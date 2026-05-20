@@ -8922,6 +8922,36 @@ function main(): i32 {
 	}
 }
 
+// TestCmdLangComponentWrapRejectsImports confirms `-component-wrap`
+// gives a clear error (instead of silently producing an invalid
+// component) when the source's wasmbin output has WASI imports.
+// `print()` pulls in `wasi_snapshot_preview1.fd_write`, so a
+// program that prints anything triggers this.
+func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "prints.lang")
+	src := []byte(`function main(): i32 {
+    print("hi");
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "prints.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected `lang -component-wrap` to fail on a program with imports, but it succeeded.\noutput:\n%s", out)
+	}
+	if !strings.Contains(string(out), "can't wrap a core module with imports") {
+		t.Errorf("expected import-rejection error message in output, got:\n%s", out)
+	}
+}
+
 // TestCmdLangComponentWrap exercises the new `-component-wrap`
 // driver flag, which uses the Go-side encoder to produce a
 // self-contained preview-2 component without shelling out to

@@ -442,6 +442,9 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// returning function. Only valid for Lang programs
 				// whose wasmbin output has zero imports (typically
 				// "just returns a value", no I/O).
+				if has, names := coreModuleHasImports(bin); has {
+					return 1, fmt.Errorf("-component-wrap can't wrap a core module with imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter PATH to wrap through wasm-tools.", len(names), strings.Join(names, ", "))
+				}
 				comp := component.BuildLiftedExportComponent(bin, "main", "main", nil, nil, component.CValtypeU32)
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
@@ -709,4 +712,119 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 		return cmd.ProcessState.ExitCode(), nil
 	}
 	return 1, err
+}
+
+// coreModuleHasImports peeks at a core wasm module's import
+// section to check whether it declares any imports. Used by the
+// -component-wrap path to give a clean error when the source's
+// wasmbin output would need a preview-1 adapter (something
+// `component.BuildLiftedExportComponent` doesn't handle).
+//
+// Returns (false, nil) when the module has no import section or
+// the section is empty. The names are returned as
+// "module.fieldName" tuples for the error message.
+//
+// The import section is identifier 2 in core wasm; layout is
+// `id:u8 size:uleb body`. Body is `count:uleb (module:name name:name kind:u8 ...)*`.
+// This skips section bodies it doesn't recognize and bails out
+// on malformed input.
+func coreModuleHasImports(bin []byte) (bool, []string) {
+	const preambleLen = 8
+	if len(bin) < preambleLen {
+		return false, nil
+	}
+	off := preambleLen
+	for off < len(bin) {
+		id := bin[off]
+		off++
+		size, n := readULEB(bin[off:])
+		if n == 0 {
+			return false, nil
+		}
+		off += n
+		if off+int(size) > len(bin) {
+			return false, nil
+		}
+		body := bin[off : off+int(size)]
+		off += int(size)
+		if id != 2 {
+			continue
+		}
+		count, m := readULEB(body)
+		if m == 0 || count == 0 {
+			return false, nil
+		}
+		body = body[m:]
+		var names []string
+		for i := uint64(0); i < count && len(body) > 0; i++ {
+			mod, body2 := readName(body)
+			fld, body3 := readName(body2)
+			if len(body3) < 1 {
+				break
+			}
+			kind := body3[0]
+			body3 = body3[1:]
+			// Skip the kind-specific suffix.
+			switch kind {
+			case 0: // func: typeidx uleb
+				_, ks := readULEB(body3)
+				body3 = body3[ks:]
+			case 1: // table: reftype byte + limits
+				if len(body3) >= 2 {
+					body3 = body3[2:]
+					_, ks := readULEB(body3)
+					body3 = body3[ks:]
+				}
+			case 2: // memory: limits
+				if len(body3) >= 1 {
+					flag := body3[0]
+					body3 = body3[1:]
+					_, ks := readULEB(body3)
+					body3 = body3[ks:]
+					if flag == 1 {
+						_, ks2 := readULEB(body3)
+						body3 = body3[ks2:]
+					}
+				}
+			case 3: // global: valtype byte + mut byte
+				if len(body3) >= 2 {
+					body3 = body3[2:]
+				}
+			}
+			body = body3
+			names = append(names, mod+"."+fld)
+		}
+		return len(names) > 0, names
+	}
+	return false, nil
+}
+
+// readULEB decodes a uleb128-encoded uint up to 10 bytes; returns
+// (value, bytes consumed). Returns (0, 0) on malformed input.
+func readULEB(b []byte) (uint64, int) {
+	var v uint64
+	var shift uint
+	for i := 0; i < 10 && i < len(b); i++ {
+		x := b[i]
+		v |= uint64(x&0x7f) << shift
+		if x&0x80 == 0 {
+			return v, i + 1
+		}
+		shift += 7
+	}
+	return 0, 0
+}
+
+// readName reads a uleb-prefixed UTF-8 name; returns (name, rest)
+// or ("", b) when malformed.
+func readName(b []byte) (string, []byte) {
+	n, k := readULEB(b)
+	if k == 0 {
+		return "", b
+	}
+	b = b[k:]
+	if uint64(len(b)) < n {
+		return "", b
+	}
+	return string(b[:n]), b[n:]
 }
