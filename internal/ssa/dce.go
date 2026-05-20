@@ -74,7 +74,7 @@ func isDeadOp(op *Op, uses map[int32]int) bool {
 // safe to drop.
 func hasSideEffect(k OpKind) bool {
 	switch k {
-	case OpCall, OpCallIndirect, OpLoad, OpStore,
+	case OpCall, OpCallIndirect, OpCallPair, OpLoad, OpStore,
 		OpMakeClosure, OpMakeEnv:
 		return true
 	default:

@@ -185,6 +185,13 @@ const (
 	// dispatch / function-pointer values.
 	OpCallIndirect
 
+	// Pair-returning direct call — produces two Values (tag
+	// in Result, payload in Result2). Str holds the callee
+	// name; Args hold the popped arguments. Used for the
+	// pair-form lowering of Option/Result returns to avoid
+	// the per-call heap box allocation.
+	OpCallPair
+
 	// Closure construction.
 	//
 	// OpMakeClosure allocates an {fn_idx, env_ptr} pair plus
@@ -333,6 +340,8 @@ func (k OpKind) String() string {
 		return "call"
 	case OpCallIndirect:
 		return "call_indirect"
+	case OpCallPair:
+		return "call_pair"
 	case OpMakeClosure:
 		return "make_closure"
 	case OpMakeEnv:
@@ -356,7 +365,11 @@ func (k OpKind) String() string {
 type Op struct {
 	Kind   OpKind
 	Result Value
-	Args   []Value
+	// Result2 is the second-value-defined slot — used only by
+	// multi-result ops (currently OpCallPair). Zero sentinel
+	// for every other Op.
+	Result2 Value
+	Args    []Value
 
 	// Op-kind-specific immediate fields. Mutually exclusive
 	// in practice — each kind uses at most one.
@@ -502,6 +515,19 @@ func (f *Func) AddOpNoResult(b *Block, kind OpKind, args ...Value) *Op {
 	op := &Op{Kind: kind, Args: args}
 	b.Ops = append(b.Ops, op)
 	return op
+}
+
+// AddCallPair appends an OpCallPair to block `b` and returns
+// the two freshly-minted Values (tag, payload). Str on the
+// emitted Op holds the callee name; callers set it before or
+// after this call. Used for the pair-form lowering of
+// Option/Result returns.
+func (f *Func) AddCallPair(b *Block, args ...Value) (Value, Value) {
+	tag := f.NewValue()
+	payload := f.NewValue()
+	op := &Op{Kind: OpCallPair, Result: tag, Result2: payload, Args: args}
+	b.Ops = append(b.Ops, op)
+	return tag, payload
 }
 
 // AddPhi prepends a Phi Op to block `b` and returns the

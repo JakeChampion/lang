@@ -55,12 +55,13 @@ func (f *Func) Clone() *Func {
 			dst.Ops = make([]*Op, len(src.Ops))
 			for i, op := range src.Ops {
 				dst.Ops[i] = &Op{
-					Kind:   op.Kind,
-					Result: op.Result,
-					Args:   append([]Value(nil), op.Args...),
-					Imm:    op.Imm,
-					F64:    op.F64,
-					Str:    op.Str,
+					Kind:    op.Kind,
+					Result:  op.Result,
+					Result2: op.Result2,
+					Args:    append([]Value(nil), op.Args...),
+					Imm:     op.Imm,
+					F64:     op.F64,
+					Str:     op.Str,
 				}
 			}
 		}

@@ -28,7 +28,7 @@ func IsCommutative(k OpKind) bool {
 // `k == OpPhi` separately when that matters.
 func IsPure(k OpKind) bool {
 	switch k {
-	case OpCall, OpCallIndirect, OpLoad, OpStore,
+	case OpCall, OpCallIndirect, OpCallPair, OpLoad, OpStore,
 		OpMakeClosure, OpMakeEnv:
 		return false
 	default:

@@ -74,7 +74,9 @@ func writeOp(b *strings.Builder, op *Op, blk *Block) {
 		b.WriteString("<nil op>")
 		return
 	}
-	if op.Result.IsValid() {
+	if op.Result.IsValid() && op.Result2.IsValid() {
+		fmt.Fprintf(b, "%s, %s = ", op.Result, op.Result2)
+	} else if op.Result.IsValid() {
 		b.WriteString(op.Result.String())
 		b.WriteString(" = ")
 	}
