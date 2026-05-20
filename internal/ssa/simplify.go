@@ -106,6 +106,23 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		}
 		return def.Args[0], true
 	}
+	// Ternary OpSelect.
+	if op.Kind == OpSelect {
+		if len(op.Args) != 3 {
+			return Value{}, false
+		}
+		if op.Args[1] == op.Args[2] {
+			// both branches identical → either one.
+			return op.Args[1], true
+		}
+		if v, ok := constBool(op.Args[0], defs); ok {
+			if v {
+				return op.Args[1], true
+			}
+			return op.Args[2], true
+		}
+		return Value{}, false
+	}
 	if len(op.Args) != 2 {
 		return Value{}, false
 	}

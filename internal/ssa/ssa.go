@@ -90,6 +90,12 @@ const (
 	// Value; result is the flipped bool.
 	OpNot
 
+	// Ternary select — `cond ? ifTrue : ifFalse`. Args[0] is
+	// the bool condition; Args[1] is the value when true;
+	// Args[2] is the value when false. Branchless; backends
+	// lower to csel (arm64), cmov (x86), or select (wasm).
+	OpSelect
+
 	// Comparison — produces a boolean Value.
 	OpEq
 	OpNe
@@ -150,6 +156,8 @@ func (k OpKind) String() string {
 		return "neg"
 	case OpNot:
 		return "not"
+	case OpSelect:
+		return "select"
 	case OpEq:
 		return "eq"
 	case OpNe:
