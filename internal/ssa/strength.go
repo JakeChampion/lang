@@ -35,12 +35,15 @@ package ssa
 // `x != x` may be true for x = NaN. Integer values can't be NaN
 // so the integer forms are safe.
 //
-// Kind-shifting rewrite (Phase 2):
+// Kind-shifting rewrites (Phase 2):
 //
-//	0 - x   ⇒ neg x             (OpSub kind becomes OpNeg)
+//	0 - x        ⇒ neg x        (OpSub kind becomes OpNeg)
+//	x + neg(y)   ⇒ x - y        (OpAdd kind becomes OpSub)
+//	neg(y) + x   ⇒ x - y        (same)
 //
-// In-place: Kind flips to OpNeg, Args drops the zero, Result
-// stays put so existing uses keep working.
+// In-place: Kind flips, Args is rebuilt, Result stays put so
+// existing uses keep working. Saves the OpNeg op when DCE
+// reclaims it.
 //
 // Not yet handled (would need a "definitely non-zero" check
 // on x that we don't track yet):
@@ -130,6 +133,18 @@ func StrengthReduce(f *Func) {
 				if isNegOf(op.Args[1], op.Args[0], defs) ||
 					isNegOf(op.Args[0], op.Args[1], defs) {
 					rewriteInt(op, 0)
+					continue
+				}
+				// x + neg(y) ⇒ x - y (and neg(y) + x ⇒ x - y).
+				// Looks up the neg-def to pull out y.
+				if y, ok := negArg(op.Args[1], defs); ok {
+					op.Kind = OpSub
+					op.Args = []Value{op.Args[0], y}
+					continue
+				}
+				if y, ok := negArg(op.Args[0], defs); ok {
+					op.Kind = OpSub
+					op.Args = []Value{op.Args[1], y}
 				}
 			case OpEq, OpLe, OpLeU, OpGe, OpGeU:
 				// x == x, x <= x, x >= x ⇒ true.
@@ -158,4 +173,18 @@ func isNegOf(maybeNeg, x Value, defs map[int32]*Op) bool {
 		return false
 	}
 	return def.Args[0] == x
+}
+
+// negArg returns the inner Value when `v` is defined by an
+// OpNeg, or `Value{}, false` otherwise. Used by the
+// add-of-neg → sub rewrite.
+func negArg(v Value, defs map[int32]*Op) (Value, bool) {
+	if !v.IsValid() {
+		return Value{}, false
+	}
+	def, ok := defs[v.ID]
+	if !ok || def.Kind != OpNeg || len(def.Args) != 1 {
+		return Value{}, false
+	}
+	return def.Args[0], true
 }

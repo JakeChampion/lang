@@ -384,7 +384,7 @@ func TestStrengthAddNegLeft(t *testing.T) {
 }
 
 // TestStrengthAddNegDistinct — `x + neg(y)` (different operands)
-// must NOT be folded.
+// rewrites to `x - y`. Saves the OpNeg when DCE follows.
 func TestStrengthAddNegDistinct(t *testing.T) {
 	f := NewFunc("f")
 	x := f.AddParam()
@@ -396,9 +396,76 @@ func TestStrengthAddNegDistinct(t *testing.T) {
 
 	StrengthReduce(f)
 
-	if entry.Ops[1].Kind != OpAdd {
-		t.Errorf("Kind = %v, want OpAdd (neg of different var, unchanged)",
-			entry.Ops[1].Kind)
+	add := entry.Ops[1]
+	if add.Kind != OpSub {
+		t.Errorf("Kind = %v, want OpSub (x + neg(y) → x - y)",
+			add.Kind)
+	}
+	if len(add.Args) != 2 || add.Args[0] != x || add.Args[1] != y {
+		t.Errorf("Args = %v, want [x, y]", add.Args)
+	}
+}
+
+// TestStrengthAddNegYToSub — explicit `x + neg(y)` rewrite
+// (mirror of the test above for the neg-on-right operand
+// position, with stricter Result-preservation checks).
+func TestStrengthAddNegYToSub(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	negY := f.AddOp(entry, OpNeg, y)
+	r := f.AddOp(entry, OpAdd, x, negY)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	add := entry.Ops[1]
+	if add.Result != r {
+		t.Errorf("Result changed; downstream uses would break")
+	}
+	if add.Kind != OpSub {
+		t.Errorf("Kind = %v, want OpSub", add.Kind)
+	}
+}
+
+// TestStrengthNegYAddXToSub — `neg(y) + x` (neg on left)
+// rewrites to OpSub with Args [x, y] (non-neg side first).
+func TestStrengthNegYAddXToSub(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	negY := f.AddOp(entry, OpNeg, y)
+	r := f.AddOp(entry, OpAdd, negY, x)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	add := entry.Ops[1]
+	if add.Kind != OpSub {
+		t.Errorf("Kind = %v, want OpSub", add.Kind)
+	}
+	if len(add.Args) != 2 || add.Args[0] != x || add.Args[1] != y {
+		t.Errorf("Args = %v, want [x, y]", add.Args)
+	}
+}
+
+// TestStrengthAddNoNegLeftAlone — `x + y` with neither arg
+// being an OpNeg stays as OpAdd.
+func TestStrengthAddNoNegLeftAlone(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	y := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpAdd, x, y)
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	if entry.Ops[0].Kind != OpAdd {
+		t.Errorf("Kind = %v, want OpAdd (no neg, unchanged)",
+			entry.Ops[0].Kind)
 	}
 }
 
