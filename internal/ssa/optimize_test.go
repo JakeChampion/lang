@@ -96,8 +96,11 @@ func TestOptimizeBranchAndCleanup(t *testing.T) {
 
 	Optimize(f)
 
-	if entry.Term.Kind != TermBr || entry.Term.Target != thenB {
-		t.Errorf("Term = %+v, want Br→thenB", entry.Term)
+	// With FuseLinearBlocks, entry+thenB collapse into entry
+	// since thenB has entry as its sole pred — entry inherits
+	// thenB's ret terminator.
+	if entry.Term.Kind != TermRet {
+		t.Errorf("Term = %+v, want TermRet (fused thenB)", entry.Term)
 	}
 	if len(elseB.Preds) != 0 {
 		t.Errorf("elseB.Preds = %v, want empty", elseB.Preds)

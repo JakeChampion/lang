@@ -165,9 +165,12 @@ func TestMergeTrivialBlocksInOptimize(t *testing.T) {
 
 	Optimize(f)
 
-	// After several Optimize iterations, only A → X should remain.
-	if len(f.Blocks) != 2 {
-		t.Errorf("Blocks = %d, want 2 (A + X); got block IDs %v",
+	// With both MergeTrivialBlocks (forwarder elimination) and
+	// FuseLinearBlocks (single-pred/single-succ chain fusion),
+	// the entire A → b1 → b2 → b3 → X chain collapses into
+	// a single block.
+	if len(f.Blocks) != 1 {
+		t.Errorf("Blocks = %d, want 1 (fully fused); got block IDs %v",
 			len(f.Blocks), blockIDs(f.Blocks))
 	}
 }

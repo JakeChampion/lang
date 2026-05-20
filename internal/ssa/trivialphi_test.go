@@ -177,9 +177,19 @@ func TestTrivialPhiInOptimizePipeline(t *testing.T) {
 
 	Optimize(f)
 
-	// Merge.Term.Value should be the single surviving constant.
-	if !merge.Term.Value.IsValid() {
-		t.Fatal("Term.Value invalid after Optimize")
+	// After Optimize: brif-on-const collapses to br, the trivial
+	// phi resolves, and FuseLinearBlocks fuses the whole chain
+	// into a single block. The final block's Ret value must be
+	// the surviving const.
+	last := f.Blocks[len(f.Blocks)-1]
+	for _, b := range f.Blocks {
+		if b.Term.Kind == TermRet {
+			last = b
+			break
+		}
+	}
+	if !last.Term.Value.IsValid() {
+		t.Fatal("no Ret terminator carries a valid Value after Optimize")
 	}
 }
 

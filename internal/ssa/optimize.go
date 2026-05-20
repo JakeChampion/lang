@@ -43,6 +43,7 @@ func Optimize(f *Func) int {
 		FoldBranches(f)
 		PruneUnreachable(f)
 		MergeTrivialBlocks(f)
+		FuseLinearBlocks(f)
 		TrivialPhis(f)
 		CSE(f)
 		DCE(f)
