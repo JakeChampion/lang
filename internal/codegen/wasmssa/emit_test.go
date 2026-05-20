@@ -358,7 +358,7 @@ func TestEmitSelfRecursiveFactorial(t *testing.T) {
 }
 
 // TestEmitRejectsExternalCall — OpCall whose callee name
-// doesn't match the function's own name is rejected.
+// matches neither f.Name nor any declared import is rejected.
 func TestEmitRejectsExternalCall(t *testing.T) {
 	f := ssa.NewFunc("main")
 	entry := f.NewBlock()
@@ -371,6 +371,58 @@ func TestEmitRejectsExternalCall(t *testing.T) {
 		t.Fatal("expected error for non-self OpCall")
 	}
 }
+
+// TestEmitImportedCall — a function that calls an imported
+// helper resolves the call to the import's func index. The
+// resulting module declares the import + a single defined
+// function (the export); the call op lowers to `call 0`
+// (import) rather than `call 1` (self).
+func TestEmitImportedCall(t *testing.T) {
+	f := ssa.NewFunc("main")
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	r := f.AddOp(entry, ssa.OpCall, a, b)
+	entry.Ops[0].Str = "host_add"
+	f.SetRet(entry, r)
+
+	hostAdd := Import{
+		Module:  "env",
+		Name:    "host_add",
+		Params:  []byte{encodeValtypeI32, encodeValtypeI32},
+		Results: []byte{encodeValtypeI32},
+	}
+	mod, err := EmitModule(f, "main", hostAdd)
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitRejectsDuplicateImportName — two imports with the
+// same Name are ambiguous; EmitModule rejects.
+func TestEmitRejectsDuplicateImportName(t *testing.T) {
+	f := ssa.NewFunc("main")
+	entry := f.NewBlock()
+	c := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 0
+	f.SetRet(entry, c)
+
+	a := Import{Module: "env", Name: "f", Params: nil, Results: []byte{encodeValtypeI32}}
+	b := Import{Module: "env", Name: "f", Params: nil, Results: []byte{encodeValtypeI32}}
+	_, err := EmitModule(f, "main", a, b)
+	if err == nil {
+		t.Fatal("expected error for duplicate import name")
+	}
+}
+
+// encodeValtypeI32 is a test-local alias for the encode.ValtypeI32
+// constant — avoids importing the encode package into the test
+// file just for this one byte.
+const encodeValtypeI32 = 0x7f
 
 // TestEmitRejectsUnsupportedOp — an unsupported op kind
 // (e.g. OpLoad) surfaces a clear error.

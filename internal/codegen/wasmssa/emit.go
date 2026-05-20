@@ -34,14 +34,17 @@
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
 //     OpGeU, OpNeg, OpNot, OpPhi (in if-else merges + loop
-//     headers), OpCall (self-recursion only — callee name must
-//     match f.Name)
+//     headers), OpCall (self-recursion + calls to declared
+//     imports — callee name must match either f.Name or an
+//     Import.Name passed to EmitModule).
+//   - Imports: the variadic Import args to EmitModule add
+//     host-provided functions to the module's import section;
+//     OpCall.Str = Import.Name lowers to `call <import idx>`.
 //
 // Not yet supported (returns an unsupportedOp error):
 //
 //   - Other multi-block CFG shapes (nested loops, switch, etc.)
 //   - i64 / f32 / f64 / string values
-//   - Calls to external/imported functions
 //   - Memory ops, alloc
 //   - Pair-return
 //
@@ -56,15 +59,33 @@ import (
 
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/imports"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
 
+// Import describes an externally-provided wasm function the
+// emitted module pulls in. Module + Name address the import
+// in the host environment; Params + Results give its type
+// signature (each byte is an encode.Valtype*). When the
+// emitted SSA function's OpCall.Str matches an Import.Name,
+// the call is lowered to a wasm `call` of that import's
+// function index.
+//
+// Currently i32-only — for params and results, only
+// encode.ValtypeI32 is supported.
+type Import struct {
+	Module, Name string
+	Params       []byte
+	Results      []byte
+}
+
 // EmitModule produces a complete wasm core module exporting
-// `f` under `exportName`. Returns the module bytes or an
-// error if `f` uses unsupported features.
-func EmitModule(f *ssa.Func, exportName string) ([]byte, error) {
+// `f` under `exportName`, with the given imported functions
+// available for `f` to call via OpCall. Returns the module
+// bytes or an error if `f` uses unsupported features.
+func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, error) {
 	if f == nil {
 		return nil, errors.New("wasmssa.EmitModule: nil func")
 	}
@@ -74,7 +95,23 @@ func EmitModule(f *ssa.Func, exportName string) ([]byte, error) {
 	if f.Entry == nil {
 		return nil, errors.New("wasmssa.EmitModule: func has no entry block")
 	}
-	body, valueToLocal, err := emitFunc(f)
+	// Build the import-name → func-index map. Imports come
+	// first in the module's func index space, so they get
+	// indices 0..N-1.
+	importIdx := map[string]uint32{}
+	for i, im := range importList {
+		if im.Name == "" {
+			return nil, fmt.Errorf("wasmssa.EmitModule: import %d has empty Name", i)
+		}
+		if _, dup := importIdx[im.Name]; dup {
+			return nil, fmt.Errorf("wasmssa.EmitModule: duplicate import name %q", im.Name)
+		}
+		importIdx[im.Name] = uint32(i)
+	}
+	// Self-function lives just after the imports.
+	selfFuncIdx := uint32(len(importList))
+
+	body, valueToLocal, err := emitFunc(f, importIdx, selfFuncIdx)
 	if err != nil {
 		return nil, err
 	}
@@ -82,22 +119,45 @@ func EmitModule(f *ssa.Func, exportName string) ([]byte, error) {
 	// Module skeleton.
 	out := encode.PutModuleHeader(nil)
 
-	// Type section: one func type (params = N × i32; result = i32).
-	paramsBytes := make([]byte, 0, paramCount(f))
-	for range realParams(f) {
-		paramsBytes = append(paramsBytes, encode.ValtypeI32)
+	// Type section: one type per import + one for the main function.
+	paramsPerType := make([][]byte, 0, len(importList)+1)
+	resultsPerType := make([][]byte, 0, len(importList)+1)
+	for _, im := range importList {
+		paramsPerType = append(paramsPerType, im.Params)
+		resultsPerType = append(resultsPerType, im.Results)
 	}
-	resultBytes := []byte{encode.ValtypeI32}
-	out = sections.EncodeTypeSection(out, [][]byte{paramsBytes}, [][]byte{resultBytes})
+	mainParams := make([]byte, 0, paramCount(f))
+	for range realParams(f) {
+		mainParams = append(mainParams, encode.ValtypeI32)
+	}
+	mainResults := []byte{encode.ValtypeI32}
+	paramsPerType = append(paramsPerType, mainParams)
+	resultsPerType = append(resultsPerType, mainResults)
+	mainTypeIdx := uint32(len(importList))
+	out = sections.EncodeTypeSection(out, paramsPerType, resultsPerType)
 
-	// Function section: one func, type index 0.
-	out = sections.EncodeFunctionSection(out, []uint32{0})
+	// Import section (only if there ARE imports).
+	if len(importList) > 0 {
+		var mods, names []string
+		var kinds []byte
+		var descs [][]byte
+		for i, im := range importList {
+			mods = append(mods, im.Module)
+			names = append(names, im.Name)
+			kinds = append(kinds, imports.ImportFunc)
+			descs = append(descs, imports.ImportDescFunc(uint32(i)))
+		}
+		out = imports.EncodeImportSection(out, mods, names, kinds, descs)
+	}
 
-	// Export section: export `exportName` → func 0.
+	// Function section: one func, type index = mainTypeIdx.
+	out = sections.EncodeFunctionSection(out, []uint32{mainTypeIdx})
+
+	// Export section: export `exportName` → func `selfFuncIdx`.
 	out = sections.EncodeExportSection(out,
 		[]string{exportName},
 		[]byte{0x00}, // 0 = func export kind
-		[]uint32{0})
+		[]uint32{selfFuncIdx})
 
 	// Code section: one func body with declared locals + body bytes.
 	localCount := uint32(len(valueToLocal) - paramCount(f))
@@ -151,20 +211,44 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 //   - 4 blocks shaped as while loop → wasm `block`/`loop`/
 //     `br_if` form with phi locals carrying loop state.
 //   - Anything else → unsupported error.
-func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
-	// Validate OpCall callees: only self-recursion supported.
+//
+// emitCtx threads per-call state down to the inner emitters
+// — the value→local map plus call-related metadata so emitOp
+// can lower OpCall to the right function index.
+type emitCtx struct {
+	valueToLocal map[int32]uint32
+	funcName     string
+	importIdx    map[string]uint32
+	selfFuncIdx  uint32
+}
+
+func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32) ([]byte, map[int32]uint32, error) {
+	// Validate OpCall callees: must be either self-recursion
+	// (callee name == f.Name) or one of the declared imports.
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
-			if op.Kind == ssa.OpCall && op.Str != f.Name {
-				return nil, nil, fmt.Errorf("wasmssa: OpCall to %q; only self-recursion (callee == %q) supported",
-					op.Str, f.Name)
+			if op.Kind != ssa.OpCall {
+				continue
 			}
+			if op.Str == f.Name {
+				continue
+			}
+			if _, ok := importIdx[op.Str]; ok {
+				continue
+			}
+			return nil, nil, fmt.Errorf("wasmssa: OpCall to %q is neither self-recursion (callee == %q) nor a declared import",
+				op.Str, f.Name)
 		}
 	}
-	valueToLocal := map[int32]uint32{}
+	ctx := &emitCtx{
+		valueToLocal: map[int32]uint32{},
+		funcName:     f.Name,
+		importIdx:    importIdx,
+		selfFuncIdx:  selfFuncIdx,
+	}
 	nextLocal := uint32(0)
 	for _, p := range realParams(f) {
-		valueToLocal[p.ID] = nextLocal
+		ctx.valueToLocal[p.ID] = nextLocal
 		nextLocal++
 	}
 
@@ -175,8 +259,8 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				if _, ok := valueToLocal[op.Result.ID]; !ok {
-					valueToLocal[op.Result.ID] = nextLocal
+				if _, ok := ctx.valueToLocal[op.Result.ID]; !ok {
+					ctx.valueToLocal[op.Result.ID] = nextLocal
 					nextLocal++
 				}
 			}
@@ -190,50 +274,50 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		var body []byte
 		var err error
 		for _, b := range chain {
-			body, err = emitStraightBlock(body, b, valueToLocal)
+			body, err = emitStraightBlock(body, b, ctx)
 			if err != nil {
 				return nil, nil, err
 			}
 		}
 		last := chain[len(chain)-1]
-		body = emitRet(body, last.Term, valueToLocal)
-		return body, valueToLocal, nil
+		body = emitRet(body, last.Term, ctx)
+		return body, ctx.valueToLocal, nil
 	}
 
 	// If-else diamond case.
 	if diamond, ok := classifyIfElseDiamond(f); ok {
-		body, err := emitIfElseDiamond(nil, diamond, valueToLocal)
+		body, err := emitIfElseDiamond(nil, diamond, ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		return body, valueToLocal, nil
+		return body, ctx.valueToLocal, nil
 	}
 
 	// If-only (no-else) case.
 	if shape, ok := classifyIfOnly(f); ok {
-		body, err := emitIfOnly(nil, shape, valueToLocal)
+		body, err := emitIfOnly(nil, shape, ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		return body, valueToLocal, nil
+		return body, ctx.valueToLocal, nil
 	}
 
 	// Dual-return diamond — both arms ret, no merge.
 	if shape, ok := classifyDualReturn(f); ok {
-		body, err := emitDualReturn(nil, shape, valueToLocal)
+		body, err := emitDualReturn(nil, shape, ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		return body, valueToLocal, nil
+		return body, ctx.valueToLocal, nil
 	}
 
 	// While loop case.
 	if lp, ok := classifyWhileLoop(f); ok {
-		body, err := emitWhileLoop(nil, lp, valueToLocal)
+		body, err := emitWhileLoop(nil, lp, ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		return body, valueToLocal, nil
+		return body, ctx.valueToLocal, nil
 	}
 
 	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, dual-return diamonds, and while loops handled",
@@ -242,12 +326,12 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 
 // emitStraightBlock emits the ops of `b` (skipping phis,
 // which are handled separately at block-entry sites).
-func emitStraightBlock(body []byte, b *ssa.Block, valueToLocal map[int32]uint32) ([]byte, error) {
+func emitStraightBlock(body []byte, b *ssa.Block, ctx *emitCtx) ([]byte, error) {
 	for _, op := range b.Ops {
 		if op.Kind == ssa.OpPhi {
 			continue // phis are written by predecessors at branch sites
 		}
-		newBody, err := emitOp(body, op, valueToLocal)
+		newBody, err := emitOp(body, op, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -258,9 +342,9 @@ func emitStraightBlock(body []byte, b *ssa.Block, valueToLocal map[int32]uint32)
 
 // emitRet emits the bytes that materialise a TermRet — push
 // the return value (or zero), `return`.
-func emitRet(body []byte, term ssa.Terminator, valueToLocal map[int32]uint32) []byte {
+func emitRet(body []byte, term ssa.Terminator, ctx *emitCtx) []byte {
 	if term.Value.IsValid() {
-		body = pushValue(body, term.Value, valueToLocal)
+		body = pushValue(body, term.Value, ctx)
 	} else {
 		body = inst.InstI32Const(body, 0)
 	}
@@ -364,35 +448,35 @@ func classifyIfElseDiamond(f *ssa.Func) (ifElseDiamond, bool) {
 // `if cond` / `else` / `end` around the two arms. Phis at
 // the merge block become shared locals; each arm writes to
 // the phi's local just before branching.
-func emitIfElseDiamond(body []byte, d ifElseDiamond, valueToLocal map[int32]uint32) ([]byte, error) {
-	body, err := emitStraightBlock(body, d.entry, valueToLocal)
+func emitIfElseDiamond(body []byte, d ifElseDiamond, ctx *emitCtx) ([]byte, error) {
+	body, err := emitStraightBlock(body, d.entry, ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Push the brif cond + open `if` (no result; we use locals
 	// for cross-arm communication).
-	body = pushValue(body, d.entry.Term.Cond, valueToLocal)
+	body = pushValue(body, d.entry.Term.Cond, ctx)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	// True arm.
-	body, err = emitStraightBlock(body, d.t, valueToLocal)
+	body, err = emitStraightBlock(body, d.t, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = writePhiArgs(body, d.merge, d.t, valueToLocal)
+	body = writePhiArgs(body, d.merge, d.t, ctx)
 	body = inst.InstElse(body)
 	// False arm.
-	body, err = emitStraightBlock(body, d.f, valueToLocal)
+	body, err = emitStraightBlock(body, d.f, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = writePhiArgs(body, d.merge, d.f, valueToLocal)
+	body = writePhiArgs(body, d.merge, d.f, ctx)
 	body = inst.InstEnd(body) // end if
 	// Merge ops (post-phi) + ret.
-	body, err = emitStraightBlock(body, d.merge, valueToLocal)
+	body, err = emitStraightBlock(body, d.merge, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = emitRet(body, d.merge.Term, valueToLocal)
+	body = emitRet(body, d.merge.Term, ctx)
 	return body, nil
 }
 
@@ -400,7 +484,7 @@ func emitIfElseDiamond(body []byte, d ifElseDiamond, valueToLocal map[int32]uint
 // that push the phi-arg coming from `fromBlock` and store it
 // into the phi's local. fromBlock must be one of target.Preds.
 // Used at branch-out sites in if-else arms + while loops.
-func writePhiArgs(body []byte, target, fromBlock *ssa.Block, valueToLocal map[int32]uint32) []byte {
+func writePhiArgs(body []byte, target, fromBlock *ssa.Block, ctx *emitCtx) []byte {
 	predIdx := -1
 	for i, p := range target.Preds {
 		if p == fromBlock {
@@ -418,8 +502,8 @@ func writePhiArgs(body []byte, target, fromBlock *ssa.Block, valueToLocal map[in
 		if predIdx >= len(op.Args) {
 			continue
 		}
-		body = pushValue(body, op.Args[predIdx], valueToLocal)
-		if local, ok := valueToLocal[op.Result.ID]; ok {
+		body = pushValue(body, op.Args[predIdx], ctx)
+		if local, ok := ctx.valueToLocal[op.Result.ID]; ok {
 			body = inst.InstLocalSet(body, local)
 		}
 	}
@@ -481,8 +565,8 @@ func classifyIfOnly(f *ssa.Func) (ifOnly, bool) {
 // block contains the body's ops; the implicit else is empty.
 // Phi-arg writes go in the appropriate slot — true-arm if
 // entry's True == body, false-arm if entry's False == body.
-func emitIfOnly(body []byte, s ifOnly, valueToLocal map[int32]uint32) ([]byte, error) {
-	body, err := emitStraightBlock(body, s.entry, valueToLocal)
+func emitIfOnly(body []byte, s ifOnly, ctx *emitCtx) ([]byte, error) {
+	body, err := emitStraightBlock(body, s.entry, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -490,27 +574,27 @@ func emitIfOnly(body []byte, s ifOnly, valueToLocal map[int32]uint32) ([]byte, e
 	// when cond is true (no flip needed). If entry's False ==
 	// s.body, flip the cond via i32.eqz so the wasm `if`
 	// enters when the original False arm should.
-	body = pushValue(body, s.entry.Term.Cond, valueToLocal)
+	body = pushValue(body, s.entry.Term.Cond, ctx)
 	if s.entry.Term.False == s.body {
 		body = append(body, 0x45) // i32.eqz
 	}
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	// Body arm.
-	body, err = emitStraightBlock(body, s.body, valueToLocal)
+	body, err = emitStraightBlock(body, s.body, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = writePhiArgs(body, s.merge, s.body, valueToLocal)
+	body = writePhiArgs(body, s.merge, s.body, ctx)
 	body = inst.InstElse(body)
 	// Else arm: no ops, just phi-writes from entry.
-	body = writePhiArgs(body, s.merge, s.entry, valueToLocal)
+	body = writePhiArgs(body, s.merge, s.entry, ctx)
 	body = inst.InstEnd(body)
 	// Merge ops + ret.
-	body, err = emitStraightBlock(body, s.merge, valueToLocal)
+	body, err = emitStraightBlock(body, s.merge, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = emitRet(body, s.merge.Term, valueToLocal)
+	body = emitRet(body, s.merge.Term, ctx)
 	return body, nil
 }
 
@@ -556,27 +640,27 @@ func classifyDualReturn(f *ssa.Func) (dualReturn, bool) {
 // emits `return`. After the `if/end` the function body is
 // unreachable; we emit a trailing `unreachable` + an i32.const 0
 // to keep the stack-balance check happy.
-func emitDualReturn(body []byte, d dualReturn, valueToLocal map[int32]uint32) ([]byte, error) {
-	body, err := emitStraightBlock(body, d.entry, valueToLocal)
+func emitDualReturn(body []byte, d dualReturn, ctx *emitCtx) ([]byte, error) {
+	body, err := emitStraightBlock(body, d.entry, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = pushValue(body, d.entry.Term.Cond, valueToLocal)
+	body = pushValue(body, d.entry.Term.Cond, ctx)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 
-	body, err = emitStraightBlock(body, d.t, valueToLocal)
+	body, err = emitStraightBlock(body, d.t, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = emitRet(body, d.t.Term, valueToLocal)
+	body = emitRet(body, d.t.Term, ctx)
 
 	body = inst.InstElse(body)
 
-	body, err = emitStraightBlock(body, d.f, valueToLocal)
+	body, err = emitStraightBlock(body, d.f, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = emitRet(body, d.f.Term, valueToLocal)
+	body = emitRet(body, d.f.Term, ctx)
 
 	body = inst.InstEnd(body) // end if
 
@@ -664,20 +748,20 @@ func classifyWhileLoop(f *ssa.Func) (whileLoop, bool) {
 //	  end loop
 //	end block
 //	ops_in_done; ret
-func emitWhileLoop(body []byte, lp whileLoop, valueToLocal map[int32]uint32) ([]byte, error) {
-	body, err := emitStraightBlock(body, lp.entry, valueToLocal)
+func emitWhileLoop(body []byte, lp whileLoop, ctx *emitCtx) ([]byte, error) {
+	body, err := emitStraightBlock(body, lp.entry, ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Initialise header phi locals from the entry pred.
-	body = writePhiArgs(body, lp.header, lp.entry, valueToLocal)
+	body = writePhiArgs(body, lp.header, lp.entry, ctx)
 
 	// block $exit
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	//   loop $continue
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
 	//     header ops (excluding phis)
-	body, err = emitStraightBlock(body, lp.header, valueToLocal)
+	body, err = emitStraightBlock(body, lp.header, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -685,16 +769,16 @@ func emitWhileLoop(body []byte, lp whileLoop, valueToLocal map[int32]uint32) ([]
 	if !lp.header.Term.Cond.IsValid() {
 		return nil, fmt.Errorf("wasmssa: while-loop header has invalid brif cond")
 	}
-	body = pushValue(body, lp.header.Term.Cond, valueToLocal)
+	body = pushValue(body, lp.header.Term.Cond, ctx)
 	body = append(body, 0x45) // i32.eqz — exit when cond is false
 	body = inst.InstBrIf(body, 1)
 	//     body ops
-	body, err = emitStraightBlock(body, lp.body, valueToLocal)
+	body, err = emitStraightBlock(body, lp.body, ctx)
 	if err != nil {
 		return nil, err
 	}
 	//     update phi locals from body for next iteration
-	body = writePhiArgs(body, lp.header, lp.body, valueToLocal)
+	body = writePhiArgs(body, lp.header, lp.body, ctx)
 	//     br 0 (back to loop top)
 	body = inst.InstBr(body, 0)
 	//   end loop
@@ -703,43 +787,49 @@ func emitWhileLoop(body []byte, lp whileLoop, valueToLocal map[int32]uint32) ([]
 	body = inst.InstEnd(body)
 
 	// done ops + ret.
-	body, err = emitStraightBlock(body, lp.done, valueToLocal)
+	body, err = emitStraightBlock(body, lp.done, ctx)
 	if err != nil {
 		return nil, err
 	}
-	body = emitRet(body, lp.done.Term, valueToLocal)
+	body = emitRet(body, lp.done.Term, ctx)
 	return body, nil
 }
 
 // emitOp lowers a single Op to wasm bytes. Appends to body
 // and returns the extended slice. Reads op.Result's local
 // (pre-assigned by emitFunc) to emit local.set.
-func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) ([]byte, error) {
+func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 	switch op.Kind {
 	case ssa.OpConstInt:
 		body = inst.InstI32Const(body, int32(op.Imm))
-		return storeResult(body, op, valueToLocal), nil
+		return storeResult(body, op, ctx), nil
 	case ssa.OpNeg:
 		// neg x → 0 - x; push 0, push x, i32.sub.
 		body = inst.InstI32Const(body, 0)
-		body = pushValue(body, op.Args[0], valueToLocal)
+		body = pushValue(body, op.Args[0], ctx)
 		body = append(body, 0x6b) // i32.sub
-		return storeResult(body, op, valueToLocal), nil
+		return storeResult(body, op, ctx), nil
 	case ssa.OpNot:
 		// not x → i32.eqz x (returns 1 if x == 0 else 0).
-		body = pushValue(body, op.Args[0], valueToLocal)
+		body = pushValue(body, op.Args[0], ctx)
 		body = append(body, 0x45) // i32.eqz
-		return storeResult(body, op, valueToLocal), nil
+		return storeResult(body, op, ctx), nil
 	case ssa.OpCall:
-		// Self-recursive call only: op.Str must match the
-		// emitting func's name (which we don't carry into
-		// emitOp; emitFunc validates it). All args are i32;
-		// callee returns i32.
-		for _, a := range op.Args {
-			body = pushValue(body, a, valueToLocal)
+		// Callee is either an import (use its declared func
+		// index) or self-recursion (use selfFuncIdx).
+		// emitFunc has already validated that op.Str matches
+		// one of those two cases.
+		var idx uint32
+		if op.Str == ctx.funcName {
+			idx = ctx.selfFuncIdx
+		} else {
+			idx = ctx.importIdx[op.Str]
 		}
-		body = inst.InstCall(body, 0) // single-func module → func idx 0
-		return storeResult(body, op, valueToLocal), nil
+		for _, a := range op.Args {
+			body = pushValue(body, a, ctx)
+		}
+		body = inst.InstCall(body, idx)
+		return storeResult(body, op, ctx), nil
 	}
 	// Binary i32 ops.
 	opcode, ok := binaryI32Opcode(op.Kind)
@@ -749,18 +839,18 @@ func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) ([]byte, err
 	if len(op.Args) != 2 {
 		return nil, fmt.Errorf("wasmssa: %v needs 2 args, got %d", op.Kind, len(op.Args))
 	}
-	body = pushValue(body, op.Args[0], valueToLocal)
-	body = pushValue(body, op.Args[1], valueToLocal)
+	body = pushValue(body, op.Args[0], ctx)
+	body = pushValue(body, op.Args[1], ctx)
 	body = append(body, opcode)
-	return storeResult(body, op, valueToLocal), nil
+	return storeResult(body, op, ctx), nil
 }
 
 // pushValue emits a local.get for the wasm local backing v.
 // Caller must have already assigned v to a local via
 // assignResult (or it must be a param — params are
 // pre-assigned in emitBody).
-func pushValue(body []byte, v ssa.Value, valueToLocal map[int32]uint32) []byte {
-	idx, ok := valueToLocal[v.ID]
+func pushValue(body []byte, v ssa.Value, ctx *emitCtx) []byte {
+	idx, ok := ctx.valueToLocal[v.ID]
 	if !ok {
 		// Defensive — would be a bug in the emitter; we'd
 		// produce malformed wasm. Emit i32.const 0 as a
@@ -773,11 +863,11 @@ func pushValue(body []byte, v ssa.Value, valueToLocal map[int32]uint32) []byte {
 
 // storeResult emits local.set for op.Result (pre-assigned by
 // emitFunc). No-op for side-effect-only ops with no Result.
-func storeResult(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) []byte {
+func storeResult(body []byte, op *ssa.Op, ctx *emitCtx) []byte {
 	if !op.Result.IsValid() {
 		return body
 	}
-	idx, ok := valueToLocal[op.Result.ID]
+	idx, ok := ctx.valueToLocal[op.Result.ID]
 	if !ok {
 		return body // shouldn't happen — emitFunc pre-assigns
 	}
