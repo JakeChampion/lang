@@ -3028,3 +3028,34 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (aliased a.b.field[i]=v must copy)", code)
 	}
 }
+
+// Mirror of TestArm64ArrayIndexSetMat.
+func TestX86_64ArrayIndexSetMat(t *testing.T) {
+	src := `function main(): i32 {
+    var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
+    mat[0][1] = 999;
+    if (mat[0][0] != 1) { return 1; }
+    if (mat[0][1] != 999) { return 2; }
+    if (mat[0][2] != 3) { return 3; }
+    if (mat[1][0] != 4) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (mat[i][j]=v in-place when inner rc==1)", code)
+	}
+}
+
+// Mirror of TestArm64ArrayIndexSetMatInnerAliasedCopies.
+func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var mat: i32[][] = [[1, 2], [3, 4]];
+    var inner = mat[0];
+    mat[0][1] = 999;
+    if (inner[1] != 2) { return 1; }
+    if (mat[0][1] != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (mat[i][j]=v with aliased inner must copy)", code)
+	}
+}
