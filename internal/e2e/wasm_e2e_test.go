@@ -10280,6 +10280,77 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentOwnBorrowHandles covers
+// put_type_section_one_own + put_type_section_one_borrow. Declares
+// a resource type then `own<$r>` and `borrow<$r>` handles referring
+// to it. Verifies wasm-tools picks up both handle forms.
+//
+// Resource handles are how WASI worlds reference live host objects:
+// `own<incoming-request>` for transferred handles,
+// `borrow<incoming-request>` for non-owning references.
+func TestWASMComponentOwnBorrowHandles(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+import "std/wasm/encode";
+function main(): i32 {
+    var comp: u8[] = component.put_component_header([]);
+    // Type 0: resource with i32 rep, no dtor.
+    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    // Type 1: own<$0>.
+    comp = component.put_type_section_one_own(comp, 0u32);
+    // Type 2: borrow<$0>.
+    comp = component.put_type_section_one_borrow(comp, 0u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{"resource", "own", "borrow"} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentVariantMixed covers put_type_section_one_variant
 // with a mix of payload-carrying and tag-only cases. Declares
 // `variant { ok(u32), err(string), abort }` — the typical
