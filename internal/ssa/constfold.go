@@ -1,5 +1,7 @@
 package ssa
 
+import "math"
+
 // Fold rewrites Ops whose operands all resolve to compile-time
 // constants into the resulting constant directly. Walks blocks
 // + ops in linear order, threading a def-site map as it goes,
@@ -172,6 +174,46 @@ func tryFold(op *Op, defs map[int32]*Op) {
 			return
 		}
 		rewriteInt(op, int64(uint64(v)))
+		return
+	case OpReinterpretF32ToI32:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(int32(math.Float32bits(float32(v)))))
+		return
+	case OpReinterpretI32ToF32:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, float64(math.Float32frombits(uint32(v))))
+		return
+	case OpReinterpretF64ToI64:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constFloat(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, int64(math.Float64bits(v)))
+		return
+	case OpReinterpretI64ToF64:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteFloat(op, math.Float64frombits(uint64(v)))
 		return
 	case OpFNeg:
 		if len(op.Args) != 1 {
