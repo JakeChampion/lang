@@ -2429,7 +2429,7 @@ func (g *generator) emitDataSections() {
 // the program lifetime). See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 64 * 1024 * 1024 // 64 MiB per region
+	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.lang through itself (its O(N²) string-builder allocates ~290 MB for that)
 	g.line("")
 	g.line(".globl __lang_alloc")
 	g.line(".type __lang_alloc, @function")
