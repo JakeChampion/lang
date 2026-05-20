@@ -8537,6 +8537,100 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentAliasCoreFunc covers
+// put_alias_section_core_export_func: after a core module is
+// instantiated, the alias section lets us surface one of its
+// exported core functions as a top-level core-sort func — the
+// prerequisite for canon-lift to turn that core func into a
+// component-level function. Without an alias the core func has no
+// addressable identity at the component level.
+//
+// We don't reach the canon section in this slice; the test just
+// checks the alias bytes parse + print as the expected
+// `(alias core export ... "f" (core func ...))` shape.
+func TestWASMComponentAliasCoreFunc(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    // Build a core module: function "f" returns 9.
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["f"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var bodyExpr: u8[] = inst.inst_i32_const([], 9);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    m.code_bodies = [fn];
+    var core_bytes: u8[] = module.build(m);
+
+    // Component: preamble + core-module + core-instance + alias.
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_module_section(comp, core_bytes);
+    comp = component.put_core_instance_section_instantiate(comp, 0u32);
+    comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(alias core export") {
+		t.Errorf("expected (alias core export ... in printed output, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "\"f\"") {
+		t.Errorf("expected alias to reference export \"f\", got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "(core func") {
+		t.Errorf("expected (core func ... result of the alias, got:\n%s", watStr)
+	}
+}
+
 // TestWASMModuleRunsIfElse: a function that returns 100 from the
 // then-arm or 200 from the else-arm of an if/else with an i32
 // result type. Exercises inst_if_start with a non-empty blocktype
