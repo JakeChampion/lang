@@ -29,6 +29,16 @@ package ssa
 //
 //	xor(xor(x, y), y)           ⇒ x   (any operand-position combo)
 //
+// Sign-extend idempotence:
+//
+//	extend8s(extend8s(x))       ⇒ extend8s(x)
+//	extend16s(extend16s(x))     ⇒ extend16s(x)
+//
+// Sign-extending the low byte/halfword twice produces the
+// same bits as doing it once — the inner's result already
+// has its high bits filled with the sign of the low N bits,
+// and re-extending preserves that.
+//
 // OpNeg / OpFNeg identities:
 //
 //	neg(neg(x))                 ⇒ x
@@ -131,6 +141,19 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 			return Value{}, false
 		}
 		return def.Args[0], true
+	}
+	// Idempotent sign-extends — extend(extend(x)) aliases to
+	// the inner extend (whose result already has the correct
+	// sign-extended bits).
+	if op.Kind == OpExtend8S || op.Kind == OpExtend16S {
+		if len(op.Args) != 1 {
+			return Value{}, false
+		}
+		def, ok := defs[op.Args[0].ID]
+		if !ok || def.Kind != op.Kind {
+			return Value{}, false
+		}
+		return def.Result, true
 	}
 	// Ternary OpSelect.
 	if op.Kind == OpSelect {
