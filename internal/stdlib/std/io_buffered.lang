@@ -66,16 +66,13 @@ pub function (w: BytesWriter) write_byte(b: i32) {
     w.data = w.data.push(b as u8);
 }
 
-// `(w: BytesWriter).size()` — total bytes written so far.
-// Named `size` rather than `len` to dodge the built-in
-// `len()` shadow inside the module's own bodies (same
-// workaround as HeaderMap.size + Stream.size).
-pub function (w: BytesWriter) size(): i32 {
+// `(w: BytesWriter).len()` — total bytes written so far.
+pub function (w: BytesWriter) len(): i32 {
     return w.data.len();
 }
 
 // `(w: BytesWriter).is_empty()` — convenience over
-// `.size() == 0`.
+// `.len() == 0`.
 pub function (w: BytesWriter) is_empty(): boolean {
     return w.data.len() == 0;
 }

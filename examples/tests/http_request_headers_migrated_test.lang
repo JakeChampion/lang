@@ -39,7 +39,7 @@ function test_parsed_header_count_is_3(): Option[string] {
         Some(req) => {
             // Three headers in the wire (Host, Content-
             // Type, Content-Length) → size() == 3.
-            return assert_eq_i32(req.headers.size(), 3);
+            return assert_eq_i32(req.headers.len(), 3);
         },
         None => { return fail("parse failed"); }
     }

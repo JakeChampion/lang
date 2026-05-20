@@ -43,12 +43,9 @@ pub function stream_empty(): Stream {
     return Stream { data: empty, pos: 0 };
 }
 
-// `(s: Stream).size()` — total byte count of the Stream's
-// backing buffer (independent of the read cursor). Named
-// `size` rather than `len` so the method doesn't shadow the
-// built-in `len()` inside the module's own bodies (same
-// workaround as HeaderMap.size).
-pub function (s: Stream) size(): i32 {
+// `(s: Stream).len()` — total byte count of the Stream's
+// backing buffer (independent of the read cursor).
+pub function (s: Stream) len(): i32 {
     return s.data.len();
 }
 
