@@ -1013,31 +1013,76 @@ pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[]
 //   00 <export_name>         // exportname kind=label
 //   01 00                    // externdesc func, typeidx 0 (the inline one)
 pub function put_type_section_one_instance_one_func_export(buf: u8[], export_name: string, param_names: string[], param_valtypes: u8[]): u8[] {
+    var names_per: string[][] = [param_names];
+    var valtypes_per: u8[][] = [param_valtypes];
+    var export_names: string[] = [export_name];
+    return put_type_section_one_instance_with_func_exports(buf, export_names, names_per, valtypes_per);
+}
+
+// put_type_section_one_instance_with_func_exports — emit a
+// component-level type section containing one instance type that
+// inline-declares N no-result functypes and exports each under
+// the corresponding name. Generalisation of the single-func
+// composer.
+//
+// Most WASI interfaces ship multiple functions:
+// `wasi:cli/std{in,out,err}` each export `get-{stdin,stdout,stderr}`;
+// `wasi:io/streams` exports `read` / `write` / `blocking-flush` / …;
+// `wasi:filesystem/types` exports a couple dozen methods on the
+// descriptor resource. This composer encodes any of those shapes
+// in a single type-section entry.
+//
+// The three top-level arrays must have equal length (= the number
+// of functions in the instance). The inner arrays carry each
+// function's parameter list. All functions are assumed to return
+// no result; mixed-return-shape instance types aren't supported by
+// this slice (each return shape would need a separate composer or
+// a richer per-func type signature).
+//
+// Encoded body (for the simple case of two functions, each
+// `() -> nothing`):
+//
+//   01                       // vec(1) type entries
+//   42                       // instance-type form
+//   <2N:uleb>                // vec(2N) decls: per func, a type +
+//                            // an export
+//   (01 40 <P> ...           // decl 2i: inline functype
+//      01 00                 //          named results, vec(0)
+//    04 00 <name> 01 i)*     // decl 2i+1: export func, typeidx i
+pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_names: string[], param_names_per_func: string[][], param_valtypes_per_func: u8[][]): u8[] {
     var body: u8[] = [];
     body = leb128.uleb_u32(body, 1u32);          // vec(1) type entries
     body = body.push(66u8);                       // instance-type form (0x42)
-    body = leb128.uleb_u32(body, 2u32);          // vec(2) decls
+    var n: i32 = export_names.len();
+    body = leb128.uleb_u32(body, (n * 2) as u32);  // 2N decls
 
-    // decl 0: type — inline functype with the given params, no result.
-    body = body.push(1u8);                        // type decl
-    body = body.push(64u8);                       // functype form (0x40)
-    var np: i32 = param_names.len();
-    body = leb128.uleb_u32(body, np as u32);
-    var i: i32 = 0;
-    while (i < np) {
-        body = encode.put_name(body, param_names[i]);
-        body = body.push(param_valtypes[i]);
-        i = i + 1;
+    var f: i32 = 0;
+    while (f < n) {
+        // decl 2f: inline functype with the given params, no result.
+        body = body.push(1u8);                    // type decl
+        body = body.push(64u8);                   // functype form (0x40)
+        var p_names: string[] = param_names_per_func[f];
+        var p_valtypes: u8[] = param_valtypes_per_func[f];
+        var np: i32 = p_names.len();
+        body = leb128.uleb_u32(body, np as u32);
+        var i: i32 = 0;
+        while (i < np) {
+            body = encode.put_name(body, p_names[i]);
+            body = body.push(p_valtypes[i]);
+            i = i + 1;
+        }
+        body = body.push(1u8);                    // resultlist: named
+        body = leb128.uleb_u32(body, 0u32);      // vec(0) = no result
+
+        // decl 2f+1: export — surface the inline-declared func.
+        body = body.push(4u8);                    // export decl
+        body = body.push(0u8);                    // exportname kind = label
+        body = encode.put_name(body, export_names[f]);
+        body = body.push(1u8);                    // externdesc kind = func
+        body = leb128.uleb_u32(body, f as u32);  // typeidx = f
+
+        f = f + 1;
     }
-    body = body.push(1u8);                        // resultlist: named
-    body = leb128.uleb_u32(body, 0u32);          // vec(0) = no result
-
-    // decl 1: export — surface the inline-declared func.
-    body = body.push(4u8);                        // export decl
-    body = body.push(0u8);                        // exportname kind = label
-    body = encode.put_name(body, export_name);
-    body = body.push(1u8);                        // externdesc kind = func
-    body = leb128.uleb_u32(body, 0u32);          // typeidx 0 (the inline functype)
 
     var out: u8[] = buf;
     out = out.push(section_type());
