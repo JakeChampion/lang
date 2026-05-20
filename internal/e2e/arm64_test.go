@@ -13030,6 +13030,27 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
+// Phase 2b extension: `obj.mat[i][j] = v` — outer rooted in a
+// FieldAccess chain rather than a bare ident. outerRootIdent
+// walks the chain back to the root local-ident; the rest of
+// the nested CoW emit handles arbitrary outer expressions via
+// re-evaluation.
+func TestArm64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
+	src := `struct State { mat: i32[][] }
+function main(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var s: State = State{mat: [inner, [4, 5, 6]]};
+    s.mat[0][1] = 999;
+    if (inner[1] != 2) { return 1; }
+    if (s.mat[0][1] != 999) { return 2; }
+    if (s.mat[0][0] != 1) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (obj.mat[i][j]=v with shared inner must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

@@ -3059,3 +3059,20 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (mat[i][j]=v with aliased inner must copy)", code)
 	}
 }
+
+// Mirror of TestArm64ArrayIndexSetObjMatInnerAliasedCopies.
+func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
+	src := `struct State { mat: i32[][] }
+function main(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var s: State = State{mat: [inner, [4, 5, 6]]};
+    s.mat[0][1] = 999;
+    if (inner[1] != 2) { return 1; }
+    if (s.mat[0][1] != 999) { return 2; }
+    if (s.mat[0][0] != 1) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (obj.mat[i][j]=v with shared inner must copy)", code)
+	}
+}

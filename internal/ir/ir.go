@@ -5875,15 +5875,15 @@ func (b *builder) assign(n *ast.Assign) error {
 			// Phase 2c is what gates copy-on-write at the mat
 			// level too).
 			if outer, ok := t.Array.(*ast.Index); ok && !outer.IsSlice {
-				if outerIdent, ok2 := outer.Array.(*ast.Ident); ok2 {
-					if _, isLocal := b.locals[outerIdent.Name]; isLocal && isArrayTypeOfLocal(outerIdent.Name, b) && !isParamName(outerIdent.Name, b) {
+				if outerRoot, found := outerRootIdent(outer.Array); found {
+					if _, isLocal := b.locals[outerRoot]; isLocal && !isParamName(outerRoot, b) {
 						// outer.ElemType is the inner-array type
 						// (e.g. i32[] for mat: i32[][]). Use it
 						// to pick the right pointer-shaped
 						// load/store width.
 						if outerElemT := outer.ElemType; outerElemT != nil {
 							if _, isInnerArr := outerElemT.(ast.ArrayType); isInnerArr {
-								return b.emitArrayIndexAssignCoWNested(outer, outerIdent, t, n, stride, storeOp, storeWidth, helper)
+								return b.emitArrayIndexAssignCoWNested(outer, t, n, stride, storeOp, storeWidth, helper)
 							}
 						}
 					}
@@ -6010,6 +6010,22 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// outerRootIdent resolves the root local-ident of an outer
+// expression for the nested `mat[i][j] = v` CoW path. Handles
+// `mat` (bare ident) and `obj.mat`, `a.b.mat`, ... (field
+// chains). Anything else — call results, slices, deeper
+// indexing — bottoms out unresolved and the caller falls
+// through to the legacy in-place emit.
+func outerRootIdent(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name, true
+	case *ast.FieldAccess:
+		return rootIdentOfFieldChain(x)
+	}
+	return "", false
 }
 
 // rootIdentOfFieldChain walks a chain of nested FieldAccess
@@ -6826,7 +6842,7 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 // Phase 2c will gate the outer slot's write through
 // `__lang_arr_cow_inplace` too, so aliases of mat see the
 // pre-write inner-array pointer.
-func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, outerIdent *ast.Ident, t *ast.Index, n *ast.Assign, innerStride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, n *ast.Assign, innerStride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
 	// Outer stride + outer __arr_idx_<N> helper for resolving
 	// `&mat[i]`. Outer elements are pointer-shaped (each holds
 	// the inner array's data pointer), so stride = ptrW on
