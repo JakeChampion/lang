@@ -39,7 +39,6 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/wasm"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -445,45 +444,32 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		return 0, nil
 	}
 
-	if target == "wasm" {
-		// `wasm` (CLI component) routes through wasmbin — the
-		// WAT path's user-facing surface for this target is done.
-		// `wasi-http` stays on WAT for the moment (the wasmbin
-		// HttpHandler wrapper handles canonical-ABI marshalling
-		// but a runtime issue under wasmtime serve is still
-		// outstanding — see TestWasmPreview2HttpHandler).
+	if target == "wasm" || target == "wasi-http" {
+		// Both CLI wasm targets route through wasmbin. WAT is
+		// out of the user-facing wasm story; what's left of
+		// internal/codegen/wasm/ is dev tooling (cmd/lang-wasm,
+		// cmd/dump_wat) waiting on a downstream cleanup PR.
 		if outPath == "" {
-			return 1, fmt.Errorf("-target wasm requires -o OUTPUT (the component is a binary)")
+			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
 		}
 		if wasiAdapter == "" {
-			return 1, fmt.Errorf("-target wasm requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
+			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
 		}
-		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		opts := wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			SynthStart:         true,
-		})
+		}
+		world := "lang"
+		if target == "wasi-http" {
+			opts.HttpHandler = true
+			opts.SynthStart = false // empty `_start` stub emitted by the HttpHandler branch
+			world = "http"
+		}
+		bin, err := wasmbin.BuildWithOptions(prog, info, opts)
 		if err != nil {
 			return 1, err
 		}
-		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "lang"); err != nil {
-			return 1, err
-		}
-		return 0, nil
-	}
-
-	if target == "wasi-http" {
-		opts := wasm.EmitOptions{HttpHandler: true}
-		text, err := wasm.EmitWithOptions(prog, info, opts)
-		if err != nil {
-			return 1, err
-		}
-		if outPath == "" {
-			return 1, fmt.Errorf("-target wasi-http requires -o OUTPUT (the component is a binary)")
-		}
-		if wasiAdapter == "" {
-			return 1, fmt.Errorf("-target wasi-http requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)")
-		}
-		if err := emitPreview2ComponentWorld(text, outPath, wasiAdapter, "http"); err != nil {
+		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, world); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -655,41 +641,6 @@ func link(asm, outPath, cc string) error {
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)
 	}
 	return nil
-}
-
-// emitPreview2ComponentWorld wraps the WAT in a Component Model
-// component matching the named WIT world (currently `http` for
-// the HTTP-handler target — the `wasm` CLI target moved to
-// wasmbin's binary path). Pipeline:
-//  1. write WAT to a temp file;
-//  2. `wasm-tools parse` lowers it to a binary core module;
-//  3. internal/wasm/componenttype.Embed appends the `component-type`
-//     custom section for the world;
-//  4. `wasm-tools component new --adapt wasi_snapshot_preview1=ADAPTER`
-//     composes the module with the adapter.
-func emitPreview2ComponentWorld(wat, outPath, adapterPath, world string) error {
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
-	}
-	tmpDir, err := os.MkdirTemp("", "lang-component-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	watPath := filepath.Join(tmpDir, "prog.wat")
-	if err := os.WriteFile(watPath, []byte(wat), 0o644); err != nil {
-		return err
-	}
-	modulePath := filepath.Join(tmpDir, "prog.wasm")
-	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", modulePath).CombinedOutput(); err != nil {
-		return fmt.Errorf("wasm-tools parse failed: %w\n%s", err, out)
-	}
-	coreBytes, err := os.ReadFile(modulePath)
-	if err != nil {
-		return fmt.Errorf("read core module: %w", err)
-	}
-	return emitPreview2ComponentFromCoreBytes(coreBytes, outPath, adapterPath, world)
 }
 
 // emitPreview2ComponentFromCoreBytes takes already-binary core wasm
