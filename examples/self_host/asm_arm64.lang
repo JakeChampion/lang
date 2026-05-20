@@ -2071,9 +2071,12 @@ function (s: EmitState) mark_read_int(): EmitState {
 }
 
 // escape_for_ascii rewrites a string for `.ascii "…"` syntax:
-// quotes get backslashed, backslashes doubled, common
-// whitespace bytes become GAS escape sequences so a `\n` byte
-// in the source string lands as a single LF byte in .rodata.
+// quotes get backslashed, backslashes doubled, common whitespace
+// bytes become GAS escape sequences so a `\n` byte in the source
+// string lands as a single LF byte in .rodata. Other control
+// bytes (NUL, DEL, anything < 0x20 we don't handle by name) get
+// a 3-digit octal escape — always 3 digits to avoid ambiguity
+// when followed by a literal digit.
 function escape_for_ascii(s: string): string {
     var out: string = "";
     var i: i32 = 0;
@@ -2084,6 +2087,13 @@ function escape_for_ascii(s: string): string {
         else if (b == 10) { out = out + "\\n"; }
         else if (b == 9) { out = out + "\\t"; }
         else if (b == 13) { out = out + "\\r"; }
+        else if (b < 32 || b == 127) {
+            // 3-digit octal: \<o2><o1><o0>.
+            var o0: i32 = b % 8;
+            var o1: i32 = (b / 8) % 8;
+            var o2: i32 = (b / 64) % 8;
+            out = out + "\\" + i32_to_string(o2) + i32_to_string(o1) + i32_to_string(o0);
+        }
         else { out = out + s[i:i + 1]; }
         i = i + 1;
     }
