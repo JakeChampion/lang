@@ -2261,7 +2261,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.min()` / `.max()` on i32 arrays.
                     // UB on empty arrays.
                     if ((fa.field == "min" || fa.field == "max")
-                            && len(c.args) == 0 && prim_recv == "array_i32") {
+                            && c.args.len() == 0 && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
                         if (fa.field == "min") {
