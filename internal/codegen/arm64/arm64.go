@@ -295,6 +295,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
 	}
+	if g.usesArrPushGrow {
+		g.emitArrPushGrowRuntime()
+	}
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
@@ -785,6 +788,110 @@ func (g *generator) emitRcDecRuntime() {
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.sizeDirective("__lang_rc_dec")
+}
+
+// emitArrPushGrowRuntime emits `__lang_arr_push_grow(arr,
+// oldLen, stride) -> new_data` — the Phase 2 mutate-or-copy
+// helper called from IR-level `emitArrayPush`. Reads rc at
+// `[arr-8]` and cap at `[arr-12]`:
+//
+//   - rc == 1 AND oldLen < cap  → mutate in place. Bump rc to
+//     2 (so the Phase 1d-vi dec-on-overwrite later drops it
+//     back to 1) and write `[arr-4] = oldLen+1`. Return arr.
+//   - else                      → allocate a new buffer with
+//     cap = max(2*newLen, 4), copy `oldLen*stride` bytes,
+//     write new cap / rc=1 / len. Return new data pointer.
+//
+// The IR's caller then does the width-correct element store at
+// `[buf + oldLen*stride]`. Sentinel-aware via the rc high bit:
+// `[arr-8] == 0x80000000` (static empty-array head) compares
+// unequal to 1 and falls through to the copy path, which is
+// the correct behaviour (you can't mutate the static sentinel).
+//
+// See docs/RC-PERCEUS-PLAN.md "Phase 2".
+func (g *generator) emitArrPushGrowRuntime() {
+	g.line("")
+	g.line(".global __lang_arr_push_grow")
+	g.typeDirective("__lang_arr_push_grow")
+	g.label("__lang_arr_push_grow")
+	// Fast path: rc==1 and oldLen < cap. arm64 AAPCS64 inputs:
+	//   x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
+	g.emit("ldur w3, [x0, #-8]")  // w3 = rc
+	g.emit("cmp w3, #1")
+	g.emit("b.ne .Lpush_copy")
+	g.emit("ldur w4, [x0, #-12]") // w4 = cap
+	g.emit("cmp w1, w4")
+	g.emit("b.ge .Lpush_copy")
+	// In place: bump rc to 2, write len = oldLen+1.
+	g.emit("mov w3, #2")
+	g.emit("stur w3, [x0, #-8]")
+	g.emit("add w4, w1, #1")
+	g.emit("stur w4, [x0, #-4]")
+	g.emit("ret")
+	// Copy path: allocate new buffer, memcpy, return new data.
+	// Frame layout (80 bytes):
+	//   sp+0..15  : saved x29, x30
+	//   sp+16..31 : saved x19 (arr), x20 (oldLen)
+	//   sp+32..47 : saved x21 (stride), x22 (newLen)
+	//   sp+48..63 : saved x23 (newCap), x24 (headerBytes)
+	//   sp+64..79 : saved x25 (new-data ptr), x26 (unused / pad)
+	g.label(".Lpush_copy")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("mov x19, x0")      // x19 = arr
+	g.emit("mov w20, w1")      // w20 = oldLen
+	g.emit("mov w21, w2")      // w21 = stride
+	g.emit("add w22, w20, #1") // w22 = newLen
+	// newCap = max(2*newLen, 4)
+	g.emit("lsl w23, w22, #1")
+	g.emit("mov w0, #4")
+	g.emit("cmp w23, w0")
+	g.emit("csel w23, w23, w0, ge") // w23 = max(2*newLen, 4)
+	// headerBytes = max(16, stride). For stride <= 16 use 16.
+	g.emit("mov w24, #16")
+	g.emit("cmp w21, w24")
+	g.emit("csel w24, w21, w24, ge") // w24 = max(stride, 16)
+	// allocSize = headerBytes + newCap * stride
+	g.emit("mul w0, w23, w21")
+	g.emit("add w0, w0, w24")
+	g.emit("bl __lang_alloc")
+	// x0 = base; new_data = base + headerBytes (in w24).
+	g.emit("add x25, x0, x24")
+	// Store cap at [base + headerBytes - 12]
+	g.emit("sub w1, w24, #12")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w23, [x2]")
+	// Store rc = 1 at [base + headerBytes - 8] (NOT bumped;
+	// copy returns a fresh value, caller's dec-on-overwrite
+	// affects only the OLD buffer).
+	g.emit("sub w1, w24, #8")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("mov w3, #1")
+	g.emit("str w3, [x2]")
+	// Store len = newLen at [base + headerBytes - 4]
+	g.emit("sub w1, w24, #4")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w22, [x2]")
+	// memcpy(new_data, arr, oldLen * stride). __lang_memcpy
+	// AAPCS64: x0=dst, x1=src, x2=n.
+	g.emit("mov x0, x25")
+	g.emit("mov x1, x19")
+	g.emit("mul w2, w20, w21")
+	g.emit("bl __lang_memcpy")
+	// Return new_data in x0.
+	g.emit("mov x0, x25")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__lang_arr_push_grow")
+	g.line(".ltorg")
 }
 
 // emitSliceMakeRuntime emits `__lang_slice_make(data, len)`:
@@ -4159,6 +4266,13 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesArrPushGrow gates `__lang_arr_push_grow` — the Phase 2
+	// helper called by `emitArrayPush` to decide between in-
+	// place mutation (rc==1 + cap available) and copy-into-new-
+	// buffer (rc>1 OR cap exhausted). See
+	// docs/RC-PERCEUS-PLAN.md "Phase 2" + `internal/ir/ir.go`'s
+	// emitArrayPush.
+	usesArrPushGrow bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __lang_puts    (string + newline, two write()s)
@@ -6116,6 +6230,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcInc = true
 		case "__lang_rc_dec":
 			g.usesRcDec = true
+		case "__lang_arr_push_grow":
+			g.usesArrPushGrow = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		case "__lang_strcat":
 			g.usesStrcat = true
 			g.usesAlloc = true

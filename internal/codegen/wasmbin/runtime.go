@@ -381,6 +381,10 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_rc_inc")
 				case "__lang_rc_dec":
 					needs.add("__lang_rc_dec")
+				case "__lang_arr_push_grow":
+					needs.add("__lang_arr_push_grow")
+					needs.add("__lang_alloc")
+					needs.add("__memcpy")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __lang_str_byte but returns a byte
@@ -747,6 +751,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildRcDecBody,
+	},
+	"__lang_arr_push_grow": {
+		// (arr, oldLen, stride) → new_data. Phase 2 mutate-or-
+		// copy helper for `arr.push(v)`. Same contract as the
+		// arm64 / x86_64 helpers: on rc==1 and oldLen<cap,
+		// mutate in place (bump rc to 2 + write len), return
+		// arr. Else alloc fresh buffer with cap=max(2*newLen,4),
+		// memcpy old data, return new data pointer. See
+		// buildArrPushGrowBody + docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrPushGrowBody,
 	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
@@ -1629,6 +1645,121 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	// Return the input ptr (preserved through the dec).
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArrPushGrowBody — (arr, oldLen, stride) → new_data.
+// Wasm32 counterpart of arm64.go's emitArrPushGrowRuntime /
+// x86_64.go's emitArrPushGrowRuntime. Decides between in-place
+// mutation (rc==1 + cap available) and copy-into-new-buffer
+// (rc>1 OR cap exhausted) and returns the buffer the caller
+// should write the new element into. See
+// docs/RC-PERCEUS-PLAN.md "Phase 2".
+//
+// Locals: 0=arr, 1=oldLen, 2=stride (params); 3=newLen,
+// 4=newCap, 5=headerBytes, 6=base.
+func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__lang_alloc"]
+	memcpy := helperIdxs["__memcpy"]
+	var body []byte
+	// Fast path: rc == 1 AND oldLen < cap. Both must hold.
+	// rc = mem[arr - 8]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	// cap = mem[arr - 12]; oldLen < cap?
+	body = inst.InstLocalGet(body, 1) // oldLen
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32LtS(body)
+	// (rc == 1) AND (oldLen < cap)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// In place: mem[arr - 8] = 2 ; mem[arr - 4] = oldLen + 1 ;
+	// return arr.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Copy path. newLen = oldLen + 1.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 3) // $newLen
+	// newCap = max(2 * newLen, 4). Use a select.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstLocalTee(body, 4) // $newCap = 2 * newLen
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 4)
+	// headerBytes = max(16, stride).
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 5) // $headerBytes
+	// allocSize = headerBytes + newCap * stride.
+	// base = __lang_alloc(allocSize) + headerBytes.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 6) // $base = new data ptr
+	// mem[base - 12] = newCap
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 8] = 1 (rc; NOT bumped for the copy path)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 4] = newLen
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	// memcpy(base, arr, oldLen * stride)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, memcpy)
+	// return base
+	body = inst.InstLocalGet(body, 6)
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

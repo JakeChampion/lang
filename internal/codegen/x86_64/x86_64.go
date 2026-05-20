@@ -203,6 +203,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
+	if g.usesArrPushGrow {
+		g.emitArrPushGrowRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -408,6 +411,12 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesArrPushGrow gates `__lang_arr_push_grow` — the Phase 2
+	// helper called by `emitArrayPush` to decide between in-
+	// place mutation (rc==1 + cap available) and copy-into-new-
+	// buffer (rc>1 OR cap exhausted). See
+	// docs/RC-PERCEUS-PLAN.md "Phase 2".
+	usesArrPushGrow bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__lang_io_error(errno, path) → IoError box` helper.
@@ -434,6 +443,10 @@ func (g *generator) recordUse(target string) {
 		g.usesRcInc = true
 	case "__lang_rc_dec":
 		g.usesRcDec = true
+	case "__lang_arr_push_grow":
+		g.usesArrPushGrow = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
 	case "__alloc":
 		g.usesAlloc = true
 	case "__slice_make":
@@ -2688,6 +2701,105 @@ func (g *generator) emitRcDecRuntime() {
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.line(".size __lang_rc_dec, .-__lang_rc_dec")
+}
+
+// emitArrPushGrowRuntime emits `__lang_arr_push_grow(arr,
+// oldLen, stride) -> new_data` — System V counterpart of the
+// arm64 helper. Inputs rdi=arr, esi=oldLen, edx=stride.
+// Returns new data pointer in rax. See arm64.go's
+// emitArrPushGrowRuntime + docs/RC-PERCEUS-PLAN.md "Phase 2".
+func (g *generator) emitArrPushGrowRuntime() {
+	g.line("")
+	g.line(".globl __lang_arr_push_grow")
+	g.line(".type __lang_arr_push_grow, @function")
+	g.label("__lang_arr_push_grow")
+	// Fast path: rc == 1 AND oldLen < cap.
+	g.emit("mov eax, dword ptr [rdi - 8]") // rc
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lpush_copy")
+	g.emit("mov eax, dword ptr [rdi - 12]") // cap
+	g.emit("cmp esi, eax")
+	g.emit("jge .Lpush_copy")
+	// In place: rc = 2, len = oldLen + 1, return arr.
+	g.emit("mov dword ptr [rdi - 8], 2")
+	g.emit("lea eax, [rsi + 1]")
+	g.emit("mov dword ptr [rdi - 4], eax")
+	g.emit("mov rax, rdi")
+	g.emit("ret")
+	g.label(".Lpush_copy")
+	// Copy path. Stash arr / oldLen / stride / newLen / newCap /
+	// headerBytes / new_data in callee-saves so they survive the
+	// __lang_alloc + __lang_memcpy calls.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8") // pad to 16-byte alignment
+	g.emit("mov rbx, rdi") // rbx = arr
+	g.emit("mov r12d, esi") // r12d = oldLen
+	g.emit("mov r13d, edx") // r13d = stride
+	g.emit("mov r14d, esi")
+	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
+	// newCap = max(2 * newLen, 4)
+	g.emit("mov r15d, r14d")
+	g.emit("shl r15d, 1")
+	g.emit("cmp r15d, 4")
+	g.emit("jge .Lpush_cap_ok")
+	g.emit("mov r15d, 4")
+	g.label(".Lpush_cap_ok")
+	// headerBytes = max(16, stride). Use ecx as scratch.
+	g.emit("mov ecx, 16")
+	g.emit("cmp r13d, 16")
+	g.emit("jle .Lpush_hdr_set")
+	g.emit("mov ecx, r13d")
+	g.label(".Lpush_hdr_set")
+	g.emit("push rcx")    // stash headerBytes (rsp now off by 8 again)
+	g.emit("sub rsp, 8")  // re-pad to 16 alignment (24 + 8 = 32, /16 = aligned)
+	// allocSize = headerBytes + newCap * stride. eax scratch.
+	g.emit("mov eax, r15d")
+	g.emit("imul eax, r13d")
+	g.emit("add eax, ecx")
+	g.emit("mov edi, eax")
+	g.emit("call __lang_alloc")
+	// rax = base. new_data = base + headerBytes. Reload
+	// headerBytes from stack (it was rcx, but rcx is caller-save
+	// and __lang_alloc may have clobbered it).
+	g.emit("mov rcx, qword ptr [rsp + 8]") // reload headerBytes
+	g.emit("lea r11, [rax + rcx]")         // r11 = new_data (caller-save, OK)
+	// Store cap at [base + headerBytes - 12]
+	g.emit("lea rdx, [rax + rcx - 12]")
+	g.emit("mov dword ptr [rdx], r15d")
+	// Store rc = 1 at [base + headerBytes - 8]
+	g.emit("lea rdx, [rax + rcx - 8]")
+	g.emit("mov dword ptr [rdx], 1")
+	// Store len = newLen at [base + headerBytes - 4]
+	g.emit("lea rdx, [rax + rcx - 4]")
+	g.emit("mov dword ptr [rdx], r14d")
+	// memcpy(new_data, arr, oldLen * stride)
+	g.emit("mov rdi, r11")
+	g.emit("mov rsi, rbx")
+	g.emit("mov eax, r12d")
+	g.emit("imul eax, r13d")
+	g.emit("mov edx, eax")
+	g.emit("mov qword ptr [rsp], r11") // stash new_data across the call
+	g.emit("call __lang_memcpy")
+	g.emit("mov rax, qword ptr [rsp]") // reload new_data
+	// Tear down. We pushed THREE 8-byte slots beyond the 6
+	// callee-saves: prolog pad + inner push rcx + inner pad.
+	// All three live above the saved r15, so undo 24 bytes
+	// before popping the callee-saves.
+	g.emit("add rsp, 24")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_arr_push_grow, .-__lang_arr_push_grow")
 }
 
 // emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
