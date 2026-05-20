@@ -1415,6 +1415,25 @@ func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 	}
 }
 
+// Mirror of TestArm64LambdaCallsMethodOnCapturedString. Method
+// calls inside a lambda body used to fall off the treeshake
+// liveness walk because `walkExpr` had no case for
+// `*ast.Lambda`; the lambda body was invisible at shake time
+// (closureconv hoists it later), so `__method_string_trim`
+// got pruned and link died on the undefined reference.
+func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "  hi  ";
+    var f = function (): string { return s.trim(); };
+    var got = f();
+    if (got == "hi") { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got %d, want 0 (s.trim() inside lambda body)", code)
+	}
+}
+
 // Mirror of TestArm64NestedLambdaUniqueNames. Two anonymous
 // lambdas hoisted in the same converter session used to
 // collide on `__closure_lambda_1` because freshName keyed off

@@ -316,6 +316,18 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		for _, c := range x.Captures {
 			walkExpr(c, byName, enqueue)
 		}
+	case *ast.Lambda:
+		// Anonymous function expression — walk the body so any
+		// top-level functions (in particular mangled method
+		// names like `__method_string_trim`) referenced from
+		// inside the lambda survive treeshake. Closureconv
+		// hoists Lambda into a top-level FuncDecl, but that
+		// runs AFTER treeshake; without this case the lambda
+		// body is invisible to liveness analysis and any method
+		// only reachable through a lambda gets pruned, leading
+		// to "undefined reference to __method_string_trim" at
+		// link time.
+		walkStmt(x.Body, byName, enqueue)
 	case *ast.CaptureRef:
 		// CaptureRef targets a synthesised env variable; no
 		// direct function reference.

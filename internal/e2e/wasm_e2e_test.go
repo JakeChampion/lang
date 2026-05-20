@@ -4601,6 +4601,26 @@ func TestWASMLambdaWithBodyLocals(t *testing.T) {
 	}
 }
 
+// Mirror of TestArm64LambdaCallsMethodOnCapturedString. Method
+// calls inside a lambda body used to fall off the treeshake
+// liveness walk because `walkExpr` had no case for
+// `*ast.Lambda`; the lambda body was invisible at shake time
+// (closureconv hoists it later), so `__method_string_trim`
+// got pruned and the wasm module failed to validate /
+// reference the missing import.
+func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "  hi  ";
+    var f = function (): string { return s.trim(); };
+    var got = f();
+    if (got == "hi") { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (s.trim() inside lambda body)", got)
+	}
+}
+
 func TestWASMClosureCapturesArray(t *testing.T) {
 	src := `function outer(xs: i32[]): i32 {
     function inner(i: i32): i32 { return xs[i]; }
