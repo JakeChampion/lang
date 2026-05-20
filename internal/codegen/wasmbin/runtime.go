@@ -719,6 +719,24 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildAliasAllocBody,
 	},
+	"__lang_rc_inc": {
+		// (ptr) → () — refcount inc helper. NULL-safe and
+		// sentinel-aware (high bit of rc word = "static, never
+		// touch"). See buildRcIncBody +
+		// docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildRcIncBody,
+	},
+	"__lang_rc_dec": {
+		// (ptr) → () — refcount dec helper. NULL-safe and
+		// sentinel-aware. Phase-1 simplification: doesn't free
+		// on rc == 1 (the bump allocator leaks). See
+		// buildRcDecBody + docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildRcDecBody,
+	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
 		// length n. Layout: 4-byte i32 length prefix at
@@ -1490,6 +1508,90 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, helperIdxs["__lang_alloc"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildRcIncBody — (ptr) → (). Refcount inc helper. NULL-safe
+// and sentinel-aware (high bit of rc word = "static, never
+// touch"). See arm64 emitRcIncRuntime for the canonical
+// implementation + docs/RC-PERCEUS-PLAN.md for the rollout.
+//
+//	if ptr == 0: return
+//	rcaddr = ptr - 8
+//	rc = mem[rcaddr]
+//	if rc & 0x80000000: return    ; static sentinel
+//	mem[rcaddr] = rc + 1
+func buildRcIncBody(_ map[string]uint32) []byte {
+	var body []byte
+	// Short-circuit on NULL.
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// $rcaddr = ptr - 8.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalTee(body, 1) // $rcaddr (also leaves on stack)
+	// $rc = mem[$rcaddr].
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 2) // $rc (also leaves on stack)
+	// Static sentinel check — high bit set?
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// mem[$rcaddr] = $rc + 1.
+	body = inst.InstLocalGet(body, 1) // rcaddr
+	body = inst.InstLocalGet(body, 2) // rc
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildRcDecBody — (ptr) → (). Refcount dec helper. NULL-safe
+// and sentinel-aware (see buildRcIncBody). Phase-1
+// simplification: on rc == 1 the helper still decrements to 0
+// instead of calling a type-specific drop handler + freelist
+// push. The bump allocator leaks; Phase 3 introduces the real
+// freelist and Phase 1e introduces the drop handlers. Until
+// then, "freeing" just leaves the slot at rc = 0 so accidental
+// re-inc / re-dec stays observable for the leak detector that
+// phase 1 testing will rely on.
+//
+//	if ptr == 0: return
+//	rcaddr = ptr - 8
+//	rc = mem[rcaddr]
+//	if rc & 0x80000000: return    ; static sentinel
+//	mem[rcaddr] = rc - 1
+func buildRcDecBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalTee(body, 1) // $rcaddr
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 2) // $rc
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Store(body, 2, 0)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildAllocU8Body — (n) → i32. Allocates a length-prefixed
