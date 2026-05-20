@@ -13030,6 +13030,27 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
+// Phase 2c: Map.set is now value-returning. Callers can use
+// the `m = m.set(k, v)` idiom for explicit value semantics;
+// the existing `m.set(k, v)` statement form still works
+// (return discarded).
+func TestArm64MapSetReturnsMap(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("c", 3);
+    if (m.get_or("a", 0) != 1) { return 1; }
+    if (m.get_or("b", 0) != 2) { return 2; }
+    if (m.get_or("c", 0) != 3) { return 3; }
+    if (m.len() != 3) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (Map.set returns Map)", code)
+	}
+}
+
 // Phase 2b extension: `obj.mat[i][j] = v` — outer rooted in a
 // FieldAccess chain rather than a bare ident. outerRootIdent
 // walks the chain back to the root local-ident; the rest of

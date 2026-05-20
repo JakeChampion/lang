@@ -249,7 +249,7 @@ pub function __map_grow(m: usize): usize {
     return newBuf;
 }
 
-pub function __map_set_impl(m: usize, k: usize, v: usize) {
+pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
@@ -288,7 +288,7 @@ pub function __map_set_impl(m: usize, k: usize, v: usize) {
             }
             if (eq) {
                 __store_ptr(entriesBase + b * entryStride + ptrW, v);
-                return;
+                return m;
             }
             bucket = (bucket + 1) & mask;
         }
@@ -298,6 +298,7 @@ pub function __map_set_impl(m: usize, k: usize, v: usize) {
     __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
     __store_i32(buf + 16 + insertSlot * 4, len_);
     __store_i32(buf + 4, len_ + 1);
+    return m;
 }
 
 // Snapshot a column (keys or values) into a freshly-allocated

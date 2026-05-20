@@ -3060,6 +3060,24 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	}
 }
 
+// Mirror of TestArm64MapSetReturnsMap.
+func TestX86_64MapSetReturnsMap(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("c", 3);
+    if (m.get_or("a", 0) != 1) { return 1; }
+    if (m.get_or("b", 0) != 2) { return 2; }
+    if (m.get_or("c", 0) != 3) { return 3; }
+    if (m.len() != 3) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (Map.set returns Map)", code)
+	}
+}
+
 // Mirror of TestArm64ArrayIndexSetObjMatInnerAliasedCopies.
 func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
