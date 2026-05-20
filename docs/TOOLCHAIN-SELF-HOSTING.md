@@ -386,6 +386,19 @@ End-to-end exit code 42 demo (covered by
     now LINKS AND RUNS under `wasmtime`. End-to-end test:
     `TestCmdLangComponentWrapWrapsExit` actually invokes
     `wasmtime run --invoke main()` and asserts a clean exit.
+  - **wasi:cli/run export.** `component.BuildWasiCliRunComponent`
+    wraps a core module that exports `() -> i32` as a preview-2
+    component implementing the `wasi:cli/run@0.2.0` world. The
+    produced component runs under `wasmtime run prog.wasm`
+    directly (no `--invoke`) — wasmtime treats the lifted i32 (0
+    = ok, non-zero = err) as the process exit signal. Uses the
+    packaged-instance form (component-instance section 0x01)
+    rather than the sub-component form `wasm-tools` typically
+    emits — simpler bytes, same semantics. End-to-end test:
+    `TestBuildWasiCliRunComponent_RunsUnderWasmtime`. The driver
+    isn't yet wired to emit this shape; that's the next slice
+    (decide between main-lift and run-export defaults for
+    `-component-wrap`).
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
     `environ_*`, `args_*`, `path_*`). HTTP body / file I/O

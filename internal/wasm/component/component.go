@@ -332,6 +332,75 @@ func PutExportSectionOneFunc(buf []byte, name string, funcIdx uint32) []byte {
 	return wrapSection(buf, SectionExport, body)
 }
 
+// PutTypeSectionResultEmptyAndUnitFuncReturningResult emits a type
+// section with two consecutive types:
+//
+//   - type 0: result<_, _> (no payloads on either arm)
+//   - type 1: func() -> result<typeidx 0>
+//
+// This is the type-section shape `wasi:cli/run::run` (and any
+// "no-arg returns result" component-level function) needs: the
+// result defvaltype first so the functype can reference it as
+// inner-typeidx 0. The functype's resultlist uses the
+// single-anonymous-result form (tag 0x00) with valtype byte 0x00
+// — read by the binary parser as "typeidx 0", pointing at the
+// result type declared one slot earlier.
+func PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf []byte) []byte {
+	body := []byte{
+		0x02,             // vec(2) type entries
+		0x6a, 0x00, 0x00, // type 0: result<_, _>
+		0x40,             // type 1: functype form
+		0x00,             // vec(0) params
+		0x00,             // resultlist: single anonymous
+		0x00,             // valtype = typeidx 0 (the result type)
+	}
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutInstanceSectionOnePackagedFunc emits a component-level
+// instance section that packages a single component-level function
+// (by funcidx) into an instance with the given export name.
+//
+// Layout (body):
+//
+//	01    // vec(1) instances
+//	01    // form 1: from-export-list
+//	01    // vec(1) inline exports
+//	00    // inline-export name kind = label
+//	<n>   // uleb name length
+//	...   // name bytes
+//	01    // sort = func
+//	<idx> // sortidx
+//
+// Pair with PutExportSectionOneInstance to expose the instance
+// under a WASI interface name (e.g. "wasi:cli/run@0.2.0").
+func PutInstanceSectionOnePackagedFunc(buf []byte, exportName string, funcIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x01)      // form 1: from-export-list
+	body = leb128.UlebU64(body, 1) // vec(1) inline exports
+	body = append(body, 0x00)      // export name kind = label
+	body = putName(body, exportName)
+	body = append(body, 0x01) // sort = func
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	return wrapSection(buf, SectionInstance, body)
+}
+
+// PutExportSectionOneInstance emits an export section with one
+// label-form entry exposing a component-level instance under the
+// given (typically interface-style) name. Mirrors
+// PutExportSectionOneFunc but for sort = instance (0x05).
+func PutExportSectionOneInstance(buf []byte, name string, instanceIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // exportname kind = label
+	body = putName(body, name)
+	body = append(body, 0x05) // sort = instance
+	body = leb128.UlebU64(body, uint64(instanceIdx))
+	body = append(body, 0x00) // no externdesc
+	return wrapSection(buf, SectionExport, body)
+}
+
 // PutComponentTypeSection appends a `component-type` custom
 // section carrying the given precomputed payload bytes. Mirrors
 // the Lang stdlib `put_component_type_section` and the existing
