@@ -1033,16 +1033,20 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 			return nil, nil, fmt.Errorf("op[%d] %v: %w", opIdx, op.Kind, err)
 		}
 	}
-	// TCO sentinel: when the function ends with an OpEnd closing
-	// the synthetic outer loop (every iteration ends in OpReturn
-	// or `br 0`, so the loop-end is unreachable at runtime), the
-	// wasm validator still expects the operand stack at function
-	// exit to match the result type. An `unreachable` after the
-	// loop's end makes the validator treat the exit point as
-	// stack-poly. No-op for non-TCO functions (they end with
-	// OpReturn / OpReturnVoid, which already make the exit
-	// stack-poly).
-	if len(fn.Ops) > 0 && fn.Ops[len(fn.Ops)-1].Kind == ir.OpEnd {
+	// TCO sentinel: when the function body is the synthetic
+	// outer loop from `TailCallOptimize` (first op OpLoop, last
+	// op OpEnd, every iteration ends in OpReturn / `br 0`), the
+	// loop-end is unreachable at runtime but the wasm validator
+	// still expects the operand stack at function exit to match
+	// the result type. An `unreachable` after the loop's end
+	// makes the validator treat the exit point as stack-poly.
+	// No-op for functions that legitimately fall through a
+	// trailing OpEnd (e.g. an if-as-expression with both arms
+	// pushing the result and the function returning the if's
+	// value) — those need to actually push the result, not trap.
+	if len(fn.Ops) > 1 &&
+		fn.Ops[0].Kind == ir.OpLoop &&
+		fn.Ops[len(fn.Ops)-1].Kind == ir.OpEnd {
 		if _, isVoid := fn.ReturnType.(ast.VoidType); !isVoid && fn.ReturnType != nil {
 			body = inst.InstUnreachable(body)
 		}
