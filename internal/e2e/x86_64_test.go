@@ -2697,3 +2697,18 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (rc progression off)", code)
 	}
 }
+
+// Phase 1d: `var y = x;` where x is an array variable load
+// bumps the refcount via __lang_rc_inc, so both x and y own
+// references. Returns 0 iff the post-alias rc is exactly 2.
+func TestX86_64RcAliasInc(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var alias: u8[] = arr;
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+	}
+}
