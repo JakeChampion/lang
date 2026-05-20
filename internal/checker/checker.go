@@ -1005,6 +1005,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// strbuf_reset() / strbuf_append(s) / strbuf_take() — global
+	// mutable string-builder primitive. There's a single 64 MiB BSS
+	// scratch buffer; reset zeroes its length, append memcpys bytes
+	// past the current tail, take allocates a fresh string of the
+	// accumulated bytes and resets. Built for the asm self-host
+	// backend's emit_module — `s = s.out + text` per write
+	// allocates O(N²) bytes through the bump heap (~60 GB to compile
+	// asm.lang through itself). With strbuf the same loop is O(N).
+	c.info.FuncSigs["strbuf_reset"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["strbuf_append"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["strbuf_take"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /
