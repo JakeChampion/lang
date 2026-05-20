@@ -1152,26 +1152,25 @@ func TestLiftBrDepthOutOfRange(t *testing.T) {
 	}
 }
 
-// TestLiftBrTargetingIfRejected — Phase 9b only supports OpBlock
-// targets. OpBr targeting an open OpIf scope is rejected (lands
-// in Phase 9c).
-func TestLiftBrTargetingIfRejected(t *testing.T) {
+// TestLiftBrToIf — OpBr targeting an open OpIf scope (early-exit
+// from a branch arm). Phase 10c.
+func TestLiftBrToIf(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 1},
 			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
-			{Kind: ir.OpBr, I32: 0}, // targets the if scope itself
+			{Kind: ir.OpBr, I32: 0}, // exit the if scope (depth 0)
 			{Kind: ir.OpEnd},
 			{Kind: ir.OpReturnVoid},
 		},
 	}
-	_, err := LiftFromIR(in)
-	if err == nil {
-		t.Fatal("expected error for OpBr to OpIf")
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
 	}
-	if !strings.Contains(err.Error(), "only OpBlock supported") {
-		t.Errorf("error %q doesn't mention OpBlock restriction", err)
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -1249,25 +1248,27 @@ func TestLiftBrIfWithPhi(t *testing.T) {
 }
 
 // TestLiftBrIfTargetingIfRejected — Phase 10 mirrors Phase 9b:
-// only OpBlock targets allowed.
-func TestLiftBrIfTargetingIfRejected(t *testing.T) {
+// TestLiftBrIfToIf — OpBrIf targeting an open OpIf scope.
+// Phase 10c.
+func TestLiftBrIfToIf(t *testing.T) {
 	in := &ir.Func{
-		Name: "f",
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
 		Ops: []ir.Op{
 			{Kind: ir.OpConstI32, I32: 1},
 			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
-			{Kind: ir.OpConstI32, I32: 1},
-			{Kind: ir.OpBrIf, I32: 0}, // targets the if scope
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpBrIf, I32: 0}, // conditional exit of the if scope
 			{Kind: ir.OpEnd},
 			{Kind: ir.OpReturnVoid},
 		},
 	}
-	_, err := LiftFromIR(in)
-	if err == nil {
-		t.Fatal("expected error for OpBrIf to OpIf")
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
 	}
-	if !strings.Contains(err.Error(), "only OpBlock supported") {
-		t.Errorf("error %q doesn't mention OpBlock restriction", err)
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 

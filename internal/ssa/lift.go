@@ -90,6 +90,12 @@ import (
 //     source captures slots at the OpBrIf site for the merge phi
 //     at scope close.
 //
+//   Phase 10c:
+//   - OpBr / OpBrIf may target an enclosing OpIf scope (in
+//     addition to OpBlock). The endIfScope merge already
+//     iterates brSources so the only change is dropping the
+//     "OpBlock only" reject path.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -419,8 +425,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				i, depth, len(l.scopes))
 		}
 		target := &l.scopes[len(l.scopes)-1-depth]
-		if target.kind != ir.OpBlock {
-			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] targets scope kind %v; only OpBlock supported in Phase 9b",
+		if target.kind != ir.OpBlock && target.kind != ir.OpIf {
+			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] targets scope kind %v; only OpBlock/OpIf supported",
 				i, target.kind)
 		}
 		var stackTop Value
@@ -444,8 +450,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				i, depth, len(l.scopes))
 		}
 		target := &l.scopes[len(l.scopes)-1-depth]
-		if target.kind != ir.OpBlock {
-			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] targets scope kind %v; only OpBlock supported",
+		if target.kind != ir.OpBlock && target.kind != ir.OpIf {
+			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] targets scope kind %v; only OpBlock/OpIf supported",
 				i, target.kind)
 		}
 		if len(l.stack) < 1 {
