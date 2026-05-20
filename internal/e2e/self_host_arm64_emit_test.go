@@ -904,6 +904,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"str-bytes-len",
+			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); return bs.len(); }",
+			3,
+			"",
+		},
+		{
+			"str-bytes-value",
+			"function main(): i32 { var s = \"A\"; var bs = s.bytes(); return bs[0]; }",
+			65,
+			"",
+		},
+		{
+			"str-bytes-multi",
+			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); print_int(bs[0] + bs[1] + bs[2]); return 0; }",
+			0,
+			"294",
+		},
+		{
+			"str-bytes-sum",
+			"function main(): i32 { var s = \"abc\"; print_int(s.bytes().sum()); return 0; }",
+			0,
+			"294",
+		},
+		{
+			"str-bytes-empty",
+			"function main(): i32 { var s = \"\"; var bs = s.bytes(); return bs.len(); }",
+			0,
+			"",
+		},
+		{
 			"str-lines-count",
 			"function main(): i32 { var s = \"line1\\nline2\\nline3\"; var ls = s.lines(); return ls.len(); }",
 			3,
