@@ -9329,6 +9329,94 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentInstanceFromTwoFuncExports covers
+// put_core_instance_section_from_func_exports in its multi-export
+// shape: builds one core instance packaging two lowered host funcs
+// under different export names — the shape preview-2 WASI imports
+// take when getting threaded down into the core module
+// instantiation as a single "wasi" instance arg.
+func TestWASMComponentInstanceFromTwoFuncExports(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    // Two functypes (one each so we can have two distinct
+    // lowered core funcs). Both () -> u32 for simplicity.
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    var names_per: string[][] = [no_names, no_names];
+    var valtypes_per: u8[][] = [no_valtypes, no_valtypes];
+    var results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
+
+    // Two imports + lower each to a core func.
+    var imp_names: string[] = ["h0", "h1"];
+    var imp_types: u32[] = [0u32, 1u32];
+    comp = component.put_import_section_funcs(comp, imp_names, imp_types);
+
+    var lower_funcs: u32[] = [0u32, 1u32];
+    comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
+
+    // Package both lowered core funcs into one core instance.
+    var exp_names: string[] = ["stdout", "exit"];
+    var exp_core_funcs: u32[] = [0u32, 1u32];
+    comp = component.put_core_instance_section_from_func_exports(comp, exp_names, exp_core_funcs);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"(core instance",
+		"\"stdout\"",
+		"\"exit\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentImportLoweredIntoCoreModule covers the
 // other half of the canonical-ABI boundary: a host-imported function
 // is lowered into a core function and threaded down as a core
