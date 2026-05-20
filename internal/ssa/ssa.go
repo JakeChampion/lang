@@ -212,6 +212,18 @@ const (
 	OpLoad
 	OpStore
 
+	// Sub-i32 load / store variants. OpLoad8S sign-extends
+	// the low byte; OpLoad8U zero-extends. The halfword
+	// variants do the same for the low 16 bits. OpStore8 /
+	// OpStore16 write only the low N bits, leaving higher
+	// bits in memory untouched.
+	OpLoad8S
+	OpLoad8U
+	OpLoad16S
+	OpLoad16U
+	OpStore8
+	OpStore16
+
 	// Phi — SSA merge. In a block B with predecessors
 	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
 	// from P[i]. Phi ops MUST appear at the top of B before
@@ -350,6 +362,18 @@ func (k OpKind) String() string {
 		return "load"
 	case OpStore:
 		return "store"
+	case OpLoad8S:
+		return "load8_s"
+	case OpLoad8U:
+		return "load8_u"
+	case OpLoad16S:
+		return "load16_s"
+	case OpLoad16U:
+		return "load16_u"
+	case OpStore8:
+		return "store8"
+	case OpStore16:
+		return "store16"
 	case OpPhi:
 		return "phi"
 	default:
