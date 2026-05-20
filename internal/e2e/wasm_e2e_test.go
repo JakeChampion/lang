@@ -9331,6 +9331,64 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithMultipleImports drives a Lang
+// program that pulls in TWO preview-2 WASI imports
+// simultaneously: wasi:random/random (via random_i32) and
+// wasi:cli/exit (via exit()). Confirms the multi-import loop in
+// WrapWasiImportedAsCliRun produces a component that wasmtime
+// accepts and runs cleanly under `wasmtime run` (no --invoke).
+//
+// The Lang program asks for a random i32 and exits 0 — both
+// imports get exercised at runtime.
+func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "multi.lang")
+	src := []byte(`function main(): i32 {
+    var r: i32 = random_i32();
+    if (r == r) {
+        exit(0);
+    }
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "multi.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (multi) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{
+		"wasi:random/random@0.2.0",
+		"wasi:cli/exit@0.2.0",
+		"wasi:cli/run@0.2.0",
+	} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomBytes drives a Lang
 // program that calls random_bytes(n) through `-component-wrap-cli`.
 // With the preview-2 migration of __lang_random_bytes (loop of
