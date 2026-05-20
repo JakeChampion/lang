@@ -152,8 +152,15 @@ import (
 //       OpMakeOkI32   → pop payload; push (const_int 0, payload)
 //       OpMakeErrI32  → pop payload; push (const_int 1, payload)
 //     These leave 2 values on the operand stack (tag, payload).
-//     OpReturnPair / OpCallDirectPair / OpMatchTag consumers
-//     for the pair shape land in a follow-up.
+//
+//   Phase 18:
+//   - OpMatchTag — pops a heap-pointer scrutinee and pushes the
+//     i32 variant tag stored at [ptr+0]. Lifts to ssa.OpLoad
+//     (the backend lowering already treats it as a load at
+//     offset 0).
+//   - OpCallClosureDirect — defunctionalised closure direct
+//     call. Args layout: (args..., env_ptr); I32 = arg count
+//     including env_ptr. Lifts to ssa.OpCall with Str = callee.
 //
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
@@ -514,6 +521,28 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		payload := l.out.AddOp(l.cur, OpConstInt)
 		l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
 		l.stack = append(l.stack, tag, payload)
+	case ir.OpMatchTag:
+		// (ptr) → (tag at [ptr+0]). Same lowering as OpLoad.
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpMatchTag at op[%d] needs ptr operand", i)
+		}
+		addr := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpLoad, addr)
+		l.stack = append(l.stack, v)
+	case ir.OpCallClosureDirect:
+		// (args..., env_ptr) — I32 is the total arg count
+		// including env_ptr. Lift like OpCallDirect.
+		argc := int(op.I32)
+		if len(l.stack) < argc {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallClosureDirect at op[%d] needs %d args, stack has %d",
+				i, argc, len(l.stack))
+		}
+		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
+		l.stack = l.stack[:len(l.stack)-argc]
+		result := l.out.AddOp(l.cur, OpCall, args...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, result)
 	case ir.OpIf:
 		switch op.I32 {
 		case ir.BlockTypeVoid,
