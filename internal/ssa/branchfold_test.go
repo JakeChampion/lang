@@ -172,6 +172,90 @@ func TestFoldBranchesComposesWithFold(t *testing.T) {
 	}
 }
 
+// TestFoldBranchesUnwrapsNot — `brif (not v), T, F` rewrites
+// to `brif v, F, T`. Saves the OpNot when DCE follows.
+func TestFoldBranchesUnwrapsNot(t *testing.T) {
+	f := NewFunc("f")
+	v := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	n := f.AddOp(entry, OpNot, v)
+	f.SetBrIf(entry, n, thenB, elseB)
+	f.SetRet(thenB, Value{})
+	f.SetRet(elseB, Value{})
+
+	FoldBranches(f)
+
+	if entry.Term.Kind != TermBrIf {
+		t.Fatalf("Term.Kind = %v, want TermBrIf (cond non-const)", entry.Term.Kind)
+	}
+	if entry.Term.Cond != v {
+		t.Errorf("Term.Cond = %v, want %v (unwrapped through not)", entry.Term.Cond, v)
+	}
+	if entry.Term.True != elseB {
+		t.Errorf("Term.True = %v, want elseB (swap)", entry.Term.True)
+	}
+	if entry.Term.False != thenB {
+		t.Errorf("Term.False = %v, want thenB (swap)", entry.Term.False)
+	}
+}
+
+// TestFoldBranchesUnwrapsChainedNot — two stacked nots cancel
+// each other; brif ends up on the inner value with the
+// original True/False order restored.
+func TestFoldBranchesUnwrapsChainedNot(t *testing.T) {
+	f := NewFunc("f")
+	v := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	n1 := f.AddOp(entry, OpNot, v)
+	n2 := f.AddOp(entry, OpNot, n1)
+	f.SetBrIf(entry, n2, thenB, elseB)
+	f.SetRet(thenB, Value{})
+	f.SetRet(elseB, Value{})
+
+	FoldBranches(f)
+
+	if entry.Term.Cond != v {
+		t.Errorf("Term.Cond = %v, want %v (unwrapped two nots)", entry.Term.Cond, v)
+	}
+	if entry.Term.True != thenB {
+		t.Errorf("Term.True = %v, want thenB (two swaps cancel)", entry.Term.True)
+	}
+	if entry.Term.False != elseB {
+		t.Errorf("Term.False = %v, want elseB", entry.Term.False)
+	}
+}
+
+// TestFoldBranchesUnwrapsNotIntoConst — `brif not(const_bool 1)` —
+// the unwrap exposes the const, then const-folding fires too.
+func TestFoldBranchesUnwrapsNotIntoConst(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	c := f.AddOp(entry, OpConstBool)
+	entry.Ops[0].Imm = 1
+	n := f.AddOp(entry, OpNot, c)
+	f.SetBrIf(entry, n, thenB, elseB)
+	f.SetRet(thenB, Value{})
+	f.SetRet(elseB, Value{})
+
+	FoldBranches(f)
+
+	// not(const_bool true), T, F  →  brif const_bool true, F, T
+	// → br F.
+	if entry.Term.Kind != TermBr {
+		t.Fatalf("Term.Kind = %v, want TermBr", entry.Term.Kind)
+	}
+	if entry.Term.Target != elseB {
+		t.Errorf("Target = %v, want elseB (true cond after swap → F)",
+			entry.Term.Target)
+	}
+}
+
 // TestFoldBranchesNilFunc — defensive nil-input guard.
 func TestFoldBranchesNilFunc(t *testing.T) {
 	defer func() {
