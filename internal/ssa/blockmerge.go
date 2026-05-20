@@ -2,28 +2,29 @@ package ssa
 
 // MergeTrivialBlocks splices out blocks whose only role is to
 // forward control to another block via an unconditional br
-// with no ops. Specifically: B is eligible iff
+// with no ops. B is eligible iff:
 //
 //   - B is not the function's entry block, AND
 //   - B has zero Ops, AND
 //   - B's terminator is `br X`, AND
-//   - B has exactly one predecessor A, AND
-//   - A is not already a predecessor of X (no duplicate-Preds
-//     pitfall that would break phi parallelism).
+//   - none of B's predecessors P are already preds of X (no
+//     duplicate-Preds pitfall), AND
+//   - if X has phi ops, the number of preds B will inject into
+//     X.Preds is finite (always true; mentioned for clarity).
 //
-// When all of those hold, we rewrite A's terminator to point
-// at X instead of B and rewrite X.Preds to replace B with A.
-// B becomes unreachable; PruneUnreachable picks it up later.
+// Each pred P of B is rewritten to point at X directly; the
+// `B` entry in X.Preds is replaced with the first P, and the
+// remaining P's are appended. Phi nodes at X get their B-
+// indexed Arg replicated for each new pred-slot (the Value
+// flowing through B is unchanged — B is empty — so all of P1,
+// P2, …, Pn see the same incoming Value).
 //
-// Phi nodes at X don't need rewiring: phi.Args follows Preds
-// order, and we're swapping one Pred-identity for another at
-// the same slot — the Value flowing in is unchanged (it's
-// whatever A produced before its terminator, which is what
-// B produced before, since B was just forwarding).
+// Single-pred B is a special case of this (single-slot
+// replacement, no growth).
 //
 // Wired into the Optimize pipeline between PruneUnreachable
-// and TrivialPhis — single-pass; the second Optimize iteration
-// runs PruneUnreachable again to clean up the orphaned B's.
+// and FuseLinearBlocks. Pair with PruneUnreachable on the
+// next Optimize iteration to drop the orphan B.
 func MergeTrivialBlocks(f *Func) {
 	if f == nil {
 		return
@@ -38,41 +39,85 @@ func MergeTrivialBlocks(f *Func) {
 		if b.Term.Kind != TermBr || b.Term.Target == nil {
 			continue
 		}
-		if len(b.Preds) != 1 {
+		if len(b.Preds) == 0 {
 			continue
 		}
-		a := b.Preds[0]
 		x := b.Term.Target
-		if predContains(x, a) {
-			// A is already a pred of X; merging would duplicate.
+		if x == b {
+			// Self-loop on an empty block — degenerate, skip.
 			continue
 		}
-		// Rewrite A's terminator: any reference to B → X.
-		switch a.Term.Kind {
-		case TermBr:
-			if a.Term.Target == b {
-				a.Term.Target = x
-			}
-		case TermBrIf:
-			if a.Term.True == b {
-				a.Term.True = x
-			}
-			if a.Term.False == b {
-				a.Term.False = x
-			}
-		default:
-			continue
-		}
-		// Replace B with A in X.Preds.
-		for j, p := range x.Preds {
-			if p == b {
-				x.Preds[j] = a
+		// Bail if any pred of B is already a pred of X — merging
+		// would create duplicate Preds at X.
+		conflict := false
+		for _, p := range b.Preds {
+			if predContains(x, p) {
+				conflict = true
 				break
 			}
 		}
-		// B's outgoing edge to X drops on the floor — B becomes
-		// unreachable. Clear B's terminator so it can't be picked
-		// up by future passes mid-flight.
+		if conflict {
+			continue
+		}
+		// Find B's slot in X.Preds — its phi-arg index.
+		bSlot := -1
+		for j, p := range x.Preds {
+			if p == b {
+				bSlot = j
+				break
+			}
+		}
+		if bSlot < 0 {
+			continue
+		}
+		// Rewrite each pred's terminator: B → X.
+		for _, p := range b.Preds {
+			switch p.Term.Kind {
+			case TermBr:
+				if p.Term.Target == b {
+					p.Term.Target = x
+				}
+			case TermBrIf:
+				if p.Term.True == b {
+					p.Term.True = x
+				}
+				if p.Term.False == b {
+					p.Term.False = x
+				}
+			}
+		}
+		// Splice the B-slot in X.Preds: replace with B.Preds[0]
+		// and append B.Preds[1..n] to the end. Each phi at X
+		// must follow: replicate its B-slot Arg for the new
+		// trailing preds.
+		newPreds := make([]*Block, 0, len(x.Preds)+len(b.Preds)-1)
+		newPreds = append(newPreds, x.Preds[:bSlot]...)
+		newPreds = append(newPreds, b.Preds...)
+		newPreds = append(newPreds, x.Preds[bSlot+1:]...)
+		x.Preds = newPreds
+		// Walk phis at X — only ops that are OpPhi can be in
+		// header position. Replicate the B-slot arg for the
+		// (len(b.Preds) - 1) trailing slots we're inserting.
+		extra := len(b.Preds) - 1
+		if extra > 0 {
+			for _, op := range x.Ops {
+				if op.Kind != OpPhi {
+					continue
+				}
+				if bSlot >= len(op.Args) {
+					continue
+				}
+				bArg := op.Args[bSlot]
+				newArgs := make([]Value, 0, len(op.Args)+extra)
+				newArgs = append(newArgs, op.Args[:bSlot]...)
+				for i := 0; i < len(b.Preds); i++ {
+					newArgs = append(newArgs, bArg)
+				}
+				newArgs = append(newArgs, op.Args[bSlot+1:]...)
+				op.Args = newArgs
+			}
+		}
+		// B becomes orphan.
 		b.Term = Terminator{Kind: TermBr, Target: x}
 		b.Preds = nil
 	}
