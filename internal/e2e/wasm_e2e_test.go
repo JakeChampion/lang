@@ -10280,6 +10280,73 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentTupleStringU32 covers put_type_section_one_tuple:
+// declares `tuple<string, u32>` and verifies `wasm-tools print`
+// surfaces it. Tuples are the canonical pair shape in WASI —
+// `wasi:cli/environment::get-environment()` returns
+// `list<tuple<string, string>>` for the (name, value) entries.
+func TestWASMComponentTupleStringU32(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var elems: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_tuple(comp, elems);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "tuple") {
+		t.Errorf("expected tuple in printed component, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "string") {
+		t.Errorf("expected string element, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "u32") {
+		t.Errorf("expected u32 element, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentOptionOfU32 covers put_type_section_one_option:
 // declares `option<u32>` and verifies `wasm-tools print` surfaces
 // `(option u32)`. Options appear pervasively in WASI worlds —
