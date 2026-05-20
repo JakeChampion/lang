@@ -12578,9 +12578,12 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d-ii: FieldAccess and Index of array type also count
-// as aliases. `var y = h.items` and `var y = matrix[0]` should
-// bump the refcount of the underlying array via __lang_rc_inc.
+// Phase 1d-ii (+ Phase 1d-viii): FieldAccess and Index of
+// array type count as aliases. With Phase 1d-viii's lit-
+// element inc, the struct- / array-lit constructor ALSO inc's
+// the captured array — so `inner` ends up with rc=3 after
+// the full chain: 1 (alloc) + 1 (lit-element store) + 1
+// (alias read).
 func TestArm64RcAliasIncFieldAndIndex(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -12592,19 +12595,19 @@ function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var h: Holder = Holder { items: inner };
     var alias: u8[] = h.items;
-    return __rc_get(inner) - 2;
+    return __rc_get(inner) - 3;
 }`},
 		{"index_load", `import "core/no_prelude";
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var matrix: u8[][] = [inner];
     var alias: u8[] = matrix[0];
-    return __rc_get(inner) - 2;
+    return __rc_get(inner) - 3;
 }`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64(t, c.src); code != 0 {
-				t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+				t.Errorf("got exit %d, want 0 (lit + alias should bump rc to 3)", code)
 			}
 		})
 	}
