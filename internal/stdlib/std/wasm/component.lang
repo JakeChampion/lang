@@ -252,25 +252,57 @@ pub function cvaltype_string(): u8 { return 115u8; }   // 0x73
 //   <result_valtype>    // result valtype byte
 //
 // Section header: `id=7 + uleb size + body`.
-pub function put_type_section_one_func(buf: u8[], param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
+// put_type_section_funcs — emit a component-level type section
+// containing N functype entries. Each entry has its own parameter
+// list (name + valtype pairs, given as parallel inner arrays) and
+// a single anonymous result. The three top-level arrays MUST have
+// equal length; the i-th entry of each describes the i-th functype.
+//
+// Spec (Binary.md):
+//   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
+//   resultlist ::= 0x00 t:<valtype>          -- single anonymous
+//                | 0x01 lts:vec(<labelvaltype>) -- named results
+//
+// This composer covers the "single anonymous result" form, which
+// is what every WASI function in the lang / http worlds uses. The
+// named-result form lands in a later slice if/when a world needs it.
+pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][], param_valtypes_per_func: u8[][], result_valtype_per_func: u8[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1) of types
-    body = body.push(64u8);                       // functype form (0x40)
-    var n: i32 = param_names.len();
-    body = leb128.uleb_u32(body, n as u32);      // params vec count
-    var i: i32 = 0;
-    while (i < n) {
-        body = encode.put_name(body, param_names[i]);
-        body = body.push(param_valtypes[i]);
-        i = i + 1;
+    var n: i32 = result_valtype_per_func.len();
+    body = leb128.uleb_u32(body, n as u32);      // vec(N) types
+    var t: i32 = 0;
+    while (t < n) {
+        body = body.push(64u8);                  // functype form (0x40)
+        var p_names: string[] = param_names_per_func[t];
+        var p_valtypes: u8[] = param_valtypes_per_func[t];
+        var pn: i32 = p_names.len();
+        body = leb128.uleb_u32(body, pn as u32); // params vec count
+        var i: i32 = 0;
+        while (i < pn) {
+            body = encode.put_name(body, p_names[i]);
+            body = body.push(p_valtypes[i]);
+            i = i + 1;
+        }
+        body = body.push(0u8);                   // resultlist tag: single anon
+        body = body.push(result_valtype_per_func[t]);
+        t = t + 1;
     }
-    body = body.push(0u8);                        // resultlist tag: single anon
-    body = body.push(result_valtype);             // result valtype byte
 
     var out: u8[] = buf;
     out = out.push(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_type_section_one_func — convenience wrapper over
+// put_type_section_funcs for the single-functype case. Existing call
+// sites in the e2e tests use this; new multi-type code should reach
+// for put_type_section_funcs directly.
+pub function put_type_section_one_func(buf: u8[], param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
+    var names_per: string[][] = [param_names];
+    var valtypes_per: u8[][] = [param_valtypes];
+    var results_per: u8[] = [result_valtype];
+    return put_type_section_funcs(buf, names_per, valtypes_per, results_per);
 }
 
 // put_type_section_one_func_no_param — thin convenience wrapper
