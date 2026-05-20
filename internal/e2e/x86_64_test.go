@@ -2773,3 +2773,20 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (call-arg inc+dec should leave rc at 1)", code)
 	}
 }
+
+// Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
+// for the trace.
+func TestX86_64RcDecOnOverwrite(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr1: u8[] = __alloc_u8(8);
+    var arr2: u8[] = __alloc_u8(8);
+    var arr3: u8[] = __alloc_u8(8);
+    arr1 = arr2;
+    arr1 = arr3;
+    return __rc_get(arr2) + __rc_get(arr3) - 3;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (arr2 rc=1, arr3 rc=2, sum=3)", code)
+	}
+}

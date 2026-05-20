@@ -735,12 +735,17 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildRcIncBody,
 	},
 	"__lang_rc_dec": {
-		// (ptr) → () — refcount dec helper. NULL-safe and
-		// sentinel-aware. Phase-1 simplification: doesn't free
-		// on rc == 1 (the bump allocator leaks). See
+		// (ptr) → ptr — refcount dec helper. NULL-safe and
+		// sentinel-aware. Returns the input ptr so the
+		// calling convention matches arm64 / x86_64 (both
+		// preserve x0 / rax through the helper). IR-level
+		// dec emission can rely on a uniform "OpCallDirect
+		// always pushes one result" assumption across every
+		// backend. Phase-1 simplification: doesn't free on
+		// rc == 1 (the bump allocator leaks). See
 		// buildRcDecBody + docs/RC-PERCEUS-PLAN.md.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildRcDecBody,
 	},
 	"__alloc_u8": {
@@ -1582,9 +1587,25 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 //	mem[rcaddr] = rc - 1
 func buildRcDecBody(_ map[string]uint32) []byte {
 	var body []byte
+	// NULL short-circuit: return the (zero) input ptr.
 	body = inst.InstLocalGet(body, 0)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Defensive low-address guard — Phase 1d-v's exit dec
+	// sweep can touch slots holding non-pointer values
+	// (enum tags, small i32 literals, stack garbage). On
+	// wasm a sub-64-KiB "pointer" would read scratch /
+	// .rodata-like regions of linear memory, corrupting
+	// whatever lives there. See arm64's emitRcDecRuntime for
+	// the matching guard and full rationale.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
@@ -1595,7 +1616,9 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 2) // $rc
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = numeric.InstI32And(body)
+	// Static-sentinel short-circuit: return the input ptr.
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 1)
@@ -1603,6 +1626,8 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = numeric.InstI32Sub(body)
 	body = memory.InstI32Store(body, 2, 0)
+	// Return the input ptr (preserved through the dec).
+	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

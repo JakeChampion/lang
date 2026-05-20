@@ -1474,6 +1474,23 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		// balanced.
 		b.emit(Op{Kind: OpDrop})
 	}
+	// Use b.locals[name] so we only dec slots that user code
+	// actually writes to. Two scope-separated Var declarations
+	// sharing a name (e.g. `var ns` declared 9 times across
+	// different branches of vm.lang) all map to the SAME
+	// physical slot via b.locals[name] — only the last entry
+	// wins in the slot map, and every Var-decl Store reaches
+	// that last slot. The "earlier" slot indices that
+	// info.Locals[fn] tracks are never written by user code, so
+	// dec'ing them at exit by index would read uninitialised
+	// memory and trap.
+	//
+	// Dedup via a per-name set so we only dec each unique slot
+	// once even if the same name appears multiple times in
+	// info.Locals[fn].
+	// Params first: each parameter name is unique in the
+	// function signature, so name lookup is safe. Caller-side
+	// inc (Phase 1d-iv) balanced by callee-exit dec here.
 	for _, p := range b.fn.Params {
 		if _, isArr := p.Type.(ast.ArrayType); !isArr {
 			continue
@@ -1484,10 +1501,15 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		}
 		emitDec(slot)
 	}
+	seen := map[string]bool{}
 	for _, v := range b.info.Locals[b.fn] {
 		if _, isArr := v.Type.(ast.ArrayType); !isArr {
 			continue
 		}
+		if seen[v.Name] {
+			continue
+		}
+		seen[v.Name] = true
 		slot, ok := b.locals[v.Name]
 		if !ok {
 			continue
@@ -1538,6 +1560,37 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		slot := b.allocSlot()
 		b.deferSlots = append(b.deferSlots, slot)
 		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
+	}
+	// Phase 1d-v safety net: zero-init every array-typed local
+	// slot at function entry. The function-exit dec sweep (in
+	// `emitRcDecLocalsAtExit`) visits every declared
+	// array-typed local regardless of whether its Var statement
+	// was reached at runtime — a conditional `if (false) { var
+	// arr = [1, 2]; }` registers `arr` in info.Locals but never
+	// runs its Var. Pre-zeroing makes the dec helper's `if ptr
+	// == 0` short-circuit fire on never-initialised slots.
+	//
+	// Zero by slot — same `b.locals[name]` slot the dec sweep
+	// resolves — so the two sides agree even when multiple Var
+	// declarations across separate scopes share a name (the slot
+	// map only keeps the last entry, all those declarations
+	// store to the same physical slot, and only that slot needs
+	// the safety zero).
+	zeroSeen := map[string]bool{}
+	for _, v := range info.Locals[fn] {
+		if _, isArr := v.Type.(ast.ArrayType); !isArr {
+			continue
+		}
+		if zeroSeen[v.Name] {
+			continue
+		}
+		zeroSeen[v.Name] = true
+		slot, ok := b.locals[v.Name]
+		if !ok {
+			continue
+		}
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
@@ -5621,14 +5674,28 @@ func (b *builder) assign(n *ast.Assign) error {
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
-		// new binding needs its own rc. The matching dec on
-		// the old value-of-y arrives in a later slice (the
-		// parser.lang `nfuncs = into.funcs; nfuncs = nfuncs
-		// .push(...);` loop currently relies on the inc but
-		// orphans the previous nfuncs allocation; bump
-		// allocator absorbs the leak until Phase 3).
+		// new binding needs its own rc.
 		if needsRcIncOnAlias(n.Value, b) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+		}
+		// Phase 1d-vi: dec the old value of `y` before
+		// overwriting it. `y` previously held some array
+		// reference (whose rc was bumped by the var-binding
+		// site that filled it); the reassignment ends that
+		// binding's ownership, so the dec balances the prior
+		// inc. Without this, every `y = x;` orphans the
+		// previous allocation — Phase 1's bump allocator
+		// absorbs the leak, but Phase 2's mutate-or-copy
+		// rc check needs accurate counts.
+		//
+		// Gating on `*ast.ArrayType` matches the inc side
+		// (`needsRcIncOnAlias`). Phase 1e widens to strings
+		// / structs / enums / closures together with their
+		// matching inc sites.
+		if isArrayTypeOfLocal(t.Name, b) {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
@@ -5804,6 +5871,31 @@ func (b *builder) assign(n *ast.Assign) error {
 // Calls, literals, push results, slice / map operations etc.
 // all yield fresh values with rc=1 already initialised by their
 // allocator path, so they're explicitly excluded.
+// isArrayTypeOfLocal reports whether the local named `name`
+// in the current function has an array type. Used by the
+// Phase 1d-vi dec-on-overwrite emission in `b.assign`. Looks
+// in the function's parameter list first (params share the
+// slot map with declared locals), then the declared locals.
+// Returns false on misses so callers stay conservative — a
+// missing slot means no inc was emitted to balance, and a
+// missing dec is preferable to a spurious one on a non-
+// pointer slot.
+func isArrayTypeOfLocal(name string, b *builder) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			_, isArr := p.Type.(ast.ArrayType)
+			return isArr
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			_, isArr := v.Type.(ast.ArrayType)
+			return isArr
+		}
+	}
+	return false
+}
+
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index:
