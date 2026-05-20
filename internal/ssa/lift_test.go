@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -123,6 +124,111 @@ func TestLiftImplicitVoid(t *testing.T) {
 	}
 	if out.Blocks[0].Term.Kind != TermRet {
 		t.Errorf("Term.Kind = %v, want TermRet", out.Blocks[0].Term.Kind)
+	}
+}
+
+// TestLiftIdentityParam — `function f(a) { return a; }` lifts
+// to a Func with one param and a ret of that param.
+func TestLiftIdentityParam(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Params) != 1 {
+		t.Fatalf("Params = %d, want 1", len(out.Params))
+	}
+	if out.Blocks[0].Term.Value != out.Params[0] {
+		t.Errorf("Term.Value = %v, want %v (param)", out.Blocks[0].Term.Value, out.Params[0])
+	}
+}
+
+// TestLiftAddTwoParams — `f(a, b) { return a + b; }` lifts to
+// a Func with one OpAdd consuming two params.
+func TestLiftAddTwoParams(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Blocks[0].Ops) != 1 || out.Blocks[0].Ops[0].Kind != OpAdd {
+		t.Fatalf("got %v", out.Blocks[0].Ops)
+	}
+	add := out.Blocks[0].Ops[0]
+	if add.Args[0] != out.Params[0] || add.Args[1] != out.Params[1] {
+		t.Errorf("add.Args = %v, want [param0, param1]", add.Args)
+	}
+}
+
+// TestLiftLoadLocalOutOfRange — slot index past params count
+// fails clean.
+func TestLiftLoadLocalOutOfRange(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 5}, // out of range
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected out-of-range error")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("error %q doesn't mention out of range", err)
+	}
+}
+
+// TestLiftParamsRoundTripOptimize — `f(a, b) { return a + 0 + b; }`
+// after lift+Optimize collapses to plain `add a, b`.
+func TestLiftParamsRoundTripOptimize(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+
+	if len(out.Blocks[0].Ops) != 1 || out.Blocks[0].Ops[0].Kind != OpAdd {
+		t.Fatalf("Optimize result = %v, want one OpAdd", out.Blocks[0].Ops)
 	}
 }
 
