@@ -28,8 +28,10 @@ package ssa
 //     all args identical) to their surviving Value.
 //  9. CSE dedups pure expressions left over after Simplify,
 //     Canonicalize, and TrivialPhis unified equivalent args.
-//
-// 10. DCE reclaims everything orphaned by the previous passes.
+//  10. LICM hoists loop-invariant pure ops to each loop's
+//     preheader. Runs after CSE so deduplicated invariant
+//     expressions hoist as one (instead of N).
+//  11. DCE reclaims everything orphaned by the previous passes.
 //
 // On a real program a single iteration usually does the job;
 // the loop guards against the rare cascade where pass N+1
@@ -58,6 +60,7 @@ func Optimize(f *Func) int {
 		FuseLinearBlocks(f)
 		TrivialPhis(f)
 		CSE(f)
+		LICM(f)
 		DCE(f)
 		cur := f.String()
 		if cur == prev {
