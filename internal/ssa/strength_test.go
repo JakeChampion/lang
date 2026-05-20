@@ -123,6 +123,103 @@ func TestStrengthComposesWithOptimize(t *testing.T) {
 	}
 }
 
+// TestStrengthCmpSelfTrue — `x == x`, `x <= x`, `x >= x` all
+// fold to const_bool true regardless of x's runtime value
+// (integers can't be NaN; safe).
+func TestStrengthCmpSelfTrue(t *testing.T) {
+	cases := []OpKind{OpEq, OpLe, OpLeU, OpGe, OpGeU}
+	for _, k := range cases {
+		f := NewFunc("f")
+		x := f.AddParam()
+		entry := f.NewBlock()
+		r := f.AddOp(entry, k, x, x)
+		f.SetRet(entry, r)
+
+		StrengthReduce(f)
+
+		if entry.Ops[0].Kind != OpConstBool {
+			t.Errorf("%v: Kind = %v, want OpConstBool", k, entry.Ops[0].Kind)
+		}
+		if entry.Ops[0].Imm != 1 {
+			t.Errorf("%v: Imm = %d, want 1 (true)", k, entry.Ops[0].Imm)
+		}
+		if entry.Ops[0].Result != r {
+			t.Errorf("%v: Result changed; downstream uses would break", k)
+		}
+	}
+}
+
+// TestStrengthCmpSelfFalse — `x != x`, `x < x`, `x > x` all
+// fold to const_bool false.
+func TestStrengthCmpSelfFalse(t *testing.T) {
+	cases := []OpKind{OpNe, OpLt, OpLtU, OpGt, OpGtU}
+	for _, k := range cases {
+		f := NewFunc("f")
+		x := f.AddParam()
+		entry := f.NewBlock()
+		r := f.AddOp(entry, k, x, x)
+		f.SetRet(entry, r)
+
+		StrengthReduce(f)
+
+		if entry.Ops[0].Kind != OpConstBool {
+			t.Errorf("%v: Kind = %v, want OpConstBool", k, entry.Ops[0].Kind)
+		}
+		if entry.Ops[0].Imm != 0 {
+			t.Errorf("%v: Imm = %d, want 0 (false)", k, entry.Ops[0].Imm)
+		}
+		if entry.Ops[0].Result != r {
+			t.Errorf("%v: Result changed; downstream uses would break", k)
+		}
+	}
+}
+
+// TestStrengthCmpSelfDistinctOperandsUntouched — `a == b`
+// (different params) must NOT be folded.
+func TestStrengthCmpSelfDistinctOperandsUntouched(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	for _, k := range []OpKind{OpEq, OpNe, OpLt, OpLe, OpGt, OpGe} {
+		f.AddOp(entry, k, a, b)
+	}
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	wantKinds := []OpKind{OpEq, OpNe, OpLt, OpLe, OpGt, OpGe}
+	for i, k := range wantKinds {
+		if entry.Ops[i].Kind != k {
+			t.Errorf("Ops[%d].Kind = %v, want %v (distinct operands, unchanged)",
+				i, entry.Ops[i].Kind, k)
+		}
+	}
+}
+
+// TestStrengthFCmpSelfUntouched — float self-compare is NOT
+// folded: NaN compares unequal to itself, so `x == x` is not
+// always true for floats. Verify safe behaviour.
+func TestStrengthFCmpSelfUntouched(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	for _, k := range []OpKind{OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe} {
+		f.AddOp(entry, k, x, x)
+	}
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	wantKinds := []OpKind{OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe}
+	for i, k := range wantKinds {
+		if entry.Ops[i].Kind != k {
+			t.Errorf("Ops[%d].Kind = %v, want %v (float self-compare unsafe to fold)",
+				i, entry.Ops[i].Kind, k)
+		}
+	}
+}
+
 // TestStrengthNilFunc — defensive.
 func TestStrengthNilFunc(t *testing.T) {
 	defer func() {
