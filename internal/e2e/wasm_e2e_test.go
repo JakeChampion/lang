@@ -8922,6 +8922,76 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentGoEncoderRunsLangCore is the first end-to-end
+// path that retires `wasm-tools component new --adapt` for a real
+// (if trivial) Lang program: it compiles a no-WASI-imports Lang
+// program through wasmbin, wraps the resulting core module with
+// the Go-side `component.BuildLiftedExportComponent`, and confirms
+// `wasmtime run --invoke main()` returns the expected value.
+//
+// "No-WASI-imports" is the key restriction — wasmbin's
+// dead-code-elimination drops the proc_exit / fd_write imports
+// when nothing uses them, so a trivial `function main(): i32
+// { return 42; }` compiles to a self-contained core module that
+// the Go encoder can wrap directly without an adapter.
+//
+// This is the smallest concrete proof that the production driver
+// could call `component.BuildLiftedExportComponent` instead of
+// shelling out to `wasm-tools component new --adapt` for the
+// no-import case. Real programs with WASI imports still need the
+// adapter (or the future preview-2 import migration in wasmbin).
+func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	const src = `function main(): i32 { return 42; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	coreBytes, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// Wrap directly with the Go-side encoder — no wasm-tools.
+	comp := component.BuildLiftedExportComponent(
+		coreBytes, "main", "main",
+		nil, nil, // no params
+		component.CValtypeU32,
+	)
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "out.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != "42" {
+		t.Errorf("wasmtime stdout = %q, want %q", got, "42")
+	}
+}
+
 // TestWASMComponentGoLangByteEquivalence pins the Go-side
 // `internal/wasm/component.WrapWasiImported` against the Lang
 // `build_wasi_imported_component` helper: given the same core
