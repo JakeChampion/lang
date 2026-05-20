@@ -83,6 +83,25 @@ func TestBuildBranchingFunction(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsEntryNotInBlocks — f.Entry pointing at a
+// Block that isn't in f.Blocks would have walks (DFS, RPO,
+// dom-tree) skip the entry on a list iteration. Catch that.
+func TestVerifyRejectsEntryNotInBlocks(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	f.SetRet(entry, Value{})
+	// Drop entry from f.Blocks but keep f.Entry pointing at it.
+	f.Blocks = nil
+
+	err := Verify(f)
+	if err == nil {
+		t.Fatal("expected Verify error for Entry not in Blocks")
+	}
+	if !strings.Contains(err.Error(), "Entry block") {
+		t.Errorf("error %q does not mention Entry block", err)
+	}
+}
+
 // TestVerifyRejectsBrWithNilTarget — `br` terminator with a
 // nil Target is structurally invalid (downstream consumers
 // would crash on the dangling pointer). Verify catches it.
