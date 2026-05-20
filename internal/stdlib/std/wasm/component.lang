@@ -672,6 +672,50 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_record — emit a component-level type section
+// that defines a single `record` type with N named typed fields.
+// Records are the structural product type — like a struct, with
+// each field carrying a name + a valtype.
+//
+// `field_names` and `field_valtypes` are parallel arrays describing
+// the i-th field's name and type respectively; they must have equal
+// length.
+//
+// Records appear in WASI for things like `wasi:filesystem/types::
+// descriptor-stat` (file metadata: size, modified-at, link-count, …)
+// and `wasi:http/types::field-entry` (header name + value).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype   ::= ... | 0x72 lts:vec(<labelvaltype>)          -- record
+//   labelvaltype ::= label:<name> t:<valtype>
+//
+// The per-field encoding is identical to functype params: each
+// `<labelvaltype>` is a uleb-prefixed UTF-8 name followed by one
+// valtype byte. The full body for an N-field record:
+//
+//   01                       // vec(1) defvaltype entries
+//   72                       // record form (0x72)
+//   <N:uleb>                 // vec(N) fields
+//   (<name> <valtype>)*      // N (name, valtype) pairs
+pub function put_type_section_one_record(buf: u8[], field_names: string[], field_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(114u8);                      // record form (0x72)
+    var n: i32 = field_names.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, field_names[i]);
+        body = body.push(field_valtypes[i]);
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
