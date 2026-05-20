@@ -198,6 +198,54 @@ func TestVerifyRejectsUndefinedValue(t *testing.T) {
 	}
 }
 
+// TestFuncHasSideEffectsPureFunc — a function with only
+// pure ops (Add, Mul, Const, etc.) reports false.
+func TestFuncHasSideEffectsPureFunc(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpAdd, a, a)
+	f.AddOp(entry, OpMul, a, a)
+	f.SetRet(entry, Value{})
+
+	if f.HasSideEffects() {
+		t.Errorf("HasSideEffects() = true, want false (pure function)")
+	}
+}
+
+// TestFuncHasSideEffectsImpureFunc — one impure op (Call,
+// Load, Store, Alloc, MakeClosure/Env) flips the result.
+func TestFuncHasSideEffectsImpureFunc(t *testing.T) {
+	cases := []OpKind{OpCall, OpLoad, OpStore, OpAlloc, OpMakeClosure, OpMakeEnv}
+	for _, k := range cases {
+		t.Run(k.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			a := f.AddParam()
+			entry := f.NewBlock()
+			f.AddOp(entry, OpAdd, a, a) // some pure ops first
+			f.AddOp(entry, k)
+			f.SetRet(entry, Value{})
+
+			if !f.HasSideEffects() {
+				t.Errorf("HasSideEffects() = false, want true (contains %v)", k)
+			}
+		})
+	}
+}
+
+// TestFuncHasSideEffectsEmptyFunc — empty/nil functions
+// report false.
+func TestFuncHasSideEffectsEmptyFunc(t *testing.T) {
+	var f *Func
+	if f.HasSideEffects() {
+		t.Errorf("nil HasSideEffects() = true, want false")
+	}
+	f = NewFunc("f")
+	if f.HasSideEffects() {
+		t.Errorf("empty HasSideEffects() = true, want false")
+	}
+}
+
 // TestValueStringFormat — `v<ID>` per SSA convention, with
 // `v_` for the zero sentinel.
 func TestValueStringFormat(t *testing.T) {
