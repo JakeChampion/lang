@@ -13,17 +13,21 @@
 //     entry ─brif─→ T ┐
 //     ├─→ merge ─ret
 //     entry ─brif─→ F ┘
-//     T and F each end with `br merge`; merge may have phis
-//     (one wasm local per phi) and additional ops; merge ends
-//     with TermRet.
+//   - While loop shape:
+//     entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
+//                            └─→ done ─ret
+//     Header phis (loop-carried values) become shared wasm
+//     locals — entry writes initial values; the back-edge
+//     re-writes them at each iteration.
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
-//     OpGeU, OpNeg, OpNot, OpPhi (only in if-else merge blocks)
+//     OpGeU, OpNeg, OpNot, OpPhi (in if-else merges + loop
+//     headers)
 //
 // Not yet supported (returns an unsupportedOp error):
 //
-//   - Loops (back-edges) and other multi-block CFG shapes
+//   - Other multi-block CFG shapes (nested loops, switch, etc.)
 //   - i64 / f32 / f64 / string values
 //   - Function calls, memory ops, alloc
 //   - Pair-return
@@ -174,7 +178,16 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only single-block and if-else diamonds handled",
+	// While loop case.
+	if lp, ok := classifyWhileLoop(f); ok {
+		body, err := emitWhileLoop(nil, lp, valueToLocal)
+		if err != nil {
+			return nil, nil, err
+		}
+		return body, valueToLocal, nil
+	}
+
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only single-block, if-else diamonds, and while loops handled",
 		len(f.Blocks))
 }
 
@@ -291,21 +304,22 @@ func emitIfElseDiamond(body []byte, d ifElseDiamond, valueToLocal map[int32]uint
 	return body, nil
 }
 
-// writePhiArgs emits, for every phi at `merge`, the bytes
+// writePhiArgs emits, for every phi at `target`, the bytes
 // that push the phi-arg coming from `fromBlock` and store it
-// into the phi's local. fromBlock must be one of merge.Preds.
-func writePhiArgs(body []byte, merge, fromBlock *ssa.Block, valueToLocal map[int32]uint32) []byte {
+// into the phi's local. fromBlock must be one of target.Preds.
+// Used at branch-out sites in if-else arms + while loops.
+func writePhiArgs(body []byte, target, fromBlock *ssa.Block, valueToLocal map[int32]uint32) []byte {
 	predIdx := -1
-	for i, p := range merge.Preds {
+	for i, p := range target.Preds {
 		if p == fromBlock {
 			predIdx = i
 			break
 		}
 	}
 	if predIdx < 0 {
-		return body // shouldn't happen; classifyIfElseDiamond guarantees
+		return body // shouldn't happen; classifier guarantees
 	}
-	for _, op := range merge.Ops {
+	for _, op := range target.Ops {
 		if op.Kind != ssa.OpPhi {
 			continue
 		}
@@ -318,6 +332,128 @@ func writePhiArgs(body []byte, merge, fromBlock *ssa.Block, valueToLocal map[int
 		}
 	}
 	return body
+}
+
+// whileLoop captures the four blocks of a recognised
+// while-loop CFG shape.
+type whileLoop struct {
+	entry, header, body, done *ssa.Block
+}
+
+// classifyWhileLoop detects the canonical while-loop shape:
+//
+//	entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
+//	                       └─→ done ─ret
+//
+// Returns the recognised shape + true on a match.
+func classifyWhileLoop(f *ssa.Func) (whileLoop, bool) {
+	if len(f.Blocks) != 4 || f.Entry == nil {
+		return whileLoop{}, false
+	}
+	entry := f.Entry
+	if entry.Term.Kind != ssa.TermBr {
+		return whileLoop{}, false
+	}
+	header := entry.Term.Target
+	if header == nil || header.Term.Kind != ssa.TermBrIf {
+		return whileLoop{}, false
+	}
+	body, done := header.Term.True, header.Term.False
+	if body == nil || done == nil || body == done {
+		return whileLoop{}, false
+	}
+	// body's only pred is header; body ends with br back to header.
+	if len(body.Preds) != 1 || body.Preds[0] != header {
+		return whileLoop{}, false
+	}
+	if body.Term.Kind != ssa.TermBr || body.Term.Target != header {
+		return whileLoop{}, false
+	}
+	// header's preds are {entry, body} in some order.
+	if len(header.Preds) != 2 {
+		return whileLoop{}, false
+	}
+	found := map[*ssa.Block]bool{}
+	for _, p := range header.Preds {
+		found[p] = true
+	}
+	if !found[entry] || !found[body] {
+		return whileLoop{}, false
+	}
+	// done's only pred is header; done ends with ret.
+	if len(done.Preds) != 1 || done.Preds[0] != header {
+		return whileLoop{}, false
+	}
+	if done.Term.Kind != ssa.TermRet {
+		return whileLoop{}, false
+	}
+	return whileLoop{entry: entry, header: header, body: body, done: done}, true
+}
+
+// emitWhileLoop emits the wasm `block`/`loop`/`br_if` shape
+// for a recognised while-loop CFG. Header phis become shared
+// wasm locals: entry writes initial values; the back-edge
+// re-writes them at each iteration.
+//
+// Wasm structure:
+//
+//	ops_in_entry
+//	write phi-initial-values from entry
+//	block            ; $exit (label 1)
+//	  loop           ; $continue (label 0)
+//	    ops_in_header (computes cond)
+//	    local.get cond ; i32.eqz ; br_if $exit
+//	    ops_in_body
+//	    write phi-back-edge-values from body
+//	    br $continue
+//	  end loop
+//	end block
+//	ops_in_done; ret
+func emitWhileLoop(body []byte, lp whileLoop, valueToLocal map[int32]uint32) ([]byte, error) {
+	body, err := emitStraightBlock(body, lp.entry, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	// Initialise header phi locals from the entry pred.
+	body = writePhiArgs(body, lp.header, lp.entry, valueToLocal)
+
+	// block $exit
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	//   loop $continue
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	//     header ops (excluding phis)
+	body, err = emitStraightBlock(body, lp.header, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	//     push cond; eqz; br_if 1 (to $exit)
+	if !lp.header.Term.Cond.IsValid() {
+		return nil, fmt.Errorf("wasmssa: while-loop header has invalid brif cond")
+	}
+	body = pushValue(body, lp.header.Term.Cond, valueToLocal)
+	body = append(body, 0x45) // i32.eqz — exit when cond is false
+	body = inst.InstBrIf(body, 1)
+	//     body ops
+	body, err = emitStraightBlock(body, lp.body, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	//     update phi locals from body for next iteration
+	body = writePhiArgs(body, lp.header, lp.body, valueToLocal)
+	//     br 0 (back to loop top)
+	body = inst.InstBr(body, 0)
+	//   end loop
+	body = inst.InstEnd(body)
+	// end block
+	body = inst.InstEnd(body)
+
+	// done ops + ret.
+	body, err = emitStraightBlock(body, lp.done, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, lp.done.Term, valueToLocal)
+	return body, nil
 }
 
 // emitOp lowers a single Op to wasm bytes. Appends to body

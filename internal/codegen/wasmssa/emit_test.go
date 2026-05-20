@@ -144,24 +144,70 @@ func TestEmitIfElseDiamondWithOps(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitRejectsLoopShape — a function with a back-edge
-// (loop) is not yet supported; EmitModule returns a clear
-// error.
-func TestEmitRejectsLoopShape(t *testing.T) {
+// TestEmitWhileLoop — a canonical while-loop CFG emits a
+// valid module. Shape: entry → header → (body → header) /
+// done.
+func TestEmitWhileLoop(t *testing.T) {
 	f := ssa.NewFunc("main")
-	c := f.AddParam()
+	n := f.AddParam() // loop bound
 	entry := f.NewBlock()
 	header := f.NewBlock()
 	body := f.NewBlock()
 	done := f.NewBlock()
+
+	// Initial counter = 0.
+	zero := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 0
 	f.SetBr(entry, header)
-	f.SetBrIf(header, c, body, done)
-	f.SetBr(body, header) // back-edge
-	f.SetRet(done, ssa.Value{})
+
+	// Header phi: i = phi(0, i+1) — loop counter.
+	phiRes := f.NewValue()
+	phiOp := &ssa.Op{Kind: ssa.OpPhi, Result: phiRes, Args: []ssa.Value{zero, ssa.Value{}}}
+	header.Ops = append(header.Ops, phiOp)
+	// cond = i < n
+	cond := f.AddOp(header, ssa.OpLt, phiRes, n)
+	f.SetBrIf(header, cond, body, done)
+
+	// Body: i++
+	one := f.AddOp(body, ssa.OpConstInt)
+	body.Ops[0].Imm = 1
+	inc := f.AddOp(body, ssa.OpAdd, phiRes, one)
+	phiOp.Args[1] = inc
+	f.SetBr(body, header)
+
+	// Done: return i (which equals n).
+	f.SetRet(done, phiRes)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitRejectsUnknownCFG — a CFG that doesn't match any
+// recognised shape (e.g. 5 blocks with arbitrary edges)
+// returns a clear error.
+func TestEmitRejectsUnknownCFG(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	a := f.NewBlock()
+	b := f.NewBlock()
+	cb := f.NewBlock()
+	d := f.NewBlock()
+	f.SetBrIf(entry, c, a, b)
+	f.SetBr(a, cb)
+	f.SetBr(b, cb)
+	f.SetBr(cb, d)
+	f.SetRet(d, ssa.Value{})
 
 	_, err := EmitModule(f, "main")
 	if err == nil {
-		t.Fatal("expected error for loop CFG")
+		t.Fatal("expected error for 5-block unrecognised CFG")
 	}
 }
 
