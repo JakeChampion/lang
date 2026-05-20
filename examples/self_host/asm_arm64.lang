@@ -1316,6 +1316,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "string") {
                         if (fa.field == "split") { return "array_string"; }
                         if (fa.field == "chars") { return "array_string"; }
+                        if (fa.field == "lines") { return "array_string"; }
                         if (fa.field == "contains") { return "bool"; }
                         if (fa.field == "starts_with") { return "bool"; }
                         if (fa.field == "ends_with") { return "bool"; }
@@ -2337,6 +2338,29 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    bl __lang_str_chars\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_chars();
+                            return s;
+                        }
+                        if (fa.field == "lines" && c.args.len() == 0) {
+                            // Sugar for `s.split("\n")`. Materialise
+                            // a `"\n"` string box, then route through
+                            // the existing __lang_str_split runtime.
+                            s = emit_expr(fa.obj, s);
+                            var lo_ln: StringLitOut = add_string_lit(s, "\n");
+                            s = lo_ln.state;
+                            s = s.write("    mov x0, #16\n");
+                            s = s.write("    bl __lang_alloc\n");
+                            s = s.write("    adrp x1, .S" + i32_to_string(lo_ln.idx) + "\n");
+                            s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(lo_ln.idx) + "\n");
+                            s = s.write("    str x1, [x0]\n");
+                            s = s.write("    mov x1, #1\n");
+                            s = s.write("    str x1, [x0, #8]\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            s = s.write("    ldr x1, [sp], #16\n");
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    bl __lang_str_split\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            s = s.mark_str_search();
+                            s = s.mark_heap();
                             return s;
                         }
                         if (fa.field == "split" && c.args.len() == 1) {
