@@ -33,11 +33,7 @@ import (
 //
 //   Phase 4:
 //   - OpCallDirect → OpCall with Str = callee name, Args = the
-//     popped arguments. Always pushes a single Result value;
-//     void calls leak an unused Result onto the SSA stack —
-//     harmless (DCE keeps Call ops anyway, side-effect-y) but
-//     a future pass that consults callee signatures can prune
-//     the dead Result if it ever becomes worthwhile.
+//     popped arguments.
 //
 //   Phase 5:
 //   - OpConstStr → OpConstString with Str = string literal.
@@ -50,18 +46,20 @@ import (
 //
 //   Phase 7:
 //   - OpStoreLocal / OpTeeLocal / OpLoadLocal for the non-param
-//     slot range. Straight-line code only — no merges yet, so
-//     no phi insertion needed. Each store overwrites the slot's
-//     current SSA Value; subsequent loads see the latest store.
-//     Reading a slot that's never been written (uninitialised
-//     local) is rejected with a clear error rather than
-//     fabricating a default-zero op.
-//   - OpDrop pops the top stack value without emitting an SSA
-//     op. The dropped Value just becomes unused; DCE picks up
-//     the producer if no one else consumes it.
+//     slot range.
+//   - OpDrop pops the top stack value without emitting an SSA op.
 //
-// Anything else returns an `unsupported op` error. Branches,
-// indirect calls, and the conversion ops land in follow-up PRs.
+//   Phase 8a:
+//   - OpIf / OpElse / OpEnd for if/else control flow, BlockTypeVoid
+//     only. Creates a diamond CFG (then, else, post); phi nodes
+//     synthesised at the merge for any local slot whose value
+//     differs between the two arms. Nested ifs are fine — the
+//     scope stack handles them. OpReturn inside either arm is
+//     also fine — the arm just doesn't flow into the merge.
+//
+// Anything else returns an `unsupported op` error. OpBlock /
+// OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
+// ops land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -72,7 +70,10 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
 	}
 
-	out := NewFunc(in.Name)
+	l := &lifter{
+		in:  in,
+		out: NewFunc(in.Name),
+	}
 
 	// Slots: a flat array indexed by OpLoadLocal/OpStoreLocal's
 	// I32 immediate. Slots [0, len(Params)) are parameters,
@@ -83,139 +84,297 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	// OpStoreLocal / OpTeeLocal as the lift walks the op list.
 	// Reading an uninitialised slot is a hard error.
 	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
-	slots := make([]Value, totalSlots)
+	l.slots = make([]Value, totalSlots)
 	for i := range in.Params {
-		slots[i] = out.AddParam()
+		l.slots[i] = l.out.AddParam()
 	}
 
-	entry := out.NewBlock()
-	var stack []Value
+	l.cur = l.out.NewBlock()
 
 	for i, op := range in.Ops {
-		switch op.Kind {
-		case ir.OpConstI32:
-			v := out.AddOp(entry, OpConstInt)
-			entry.Ops[len(entry.Ops)-1].Imm = int64(op.I32)
-			stack = append(stack, v)
-		case ir.OpConstI64:
-			v := out.AddOp(entry, OpConstInt)
-			entry.Ops[len(entry.Ops)-1].Imm = op.I64
-			stack = append(stack, v)
-		case ir.OpConstStr:
-			v := out.AddOp(entry, OpConstString)
-			entry.Ops[len(entry.Ops)-1].Str = op.Str
-			stack = append(stack, v)
-		case ir.OpConstF32:
-			v := out.AddOp(entry, OpConstFloat)
-			entry.Ops[len(entry.Ops)-1].F64 = float64(op.F32)
-			stack = append(stack, v)
-		case ir.OpConstF64:
-			v := out.AddOp(entry, OpConstFloat)
-			entry.Ops[len(entry.Ops)-1].F64 = op.F64
-			stack = append(stack, v)
-		case ir.OpLoadLocal:
-			idx := int(op.I32)
-			if idx < 0 || idx >= len(slots) {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d slots)",
-					i, idx, len(slots))
-			}
-			v := slots[idx]
-			if !v.IsValid() {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] reads uninitialised slot %d",
-					i, idx)
-			}
-			stack = append(stack, v)
-		case ir.OpStoreLocal:
-			idx := int(op.I32)
-			if idx < 0 || idx >= len(slots) {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] slot %d out of range (have %d slots)",
-					i, idx, len(slots))
-			}
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] needs 1 operand", i)
-			}
-			slots[idx] = stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-		case ir.OpTeeLocal:
-			idx := int(op.I32)
-			if idx < 0 || idx >= len(slots) {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] slot %d out of range (have %d slots)",
-					i, idx, len(slots))
-			}
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] needs 1 operand", i)
-			}
-			slots[idx] = stack[len(stack)-1]
-			// Don't pop — Tee leaves the value on the stack.
-		case ir.OpAdd, ir.OpSub, ir.OpMul,
-			ir.OpDivS, ir.OpRemS,
-			ir.OpAnd, ir.OpOr, ir.OpXor,
-			ir.OpShl, ir.OpShrS,
-			ir.OpEq, ir.OpNe,
-			ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS,
-			ir.OpFAdd, ir.OpFSub, ir.OpFMul, ir.OpFDiv,
-			ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
-			if len(stack) < 2 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 2 operands, stack has %d",
-					op.Kind, i, len(stack))
-			}
-			rhs := stack[len(stack)-1]
-			lhs := stack[len(stack)-2]
-			stack = stack[:len(stack)-2]
-			kind := mapBinaryArith(op.Kind)
-			v := out.AddOp(entry, kind, lhs, rhs)
-			stack = append(stack, v)
-		case ir.OpNot:
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpNot at op[%d] needs 1 operand", i)
-			}
-			arg := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			v := out.AddOp(entry, OpNot, arg)
-			stack = append(stack, v)
-		case ir.OpFNeg:
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpFNeg at op[%d] needs 1 operand", i)
-			}
-			arg := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			v := out.AddOp(entry, OpFNeg, arg)
-			stack = append(stack, v)
-		case ir.OpDrop:
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpDrop at op[%d] needs 1 operand", i)
-			}
-			stack = stack[:len(stack)-1]
-		case ir.OpCallDirect:
-			argc := int(op.I32)
-			if len(stack) < argc {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpCallDirect at op[%d] needs %d args, stack has %d",
-					i, argc, len(stack))
-			}
-			args := append([]Value(nil), stack[len(stack)-argc:]...)
-			stack = stack[:len(stack)-argc]
-			result := out.AddOp(entry, OpCall, args...)
-			// Set the callee name on the just-appended Op.
-			entry.Ops[len(entry.Ops)-1].Str = op.Str
-			stack = append(stack, result)
-		case ir.OpReturn:
-			if len(stack) < 1 {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpReturn at op[%d] needs 1 operand", i)
-			}
-			out.SetRet(entry, stack[len(stack)-1])
-			return out, nil
-		case ir.OpReturnVoid:
-			out.SetRet(entry, Value{})
-			return out, nil
-		default:
-			return nil, fmt.Errorf("ssa.LiftFromIR: unsupported op %v at index %d", op.Kind, i)
+		if err := l.handle(i, op); err != nil {
+			return nil, err
+		}
+		if l.cur == nil {
+			// Op terminated the function (Return/ReturnVoid) and
+			// we've returned early already; remaining ops would be
+			// dead code, just ignore. Actually handle() returns nil
+			// when the function ended via Return — bail.
+			return l.out, nil
 		}
 	}
 
-	// Implicit void return — the legacy IR is happy to end without
-	// an explicit OpReturn for void functions.
-	out.SetRet(entry, Value{})
-	return out, nil
+	// Implicit void return at function end. Active block may have
+	// already been terminated by OpReturn/OpReturnVoid above (in
+	// which case l.cur is nil — the early-return above caught it).
+	// If we're still here, the active block has no terminator yet.
+	if len(l.scopes) > 0 {
+		return nil, fmt.Errorf("ssa.LiftFromIR: %d unclosed scope(s) at end of function", len(l.scopes))
+	}
+	l.out.SetRet(l.cur, Value{})
+	return l.out, nil
+}
+
+type lifter struct {
+	in  *ir.Func
+	out *Func
+
+	// Active block: where AddOp emits next. Changes on
+	// OpIf/OpElse/OpEnd. nil after OpReturn/OpReturnVoid.
+	cur *Block
+
+	// Operand stack — mirrors the legacy IR's stack-machine
+	// shape. Values pushed/popped by each Op.
+	stack []Value
+
+	// Slot array — addressed by OpLoadLocal/OpStoreLocal/OpTeeLocal.
+	slots []Value
+
+	// Control-flow scope stack. Top is the innermost open
+	// OpIf / (future: OpBlock / OpLoop).
+	scopes []scope
+}
+
+// scope describes one open control-flow construct.
+type scope struct {
+	kind ir.OpKind // ir.OpIf for now; ir.OpBlock / ir.OpLoop in later PRs.
+
+	thenB *Block
+	elseB *Block
+	postB *Block
+
+	// Slot snapshots used to build the merge phis.
+	preSlots  []Value // slots state entering the scope
+	thenSlots []Value // captured at OpElse; slots after the then arm
+	sawElse   bool
+}
+
+func (l *lifter) handle(i int, op ir.Op) error {
+	if l.cur == nil {
+		// We've already returned from the function but the IR has
+		// trailing ops. Skip silently — they're dead.
+		return nil
+	}
+	switch op.Kind {
+	case ir.OpConstI32:
+		v := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+		l.stack = append(l.stack, v)
+	case ir.OpConstI64:
+		v := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = op.I64
+		l.stack = append(l.stack, v)
+	case ir.OpConstStr:
+		v := l.out.AddOp(l.cur, OpConstString)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, v)
+	case ir.OpConstF32:
+		v := l.out.AddOp(l.cur, OpConstFloat)
+		l.cur.Ops[len(l.cur.Ops)-1].F64 = float64(op.F32)
+		l.stack = append(l.stack, v)
+	case ir.OpConstF64:
+		v := l.out.AddOp(l.cur, OpConstFloat)
+		l.cur.Ops[len(l.cur.Ops)-1].F64 = op.F64
+		l.stack = append(l.stack, v)
+	case ir.OpLoadLocal:
+		idx := int(op.I32)
+		if idx < 0 || idx >= len(l.slots) {
+			return fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d slots)",
+				i, idx, len(l.slots))
+		}
+		v := l.slots[idx]
+		if !v.IsValid() {
+			return fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] reads uninitialised slot %d", i, idx)
+		}
+		l.stack = append(l.stack, v)
+	case ir.OpStoreLocal:
+		idx := int(op.I32)
+		if idx < 0 || idx >= len(l.slots) {
+			return fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] slot %d out of range (have %d slots)",
+				i, idx, len(l.slots))
+		}
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] needs 1 operand", i)
+		}
+		l.slots[idx] = l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+	case ir.OpTeeLocal:
+		idx := int(op.I32)
+		if idx < 0 || idx >= len(l.slots) {
+			return fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] slot %d out of range (have %d slots)",
+				i, idx, len(l.slots))
+		}
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] needs 1 operand", i)
+		}
+		l.slots[idx] = l.stack[len(l.stack)-1]
+	case ir.OpAdd, ir.OpSub, ir.OpMul,
+		ir.OpDivS, ir.OpRemS,
+		ir.OpAnd, ir.OpOr, ir.OpXor,
+		ir.OpShl, ir.OpShrS,
+		ir.OpEq, ir.OpNe,
+		ir.OpLtS, ir.OpLeS, ir.OpGtS, ir.OpGeS,
+		ir.OpFAdd, ir.OpFSub, ir.OpFMul, ir.OpFDiv,
+		ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 2 operands, stack has %d",
+				op.Kind, i, len(l.stack))
+		}
+		rhs := l.stack[len(l.stack)-1]
+		lhs := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		kind := mapBinaryArith(op.Kind)
+		v := l.out.AddOp(l.cur, kind, lhs, rhs)
+		l.stack = append(l.stack, v)
+	case ir.OpNot:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpNot at op[%d] needs 1 operand", i)
+		}
+		arg := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpNot, arg)
+		l.stack = append(l.stack, v)
+	case ir.OpFNeg:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpFNeg at op[%d] needs 1 operand", i)
+		}
+		arg := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpFNeg, arg)
+		l.stack = append(l.stack, v)
+	case ir.OpDrop:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpDrop at op[%d] needs 1 operand", i)
+		}
+		l.stack = l.stack[:len(l.stack)-1]
+	case ir.OpCallDirect:
+		argc := int(op.I32)
+		if len(l.stack) < argc {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallDirect at op[%d] needs %d args, stack has %d",
+				i, argc, len(l.stack))
+		}
+		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
+		l.stack = l.stack[:len(l.stack)-argc]
+		result := l.out.AddOp(l.cur, OpCall, args...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, result)
+	case ir.OpIf:
+		if op.I32 != ir.BlockTypeVoid {
+			return fmt.Errorf("ssa.LiftFromIR: OpIf at op[%d] with non-void result not yet supported", i)
+		}
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpIf at op[%d] needs cond", i)
+		}
+		cond := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		thenB := l.out.NewBlock()
+		elseB := l.out.NewBlock()
+		postB := l.out.NewBlock()
+		l.out.SetBrIf(l.cur, cond, thenB, elseB)
+		l.scopes = append(l.scopes, scope{
+			kind:     ir.OpIf,
+			thenB:    thenB,
+			elseB:    elseB,
+			postB:    postB,
+			preSlots: append([]Value(nil), l.slots...),
+		})
+		l.cur = thenB
+	case ir.OpElse:
+		if len(l.scopes) == 0 {
+			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] with no open scope", i)
+		}
+		top := &l.scopes[len(l.scopes)-1]
+		if top.kind != ir.OpIf {
+			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] doesn't match an if scope", i)
+		}
+		if top.sawElse {
+			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] is the second else for this if", i)
+		}
+		l.out.SetBr(l.cur, top.postB)
+		top.thenSlots = append([]Value(nil), l.slots...)
+		top.sawElse = true
+		l.slots = append([]Value(nil), top.preSlots...)
+		l.cur = top.elseB
+	case ir.OpEnd:
+		if len(l.scopes) == 0 {
+			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] with no open scope", i)
+		}
+		top := l.scopes[len(l.scopes)-1]
+		l.scopes = l.scopes[:len(l.scopes)-1]
+		switch top.kind {
+		case ir.OpIf:
+			l.endIfScope(top)
+		default:
+			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] for unsupported scope kind %v", i, top.kind)
+		}
+	case ir.OpReturn:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpReturn at op[%d] needs 1 operand", i)
+		}
+		l.out.SetRet(l.cur, l.stack[len(l.stack)-1])
+		l.cur = nil
+	case ir.OpReturnVoid:
+		l.out.SetRet(l.cur, Value{})
+		l.cur = nil
+	default:
+		return fmt.Errorf("ssa.LiftFromIR: unsupported op %v at index %d", op.Kind, i)
+	}
+	return nil
+}
+
+// endIfScope finalises an OpIf scope. The active block (l.cur)
+// has the current arm's final state — terminate it with a br
+// to postB, build any required phis at postB to merge slot
+// values from the then + else arms, then switch l.cur to
+// postB.
+func (l *lifter) endIfScope(top scope) {
+	// Terminate the active arm.
+	thenSlots, elseSlots := top.thenSlots, l.slots
+	if !top.sawElse {
+		// No OpElse — current arm is the then-arm. The else-side
+		// is the empty elseB; terminate it with a br to postB.
+		thenSlots = append([]Value(nil), l.slots...)
+		elseSlots = top.preSlots
+		l.out.SetBr(l.cur, top.postB)
+		l.out.SetBr(top.elseB, top.postB)
+	} else {
+		l.out.SetBr(l.cur, top.postB)
+	}
+
+	// Build phi nodes for any slot that differs between the two
+	// merge sources. Preds order at postB is [first SetBr caller,
+	// second SetBr caller, …] — which matches the order we
+	// emitted them above (then-end before else-end).
+	for i := range l.slots {
+		var tv, ev Value
+		if i < len(thenSlots) {
+			tv = thenSlots[i]
+		}
+		if i < len(elseSlots) {
+			ev = elseSlots[i]
+		}
+		if tv == ev {
+			continue
+		}
+		if !tv.IsValid() && !ev.IsValid() {
+			continue
+		}
+		if !tv.IsValid() || !ev.IsValid() {
+			// Only one arm initialised the slot; keep whichever is
+			// valid. A later load on the un-init path would re-trip
+			// the uninit-check.
+			if tv.IsValid() {
+				l.slots[i] = tv
+			} else {
+				l.slots[i] = ev
+			}
+			continue
+		}
+		phi := l.out.AddPhi(top.postB, tv, ev)
+		l.slots[i] = phi
+	}
+
+	l.cur = top.postB
 }
 
 func mapBinaryArith(k ir.OpKind) OpKind {
