@@ -94,6 +94,62 @@ func TestNegFold(t *testing.T) {
 	}
 }
 
+// TestSimplifyDoubleNeg — `neg(neg(x))` aliases directly to x.
+// Two's complement preserves round-trip even for INT_MIN
+// (`-(-INT_MIN) == INT_MIN`).
+func TestSimplifyDoubleNeg(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpNeg, x)
+	outer := f.AddOp(entry, OpNeg, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != x {
+		t.Errorf("Term.Value = %v, want %v (neg(neg(x)) → x)",
+			entry.Term.Value, x)
+	}
+}
+
+// TestSimplifyDoubleFNeg — `fneg(fneg(x))` aliases to x.
+// IEEE-754: -(-NaN)=NaN, -(-0.0)=0.0 — both round-trip cleanly.
+func TestSimplifyDoubleFNeg(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpFNeg, x)
+	outer := f.AddOp(entry, OpFNeg, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != x {
+		t.Errorf("Term.Value = %v, want %v (fneg(fneg(x)) → x)",
+			entry.Term.Value, x)
+	}
+}
+
+// TestSimplifyMixedNegFNegNotCollapsed — `fneg(neg(x))` is NOT
+// an identity (different op kinds), so it must stay. Guards
+// the kind-mismatch case.
+func TestSimplifyMixedNegFNegNotCollapsed(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	inner := f.AddOp(entry, OpNeg, x)
+	outer := f.AddOp(entry, OpFNeg, inner)
+	f.SetRet(entry, outer)
+
+	Simplify(f)
+
+	if entry.Term.Value != outer {
+		t.Errorf("Term.Value = %v, want %v (mixed neg/fneg must stay)",
+			entry.Term.Value, outer)
+	}
+}
+
 // TestNegLeavesNonConst — Neg of a Param stays as OpNeg.
 func TestNegLeavesNonConst(t *testing.T) {
 	f := NewFunc("f")

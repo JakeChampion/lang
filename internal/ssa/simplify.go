@@ -25,6 +25,16 @@ package ssa
 //
 //	not(not(x))                 ⇒ x
 //
+// OpNeg / OpFNeg identities:
+//
+//	neg(neg(x))                 ⇒ x
+//	fneg(fneg(x))               ⇒ x
+//
+// (Two's complement: `-(-INT_MIN) = INT_MIN` — the round trip
+// still yields the original value, only the intermediate is
+// mathematically off. IEEE-754: `-(-NaN) = NaN`, `-(-0.0) = 0.0`
+// — both round-trip cleanly.)
+//
 // "Synthesising" identities (x - x ⇒ 0, x * 0 ⇒ 0, x / x ⇒ 1)
 // need a fresh OpConstInt op to materialise the answer; that
 // shape lands in a future pass alongside the IR-→SSA lift,
@@ -108,12 +118,12 @@ func Simplify(f *Func) {
 
 func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 	// Unary cases first.
-	if op.Kind == OpNot {
+	if op.Kind == OpNot || op.Kind == OpNeg || op.Kind == OpFNeg {
 		if len(op.Args) != 1 {
 			return Value{}, false
 		}
 		def, ok := defs[op.Args[0].ID]
-		if !ok || def.Kind != OpNot || len(def.Args) != 1 {
+		if !ok || def.Kind != op.Kind || len(def.Args) != 1 {
 			return Value{}, false
 		}
 		return def.Args[0], true
