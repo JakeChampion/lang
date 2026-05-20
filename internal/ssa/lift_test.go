@@ -1272,6 +1272,135 @@ func TestLiftBrIfToIf(t *testing.T) {
 	}
 }
 
+// TestLiftLoopEmpty — `loop { }` with fall-through immediately;
+// degenerate but should still verify. The header phi (for any
+// initialised slot) ends up with a single Args entry (preLoop
+// value) since there's no back-edge.
+func TestLiftLoopEmpty(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "p"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoop, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftLoopBackBranch — `loop { ...; br 0 }` always loops
+// (never falls through). After Verify + Optimize, the post-loop
+// block is unreachable and gets pruned.
+func TestLiftLoopBackBranch(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "p"}},
+		Locals: []*ast.Var{{Name: "i"}},
+		Ops: []ir.Op{
+			// i = 0
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// loop
+			{Kind: ir.OpLoop, I32: ir.BlockTypeVoid},
+			// i = i + 1
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// br 0 (back to loop header)
+			{Kind: ir.OpBr, I32: 0},
+			{Kind: ir.OpEnd},
+			// unreachable past-loop
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// The header should have a phi for slot[1] (i): Args = [0, i+1]
+	// — two distinct values, so TrivialPhis won't collapse it.
+	hasPhi := false
+	for _, b := range out.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == OpPhi {
+				hasPhi = true
+				break
+			}
+		}
+	}
+	if !hasPhi {
+		t.Errorf("expected at least one phi at loop header; got:\n%s", out)
+	}
+}
+
+// TestLiftLoopCounted — `i = 0; loop { if (i >= 10) break;
+// i = i + 1 }` typical counter loop. brif exits, br loops.
+func TestLiftLoopCounted(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "i"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid}, // outer for break
+			{Kind: ir.OpLoop, I32: ir.BlockTypeVoid},
+			// if (i >= 10) br 1 (exit block)
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 10},
+			{Kind: ir.OpGeS},
+			{Kind: ir.OpBrIf, I32: 1}, // depth 1 = the outer OpBlock
+			// i = i + 1
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			// continue loop
+			{Kind: ir.OpBr, I32: 0},
+			{Kind: ir.OpEnd}, // close loop
+			{Kind: ir.OpEnd}, // close block
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftLoopRejectsNonVoid — non-void OpLoop rejected.
+func TestLiftLoopRejectsNonVoid(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpLoop, I32: ir.BlockTypeI32},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for non-void OpLoop")
+	}
+	if !strings.Contains(err.Error(), "non-void BlockType") {
+		t.Errorf("error %q doesn't mention non-void BlockType", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
@@ -1376,14 +1505,14 @@ func TestLiftCallStackUnderflow(t *testing.T) {
 	}
 }
 
-// TestLiftRejectsUnsupportedOp — OpLoop (branches/blocks) isn't
-// in the current subset; lift surfaces a clear error.
+// TestLiftRejectsUnsupportedOp — OpCallIndirect isn't in the
+// current subset; lift surfaces a clear error.
 func TestLiftRejectsUnsupportedOp(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
-			{Kind: ir.OpLoop}, // not yet supported — needs branch handling
-			{Kind: ir.OpReturn},
+			{Kind: ir.OpCallIndirect, I32: 0}, // not yet supported
+			{Kind: ir.OpReturnVoid},
 		},
 	}
 

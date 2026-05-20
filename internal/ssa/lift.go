@@ -96,6 +96,19 @@ import (
 //     iterates brSources so the only change is dropping the
 //     "OpBlock only" reject path.
 //
+//   Phase 11:
+//   - OpLoop (BlockTypeVoid only) opens a backward-only labelled
+//     scope. The lift mints a `header` block and emits br cur →
+//     header at the OpLoop, then eagerly creates a phi at the
+//     header for every initialised slot (Args[0] = the pre-loop
+//     value). Loads inside the loop see the phi; stores update
+//     the slot to a new Value. OpBr / OpBrIf with this scope as
+//     target branches to header (not postB) — each back-edge
+//     appends the current slot Value to every header phi's Args.
+//     OpEnd terminates the loop body with br to postB; cur =
+//     postB. TrivialPhis later prunes any phi whose Args reduce
+//     to a single distinct Value.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -177,11 +190,17 @@ type lifter struct {
 
 // scope describes one open control-flow construct.
 type scope struct {
-	kind ir.OpKind // ir.OpIf or ir.OpBlock (ir.OpLoop in later PRs).
+	kind ir.OpKind // ir.OpIf / ir.OpBlock / ir.OpLoop.
 
-	thenB *Block
-	elseB *Block
-	postB *Block
+	thenB  *Block
+	elseB  *Block
+	postB  *Block
+	header *Block // OpLoop only — branch target for back-edges.
+
+	// For OpLoop only: per-slot phi nodes inserted at the header.
+	// Indexed parallel to l.slots; nil entries for uninitialised
+	// slots at loop entry.
+	loopPhis []*Op
 
 	// Slot snapshots used to build the merge phis.
 	preSlots  []Value // slots state entering the scope
@@ -370,6 +389,48 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			blockType:   op.I32,
 			stackHeight: len(l.stack),
 		})
+	case ir.OpLoop:
+		if op.I32 != ir.BlockTypeVoid {
+			return fmt.Errorf("ssa.LiftFromIR: OpLoop at op[%d] non-void BlockType %d not yet supported", i, op.I32)
+		}
+		header := l.out.NewBlock()
+		postB := l.out.NewBlock()
+		l.out.SetBr(l.cur, header)
+		// Eagerly create a phi at the header for every initialised
+		// slot. Args[0] = pre-loop value (current); back-edges
+		// append their value at OpBr/OpBrIf time. TrivialPhis
+		// later prunes phis whose Args collapse to a single value.
+		loopPhis := make([]*Op, len(l.slots))
+		for sIdx, v := range l.slots {
+			if !v.IsValid() {
+				continue
+			}
+			phiResult := l.out.AddPhi(header, v)
+			// AddPhi returns the freshly-minted Value; grab the
+			// underlying Op from header.Ops (last entry, since
+			// AddPhi prepends to keep phis at top — actually it
+			// inserts after any existing phis. Walk header.Ops
+			// to find our just-added one).
+			var phiOp *Op
+			for _, op := range header.Ops {
+				if op.Kind == OpPhi && op.Result == phiResult {
+					phiOp = op
+					break
+				}
+			}
+			loopPhis[sIdx] = phiOp
+			l.slots[sIdx] = phiResult
+		}
+		l.scopes = append(l.scopes, scope{
+			kind:        ir.OpLoop,
+			header:      header,
+			postB:       postB,
+			preSlots:    append([]Value(nil), l.slots...),
+			blockType:   op.I32,
+			stackHeight: len(l.stack),
+			loopPhis:    loopPhis,
+		})
+		l.cur = header
 	case ir.OpElse:
 		if len(l.scopes) == 0 {
 			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] with no open scope", i)
@@ -415,6 +476,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			}
 		case ir.OpBlock:
 			l.endBlockScope(top)
+		case ir.OpLoop:
+			l.endLoopScope(top)
 		default:
 			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] for unsupported scope kind %v", i, top.kind)
 		}
@@ -425,23 +488,34 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				i, depth, len(l.scopes))
 		}
 		target := &l.scopes[len(l.scopes)-1-depth]
-		if target.kind != ir.OpBlock && target.kind != ir.OpIf {
-			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] targets scope kind %v; only OpBlock/OpIf supported",
-				i, target.kind)
-		}
-		var stackTop Value
-		if target.blockType != ir.BlockTypeVoid {
-			if len(l.stack) < 1 {
-				return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] needs 1 value (target is non-void scope)", i)
+		switch target.kind {
+		case ir.OpBlock, ir.OpIf:
+			var stackTop Value
+			if target.blockType != ir.BlockTypeVoid {
+				if len(l.stack) < 1 {
+					return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] needs 1 value (target is non-void scope)", i)
+				}
+				stackTop = l.stack[len(l.stack)-1]
 			}
-			stackTop = l.stack[len(l.stack)-1]
+			target.brSources = append(target.brSources, brSource{
+				block:    l.cur,
+				slots:    append([]Value(nil), l.slots...),
+				stackTop: stackTop,
+			})
+			l.out.SetBr(l.cur, target.postB)
+		case ir.OpLoop:
+			// Back-edge: branch to header, append every header
+			// phi's Args with the current slot value.
+			l.out.SetBr(l.cur, target.header)
+			for sIdx, phi := range target.loopPhis {
+				if phi == nil {
+					continue
+				}
+				phi.Args = append(phi.Args, l.slots[sIdx])
+			}
+		default:
+			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] targets unsupported scope kind %v", i, target.kind)
 		}
-		target.brSources = append(target.brSources, brSource{
-			block:    l.cur,
-			slots:    append([]Value(nil), l.slots...),
-			stackTop: stackTop,
-		})
-		l.out.SetBr(l.cur, target.postB)
 		l.cur = nil
 	case ir.OpBrIf:
 		depth := int(op.I32)
@@ -450,8 +524,8 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				i, depth, len(l.scopes))
 		}
 		target := &l.scopes[len(l.scopes)-1-depth]
-		if target.kind != ir.OpBlock && target.kind != ir.OpIf {
-			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] targets scope kind %v; only OpBlock/OpIf supported",
+		if target.kind != ir.OpBlock && target.kind != ir.OpIf && target.kind != ir.OpLoop {
+			return fmt.Errorf("ssa.LiftFromIR: OpBrIf at op[%d] targets unsupported scope kind %v",
 				i, target.kind)
 		}
 		if len(l.stack) < 1 {
@@ -467,12 +541,23 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			stackTop = l.stack[len(l.stack)-1]
 		}
 		fallthroughB := l.out.NewBlock()
-		target.brSources = append(target.brSources, brSource{
-			block:    l.cur,
-			slots:    append([]Value(nil), l.slots...),
-			stackTop: stackTop,
-		})
-		l.out.SetBrIf(l.cur, cond, target.postB, fallthroughB)
+		switch target.kind {
+		case ir.OpBlock, ir.OpIf:
+			target.brSources = append(target.brSources, brSource{
+				block:    l.cur,
+				slots:    append([]Value(nil), l.slots...),
+				stackTop: stackTop,
+			})
+			l.out.SetBrIf(l.cur, cond, target.postB, fallthroughB)
+		case ir.OpLoop:
+			l.out.SetBrIf(l.cur, cond, target.header, fallthroughB)
+			for sIdx, phi := range target.loopPhis {
+				if phi == nil {
+					continue
+				}
+				phi.Args = append(phi.Args, l.slots[sIdx])
+			}
+		}
 		l.cur = fallthroughB
 	case ir.OpReturn:
 		if len(l.stack) < 1 {
@@ -640,6 +725,32 @@ func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
 		}
 		l.slots[i] = l.out.AddPhi(postB, args...)
 	}
+}
+
+// endLoopScope closes an OpLoop scope. Fall-through past the
+// loop body goes to postB. The header phis already have one
+// arg per back-edge appended at the OpBr/OpBrIf sites; if the
+// loop body fell through (l.cur != nil at OpEnd), that's a
+// silent fall-through edge that doesn't loop back (wasm OpLoop
+// semantics: fall-through goes past OpEnd, NOT back to the
+// header).
+//
+// If the loop body never fell through (always looped back or
+// exited via OpBr/OpReturn), cur stays nil so the outer scope's
+// endX doesn't pick up loop.postB as a phantom fall-through
+// source — that would put an unreachable Pred into the outer
+// merge and pull in Values that don't dominate it.
+func (l *lifter) endLoopScope(top scope) {
+	if l.cur != nil {
+		l.out.SetBr(l.cur, top.postB)
+		l.cur = top.postB
+		return
+	}
+	// Loop body never fell through — postB is unreachable. Give
+	// it a void-ret terminator so Verify doesn't reject; the
+	// upcoming PruneUnreachable pass will drop the block in
+	// Optimize.
+	l.out.SetRet(top.postB, Value{})
 }
 
 // endBlockScope closes an OpBlock scope. Merges the fall-through
