@@ -756,3 +756,131 @@ function main(): i32 {
 		t.Fatalf("map get_or = %q, want 10", got)
 	}
 }
+
+// importExists walks the import section (id 0x02) and returns true
+// iff an import with the given (module, name) pair is present.
+func importExists(t *testing.T, bin []byte, wantModule, wantName string) bool {
+	t.Helper()
+	if len(bin) < 8 {
+		return false
+	}
+	readULEB := func(buf []byte, i *int) int {
+		n := 0
+		sh := 0
+		for {
+			b := buf[*i]
+			*i++
+			n |= int(b&0x7f) << sh
+			if b&0x80 == 0 {
+				return n
+			}
+			sh += 7
+		}
+	}
+	i := 8
+	for i < len(bin) {
+		id := bin[i]
+		i++
+		size := readULEB(bin, &i)
+		if id != 0x02 {
+			i += size
+			continue
+		}
+		body := bin[i : i+size]
+		j := 0
+		cnt := readULEB(body, &j)
+		for k := 0; k < cnt; k++ {
+			ml := readULEB(body, &j)
+			mod := string(body[j : j+ml])
+			j += ml
+			nl := readULEB(body, &j)
+			name := string(body[j : j+nl])
+			j += nl
+			kind := body[j]
+			j++
+			switch kind {
+			case 0x00:
+				readULEB(body, &j)
+			case 0x01:
+				j++
+				flags := body[j]
+				j++
+				readULEB(body, &j)
+				if flags&0x01 != 0 {
+					readULEB(body, &j)
+				}
+			case 0x02:
+				flags := body[j]
+				j++
+				readULEB(body, &j)
+				if flags&0x01 != 0 {
+					readULEB(body, &j)
+				}
+			case 0x03:
+				j++
+				j++
+			}
+			if mod == wantModule && name == wantName {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// TestBuildPreview2WASIRenamesProcExit — with Preview2WASI=true,
+// a Lang program that calls exit() emits its termination import
+// as `wasi:cli/exit@0.2.0::exit` (preview-2) instead of
+// `wasi_snapshot_preview1::proc_exit`. Core-wasm signature is
+// unchanged ((i32) -> ()), so __lang_exit's call site needs no
+// adjustment. Foundation for wiring the wrap.go preview-2
+// pipeline into the default driver path.
+func TestBuildPreview2WASIRenamesProcExit(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    exit(0);
+    return 0;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{Preview2WASI: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if importExists(t, bin, "wasi_snapshot_preview1", "proc_exit") {
+		t.Errorf("module still has preview-1 proc_exit import under Preview2WASI=true")
+	}
+	if !importExists(t, bin, "wasi:cli/exit@0.2.0", "exit") {
+		t.Errorf("module missing wasi:cli/exit@0.2.0::exit import under Preview2WASI=true")
+	}
+}
+
+// TestBuildPreview2WASIDefaultLeavesProcExit — the default
+// (Preview2WASI=false) path still emits the preview-1
+// proc_exit import. Pins the opt-in shape of the migration.
+func TestBuildPreview2WASIDefaultLeavesProcExit(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    exit(0);
+    return 0;
+}
+`
+	bin, err := buildFromSource(t, src)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !importExists(t, bin, "wasi_snapshot_preview1", "proc_exit") {
+		t.Errorf("default build missing preview-1 proc_exit import")
+	}
+	if importExists(t, bin, "wasi:cli/exit@0.2.0", "exit") {
+		t.Errorf("default build has preview-2 exit import without opt-in")
+	}
+}

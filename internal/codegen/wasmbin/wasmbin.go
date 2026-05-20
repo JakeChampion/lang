@@ -98,6 +98,16 @@ type EmitOptions struct {
 	// `cabi_realloc` export the host calls back for list<u8>
 	// allocations. Mirrors the WAT path's `EmitOptions.HttpHandler`.
 	HttpHandler bool
+	// Preview2WASI rewrites preview-1-shaped WASI imports to their
+	// preview-2 component-model equivalents. Currently scoped to
+	// `proc_exit` — the only import whose core-wasm signature is
+	// identical across the two preview generations (i32 → ()). The
+	// canonical-ABI `result<_, _>` that lifts to wasi:cli/exit::exit
+	// also lowers to a single i32, so __lang_exit's call site is
+	// untouched. Off by default; opt-in for the WrapWasiImported
+	// pipeline that produces preview-2-native components without
+	// the wasm-tools adapter shell-out.
+	Preview2WASI bool
 }
 
 // Emit is EmitWithOptions with the zero-value options.
@@ -371,6 +381,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// is stable.
 	for _, name := range importNeeds.order {
 		spec := importSpecs[name]
+		if opts.Preview2WASI && name == "wasi_proc_exit" {
+			spec.module = "wasi:cli/exit@0.2.0"
+			spec.name = "exit"
+		}
 		tIdx := addType(spec.params, spec.results)
 		m.ImportModules = append(m.ImportModules, spec.module)
 		m.ImportNames = append(m.ImportNames, spec.name)

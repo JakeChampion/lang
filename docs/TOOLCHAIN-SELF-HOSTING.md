@@ -361,11 +361,18 @@ End-to-end exit code 42 demo (covered by
   still emits preview-1 imports (`fd_write`, `path_open`, etc.).
   Migrating each to its preview-2 equivalent lifts more programs
   into the no-imports class that `-component-wrap` already handles
-  end-to-end. `proc_exit` → `wasi:cli/exit::exit` is the smallest
-  first migration (signature is unchanged, just import-name byte
-  strings). HTTP body / file I/O migrations are larger because
-  they require canonical-ABI marshalling at the call site
-  (list<u8> instead of raw pointers + lengths).
+  end-to-end. **First migration shipped:** `proc_exit` →
+  `wasi:cli/exit@0.2.0.exit` under `BuildOptions.Preview2WASI`
+  (opt-in; default still emits preview-1). The core-wasm signature
+  is unchanged ((i32) → ()) so `__lang_exit`'s call site stays
+  untouched. Pinned by `TestBuildPreview2WASIRenamesProcExit` /
+  `TestBuildPreview2WASIDefaultLeavesProcExit` in
+  `internal/codegen/wasmbin/build_test.go`. Still to do: wire
+  `-component-wrap` to detect the new import + drive
+  `WrapWasiImported`, then migrate the remaining imports.
+  HTTP body / file I/O migrations are larger because they require
+  canonical-ABI marshalling at the call site (list<u8> instead of
+  raw pointers + lengths).
 - **Compound canonical-ABI shapes.** `canon lower` with
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering
