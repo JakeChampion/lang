@@ -45,7 +45,18 @@ func tryFold(op *Op, defs map[int32]*Op) {
 	switch op.Kind {
 	case OpAdd, OpSub, OpMul, OpDiv, OpRem,
 		OpAnd, OpOr, OpXor,
+		OpShl, OpShr,
 		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+	case OpNeg:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constInt(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteInt(op, -v)
+		return
 	default:
 		return
 	}
@@ -81,6 +92,16 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		rewriteInt(op, lhs|rhs)
 	case OpXor:
 		rewriteInt(op, lhs^rhs)
+	case OpShl:
+		if rhs < 0 || rhs >= 64 {
+			return
+		}
+		rewriteInt(op, lhs<<uint(rhs))
+	case OpShr:
+		if rhs < 0 || rhs >= 64 {
+			return
+		}
+		rewriteInt(op, lhs>>uint(rhs))
 	case OpEq:
 		rewriteBool(op, lhs == rhs)
 	case OpNe:
