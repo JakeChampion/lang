@@ -37,6 +37,7 @@ func Optimize(f *Func) int {
 	for i := 1; i <= maxOptimizeIters; i++ {
 		Fold(f)
 		Simplify(f)
+		StrengthReduce(f)
 		Canonicalize(f)
 		FoldBranches(f)
 		PruneUnreachable(f)
