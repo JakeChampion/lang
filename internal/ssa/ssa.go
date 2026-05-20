@@ -117,6 +117,16 @@ const (
 	OpFToIS // float64 → int64 (signed truncation)
 	OpFToIU // float64 → int64 (unsigned truncation)
 
+	// Bit reinterpret — same-width float ↔ int with no value
+	// conversion (just re-types the bit pattern). Lowers to
+	// wasm's i32.reinterpret_f32 / f32.reinterpret_i32 /
+	// i64.reinterpret_f64 / f64.reinterpret_i64. Four kinds
+	// to preserve the width distinction the IR encodes.
+	OpReinterpretF32ToI32 // (f32 bits) → (i32 with same bit pattern)
+	OpReinterpretI32ToF32 // (i32 bits) → (f32 with same bit pattern)
+	OpReinterpretF64ToI64 // (f64 bits) → (i64 with same bit pattern)
+	OpReinterpretI64ToF64 // (i64 bits) → (f64 with same bit pattern)
+
 	// Unary logical — boolean negation. Args[0] is a bool
 	// Value; result is the flipped bool.
 	OpNot
@@ -236,6 +246,14 @@ func (k OpKind) String() string {
 		return "f_to_i_s"
 	case OpFToIU:
 		return "f_to_i_u"
+	case OpReinterpretF32ToI32:
+		return "reinterpret_f32_to_i32"
+	case OpReinterpretI32ToF32:
+		return "reinterpret_i32_to_f32"
+	case OpReinterpretF64ToI64:
+		return "reinterpret_f64_to_i64"
+	case OpReinterpretI64ToF64:
+		return "reinterpret_i64_to_f64"
 	case OpNot:
 		return "not"
 	case OpSelect:
