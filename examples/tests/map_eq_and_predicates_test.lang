@@ -146,7 +146,7 @@ function test_assert_any_i32_empty_fails(): Option[string] {
     }
 }
 
-function is_non_empty(s: string): boolean { return len(s) > 0; }
+function is_non_empty(s: string): boolean { return s.len() > 0; }
 
 function test_assert_all_string_pass(): Option[string] {
     return assert_all_string(["a", "bc", "def"], is_non_empty);

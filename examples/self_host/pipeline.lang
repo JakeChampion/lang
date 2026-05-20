@@ -78,7 +78,7 @@ function main(): i32 {
     var folded2: parser.Module = constfold.fold_module(mod2);
     // fact + main funcs; main's first stmt is `var c = …`
     // whose init should be a single ExprNumber after folding.
-    if (len(folded2.funcs) != 2) { return 20; }
+    if (folded2.funcs.len() != 2) { return 20; }
     match (folded2.funcs[1].body[0]) {
         parser.StmtVar(v) => {
             match (v.init) {

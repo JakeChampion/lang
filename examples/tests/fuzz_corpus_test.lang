@@ -21,7 +21,7 @@ function check_no_x(input: string): Option[string] {
     // ONLY by genuine bugs, not by the mutation strategy
     // landing in an unrelated character class — otherwise the
     // run is flaky.)
-    if (len(input) < 0) { return Some("len negative"); }
+    if (input.len() < 0) { return Some("len negative"); }
     return None;
 }
 

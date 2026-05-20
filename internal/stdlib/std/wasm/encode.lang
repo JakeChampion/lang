@@ -54,7 +54,7 @@ pub function section_data(): u8     { return 11u8; }
 // splice a precomputed section body onto a growing module, or to
 // concatenate two preallocated chunks.
 pub function put_bytes(buf: u8[], src: u8[]): u8[] {
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var out: u8[] = buf;
     var i: i32 = 0;
     while (i < n) {
@@ -96,7 +96,7 @@ pub function put_module_header(buf: u8[]): u8[] {
 // Lang's string is a byte sequence underneath, and this matches
 // the wasm spec's "name = vec(byte)" definition.
 pub function put_name(buf: u8[], s: string): u8[] {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var out: u8[] = leb128.uleb_u32(buf, n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -114,7 +114,7 @@ pub function put_name(buf: u8[], s: string): u8[] {
 pub function put_section(buf: u8[], id: u8, body: u8[]): u8[] {
     var out: u8[] = buf;
     out = out.push(id);
-    out = leb128.uleb_u32(out, len(body) as u32);
+    out = leb128.uleb_u32(out, body.len() as u32);
     out = put_bytes(out, body);
     return out;
 }
@@ -128,9 +128,9 @@ pub function put_section(buf: u8[], id: u8, body: u8[]): u8[] {
 pub function put_func_type(buf: u8[], params: u8[], results: u8[]): u8[] {
     var out: u8[] = buf;
     out = out.push(96u8);    // 0x60 functype tag
-    out = leb128.uleb_u32(out, len(params) as u32);
+    out = leb128.uleb_u32(out, params.len() as u32);
     out = put_bytes(out, params);
-    out = leb128.uleb_u32(out, len(results) as u32);
+    out = leb128.uleb_u32(out, results.len() as u32);
     out = put_bytes(out, results);
     return out;
 }

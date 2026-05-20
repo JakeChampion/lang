@@ -71,6 +71,6 @@ pub function put_component_header(buf: u8[]): u8[] {
 pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
     var out: u8[] = buf;
     out = out.push(section_core_module());
-    out = leb128.uleb_u32(out, len(core_bytes) as u32);
+    out = leb128.uleb_u32(out, core_bytes.len() as u32);
     return encode.put_bytes(out, core_bytes);
 }

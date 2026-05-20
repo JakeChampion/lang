@@ -100,7 +100,7 @@ pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
 // the descriptor body that the matching import_desc_* helper
 // produced.
 pub function encode_import_section(buf: u8[], modules: string[], names: string[], kinds: u8[], desc_bodies: u8[][]): u8[] {
-    var n: i32 = len(modules);
+    var n: i32 = modules.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -121,7 +121,7 @@ pub function encode_import_section(buf: u8[], modules: string[], names: string[]
 // typical shape is `i32.const N ; end` (3 bytes for small N),
 // produced by inst.inst_i32_const followed by inst.inst_end.
 pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_exprs: u8[][]): u8[] {
-    var n: i32 = len(valtypes);
+    var n: i32 = valtypes.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {

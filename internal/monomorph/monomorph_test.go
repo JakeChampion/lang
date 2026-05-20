@@ -217,7 +217,7 @@ function main(): i32 {
 function main(): i32 {
     var a: i32[] = [1, 2, 3, 4];
     var s: [i32] = a[id(0):id(2)];
-    return len(s);
+    return s.len();
 }`},
 		{node: "FieldAccess", src: `function id[T](x: T): T { return x; }
 struct P { x: i32 }
@@ -262,7 +262,7 @@ function main(): i32 {
 		{node: "FString.Interpolant", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
     var s: string = f"x={id(42)}";
-    return len(s);
+    return s.len();
 }`},
 		{node: "Assign", src: `function id[T](x: T): T { return x; }
 function main(): i32 {

@@ -36,9 +36,9 @@ function read_all(r: Reader): string {
 }
 
 function row_to_object(headers: string[], row: string[]): JsonValue {
-  var m: Map[string, JsonValue] = map_new(len(headers));
+  var m: Map[string, JsonValue] = map_new(headers.len());
   var i: i32 = 0;
-  while (i < len(headers) && i < len(row)) {
+  while (i < headers.len() && i < row.len()) {
     m.set(headers[i].trim(), JString(row[i].trim()));
     i = i + 1;
   }
@@ -48,14 +48,14 @@ function row_to_object(headers: string[], row: string[]): JsonValue {
 function main(): i32 {
   var raw: string = read_all(stdin()).trim();
   var lines: string[] = raw.split("\n");
-  if (len(lines) == 0 || lines[0].is_empty()) {
+  if (lines.len() == 0 || lines[0].is_empty()) {
     print("[]");
     return 0;
   }
   var headers: string[] = lines[0].split(",");
   var rows: JsonValue[] = [];
   var i: i32 = 1;
-  while (i < len(lines)) {
+  while (i < lines.len()) {
     if (!lines[i].is_empty()) {
       var fields: string[] = lines[i].split(",");
       rows = rows.push(row_to_object(headers, fields));

@@ -250,7 +250,7 @@ function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 struct Par { toks: lexer.Token[], pos: i32 }
 
 function (p: Par) at_end(): boolean {
-    if (p.pos >= len(p.toks)) { return true; }
+    if (p.pos >= p.toks.len()) { return true; }
     var t: lexer.Token = p.toks[p.pos];
     match (t) {
         lexer.TokEof(_) => { return true; },
@@ -260,7 +260,7 @@ function (p: Par) at_end(): boolean {
 }
 
 function (p: Par) peek(): lexer.Token {
-    if (p.pos < len(p.toks)) { return p.toks[p.pos]; }
+    if (p.pos < p.toks.len()) { return p.toks[p.pos]; }
     return lexer.eof_tok(0, 0);
 }
 
@@ -355,13 +355,13 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             // store the field name as a bare string.
             p = p.advance();
             var fname: string = p.peek_ident();
-            if (len(fname) == 0) {
+            if (fname.len() == 0) {
                 match (p.peek()) {
                     lexer.TokNumber(n) => { fname = n.text; },
                     _ => { }
                 }
             }
-            if (len(fname) == 0) {
+            if (fname.len() == 0) {
                 return ExprResult { par: p, expr: e_unknown("missing field name after .") };
             }
             p = p.advance();
@@ -451,7 +451,7 @@ function parse_primary(p: Par): ExprResult {
                 var look: Par = p.advance();
                 if (look.peek_punct() == "}") {
                     struct_lit_ok = true;
-                } else if (len(look.peek_ident()) > 0) {
+                } else if ((look.peek_ident()).len() > 0) {
                     var look2: Par = look.advance();
                     if (look2.peek_punct() == ":") { struct_lit_ok = true; }
                 }
@@ -463,7 +463,7 @@ function parse_primary(p: Par): ExprResult {
                 if (p.peek_punct() != "}") {
                     while (true) {
                         var fname: string = p.peek_ident();
-                        if (len(fname) == 0) {
+                        if (fname.len() == 0) {
                             return ExprResult { par: p, expr: e_unknown("missing field name in struct lit") };
                         }
                         p = p.advance();
@@ -627,7 +627,7 @@ function parse_pattern(p: Par): PatternResult {
         p = p.advance();
         return PatternResult { par: p, pattern: p_wildcard() };
     }
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         return PatternResult { par: p, pattern: p_variant("", "") };
     }
     p = p.advance();
@@ -635,7 +635,7 @@ function parse_pattern(p: Par): PatternResult {
     if (p.peek_punct() == "(") {
         p = p.advance();
         var inner: string = p.peek_ident();
-        if (len(inner) > 0) {
+        if (inner.len() > 0) {
             binding = inner;
             p = p.advance();
         }
@@ -737,7 +737,7 @@ function parse_stmt(p: Par): StmtResult {
         // it through peek_ident rather than peek_keyword.
         p = p.advance();  // consume `for`
         var fvar: string = p.peek_ident();
-        if (len(fvar) == 0) {
+        if (fvar.len() == 0) {
             return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
         }
         p = p.advance();
@@ -754,7 +754,7 @@ function parse_stmt(p: Par): StmtResult {
     if (kw == "var") {
         p = p.advance();
         var name: string = p.peek_ident();
-        if (len(name) == 0) {
+        if (name.len() == 0) {
             return StmtResult { par: p, stmt: s_unknown("missing var name") };
         }
         p = p.advance();
@@ -829,7 +829,7 @@ function parse_stmt(p: Par): StmtResult {
             // `x += y` desugars to `x = x + y`. Strip the
             // trailing `=` off the op to recover the binary
             // operator the source intended.
-            var op: string = assign_op[0:len(assign_op) - 1];
+            var op: string = assign_op[0:assign_op.len() - 1];
             rhs = e_binary(op, e_ident(target), rhs);
         }
         return StmtResult { par: p, stmt: s_assign(target, rhs) };
@@ -866,8 +866,8 @@ pub struct TypeNameResult { par: Par, name: string }
 
 function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
-    if (len(base) == 0) { base = p.peek_keyword(); }
-    if (len(base) == 0) {
+    if (base.len() == 0) { base = p.peek_keyword(); }
+    if (base.len() == 0) {
         return TypeNameResult { par: p, name: "" };
     }
     p = p.advance();
@@ -887,8 +887,8 @@ function parse_type_name(p: Par): TypeNameResult {
         if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); continue; }
         if (pk == ",") { inner = inner + ", "; p = p.advance(); continue; }
         var seg: string = p.peek_ident();
-        if (len(seg) == 0) { seg = p.peek_keyword(); }
-        if (len(seg) == 0) { break; }
+        if (seg.len() == 0) { seg = p.peek_keyword(); }
+        if (seg.len() == 0) { break; }
         inner = inner + seg;
         p = p.advance();
     }
@@ -898,7 +898,7 @@ function parse_type_name(p: Par): TypeNameResult {
 
 function parse_param(p: Par): ParamResult {
     var name: string = p.peek_ident();
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         return ParamResult { par: p, param: ParamDecl { name: "", type_name: "" } };
     }
     p = p.advance();
@@ -931,7 +931,7 @@ function parse_func_decl(p: Par): FuncResult {
     if (p.peek_punct() == "(") {
         p = p.advance();
         receiver_name = p.peek_ident();
-        if (len(receiver_name) > 0) {
+        if (receiver_name.len() > 0) {
             p = p.advance();
             if (p.peek_punct() == ":") {
                 p = p.advance();
@@ -943,7 +943,7 @@ function parse_func_decl(p: Par): FuncResult {
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
     var name: string = p.peek_ident();
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
@@ -985,7 +985,7 @@ pub struct StructFieldResult { par: Par, field: StructFieldDecl }
 
 function parse_struct_field(p: Par): StructFieldResult {
     var name: string = p.peek_ident();
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         return StructFieldResult { par: p, field: StructFieldDecl { name: "", type_name: "" } };
     }
     p = p.advance();
@@ -1008,7 +1008,7 @@ pub struct StructResult { par: Par, decl: StructDecl }
 function parse_struct_decl(p: Par): StructResult {
     p = p.advance();  // consume `struct`
     var name: string = p.peek_ident();
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
         return StructResult { par: p, decl: StructDecl { name: "", fields: empty } };
     }
@@ -1042,7 +1042,7 @@ pub struct TypeAliasResult { par: Par, alias: TypeAlias }
 function parse_type_alias(p: Par): TypeAliasResult {
     p = p.advance();  // consume `type`
     var name: string = p.peek_ident();
-    if (len(name) == 0) {
+    if (name.len() == 0) {
         var empty: string[] = [];
         return TypeAliasResult { par: p, alias: TypeAlias { name: "", variants: empty } };
     }
@@ -1055,7 +1055,7 @@ function parse_type_alias(p: Par): TypeAliasResult {
     var variants: string[] = [];
     while (true) {
         var v: string = p.peek_ident();
-        if (len(v) == 0) {
+        if (v.len() == 0) {
             // Allow keyword-style variants too (e.g. `null` if it
             // ever lexes as a keyword); for now fall through to
             // end-of-list handling.
@@ -1147,13 +1147,13 @@ pub function parse_module(toks: lexer.Token[]): Module {
 pub function merge_module(into: Module, from: Module): Module {
     var nfuncs: FuncDecl[] = into.funcs;
     var fi: i32 = 0;
-    while (fi < len(from.funcs)) { nfuncs = nfuncs.push(from.funcs[fi]); fi = fi + 1; }
+    while (fi < from.funcs.len()) { nfuncs = nfuncs.push(from.funcs[fi]); fi = fi + 1; }
     var nstructs: StructDecl[] = into.structs;
     var si: i32 = 0;
-    while (si < len(from.structs)) { nstructs = nstructs.push(from.structs[si]); si = si + 1; }
+    while (si < from.structs.len()) { nstructs = nstructs.push(from.structs[si]); si = si + 1; }
     var naliases: TypeAlias[] = into.aliases;
     var ai: i32 = 0;
-    while (ai < len(from.aliases)) { naliases = naliases.push(from.aliases[ai]); ai = ai + 1; }
+    while (ai < from.aliases.len()) { naliases = naliases.push(from.aliases[ai]); ai = ai + 1; }
     return Module {
         funcs: nfuncs,
         structs: nstructs,
@@ -1171,7 +1171,7 @@ pub function merge_module(into: Module, from: Module): Module {
 pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
     var nfuncs: FuncDecl[] = into.funcs;
     var fi: i32 = 0;
-    while (fi < len(from.funcs)) {
+    while (fi < from.funcs.len()) {
         var fd: FuncDecl = from.funcs[fi];
         nfuncs = nfuncs.push(FuncDecl {
             name: prefix + "." + fd.name,
@@ -1185,14 +1185,14 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     }
     var nstructs: StructDecl[] = into.structs;
     var si: i32 = 0;
-    while (si < len(from.structs)) {
+    while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
         nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
     var ai: i32 = 0;
-    while (ai < len(from.aliases)) {
+    while (ai < from.aliases.len()) {
         var ad: TypeAlias = from.aliases[ai];
         naliases = naliases.push(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants });
         ai = ai + 1;
@@ -1216,7 +1216,7 @@ function main(): i32 {
     var src: string = "var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;";
     var toks: lexer.Token[] = lexer.tokenize(src);
     var prog: Stmt[] = parse_program(toks);
-    if (len(prog) != 3) { return 1; }
+    if (prog.len() != 3) { return 1; }
 
     // Stmt 0: var x = 1 + 2 * 3   →   StmtVar { name: "x", init: ExprBinary "+" }
     match (prog[0]) {
@@ -1291,7 +1291,7 @@ function main(): i32 {
     // should produce a single StmtIf with one stmt in each branch.
     var src2: string = "if (x < 0) { var a = 1; } else { var b = 2; }";
     var prog2: Stmt[] = parse_program(lexer.tokenize(src2));
-    if (len(prog2) != 1) { return 400; }
+    if (prog2.len() != 1) { return 400; }
     match (prog2[0]) {
         StmtIf(ifs) => {
             // cond: ExprBinary `<`.
@@ -1299,8 +1299,8 @@ function main(): i32 {
                 ExprBinary(b) => { if (b.op != "<") { return 401; } },
                 _ => { return 402; }
             }
-            if (len(ifs.then_body) != 1) { return 403; }
-            if (len(ifs.else_body) != 1) { return 404; }
+            if (ifs.then_body.len() != 1) { return 403; }
+            if (ifs.else_body.len() != 1) { return 404; }
         },
         _ => { return 405; }
     }
@@ -1310,7 +1310,7 @@ function main(): i32 {
     var prog3: Stmt[] = parse_program(lexer.tokenize(src3));
     match (prog3[0]) {
         StmtIf(ifs) => {
-            if (len(ifs.else_body) != 0) { return 500; }
+            if (ifs.else_body.len() != 0) { return 500; }
         },
         _ => { return 501; }
     }
@@ -1319,14 +1319,14 @@ function main(): i32 {
     // with cond ExprBinary `<` and a single-stmt body (StmtAssign).
     var src4: string = "while (i < 5) { i = i + 1; }";
     var prog4: Stmt[] = parse_program(lexer.tokenize(src4));
-    if (len(prog4) != 1) { return 600; }
+    if (prog4.len() != 1) { return 600; }
     match (prog4[0]) {
         StmtWhile(w) => {
             match (w.cond) {
                 ExprBinary(b) => { if (b.op != "<") { return 601; } },
                 _ => { return 602; }
             }
-            if (len(w.body) != 1) { return 603; }
+            if (w.body.len() != 1) { return 603; }
             match (w.body[0]) {
                 StmtAssign(a) => {
                     if (a.target != "i") { return 604; }
@@ -1346,7 +1346,7 @@ function main(): i32 {
     // ExprNumber("1")). Confirms the desugar fires.
     var srcC: string = "x += 1;";
     var progC: Stmt[] = parse_program(lexer.tokenize(srcC));
-    if (len(progC) != 1) { return 700; }
+    if (progC.len() != 1) { return 700; }
     match (progC[0]) {
         StmtAssign(a) => {
             if (a.target != "x") { return 701; }
@@ -1405,32 +1405,32 @@ function main(): i32 {
     // parse_module: two function decls, no top-level stmts.
     var src5: string = "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }";
     var mod: Module = parse_module(lexer.tokenize(src5));
-    if (len(mod.funcs) != 2) { return 700; }
-    if (len(mod.top_stmts) != 0) { return 701; }
+    if (mod.funcs.len() != 2) { return 700; }
+    if (mod.top_stmts.len() != 0) { return 701; }
     // add: name, 2 params, ret type i32.
     if (mod.funcs[0].name != "add") { return 702; }
-    if (len(mod.funcs[0].params) != 2) { return 703; }
+    if (mod.funcs[0].params.len() != 2) { return 703; }
     if (mod.funcs[0].params[0].name != "x") { return 704; }
     if (mod.funcs[0].params[0].type_name != "i32") { return 705; }
     if (mod.funcs[0].ret_type != "i32") { return 706; }
-    if (len(mod.funcs[0].body) != 1) { return 707; }
+    if (mod.funcs[0].body.len() != 1) { return 707; }
     // main: name, 0 params, ret type i32.
     if (mod.funcs[1].name != "main") { return 708; }
-    if (len(mod.funcs[1].params) != 0) { return 709; }
+    if (mod.funcs[1].params.len() != 0) { return 709; }
     if (mod.funcs[1].ret_type != "i32") { return 710; }
 
     // parse_module: struct decls.
     var srcSt: string = "struct Point { x: i32, y: i32 } struct Empty { } function main(): i32 { return 0; }";
     var modSt: Module = parse_module(lexer.tokenize(srcSt));
-    if (len(modSt.structs) != 2) { return 720; }
+    if (modSt.structs.len() != 2) { return 720; }
     if (modSt.structs[0].name != "Point") { return 721; }
-    if (len(modSt.structs[0].fields) != 2) { return 722; }
+    if (modSt.structs[0].fields.len() != 2) { return 722; }
     if (modSt.structs[0].fields[0].name != "x") { return 723; }
     if (modSt.structs[0].fields[0].type_name != "i32") { return 724; }
     if (modSt.structs[0].fields[1].name != "y") { return 725; }
     if (modSt.structs[1].name != "Empty") { return 726; }
-    if (len(modSt.structs[1].fields) != 0) { return 727; }
-    if (len(modSt.funcs) != 1) { return 728; }
+    if (modSt.structs[1].fields.len() != 0) { return 727; }
+    if (modSt.funcs.len() != 1) { return 728; }
     if (modSt.funcs[0].name != "main") { return 729; }
 
     // Struct literal: `var p = Point { x: 3, y: 4 };`
@@ -1442,7 +1442,7 @@ function main(): i32 {
             match (v.init) {
                 ExprStructLit(sl) => {
                     if (sl.type_name != "Point") { return 801; }
-                    if (len(sl.field_names) != 2) { return 802; }
+                    if (sl.field_names.len() != 2) { return 802; }
                     if (sl.field_names[0] != "x") { return 803; }
                     if (sl.field_names[1] != "y") { return 804; }
                     match (sl.field_values[0]) {
@@ -1500,28 +1500,28 @@ function main(): i32 {
     //   pub type Cell  = Empty | Wall;
     var srcTy: string = "pub type Shape = Circle | Square | Triangle; pub type Cell = Empty | Wall; struct Circle { r: i32 } function main(): i32 { return 0; }";
     var modTy: Module = parse_module(lexer.tokenize(srcTy));
-    if (len(modTy.aliases) != 2) { return 830; }
+    if (modTy.aliases.len() != 2) { return 830; }
     if (modTy.aliases[0].name != "Shape") { return 831; }
-    if (len(modTy.aliases[0].variants) != 3) { return 832; }
+    if (modTy.aliases[0].variants.len() != 3) { return 832; }
     if (modTy.aliases[0].variants[0] != "Circle") { return 833; }
     if (modTy.aliases[0].variants[1] != "Square") { return 834; }
     if (modTy.aliases[0].variants[2] != "Triangle") { return 835; }
     if (modTy.aliases[1].name != "Cell") { return 836; }
-    if (len(modTy.aliases[1].variants) != 2) { return 837; }
+    if (modTy.aliases[1].variants.len() != 2) { return 837; }
     if (modTy.aliases[1].variants[0] != "Empty") { return 838; }
     if (modTy.aliases[1].variants[1] != "Wall") { return 839; }
     // Struct + func still parse alongside aliases.
-    if (len(modTy.structs) != 1) { return 840; }
+    if (modTy.structs.len() != 1) { return 840; }
     if (modTy.structs[0].name != "Circle") { return 841; }
-    if (len(modTy.funcs) != 1) { return 842; }
+    if (modTy.funcs.len() != 1) { return 842; }
     if (modTy.funcs[0].name != "main") { return 843; }
 
     // Single-variant alias is allowed (it's just a type-rename).
     var srcTy2: string = "type Id = Inner;";
     var modTy2: Module = parse_module(lexer.tokenize(srcTy2));
-    if (len(modTy2.aliases) != 1) { return 850; }
+    if (modTy2.aliases.len() != 1) { return 850; }
     if (modTy2.aliases[0].name != "Id") { return 851; }
-    if (len(modTy2.aliases[0].variants) != 1) { return 852; }
+    if (modTy2.aliases[0].variants.len() != 1) { return 852; }
     if (modTy2.aliases[0].variants[0] != "Inner") { return 853; }
 
     // Match statement: variant + wildcard arms with bindings.
@@ -1532,14 +1532,14 @@ function main(): i32 {
     //   }
     var srcMa: string = "match (e) { Circle(c) => { return 1; }, Square(_) => { return 2; }, _ => { return 3; } }";
     var progMa: Stmt[] = parse_program(lexer.tokenize(srcMa));
-    if (len(progMa) != 1) { return 900; }
+    if (progMa.len() != 1) { return 900; }
     match (progMa[0]) {
         StmtMatch(m) => {
             match (m.scrutinee) {
                 ExprIdent(id) => { if (id.name != "e") { return 901; } },
                 _ => { return 902; }
             }
-            if (len(m.arms) != 3) { return 903; }
+            if (m.arms.len() != 3) { return 903; }
             // Arm 0: Circle(c) => { return 1; }
             match (m.arms[0].pattern) {
                 PatVariant(pv) => {
@@ -1548,7 +1548,7 @@ function main(): i32 {
                 },
                 _ => { return 906; }
             }
-            if (len(m.arms[0].body) != 1) { return 907; }
+            if (m.arms[0].body.len() != 1) { return 907; }
             // Arm 1: Square(_) => { return 2; }
             match (m.arms[1].pattern) {
                 PatVariant(pv) => {
@@ -1571,7 +1571,7 @@ function main(): i32 {
     var progMb: Stmt[] = parse_program(lexer.tokenize(srcMb));
     match (progMb[0]) {
         StmtMatch(m) => {
-            if (len(m.arms) != 2) { return 920; }
+            if (m.arms.len() != 2) { return 920; }
             match (m.arms[0].pattern) {
                 PatVariant(pv) => {
                     if (pv.type_name != "Foo") { return 921; }
@@ -1621,18 +1621,18 @@ function main(): i32 {
     // name; the param list and return type behave normally.
     var srcRM: string = "function (p: Par) advance(n: i32): Par { return p; }";
     var modRM: Module = parse_module(lexer.tokenize(srcRM));
-    if (len(modRM.funcs) != 1) { return 960; }
+    if (modRM.funcs.len() != 1) { return 960; }
     if (modRM.funcs[0].name != "advance") { return 961; }
     if (modRM.funcs[0].receiver_name != "p") { return 962; }
     if (modRM.funcs[0].receiver_type != "Par") { return 963; }
-    if (len(modRM.funcs[0].params) != 1) { return 964; }
+    if (modRM.funcs[0].params.len() != 1) { return 964; }
     if (modRM.funcs[0].params[0].name != "n") { return 965; }
     if (modRM.funcs[0].ret_type != "Par") { return 966; }
 
     // Plain function — receiver fields stay empty.
     var srcRP: string = "function add(a: i32, b: i32): i32 { return a + b; }";
     var modRP: Module = parse_module(lexer.tokenize(srcRP));
-    if (len(modRP.funcs) != 1) { return 970; }
+    if (modRP.funcs.len() != 1) { return 970; }
     if (modRP.funcs[0].name != "add") { return 971; }
     if (modRP.funcs[0].receiver_name != "") { return 972; }
     if (modRP.funcs[0].receiver_type != "") { return 973; }
@@ -1641,32 +1641,32 @@ function main(): i32 {
     // cleanly. `function (s: Scope) is_empty(): bool { … }`.
     var srcR0: string = "function (s: Scope) is_empty(): bool { return false; }";
     var modR0: Module = parse_module(lexer.tokenize(srcR0));
-    if (len(modR0.funcs) != 1) { return 980; }
+    if (modR0.funcs.len() != 1) { return 980; }
     if (modR0.funcs[0].name != "is_empty") { return 981; }
     if (modR0.funcs[0].receiver_name != "s") { return 982; }
     if (modR0.funcs[0].receiver_type != "Scope") { return 983; }
-    if (len(modR0.funcs[0].params) != 0) { return 984; }
+    if (modR0.funcs[0].params.len() != 0) { return 984; }
 
     // Top-level imports: `import "./lexer"; import "./parser";`.
     // Both get captured into mod.imports as Import entries.
     var srcIm: string = "import \"./lexer\"; import \"./parser\"; function main(): i32 { return 0; }";
     var modIm: Module = parse_module(lexer.tokenize(srcIm));
-    if (len(modIm.imports) != 2) { return 990; }
+    if (modIm.imports.len() != 2) { return 990; }
     if (modIm.imports[0].path != "./lexer") { return 991; }
     if (modIm.imports[1].path != "./parser") { return 992; }
-    if (len(modIm.funcs) != 1) { return 993; }
+    if (modIm.funcs.len() != 1) { return 993; }
     if (modIm.funcs[0].name != "main") { return 994; }
 
     // Module without imports — list stays empty.
     var srcIp: string = "function main(): i32 { return 0; }";
     var modIp: Module = parse_module(lexer.tokenize(srcIp));
-    if (len(modIp.imports) != 0) { return 1000; }
+    if (modIp.imports.len() != 0) { return 1000; }
 
     // For-in loop: `for x in arr { … }` parses as StmtFor with
     // var_name + iter + body.
     var srcFor: string = "for x in arr { var y = x + 1; }";
     var progFor: Stmt[] = parse_program(lexer.tokenize(srcFor));
-    if (len(progFor) != 1) { return 1010; }
+    if (progFor.len() != 1) { return 1010; }
     match (progFor[0]) {
         StmtFor(fs) => {
             if (fs.var_name != "x") { return 1011; }
@@ -1674,7 +1674,7 @@ function main(): i32 {
                 ExprIdent(id) => { if (id.name != "arr") { return 1012; } },
                 _ => { return 1013; }
             }
-            if (len(fs.body) != 1) { return 1014; }
+            if (fs.body.len() != 1) { return 1014; }
         },
         _ => { return 1015; }
     }
@@ -1686,7 +1686,7 @@ function main(): i32 {
         StmtFor(fs) => {
             if (fs.var_name != "n") { return 1020; }
             match (fs.iter) {
-                ExprArray(a) => { if (len(a.elements) != 3) { return 1021; } },
+                ExprArray(a) => { if (a.elements.len() != 3) { return 1021; } },
                 _ => { return 1022; }
             }
         },
@@ -1701,7 +1701,7 @@ function main(): i32 {
         StmtVar(v) => {
             match (v.init) {
                 ExprTuple(t) => {
-                    if (len(t.elements) != 3) { return 1030; }
+                    if (t.elements.len() != 3) { return 1030; }
                     match (t.elements[0]) {
                         ExprNumber(n) => { if (n.text != "1") { return 1031; } },
                         _ => { return 1032; }
@@ -1733,7 +1733,7 @@ function main(): i32 {
         StmtVar(v) => {
             match (v.init) {
                 ExprTuple(t) => {
-                    if (len(t.elements) != 2) { return 1050; }
+                    if (t.elements.len() != 2) { return 1050; }
                     match (t.elements[1]) {
                         ExprString(s) => { if (s.value != "hi") { return 1051; } },
                         _ => { return 1052; }
@@ -1756,7 +1756,7 @@ function main(): i32 {
                 ExprFieldAccess(fa) => {
                     if (fa.field != "1") { return 1055; }
                     match (fa.obj) {
-                        ExprTuple(t) => { if (len(t.elements) != 3) { return 1056; } },
+                        ExprTuple(t) => { if (t.elements.len() != 3) { return 1056; } },
                         _ => { return 1057; }
                     }
                 },
@@ -1769,10 +1769,10 @@ function main(): i32 {
     // break / continue stmts.
     var srcBC: string = "while (true) { if (x > 10) { break; } if (x < 0) { continue; } }";
     var progBC: Stmt[] = parse_program(lexer.tokenize(srcBC));
-    if (len(progBC) != 1) { return 1060; }
+    if (progBC.len() != 1) { return 1060; }
     match (progBC[0]) {
         StmtWhile(w) => {
-            if (len(w.body) != 2) { return 1061; }
+            if (w.body.len() != 2) { return 1061; }
             match (w.body[0]) {
                 StmtIf(ifs) => {
                     match (ifs.then_body[0]) {
@@ -1799,7 +1799,7 @@ function main(): i32 {
     // captures the full spelling as a single string.
     var srcGT: string = "function lookup(m: Map[string, i32], k: string): i32 { return 0; }";
     var modGT: Module = parse_module(lexer.tokenize(srcGT));
-    if (len(modGT.funcs) != 1) { return 1080; }
+    if (modGT.funcs.len() != 1) { return 1080; }
     if (modGT.funcs[0].params[0].type_name != "Map[string, i32]") { return 1081; }
     if (modGT.funcs[0].params[1].type_name != "string") { return 1082; }
 
@@ -1811,7 +1811,7 @@ function main(): i32 {
     // Generic struct field type.
     var srcGS: string = "struct Cache { entries: Map[string, i32] } function main(): i32 { return 0; }";
     var modGS: Module = parse_module(lexer.tokenize(srcGS));
-    if (len(modGS.structs) != 1) { return 1084; }
+    if (modGS.structs.len() != 1) { return 1084; }
     if (modGS.structs[0].fields[0].type_name != "Map[string, i32]") { return 1085; }
 
     // Module merge — flat-concatenate decls from a "main"
@@ -1821,12 +1821,12 @@ function main(): i32 {
     var mainMod: Module = parse_module(lexer.tokenize(mainSrc));
     var greetMod: Module = parse_module(lexer.tokenize(greetSrc));
     var merged: Module = merge_module(mainMod, greetMod);
-    if (len(merged.funcs) != 2) { return 1090; }
+    if (merged.funcs.len() != 2) { return 1090; }
     // Order: mainMod.funcs first, then greetMod.funcs appended.
     if (merged.funcs[0].name != "main") { return 1091; }
     if (merged.funcs[1].name != "hello") { return 1092; }
     // imports + top_stmts come from `into` only.
-    if (len(merged.imports) != 1) { return 1093; }
+    if (merged.imports.len() != 1) { return 1093; }
 
     // Prefixed merge — same imports but each decl renamed to
     // `prefix.name`. Models cross-file flat-namespace
@@ -1835,9 +1835,9 @@ function main(): i32 {
     var pSrc: string = "pub function parse_module(): i32 { return 1; } pub struct Token { v: i32 }";
     var pMod: Module = parse_module(lexer.tokenize(pSrc));
     var withImp: Module = merge_module_prefixed(mainMod, pMod, "parser");
-    if (len(withImp.funcs) != 2) { return 1094; }
+    if (withImp.funcs.len() != 2) { return 1094; }
     if (withImp.funcs[1].name != "parser.parse_module") { return 1095; }
-    if (len(withImp.structs) != 1) { return 1096; }
+    if (withImp.structs.len() != 1) { return 1096; }
     if (withImp.structs[0].name != "parser.Token") { return 1097; }
 
     // Generic var-annotation.
@@ -1857,11 +1857,11 @@ function main(): i32 {
         StmtVar(v) => {
             match (v.init) {
                 ExprLambda(lm) => {
-                    if (len(lm.params) != 1) { return 1070; }
+                    if (lm.params.len() != 1) { return 1070; }
                     if (lm.params[0].name != "x") { return 1071; }
                     if (lm.params[0].type_name != "i32") { return 1072; }
                     if (lm.ret_type != "i32") { return 1073; }
-                    if (len(lm.body) != 1) { return 1074; }
+                    if (lm.body.len() != 1) { return 1074; }
                 },
                 _ => { return 1075; }
             }

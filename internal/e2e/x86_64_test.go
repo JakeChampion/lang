@@ -215,10 +215,10 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 { return len("hello"); }`, 5},
-		{`function main(): i32 { return len("hello, world"); }`, 12},
-		{`function main(): i32 { return len(""); }`, 0},
-		{`function main(): i32 { return len("a") + len("bb") + len("ccc"); }`, 6},
+		{`function main(): i32 { return ("hello").len(); }`, 5},
+		{`function main(): i32 { return ("hello, world").len(); }`, 12},
+		{`function main(): i32 { return ("").len(); }`, 0},
+		{`function main(): i32 { return ("a").len() + ("bb").len() + ("ccc").len(); }`, 6},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
 		if code != c.want {
@@ -237,15 +237,15 @@ func TestX86_64StringConcat(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 { return len("hello, " + "world!"); }`, 13},
+		{`function main(): i32 { return ("hello, " + "world!").len(); }`, 13},
 		{`function main(): i32 {
     var a: string = "foo";
     var b: string = "barbaz";
-    return len(a + b);
+    return (a + b).len();
 }`, 9},
 		// Triple-concat — each `+` is left-associative so this
 		// flexes the strcat helper twice on the same arena.
-		{`function main(): i32 { return len("aa" + "bb" + "cc"); }`, 6},
+		{`function main(): i32 { return ("aa" + "bb" + "cc").len(); }`, 6},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
 		if code != c.want {
@@ -325,23 +325,23 @@ function main(): i32 {
 func TestX86_64StringLines(t *testing.T) {
 	src := `function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
-    if (len(lf) != 3) { return 1; }
+    if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
     var crlf: string[] = "a\r\nb\r\nc".lines();
-    if (len(crlf) != 3) { return 5; }
+    if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[2] != "c") { return 7; }
 
     var trail: string[] = "a\nb\n".lines();
-    if (len(trail) != 2) { return 8; }
+    if (trail.len() != 2) { return 8; }
 
-    if (len("".lines()) != 0) { return 9; }
+    if (("".lines()).len() != 0) { return 9; }
 
     var solo: string[] = "\n".lines();
-    if (len(solo) != 1) { return 10; }
+    if (solo.len() != 1) { return 10; }
     if (solo[0] != "") { return 11; }
 
     return 0;
@@ -370,13 +370,13 @@ func TestX86_64SsoInline(t *testing.T) {
 	}{
 		// __str_slice produces inline at 1..7, heap at 8+.
 		{"slice-len-1-inline", `function main(): i32 {
-    return len("abcdefghij"[0:1]);
+    return ("abcdefghij"[0:1]).len();
 }`, 1},
 		{"slice-len-7-inline", `function main(): i32 {
-    return len("abcdefghij"[0:7]);
+    return ("abcdefghij"[0:7]).len();
 }`, 7},
 		{"slice-len-8-heap", `function main(): i32 {
-    return len("abcdefghij"[0:8]);
+    return ("abcdefghij"[0:8]).len();
 }`, 8},
 		// Inline byte indexing must still match the source bytes.
 		{"inline-index-first-byte", `function main(): i32 {
@@ -413,12 +413,12 @@ func TestX86_64SsoInline(t *testing.T) {
 		{"concat-inline-plus-inline-inline", `function main(): i32 {
     var a: string = "abcdef"[0:3]; // inline "abc"
     var b: string = "xyz";          // heap "xyz" — could go inline-or-heap
-    return len(a + b);
+    return (a + b).len();
 }`, 6},
 		{"concat-inline-plus-inline-heap", `function main(): i32 {
     var a: string = "abcdef"[0:5];  // inline "abcde"
     var b: string = "fghij";         // heap, 5 chars
-    return len(a + b);
+    return (a + b).len();
 }`, 10},
 		{"concat-roundtrip-bytes", `function main(): i32 {
     var a: string = "abcdef"[0:3]; // inline "abc"
@@ -443,13 +443,13 @@ func TestX86_64SsoInline(t *testing.T) {
 		{"print-inline", `function main(): i32 {
     var s: string = "abcdefgh"[0:5]; // inline "abcde"
     print(s);
-    return len(s);
+    return s.len();
 }`, 5},
 		// Triple concat: each `+` is left-associative. Builds an
 		// inline intermediate, then a heap final.
 		{"triple-concat-via-inline", `function main(): i32 {
     var s: string = "aa" + "bb" + "ccddee";
-    return len(s);
+    return s.len();
 }`, 10},
 		// FieldAccess + len: regression test for the IR exprType
 		// fix. `len(struct.field)` must route through OpStrLen
@@ -457,7 +457,7 @@ func TestX86_64SsoInline(t *testing.T) {
 		{"field-access-len-inline", `struct Box { s: string }
 function main(): i32 {
     var b: Box = Box { s: "abcdefgh"[0:5] }; // inline "abcde"
-    return len(b.s);
+    return b.s.len();
 }`, 5},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -484,16 +484,16 @@ func TestX86_64EmptyU8Sentinel(t *testing.T) {
 	}{
 		{"len-on-empty-u8", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    return len(bs);
+    return bs.len();
 }`, 0},
 		{"string-from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
     var s: string = string_from_bytes(bs);
-    return len(s);
+    return s.len();
 }`, 0},
 		{"to-lower-empty-string", `function main(): i32 {
     var s: string = "".to_lower();
-    return len(s);
+    return s.len();
 }`, 0},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -513,20 +513,20 @@ func TestX86_64EmptyStringSentinel(t *testing.T) {
     var s: string = "abcd";
     var a: string = s[0:0];
     var b: string = s[0:0];
-    return len(a + b);
+    return (a + b).len();
 }`, 0},
 		{"zero-width-slice", `function main(): i32 {
     var s: string = "abcd";
-    return len(s[2:2]);
+    return s[2:2].len();
 }`, 0},
 		{"from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    return len(string_from_bytes(bs));
+    return (string_from_bytes(bs)).len();
 }`, 0},
 		{"sentinel-roundtrip", `function main(): i32 {
     var s: string = "world";
     var empty: string = s[0:0];
-    return len("hello, " + empty + s);
+    return ("hello, " + empty + s).len();
 }`, 12},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -655,12 +655,12 @@ func TestX86_64ArrayLiteral(t *testing.T) {
 }`, 20},
 		{`function main(): i32 {
     var xs: i32[] = [1, 2, 3, 4, 5];
-    return len(xs);
+    return xs.len();
 }`, 5},
 		{`function sum(xs: i32[]): i32 {
     var total: i32 = 0;
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         total = total + xs[i];
         i = i + 1;
     }
@@ -697,7 +697,7 @@ function main(): i32 {
 		{`struct Person { age: i32, name: string }
 function main(): i32 {
     var p: Person = Person { age: 25, name: "Claude" };
-    return p.age + len(p.name);
+    return p.age + p.name.len();
 }`, 31},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -922,11 +922,11 @@ func TestX86_64Args(t *testing.T) {
 	src := `function main(): i32 {
     var a: string[] = args();
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         print(a[i]);
         i = i + 1;
     }
-    return len(a);
+    return a.len();
 }`
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -1050,7 +1050,7 @@ func TestX86_64RandomBytes(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
     var s: string = random_bytes(16);
     write(s);
-    return len(s);
+    return s.len();
 }`)
 	if code != 16 {
 		t.Errorf("exit = %d, want 16 (length of returned bytes)", code)
@@ -1234,7 +1234,7 @@ func TestX86_64PointerPayloadPairForm(t *testing.T) {
 }
 function main(): i32 {
     match (pick(true)) {
-        Some(s) => { return len(s); },
+        Some(s) => { return s.len(); },
         None    => { return -1; }
     }
 }`
@@ -1379,7 +1379,7 @@ function main(): i32 { return outer(40); }`
 // `mov [r12], eax` truncation.
 func TestX86_64ClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
-    function inner(): i32 { return len(s); }
+    function inner(): i32 { return s.len(); }
     return inner();
 }
 function main(): i32 { return outer("hello"); }`
@@ -1411,7 +1411,7 @@ function main(): i32 {
 // arithmetic.
 func TestX86_64ClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, n: i32): i32 {
-    function inner(): i32 { return len(s) + n; }
+    function inner(): i32 { return s.len() + n; }
     return inner();
 }
 function main(): i32 { return outer("hi", 40); }`
@@ -1766,12 +1766,12 @@ func TestX86_64FStringInterpolation(t *testing.T) {
 		{"interpolated i32", `function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
-    return len(s);
+    return s.len();
 }`, 7},
 		{"interpolated string", `function main(): i32 {
     var who: string = "world";
     var s: string = f"hello, {who}!";
-    return len(s);
+    return s.len();
 }`, 13},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -1936,7 +1936,7 @@ func TestX86_64WideScalarMap(t *testing.T) {
 		{"Map[i64, string]", `function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
-    return len(m.get_or(1i64, ""));
+    return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `function main(): i32 {
     var m: Map[string, i64] = map_new(4);
@@ -1973,7 +1973,7 @@ func TestX86_64WideScalarMap(t *testing.T) {
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
     var keys: i64[] = m.keys();
-    if (len(keys) != 2) { return 1; }
+    if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
     if (keys[0] == keys[1]) { return 4; }
@@ -2017,7 +2017,7 @@ function main(): i32 {
     var s: string = "hello, " + "world";
     var ptr: usize = s as usize;
     var s2: string = ptr as string;
-    return len(s2);
+    return s2.len();
 }`, 12},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -2037,7 +2037,7 @@ func TestX86_64SubI32(t *testing.T) {
     var xs: i8[] = [1 as i8, 2 as i8, 3 as i8, 0 - 1 as i8];
     var sum: i32 = 0;
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         sum = sum + (xs[i] as i32);
         i = i + 1;
     }
@@ -2126,7 +2126,7 @@ func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdou
 func TestX86_64ReadFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return 0 - 1; }
     }
     return 0 - 2;
@@ -2147,7 +2147,7 @@ func TestX86_64ReadFileNotFound(t *testing.T) {
         Ok(_) => { return 0; },
         Err(err) => {
             match (err) {
-                NotFound(p) => { return len(p); },
+                NotFound(p) => { return p.len(); },
                 _ => { return 99; }
             }
         }
@@ -2194,7 +2194,7 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
         None => {}
     }
     match (read_file("rt.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return 2; }
     }
     return 0 - 1;
@@ -2276,7 +2276,7 @@ func TestX86_64SliceMake(t *testing.T) {
 		{"len(slice)", `function main(): i32 {
     var arr: i32[] = [1, 2, 3, 4, 5];
     var s: [i32] = arr[1:4];
-    return len(s);
+    return s.len();
 }`, 3},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -2293,7 +2293,7 @@ func TestX86_64Arena(t *testing.T) {
     var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
     arena_restore(saved);
     var s3: string = "after-" + "restore"; // alloc reuses s2's space
-    return len(s1) + len(s3);
+    return s1.len() + s3.len();
 }`)
 	if code != 13+13 {
 		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
@@ -2582,7 +2582,7 @@ function main(): i32 {
 		{"fstring_interp", `function main(): i32 {
     var x: i32 = 42;
     var s: string = f"x is {x}";
-    if (len(s) == 7) { return 0; }
+    if (s.len() == 7) { return 0; }
     return 1;
 }`},
 		{"for_each_array", `function main(): i32 {

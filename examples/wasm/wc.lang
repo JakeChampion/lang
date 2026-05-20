@@ -21,13 +21,13 @@ import "std/i32";
 struct Counts { lines: i32, words: i32, bytes: i32 }
 
 function count_chunk(chunk: string, acc: Counts): Counts {
-  acc.bytes = acc.bytes + len(chunk);
+  acc.bytes = acc.bytes + chunk.len();
   // `read_line` strips the trailing '\n'; we count the line
   // ourselves by incrementing once per non-empty chunk.
   acc.lines = acc.lines + 1;
   var parts: string[] = chunk.split(" ");
   var i: i32 = 0;
-  while (i < len(parts)) {
+  while (i < parts.len()) {
     if (!parts[i].is_empty()) {
       acc.words = acc.words + 1;
     }
@@ -64,7 +64,7 @@ function main(): i32 {
   var total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
   var nfiles: i32 = 0;
   var i: i32 = 1;  // skip argv[0]
-  while (i < len(argv)) {
+  while (i < argv.len()) {
     var path: string = argv[i];
     match (open_reader(path)) {
       Ok(r) => {

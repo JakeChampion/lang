@@ -160,7 +160,7 @@ func TestREPLDeclaresThenCallsFunction(t *testing.T) {
 }
 
 func TestInterpLenOfString(t *testing.T) {
-	if got := evalProgramValue(t, `function main(): i32 { return len("hello"); }`); got != Number(5) {
+	if got := evalProgramValue(t, `function main(): i32 { return ("hello").len(); }`); got != Number(5) {
 		t.Errorf("got %v, want 5", got)
 	}
 }
@@ -168,7 +168,7 @@ func TestInterpLenOfString(t *testing.T) {
 func TestInterpLenOfArray(t *testing.T) {
 	if got := evalProgramValue(t, `function main(): i32 {
 		var a: i32[] = [1, 2, 3, 4];
-		return len(a);
+		return a.len();
 	}`); got != Number(4) {
 		t.Errorf("got %v, want 4", got)
 	}

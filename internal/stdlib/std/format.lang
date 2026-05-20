@@ -35,13 +35,13 @@ import "std/i32";
 // trait dispatch which lang doesn't have yet; the string[]
 // signature keeps the type story trivial.
 pub function format(fmt: string, args: string[]): string {
-    var n: i32 = len(fmt);
+    var n: i32 = fmt.len();
     var out: string = "";
     var i: i32 = 0;
     var argi: i32 = 0;
     while (i < n) {
         if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
-            if (argi < len(args)) {
+            if (argi < args.len()) {
                 out = out + args[argi];
                 argi = argi + 1;
             } else {
@@ -105,15 +105,15 @@ pub function format_duration_ms(ms: i32): string {
     var out: string = "";
     if (h > 0) { out = out + h.to_string() + "h"; }
     if (m > 0) {
-        if (len(out) > 0) { out = out + " "; }
+        if (out.len() > 0) { out = out + " "; }
         out = out + m.to_string() + "m";
     }
     if (s > 0) {
-        if (len(out) > 0) { out = out + " "; }
+        if (out.len() > 0) { out = out + " "; }
         out = out + s.to_string() + "s";
     }
     if (msPart > 0) {
-        if (len(out) > 0) { out = out + " "; }
+        if (out.len() > 0) { out = out + " "; }
         out = out + msPart.to_string() + "ms";
     }
     return sign + out;

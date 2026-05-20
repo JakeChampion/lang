@@ -51,7 +51,7 @@ pub function encode_custom_section(buf: u8[], name: string, payload: u8[]): u8[]
 // byte sequences per entry without needing struct-of-arrays
 // composite types.
 pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per_type: u8[][]): u8[] {
-    var n: i32 = len(params_per_type);
+    var n: i32 = params_per_type.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -68,7 +68,7 @@ pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per
 // this section binds the i-th body in the code section to one
 // of the types from the type section.
 pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
-    var n: i32 = len(typeidxs);
+    var n: i32 = typeidxs.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -104,7 +104,7 @@ pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u
 // idx : u32`. The three parallel arrays cover the three fields
 // — same shape as the type section's params/results split.
 pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indices: u32[]): u8[] {
-    var n: i32 = len(names);
+    var n: i32 = names.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -132,7 +132,7 @@ pub function encode_start_section(buf: u8[], funcidx: u32): u8[] {
 // already prefixes the size. So the caller passes pre-wrapped
 // bodies and we just emit the count + concatenation.
 pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
-    var n: i32 = len(bodies);
+    var n: i32 = bodies.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -152,7 +152,7 @@ pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
 // `offsets` and `init_bytes` are parallel arrays — one offset and
 // one byte sequence per segment.
 pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]): u8[] {
-    var n: i32 = len(offsets);
+    var n: i32 = offsets.len();
     var body: u8[] = leb128.uleb_u32([], n as u32);
     var i: i32 = 0;
     while (i < n) {
@@ -163,7 +163,7 @@ pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]):
         body = body.push(11u8);                       // 0x0B end
         // Init bytes vec.
         var seg: u8[] = init_bytes[i];
-        body = leb128.uleb_u32(body, len(seg) as u32);
+        body = leb128.uleb_u32(body, seg.len() as u32);
         body = encode.put_bytes(body, seg);
         i = i + 1;
     }

@@ -32,7 +32,7 @@ import "std/string";
 function values_as_jarray(values: string[]): JsonValue {
   var arr: JsonValue[] = [];
   var i: i32 = 0;
-  while (i < len(values)) {
+  while (i < values.len()) {
     arr = arr.push(JString(values[i]));
     i = i + 1;
   }
@@ -46,7 +46,7 @@ function describe(path: string, q: Map[string, string[]]): JsonValue {
   out.set("path", JString(path));
   match (q.get("q")) {
     Some(qs) => {
-      if (len(qs) > 0) {
+      if (qs.len() > 0) {
         out.set("q", JString(qs[0]));
       }
     },

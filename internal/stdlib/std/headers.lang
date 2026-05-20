@@ -40,7 +40,7 @@ pub function header_map_new(): HeaderMap {
 pub function (h: HeaderMap) get(name: string): Option[string] {
     var key: string = name.to_lower();
     var i: i32 = 0;
-    while (i < len(h.names)) {
+    while (i < h.names.len()) {
         if (h.names[i] == key) {
             return Some(h.values[i]);
         }
@@ -57,7 +57,7 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
     var key: string = name.to_lower();
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < len(h.names)) {
+    while (i < h.names.len()) {
         if (h.names[i] == key) {
             out = out.push(h.values[i]);
         }
@@ -86,7 +86,7 @@ pub function (h: HeaderMap) set(name: string, value: string) {
     var new_values: string[] = [];
     var inserted: boolean = false;
     var i: i32 = 0;
-    while (i < len(h.names)) {
+    while (i < h.names.len()) {
         if (h.names[i] == key) {
             if (!inserted) {
                 new_names = new_names.push(key);
@@ -114,5 +114,5 @@ pub function (h: HeaderMap) set(name: string, value: string) {
 // own method bodies (the parser would resolve `len(h.names)` to
 // this method otherwise).
 pub function (h: HeaderMap) size(): i32 {
-    return len(h.names);
+    return h.names.len();
 }
