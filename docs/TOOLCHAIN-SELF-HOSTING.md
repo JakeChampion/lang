@@ -441,13 +441,31 @@ End-to-end exit code 42 demo (covered by
     (the stdlib helper used by user code via `std/math` — calls
     `random_bytes(3)` internally) under `-component-wrap-cli`.
     End-to-end test: `TestCmdLangComponentWrapCliWithRandomBytes`.
+  - **Multi-import coverage.** Programs that pull in MORE than
+    one preview-2 import in the same component validate and run
+    end-to-end. Pinned by
+    `TestCmdLangComponentWrapCliWithMultipleImports`:
+    `random_i32()` + `exit(0)` → component imports
+    wasi:random/random@0.2.0 AND wasi:cli/exit@0.2.0, exports
+    wasi:cli/run@0.2.0, runs under plain `wasmtime run`.
+  - **Driver UX hardening.** `-component-wrap-cli` errors out
+    up front with a user-targeted message when the Lang `main`
+    returns void (`wasi:cli/run::run` lifts `() -> i32` to
+    `() -> result<_, _>`; a void main would otherwise produce
+    an invalid component the validator rejects with a cryptic
+    error). Pinned by
+    `TestCmdLangComponentWrapCliRejectsVoidMain`.
   - **Still to do:** migrate the remaining preview-1 imports
-    (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
-    `environ_*`, `args_*`, `path_*`). HTTP body / file I/O
-    migrations are larger because they require canonical-ABI
-    marshalling at the call site (list<u8> instead of raw
-    pointers + lengths). Default-path driver wiring (replacing
-    the `wasm-tools component new --adapt` shell-out in
+    (`fd_write`, `fd_read`, `clock_time_get` realtime,
+    `environ_*`, `args_*`, `path_*`). The realtime wall-clock
+    migration in particular needs canonical-ABI memory opts +
+    the canon-lower trampoline pattern because
+    `wasi:clocks/wall-clock::now -> datetime` uses indirect-
+    return for the record. HTTP body / file I/O migrations are
+    larger because they require canonical-ABI marshalling at
+    the call site (list<u8> instead of raw pointers + lengths).
+    Default-path driver wiring (replacing the `wasm-tools
+    component new --adapt` shell-out in
     `emitPreview2ComponentFromCoreBytes`) lights up once enough
     imports are migrated that the no-adapter path covers a
     useful program set.
@@ -455,7 +473,11 @@ End-to-end exit code 42 demo (covered by
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering
   patterns aren't wired through the high-level helpers (they're
-  composable via individual section composers though).
+  composable via individual section composers though). Interfaces
+  whose shape the structured `WasiImport` fields can't express
+  yet (e.g. `wasi:clocks/wall-clock` exports `datetime` then
+  references it from `now`) need a future "raw instance-type
+  body" escape hatch on `WasiImport`.
 
 #### Original scope
 
