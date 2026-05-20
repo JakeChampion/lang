@@ -143,37 +143,57 @@ pub function cvaltype_f64(): u8    { return 117u8; }   // 0x75
 pub function cvaltype_char(): u8   { return 116u8; }   // 0x74
 pub function cvaltype_string(): u8 { return 115u8; }   // 0x73
 
-// put_type_section_one_func_no_param — emit a component-level type
-// section that defines a single functype with no parameters and one
-// anonymous result of the given valtype. This is the minimal type-
-// section shape: typeidx 0 = `(func (result T))`.
+// put_type_section_one_func — emit a component-level type section
+// that defines a single functype with the given parameter list and
+// one anonymous result. Each parameter has a name + a valtype byte;
+// the two parallel arrays must have equal length.
 //
 // Spec (Binary.md):
 //   functype   ::= 0x40 ps:vec(<paramname valtype>) rs:resultlist
-//   resultlist ::= 0x00 t:<valtype>          -- single anonymous result
-//                | 0x01 lts:vec(<labelvaltype>) -- named results
+//   paramname  ::= <name>                              -- uleb-prefixed UTF-8
+//   resultlist ::= 0x00 t:<valtype>                    -- single anonymous
+//                | 0x01 lts:vec(<labelvaltype>)        -- named results
 //
-// Encoded body:
+// Encoded body for one functype with N params:
 //
-//   01           // vec(1) of types
-//   40           // functype form
-//   00           // params vec count 0
-//   00           // resultlist tag = 0x00 (single anonymous)
-//   <valtype>    // the result type byte
+//   01                  // vec(1) types
+//   40                  // functype form
+//   <N:uleb>            // params vec count
+//   (<name> <valtype>)* // N pairs, each: uleb-prefixed name + valtype byte
+//   00                  // resultlist tag = single anonymous
+//   <result_valtype>    // result valtype byte
 //
 // Section header: `id=7 + uleb size + body`.
-pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): u8[] {
+pub function put_type_section_one_func(buf: u8[], param_names: string[], param_valtypes: u8[], result_valtype: u8): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);   // vec(1) of types
-    body = body.push(64u8);                // functype form (0x40)
-    body = body.push(0u8);                 // params vec count 0
-    body = body.push(0u8);                 // resultlist tag: single anon
-    body = body.push(result_valtype);      // result valtype byte
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) of types
+    body = body.push(64u8);                       // functype form (0x40)
+    var n: i32 = param_names.len();
+    body = leb128.uleb_u32(body, n as u32);      // params vec count
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, param_names[i]);
+        body = body.push(param_valtypes[i]);
+        i = i + 1;
+    }
+    body = body.push(0u8);                        // resultlist tag: single anon
+    body = body.push(result_valtype);             // result valtype byte
 
     var out: u8[] = buf;
     out = out.push(section_type());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_type_section_one_func_no_param — thin convenience wrapper
+// over `put_type_section_one_func` for the zero-parameter case.
+// Retained as a named entry point because earlier slices already
+// call it from the e2e tests; new code with params should reach for
+// `put_type_section_one_func` directly.
+pub function put_type_section_one_func_no_param(buf: u8[], result_valtype: u8): u8[] {
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    return put_type_section_one_func(buf, no_names, no_valtypes, result_valtype);
 }
 
 // put_alias_section_core_export_func — emit an alias section

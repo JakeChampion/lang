@@ -8696,6 +8696,78 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentTypeFuncWithParams covers put_type_section_one_func
+// with a non-empty parameter list: emits
+// `(func (param "x" u32) (param "y" string) (result bool))` and
+// verifies wasm-tools picks up both parameters with the right names
+// and valtypes. Anchors the parallel-array (param_names,
+// param_valtypes) calling convention against
+// `wasm-tools print`'s textual output.
+func TestWASMComponentTypeFuncWithParams(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var names: string[] = ["x", "y"];
+    var valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_bool());
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"\"x\"",
+		"\"y\"",
+		"u32",
+		"string",
+		"bool",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentImportFunc covers put_import_section_one_func:
 // declares an imported function `host-func : () -> u32` and verifies
 // the bytes parse + print as the expected `(import "host-func" (func
