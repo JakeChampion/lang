@@ -89,6 +89,20 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// `__method_HeaderMap_append` — the wrapper calls it
 		// per header entry from the canonical-ABI fields list.
 		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append")
+		// The auto-synthesised `main()` (in std/tcp's prelude)
+		// calls `tcp_serve` and pulls in wasi:sockets imports
+		// the http world's WIT doesn't have. Drop it before
+		// tree-shake so it doesn't hold tcp_serve / tcp_listen
+		// alive on this target. Mirror of the WAT path's
+		// `IsSynthesisedHandlerMain` pre-shake (wasm.go ~140).
+		out := prog.Funcs[:0]
+		for _, fn := range prog.Funcs {
+			if fn.IsSynthesisedHandlerMain {
+				continue
+			}
+			out = append(out, fn)
+		}
+		prog.Funcs = out
 	}
 	treeshake.Run(prog, treeshakeExtras...)
 	ip, err := ir.LowerWith(prog, info, 4)
