@@ -89,15 +89,15 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			expected := runInterpByte(t, src)
 
 			t.Run("arm64", func(t *testing.T) {
-				_, code := compileAndRunArm64(t, src)
+				out, code := compileAndRunArm64(t, src)
 				if code != expected {
-					t.Errorf("arm64 exit=%d, interp=%d\nsrc:\n%s", code, expected, src)
+					t.Errorf("arm64 exit=%d, interp=%d\nbinary output (stdout+stderr):\n%s\nsrc:\n%s", code, expected, out, src)
 				}
 			})
 			t.Run("x86_64", func(t *testing.T) {
-				_, code := compileAndRunX86_64(t, src)
+				out, code := compileAndRunX86_64(t, src)
 				if code != expected {
-					t.Errorf("x86_64 exit=%d, interp=%d\nsrc:\n%s", code, expected, src)
+					t.Errorf("x86_64 exit=%d, interp=%d\nbinary output (stdout+stderr):\n%s\nsrc:\n%s", code, expected, out, src)
 				}
 			})
 			// wasm sub-test (WAT-text backend) retired here as
