@@ -185,6 +185,21 @@ const (
 	// dispatch / function-pointer values.
 	OpCallIndirect
 
+	// Closure construction.
+	//
+	// OpMakeClosure allocates an {fn_idx, env_ptr} pair plus
+	// an env block, populates the env block from Args, and
+	// returns the closure pointer. Str = the target function
+	// name; Args = the capture values in declaration order.
+	//
+	// OpMakeEnv is the defunctionalised form: allocates the
+	// env block only (no {fn_idx, env_ptr} pair), returns the
+	// env pointer directly. Args = the captures.
+	//
+	// Both are impure — heap allocation has side effects.
+	OpMakeClosure
+	OpMakeEnv
+
 	// Load / Store — memory access. Index-into-array,
 	// struct-field-access, etc. resolve to these.
 	OpLoad
@@ -318,6 +333,10 @@ func (k OpKind) String() string {
 		return "call"
 	case OpCallIndirect:
 		return "call_indirect"
+	case OpMakeClosure:
+		return "make_closure"
+	case OpMakeEnv:
+		return "make_env"
 	case OpLoad:
 		return "load"
 	case OpStore:
