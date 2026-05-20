@@ -15,7 +15,7 @@
 //     entry ─brif─→ F ┘
 //   - While loop shape:
 //     entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
-//                            └─→ done ─ret
+//     └─→ done ─ret
 //     Header phis (loop-carried values) become shared wasm
 //     locals — entry writes initial values; the back-edge
 //     re-writes them at each iteration.
