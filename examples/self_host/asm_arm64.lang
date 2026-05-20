@@ -1394,7 +1394,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max")) {
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp")) {
                         return "i32";
                     }
                     if (fa.field == "len"
@@ -2301,6 +2301,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    ldr x0, [sp], #16\n");
                             s = s.write("    cmp x0, x1\n");
                             s = s.write("    csel x0, x0, x1, gt\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            return s;
+                        }
+                        if (fa.field == "clamp" && c.args.len() == 2) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = emit_expr(c.args[1], s);
+                            s = s.write("    ldr x2, [sp], #16\n");   // hi
+                            s = s.write("    ldr x1, [sp], #16\n");   // lo
+                            s = s.write("    ldr x0, [sp], #16\n");   // n
+                            // n = max(n, lo) — keep n if n > lo, else lo
+                            s = s.write("    cmp x0, x1\n");
+                            s = s.write("    csel x0, x0, x1, gt\n");
+                            // n = min(n, hi) — keep n if n < hi, else hi
+                            s = s.write("    cmp x0, x2\n");
+                            s = s.write("    csel x0, x0, x2, lt\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             return s;
                         }
