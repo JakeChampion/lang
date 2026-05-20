@@ -8696,6 +8696,113 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentLiftedExport is the first end-to-end shape that
+// exercises every section composer std/wasm/component currently
+// ships: preamble + core-module + core-instance + alias + type +
+// canon + export. A core module exports `f : () -> i32`; the
+// component aliases it as a core-func, declares a component-level
+// type `() -> u32`, lifts the core-func into a component-level
+// function, and exports that lifted function as `g`.
+//
+// This is the structural shape that `wasm-tools component new`
+// produces for a self-contained core module — the production target
+// of Phase 2. wasmtime won't *run* this as a CLI world (the
+// component doesn't satisfy a known WASI world signature), but
+// `wasm-tools validate` accepts it and `wasm-tools print` shows the
+// `(export "g" (func ...))` + `(canon lift ...)` recipe that proves
+// the seven sections compose correctly.
+func TestWASMComponentLiftedExport(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    // Core module: function "f" returns 11.
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.export_names = ["f"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    var bodyExpr: u8[] = inst.inst_i32_const([], 11);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
+    m.code_bodies = [fn];
+    var core_bytes: u8[] = module.build(m);
+
+    // Component: preamble + the seven-section recipe.
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_module_section(comp, core_bytes);
+    comp = component.put_core_instance_section_instantiate(comp, 0u32);
+    comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
+    comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
+    comp = component.put_canon_section_lift_no_opts(comp, 0u32, 0u32);
+    comp = component.put_export_section_one_func(comp, "g", 0u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	// Structural assertions — every section we wired has to show
+	// up at component level in the printed output.
+	for _, want := range []string{
+		"(core module",
+		"(core instance",
+		"(alias core export",
+		"(type",
+		"canon lift",
+		"(export",
+		"\"g\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMModuleRunsIfElse: a function that returns 100 from the
 // then-arm or 200 from the else-arm of an if/else with an i32
 // result type. Exercises inst_if_start with a non-empty blocktype

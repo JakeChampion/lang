@@ -218,3 +218,74 @@ pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u3
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
+
+// put_canon_section_lift_no_opts — emit a canon section containing
+// a single `canon lift` entry that turns a core function (already
+// referenceable via an alias or import) into a component-level
+// function with the given type signature. `opts` is left empty —
+// no `memory`, `realloc`, `post-return`, or non-default string
+// encoding. That's sufficient for callee functions whose signature
+// only mentions scalar valtypes (no strings, no lists, no
+// resources).
+//
+// Spec (Binary.md):
+//   canon ::= 0x00 0x00 f:<core-func-idx> opts:vec(<canonopt>) ft:<typeidx>  -- lift
+//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>) ct:<core-typeidx> -- lower
+//           | 0x02 rt:<typeidx>           -- resource.new
+//           ... etc.
+//
+// Encoded body for one canon-lift entry:
+//
+//   01                  // vec(1) canon entries
+//   00 00               // discriminator: lift, function-lift sub-tag
+//   <core-func-idx:uleb>
+//   00                  // opts vec count = 0
+//   <typeidx:uleb>
+pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typeidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(0u8);                       // canon-lift
+    body = body.push(0u8);                       // function-lift sub-tag
+    body = leb128.uleb_u32(body, core_func_idx);
+    body = leb128.uleb_u32(body, 0u32);          // no opts
+    body = leb128.uleb_u32(body, typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
+// put_export_section_one_func — emit a component-level export
+// section with a single entry that exposes a component-level
+// function (created by canon-lift) under the given name.
+//
+// Spec (Binary.md):
+//   export     ::= n:<exportname> si:<sortidx> [t:<externdesc>]?
+//   exportname ::= 0x00 <name>   -- "label" form: plain UTF-8 name
+//                | 0x01 <name>   -- "deprecated label"
+//                | ...           -- interface name, etc.
+//   sortidx    ::= s:<sort> i:<u32>
+//
+// Encoded body for one func export named `name` at component-func
+// index `func_idx`:
+//
+//   01                  // vec(1) exports
+//   00 <name>           // exportname kind=0 (label) + uleb-prefixed UTF-8
+//   01                  // sort = func (0x01)
+//   <func_idx:uleb>
+//   00                  // no externdesc tag
+pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(0u8);                       // exportname kind = label
+    body = encode.put_name(body, name);
+    body = body.push(1u8);                       // sort: func
+    body = leb128.uleb_u32(body, func_idx);
+    body = body.push(0u8);                       // no externdesc
+
+    var out: u8[] = buf;
+    out = out.push(section_export());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
