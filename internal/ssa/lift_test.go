@@ -1175,6 +1175,102 @@ func TestLiftBrTargetingIfRejected(t *testing.T) {
 	}
 }
 
+// TestLiftBrIfExits — `block { brif (c, exit) ... }`.
+// Conditional early-exit via brif then continue inside.
+func TestLiftBrIfExits(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpLoadLocal, I32: 0}, // cond
+			{Kind: ir.OpBrIf, I32: 0},      // exit block if cond
+			{Kind: ir.OpConstI32, I32: 5},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftBrIfWithPhi — both branch and fall-through assign to
+// the same local; phi merges the two values at the block's exit.
+func TestLiftBrIfWithPhi(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			// x = 1 (initial)
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			// if (c) br out (x stays 1)
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpBrIf, I32: 0},
+			// fall-through: x = 2
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpEnd},
+			// return x — should be 1 or 2 depending on c
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// The post-block (where the ret lives) should have a phi for
+	// x merging the brif-taken path and the fall-through path.
+	hasPhi := false
+	for _, b := range out.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == OpPhi {
+				hasPhi = true
+				break
+			}
+		}
+	}
+	if !hasPhi {
+		t.Errorf("expected a phi op somewhere; got:\n%s", out)
+	}
+}
+
+// TestLiftBrIfTargetingIfRejected — Phase 10 mirrors Phase 9b:
+// only OpBlock targets allowed.
+func TestLiftBrIfTargetingIfRejected(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpBrIf, I32: 0}, // targets the if scope
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for OpBrIf to OpIf")
+	}
+	if !strings.Contains(err.Error(), "only OpBlock supported") {
+		t.Errorf("error %q doesn't mention OpBlock restriction", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
