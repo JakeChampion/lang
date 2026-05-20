@@ -904,6 +904,42 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"arr-i32-min",
+			"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 7]; return xs.min(); }",
+			1,
+			"",
+		},
+		{
+			"arr-i32-max",
+			"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 7]; return xs.max(); }",
+			8,
+			"",
+		},
+		{
+			"arr-i32-min-single",
+			"function main(): i32 { var xs: i32[] = [42]; return xs.min(); }",
+			42,
+			"",
+		},
+		{
+			"arr-i32-max-single",
+			"function main(): i32 { var xs: i32[] = [42]; return xs.max(); }",
+			42,
+			"",
+		},
+		{
+			"arr-i32-min-negatives",
+			"function main(): i32 { var xs: i32[] = [3, 0 - 5, 1]; print_int(xs.min()); return 0; }",
+			0,
+			"-5",
+		},
+		{
+			"arr-i32-max-negatives",
+			"function main(): i32 { var xs: i32[] = [0 - 9, 0 - 2, 0 - 5]; print_int(xs.max()); return 0; }",
+			0,
+			"-2",
+		},
+		{
 			"closure-uses-multiple-string-methods",
 			"function (s: string) bang(): string { return s + \"!\"; } function main(): i32 { var msg = \"hi\"; var f = function (): string { return msg.bang() + \"?\"; }; print(f()); return 0; }",
 			0,
