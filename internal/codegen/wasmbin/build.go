@@ -63,6 +63,13 @@ type BuildOptions struct {
 	// `__method_HeaderMap_append` past every dead-function-
 	// elimination step so the wrapper's calls resolve.
 	HttpHandler bool
+	// SynthCliRun emits a synthetic `_lang_run() -> i32` wrapper
+	// that normalises main's signature (void → i32.const 0; i32
+	// → pass-through). Used by `-component-wrap-cli` so the
+	// canon-lifted wasi:cli/run::run sees a `() -> i32` core
+	// export even when the user's main returns void. Forwarded
+	// to EmitOptions.SynthCliRun.
+	SynthCliRun bool
 	// Preview2WASI emits preview-2-named WASI imports in place
 	// of preview-1. Currently scoped to proc_exit
 	// (wasi_snapshot_preview1.proc_exit → wasi:cli/exit@0.2.0.exit);
@@ -162,5 +169,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		PrintMainResult:    opts.PrintMainResult,
 		HttpHandler:        opts.HttpHandler,
 		Preview2WASI:       opts.Preview2WASI,
+		SynthCliRun:        opts.SynthCliRun,
 	})
 }
