@@ -119,3 +119,46 @@ pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): 
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
 }
+
+// put_alias_section_core_export_func — emit an alias section
+// containing one entry that surfaces a core function export of a
+// core instance as a top-level core-sort func. After this alias
+// runs, the alias-defined core function can be referenced by a
+// later canon-lift to turn it into a component-level function.
+//
+// Spec (Binary.md, `alias` production):
+//   alias ::= s:sort t:aliastarget
+//   sort  ::= 0x00 cs:core-sort     -- core sort, with sub-kind
+//           | 0x01 -- func          | 0x02 -- value
+//           | 0x03 -- type          | 0x04 -- component
+//           | 0x05 -- instance
+//   core-sort   ::= 0x00 -- func    | 0x01 -- table
+//                 | 0x02 -- memory  | 0x03 -- global
+//                 | 0x10 -- type    | 0x11 -- module
+//                 | 0x12 -- instance
+//   aliastarget ::= 0x00 i:instance-idx       n:name  -- from instance export
+//                 | 0x01 i:core-instance-idx  n:name  -- from core instance export
+//                 | 0x02 ct:u32 idx:u32               -- outer-component
+//
+// Encoded body for "alias core export `core_instance_idx` `name` as
+// a core func":
+//
+//   01           // vec(1) alias entries
+//   00 00        // sort = core (0x00) + core-sort = func (0x00)
+//   01           // aliastarget = core-instance-export
+//   <idx:uleb>   // core-instance-idx
+//   <name>       // uleb-prefixed UTF-8
+pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u32, name: string): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(0u8);                       // sort: core
+    body = body.push(0u8);                       // core-sort: func
+    body = body.push(1u8);                       // target: from core-instance-export
+    body = leb128.uleb_u32(body, core_instance_idx);
+    body = encode.put_name(body, name);
+
+    var out: u8[] = buf;
+    out = out.push(section_alias());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
