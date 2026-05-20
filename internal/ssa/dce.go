@@ -110,6 +110,9 @@ func collectUses(f *Func) map[int32]int {
 			bump(b.Term.Cond)
 		case TermRet:
 			bump(b.Term.Value)
+		case TermRetPair:
+			bump(b.Term.Value)
+			bump(b.Term.Value2)
 		}
 	}
 	return uses
