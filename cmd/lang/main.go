@@ -741,18 +741,25 @@ type preview2ImportSpec struct {
 	paramNames       []string
 	paramValtypes    []byte
 	coreImportModule string
+	innerTypes       [][]byte
 }
 
 // knownPreview2Imports is the registry of (core-module, core-name)
 // pairs the driver can map to component-level
 // `component.WasiImport` records. Grows as more preview-2 imports
 // land in wasmbin (see docs/TOOLCHAIN-SELF-HOSTING.md).
+//
+// `wasi:cli/exit@0.2.0::exit` takes `func(status: result<_, _>)`,
+// so its WasiImport carries InnerTypes = [InnerTypeResultEmpty]
+// and its param valtype is byte 0x00 — read by the binary parser
+// as the inner-scope typeidx of the result type.
 var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 	{"wasi:cli/exit@0.2.0", "exit"}: {
 		interfaceName:    "wasi:cli/exit@0.2.0",
-		paramNames:       []string{"code"},
-		paramValtypes:    []byte{component.CValtypeU32},
+		paramNames:       []string{"status"},
+		paramValtypes:    []byte{0x00},
 		coreImportModule: "wasi:cli/exit@0.2.0",
+		innerTypes:       [][]byte{component.InnerTypeResultEmpty},
 	},
 }
 
@@ -779,6 +786,7 @@ func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 			ParamNames:       spec.paramNames,
 			ParamValtypes:    spec.paramValtypes,
 			CoreImportModule: spec.coreImportModule,
+			InnerTypes:       spec.innerTypes,
 		})
 	}
 	return wasi, unknown
