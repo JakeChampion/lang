@@ -13,6 +13,13 @@ package ssa
 // gets dead-code-eliminated to identical blocks, or when a
 // front-end emits redundant branches.)
 //
+// `brif (not v), T, F` is rewritten to `brif v, F, T`. CmpFlip
+// already pulls `not(cmp)` into its inverted comparison op for
+// the value-position case; this handles the residual where the
+// not's argument isn't a comparison (e.g. a bool param threaded
+// through a not) and the only consumer is the brif. Saves a not
+// op when DCE reclaims it.
+//
 // Composes with Fold: a chain like
 //
 //	v1 = const_int 1
@@ -58,12 +65,35 @@ func FoldBranches(f *Func) {
 			continue
 		}
 
-		// Const-cond folding.
 		cond := b.Term.Cond
 		if !cond.IsValid() {
 			continue
 		}
 		def, ok := defs[cond.ID]
+		if !ok {
+			continue
+		}
+
+		// brif (not v), T, F  →  brif v, F, T. Saves the OpNot.
+		// Loop in case `v` is itself wrapped — chained nots
+		// collapse all the way through. `seen` guards against a
+		// malformed self-referencing OpNot.
+		seen := map[int32]bool{}
+		for def.Kind == OpNot && len(def.Args) == 1 && def.Args[0].IsValid() {
+			if seen[cond.ID] {
+				break
+			}
+			seen[cond.ID] = true
+			b.Term.Cond = def.Args[0]
+			b.Term.True, b.Term.False = b.Term.False, b.Term.True
+			tBlock, fBlock = b.Term.True, b.Term.False
+			cond = b.Term.Cond
+			def, ok = defs[cond.ID]
+			if !ok {
+				break
+			}
+		}
+
 		if !ok || def.Kind != OpConstBool {
 			continue
 		}
