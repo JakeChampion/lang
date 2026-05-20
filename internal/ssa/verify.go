@@ -193,6 +193,13 @@ func Verify(f *Func) error {
 			if err := check(b.Term.Value, b, termIdx, "ret"); err != nil {
 				return err
 			}
+		case TermRetPair:
+			if err := check(b.Term.Value, b, termIdx, "ret_pair tag"); err != nil {
+				return err
+			}
+			if err := check(b.Term.Value2, b, termIdx, "ret_pair payload"); err != nil {
+				return err
+			}
 		}
 	}
 

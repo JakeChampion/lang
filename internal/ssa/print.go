@@ -137,6 +137,8 @@ func writeTerm(b *strings.Builder, t *Terminator) {
 		} else {
 			b.WriteString("ret")
 		}
+	case TermRetPair:
+		fmt.Fprintf(b, "ret_pair %s, %s", t.Value, t.Value2)
 	default:
 		b.WriteString("<invalid>")
 	}

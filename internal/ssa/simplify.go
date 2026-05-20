@@ -91,6 +91,7 @@ func Simplify(f *Func) {
 		}
 		b.Term.Cond = resolve(b.Term.Cond)
 		b.Term.Value = resolve(b.Term.Value)
+		b.Term.Value2 = resolve(b.Term.Value2)
 	}
 }
 
