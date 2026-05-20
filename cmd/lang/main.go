@@ -49,6 +49,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
+	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
@@ -109,6 +110,7 @@ func main() {
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.lang (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
+	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin and no -wasi-adapter: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out). Lifts main() as a component-level u32-returning function. Only valid for Lang programs with no WASI imports.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -216,7 +218,7 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, *componentWrap, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -390,7 +392,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, componentWrap bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, formatLoadError(err, srcs, srcPath)
@@ -433,6 +435,19 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			return 1, err
 		}
 		if wasiAdapter == "" {
+			if componentWrap {
+				// Wrap the core module as a preview-2 component via
+				// the Go-side encoder — no wasm-tools shell-out, no
+				// adapter. Lifts `main` as a component-level u32-
+				// returning function. Only valid for Lang programs
+				// whose wasmbin output has zero imports (typically
+				// "just returns a value", no I/O).
+				comp := component.BuildLiftedExportComponent(bin, "main", "main", nil, nil, component.CValtypeU32)
+				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+					return 1, err
+				}
+				return 0, nil
+			}
 			if err := os.WriteFile(outPath, bin, 0o644); err != nil {
 				return 1, err
 			}
