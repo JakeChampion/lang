@@ -522,6 +522,42 @@ pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_tuple — emit a component-level type section
+// that defines a single `tuple<t0, t1, …>` type with N positional
+// elements. Tuples are the canonical pair / triple shape in WASI:
+// e.g. `wasi:cli/environment::get-environment()` returns
+// `list<tuple<string, string>>` for the (name, value) entries.
+//
+// Each entry of `elem_valtypes` is a primitive cvaltype byte or a
+// uleb-encoded typeidx — same rules as `put_type_section_one_list`.
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x6f ts:vec(<valtype>)          -- tuple
+//
+// Encoded body for an N-element tuple:
+//
+//   01           // vec(1) defvaltype entries
+//   6f           // tuple form (0x6f)
+//   <N:uleb>     // vec(N) element types
+//   <e0> <e1> …  // N valtype bytes
+pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(111u8);                      // tuple form (0x6f)
+    var n: i32 = elem_valtypes.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(elem_valtypes[i]);
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
