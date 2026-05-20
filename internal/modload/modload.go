@@ -76,10 +76,7 @@ func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[
 	loaded := map[string]*module{} // path → loaded module
 	stack := map[string]bool{}     // path → true while in flight (cycle detection)
 	srcs := map[string]string{}    // path → source text (for diag formatting)
-	prev := overrideSources
-	overrideSources = overrides
-	defer func() { overrideSources = prev }()
-	if err := loadRecursive(entryAbs, loaded, stack, srcs); err != nil {
+	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides); err != nil {
 		return nil, nil, err
 	}
 	resolveCyclicImports(loaded)
@@ -89,12 +86,6 @@ func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[
 	}
 	return prog, srcs, nil
 }
-
-// overrideSources is the per-call override table installed by
-// loadCore. readSource consults it before going to disk. Single-
-// threaded loader (no concurrent Load calls), so a package-level
-// var is enough; LoadWith saves + restores around its call.
-var overrideSources map[string]string
 
 // LoadStdlibFlat loads each stdlib path in `paths` (and every
 // stdlib module it transitively imports) and returns a single
@@ -145,7 +136,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 			return nil, fmt.Errorf("LoadStdlibFlat: %q is not a stdlib path (must start with `std/` or `core/`)", p)
 		}
 		canonical := resolveImportPath("", p)
-		if err := loadRecursive(canonical, loaded, stack, srcs); err != nil {
+		if err := loadRecursive(canonical, loaded, stack, srcs, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -239,7 +230,7 @@ type module struct {
 // not to enforce a strict DAG). When a stdlib cycle is detected
 // we just return without recursing; the back-edge's `imports`
 // pointer is patched up in the second pass below.
-func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string) error {
+func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string, overrides map[string]string) error {
 	if _, done := loaded[path]; done {
 		return nil
 	}
@@ -252,7 +243,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	stack[path] = true
 	defer delete(stack, path)
 
-	src, err := readSource(path)
+	src, err := readSource(path, overrides)
 	if err != nil {
 		return err
 	}
@@ -286,7 +277,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	childPaths := make([]string, len(prog.Imports))
 	for i, imp := range prog.Imports {
 		childPaths[i] = resolveImportPath(dir, imp.Path)
-		if err := loadRecursive(childPaths[i], loaded, stack, srcs); err != nil {
+		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides); err != nil {
 			return err
 		}
 	}
@@ -425,7 +416,7 @@ const stdlibPrefix = "stdlib://"
 // the embedded FS in the stdlib package. A missing stdlib module
 // surfaces a clear "unknown stdlib module" error rather than
 // falling back to disk.
-func readSource(path string) (string, error) {
+func readSource(path string, overrides map[string]string) (string, error) {
 	if strings.HasPrefix(path, stdlibPrefix) {
 		importPath := strings.TrimPrefix(path, stdlibPrefix)
 		src, ok := stdlib.Resolve(importPath)
@@ -436,9 +427,12 @@ func readSource(path string) (string, error) {
 	}
 	// In-memory override (set by LoadWith) takes precedence over
 	// disk — the editor's buffer is the source of truth while a
-	// file is open, even when it hasn't been saved yet.
-	if overrideSources != nil {
-		if src, ok := overrideSources[path]; ok {
+	// file is open, even when it hasn't been saved yet. The
+	// override map is threaded through loadRecursive rather than
+	// stashed on a package-level var so concurrent `Load` calls
+	// (e.g. parallel langsmith differential subtests) don't race.
+	if overrides != nil {
+		if src, ok := overrides[path]; ok {
 			return src, nil
 		}
 	}

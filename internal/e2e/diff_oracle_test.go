@@ -68,6 +68,14 @@ const diffOracleSeedCount = 2048
 // 0-indexed). Each shard claims `seed % N == I`. Unset → run
 // every seed, preserving local `go test ./internal/e2e/` behaviour
 // and the pre-shard CI semantics.
+//
+// Per-seed subtests are parallel (`t.Parallel()`). Each seed
+// generates its own source, runs through interp + compile-and-
+// exec helpers that use `t.TempDir()` exclusively, so there's no
+// shared filesystem or in-memory state across seeds — they can be
+// driven up to GOMAXPROCS at a time. Halves wall-clock on the
+// CI shards (1 shard × 4 cores ≈ 4 seeds in flight) without
+// touching coverage.
 func TestDifferential_LangsmithMain(t *testing.T) {
 	shardIdx, shardCount := diffOracleShard(t)
 	for seed := uint64(0); seed < diffOracleSeedCount; seed++ {
@@ -76,6 +84,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 		}
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			t.Parallel()
 			src := langsmith.GenMain(seed)
 			expected := runInterpByte(t, src)
 

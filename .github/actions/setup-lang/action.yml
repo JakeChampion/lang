@@ -1,7 +1,9 @@
 name: Setup lang toolchain
 description: >
   Shared setup for the lang CI workflows. Sets up Go (no module
-  cache — the repo has no external deps) and, on demand, the
+  cache — the repo has no external deps), caches the Go build
+  cache so per-job `go test` / `go build` reuse compiled stdlib +
+  per-package object files across runs, and, on demand, the
   wasmtime + wasm-tools + adapter triple and gotestsum. Each
   optional dependency is cached on a (host arch, version) key so
   the second-and-onward run skips the network fetch.
@@ -33,8 +35,27 @@ runs:
       with:
         go-version: "1.24"
         # No go.sum (no external deps) → setup-go's default cache
-        # attempt complains. Disable.
+        # attempt complains. Disable it here; we run our own cache
+        # step below that covers the Go build cache directly.
         cache: false
+
+    # Cache the Go build cache (`~/.cache/go-build` on Linux). Each
+    # `go test` invocation compiles the package + its test binary;
+    # without a cache that's repeated work every job. Keyed on host
+    # arch + Go version + go.mod hash (Go-version + module-set
+    # invalidation), with a restore-key on (arch, Go version) so a
+    # source-only edit still lands a warm cache — Go invalidates
+    # individual entries by per-file fingerprint on cache hit.
+    #
+    # No module cache step: the repo has no external module deps,
+    # `~/go/pkg/mod` stays empty.
+    - name: Cache Go build cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/go-build
+        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-${{ hashFiles('go.mod') }}
+        restore-keys: |
+          gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-
 
     - name: Detect host wasm-tools arch
       if: inputs.wasmtime == 'true'
