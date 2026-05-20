@@ -5845,8 +5845,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				}
 			}
 			if fa, ok := t.Array.(*ast.FieldAccess); ok {
-				if objIdent, ok2 := fa.Target.(*ast.Ident); ok2 {
-					if _, isLocal := b.locals[objIdent.Name]; isLocal && !isParamName(objIdent.Name, b) {
+				if rootName, found := rootIdentOfFieldChain(fa); found {
+					if _, isLocal := b.locals[rootName]; isLocal && !isParamName(rootName, b) {
 						st := b.fieldOwner(fa.Target)
 						if sd, sdOk := b.info.Structs[st]; sdOk {
 							offs, _ := structFieldLayout(sd.Fields, b.ptrW)
@@ -5987,6 +5987,27 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// rootIdentOfFieldChain walks a chain of nested FieldAccess
+// back to the root Ident (if any). `a.b.c.d` resolves to "a";
+// returns ("", false) when the chain bottoms out on a non-
+// ident shape (a call result, an index, etc.) — those cases
+// don't have a single writable "owner" slot the Phase 2b CoW
+// path can update, so they fall through to the legacy in-
+// place emit.
+func rootIdentOfFieldChain(fa *ast.FieldAccess) (string, bool) {
+	cur := fa.Target
+	for {
+		switch t := cur.(type) {
+		case *ast.Ident:
+			return t.Name, true
+		case *ast.FieldAccess:
+			cur = t.Target
+		default:
+			return "", false
+		}
+	}
 }
 
 // isParamName reports whether `name` resolves to a function

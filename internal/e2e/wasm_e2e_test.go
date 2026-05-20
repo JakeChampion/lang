@@ -14231,3 +14231,37 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (aliased struct.field[i]=v must copy)", got)
 	}
 }
+
+// Mirror of TestArm64ArrayIndexSetNestedStructField.
+func TestWASMArrayIndexSetNestedStructField(t *testing.T) {
+	src := `struct Inner { items: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
+    o.inner.items[1] = 999;
+    if (o.inner.items[0] != 10) { return 1; }
+    if (o.inner.items[1] != 999) { return 2; }
+    if (o.inner.items[2] != 30) { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (a.b.field[i]=v in-place when rc==1)", got)
+	}
+}
+
+// Mirror of TestArm64ArrayIndexSetNestedStructFieldAliasedCopies.
+func TestWASMArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
+	src := `struct Inner { items: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var arr: i32[] = [10, 20, 30];
+    var o: Outer = Outer{inner: Inner{items: arr}};
+    o.inner.items[1] = 999;
+    if (arr[1] != 20) { return 1; }
+    if (o.inner.items[1] != 999) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (aliased a.b.field[i]=v must copy)", got)
+	}
+}

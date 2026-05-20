@@ -12957,6 +12957,44 @@ function main(): i32 {
 	}
 }
 
+// Phase 2b extension: `a.b.field[i] = v` for nested struct
+// field chains. rootIdentOfFieldChain walks the chain back to
+// the root ident; the helper handles arbitrary chain depths.
+func TestArm64ArrayIndexSetNestedStructField(t *testing.T) {
+	src := `struct Inner { items: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
+    o.inner.items[1] = 999;
+    if (o.inner.items[0] != 10) { return 1; }
+    if (o.inner.items[1] != 999) { return 2; }
+    if (o.inner.items[2] != 30) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (a.b.field[i]=v in-place when rc==1)", code)
+	}
+}
+
+// Aliased nested struct field — writing through o.inner.items
+// must copy when the underlying buffer is shared with the
+// outer `arr` local.
+func TestArm64ArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
+	src := `struct Inner { items: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var arr: i32[] = [10, 20, 30];
+    var o: Outer = Outer{inner: Inner{items: arr}};
+    o.inner.items[1] = 999;
+    if (arr[1] != 20) { return 1; }  // arr unchanged
+    if (o.inner.items[1] != 999) { return 2; }  // o updated
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased a.b.field[i]=v must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
