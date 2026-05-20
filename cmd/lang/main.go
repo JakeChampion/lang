@@ -440,7 +440,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			ForceMemorySection: wasiAdapter != "",
 			SynthStart:         wasiAdapter != "",
 			Preview2WASI:       componentWrap || componentWrapCli,
-			SynthCliRun:        componentWrapCli,
+			SynthCliRun:        componentWrap || componentWrapCli,
 		})
 		if err != nil {
 			return 1, err
@@ -463,11 +463,17 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter PATH to wrap through wasm-tools.", len(unknown), strings.Join(unknown, ", "))
 				}
+				// `_lang_run` is the wasmbin-synthesised wrapper
+				// (SynthCliRun above) that normalises main's
+				// signature to `() -> i32` regardless of what the
+				// user declared. The component-level export name
+				// stays as "main" so `wasmtime run --invoke main()`
+				// keeps working.
 				var comp []byte
 				if len(wasiImports) == 0 {
-					comp = component.BuildLiftedExportComponent(bin, "main", "main", nil, nil, component.CValtypeU32)
+					comp = component.BuildLiftedExportComponent(bin, "_lang_run", "main", nil, nil, component.CValtypeU32)
 				} else {
-					comp = component.WrapWasiImportedWithExport(bin, wasiImports, "main", "main", nil, nil, component.CValtypeU32)
+					comp = component.WrapWasiImportedWithExport(bin, wasiImports, "_lang_run", "main", nil, nil, component.CValtypeU32)
 				}
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err

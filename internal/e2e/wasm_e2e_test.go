@@ -9449,6 +9449,46 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapVoidMain confirms `-component-wrap`
+// (the non-cli variant, lifts main as a top-level export)
+// handles a void `main` via the SynthCliRun wrapper too. The
+// component-level export is still named "main" returning u32;
+// the wrapper internally turns void → i32.const 0 so wasmtime's
+// canon-lift sees a `() -> i32` core export.
+//
+// Verifies via `wasmtime run --invoke "main()"` that main() now
+// returns 0 (the wrapper's fallback).
+func TestCmdLangComponentWrapVoidMain(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "void.lang")
+	src := []byte(`function main() {
+    var t: i64 = monotonic_ns();
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "void.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap (void main) failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != "0" {
+		t.Errorf("expected main() => 0 (void-main wrapper), got %q", got)
+	}
+}
+
 // TestCmdLangComponentWrap exercises the new `-component-wrap`
 // driver flag, which uses the Go-side encoder to produce a
 // self-contained preview-2 component without shelling out to
