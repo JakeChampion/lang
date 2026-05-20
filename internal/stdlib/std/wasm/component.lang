@@ -1390,6 +1390,48 @@ pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u3
     return put_alias_section_core_exports(buf, sorts, instance_idxs, names);
 }
 
+// put_alias_section_instance_export_func — emit an alias section
+// with one entry that surfaces a component-level function exported
+// by a COMPONENT instance (not a core instance) as a top-level
+// component-level func. The sibling of
+// `put_alias_section_core_export_func` for the component-sort
+// alias case.
+//
+// This is how WASI imports are consumed: after
+// `import "wasi:cli/exit@0.2.0" (instance ...)` declares an
+// imported instance, the component aliases its `exit` export to
+// get a callable top-level func, which is then `canon lower`ed
+// into a core function that gets threaded down into the core
+// module's instantiation.
+//
+// Spec (Binary.md, `alias` production):
+//   alias       ::= s:sort t:aliastarget
+//   sort        ::= ... | 0x01 -- func
+//   aliastarget ::= 0x00 i:<instance-idx>      n:<name>   -- from component instance
+//                 | 0x01 i:<core-instance-idx> n:<name>   -- from core instance
+//                 | 0x02 ct:u32 idx:u32                   -- outer
+//
+// Encoded body:
+//
+//   01                       // vec(1) alias entries
+//   01                       // sort = func
+//   00                       // aliastarget = from-instance-export
+//   <instance-idx:uleb>
+//   <name>                   // uleb-prefixed UTF-8
+pub function put_alias_section_instance_export_func(buf: u8[], instance_idx: u32, name: string): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(1u8);                       // sort = func
+    body = body.push(0u8);                       // target: from-instance-export
+    body = leb128.uleb_u32(body, instance_idx);
+    body = encode.put_name(body, name);
+
+    var out: u8[] = buf;
+    out = out.push(section_alias());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_lifts_no_opts — emit a canon section containing
 // N `canon lift` entries with `opts = []`. Lifts a vec of core
 // functions into the component-level function space, each with its
