@@ -147,13 +147,15 @@ func buildComponent(t *testing.T, src string) string {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	wat, err := wasm.EmitWithOptions(prog, info, wasm.EmitOptions{
-		PrintMainResult: true,
+	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		SynthStart:         true,
+		PrintMainResult:    true,
 	})
 	if err != nil {
-		t.Fatalf("emit: %v", err)
+		t.Fatalf("wasmbin.Build: %v", err)
 	}
-	return finishComponent(t, wat)
+	return finishComponentFromCoreBytes(t, bin)
 }
 
 // buildComponentMulti is buildComponent for a module set loaded

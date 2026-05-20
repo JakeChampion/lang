@@ -235,6 +235,16 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	const closuresBase = 80
 	const maxClosureCells = (1024 - closuresBase) / 8
 	closureTableIdx := map[string]int{}
+	// progFuncTableIdx maps a user-function name to its position
+	// in prog.Funcs. The element segment places prog.Funcs[i] at
+	// table-index i (see anyTableOp branch below); call_indirect
+	// dispatches by that table-index, not by the module-wide
+	// funcidx (which has the import-count shift baked in).
+	progFuncTableIdx := make(map[string]uint32, len(prog.Funcs))
+	for i, fn := range prog.Funcs {
+		progFuncTableIdx[fn.Name] = uint32(i)
+	}
+
 	var closureBytes []byte
 	internClosure := func(name string) (int, error) {
 		if idx, ok := closureTableIdx[name]; ok {
@@ -245,12 +255,16 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			return 0, fmt.Errorf("OpConstFunc: closure-cell pool exhausted (>%d unique targets)", maxClosureCells)
 		}
 		closureTableIdx[name] = idx
-		// Cell bytes: fn_idx LE + env_ptr=0 LE. fn_idx is the
-		// post-import-shifted funcidx, which equals funcIdx[name]
-		// here since the import shift is uniform.
-		fnIdx := funcIdx[name]
+		// Cell bytes: fn_table_idx LE + env_ptr=0 LE.
+		// call_indirect takes a TABLE index, not a funcidx —
+		// table-index = position in prog.Funcs (the element
+		// segment places prog.Funcs[i] at table-index i).
+		fnTableIdx, ok := progFuncTableIdx[name]
+		if !ok {
+			return 0, fmt.Errorf("OpConstFunc: target %q not in prog.Funcs (treeshake / IR mismatch)", name)
+		}
 		closureBytes = append(closureBytes,
-			byte(fnIdx), byte(fnIdx>>8), byte(fnIdx>>16), byte(fnIdx>>24),
+			byte(fnTableIdx), byte(fnTableIdx>>8), byte(fnTableIdx>>16), byte(fnTableIdx>>24),
 			0, 0, 0, 0)
 		return idx, nil
 	}
@@ -302,6 +316,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	closureTargets := closureTargetSet(prog)
 	ctx := &emitCtx{
 		funcIdx:            funcIdx,
+		progFuncTableIdx:   progFuncTableIdx,
 		internString:       internString,
 		internClosure:      internClosure,
 		closuresBaseAddr:   closuresBase,
@@ -854,6 +869,12 @@ type emitCtx struct {
 	// funcIdx maps an IR function name to its funcidx in the
 	// emitted module. OpCallDirect / OpCallClosureDirect use it.
 	funcIdx map[string]uint32
+	// progFuncTableIdx maps an IR function name to its position in
+	// prog.Funcs — i.e. its slot in the element segment. Closure
+	// pair cells (OpMakeClosure, OpConstFunc) store this value
+	// because call_indirect indexes by table-idx, not funcidx
+	// (the import shift would skew the lookup otherwise).
+	progFuncTableIdx map[string]uint32
 	// addSigType resolves a function-type signature to its
 	// typeidx, lazily inserting into the type section.
 	addSigType func(*ast.FuncType) (uint32, error)
@@ -1010,6 +1031,20 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		body, err = emitOp(body, op, ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("op[%d] %v: %w", opIdx, op.Kind, err)
+		}
+	}
+	// TCO sentinel: when the function ends with an OpEnd closing
+	// the synthetic outer loop (every iteration ends in OpReturn
+	// or `br 0`, so the loop-end is unreachable at runtime), the
+	// wasm validator still expects the operand stack at function
+	// exit to match the result type. An `unreachable` after the
+	// loop's end makes the validator treat the exit point as
+	// stack-poly. No-op for non-TCO functions (they end with
+	// OpReturn / OpReturnVoid, which already make the exit
+	// stack-poly).
+	if len(fn.Ops) > 0 && fn.Ops[len(fn.Ops)-1].Kind == ir.OpEnd {
+		if _, isVoid := fn.ReturnType.(ast.VoidType); !isVoid && fn.ReturnType != nil {
+			body = inst.InstUnreachable(body)
 		}
 	}
 	return body, locals, nil
@@ -1705,6 +1740,10 @@ var CallDirectAliases = map[string]string{
 	"open_writer":   "__lang_open_writer",
 	"open_appender": "__lang_open_appender",
 
+	// stdio Writers, mirrors of stdin for consistency. fd=1 / 2.
+	"stdout": "__lang_stdout",
+	"stderr": "__lang_stderr",
+
 	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
 	// the helpers wrap wasi:sockets + wasi:io directly. See
 	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
@@ -2059,9 +2098,13 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	if op.Str == "" {
 		return nil, fmt.Errorf("OpMakeClosure: missing target name")
 	}
-	fnIdx, ok := ctx.funcIdx[op.Str]
+	// call_indirect dispatches by table-idx, not funcidx, so the
+	// pair cell stores the function's slot in the element segment
+	// (= its position in prog.Funcs) rather than the
+	// post-import-shifted funcidx.
+	fnTableIdx, ok := ctx.progFuncTableIdx[op.Str]
 	if !ok {
-		return nil, fmt.Errorf("OpMakeClosure: unknown target %q", op.Str)
+		return nil, fmt.Errorf("OpMakeClosure: target %q not in prog.Funcs", op.Str)
 	}
 	if ctx.closureSiteCursor >= len(ctx.closureSites) {
 		return nil, fmt.Errorf("OpMakeClosure: site cursor exhausted")
@@ -2072,12 +2115,12 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("OpMakeClosure: %w", err)
 	}
-	// Pair cell: 8 bytes containing {fn_idx, env_ptr}.
+	// Pair cell: 8 bytes containing {fn_table_idx, env_ptr}.
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocIdx)
 	body = inst.InstLocalSet(body, pairSlot)
 	body = inst.InstLocalGet(body, pairSlot)
-	body = inst.InstI32Const(body, int32(fnIdx))
+	body = inst.InstI32Const(body, int32(fnTableIdx))
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, pairSlot)
 	body = inst.InstLocalGet(body, envSlot)

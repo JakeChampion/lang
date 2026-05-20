@@ -325,6 +325,29 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					// tcp-socket to satisfy the canonical-ABI
 					// resource-has-children rule.
 					needs.add("__lang_tcp_close")
+				case "__slice_make":
+					needs.add("__lang_alloc")
+					needs.add("__slice_make")
+				case "__slice_idx":
+					needs.add("__slice_idx")
+				case "__slice_idx_1":
+					needs.add("__slice_idx_1")
+				case "__slice_idx_2":
+					needs.add("__slice_idx_2")
+				case "__slice_idx_4":
+					needs.add("__slice_idx_4")
+				case "__slice_idx_8":
+					needs.add("__slice_idx_8")
+				case "__method_string_as_bytes":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__method_string_as_bytes")
+				case "__lang_stdout":
+					needs.add("__lang_alloc")
+					needs.add("__lang_stdout")
+				case "__lang_stderr":
+					needs.add("__lang_alloc")
+					needs.add("__lang_stderr")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -949,6 +972,58 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCabiReallocBody,
+	},
+	"__slice_make": {
+		// (data, len) → i32 — 8-byte slice header (data@0, len@4).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceMakeBody,
+	},
+	"__slice_idx": {
+		// Legacy unsuffixed name, stride 4 (default i32 slices).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceIdxBody(4),
+	},
+	"__slice_idx_1": {
+		// (slice, i) → i32 — bounds-checked byte address; stride 1.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceIdxBody(1),
+	},
+	"__slice_idx_2": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceIdxBody(2),
+	},
+	"__slice_idx_4": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceIdxBody(4),
+	},
+	"__slice_idx_8": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSliceIdxBody(8),
+	},
+	"__method_string_as_bytes": {
+		// (s_data, s_len) → i32 — zero-copy slice header
+		// aliasing the string's bytes.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStringAsBytesBody,
+	},
+	"__lang_stdout": {
+		// () → i32 — Writer struct with fd=1 (stdout).
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildStdoutBody,
+	},
+	"__lang_stderr": {
+		// () → i32 — Writer struct with fd=2 (stderr).
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildStderrBody,
 	},
 }
 
