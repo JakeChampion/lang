@@ -982,6 +982,99 @@ pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[]
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_instance_one_func_export — emit a component-
+// level type section containing one instance type. The instance
+// type declares a single inline functype with the given parameter
+// list and no result (the WASI pattern: `wasi:cli/exit::exit` has
+// `(param "code" u32)` and no return), then exports it under
+// `export_name`.
+//
+// This is the building block for WASI interface imports: an
+// `import "wasi:cli/exit@0.2.0" (instance ...)` needs an instance
+// type to describe what's inside, and this composer produces the
+// simplest single-function shape.
+//
+// Spec (Binary.md, component instance types):
+//   instancetype ::= 0x42 ds:vec(<instancedecl>)
+//   instancedecl ::= 0x00 t:<core:type>
+//                | 0x01 t:<type>
+//                | 0x02 a:<alias>
+//                | 0x04 ed:<exportname> ed2:<externdesc>
+//
+// Encoded body for an instance type that inline-declares one
+// no-result functype + exports it:
+//
+//   01                       // vec(1) type entries (the instance type)
+//   42                       // instance-type form
+//   02                       // vec(2) decls
+//   01                       // decl 0: type
+//   40 <P:uleb> (n,v)* 01 00 // inline functype: P params, no result
+//   04                       // decl 1: export with externdesc
+//   00 <export_name>         // exportname kind=label
+//   01 00                    // externdesc func, typeidx 0 (the inline one)
+pub function put_type_section_one_instance_one_func_export(buf: u8[], export_name: string, param_names: string[], param_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) type entries
+    body = body.push(66u8);                       // instance-type form (0x42)
+    body = leb128.uleb_u32(body, 2u32);          // vec(2) decls
+
+    // decl 0: type — inline functype with the given params, no result.
+    body = body.push(1u8);                        // type decl
+    body = body.push(64u8);                       // functype form (0x40)
+    var np: i32 = param_names.len();
+    body = leb128.uleb_u32(body, np as u32);
+    var i: i32 = 0;
+    while (i < np) {
+        body = encode.put_name(body, param_names[i]);
+        body = body.push(param_valtypes[i]);
+        i = i + 1;
+    }
+    body = body.push(1u8);                        // resultlist: named
+    body = leb128.uleb_u32(body, 0u32);          // vec(0) = no result
+
+    // decl 1: export — surface the inline-declared func.
+    body = body.push(4u8);                        // export decl
+    body = body.push(0u8);                        // exportname kind = label
+    body = encode.put_name(body, export_name);
+    body = body.push(1u8);                        // externdesc kind = func
+    body = leb128.uleb_u32(body, 0u32);          // typeidx 0 (the inline functype)
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
+// put_import_section_one_instance — emit a component-level import
+// section with one entry: a label-form name + externdesc kind 0x05
+// (instance) referring to a previously-declared instance type.
+//
+// This is the WASI-shape import: `import "wasi:cli/exit@0.2.0"
+// (instance ...)`. Pair with `put_type_section_one_instance_*` to
+// declare the instance type first.
+//
+// Spec:
+//   externdesc ::= ... | 0x05 i:<typeidx>          -- instance
+//
+// Encoded body:
+//
+//   01                       // vec(1) imports
+//   00 <name>                // importname kind = label
+//   05 <typeidx:uleb>        // externdesc instance + typeidx
+pub function put_import_section_one_instance(buf: u8[], name: string, instance_typeidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(0u8);                       // importname kind = label
+    body = encode.put_name(body, name);
+    body = body.push(5u8);                       // externdesc kind = instance
+    body = leb128.uleb_u32(body, instance_typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_import());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
