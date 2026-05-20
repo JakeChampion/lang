@@ -1093,7 +1093,13 @@ pub function (s: string) bytes(): u8[] {
     var n: i32 = s.len();
     var out: u8[] = __alloc_u8(n);
     if (n > 0) {
-        __memcpy(out as i32, s.as_bytes() as i32, n);
+        // Use `as usize`, not `as i32`: native 64-bit targets
+        // (arm64-linux on AWS Graviton / Ampere Altra) place
+        // heap mmap regions above 4 GiB, so `pointer as i32`
+        // silently truncates and __memcpy traps on the bad
+        // address. See `int_to_string` in core/int.lang for
+        // the same fix in context.
+        __memcpy(out as usize, s.as_bytes() as usize, n);
     }
     return out;
 }
