@@ -755,21 +755,28 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		header := l.out.NewBlock()
 		postB := l.out.NewBlock()
 		l.out.SetBr(l.cur, header)
-		// Eagerly create a phi at the header for every initialised
-		// slot. Args[0] = pre-loop value (current); back-edges
-		// append their value at OpBr/OpBrIf time. TrivialPhis
-		// later prunes phis whose Args collapse to a single value.
+		// Determine which slots the loop body actually writes to
+		// (OpStoreLocal / OpTeeLocal). Only those slots need a
+		// header phi — unmodified slots keep their pre-loop value
+		// throughout the loop, so a phi for them would just
+		// reference the pre-loop Value as both Args[0] and the
+		// back-edge arg. That self-phi is fine inside the loop
+		// but creates a dominance violation when the loop is
+		// reached conditionally (e.g., the surrounding `if`'s
+		// else-arm bypasses the loop, and the eager phi's pre-
+		// loop Value isn't dominated by an enclosing merge phi
+		// at the if-postB if the merge skipped a single-Value
+		// "doesn't vary" case).
+		writtenSlots := loopBodyWrites(l.in.Ops, i)
 		loopPhis := make([]*Op, len(l.slots))
 		for sIdx, v := range l.slots {
 			if !v.IsValid() {
 				continue
 			}
+			if !writtenSlots[sIdx] {
+				continue
+			}
 			phiResult := l.out.AddPhi(header, v)
-			// AddPhi returns the freshly-minted Value; grab the
-			// underlying Op from header.Ops (last entry, since
-			// AddPhi prepends to keep phis at top — actually it
-			// inserts after any existing phis. Walk header.Ops
-			// to find our just-added one).
 			var phiOp *Op
 			for _, op := range header.Ops {
 				if op.Kind == OpPhi && op.Result == phiResult {
@@ -1170,6 +1177,35 @@ func mapUnsignedVariant(k OpKind) OpKind {
 		return OpGeU
 	}
 	return k
+}
+
+// loopBodyWrites scans the IR ops starting at the OpLoop at
+// `loopIdx` (exclusive) up to (but not including) the matching
+// OpEnd. Returns a set of slot indices that are written via
+// OpStoreLocal / OpTeeLocal anywhere in the loop body.
+//
+// Used by the OpLoop handler to decide which slots need a
+// header phi. Slots that aren't written keep their pre-loop
+// SSA Value throughout the loop, so no phi is needed (and a
+// phi for an unwritten slot would create a dominance bug
+// when the loop is conditionally entered).
+func loopBodyWrites(ops []ir.Op, loopIdx int) map[int]bool {
+	written := map[int]bool{}
+	depth := 1
+	for j := loopIdx + 1; j < len(ops); j++ {
+		switch ops[j].Kind {
+		case ir.OpBlock, ir.OpLoop, ir.OpIf:
+			depth++
+		case ir.OpEnd:
+			depth--
+			if depth == 0 {
+				return written
+			}
+		case ir.OpStoreLocal, ir.OpTeeLocal:
+			written[int(ops[j].I32)] = true
+		}
+	}
+	return written
 }
 
 func mapBinaryArith(k ir.OpKind) OpKind {
