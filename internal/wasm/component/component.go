@@ -1,0 +1,218 @@
+// Package component is the Go-side counterpart of the Lang stdlib
+// `std/wasm/component` module. It writes Component Model binary
+// envelopes around already-encoded core wasm modules.
+//
+// Spec: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md
+//
+// This package owns the encoder primitives used by the production
+// driver (cmd/lang) when it composes a preview-2-native component
+// without shelling out to `wasm-tools component new`. The Lang
+// stdlib version is the long-term self-hosting target; this Go
+// version is the bridge that lets us retire the wasm-tools shell-
+// out today, before the compiler is self-hosted.
+//
+// The two implementations are intentionally kept byte-for-byte
+// equivalent: when one ships a new section composer, the other
+// follows. component_test.go pins this with side-by-side checks
+// against `wasm-tools parse` output for representative shapes.
+package component
+
+import (
+	"github.com/jakechampion/lang/internal/wasm/leb128"
+)
+
+// Component-Model binary section IDs (matches the constants in
+// std/wasm/component.lang's section_*).
+const (
+	SectionCustom       = 0
+	SectionCoreModule   = 1
+	SectionCoreInstance = 2
+	SectionCoreType     = 3
+	SectionInstance     = 5
+	SectionAlias        = 6
+	SectionType         = 7
+	SectionCanon        = 8
+	SectionStart        = 9
+	SectionImport       = 10
+	SectionExport       = 11
+)
+
+// Core-sort discriminator bytes (used inside core-sortidx in
+// alias and core-instance entries).
+const (
+	CoreSortFunc     = 0x00
+	CoreSortTable    = 0x01
+	CoreSortMemory   = 0x02
+	CoreSortGlobal   = 0x03
+	CoreSortType     = 0x10
+	CoreSortModule   = 0x11
+	CoreSortInstance = 0x12
+)
+
+// Component primitive valtype bytes. Distinct numbering from the
+// core wasm valtypes (which live in internal/wasm/encode): core i32
+// is 0x7f, component bool is also 0x7f. Each space is parsed
+// independently.
+const (
+	CValtypeBool   = 0x7f
+	CValtypeS8     = 0x7e
+	CValtypeU8     = 0x7d
+	CValtypeS16    = 0x7c
+	CValtypeU16    = 0x7b
+	CValtypeS32    = 0x7a
+	CValtypeU32    = 0x79
+	CValtypeS64    = 0x78
+	CValtypeU64    = 0x77
+	CValtypeF32    = 0x76
+	CValtypeF64    = 0x75
+	CValtypeChar   = 0x74
+	CValtypeString = 0x73
+)
+
+// PutComponentHeader appends the Component Model preamble:
+// `\0asm` + version 0x000d + layer 0x0001. Always 8 bytes.
+// Layer = 0x01 is what distinguishes a component from a core module
+// (whose version field is 0x01000000 and has no layer field).
+func PutComponentHeader(buf []byte) []byte {
+	return append(buf,
+		0x00, 0x61, 0x73, 0x6d, // "\0asm"
+		0x0d, 0x00, // version 0x000d
+		0x01, 0x00, // layer 0x0001 (component)
+	)
+}
+
+// PutCoreModuleSection wraps a complete core wasm module as a
+// core-module section: `id : u8 + size : uleb + body`. `core` is
+// the entire core module starting with its own preamble.
+func PutCoreModuleSection(buf, core []byte) []byte {
+	buf = append(buf, SectionCoreModule)
+	buf = leb128.UlebU64(buf, uint64(len(core)))
+	buf = append(buf, core...)
+	return buf
+}
+
+// putName appends a uleb-prefixed UTF-8 name (the component-model
+// name encoding, identical to core wasm names).
+func putName(buf []byte, s string) []byte {
+	buf = leb128.UlebU64(buf, uint64(len(s)))
+	buf = append(buf, s...)
+	return buf
+}
+
+// wrapSection wraps `body` in a section header: `id + uleb_size + body`.
+func wrapSection(buf []byte, id byte, body []byte) []byte {
+	buf = append(buf, id)
+	buf = leb128.UlebU64(buf, uint64(len(body)))
+	buf = append(buf, body...)
+	return buf
+}
+
+// PutTypeSectionOneInstanceOneFuncNoResultExport emits a type
+// section containing one instance type that inline-declares a
+// no-result functype and exports it under exportName. Mirrors
+// std/wasm/component's `put_type_section_one_instance_one_func_export`.
+func PutTypeSectionOneInstanceOneFuncNoResultExport(buf []byte, exportName string, paramNames []string, paramValtypes []byte) []byte {
+	if len(paramNames) != len(paramValtypes) {
+		panic("component: paramNames and paramValtypes must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) type entries
+	body = append(body, 0x42)         // instance-type form
+	body = leb128.UlebU64(body, 2) // vec(2) decls
+
+	// decl 0: inline functype, no result.
+	body = append(body, 0x01) // type decl
+	body = append(body, 0x40) // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramValtypes[i])
+	}
+	body = append(body, 0x01) // resultlist: named
+	body = leb128.UlebU64(body, 0)
+
+	// decl 1: export func at typeidx 0.
+	body = append(body, 0x04) // export decl
+	body = append(body, 0x00) // exportname kind = label
+	body = putName(body, exportName)
+	body = append(body, 0x01) // externdesc kind = func
+	body = leb128.UlebU64(body, 0)
+
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutImportSectionOneInstance emits an import section with one
+// label-form entry naming an instance import of the given typeidx.
+// Mirrors std/wasm/component's `put_import_section_one_instance`.
+func PutImportSectionOneInstance(buf []byte, name string, instanceTypeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)         // importname kind = label
+	body = putName(body, name)
+	body = append(body, 0x05) // externdesc kind = instance
+	body = leb128.UlebU64(body, uint64(instanceTypeidx))
+	return wrapSection(buf, SectionImport, body)
+}
+
+// PutAliasSectionInstanceExportFunc emits an alias section that
+// surfaces a function exported by a component instance as a
+// top-level component-level func. Mirrors
+// `put_alias_section_instance_export_func`.
+func PutAliasSectionInstanceExportFunc(buf []byte, instanceIdx uint32, name string) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x01)         // sort = func
+	body = append(body, 0x00)         // target: from-instance-export
+	body = leb128.UlebU64(body, uint64(instanceIdx))
+	body = putName(body, name)
+	return wrapSection(buf, SectionAlias, body)
+}
+
+// PutCanonSectionLowerNoOpts emits a canon section with one
+// canon-lower entry (no opts). Mirrors
+// `put_canon_section_lower_no_opts`.
+func PutCanonSectionLowerNoOpts(buf []byte, funcIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x01)         // canon-lower
+	body = append(body, 0x00)         // function-lower sub-tag
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = leb128.UlebU64(body, 0) // no opts
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCoreInstanceSectionFromOneFuncExport emits a core-instance
+// section with one "instance-from-exports" entry packaging a
+// single core func. Mirrors
+// `put_core_instance_section_from_one_func_export`.
+func PutCoreInstanceSectionFromOneFuncExport(buf []byte, exportName string, coreFuncIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x01)         // form: from-exports
+	body = leb128.UlebU64(body, 1) // vec(1) exports
+	body = putName(body, exportName)
+	body = append(body, CoreSortFunc)
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	return wrapSection(buf, SectionCoreInstance, body)
+}
+
+// PutCoreInstanceSectionInstantiateWithInstanceArgs emits a
+// core-instance section with one "instantiate" entry passing N
+// instance args. Mirrors
+// `put_core_instance_section_instantiate_with_instance_args`.
+func PutCoreInstanceSectionInstantiateWithInstanceArgs(buf []byte, moduleIdx uint32, argNames []string, instanceIdxs []uint32) []byte {
+	if len(argNames) != len(instanceIdxs) {
+		panic("component: argNames and instanceIdxs must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x00)         // form: instantiate
+	body = leb128.UlebU64(body, uint64(moduleIdx))
+	body = leb128.UlebU64(body, uint64(len(argNames)))
+	for i := range argNames {
+		body = putName(body, argNames[i])
+		body = append(body, CoreSortInstance)
+		body = leb128.UlebU64(body, uint64(instanceIdxs[i]))
+	}
+	return wrapSection(buf, SectionCoreInstance, body)
+}
