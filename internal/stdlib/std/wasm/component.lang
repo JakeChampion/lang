@@ -716,6 +716,63 @@ pub function put_type_section_one_record(buf: u8[], field_names: string[], field
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_variant — emit a component-level type
+// section that defines a single `variant` type with N named cases.
+// Each case has a name and an optional payload valtype; cases
+// without payloads are tag-only (closer to enum cases). Refines —
+// the optional pointer to a "parent" case — is not supported by
+// this composer; every case emits `refines absent`.
+//
+// Variants are the structural sum type — like Rust's `enum` with
+// payloads. WASI uses them heavily for error encodings
+// (`wasi:http/types::error-code` has dozens of cases, many with
+// payloads) and option-like return shapes.
+//
+// `case_has_payload[i]` selects whether case i carries a payload:
+//   - true  → emit `01 <case_payload_valtypes[i]>`
+//   - false → emit `00` (payload absent); the corresponding entry
+//             in `case_payload_valtypes` is ignored.
+//
+// The three top-level arrays must have equal length.
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x71 cases:vec(<case>)          -- variant
+//   case ::= name:<name> t?:<valtype> refines?:<u32>
+//
+// Each optional field is encoded as `0x01 + value` (present) or
+// `0x00` (absent).
+//
+// Encoded body for an N-case variant (no refines):
+//
+//   01           // vec(1) defvaltype entries
+//   71           // variant form (0x71)
+//   <N:uleb>     // vec(N) cases
+//   (<name> <payload_flag> [<valtype>] 00)*
+pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_has_payload: boolean[], case_payload_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(113u8);                      // variant form (0x71)
+    var n: i32 = case_names.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, case_names[i]);
+        if (case_has_payload[i]) {
+            body = body.push(1u8);                // payload present
+            body = body.push(case_payload_valtypes[i]);
+        } else {
+            body = body.push(0u8);                // payload absent
+        }
+        body = body.push(0u8);                    // refines absent
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
