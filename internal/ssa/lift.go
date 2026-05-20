@@ -176,6 +176,17 @@ import (
 //     Args = popped arguments, Result + Result2 = the
 //     (tag, payload) pair pushed back onto the stack.
 //
+//   Phase 22:
+//   - Sub-i32 load/store variants:
+//       OpLoadI8S  → OpLoad8S
+//       OpLoadByte → OpLoad8U
+//       OpLoadI16S → OpLoad16S
+//       OpLoadI16U → OpLoad16U
+//       OpStoreI8  → OpStore8
+//       OpStoreI16 → OpStore16
+//     Load variants take (addr); push result. Stores take
+//     (addr, val); no result.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -479,6 +490,40 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		l.out.AddOpNoResult(l.cur, OpStore, addr, val)
+	case ir.OpLoadI8S, ir.OpLoadByte, ir.OpLoadI16S, ir.OpLoadI16U:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs addr operand", op.Kind, i)
+		}
+		addr := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		var kind OpKind
+		switch op.Kind {
+		case ir.OpLoadI8S:
+			kind = OpLoad8S
+		case ir.OpLoadByte:
+			kind = OpLoad8U
+		case ir.OpLoadI16S:
+			kind = OpLoad16S
+		case ir.OpLoadI16U:
+			kind = OpLoad16U
+		}
+		v := l.out.AddOp(l.cur, kind, addr)
+		l.stack = append(l.stack, v)
+	case ir.OpStoreI8, ir.OpStoreI16:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs (addr, value) operands", op.Kind, i)
+		}
+		val := l.stack[len(l.stack)-1]
+		addr := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		var kind OpKind
+		switch op.Kind {
+		case ir.OpStoreI8:
+			kind = OpStore8
+		case ir.OpStoreI16:
+			kind = OpStore16
+		}
+		l.out.AddOpNoResult(l.cur, kind, addr, val)
 	case ir.OpCallDirect:
 		argc := int(op.I32)
 		if len(l.stack) < argc {

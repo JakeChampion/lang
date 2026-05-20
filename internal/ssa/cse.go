@@ -78,7 +78,11 @@ func cseEligible(op *Op) bool {
 		return false
 	}
 	switch op.Kind {
-	case OpCall, OpCallIndirect, OpCallPair, OpLoad, OpStore, OpPhi, OpInvalid,
+	case OpCall, OpCallIndirect, OpCallPair,
+		OpLoad, OpStore,
+		OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U,
+		OpStore8, OpStore16,
+		OpPhi, OpInvalid,
 		OpMakeClosure, OpMakeEnv:
 		return false
 	}
