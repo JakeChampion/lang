@@ -57,34 +57,13 @@ func isDeadOp(op *Op, uses map[int32]int) bool {
 		// Side-effect-only Op (Store etc.). Keep.
 		return false
 	}
-	if hasSideEffect(op.Kind) {
+	if !IsPure(op.Kind) {
+		// Impure ops (Call, Load, Store, Alloc, MakeClosure/Env)
+		// can affect state outside their Result Value, so DCE
+		// must keep them even when nobody reads the result.
 		return false
 	}
 	return uses[op.Result.ID] == 0
-}
-
-// hasSideEffect identifies Op kinds whose execution can affect
-// state outside their Result Value, so DCE must keep them even
-// when nobody reads their result.
-//
-// Phase 1: Call + Load + Store. Call is conservatively impure
-// (we don't have a purity analysis); Load reads memory that
-// another instruction might re-read; Store writes memory by
-// definition. Pure arithmetic + comparison + const Ops are
-// safe to drop.
-func hasSideEffect(k OpKind) bool {
-	switch k {
-	case OpCall, OpCallIndirect, OpCallPair,
-		OpLoad, OpStore,
-		OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U,
-		OpStore8, OpStore16,
-		OpLoadF, OpStoreF,
-		OpAlloc,
-		OpMakeClosure, OpMakeEnv:
-		return true
-	default:
-		return false
-	}
 }
 
 // collectUses tallies how many times each Value is referenced
