@@ -464,6 +464,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign")) {
                         return "i32";
                     }
+                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd")) {
+                        return "bool";
+                    }
                     if (fa.field == "len"
                             && (rt == "string" || rt == "array_i32" || rt == "array_string" || rt == "array")) {
                         return "i32";
@@ -2530,6 +2533,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    movzbq %cl, %rcx\n");
                             s = s.write("    subq %rcx, %rdx\n");
                             s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_even" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    andq $1, %rax\n");
+                            s = s.write("    xorq $1, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_odd" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    andq $1, %rax\n");
                             s = s.write("    pushq %rax\n");
                             return s;
                         }

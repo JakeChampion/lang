@@ -616,6 +616,36 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"i32-is-even-true",
+			"function main(): i32 { var n: i32 = 4; if (n.is_even()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"i32-is-even-false",
+			"function main(): i32 { var n: i32 = 7; if (n.is_even()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"i32-is-odd-true",
+			"function main(): i32 { var n: i32 = 9; if (n.is_odd()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
+			"i32-is-odd-false",
+			"function main(): i32 { var n: i32 = 8; if (n.is_odd()) { return 1; } return 0; }",
+			0,
+			"",
+		},
+		{
+			"i32-is-even-zero",
+			"function main(): i32 { var n: i32 = 0; if (n.is_even()) { return 1; } return 0; }",
+			1,
+			"",
+		},
+		{
 			"i32-sign-positive",
 			"function main(): i32 { var n: i32 = 42; return n.sign(); }",
 			1,
