@@ -8754,6 +8754,106 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentWasiMultiImportHelper exercises the multi-import
+// generalisation of the WASI helper. Wraps a core module that
+// imports from TWO distinct WASI interfaces: `wasi:cli/exit::exit`
+// and `wasi:cli/environment::get-arguments`. The helper threads
+// both through the full type / import / alias / canon-lower /
+// core-instance pipeline, then instantiates the core module with
+// both lowered instances as args.
+func TestWASMComponentWasiMultiImportHelper(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/encode";
+import "std/wasm/imports";
+function main(): i32 {
+    // Core module imports two no-result host funcs: exit (i32 → ())
+    // and get-args (() → ()). Real WASI get-arguments returns a
+    // list, but the canon-lower-no-opts path used by the helper only
+    // supports scalar funcs, so this test uses a stub-signature shape.
+    var m: module.Module = module.module_new();
+    var p_exit: u8[] = [encode.valtype_i32()];
+    var r_void: u8[] = [];
+    var p_args: u8[] = [];
+    m.type_params = [p_exit, p_args];
+    m.type_results = [r_void, r_void];
+    m.import_modules = ["wasi-exit", "wasi-env"];
+    m.import_names = ["exit", "get-args"];
+    m.import_kinds = [imports.import_func(), imports.import_func()];
+    m.import_descs = [imports.import_desc_func(0u32), imports.import_desc_func(1u32)];
+    m.function_typeidxs = [];
+    m.code_bodies = [];
+    var core_bytes: u8[] = module.build(m);
+
+    // Two WASI imports, threaded in one call.
+    var interfaces: string[] = ["wasi:cli/exit@0.2.0", "wasi:cli/environment@0.2.0"];
+    var funcs: string[] = ["exit", "get-args"];
+    var p0: string[] = ["code"];
+    var v0: u8[] = [component.cvaltype_u32()];
+    var p1: string[] = [];
+    var v1: u8[] = [];
+    var names_per: string[][] = [p0, p1];
+    var valtypes_per: u8[][] = [v0, v1];
+    var core_modules: string[] = ["wasi-exit", "wasi-env"];
+
+    var comp: u8[] = component.build_wasi_multi_imported_component(core_bytes, interfaces, funcs, names_per, valtypes_per, core_modules);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"wasi:cli/exit@0.2.0",
+		"wasi:cli/environment@0.2.0",
+		"with \"wasi-exit\"",
+		"with \"wasi-env\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentWasiHelperBuildsValid exercises the high-level
 // `build_wasi_imported_component` helper. Same shape as the full-
 // pipeline test (`TestWASMComponentWasiExitFullPipeline`), but with
