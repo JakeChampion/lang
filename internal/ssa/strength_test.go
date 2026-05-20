@@ -469,6 +469,73 @@ func TestStrengthAddNoNegLeftAlone(t *testing.T) {
 	}
 }
 
+// TestStrengthMulNegOneRight — `x * -1` rewrites in place to
+// OpNeg with Args = [x]. The -1 const arg is dropped; DCE
+// reclaims the orphan const op.
+func TestStrengthMulNegOneRight(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	neg1 := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = -1
+	r := f.AddOp(entry, OpMul, x, neg1)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	mul := entry.Ops[1]
+	if mul.Kind != OpNeg {
+		t.Errorf("Kind = %v, want OpNeg", mul.Kind)
+	}
+	if len(mul.Args) != 1 || mul.Args[0] != x {
+		t.Errorf("Args = %v, want [%v]", mul.Args, x)
+	}
+	if mul.Result != r {
+		t.Error("Result changed; downstream uses would break")
+	}
+}
+
+// TestStrengthMulNegOneLeft — `-1 * x` rewrites in place to
+// OpNeg with Args = [x].
+func TestStrengthMulNegOneLeft(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	neg1 := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = -1
+	r := f.AddOp(entry, OpMul, neg1, x)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	mul := entry.Ops[1]
+	if mul.Kind != OpNeg {
+		t.Errorf("Kind = %v, want OpNeg", mul.Kind)
+	}
+	if len(mul.Args) != 1 || mul.Args[0] != x {
+		t.Errorf("Args = %v, want [%v]", mul.Args, x)
+	}
+}
+
+// TestStrengthMulByOtherConstUntouched — `x * 5` (non-zero,
+// non-negative-one const) stays as OpMul.
+func TestStrengthMulByOtherConstUntouched(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	five := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 5
+	f.AddOp(entry, OpMul, x, five)
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpMul {
+		t.Errorf("Kind = %v, want OpMul (k=5 isn't an identity)",
+			entry.Ops[1].Kind)
+	}
+}
+
 // TestStrengthNilFunc — defensive.
 func TestStrengthNilFunc(t *testing.T) {
 	defer func() {

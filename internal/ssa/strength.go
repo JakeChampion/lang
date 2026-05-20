@@ -40,6 +40,8 @@ package ssa
 //	0 - x        ⇒ neg x        (OpSub kind becomes OpNeg)
 //	x + neg(y)   ⇒ x - y        (OpAdd kind becomes OpSub)
 //	neg(y) + x   ⇒ x - y        (same)
+//	x * -1       ⇒ neg x        (OpMul kind becomes OpNeg)
+//	-1 * x       ⇒ neg x        (same)
 //
 // In-place: Kind flips, Args is rebuilt, Result stays put so
 // existing uses keep working. Saves the OpNeg op when DCE
@@ -92,7 +94,34 @@ func StrengthReduce(f *Func) {
 				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
 					rewriteInt(op, 0)
 				}
-			case OpMul, OpAnd:
+			case OpMul:
+				if len(op.Args) != 2 {
+					continue
+				}
+				if lImm, lOK := constInt(op.Args[0], defs); lOK {
+					if lImm == 0 {
+						rewriteInt(op, 0)
+						continue
+					}
+					if lImm == -1 {
+						// -1 * x → neg x. Drop the -1 arg.
+						op.Kind = OpNeg
+						op.Args = []Value{op.Args[1]}
+						continue
+					}
+				}
+				if rImm, rOK := constInt(op.Args[1], defs); rOK {
+					if rImm == 0 {
+						rewriteInt(op, 0)
+						continue
+					}
+					if rImm == -1 {
+						// x * -1 → neg x.
+						op.Kind = OpNeg
+						op.Args = []Value{op.Args[0]}
+					}
+				}
+			case OpAnd:
 				if len(op.Args) != 2 {
 					continue
 				}
