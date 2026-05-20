@@ -86,3 +86,37 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, argNames, instanceIdxs)
 	return buf
 }
+
+// BuildLiftedExportComponent is the Go-side counterpart of the
+// Lang stdlib's `build_lifted_export_component_with_params`. Wraps
+// a core module so one of its exported functions is callable as a
+// component-level function with the given parameter list + single
+// anonymous result valtype.
+//
+// The core function must have a core signature compatible with the
+// canonical-ABI lowering of `(paramValtypes) -> resultValtype`. For
+// scalar valtypes that's a one-to-one mapping (i32/u32 → i32,
+// i64/u64 → i64, f32 → f32, f64 → f64).
+//
+// Recipe (matches the Lang helper):
+//
+//   1. core-module:    embed the core module
+//   2. core-instance:  instantiate (no args)
+//   3. alias:          alias the named core export as a core-func
+//   4. type:           declare the component-level functype
+//   5. canon:          lift core-func 0 → component-func 0 (no opts)
+//   6. export:         expose component-func 0 as exportName
+//
+// This is the simplest preview-2 component shape that wasmtime
+// can `--invoke`. The byte-equivalence test pins the output
+// against the Lang version.
+func BuildLiftedExportComponent(coreBytes []byte, coreExportName, exportName string, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)
+	buf = PutAliasSectionCoreExportFunc(buf, 0, coreExportName)
+	buf = PutTypeSectionOneFunc(buf, paramNames, paramValtypes, resultValtype)
+	buf = PutCanonSectionLiftNoOpts(buf, 0, 0)
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
