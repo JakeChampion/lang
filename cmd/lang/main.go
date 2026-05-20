@@ -111,6 +111,7 @@ func main() {
 	doInterp := flag.Bool("interp", false, "run FILE.lang (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin and no -wasi-adapter: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out). Lifts main() as a component-level u32-returning function. Only valid for Lang programs with no WASI imports.")
+	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. Currently only supported for programs with no WASI imports.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -218,7 +219,11 @@ func main() {
 		os.Exit(code)
 	}
 
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, *componentWrap, progArgs)
+	if *componentWrap && *componentWrapCli {
+		fmt.Fprintln(os.Stderr, "-component-wrap and -component-wrap-cli are mutually exclusive")
+		os.Exit(1)
+	}
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, *componentWrap, *componentWrapCli, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -392,7 +397,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the lang process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, componentWrap bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, formatLoadError(err, srcs, srcPath)
@@ -434,7 +439,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: wasiAdapter != "",
 			SynthStart:         wasiAdapter != "",
-			Preview2WASI:       componentWrap,
+			Preview2WASI:       componentWrap || componentWrapCli,
 		})
 		if err != nil {
 			return 1, err
@@ -463,6 +468,20 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				} else {
 					comp = component.WrapWasiImportedWithExport(bin, wasiImports, "main", "main", nil, nil, component.CValtypeU32)
 				}
+				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+					return 1, err
+				}
+				return 0, nil
+			}
+			if componentWrapCli {
+				// Wrap as a wasi:cli/run-exporting component so the
+				// produced binary runs under plain `wasmtime run` (no
+				// --invoke). Currently no-imports only — the
+				// import-bearing variant is a future slice.
+				if has, names := coreModuleHasImports(bin); has {
+					return 1, fmt.Errorf("-component-wrap-cli doesn't support core modules with imports yet (saw %d: %s). Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(names), strings.Join(names, ", "))
+				}
+				comp := component.BuildWasiCliRunComponent(bin, "main")
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
 				}
