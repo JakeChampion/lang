@@ -773,6 +773,59 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_own — emit a component-level type section
+// that defines a single `own<$t>` handle, where `$t` is a
+// previously-declared resource type at index `resource_typeidx`.
+// An `own` handle is a unique, transferable handle to a resource;
+// its destructor runs when the handle is dropped.
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x69 i:<typeidx>          -- own
+//
+// Encoded body:
+//
+//   01                         // vec(1) defvaltype entries
+//   69                         // own form (0x69)
+//   <resource_typeidx:uleb>
+pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(105u8);                      // own form (0x69)
+    body = leb128.uleb_u32(body, resource_typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
+// put_type_section_one_borrow — emit a component-level type section
+// that defines a single `borrow<$t>` handle, where `$t` is a
+// previously-declared resource type at index `resource_typeidx`.
+// A `borrow` handle is a temporary, non-owning reference — used
+// for function parameters where the callee doesn't take ownership
+// of the resource (mirror of Rust's `&T`).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x68 i:<typeidx>          -- borrow
+//
+// Encoded body:
+//
+//   01                         // vec(1) defvaltype entries
+//   68                         // borrow form (0x68)
+//   <resource_typeidx:uleb>
+pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(104u8);                      // borrow form (0x68)
+    body = leb128.uleb_u32(body, resource_typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
