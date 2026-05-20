@@ -131,6 +131,100 @@ func TestCanonNoOpOnAlreadyOrdered(t *testing.T) {
 	}
 }
 
+// TestCanonLtFlipsConstLHS — `Lt(c, x)` (const on LHS, value
+// on RHS) flips to `Gt(x, c)`. Operands swap and kind toggles.
+func TestCanonLtFlipsConstLHS(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	c := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 7
+	cmp := f.AddOp(entry, OpLt, c, x)
+	f.SetRet(entry, cmp)
+
+	Canonicalize(f)
+
+	got := entry.Ops[1]
+	if got.Kind != OpGt {
+		t.Errorf("Kind = %v, want OpGt (Lt(c,x) → Gt(x,c))", got.Kind)
+	}
+	if got.Args[0] != x || got.Args[1] != c {
+		t.Errorf("Args = %v, want [x, c]", got.Args)
+	}
+}
+
+// TestCanonAllDirectionalCmpsFlip — every directional kind
+// flips correctly when const is on the LHS.
+func TestCanonAllDirectionalCmpsFlip(t *testing.T) {
+	cases := []struct {
+		from OpKind
+		want OpKind
+	}{
+		{OpLt, OpGt}, {OpLe, OpGe}, {OpGt, OpLt}, {OpGe, OpLe},
+		{OpLtU, OpGtU}, {OpLeU, OpGeU}, {OpGtU, OpLtU}, {OpGeU, OpLeU},
+		{OpFLt, OpFGt}, {OpFLe, OpFGe}, {OpFGt, OpFLt}, {OpFGe, OpFLe},
+	}
+	for _, c := range cases {
+		t.Run(c.from.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			x := f.AddParam()
+			entry := f.NewBlock()
+			k := f.AddOp(entry, OpConstInt)
+			entry.Ops[0].Imm = 3
+			cmp := f.AddOp(entry, c.from, k, x)
+			f.SetRet(entry, cmp)
+
+			Canonicalize(f)
+
+			if got := entry.Ops[1].Kind; got != c.want {
+				t.Errorf("%v(c,x) → %v, want %v", c.from, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCanonLtBothConstUntouched — both operands const: the
+// flip rule doesn't apply (other passes fold this away).
+func TestCanonLtBothConstUntouched(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 3
+	b := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 7
+	cmp := f.AddOp(entry, OpLt, a, b)
+	f.SetRet(entry, cmp)
+
+	Canonicalize(f)
+
+	if entry.Ops[2].Kind != OpLt {
+		t.Errorf("Kind = %v, want OpLt (both const, no flip)",
+			entry.Ops[2].Kind)
+	}
+}
+
+// TestCanonLtConstOnRightUntouched — already-canonical form
+// (`Lt(x, c)`) is left alone.
+func TestCanonLtConstOnRightUntouched(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	c := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 7
+	cmp := f.AddOp(entry, OpLt, x, c)
+	f.SetRet(entry, cmp)
+
+	Canonicalize(f)
+
+	got := entry.Ops[1]
+	if got.Kind != OpLt {
+		t.Errorf("Kind = %v, want OpLt (already canonical)", got.Kind)
+	}
+	if got.Args[0] != x || got.Args[1] != c {
+		t.Errorf("Args = %v, want [x, c] (unchanged)", got.Args)
+	}
+}
+
 // TestCanonNilFunc — defensive.
 func TestCanonNilFunc(t *testing.T) {
 	defer func() {
