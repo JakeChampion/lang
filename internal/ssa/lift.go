@@ -6,22 +6,27 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// LiftFromIR converts a legacy ir.Func into SSA form. Phase 1
-// coverage is intentionally narrow — straight-line constant
-// arithmetic — so we can ship the entry point + tests now
-// and grow the supported subset incrementally.
+// LiftFromIR converts a legacy ir.Func into SSA form. The
+// supported subset grows incrementally; each follow-up PR
+// extends the switch + adds tests for the newly handled ops.
 //
-// Supported in Phase 1:
+// Supported (cumulative):
+//
+//   Phase 1:
 //   - OpConstI32 / OpConstI64 → OpConstInt
 //   - OpAdd / OpSub / OpMul → matching SSA op
 //   - OpReturn → ret <value>
 //   - OpReturnVoid → ret
 //
+//   Phase 2:
+//   - Function params — minted via AddParam, addressed by
+//     OpLoadLocal at slot indices [0, len(in.Params))
+//   - OpLoadLocal for param slots only (non-param locals
+//     still rejected — they need phi insertion)
+//
 // Anything else returns an `unsupported op` error. Locals
-// (OpLoadLocal / OpStoreLocal), branches (OpBlock / OpBr /
-// OpBrIf / OpLoop / OpIf), calls, and the full integer / float
-// op surface land in follow-up PRs; each follows the same
-// "stack machine → SSA Value" shape established here.
+// beyond the param prefix, OpStoreLocal, branches, calls, and
+// the full op surface land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -31,14 +36,19 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
 	}
-	if len(in.Params) > 0 {
-		return nil, fmt.Errorf("ssa.LiftFromIR: params not yet supported (have %d)", len(in.Params))
-	}
 	if len(in.Locals) > 0 {
-		return nil, fmt.Errorf("ssa.LiftFromIR: locals not yet supported (have %d)", len(in.Locals))
+		return nil, fmt.Errorf("ssa.LiftFromIR: locals beyond params not yet supported (have %d)", len(in.Locals))
 	}
 
 	out := NewFunc(in.Name)
+
+	// Slots: [0, len(Params)) are parameters, minted up front.
+	// (Phase 3 will extend with locals + phi insertion.)
+	slots := make([]Value, len(in.Params))
+	for i := range in.Params {
+		slots[i] = out.AddParam()
+	}
+
 	entry := out.NewBlock()
 	var stack []Value
 
@@ -52,6 +62,13 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			v := out.AddOp(entry, OpConstInt)
 			entry.Ops[len(entry.Ops)-1].Imm = op.I64
 			stack = append(stack, v)
+		case ir.OpLoadLocal:
+			idx := int(op.I32)
+			if idx < 0 || idx >= len(slots) {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d params)",
+					i, idx, len(slots))
+			}
+			stack = append(stack, slots[idx])
 		case ir.OpAdd, ir.OpSub, ir.OpMul:
 			if len(stack) < 2 {
 				return nil, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 2 operands, stack has %d",
