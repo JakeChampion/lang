@@ -33,6 +33,13 @@ package ssa
 // `x != x` may be true for x = NaN. Integer values can't be NaN
 // so the integer forms are safe.
 //
+// Kind-shifting rewrite (Phase 2):
+//
+//	0 - x   ⇒ neg x             (OpSub kind becomes OpNeg)
+//
+// In-place: Kind flips to OpNeg, Args drops the zero, Result
+// stays put so existing uses keep working.
+//
 // Not yet handled (would need a "definitely non-zero" check
 // on x that we don't track yet):
 //
@@ -62,7 +69,21 @@ func StrengthReduce(f *Func) {
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			switch op.Kind {
-			case OpSub, OpXor:
+			case OpSub:
+				if len(op.Args) != 2 {
+					continue
+				}
+				if op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
+					rewriteInt(op, 0)
+					continue
+				}
+				// 0 - x → neg x. In-place Kind shift; drop the
+				// zero arg from Args.
+				if lImm, lOK := constInt(op.Args[0], defs); lOK && lImm == 0 {
+					op.Kind = OpNeg
+					op.Args = []Value{op.Args[1]}
+				}
+			case OpXor:
 				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
 					rewriteInt(op, 0)
 				}

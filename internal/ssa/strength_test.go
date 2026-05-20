@@ -302,6 +302,51 @@ func TestStrengthRemByOneOnLeftUntouched(t *testing.T) {
 	}
 }
 
+// TestStrengthZeroSubToNeg — `0 - x` rewrites in place from
+// OpSub to OpNeg. Result Value preserved; the const_int 0
+// arg is dropped, leaving Args = [x].
+func TestStrengthZeroSubToNeg(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	zero := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 0
+	r := f.AddOp(entry, OpSub, zero, x)
+	f.SetRet(entry, r)
+
+	StrengthReduce(f)
+
+	sub := entry.Ops[1]
+	if sub.Kind != OpNeg {
+		t.Errorf("Kind = %v, want OpNeg", sub.Kind)
+	}
+	if len(sub.Args) != 1 || sub.Args[0] != x {
+		t.Errorf("Args = %v, want [%v]", sub.Args, x)
+	}
+	if sub.Result != r {
+		t.Error("Result changed; downstream uses would break")
+	}
+}
+
+// TestStrengthZeroSubLHSNotConst — `0 - x` where the LHS isn't
+// literally const_int 0 is left alone (e.g. a param with value
+// 0 at runtime — we can't fold without value-tracking).
+func TestStrengthZeroSubLHSNotConst(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpSub, a, b)
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	if entry.Ops[0].Kind != OpSub {
+		t.Errorf("Kind = %v, want OpSub (lhs param, untouched)",
+			entry.Ops[0].Kind)
+	}
+}
+
 // TestStrengthNilFunc — defensive.
 func TestStrengthNilFunc(t *testing.T) {
 	defer func() {
