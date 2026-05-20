@@ -98,7 +98,7 @@ func writeOp(b *strings.Builder, op *Op, blk *Block) {
 				b.WriteString(" [block ?]")
 			}
 		}
-	case OpConstInt, OpConstBool:
+	case OpConstInt, OpConstBool, OpEnumSentinel:
 		b.WriteByte(' ')
 		b.WriteString(strconv.FormatInt(op.Imm, 10))
 	case OpConstFloat:

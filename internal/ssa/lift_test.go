@@ -1597,15 +1597,14 @@ func TestLiftCallStackUnderflow(t *testing.T) {
 	}
 }
 
-// TestLiftRejectsUnsupportedOp — OpAlloc isn't in the current
-// subset; lift surfaces a clear error.
+// TestLiftRejectsUnsupportedOp — OpInvalid is never emitted by
+// well-formed IR; lift rejects it as a sanity check on the
+// "all real OpKinds are handled" invariant.
 func TestLiftRejectsUnsupportedOp(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
-			{Kind: ir.OpConstI32, I32: 16},
-			{Kind: ir.OpAlloc}, // not yet supported
-			{Kind: ir.OpDrop},
+			{Kind: ir.OpInvalid},
 			{Kind: ir.OpReturnVoid},
 		},
 	}

@@ -192,6 +192,15 @@ import (
 //       OpFLoad  → OpLoadF
 //       OpFStore → OpStoreF
 //
+//   Phase 24:
+//   - OpAlloc → ssa.OpAlloc (Args[0] = size; impure).
+//   - OpEnumSentinel → ssa.OpEnumSentinel with Imm = the tag
+//     value (pure — CSE can dedupe).
+//
+// After Phase 24 the lift covers every real IR op kind. The
+// remaining OpKinds in ir.OpKind are OpInvalid (the zero
+// sentinel) — never emitted by a well-formed builder.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -545,6 +554,18 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
+	case ir.OpAlloc:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpAlloc at op[%d] needs size operand", i)
+		}
+		size := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpAlloc, size)
+		l.stack = append(l.stack, v)
+	case ir.OpEnumSentinel:
+		v := l.out.AddOp(l.cur, OpEnumSentinel)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+		l.stack = append(l.stack, v)
 	case ir.OpCallDirect:
 		argc := int(op.I32)
 		if len(l.stack) < argc {

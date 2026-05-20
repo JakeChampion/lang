@@ -83,6 +83,7 @@ func cseEligible(op *Op) bool {
 		OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U,
 		OpStore8, OpStore16,
 		OpLoadF, OpStoreF,
+		OpAlloc,
 		OpPhi, OpInvalid,
 		OpMakeClosure, OpMakeEnv:
 		return false
