@@ -904,6 +904,24 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"arr-i32-product",
+			"function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }",
+			30,
+			"",
+		},
+		{
+			"arr-i32-product-empty",
+			"function main(): i32 { var xs: i32[] = []; return xs.product(); }",
+			1,
+			"",
+		},
+		{
+			"arr-i32-product-with-zero",
+			"function main(): i32 { var xs: i32[] = [4, 0, 7]; return xs.product(); }",
+			0,
+			"",
+		},
+		{
 			"arr-i32-min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 7]; return xs.min(); }",
 			1,
