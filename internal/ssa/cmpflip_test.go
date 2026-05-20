@@ -207,6 +207,55 @@ func TestCmpFlipInOptimizePipeline(t *testing.T) {
 	}
 }
 
+// TestCmpFlipSelectNotUnwraps — `select(not(c), a, b)` is
+// rewritten to `select(c, b, a)`. The OpNot is left in place
+// for DCE.
+func TestCmpFlipSelectNotUnwraps(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	n := f.AddOp(entry, OpNot, c)
+	sel := f.AddOp(entry, OpSelect, n, a, b)
+	f.SetRet(entry, sel)
+
+	CmpFlip(f)
+
+	selOp := entry.Ops[1]
+	if len(selOp.Args) != 3 {
+		t.Fatalf("Args = %v, want 3", selOp.Args)
+	}
+	if selOp.Args[0] != c {
+		t.Errorf("Args[0] = %v, want %v (cond unwrapped)", selOp.Args[0], c)
+	}
+	if selOp.Args[1] != b {
+		t.Errorf("Args[1] = %v, want %v (was b)", selOp.Args[1], b)
+	}
+	if selOp.Args[2] != a {
+		t.Errorf("Args[2] = %v, want %v (was a)", selOp.Args[2], a)
+	}
+}
+
+// TestCmpFlipSelectNonNotUntouched — `select(c, a, b)` where
+// c isn't a not stays as-is.
+func TestCmpFlipSelectNonNotUntouched(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	sel := f.AddOp(entry, OpSelect, c, a, b)
+	f.SetRet(entry, sel)
+
+	CmpFlip(f)
+
+	selOp := entry.Ops[0]
+	if selOp.Args[0] != c || selOp.Args[1] != a || selOp.Args[2] != b {
+		t.Errorf("Args = %v, want [c, a, b] (unchanged)", selOp.Args)
+	}
+}
+
 // TestCmpFlipNilFunc — defensive.
 func TestCmpFlipNilFunc(t *testing.T) {
 	defer func() {

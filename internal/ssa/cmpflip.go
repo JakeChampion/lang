@@ -30,6 +30,11 @@ package ssa
 // downstream consumers see the inverted comparison transparently.
 // Args are copied (not aliased) from the producing cmp so a later
 // in-place mutation of the original Op can't break this one.
+//
+// `select(not(c), a, b)` is also rewritten to `select(c, b, a)`
+// — the OpNot is unwrapped into the select by swapping its
+// branch operands. Same motivation as the not(cmp) flip:
+// removes a not op when DCE follows.
 func CmpFlip(f *Func) {
 	if f == nil {
 		return
@@ -45,19 +50,35 @@ func CmpFlip(f *Func) {
 
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
-			if op.Kind != OpNot || len(op.Args) != 1 {
-				continue
+			switch op.Kind {
+			case OpNot:
+				if len(op.Args) != 1 {
+					continue
+				}
+				def, ok := defs[op.Args[0].ID]
+				if !ok {
+					continue
+				}
+				flipped, ok := flippedCmp(def.Kind)
+				if !ok {
+					continue
+				}
+				op.Kind = flipped
+				op.Args = append([]Value(nil), def.Args...)
+			case OpSelect:
+				// select(not(c), a, b) → select(c, b, a). Unwrap
+				// the OpNot into the select by swapping the
+				// branch args.
+				if len(op.Args) != 3 {
+					continue
+				}
+				def, ok := defs[op.Args[0].ID]
+				if !ok || def.Kind != OpNot || len(def.Args) != 1 {
+					continue
+				}
+				op.Args[0] = def.Args[0]
+				op.Args[1], op.Args[2] = op.Args[2], op.Args[1]
 			}
-			def, ok := defs[op.Args[0].ID]
-			if !ok {
-				continue
-			}
-			flipped, ok := flippedCmp(def.Kind)
-			if !ok {
-				continue
-			}
-			op.Kind = flipped
-			op.Args = append([]Value(nil), def.Args...)
 		}
 	}
 }
