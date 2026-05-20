@@ -202,23 +202,60 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_read_byte")
 					needs.add("__lang_read_line")
 				case "__lang_stdin":
-					// () → i32 — constant sentinel Reader for
-					// stdin (wasmbin doesn't model TCP / file
-					// Readers yet).
-					needs.add("__lang_stdin")
-				case "__lang_reader_read_line":
-					// (r) → i32 — Reader.read_line(). Ignores
-					// the receiver and delegates to
-					// __lang_read_line (which reads from fd=0).
+					// () → i32 — Reader struct with fd=0 (stdin).
+					// Backs `stdin()`; the `__method_Reader_*`
+					// helpers dispatch on r.fd so the same code
+					// path covers stdin and file Readers.
 					needs.add("__lang_alloc")
-					needs.add("__lang_read_byte")
-					needs.add("__lang_read_line")
-					needs.add("__lang_reader_read_line")
-				case "__lang_reader_close":
-					// (r) → () — no-op for the stdin-only Reader
-					// model. Real Reader.close (file fds, TCP)
-					// will need a discriminator-aware variant.
-					needs.add("__lang_reader_close")
+					needs.add("__lang_stdin")
+				case "__lang_reader_read_line_fd":
+					// (r) → i32 — heap-form Option[string]. Reads
+					// from r.fd byte-by-byte until '\n' / EOF.
+					needs.add("__lang_alloc")
+					needs.add("__lang_reader_read_line_fd")
+				case "__lang_reader_read_chunk":
+					// (r, n) → i32 — single fd_read of up to n
+					// bytes into a fresh n-byte heap buffer.
+					needs.add("__lang_alloc")
+					needs.add("__lang_reader_read_chunk")
+				case "__lang_reader_close_fd":
+					// (r) → i32 — fd_close on r.fd; returns
+					// Option[IoError].
+					needs.add("__lang_alloc")
+					needs.add("__build_io_error")
+					needs.add("__lang_reader_close_fd")
+				case "__lang_writer_close":
+					// Same shape as reader_close — Writer struct
+					// has identical { fd: i32 } layout.
+					needs.add("__lang_alloc")
+					needs.add("__build_io_error")
+					needs.add("__lang_writer_close")
+				case "__lang_writer_write":
+					// (w, s_data, s_len) → i32 — fd_write loop
+					// over the SSO-normalized content bytes.
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_writer_write")
+				case "__lang_open_reader":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_reader")
+				case "__lang_open_writer":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_writer")
+				case "__lang_open_appender":
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__lang_open_appender")
 				case "__lang_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -251,6 +288,43 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__lang_write_file")
+				case "__lang_tcp_listen":
+					// (port) → i32 — heap pointer to a 12-byte
+					// listener struct (sock, 0, 0), or -errno
+					// on failure. Pulls in the __network_handle
+					// accessor that caches wasi:sockets/instance-
+					// network. WASI imports get added by
+					// scanImports below.
+					needs.add("__lang_alloc")
+					needs.add("__network_handle")
+					needs.add("__lang_tcp_listen")
+				case "__lang_tcp_accept":
+					// (listener) → i32 — heap pointer to a
+					// 12-byte connection struct (sock, instream,
+					// outstream), or -errno on failure.
+					needs.add("__lang_alloc")
+					needs.add("__lang_tcp_accept")
+				case "__lang_tcp_recv":
+					// (conn, max) → (data, len) — heap-form
+					// string with the bytes read. Empty on
+					// stream-error / EOF.
+					needs.add("__lang_alloc")
+					needs.add("__lang_tcp_recv")
+				case "__lang_tcp_send":
+					// (conn, data) → i32 — bytes sent, -1 on
+					// failure. SSO-normalizes the input string
+					// so inline-form data flows through the
+					// host's read of (ptr, len).
+					needs.add("__lang_alloc")
+					needs.add("__lang_str_len")
+					needs.add("__lang_str_byte")
+					needs.add("__lang_tcp_send")
+				case "__lang_tcp_close":
+					// (conn) → i32 (always 0). Drops the
+					// streams (if non-zero) before the parent
+					// tcp-socket to satisfy the canonical-ABI
+					// resource-has-children rule.
+					needs.add("__lang_tcp_close")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -675,6 +749,118 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
 	},
+	"__network_handle": {
+		// () → i32 — cached wasi:sockets/instance-network handle.
+		// Lazily fetched on first call; the init flag at
+		// networkHandleInitAddr disambiguates "not yet fetched"
+		// from a legitimate 0 handle. See wasi_tcp.go.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildNetworkHandleBody,
+	},
+	"__lang_tcp_listen": {
+		// (port: i32) → i32 — heap pointer to a 12-byte
+		// listener struct (tcp-socket, 0, 0) on success;
+		// -errno on failure. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpListenBody,
+	},
+	"__lang_tcp_accept": {
+		// (listener: i32) → i32 — heap pointer to a 12-byte
+		// connection struct (tcp-socket, input-stream,
+		// output-stream); -errno on failure.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpAcceptBody,
+	},
+	"__lang_tcp_recv": {
+		// (conn: i32, max: i32) → (data, len) heap-form
+		// string. Empty pair (0, 0) on stream-error / EOF.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildTcpRecvBody,
+	},
+	"__lang_tcp_send": {
+		// (conn, data_data, data_len) → i32 — bytes sent on
+		// success, -1 on stream-error. Chunked at 4 KiB to
+		// match wasmtime's blocking-write-and-flush cap.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSendBody,
+	},
+	"__lang_tcp_close": {
+		// (conn: i32) → i32 (always 0). Drops streams +
+		// tcp-socket in canonical child-before-parent order.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpCloseBody,
+	},
+	"__lang_open_reader": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Reader, IoError]. The Reader struct holds a
+		// preview-1 fd.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenReaderBody,
+	},
+	"__lang_open_writer": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Writer, IoError]. Opens with CREATE|TRUNCATE.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenWriterBody,
+	},
+	"__lang_open_appender": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[Writer, IoError]. Opens with CREATE + APPEND.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenAppenderBody,
+	},
+	"__lang_reader_close_fd": {
+		// (r: i32) → i32 — heap-form Option[IoError]. Calls
+		// fd_close on the Reader's fd; returns None on success.
+		// Named `_fd` to distinguish from the existing
+		// `__lang_reader_close` which is the stdin-only stub.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderCloseFdBody,
+	},
+	"__lang_writer_close": {
+		// (w: i32) → i32 — same shape as the Reader close, with
+		// a dedicated name so the IR alias map can route
+		// `__method_Writer_close` here.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterCloseBody,
+	},
+	"__lang_writer_write": {
+		// (w, s_data, s_len) → i32 — heap-form
+		// Option[IoError]. Writes string bytes to w.fd via
+		// fd_write in a loop; returns None on success.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterWriteBody,
+	},
+	"__lang_reader_read_line_fd": {
+		// (r: i32) → i32 — heap-form Option[string]. Reads
+		// bytes one at a time until '\n' or EOF; returns None
+		// if EOF hit before any byte. Named `_fd` to distinguish
+		// from the legacy stdin-only `__lang_reader_read_line`
+		// (kept around so existing call sites compile while the
+		// alias map flips).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadLineFdBody,
+	},
+	"__lang_reader_read_chunk": {
+		// (r, n: i32) → i32 — heap-form Option[string].
+		// Single fd_read into an n-byte buffer.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadChunkBody,
+	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For
 		// heap-form strings returns base_data + i directly. For
@@ -732,6 +918,37 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStrConcatBody,
+	},
+	"__http_entry": {
+		// (req, out) → () — wasi:http/incoming-handler wrapper.
+		// Marshals the canonical-ABI incoming-request into the
+		// user's HttpRequest struct, calls handle(), then streams
+		// the HttpResponse back. Exported under the canonical
+		// `wasi:http/incoming-handler@0.2.0#handle` name from the
+		// emit-time export-renaming layer in wasmbin.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildHttpEntryBody,
+	},
+	"__bytes_to_lang_string": {
+		// (host_ptr, host_len) → (data, len) — heap-form lang
+		// string built by memcpy'ing the host bytes. Used by the
+		// http_entry wrapper to materialise method / path / body
+		// strings from the canonical-ABI return areas.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildBytesToLangStringBody,
+	},
+	"cabi_realloc": {
+		// (orig_ptr, orig_size, align, new_size) → i32 — the
+		// canonical-ABI allocator the host invokes to materialise
+		// dynamically-sized return values (e.g. list<u8> for
+		// header names / values) in our linear memory. Aligns
+		// the bump cursor before forwarding to __lang_alloc.
+		// Exported by name (the host looks it up); see wasmbin.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCabiReallocBody,
 	},
 }
 
@@ -1819,15 +2036,24 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildStdinBody — () → i32. Returns the constant 0 as the
-// stdin Reader sentinel. wasmbin only models the stdin Reader,
-// so the value's actual contents don't matter — every
-// Reader-method dispatch ignores its receiver and reads from
-// fd=0 directly.
-func buildStdinBody(_ map[string]uint32) []byte {
+// buildStdinBody — () → i32. Allocates a 4-byte Reader struct
+// `{ fd: i32 }` with fd=0 (stdin) and returns the pointer.
+// Generalises the previous "Reader == sentinel 0" stub so the
+// shared `__method_Reader_*` helpers (which dispatch on `r.fd`
+// since the file-Reader work in PR #ABC) can treat stdin
+// identically to file Readers — `fd_read(0, …)` is the kernel-
+// level read from stdin regardless of who's calling.
+func buildStdinBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
 	var body []byte
-	body = inst.InstI32Const(body, 0)
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, 0) // fd = 0 (stdin)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildReaderReadLineBody — (r) → i32. Delegates to

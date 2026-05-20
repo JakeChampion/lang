@@ -88,6 +88,16 @@ type EmitOptions struct {
 	// main's value over stdout (preview-2 hosts only surface 0/1
 	// through `wasi:cli/exit`). No-op for non-i32 / void returns.
 	PrintMainResult bool
+	// HttpHandler emits the `wasi:http/incoming-handler@0.2.0#handle`
+	// export wrapping the user-defined `function handle(req:
+	// HttpRequest, plat: Platform): HttpResponse`. The synthetic
+	// `__http_entry` helper marshals the canonical-ABI incoming-
+	// request into the user's HttpRequest struct, invokes `handle`,
+	// then streams the HttpResponse back through outgoing-body.
+	// Pulls in the wasi:http/types preview-2 imports + a
+	// `cabi_realloc` export the host calls back for list<u8>
+	// allocations. Mirrors the WAT path's `EmitOptions.HttpHandler`.
+	HttpHandler bool
 }
 
 // Emit is EmitWithOptions with the zero-value options.
@@ -134,6 +144,26 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		helpers.add("__lang_str_byte")
 		helpers.add("__lang_alloc")
 		helpers.add("__lang_print")
+	}
+	if opts.HttpHandler {
+		// __http_entry's body alloc()s the request struct, the
+		// HeaderMap parallel arrays, the body accumulator, the
+		// canonical-ABI retptr scratch, the Platform capability
+		// bag, and the response outgoing-body. It also calls
+		// __lang_arena_save / restore for per-request arena
+		// cleanup, __bytes_to_lang_string for the host-bytes →
+		// lang-string round-trip, and emitStrNormalize for the
+		// outgoing body SSO normalize. cabi_realloc is the
+		// canonical-ABI allocator the host calls back for
+		// list<u8> return-value materialisation.
+		helpers.add("__lang_alloc")
+		helpers.add("__lang_str_len")
+		helpers.add("__lang_str_byte")
+		helpers.add("__lang_arena_save")
+		helpers.add("__lang_arena_restore")
+		helpers.add("__bytes_to_lang_string")
+		helpers.add("cabi_realloc")
+		helpers.add("__http_entry")
 	}
 	importNeeds := scanImports(prog, helpers)
 
@@ -442,6 +472,29 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
 		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
+	}
+
+	// HttpHandler-specific exports. Helpers are private by default
+	// (the loop above doesn't add export entries for them), but the
+	// wasi:http target needs `__http_entry` surfaced under the
+	// canonical component-model name + `cabi_realloc` as a top-
+	// level export so the host can call it for list<u8>
+	// realloc-style returns.
+	//
+	// The export name string is special-cased here rather than in
+	// runtimeHelperSpecs because that table doesn't carry export
+	// metadata; mirrors how SynthStart sets up `_start` below.
+	if opts.HttpHandler {
+		if idx, ok := funcIdx["__http_entry"]; ok {
+			m.ExportNames = append(m.ExportNames, "wasi:http/incoming-handler@0.2.0#handle")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, idx)
+		}
+		if idx, ok := funcIdx["cabi_realloc"]; ok {
+			m.ExportNames = append(m.ExportNames, "cabi_realloc")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, idx)
+		}
 	}
 
 	// OpConstFunc closure-pair cells → data segment at the
@@ -1601,23 +1654,38 @@ var CallDirectAliases = map[string]string{
 	"read_byte":  "__lang_read_byte",
 	"read_line":  "__lang_read_line",
 
-	// Reader API. wasmbin only models the stdin Reader (no
-	// TCP / file Readers yet), so `stdin()` returns a constant
-	// sentinel and `r.read_line()` ignores its receiver and
-	// reads directly from fd=0 via __lang_read_line.
-	"stdin":                     "__lang_stdin",
-	"__method_Reader_read_line": "__lang_reader_read_line",
-	"__method_Reader_close":     "__lang_reader_close",
+	// Reader / Writer API. `stdin()` returns a real Reader
+	// struct (`{ fd: 0 }`); the `__method_Reader_*` helpers
+	// dispatch on `r.fd` so the same lowering covers stdin
+	// and file Readers identically. `open_writer` /
+	// `open_appender` produce Writers similarly.
+	"stdin":                      "__lang_stdin",
+	"__method_Reader_read_line":  "__lang_reader_read_line_fd",
+	"__method_Reader_read_chunk": "__lang_reader_read_chunk",
+	"__method_Reader_close":      "__lang_reader_close_fd",
+	"__method_Writer_write":      "__lang_writer_write",
+	"__method_Writer_close":      "__lang_writer_close",
 
 	// String / bytes round-trip.
 	"string_from_bytes": "__lang_string_from_bytes",
 
-	// File I/O. `read_file` / `write_file` are wired; the
-	// open helpers (open_reader / open_writer / open_appender
-	// + Reader/Writer methods) land in follow-up PRs as the
-	// WAT-backend retirement progresses.
-	"read_file":  "__lang_read_file",
-	"write_file": "__lang_write_file",
+	// File I/O. `read_file` / `write_file` read or truncate-write
+	// in one shot; `open_reader` / `open_writer` / `open_appender`
+	// return Reader / Writer values backed by a preview-1 fd.
+	"read_file":     "__lang_read_file",
+	"write_file":    "__lang_write_file",
+	"open_reader":   "__lang_open_reader",
+	"open_writer":   "__lang_open_writer",
+	"open_appender": "__lang_open_appender",
+
+	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
+	// the helpers wrap wasi:sockets + wasi:io directly. See
+	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
+	"tcp_listen": "__lang_tcp_listen",
+	"tcp_accept": "__lang_tcp_accept",
+	"tcp_recv":   "__lang_tcp_recv",
+	"tcp_send":   "__lang_tcp_send",
+	"tcp_close":  "__lang_tcp_close",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude

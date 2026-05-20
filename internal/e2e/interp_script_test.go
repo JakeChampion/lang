@@ -1684,6 +1684,447 @@ function main(): i32 {
 	}
 }
 
+// TestInterpScriptMockPlatform pins the Tier-C Rec §11
+// test-ergonomics surface (docs/PLATFORM-RESEARCH.md §6).
+// Phase 1 mocks are manually driven (tests call .record()
+// themselves); Phase 2 will integrate with Platform's
+// capability fields so the mock intercepts calls
+// automatically.
+func TestInterpScriptMockPlatform(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "record + call_count + indexed access",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "GET /users/42");
+    m.record("kv_set", "user:42=Alice");
+    print(m.call_count().to_string());
+    print(m.calls[0].name);
+    print(m.calls[1].args);
+    return 0;
+}`,
+			wantStdout: "2\nfetch\nuser:42=Alice\n",
+		},
+		{
+			name: "has_call distinguishes present / absent",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "x");
+    if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
+    if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
+    return 0;
+}`,
+			wantStdout: "yes-fetch\nno-wf\n",
+		},
+		{
+			name: "find_call returns Some/None correctly",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("fetch", "first");
+    m.record("kv_set", "second");
+    m.record("fetch", "third");
+    // find_call returns the FIRST match.
+    match (m.find_call("fetch")) {
+        Some(c) => { print(c.args); },
+        None => { print("missing"); }
+    }
+    match (m.find_call("unknown")) {
+        Some(_) => { print("FOUND"); },
+        None => { print("none"); }
+    }
+    return 0;
+}`,
+			wantStdout: "first\nnone\n",
+		},
+		{
+			name: "reset clears the log",
+			source: `import "std/mock_platform";
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.record("a", "1");
+    m.record("b", "2");
+    if (m.call_count() != 2) { return 1; }
+    m.reset();
+    if (m.call_count() != 0) { return 2; }
+    if (m.has_call("a")) { return 3; }
+    print("ok");
+    return 0;
+}`,
+			wantStdout: "ok\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
+// TestInterpScriptJsonGetters pins the Tier-C Rec §12 Phase 1
+// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §3). Schema-
+// directed `json_parse[T]` codegen is multi-week; Phase 1
+// ships typed-field extraction helpers that handler code
+// uses to walk a JsonValue DOM without manually pattern-
+// matching every level.
+func TestInterpScriptJsonGetters(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "json_get_string returns Some on match, None on miss",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"name\":\"Alice\"}")) {
+        Some(v) => {
+            match (json.json_get_string(v, "name")) {
+                Some(n) => { print(n); },
+                None => { print("none"); }
+            }
+            match (json.json_get_string(v, "missing")) {
+                Some(_) => { print("FOUND"); },
+                None => { print("absent"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "Alice\nabsent\n",
+		},
+		{
+			name: "json_get_i32 parses positive + negative integers",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"a\":42,\"b\":-7,\"c\":0}")) {
+        Some(v) => {
+            match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.json_get_i32(v, "b")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.json_get_i32(v, "c")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "42\n-7\n0\n",
+		},
+		{
+			name: "json_get_bool extracts true / false correctly",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"yes\":true,\"no\":false}")) {
+        Some(v) => {
+            match (json.json_get_bool(v, "yes")) {
+                Some(b) => { if (b) { print("YES"); } else { print("no"); } },
+                None => { print("none"); }
+            }
+            match (json.json_get_bool(v, "no")) {
+                Some(b) => { if (b) { print("YES"); } else { print("no"); } },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "YES\nno\n",
+		},
+		{
+			name: "json_get_array returns the element list",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"tags\":[\"a\",\"b\",\"c\"]}")) {
+        Some(v) => {
+            match (json.json_get_array(v, "tags")) {
+                Some(arr) => { print(len(arr).to_string()); },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "3\n",
+		},
+		{
+			name: "json_get_object chains into nested objects",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"user\":{\"name\":\"Bob\"}}")) {
+        Some(v) => {
+            match (json.json_get_object(v, "user")) {
+                Some(inner) => {
+                    match (json.json_get_string(inner, "name")) {
+                        Some(n) => { print(n); },
+                        None => { print("none"); }
+                    }
+                },
+                None => { print("none"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "Bob\n",
+		},
+		{
+			name: "type mismatch returns None (not the wrong-shaped value)",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"age\":\"forty\"}")) {
+        Some(v) => {
+            // age is a string in the JSON; json_get_i32 must return None.
+            match (json.json_get_i32(v, "age")) {
+                Some(_) => { print("WRONG"); },
+                None => { print("rejected"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "rejected\n",
+		},
+		{
+			name: "json_is_null distinguishes null from absent / non-null",
+			source: `import "std/json";
+function main(): i32 {
+    match (json.json_parse("{\"x\":null,\"y\":1}")) {
+        Some(v) => {
+            match (json.json_get(v, "x")) {
+                Some(xv) => { if (json.json_is_null(xv)) { print("null"); } else { print("not null"); } },
+                None => { print("missing"); }
+            }
+            match (json.json_get(v, "y")) {
+                Some(yv) => { if (json.json_is_null(yv)) { print("null"); } else { print("not null"); } },
+                None => { print("missing"); }
+            }
+            return 0;
+        },
+        None => { return 1; }
+    }
+    return 0;
+}`,
+			wantStdout: "null\nnot null\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
+// TestInterpScriptStreamReader pins the Tier-C Rec §13 Phase 1
+// Reader-shape methods on Stream (docs/STDLIB-DESIGN-RESEARCH.md
+// Rec §5).
+func TestInterpScriptStreamReader(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "read_byte returns Some until exhausted",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("ab");
+    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    match (s.read_byte()) { Some(_) => { print("UNEXPECTED"); }, None => { print("none"); } }
+    return 0;
+}`,
+			wantStdout: "97\n98\nnone\n",
+		},
+		{
+			name: "read_n caps at available bytes",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("hello");
+    var first: u8[] = s.read_n(3);
+    print(len(first).to_string());
+    var rest: u8[] = s.read_n(99);
+    print(len(rest).to_string());
+    var empty: u8[] = s.read_n(1);
+    print(len(empty).to_string());
+    return 0;
+}`,
+			wantStdout: "3\n2\n0\n",
+		},
+		{
+			name: "read_line strips both LF and CRLF",
+			source: `import "std/stream";
+function main(): i32 {
+    var s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (s.read_line()) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
+    return 0;
+}`,
+			wantStdout: "unix\nwindows\nfinal\neof\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
+// TestInterpScriptBytesWriter pins the in-memory writer
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5's MemoryWriter).
+func TestInterpScriptBytesWriter(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cases := []struct {
+		name, source, wantStdout string
+	}{
+		{
+			name: "write_string + into_string round-trips",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_string("HTTP/1.1 200 OK\r\n");
+    w.write_string("\r\nhello");
+    print(w.size().to_string());
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "24\nHTTP/1.1 200 OK\r\n\r\nhello\n",
+		},
+		{
+			name: "write_byte appends single bytes",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_byte(72);  // 'H'
+    w.write_byte(105); // 'i'
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "Hi\n",
+		},
+		{
+			name: "reset clears the buffer for reuse",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w.write_string("first");
+    if (w.size() != 5) { return 1; }
+    w.reset();
+    if (w.size() != 0) { return 2; }
+    if (!w.is_empty()) { return 3; }
+    w.write_string("second");
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "second\n",
+		},
+		{
+			name: "write_bytes for raw u8[] payloads",
+			source: `import "std/io_buffered";
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    var bs: u8[] = "binary".bytes();
+    w.write_bytes(bs);
+    if (w.size() != 6) { return 1; }
+    print(w.into_string());
+    return 0;
+}`,
+			wantStdout: "binary\n",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "prog.lang")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			cmd := exec.Command(bin, "-interp", src)
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s",
+					code, out.String(), errb.String())
+			}
+			if got := out.String(); got != tc.wantStdout {
+				t.Errorf("stdout = %q,\n want %q\nstderr: %s",
+					got, tc.wantStdout, errb.String())
+			}
+		})
+	}
+}
+
 // A program without `main` exits non-zero with a clear error.
 // Catches the case where someone pipes a snippet (function
 // helpers only) and expects the interpreter to find an entry

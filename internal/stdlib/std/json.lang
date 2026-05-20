@@ -428,3 +428,162 @@ pub function json_parse(s: string): Option[JsonValue] {
     if (p.error != 0 || p.pos < p.s.len()) { return None; }
     return Some(v);
 }
+
+// ============================================================
+// Schema-directed JSON extraction helpers — Tier-C Rec §12
+// (docs/STDLIB-DESIGN-RESEARCH.md Rec §3) Phase 1.
+//
+// The full vision is `json_parse[T](bytes) → Result[T,
+// JsonError]` where the compiler generates a per-struct walker
+// for each T. That needs a new IR pass to monomorphise + emit
+// per-T decoder code — multi-week. Phase 1 (this surface)
+// ships typed-field extraction helpers on `JsonValue`:
+// callers parse once with json_parse(), then walk the DOM
+// with these helpers instead of pattern-matching every level.
+//
+// Typical use:
+//
+//   match (json_parse(req.body_string())) {
+//       Some(v) => {
+//           var name = json_get_string(v, "name");
+//           var age  = json_get_i32(v, "age");
+//           match ((name, age)) {
+//               (Some(n), Some(a)) => return Some(CreateUser { name: n, age: a }),
+//               _ => return None,
+//           }
+//       },
+//       None => return None,
+//   }
+//
+// Phase 2 will let callers skip the manual assembly:
+//
+//   var u: CreateUser = json_parse[CreateUser](req.body_bytes())?;
+// ============================================================
+
+// `json_get(obj, key)` — look up `key` in a JObject. Returns
+// None when `obj` isn't a JObject or `key` isn't present.
+// Foundation for the typed getters below.
+pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
+    match (obj) {
+        JObject(m) => {
+            match (m.get(key)) {
+                Some(v) => { return Some(v); },
+                None => { return None; }
+            }
+        },
+        _ => { return None; }
+    }
+    return None;
+}
+
+// `json_get_string(obj, key)` — typed-extract a JString.
+// Returns None when the key is missing or the value isn't
+// a string.
+pub function json_get_string(obj: JsonValue, key: string): Option[string] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JString(s) => { return Some(s); },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `json_get_i32(obj, key)` — typed-extract a JNumber as i32.
+// Returns None when the key is missing, the value isn't a
+// number, or the number doesn't parse as an integer.
+pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JNumber(s) => {
+                    // JNumber carries the raw decimal text; parse to i32.
+                    var n: i32 = 0;
+                    var i: i32 = 0;
+                    var sign: i32 = 1;
+                    var nlen: i32 = len(s);
+                    if (nlen == 0) { return None; }
+                    if (s[0] == 45) { sign = -1; i = 1; }
+                    if (i >= nlen) { return None; }
+                    while (i < nlen) {
+                        var b: i32 = s[i];
+                        if (b < 48 || b > 57) { return None; }
+                        n = n * 10 + (b - 48);
+                        i = i + 1;
+                    }
+                    return Some(n * sign);
+                },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `json_get_bool(obj, key)` — typed-extract a JBool.
+pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JBool(b) => { return Some(b); },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `json_get_array(obj, key)` — typed-extract a JArray.
+// Returns the array's element list directly so callers can
+// `len()` / index over it without further matching.
+pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JArray(arr) => { return Some(arr); },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `json_get_object(obj, key)` — typed-extract a JObject as
+// a JsonValue (chain extracts through nested objects).
+// Doesn't unwrap to Map[string, JsonValue] — the JsonValue
+// shape composes with the other json_get_* helpers, so
+// chains read more naturally as:
+//
+//   var addr = json_get_object(user, "address");
+//   var city = json_get_string(addr.unwrap_or(JNull), "city");
+//
+// (The unwrap_or pattern works around chained-Option
+// unwrapping until lang grows a `?.` operator.)
+pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JObject(_) => { return Some(v); },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
+// `json_is_null(v)` — true iff `v` is JNull. Convenience
+// over the bare match for the common nullability check.
+pub function json_is_null(v: JsonValue): boolean {
+    match (v) {
+        JNull => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}

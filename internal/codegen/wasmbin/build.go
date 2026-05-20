@@ -55,6 +55,14 @@ type BuildOptions struct {
 	// call resolves. No-op when main returns void; non-i32
 	// returns fall back to the plain SynthStart drop path.
 	PrintMainResult bool
+	// HttpHandler emits the wasi:http/incoming-handler@0.2.0
+	// component-model export wrapping the user-defined
+	// `function handle(req: HttpRequest, plat: Platform):
+	// HttpResponse`. The synthetic `__http_entry` helper does
+	// the canonical-ABI marshalling. Pins `handle` +
+	// `__method_HeaderMap_append` past every dead-function-
+	// elimination step so the wrapper's calls resolve.
+	HttpHandler bool
 }
 
 // Build is BuildWithOptions with the default (zero-value) options.
@@ -73,6 +81,14 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	var treeshakeExtras []string
 	if opts.PrintMainResult {
 		treeshakeExtras = []string{"int_to_string", "int__int_to_string"}
+	}
+	if opts.HttpHandler {
+		// `handle` is called by the wrapper but the treeshake
+		// walker doesn't see the call (the wrapper lives in
+		// emit-time wasm bytes, not the AST). Same shape for
+		// `__method_HeaderMap_append` — the wrapper calls it
+		// per header entry from the canonical-ABI fields list.
+		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append")
 	}
 	treeshake.Run(prog, treeshakeExtras...)
 	ip, err := ir.LowerWith(prog, info, 4)
@@ -108,6 +124,9 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if opts.PrintMainResult {
 		liveExtras = []string{"int_to_string", "int__int_to_string"}
 	}
+	if opts.HttpHandler {
+		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append")
+	}
 	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {
@@ -121,5 +140,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		ForceMemorySection: opts.ForceMemorySection,
 		SynthStart:         opts.SynthStart,
 		PrintMainResult:    opts.PrintMainResult,
+		HttpHandler:        opts.HttpHandler,
 	})
 }

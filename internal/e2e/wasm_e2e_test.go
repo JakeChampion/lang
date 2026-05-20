@@ -5706,6 +5706,26 @@ func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, std
 	return s, e, ec, dir
 }
 
+// runWasmInDirBin is the wasmbin-backed sibling of
+// runWasmInDir: same signature and semantics, but the
+// component bytes come out of `buildComponentBin` (preview-1
+// path_open / fd_read / fd_write) instead of WAT (preview-2
+// `wasi:filesystem/types`). Used by tests migrating off WAT
+// once both `read_file` and `write_file` are on the wasmbin
+// side.
+func runWasmInDirBin(t *testing.T, src string, seed map[string]string) (stdout, stderr string, exitCode int, dir string) {
+	t.Helper()
+	p := buildComponentBin(t, src)
+	dir = t.TempDir()
+	for name, content := range seed {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	s, e, ec := runComponent(t, p, runOpts{workDir: dir})
+	return s, e, ec, dir
+}
+
 // `read_file` returns Ok(content) for a present file. The
 // program writes the content back to stdout so we can verify
 // both the read path and the type-erased Result unwrap.
@@ -5717,7 +5737,7 @@ func TestWASMReadFileOk(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, map[string]string{
+	stdout, _, _, _ := runWasmInDirBin(t, src, map[string]string{
 		"greeting.txt": "hello, file\n",
 	})
 	if !strings.Contains(stdout, "hello, file\n") {
@@ -5741,7 +5761,7 @@ func TestWASMReadFileNotFound(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "does_not_exist.txt") {
 		t.Errorf("stdout should echo the missing path; got %q", stdout)
 	}
@@ -5758,7 +5778,7 @@ func TestWASMWriteFileOk(t *testing.T) {
 		}
 		return -1;
 	}`
-	_, _, _, dir := runWasmInDir(t, src, nil)
+	_, _, _, dir := runWasmInDirBin(t, src, nil)
 	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
@@ -5783,7 +5803,7 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "10") {
 		t.Errorf("stdout should report `10` (len of \"round trip\"); got %q", stdout)
 	}
@@ -5837,7 +5857,7 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "line 1\n") || !strings.Contains(stdout, "line 2\n") {
 		t.Errorf("stdout missing both lines; got %q", stdout)
 	}
@@ -5874,7 +5894,7 @@ func TestWASMReaderReadChunk(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "hello: world") {
 		t.Errorf("stdout should contain `hello: world`; got %q", stdout)
 	}
@@ -5905,7 +5925,7 @@ func TestWASMOpenAppender(t *testing.T) {
 		}
 		return -1;
 	}`
-	stdout, _, _, _ := runWasmInDir(t, src, nil)
+	stdout, _, _, _ := runWasmInDirBin(t, src, nil)
 	if !strings.Contains(stdout, "first-second") {
 		t.Errorf("stdout should contain `first-second`; got %q", stdout)
 	}
