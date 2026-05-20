@@ -276,27 +276,75 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 ## Phase 2 — Component Model writer
 
-### Progress
+### Progress (refreshed 2026-05-20)
 
-- **Component preamble + core-module-section composer shipped**
-  in `internal/stdlib/std/wasm/component.lang`:
-  `put_component_header` writes the 8-byte component preamble
-  (`\0asm` + version 0x000d + layer 0x0001), and
-  `put_core_module_section` wraps a std/wasm-built core module
-  as section id 1 with a uleb size prefix. The 12 component
-  section IDs (core-module, core-instance, core-alias,
-  component-type, component, instance, alias, canon, start,
-  import, export) are exposed as `section_*` constants so
-  follow-up slices can build on them without restating spec
-  numbers. End-to-end test `TestWASMComponentWraps` builds the
-  core "function returning 42" module via std/wasm/module +
-  wraps it in a component, then pipes the bytes through
-  `wasm-tools validate` (must pass) and `wasm-tools print`
-  (must show `(component`, `(core module`, and `i32.const 42`).
-  Remaining: component type / import / export / instance / canon
-  / alias section composers for the WIT-world wiring the
-  production driver does today via
-  `wasm-tools component embed` + `wasm-tools component new`.
+The Lang-stdlib component encoder (`internal/stdlib/std/wasm/component.lang`)
+is now structurally complete for the WASI-style component wrapping
+the production driver needs. Every section the Component Model
+binary format defines has a composer, and the canonical
+"core module + WASI imports → component" pipeline has a one-call
+high-level helper. What's left for Phase 2's stated goal —
+retiring `wasm-tools component new --adapt` from
+`cmd/lang/main.go` — is **driver wiring**, not new encoder work.
+
+#### What's shipped
+
+Section composers (each verified against `wasm-tools parse`
+output; many also exercised end-to-end via `wasm-tools validate`
++ `wasmtime run --invoke`):
+
+| Section | Composer(s) |
+|---------|-------------|
+| Preamble | `put_component_header` |
+| 0 (custom) | `put_component_type_section` |
+| 1 (core-module) | `put_core_module_section` |
+| 2 (core-instance) | `_instantiate`, `_instantiate_with_one_instance_arg`, `_instantiate_with_instance_args`, `_from_one_func_export`, `_from_func_exports` |
+| 3 (core-type) | `put_core_type_section_one_func` |
+| 6 (alias) | `put_alias_section_core_export_func` / `_core_exports` (multi-sort), `put_alias_section_instance_export_func` |
+| 7 (type) | `put_type_section_one_func{,_no_param,_no_result}`, `_funcs` (multi-functype), plus one composer per defvaltype form: resource, list, option, tuple, result_ok_err, enum, flags, record, variant, own, borrow, plus instance types (single + multi func exports, with-result variants) |
+| 8 (canon) | lift (no_opts, mem_realloc, mem_realloc_post_return, mem_realloc_encoding) + multi-lifts no-opts; lower (no_opts, mem_realloc) + multi-lowers no-opts; resource_{new,drop,rep} single + multi |
+| 9 (start) | `put_start_section_no_args_no_results` |
+| 10 (import) | `put_import_section_one_func` / `_funcs` (multi), `put_import_section_one_instance` |
+| 11 (export) | `put_export_section_one_func` / `_funcs` |
+
+High-level helpers — collapse a recipe of section composers into
+one call:
+
+- `build_lifted_export_component[_with_params]` — wrap a core
+  module's exported function as a component-level export.
+  Exercised under `wasmtime run --invoke` for a real
+  `add(3, 4) = 7` round-trip.
+- `build_wasi_imported_component[_multi]` — wrap a core module
+  that calls one or more WASI host functions. Threads the full
+  type / import / alias / canon-lower / core-instance pipeline
+  for each WASI import.
+
+Supporting byte-constant exports: `section_*`, `core_sort_*` (7),
+`cvaltype_*` (13 component primitives), `canonopt_*` (6).
+
+#### What's NOT shipped
+
+- **Driver wiring.** `cmd/lang/main.go:651`
+  (`emitPreview2ComponentFromCoreBytes`) still shells out to
+  `wasm-tools component new --adapt`. Until that's flipped to
+  call the Lang-stdlib encoder (either by invoking a compiled
+  Lang program or by porting the encoder logic into Go), Phase
+  2's external-tool dependency hasn't actually been retired —
+  even though the encoder it would call is ready.
+- **Preview-2 import migration.** `internal/codegen/wasmbin/wasi.go`
+  still emits preview-1 imports (`fd_write`, `path_open`, etc.).
+  The encoder can produce a preview-2-native component, but the
+  Go-side IR backend hasn't switched its WASI import names. Even
+  with the driver wired through std/wasm/component, the produced
+  component would still need the preview-1 adapter unless this
+  migration lands first.
+- **Compound canonical-ABI shapes.** `canon lower` with
+  `mem+realloc` is in place but multi-result lifts, post-return
+  lower, and the full "string / list / record param" lowering
+  patterns aren't wired through the high-level helpers (they're
+  composable via individual section composers though).
+
+#### Original scope
 
 
 Scope: replace `wasm-tools component embed` and `wasm-tools component
