@@ -31,9 +31,17 @@ import (
 //   - OpNot → OpNot
 //   - OpEq / OpNe / OpLtS / OpLeS / OpGtS / OpGeS → matching SSA cmp
 //
+//   Phase 4:
+//   - OpCallDirect → OpCall with Str = callee name, Args = the
+//     popped arguments. Always pushes a single Result value;
+//     void calls leak an unused Result onto the SSA stack —
+//     harmless (DCE keeps Call ops anyway, side-effect-y) but
+//     a future pass that consults callee signatures can prune
+//     the dead Result if it ever becomes worthwhile.
+//
 // Anything else returns an `unsupported op` error. Locals
-// beyond the param prefix, OpStoreLocal, branches, calls, and
-// floats land in follow-up PRs.
+// beyond the param prefix, OpStoreLocal, branches, indirect
+// calls, and floats land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -100,6 +108,18 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 			stack = stack[:len(stack)-1]
 			v := out.AddOp(entry, OpNot, arg)
 			stack = append(stack, v)
+		case ir.OpCallDirect:
+			argc := int(op.I32)
+			if len(stack) < argc {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpCallDirect at op[%d] needs %d args, stack has %d",
+					i, argc, len(stack))
+			}
+			args := append([]Value(nil), stack[len(stack)-argc:]...)
+			stack = stack[:len(stack)-argc]
+			result := out.AddOp(entry, OpCall, args...)
+			// Set the callee name on the just-appended Op.
+			entry.Ops[len(entry.Ops)-1].Str = op.Str
+			stack = append(stack, result)
 		case ir.OpReturn:
 			if len(stack) < 1 {
 				return nil, fmt.Errorf("ssa.LiftFromIR: OpReturn at op[%d] needs 1 operand", i)
