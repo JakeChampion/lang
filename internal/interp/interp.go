@@ -1821,6 +1821,17 @@ func (e *env) set(name string, v Value) {
 // declare always binds in the innermost scope (for `var` decls).
 func (e *env) declare(name string, v Value) { e.vars[name] = v }
 
+// tryOpEarlyReturn is the sentinel error the `?` postfix
+// operator raises when its receiver is `None` (Option) or
+// `Err(e)` (Result). The expression evaluator can't unwind the
+// enclosing function on its own — `?` shows up in expression
+// position but its failure case is a statement-level early
+// return — so the call wrapper (callFunc) catches this and
+// turns it back into a normal Value return for the caller.
+type tryOpEarlyReturn struct{ val Value }
+
+func (t *tryOpEarlyReturn) Error() string { return "interp: TryOp early return" }
+
 type flowKind int
 
 const (
@@ -1848,6 +1859,15 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
+		// `?` postfix in expression position turns failure
+		// (None / Err) into a function-level early return. The
+		// expression evaluator can't unwind statements on its
+		// own, so it raises this sentinel error type and the
+		// call wrapper here catches it.
+		if early, ok := err.(*tryOpEarlyReturn); ok {
+			i.runDefers(defers, e)
+			return early.val, nil
+		}
 		i.runDefers(defers, e)
 		return nil, err
 	}
@@ -2518,13 +2538,40 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
 	case *ast.TryOp:
-		// The interp's expression evaluator can't unwind the
-		// enclosing function early (statement-level flow control
-		// uses a result-flow flag the expression layer doesn't
-		// thread). The wasm + arm64 backends are what users run;
-		// the interp is a sanity-check sandbox so `?` is simply
-		// not supported here.
-		return nil, fmt.Errorf("interp: postfix `?` operator is not supported in the interpreter; compile to wasm or arm64 instead")
+		// `expr?` desugars to:
+		//   match (expr) {
+		//     Some(v) => v,   // Option-shape
+		//     None    => return None,
+		//     Ok(v)   => v,   // Result-shape
+		//     Err(_)  => return expr,
+		//   }
+		// The early-return arms hop the enclosing function via
+		// the tryOpEarlyReturn sentinel; callFunc catches it.
+		inner, err := i.evalExpr(x.Inner, env)
+		if err != nil {
+			return nil, err
+		}
+		ev, ok := inner.(*Enum)
+		if !ok {
+			return nil, fmt.Errorf("interp: `?` applied to non-enum %T", inner)
+		}
+		switch ev.VariantName {
+		case "Some":
+			if len(ev.Payloads) != 1 {
+				return nil, fmt.Errorf("interp: Some payload arity %d", len(ev.Payloads))
+			}
+			return ev.Payloads[0], nil
+		case "None":
+			return nil, &tryOpEarlyReturn{val: ev}
+		case "Ok":
+			if len(ev.Payloads) != 1 {
+				return nil, fmt.Errorf("interp: Ok payload arity %d", len(ev.Payloads))
+			}
+			return ev.Payloads[0], nil
+		case "Err":
+			return nil, &tryOpEarlyReturn{val: ev}
+		}
+		return nil, fmt.Errorf("interp: `?` on unexpected variant %q", ev.VariantName)
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
 		for _, f := range x.Fields {

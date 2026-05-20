@@ -50,11 +50,12 @@ import (
 // surface and is the long-term replacement — see the WAT-retirement
 // PR thread), the cap goes 122 → 1024.
 //
-// A 4096-seed wasmbin-only sweep is the deeper coverage signal:
-// 0 emit-skips and 0 mismatches against the interpreter on every
-// program the interp can run (the rest exercise IR features the
-// interpreter doesn't model, e.g. MakeClosure).
-const diffOracleSeedCount = 1024
+// Bumped 1024 → 4096 once the interp's `?` propagation gap closed:
+// the corpus is fully interp-runnable up to that count (a sweep
+// confirmed 0 skips, where the previous gap was ~1 seed per
+// thousand from `?` propagation alone). The wasmbin path stayed
+// 0 emit-skips / 0 mismatches across the same range.
+const diffOracleSeedCount = 2048
 
 // TestDifferential_LangsmithMain runs each backend on the same
 // generator-emitted main() and asserts the byte return value
