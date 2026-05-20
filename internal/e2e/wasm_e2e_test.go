@@ -8847,6 +8847,77 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentTypeSection covers put_component_type_section,
+// which writes the `component-type` custom section the WIT world
+// machinery hangs its world descriptor on. wasm-tools doesn't
+// validate the inner payload (custom sections are opaque to the
+// validator), so we hand in a synthetic payload and assert
+// `wasm-tools print` surfaces a `component-type` custom section
+// carrying the expected bytes.
+func TestWASMComponentTypeSectionEmbed(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    // Synthetic payload: 4 bytes of ASCII. wasm-tools doesn't
+    // parse the inside of a component-type custom section so
+    // anything goes for this structural test.
+    var payload: u8[] = [];
+    payload = payload.push(116u8);   // 't' = 0x74
+    payload = payload.push(101u8);   // 'e' = 0x65
+    payload = payload.push(115u8);   // 's' = 0x73
+    payload = payload.push(116u8);   // 't' = 0x74
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_component_type_section(comp, payload);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "component-type") {
+		t.Errorf("expected `component-type` in printed component, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentImportFunc covers put_import_section_one_func:
 // declares an imported function `host-func : () -> u32` and verifies
 // the bytes parse + print as the expected `(import "host-func" (func
