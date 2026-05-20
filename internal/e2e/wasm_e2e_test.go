@@ -8728,6 +8728,78 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentCoreTypeFunc covers
+// put_core_type_section_one_func: emits a component-level core-type
+// section containing one core wasm functype `(func (param i32)
+// (result i32))`. Verifies the printed WAT surfaces the
+// `(core type ... (func ...))` shape.
+//
+// Core types live at the component level — distinct from both core
+// module types (inside an embedded core module) and component types
+// (declared via the type section, id 7). They're addressed by
+// core-typeidx and used in places like core-instance instantiation
+// args (for declaring expected core-import signatures).
+func TestWASMComponentCoreTypeFunc(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+import "std/wasm/encode";
+function main(): i32 {
+    var params: u8[] = [encode.valtype_i32()];
+    var results: u8[] = [encode.valtype_i32()];
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_type_section_one_func(comp, params, results);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(core type") {
+		t.Errorf("expected (core type ... in printed component, got:\n%s", watStr)
+	}
+	if !strings.Contains(watStr, "(func") {
+		t.Errorf("expected (func ... shape, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentTypeFuncU32 covers
 // put_type_section_one_func_no_param plus cvaltype_u32: emits a
 // component-level type section defining `(func (result u32))` and

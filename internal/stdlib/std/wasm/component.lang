@@ -145,6 +145,56 @@ pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
     return encode.put_bytes(out, core_bytes);
 }
 
+// put_core_type_section_one_func — emit a component-level
+// core-type section (id 3) containing a single core wasm functype.
+// Core types declared at the component level are addressed by
+// core-typeidx and used in places like core-instance instantiation
+// args (for declaring the expected core-import signatures of a
+// core module being instantiated). The encoding is the standard
+// core wasm functype: `0x60 vec(<valtype>) vec(<valtype>)`.
+//
+// `param_valtypes` and `result_valtypes` carry core wasm valtype
+// bytes (NOT component cvaltype bytes) — i.e. `encode.valtype_i32`
+// / `_i64` / `_f32` / `_f64`. Same as the params/results used by
+// std/wasm/module's type section.
+//
+// Spec (Binary.md):
+//   core-type ::= core:type
+//   core:type ::= functype | moduletype
+//   core:functype ::= 0x60 vec(<valtype>) vec(<valtype>)
+//
+// Encoded body for one functype:
+//
+//   03 <size>           // section id 3 = core-type
+//   01                  // vec(1) core-type entries
+//   60                  // functype form
+//   <P:uleb> <params>*  // vec(P) param valtypes
+//   <R:uleb> <results>* // vec(R) result valtypes
+pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], result_valtypes: u8[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) core types
+    body = body.push(96u8);                       // functype form (0x60)
+    var np: i32 = param_valtypes.len();
+    body = leb128.uleb_u32(body, np as u32);
+    var i: i32 = 0;
+    while (i < np) {
+        body = body.push(param_valtypes[i]);
+        i = i + 1;
+    }
+    var nr: i32 = result_valtypes.len();
+    body = leb128.uleb_u32(body, nr as u32);
+    i = 0;
+    while (i < nr) {
+        body = body.push(result_valtypes[i]);
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_core_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_component_type_section — append a `component-type` custom
 // section carrying the given precomputed payload bytes. This is
 // the same operation `wasm-tools component embed -w <world>`
