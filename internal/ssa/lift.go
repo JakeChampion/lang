@@ -554,6 +554,35 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
+	case ir.OpStrEq:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpStrEq at op[%d] needs 2 operands", i)
+		}
+		b := l.stack[len(l.stack)-1]
+		a := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		v := l.out.AddOp(l.cur, OpCall, a, b)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_eq"
+		l.stack = append(l.stack, v)
+	case ir.OpStrConcat:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpStrConcat at op[%d] needs 2 operands", i)
+		}
+		b := l.stack[len(l.stack)-1]
+		a := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		v := l.out.AddOp(l.cur, OpCall, a, b)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_concat"
+		l.stack = append(l.stack, v)
+	case ir.OpStrLen:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpStrLen at op[%d] needs 1 operand", i)
+		}
+		arg := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpCall, arg)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_len"
+		l.stack = append(l.stack, v)
 	case ir.OpAlloc:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpAlloc at op[%d] needs size operand", i)
