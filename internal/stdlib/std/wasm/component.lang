@@ -1910,3 +1910,57 @@ pub function build_lifted_export_component_with_params(core_bytes: u8[], core_ex
     comp = put_export_section_one_func(comp, export_name, 0u32);
     return comp;
 }
+
+// build_wasi_imported_component — high-level recipe for the
+// canonical "core module that calls a single WASI function" shape.
+// Bundles the seven-step pipeline into one call:
+//
+//   1. type section: instance type containing one no-result func
+//      with the given params
+//   2. import section: `interface_name` (instance of type 0)
+//   3. alias section: alias instance 0's `func_name` export as
+//      component-level func 0
+//   4. canon section: lower func 0 into core func 0
+//   5. core-instance section: wrap core func 0 as
+//      `(export func_name (func 0))` core instance (instance 0)
+//   6. core-module section: the supplied core module bytes
+//      (which must import `core_import_module.func_name`
+//      with the matching core signature)
+//   7. core-instance section: instantiate the core passing
+//      core-instance 0 as the `core_import_module` arg
+//
+// Concrete example — wrapping a core module that calls
+// `wasi:cli/exit::exit(0)`:
+//
+//   build_wasi_imported_component(
+//     core_bytes,
+//     "wasi:cli/exit@0.2.0",      // WASI interface name
+//     "exit",                      // function name within the interface
+//     ["code"],                    // component-level param names
+//     [cvaltype_u32()],            // component-level param valtypes
+//     "wasi",                      // core module's import module name
+//   );
+//
+// The core module must declare `(import "wasi" "exit" (func (param
+// i32)))` (or similar — see canonical-ABI lowering rules for
+// non-scalar types).
+//
+// What this skips:
+//   - Multiple WASI imports (one per call only)
+//   - Functions with results (params only, no return)
+//   - WASI imports with non-scalar params (string/list need
+//     mem+realloc canon-lower opts)
+//   - Component-level exports — the wrapped component has no
+//     surface area exposed beyond its WASI imports; useful for
+//     a CLI handler that just runs side effects.
+pub function build_wasi_imported_component(core_bytes: u8[], interface_name: string, func_name: string, wasi_param_names: string[], wasi_param_valtypes: u8[], core_import_module: string): u8[] {
+    var comp: u8[] = put_component_header([]);
+    comp = put_type_section_one_instance_one_func_export(comp, func_name, wasi_param_names, wasi_param_valtypes);
+    comp = put_import_section_one_instance(comp, interface_name, 0u32);
+    comp = put_alias_section_instance_export_func(comp, 0u32, func_name);
+    comp = put_canon_section_lower_no_opts(comp, 0u32);
+    comp = put_core_instance_section_from_one_func_export(comp, func_name, 0u32);
+    comp = put_core_module_section(comp, core_bytes);
+    comp = put_core_instance_section_instantiate_with_one_instance_arg(comp, 0u32, core_import_module, 0u32);
+    return comp;
+}
