@@ -317,6 +317,46 @@ pub function put_import_section_one_func(buf: u8[], name: string, typeidx: u32):
     return encode.put_bytes(out, body);
 }
 
+// put_canon_section_lower_no_opts — emit a canon section containing
+// a single `canon lower` entry that turns a component-level function
+// (typically an import) into a core-level function suitable for use
+// as a core-module import. The mirror of `canon lift`.
+//
+// `opts = []`: no `memory`, `realloc`, `post-return`, or non-default
+// string encoding. Sufficient for callee functions whose signature
+// only mentions scalar valtypes (no strings, no lists, no
+// resources).
+//
+// Unlike canon-lift, the lower form carries NO trailing typeidx —
+// the core function's signature is derived from the component-level
+// function's signature by the canonical-ABI lowering rules. The
+// caller has to ensure the component-level signature only mentions
+// types the no-opts lowering supports.
+//
+// Spec (Binary.md):
+//   canon ::= 0x00 0x00 f:<core-func-idx> opts:vec(<canonopt>) ft:<typeidx>   -- lift
+//           | 0x01 0x00 f:<func-idx>      opts:vec(<canonopt>)                 -- lower
+//
+// Encoded body for one canon-lower entry:
+//
+//   01                  // vec(1)
+//   01 00               // discriminator: lower (0x01), function sub-tag (0x00)
+//   <func-idx:uleb>
+//   00                  // opts vec count = 0
+pub function put_canon_section_lower_no_opts(buf: u8[], func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(1u8);                       // canon-lower
+    body = body.push(0u8);                       // function-lower sub-tag
+    body = leb128.uleb_u32(body, func_idx);
+    body = leb128.uleb_u32(body, 0u32);          // no opts
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_export_section_one_func — emit a component-level export
 // section with a single entry that exposes a component-level
 // function (created by canon-lift) under the given name.
