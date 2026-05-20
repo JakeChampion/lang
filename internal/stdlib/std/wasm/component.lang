@@ -900,3 +900,39 @@ pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32)
     var func_idxs: u32[] = [func_idx];
     return put_export_section_funcs(buf, names, func_idxs);
 }
+
+// build_lifted_export_component — high-level recipe for the most
+// common Component-Model shape: wrap a self-contained core module
+// so that one of its exported functions is callable as a
+// component-level function.
+//
+// Given a core module that exports a no-param func named
+// `core_export_name`, produces a component that:
+//   - embeds the core module
+//   - instantiates it
+//   - aliases the chosen core export as a core-func
+//   - declares a component-level functype `() -> result_valtype`
+//     (no params, single anonymous result)
+//   - canon-lifts the aliased core-func into a component-level fn
+//   - exports the lifted fn as `export_name` at the component level
+//
+// Skips: imports, multi-param signatures, mem/realloc opts. Those
+// shapes still go through the individual section composers; this
+// helper is for the no-import / no-string case that
+// `TestWASMComponentRunnableViaWasmtime` exercises today by
+// stitching six calls together.
+//
+// Returns the complete component bytes ready to write to disk or
+// hand to `wasmtime run --invoke`.
+pub function build_lifted_export_component(core_bytes: u8[], core_export_name: string, export_name: string, result_valtype: u8): u8[] {
+    var comp: u8[] = put_component_header([]);
+    comp = put_core_module_section(comp, core_bytes);
+    comp = put_core_instance_section_instantiate(comp, 0u32);
+    comp = put_alias_section_core_export_func(comp, 0u32, core_export_name);
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    comp = put_type_section_one_func(comp, no_names, no_valtypes, result_valtype);
+    comp = put_canon_section_lift_no_opts(comp, 0u32, 0u32);
+    comp = put_export_section_one_func(comp, export_name, 0u32);
+    return comp;
+}
