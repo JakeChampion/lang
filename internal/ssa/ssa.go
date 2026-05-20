@@ -637,6 +637,29 @@ func (f *Func) SetRetPair(b *Block, tag, payload Value) {
 	b.Term = Terminator{Kind: TermRetPair, Value: tag, Value2: payload}
 }
 
+// HasSideEffects reports whether `f` contains any impure op
+// (Call, Load, Store, Alloc, MakeClosure/Env, or their
+// sub-width Load/Store variants). Pure-only functions return
+// false.
+//
+// Bails early on the first impure op; O(ops-until-first-hit)
+// in the worst case (a fully pure function), much cheaper
+// than building a full Stats snapshot when callers only need
+// the yes/no.
+func (f *Func) HasSideEffects() bool {
+	if f == nil {
+		return false
+	}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if !IsPure(op.Kind) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // appendUnique appends `x` to `s` if it's not already
 // present. Preds shouldn't have duplicates (a block can't
 // branch to the same successor twice in SSA terms).
