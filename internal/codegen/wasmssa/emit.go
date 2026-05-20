@@ -15,6 +15,11 @@
 //     entry ─brif─→ T ┐
 //     ├─→ merge ─ret
 //     entry ─brif─→ F ┘
+//   - If-only (one-armed) shape:
+//     entry ─brif─→ body ─br─→ merge ─ret
+//     └────────────────────↗
+//     The else arm is empty; entry's other brif target IS
+//     the merge.
 //   - While loop shape:
 //     entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
 //     └─→ done ─ret
@@ -133,6 +138,8 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 //     unconditional br to the next) → straight-line emission.
 //   - 4 blocks shaped as if-else diamond → wasm `if`/`else`/
 //     `end` form with phi-write into shared locals.
+//   - 3 blocks shaped as one-armed if → wasm `if`/`else`/`end`
+//     with the body in one arm and an empty other arm.
 //   - 4 blocks shaped as while loop → wasm `block`/`loop`/
 //     `br_if` form with phi locals carrying loop state.
 //   - Anything else → unsupported error.
@@ -185,6 +192,15 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
+	// If-only (no-else) case.
+	if shape, ok := classifyIfOnly(f); ok {
+		body, err := emitIfOnly(nil, shape, valueToLocal)
+		if err != nil {
+			return nil, nil, err
+		}
+		return body, valueToLocal, nil
+	}
+
 	// While loop case.
 	if lp, ok := classifyWhileLoop(f); ok {
 		body, err := emitWhileLoop(nil, lp, valueToLocal)
@@ -194,7 +210,7 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, and while loops handled",
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, and while loops handled",
 		len(f.Blocks))
 }
 
@@ -382,6 +398,94 @@ func writePhiArgs(body []byte, target, fromBlock *ssa.Block, valueToLocal map[in
 		}
 	}
 	return body
+}
+
+// ifOnly captures the three blocks of a one-armed if shape
+// (no else): entry's True branch enters a body, False
+// branch falls through directly to merge.
+type ifOnly struct {
+	entry, body, merge *ssa.Block
+}
+
+// classifyIfOnly detects the canonical one-armed-if shape:
+//
+//	entry ─brif─→ body ─br─→ merge ─ret
+//	   └────────────────────↗   (False edge of brif)
+//
+// body's only pred is entry; merge has both entry and body
+// as preds; merge ends with ret. Either True or False of
+// entry's brif may be `body` — the False arm contributes
+// only the no-op flow into merge.
+func classifyIfOnly(f *ssa.Func) (ifOnly, bool) {
+	if len(f.Blocks) != 3 || f.Entry == nil {
+		return ifOnly{}, false
+	}
+	entry := f.Entry
+	if entry.Term.Kind != ssa.TermBrIf {
+		return ifOnly{}, false
+	}
+	t, fb := entry.Term.True, entry.Term.False
+	if t == nil || fb == nil || t == fb {
+		return ifOnly{}, false
+	}
+	// One of {t, fb} is the body (with exactly entry as pred,
+	// ending in br merge); the other IS the merge (which
+	// entry's False/True edge enters directly).
+	var body, merge *ssa.Block
+	switch {
+	case len(t.Preds) == 1 && t.Preds[0] == entry &&
+		t.Term.Kind == ssa.TermBr && t.Term.Target == fb:
+		body, merge = t, fb
+	case len(fb.Preds) == 1 && fb.Preds[0] == entry &&
+		fb.Term.Kind == ssa.TermBr && fb.Term.Target == t:
+		body, merge = fb, t
+	default:
+		return ifOnly{}, false
+	}
+	if merge.Term.Kind != ssa.TermRet {
+		return ifOnly{}, false
+	}
+	if len(merge.Preds) != 2 {
+		return ifOnly{}, false
+	}
+	return ifOnly{entry: entry, body: body, merge: merge}, true
+}
+
+// emitIfOnly emits the one-armed-if shape. The wasm `if`
+// block contains the body's ops; the implicit else is empty.
+// Phi-arg writes go in the appropriate slot — true-arm if
+// entry's True == body, false-arm if entry's False == body.
+func emitIfOnly(body []byte, s ifOnly, valueToLocal map[int32]uint32) ([]byte, error) {
+	body, err := emitStraightBlock(body, s.entry, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	// Push cond. If entry's True == s.body, the if-body runs
+	// when cond is true (no flip needed). If entry's False ==
+	// s.body, flip the cond via i32.eqz so the wasm `if`
+	// enters when the original False arm should.
+	body = pushValue(body, s.entry.Term.Cond, valueToLocal)
+	if s.entry.Term.False == s.body {
+		body = append(body, 0x45) // i32.eqz
+	}
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// Body arm.
+	body, err = emitStraightBlock(body, s.body, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = writePhiArgs(body, s.merge, s.body, valueToLocal)
+	body = inst.InstElse(body)
+	// Else arm: no ops, just phi-writes from entry.
+	body = writePhiArgs(body, s.merge, s.entry, valueToLocal)
+	body = inst.InstEnd(body)
+	// Merge ops + ret.
+	body, err = emitStraightBlock(body, s.merge, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, s.merge.Term, valueToLocal)
+	return body, nil
 }
 
 // whileLoop captures the four blocks of a recognised
