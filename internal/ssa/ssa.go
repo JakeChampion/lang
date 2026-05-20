@@ -179,6 +179,12 @@ const (
 	// are the call's arguments).
 	OpCall
 
+	// Indirect function call. Args[0] is the callee (a Value
+	// holding a function-table index); Args[1..] are the
+	// call's arguments. Used for OpCallIndirect / closure
+	// dispatch / function-pointer values.
+	OpCallIndirect
+
 	// Load / Store — memory access. Index-into-array,
 	// struct-field-access, etc. resolve to these.
 	OpLoad
@@ -310,6 +316,8 @@ func (k OpKind) String() string {
 		return "const_string"
 	case OpCall:
 		return "call"
+	case OpCallIndirect:
+		return "call_indirect"
 	case OpLoad:
 		return "load"
 	case OpStore:

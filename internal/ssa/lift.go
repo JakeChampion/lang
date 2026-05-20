@@ -138,6 +138,13 @@ import (
 //       OpReinterpretI64F64 → OpReinterpretF64ToI64
 //       OpReinterpretF64I64 → OpReinterpretI64ToF64
 //
+//   Phase 16:
+//   - OpConstFunc → OpConstInt (Imm = function-table index).
+//   - OpCallIndirect → OpCallIndirect with Args[0] = popped
+//     callee index, Args[1..] = the popped argument values.
+//     IR convention: the callee idx is the top of stack at
+//     the OpCallIndirect site (pushed after the args).
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -452,6 +459,24 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpCall, args...)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
 		l.stack = append(l.stack, result)
+	case ir.OpCallIndirect:
+		argc := int(op.I32)
+		// Layout on the stack: [args..., callee_idx]. Pop callee
+		// first, then argc args.
+		if len(l.stack) < argc+1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallIndirect at op[%d] needs %d args + callee, stack has %d",
+				i, argc, len(l.stack))
+		}
+		callee := l.stack[len(l.stack)-1]
+		args := append([]Value(nil), l.stack[len(l.stack)-1-argc:len(l.stack)-1]...)
+		l.stack = l.stack[:len(l.stack)-argc-1]
+		all := append([]Value{callee}, args...)
+		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
+		l.stack = append(l.stack, result)
+	case ir.OpConstFunc:
+		v := l.out.AddOp(l.cur, OpConstInt)
+		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
+		l.stack = append(l.stack, v)
 	case ir.OpIf:
 		switch op.I32 {
 		case ir.BlockTypeVoid,
