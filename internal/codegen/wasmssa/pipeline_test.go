@@ -45,6 +45,65 @@ func TestPipelineMul(t *testing.T) {
 	}
 }
 
+// TestPipelineIfElseAbs — `if (n < 0) return 0 - n; else
+// return n;` — exercises the dual-return / if-else CFG shape
+// end-to-end from real Lang source.
+func TestPipelineIfElseAbs(t *testing.T) {
+	src := `
+		function abs(n: i32): i32 {
+			if (n < 0) {
+				return 0 - n;
+			} else {
+				return n;
+			}
+		}
+	`
+	cases := []struct {
+		n, want int
+	}{
+		{-5, 5},
+		{0, 0},
+		{7, 7},
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "abs", strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("abs(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
+// TestPipelineWhileLoop — counter-sum via `while`. Exercises
+// the while-loop CFG end-to-end.
+func TestPipelineWhileLoop(t *testing.T) {
+	src := `
+		function sum(n: i32): i32 {
+			var total: i32 = 0;
+			var i: i32 = 0;
+			while (i < n) {
+				total = total + i;
+				i = i + 1;
+			}
+			return total;
+		}
+	`
+	// sum(n) = (n-1)*n/2
+	cases := []struct {
+		n, want int
+	}{
+		{0, 0},
+		{1, 0},
+		{5, 10},  // 0+1+2+3+4
+		{10, 45}, // 0..9
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "sum", strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("sum(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
 // compileAndRun runs the full pipeline:
 //  1. parse + check + lower the source to IR
 //  2. lift the named function to SSA
