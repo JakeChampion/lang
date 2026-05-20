@@ -5704,11 +5704,24 @@ func (b *builder) assign(n *ast.Assign) error {
 // type. Used by Phase 1d to decide when to splice in
 // __lang_rc_inc: array literals, function-call returns, and
 // push results all yield rc=1 ownership; only loads of existing
-// variables share an existing reference and need the bump.
+// references share an existing reference and need the bump.
 // Other pointer-shaped types (string / struct / enum / closure)
 // will join this in Phase 1e.
+//
+// Alias shapes:
+//   - *ast.Ident       — variable load
+//   - *ast.FieldAccess — struct field load (member is an array)
+//   - *ast.Index       — element load (e.g. matrix[i] where matrix
+//                        is i32[][], so the element is i32[])
+//
+// Calls, literals, push results, slice / map operations etc.
+// all yield fresh values with rc=1 already initialised by their
+// allocator path, so they're explicitly excluded.
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
-	if _, isIdent := e.(*ast.Ident); !isIdent {
+	switch e.(type) {
+	case *ast.Ident, *ast.FieldAccess, *ast.Index:
+		// continue
+	default:
 		return false
 	}
 	_, isArr := b.exprType(e).(ast.ArrayType)

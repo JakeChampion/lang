@@ -12578,6 +12578,38 @@ function main(): i32 {
 	}
 }
 
+// Phase 1d-ii: FieldAccess and Index of array type also count
+// as aliases. `var y = h.items` and `var y = matrix[0]` should
+// bump the refcount of the underlying array via __lang_rc_inc.
+func TestArm64RcAliasIncFieldAndIndex(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"field_access", `import "core/no_prelude";
+struct Holder { items: u8[] }
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(8);
+    var h: Holder = Holder { items: inner };
+    var alias: u8[] = h.items;
+    return __rc_get(inner) - 2;
+}`},
+		{"index_load", `import "core/no_prelude";
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(8);
+    var matrix: u8[][] = [inner];
+    var alias: u8[] = matrix[0];
+    return __rc_get(inner) - 2;
+}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, c.src); code != 0 {
+				t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+			}
+		})
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
