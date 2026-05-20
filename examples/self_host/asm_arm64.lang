@@ -383,7 +383,8 @@ pub struct EmitState {
     needs_arr_i32_min_max: boolean,
     needs_arr_i32_product: boolean,
     needs_str_chars: boolean,
-    needs_str_bytes: boolean
+    needs_str_bytes: boolean,
+    needs_str_reverse: boolean
 }
 
 function new_state(): EmitState {
@@ -428,7 +429,8 @@ function new_state(): EmitState {
         needs_arr_i32_min_max: false,
         needs_arr_i32_product: false,
         needs_str_chars: false,
-        needs_str_bytes: false
+        needs_str_bytes: false,
+        needs_str_reverse: false
     };
 }
 
@@ -468,7 +470,8 @@ function (s: EmitState) write(text: string): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -514,7 +517,8 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -555,7 +559,8 @@ function (s: EmitState) mark_str_concat(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -587,7 +592,8 @@ function (s: EmitState) mark_str_eq(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -619,7 +625,8 @@ function (s: EmitState) mark_str_print(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -651,7 +658,8 @@ function (s: EmitState) mark_str_cmp(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -683,7 +691,8 @@ function (s: EmitState) mark_str_read_line(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -715,7 +724,8 @@ function (s: EmitState) mark_i32_to_string(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -747,7 +757,8 @@ function (s: EmitState) mark_str_to_i32(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -779,7 +790,8 @@ function (s: EmitState) mark_eprint(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -811,7 +823,8 @@ function (s: EmitState) mark_str_search(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -843,7 +856,8 @@ function (s: EmitState) mark_args(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -875,7 +889,8 @@ function (s: EmitState) mark_arr_push(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -907,7 +922,8 @@ function (s: EmitState) mark_arr_slice(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -939,7 +955,8 @@ function (s: EmitState) mark_arr_i32_index_of(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -971,7 +988,8 @@ function (s: EmitState) mark_arr_reverse(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1003,7 +1021,8 @@ function (s: EmitState) mark_arr_concat(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1035,7 +1054,8 @@ function (s: EmitState) mark_arr_str_index_of(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1067,7 +1087,8 @@ function (s: EmitState) mark_arr_str_join(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1099,7 +1120,8 @@ function (s: EmitState) mark_arr_i32_sum(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1131,7 +1153,8 @@ function (s: EmitState) mark_arr_i32_min_max(): EmitState {
         needs_arr_i32_min_max: true,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1163,7 +1186,8 @@ function (s: EmitState) mark_arr_i32_product(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: true,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1195,7 +1219,8 @@ function (s: EmitState) mark_str_chars(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: true,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1227,7 +1252,41 @@ function (s: EmitState) mark_str_bytes(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: true
+        needs_str_bytes: true,
+        needs_str_reverse: s.needs_str_reverse
+    };
+}
+
+function (s: EmitState) mark_str_reverse(): EmitState {
+    return EmitState {
+        out: s.out, label_n: s.label_n, local_names: s.local_names,
+        in_function: s.in_function, string_lits: s.string_lits,
+        needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+        needs_heap: true,
+        struct_decls: s.struct_decls,
+        loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+        funcs: s.funcs, local_types: s.local_types,
+        needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq, needs_str_print: s.needs_str_print,
+        needs_str_cmp: s.needs_str_cmp,
+        needs_str_read_line: s.needs_str_read_line,
+        needs_i32_to_string: s.needs_i32_to_string,
+        needs_str_to_i32: s.needs_str_to_i32,
+        needs_eprint: s.needs_eprint,
+        needs_str_search: s.needs_str_search,
+        needs_args: s.needs_args,
+        needs_arr_push: s.needs_arr_push,
+        needs_arr_slice: s.needs_arr_slice,
+        needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+        needs_arr_reverse: s.needs_arr_reverse,
+        needs_arr_concat: s.needs_arr_concat,
+        needs_arr_str_index_of: s.needs_arr_str_index_of,
+        needs_arr_str_join: s.needs_arr_str_join,
+        needs_arr_i32_sum: s.needs_arr_i32_sum,
+        needs_arr_i32_min_max: s.needs_arr_i32_min_max,
+        needs_arr_i32_product: s.needs_arr_i32_product,
+        needs_str_chars: s.needs_str_chars,
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: true
     };
 }
 
@@ -1375,6 +1434,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                         if (fa.field == "chars") { return "array_string"; }
                         if (fa.field == "lines") { return "array_string"; }
                         if (fa.field == "bytes") { return "array_i32"; }
+                        if (fa.field == "reverse") { return "string"; }
                         if (fa.field == "contains") { return "bool"; }
                         if (fa.field == "starts_with") { return "bool"; }
                         if (fa.field == "ends_with") { return "bool"; }
@@ -1451,7 +1511,8 @@ function (s: EmitState) reset_locals(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1491,7 +1552,8 @@ function (s: EmitState) enter_function(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1533,7 +1595,8 @@ function (s: EmitState) push_loop_labels(exit_lbl: string, cont_lbl: string): Em
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1581,7 +1644,8 @@ function (s: EmitState) pop_loop_labels(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1631,7 +1695,8 @@ function (s: EmitState) leave_function(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1693,7 +1758,8 @@ function fresh_label(s: EmitState): LabelOut {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
     return LabelOut { state: ns, name: name };
 }
@@ -1800,7 +1866,8 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
     return StringLitOut { state: ns, idx: idx };
 }
@@ -1841,7 +1908,8 @@ function (s: EmitState) mark_print_int(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1881,7 +1949,8 @@ function (s: EmitState) mark_heap(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -1921,7 +1990,8 @@ function (s: EmitState) mark_read_int(): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
 }
 
@@ -2416,6 +2486,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_bytes();
                             return s;
                         }
+                        if (fa.field == "reverse" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    ldr x0, [sp], #16\n");
+                            s = s.write("    bl __lang_str_reverse\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                            s = s.mark_str_reverse();
+                            return s;
+                        }
                         if (fa.field == "lines" && c.args.len() == 0) {
                             // Sugar for `s.split("\n")`. Materialise
                             // a `"\n"` string box, then route through
@@ -2606,7 +2684,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
                     };
                     var fdi: i32 = 0;
                     while (fdi < s.funcs.len()) {
@@ -3154,7 +3233,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
             };
             var di: i32 = 0;
             while (di < s.struct_decls.len()) {
@@ -3212,7 +3292,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
                     };
                 }
                 di = di + 1;
@@ -3266,7 +3347,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
             };
             var skip_lbl: string = ".Lskip_lambda_" + i32_to_string(lam_id);
             var body_lbl: string = ".Llambda_" + i32_to_string(lam_id);
@@ -3375,7 +3457,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
             };
             s = s.write(skip_lbl + ":\n");
             // Allocate box: (1 + n_caps) * 8 bytes.
@@ -3565,7 +3648,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
             };
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
@@ -3606,7 +3690,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
@@ -3700,7 +3785,8 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition.
@@ -3860,7 +3946,8 @@ pub function emit_module(mod: parser.Module): string {
         needs_arr_i32_min_max: s.needs_arr_i32_min_max,
         needs_arr_i32_product: s.needs_arr_i32_product,
         needs_str_chars: s.needs_str_chars,
-        needs_str_bytes: s.needs_str_bytes
+        needs_str_bytes: s.needs_str_bytes,
+        needs_str_reverse: s.needs_str_reverse
     };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
@@ -5156,6 +5243,42 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Lai32_max_loop\n");
         s = s.write(".Lai32_max_done:\n");
         s = s.write("    mov x0, x2\n");
+        s = s.write("    ret\n");
+    }
+    // __lang_str_reverse: x0 = src box. Returns x0 = new
+    // string box with bytes in reverse order.
+    if (s.needs_str_reverse) {
+        s = s.write("__lang_str_reverse:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    ldr x19, [x0]\n");         // src data
+        s = s.write("    ldr x20, [x0, #8]\n");     // src len
+        // Alloc len bytes for new data buffer.
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    mov x21, x0\n");           // dst data
+        // Reverse copy.
+        s = s.write("    mov x3, #0\n");            // i
+        s = s.write(".Lstr_rev_loop:\n");
+        s = s.write("    cmp x3, x20\n");
+        s = s.write("    b.ge .Lstr_rev_done\n");
+        s = s.write("    sub x4, x20, x3\n");
+        s = s.write("    sub x4, x4, #1\n");        // src idx = len-1-i
+        s = s.write("    ldrb w5, [x19, x4]\n");
+        s = s.write("    strb w5, [x21, x3]\n");
+        s = s.write("    add x3, x3, #1\n");
+        s = s.write("    b .Lstr_rev_loop\n");
+        s = s.write(".Lstr_rev_done:\n");
+        // Alloc box.
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    str x21, [x0]\n");
+        s = s.write("    str x20, [x0, #8]\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
     // __lang_str_bytes: x0 = source string box. Returns
