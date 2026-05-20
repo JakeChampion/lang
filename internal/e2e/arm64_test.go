@@ -12658,22 +12658,43 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d-iv: passing an array as a function-call argument
-// is an aliasing site — the callee receives a fresh reference
-// of the same buffer. The inc fires before the call. Phase
-// 1d-v will add the matching dec on the callee's parameter
-// at function exit; until then, every call leaks an rc, but
-// the assertion captures the pre-Phase-1d-v expected count.
+// Phase 1d-v: every array local + param is dec'd at
+// function exit. Helper `peek(arr)` returns the live rc of
+// its param mid-body — the param was inc'd by the call site
+// (Phase 1d-iv), so peek sees rc=2. After peek's exit dec,
+// the caller's rc drops back to 1. The middle expression
+// observes the pre-dec count, the post-call __rc_get sees
+// the post-dec count; difference is exactly 1.
+func TestArm64RcDecAtExit(t *testing.T) {
+	src := `import "core/no_prelude";
+function peek(arr: u8[]): i32 { return __rc_get(arr); }
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var mid: i32 = peek(arr);
+    var after: i32 = __rc_get(arr);
+    return (mid - 2) + (after - 1);
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (mid=2 pre-dec, after=1 post-dec)", code)
+	}
+}
+
+// Phase 1d-iv (+ Phase 1d-v): passing an array as a
+// function-call argument bumps the rc on the caller side
+// (1d-iv); the callee's exit dec brings the param's rc back
+// down (1d-v). After the call returns, the caller's rc on
+// `arr` is exactly 1 — the same as before the call. The full
+// round-trip is observable end-to-end.
 func TestArm64RcAliasIncCallArg(t *testing.T) {
 	src := `import "core/no_prelude";
 function f(arr: u8[]): i32 { return 0; }
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var _: i32 = f(arr);
-    return __rc_get(arr) - 2;
+    return __rc_get(arr) - 1;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (call-arg should bump rc to 2)", code)
+		t.Errorf("got exit %d, want 0 (call-arg inc+dec should leave rc at 1)", code)
 	}
 }
 
