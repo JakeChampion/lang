@@ -7,9 +7,9 @@ import (
 
 // TestBuildSimpleFunction — build the SSA equivalent of
 //
-//   function f(a, b) {
-//       return a + b;
-//   }
+//	function f(a, b) {
+//	    return a + b;
+//	}
 //
 // One entry block, one Add op, one Ret terminator. Verifies
 // Builder mechanics + Verify-pass acceptance.
@@ -46,10 +46,10 @@ func TestBuildSimpleFunction(t *testing.T) {
 
 // TestBuildBranchingFunction — build the SSA equivalent of
 //
-//   function f(c) {
-//       if (c) { return 1; }
-//       return 2;
-//   }
+//	function f(c) {
+//	    if (c) { return 1; }
+//	    return 2;
+//	}
 //
 // Entry block ends with BrIf; True branch returns 1, False
 // branch returns 2. Verifies Preds tracking + multi-block
@@ -80,6 +80,61 @@ func TestBuildBranchingFunction(t *testing.T) {
 	succs := entry.Succs()
 	if len(succs) != 2 || succs[0] != thenB || succs[1] != elseB {
 		t.Errorf("entry.Succs() = %v, want [thenB, elseB]", succs)
+	}
+}
+
+// TestVerifyRejectsBrWithNilTarget — `br` terminator with a
+// nil Target is structurally invalid (downstream consumers
+// would crash on the dangling pointer). Verify catches it.
+func TestVerifyRejectsBrWithNilTarget(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	entry.Term = Terminator{Kind: TermBr, Target: nil}
+
+	err := Verify(f)
+	if err == nil {
+		t.Fatal("expected Verify error for br with nil target")
+	}
+	if !strings.Contains(err.Error(), "nil target") {
+		t.Errorf("error %q does not mention nil target", err)
+	}
+}
+
+// TestVerifyRejectsBrIfWithNilTrue — brif with nil True
+// branch is structurally invalid.
+func TestVerifyRejectsBrIfWithNilTrue(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	other := f.NewBlock()
+	f.SetRet(other, Value{})
+	entry.Term = Terminator{Kind: TermBrIf, Cond: c, True: nil, False: other}
+
+	err := Verify(f)
+	if err == nil {
+		t.Fatal("expected Verify error for brif with nil True")
+	}
+	if !strings.Contains(err.Error(), "nil True target") {
+		t.Errorf("error %q does not mention nil True target", err)
+	}
+}
+
+// TestVerifyRejectsBrIfWithNilFalse — brif with nil False
+// branch is structurally invalid.
+func TestVerifyRejectsBrIfWithNilFalse(t *testing.T) {
+	f := NewFunc("f")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	other := f.NewBlock()
+	f.SetRet(other, Value{})
+	entry.Term = Terminator{Kind: TermBrIf, Cond: c, True: other, False: nil}
+
+	err := Verify(f)
+	if err == nil {
+		t.Fatal("expected Verify error for brif with nil False")
+	}
+	if !strings.Contains(err.Error(), "nil False target") {
+		t.Errorf("error %q does not mention nil False target", err)
 	}
 }
 

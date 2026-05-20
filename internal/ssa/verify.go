@@ -34,10 +34,25 @@ func Verify(f *Func) error {
 	}
 
 	// Pass 1: every Block has a terminator + Preds is
-	// consistent with successors.
+	// consistent with successors. Terminator pointer-fields
+	// must be non-nil (a dangling Br.Target / BrIf.True /
+	// BrIf.False would yield a nil pointer deref downstream).
 	for _, b := range f.Blocks {
 		if b.Term.Kind == TermInvalid {
 			return fmt.Errorf("func %q: block %d has no terminator", f.Name, b.ID)
+		}
+		switch b.Term.Kind {
+		case TermBr:
+			if b.Term.Target == nil {
+				return fmt.Errorf("func %q: block %d br has nil target", f.Name, b.ID)
+			}
+		case TermBrIf:
+			if b.Term.True == nil {
+				return fmt.Errorf("func %q: block %d brif has nil True target", f.Name, b.ID)
+			}
+			if b.Term.False == nil {
+				return fmt.Errorf("func %q: block %d brif has nil False target", f.Name, b.ID)
+			}
 		}
 		for _, succ := range b.Succs() {
 			if !blockInPreds(succ, b) {
