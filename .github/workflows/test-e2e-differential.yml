@@ -1,0 +1,41 @@
+name: Test e2e differential
+
+# `TestDifferential_LangsmithMain` — the static (non-fuzz)
+# differential oracle. Iterates 2048 langsmith seeds; for each
+# one, compares the interpreter's result against arm64, x86_64,
+# and wasmbin backends. Asserts byte-for-byte agreement.
+#
+# This is the heaviest single e2e test on the suite — ~250s
+# locally, dominant chunk of the legacy `go test ./...` lane.
+# Splitting it out means the other e2e workflows finish in
+# <60s while this one runs in parallel on its own runner.
+#
+# Needs wasmtime because the wasmbin sub-test invokes
+# `wasmtime run --invoke main`. arm64 sub-tests skip on x86 (no
+# qemu / cross-gcc); x86 sub-tests skip on arm64 (no qemu-x86_64).
+# Matrix per arch so each runner natively exercises its backend +
+# wasm, instead of paying skip overhead on one and toolchain
+# overhead on the other.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: test-e2e-differential-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-lang
+        with:
+          wasmtime: "true"
+          gotestsum: "true"
+      - run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
