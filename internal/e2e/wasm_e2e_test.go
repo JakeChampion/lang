@@ -8922,6 +8922,69 @@ function main(): i32 {
 	}
 }
 
+// TestCmdLangComponentWrap exercises the new `-component-wrap`
+// driver flag, which uses the Go-side encoder to produce a
+// self-contained preview-2 component without shelling out to
+// `wasm-tools component new --adapt`.
+//
+// End-to-end: source → driver → wasmtime → exit code 42.
+//
+// This is the path-of-record for retiring the wasm-tools shell-
+// out on the no-WASI-imports class of programs. Programs that
+// pull in proc_exit / fd_write still need the existing adapter
+// composition; preview-2 import migration of wasmbin lifts more
+// programs into the no-imports class.
+func TestCmdLangComponentWrap(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "min.lang")
+	if err := os.WriteFile(srcPath, []byte(`function main(): i32 { return 42; }`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "min.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != "42" {
+		t.Errorf("wasmtime stdout = %q, want %q", got, "42")
+	}
+}
+
+// projectRoot returns the lang repo root for use as the working
+// directory when invoking `go run ./cmd/lang` from a test under
+// internal/e2e/. Walks up from the test file's directory until a
+// go.mod is found.
+func projectRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	d := wd
+	for {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			t.Fatalf("no go.mod found from %s", wd)
+		}
+		d = parent
+	}
+}
+
 // TestWASMComponentGoEncoderRunsLangCore is the first end-to-end
 // path that retires `wasm-tools component new --adapt` for a real
 // (if trivial) Lang program: it compiles a no-WASI-imports Lang
