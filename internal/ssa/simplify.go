@@ -95,6 +95,17 @@ func Simplify(f *Func) {
 }
 
 func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
+	// Unary cases first.
+	if op.Kind == OpNot {
+		if len(op.Args) != 1 {
+			return Value{}, false
+		}
+		def, ok := defs[op.Args[0].ID]
+		if !ok || def.Kind != OpNot || len(def.Args) != 1 {
+			return Value{}, false
+		}
+		return def.Args[0], true
+	}
 	if len(op.Args) != 2 {
 		return Value{}, false
 	}

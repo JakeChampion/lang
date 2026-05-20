@@ -86,6 +86,10 @@ const (
 	// Unary arithmetic — integer negation.
 	OpNeg
 
+	// Unary logical — boolean negation. Args[0] is a bool
+	// Value; result is the flipped bool.
+	OpNot
+
 	// Comparison — produces a boolean Value.
 	OpEq
 	OpNe
@@ -144,6 +148,8 @@ func (k OpKind) String() string {
 		return "shr"
 	case OpNeg:
 		return "neg"
+	case OpNot:
+		return "not"
 	case OpEq:
 		return "eq"
 	case OpNe:

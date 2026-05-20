@@ -57,6 +57,16 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		}
 		rewriteInt(op, -v)
 		return
+	case OpNot:
+		if len(op.Args) != 1 {
+			return
+		}
+		v, ok := constBool(op.Args[0], defs)
+		if !ok {
+			return
+		}
+		rewriteBool(op, !v)
+		return
 	default:
 		return
 	}
@@ -129,6 +139,23 @@ func constInt(v Value, defs map[int32]*Op) (int64, bool) {
 		return 0, false
 	}
 	return def.Imm, true
+}
+
+// constBool is the boolean analogue of constInt — returns the
+// def's Imm (interpreted as 0/1) if `v` is defined by an
+// OpConstBool, else false.
+func constBool(v Value, defs map[int32]*Op) (bool, bool) {
+	if !v.IsValid() {
+		return false, false
+	}
+	def, ok := defs[v.ID]
+	if !ok {
+		return false, false
+	}
+	if def.Kind != OpConstBool {
+		return false, false
+	}
+	return def.Imm != 0, true
 }
 
 func rewriteInt(op *Op, v int64) {
