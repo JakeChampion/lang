@@ -101,12 +101,12 @@ test("changing the asm target re-emits for that backend", async ({ page }) => {
   await gotoReady(page);
   await page.locator("#viewAsm").click();
   await expect(page.locator("#asmPanel")).toHaveClass(/shown/);
-  await page.locator("#targetSelect").selectOption("wasm");
-  await expect(page.locator("#asmStatus")).toContainText(/wasm.*line/, {
+  await page.locator("#targetSelect").selectOption("x86-64");
+  await expect(page.locator("#asmStatus")).toContainText(/x86-64.*line/, {
     timeout: 10_000,
   });
-  // WebAssembly text format always opens with `(module`.
-  await expect(page.locator("#asmOut")).toContainText("(module");
+  // x86-64 System V output always opens with a `.text` directive.
+  await expect(page.locator("#asmOut")).toContainText(".text");
 });
 
 test("theme toggle flips body.dark and updates the glyph", async ({ page }) => {
