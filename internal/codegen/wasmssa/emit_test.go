@@ -220,6 +220,31 @@ func TestEmitIfOnlyFalseArmIsBody(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitDualReturn — `function(c, a, b) { if (c) return a; else return b; }`
+// shape: 3 blocks, entry's brif → T (ret a) and F (ret b).
+// No merge.
+func TestEmitDualReturn(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	f.SetRet(thenB, a)
+	f.SetRet(elseB, b)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitWhileLoop — a canonical while-loop CFG emits a
 // valid module. Shape: entry → header → (body → header) /
 // done.

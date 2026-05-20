@@ -118,6 +118,32 @@ func buildIfElseSelect() *ssa.Func {
 	return f
 }
 
+// TestRuntimeDualReturn — `(c, a, b) → if (c) return a; else
+// return b`. Tests the dual-return-diamond emission both arms.
+func TestRuntimeDualReturn(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		c := f.AddParam()
+		a := f.AddParam()
+		b := f.AddParam()
+		entry := f.NewBlock()
+		thenB := f.NewBlock()
+		elseB := f.NewBlock()
+		f.SetBrIf(entry, c, thenB, elseB)
+		f.SetRet(thenB, a)
+		f.SetRet(elseB, b)
+		return f
+	}
+	got := runWasmtime(t, build(), "1", "11", "22")
+	if got != 11 {
+		t.Errorf("c=1 ? 11 : 22 → %d, want 11", got)
+	}
+	got = runWasmtime(t, build(), "0", "11", "22")
+	if got != 22 {
+		t.Errorf("c=0 ? 11 : 22 → %d, want 22", got)
+	}
+}
+
 // TestRuntimeWhileLoopCounter — `(n) → counter loop`:
 //
 //	i := 0
