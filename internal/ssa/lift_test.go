@@ -390,6 +390,110 @@ func TestLiftCmpAndOptimize(t *testing.T) {
 	}
 }
 
+// TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
+func TestLiftCallDirect(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 2},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	call := out.Blocks[0].Ops[0]
+	if call.Kind != OpCall {
+		t.Errorf("Kind = %v, want OpCall", call.Kind)
+	}
+	if call.Str != "foo" {
+		t.Errorf("callee = %q, want %q", call.Str, "foo")
+	}
+	if len(call.Args) != 2 {
+		t.Errorf("args = %d, want 2", len(call.Args))
+	}
+}
+
+// TestLiftCallZeroArgs — call with no args (e.g. `now()`).
+func TestLiftCallZeroArgs(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "now", I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	call := out.Blocks[0].Ops[0]
+	if call.Kind != OpCall || call.Str != "now" || len(call.Args) != 0 {
+		t.Errorf("got {%v %q args=%d}, want {OpCall now args=0}",
+			call.Kind, call.Str, len(call.Args))
+	}
+}
+
+// TestLiftCallChained — `foo(bar(x))` — nested calls.
+func TestLiftCallChained(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpCallDirect, Str: "bar", I32: 1},
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 1},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	ops := out.Blocks[0].Ops
+	if len(ops) != 2 {
+		t.Fatalf("Ops = %d, want 2", len(ops))
+	}
+	if ops[0].Str != "bar" || ops[1].Str != "foo" {
+		t.Errorf("call order = [%q %q], want [bar foo]", ops[0].Str, ops[1].Str)
+	}
+	if ops[1].Args[0] != ops[0].Result {
+		t.Errorf("foo's arg should be bar's result; got %v vs %v", ops[1].Args[0], ops[0].Result)
+	}
+}
+
+// TestLiftCallStackUnderflow — too-few-args produces a clean
+// error.
+func TestLiftCallStackUnderflow(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "foo", I32: 2}, // expects 2 args, none on stack
+		},
+	}
+
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "needs 2 args") {
+		t.Errorf("error %q doesn't mention arg count", err)
+	}
+}
+
 // TestLiftRejectsUnsupportedOp — OpLoop (branches/blocks) isn't
 // in the current subset; lift surfaces a clear error.
 func TestLiftRejectsUnsupportedOp(t *testing.T) {
