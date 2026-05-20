@@ -8754,6 +8754,90 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentWasiHelperBuildsValid exercises the high-level
+// `build_wasi_imported_component` helper. Same shape as the full-
+// pipeline test (`TestWASMComponentWasiExitFullPipeline`), but with
+// the seven section calls collapsed into one helper invocation.
+func TestWASMComponentWasiHelperBuildsValid(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/encode";
+import "std/wasm/imports";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [encode.valtype_i32()];
+    var r0: u8[] = [];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.import_modules = ["wasi"];
+    m.import_names = ["exit"];
+    m.import_kinds = [imports.import_func()];
+    m.import_descs = [imports.import_desc_func(0u32)];
+    m.function_typeidxs = [];
+    m.code_bodies = [];
+    var core_bytes: u8[] = module.build(m);
+
+    var pnames: string[] = ["code"];
+    var pvals: u8[] = [component.cvaltype_u32()];
+    var comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi");
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"wasi:cli/exit@0.2.0",
+		"alias export",
+		"canon lower",
+		"(core module",
+		"with \"wasi\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentWasiExitFullPipeline covers
 // put_alias_section_instance_export_func by exercising the full
 // WASI-style "import an interface, extract its function, lower
