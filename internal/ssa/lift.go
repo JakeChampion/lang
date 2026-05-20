@@ -48,9 +48,17 @@ import (
 //   - OpFNeg → OpFNeg
 //   - OpFEq / OpFNe / OpFLt / OpFLe / OpFGt / OpFGe → matching SSA fcmp
 //
-// Anything else returns an `unsupported op` error. Locals
-// beyond the param prefix, OpStoreLocal, branches, indirect
-// calls, and the conversion ops land in follow-up PRs.
+//   Phase 7:
+//   - OpStoreLocal / OpTeeLocal / OpLoadLocal for the non-param
+//     slot range. Straight-line code only — no merges yet, so
+//     no phi insertion needed. Each store overwrites the slot's
+//     current SSA Value; subsequent loads see the latest store.
+//     Reading a slot that's never been written (uninitialised
+//     local) is rejected with a clear error rather than
+//     fabricating a default-zero op.
+//
+// Anything else returns an `unsupported op` error. Branches,
+// indirect calls, and the conversion ops land in follow-up PRs.
 //
 // The legacy IR is a stack-machine encoding: every Op consumes
 // its operand-stack inputs and pushes its result. The lift
@@ -60,15 +68,19 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
 	}
-	if len(in.Locals) > 0 {
-		return nil, fmt.Errorf("ssa.LiftFromIR: locals beyond params not yet supported (have %d)", len(in.Locals))
-	}
 
 	out := NewFunc(in.Name)
 
-	// Slots: [0, len(Params)) are parameters, minted up front.
-	// (Phase 3 will extend with locals + phi insertion.)
-	slots := make([]Value, len(in.Params))
+	// Slots: a flat array indexed by OpLoadLocal/OpStoreLocal's
+	// I32 immediate. Slots [0, len(Params)) are parameters,
+	// minted up front via AddParam. Slots [len(Params),
+	// len(Params)+len(Locals)+len(ScratchTypes)) are non-param
+	// locals + scratches — these start uninitialised (the
+	// initial Value is the zero sentinel) and get filled in by
+	// OpStoreLocal / OpTeeLocal as the lift walks the op list.
+	// Reading an uninitialised slot is a hard error.
+	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
+	slots := make([]Value, totalSlots)
 	for i := range in.Params {
 		slots[i] = out.AddParam()
 	}
@@ -101,10 +113,37 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		case ir.OpLoadLocal:
 			idx := int(op.I32)
 			if idx < 0 || idx >= len(slots) {
-				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d params)",
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d slots)",
 					i, idx, len(slots))
 			}
-			stack = append(stack, slots[idx])
+			v := slots[idx]
+			if !v.IsValid() {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] reads uninitialised slot %d",
+					i, idx)
+			}
+			stack = append(stack, v)
+		case ir.OpStoreLocal:
+			idx := int(op.I32)
+			if idx < 0 || idx >= len(slots) {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] slot %d out of range (have %d slots)",
+					i, idx, len(slots))
+			}
+			if len(stack) < 1 {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] needs 1 operand", i)
+			}
+			slots[idx] = stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+		case ir.OpTeeLocal:
+			idx := int(op.I32)
+			if idx < 0 || idx >= len(slots) {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] slot %d out of range (have %d slots)",
+					i, idx, len(slots))
+			}
+			if len(stack) < 1 {
+				return nil, fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] needs 1 operand", i)
+			}
+			slots[idx] = stack[len(stack)-1]
+			// Don't pop — Tee leaves the value on the stack.
 		case ir.OpAdd, ir.OpSub, ir.OpMul,
 			ir.OpDivS, ir.OpRemS,
 			ir.OpAnd, ir.OpOr, ir.OpXor,

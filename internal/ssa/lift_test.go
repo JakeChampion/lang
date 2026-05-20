@@ -552,6 +552,148 @@ func TestLiftFloatNeg(t *testing.T) {
 	}
 }
 
+// TestLiftStoreLocal — `var x = 5; return x;` lifts to one
+// const_int 5 + ret; OpStoreLocal writes the const into a
+// local slot, OpLoadLocal reads it back.
+func TestLiftStoreLocal(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 5},
+			{Kind: ir.OpStoreLocal, I32: 0}, // x = 5
+			{Kind: ir.OpLoadLocal, I32: 0},  // load x
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// Only one Op (the const) and a ret of that const's Value.
+	if len(out.Blocks[0].Ops) != 1 {
+		t.Fatalf("Ops = %d, want 1", len(out.Blocks[0].Ops))
+	}
+	if out.Blocks[0].Term.Value != out.Blocks[0].Ops[0].Result {
+		t.Errorf("Term.Value = %v, want %v", out.Blocks[0].Term.Value, out.Blocks[0].Ops[0].Result)
+	}
+}
+
+// TestLiftStoreOverwrite — `x = 1; x = 2; return x;` returns 2.
+func TestLiftStoreOverwrite(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpStoreLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	// After Optimize: dead const_int 1 is gone; only const_int 2 + ret.
+	if len(out.Blocks[0].Ops) != 1 {
+		t.Fatalf("Ops after Optimize = %d, want 1", len(out.Blocks[0].Ops))
+	}
+	if op := out.Blocks[0].Ops[0]; op.Imm != 2 {
+		t.Errorf("survivor Imm = %d, want 2", op.Imm)
+	}
+}
+
+// TestLiftTeeLocal — TeeLocal stores AND leaves the value on
+// the stack.
+func TestLiftTeeLocal(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpTeeLocal, I32: 0}, // x = 7, also leaves 7 on stack
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// The const_int's Value flows directly to the return.
+	if out.Blocks[0].Term.Value != out.Blocks[0].Ops[0].Result {
+		t.Errorf("Tee should leave value on stack; ret value = %v, const result = %v",
+			out.Blocks[0].Term.Value, out.Blocks[0].Ops[0].Result)
+	}
+}
+
+// TestLiftLoadUninitialisedLocal — reading a local before any
+// store fails clean.
+func TestLiftLoadUninitialisedLocal(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for uninitialised local read")
+	}
+	if !strings.Contains(err.Error(), "uninitialised") {
+		t.Errorf("error %q doesn't mention uninitialised", err)
+	}
+}
+
+// TestLiftLocalArithmetic — `var x = a + 1; var y = x * 2; return y;`
+// composes locals with binary arithmetic; Optimize folds it
+// down (if a were const) or leaves it as a sequenced computation.
+func TestLiftLocalArithmetic(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}},
+		Locals: []*ast.Var{{Name: "x"}, {Name: "y"}},
+		Ops: []ir.Op{
+			// x = a + 1
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpAdd},
+			{Kind: ir.OpStoreLocal, I32: 1}, // x = ...
+			// y = x * 2
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpMul},
+			{Kind: ir.OpStoreLocal, I32: 2}, // y = ...
+			// return y
+			{Kind: ir.OpLoadLocal, I32: 2},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	// 4 ops in SSA: 2 const + 2 binary (after we drop redundant loads).
+	// Loads don't emit ops; the resulting SSA reuses the producer's Value.
+	if len(out.Blocks[0].Ops) != 4 {
+		t.Fatalf("Ops = %d, want 4: %v", len(out.Blocks[0].Ops), opKinds(out.Blocks[0].Ops))
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
