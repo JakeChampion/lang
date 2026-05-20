@@ -448,13 +448,14 @@ End-to-end exit code 42 demo (covered by
     `random_i32()` + `exit(0)` → component imports
     wasi:random/random@0.2.0 AND wasi:cli/exit@0.2.0, exports
     wasi:cli/run@0.2.0, runs under plain `wasmtime run`.
-  - **Driver UX hardening.** `-component-wrap-cli` errors out
-    up front with a user-targeted message when the Lang `main`
-    returns void (`wasi:cli/run::run` lifts `() -> i32` to
-    `() -> result<_, _>`; a void main would otherwise produce
-    an invalid component the validator rejects with a cryptic
-    error). Pinned by
-    `TestCmdLangComponentWrapCliRejectsVoidMain`.
+  - **Void-main support.** `wasi:cli/run::run` lifts a core
+    `() -> i32` to `() -> result<_, _>`. wasmbin's new
+    `SynthCliRun` option emits a `_lang_run() -> i32` wrapper
+    that normalises any main signature into the expected shape:
+    void main → `call main; i32.const 0` (clean exit); i32 main
+    → pass-through. `-component-wrap-cli` flips the option on
+    automatically and uses `_lang_run` as the cli-run core
+    export. Pinned by `TestCmdLangComponentWrapCliVoidMain`.
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `clock_time_get` realtime,
     `environ_*`, `args_*`, `path_*`). The realtime wall-clock

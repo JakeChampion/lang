@@ -9246,14 +9246,19 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliRejectsVoidMain confirms the
-// driver surfaces a clear error when a Lang program's `main`
-// returns void. Without the up-front check the produced
-// component would fail wasm-tools validation with a cryptic
-// "lowered result types do not match" error — the helper here
-// asserts that we instead get the user-targeted message
-// pointing at the fix.
-func TestCmdLangComponentWrapCliRejectsVoidMain(t *testing.T) {
+// TestCmdLangComponentWrapCliVoidMain confirms `-component-wrap-cli`
+// transparently handles a void `main`. wasmbin's `SynthCliRun`
+// synthesises a `_lang_run() -> i32` wrapper that calls main and
+// returns 0, so the canon-lifted wasi:cli/run::run sees the
+// expected `() -> i32` core export shape regardless of what main
+// declared. wasmtime exits 0 (result::ok).
+func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "void.lang")
 	src := []byte(`function main() {
@@ -9268,12 +9273,14 @@ func TestCmdLangComponentWrapCliRejectsVoidMain(t *testing.T) {
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected void-main rejection, got success: %s", out)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (void main) failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "requires `function main(): i32`") {
-		t.Errorf("expected void-main error message, got:\n%s", out)
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
 	}
 }
 

@@ -98,6 +98,14 @@ type EmitOptions struct {
 	// `cabi_realloc` export the host calls back for list<u8>
 	// allocations. Mirrors the WAT path's `EmitOptions.HttpHandler`.
 	HttpHandler bool
+	// SynthCliRun emits a synthetic `_lang_run() -> i32` wrapper
+	// that calls `main` and produces an i32 result regardless of
+	// main's actual return shape (void → i32.const 0; i32 →
+	// pass-through; other shapes are an error). Used by the
+	// `-component-wrap-cli` driver path so the canon-lifted
+	// wasi:cli/run::run sees a `() -> i32` core export even when
+	// the user's main returns void.
+	SynthCliRun bool
 	// Preview2WASI rewrites preview-1-shaped WASI imports to their
 	// preview-2 component-model equivalents. Currently scoped to
 	// `proc_exit` — the only import whose core-wasm signature is
@@ -674,7 +682,34 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportNames = append(m.ExportNames, "_start")
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
-	} else if opts.HttpHandler {
+	}
+	if opts.SynthCliRun {
+		mainIdx, ok := funcIdx["main"]
+		if !ok {
+			return nil, fmt.Errorf("wasmbin: SynthCliRun needs a `main` function")
+		}
+		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
+		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
+		runTIdx := addType(nil, []byte{encode.ValtypeI32})
+		runFuncIdx := nextFuncIdx
+		nextFuncIdx++
+		var body []byte
+		body = inst.InstCall(body, mainIdx)
+		switch {
+		case len(mainResults) == 0:
+			body = inst.InstI32Const(body, 0)
+		case len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32:
+			// main's i32 stays on the stack as our return.
+		default:
+			return nil, fmt.Errorf("wasmbin: SynthCliRun: `main` must return void or i32, got %v", mainResults)
+		}
+		m.FunctionTypeidxs = append(m.FunctionTypeidxs, runTIdx)
+		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
+		m.ExportNames = append(m.ExportNames, "_lang_run")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+		m.ExportIdxs = append(m.ExportIdxs, runFuncIdx)
+	}
+	if opts.HttpHandler && !opts.SynthStart {
 		// Proxy components don't run a `main()` — `wasmtime
 		// serve` invokes the exported `wasi:http/incoming-
 		// handler.handle` per request — but the wasi-preview1-
