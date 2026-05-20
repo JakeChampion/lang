@@ -322,22 +322,50 @@ one call:
 Supporting byte-constant exports: `section_*`, `core_sort_*` (7),
 `cvaltype_*` (13 component primitives), `canonopt_*` (6).
 
-#### What's NOT shipped
+#### Bridge encoder + first driver wiring (added 2026-05-20)
 
-- **Driver wiring.** `cmd/lang/main.go:651`
-  (`emitPreview2ComponentFromCoreBytes`) still shells out to
-  `wasm-tools component new --adapt`. Until that's flipped to
-  call the Lang-stdlib encoder (either by invoking a compiled
-  Lang program or by porting the encoder logic into Go), Phase
-  2's external-tool dependency hasn't actually been retired —
-  even though the encoder it would call is ready.
+`internal/wasm/component` now ships a Go-side port of the most-
+used Lang-stdlib composers — `PutComponentHeader`,
+`PutCoreModuleSection`, the lift-export composers, the WASI-
+import composers, `BuildLiftedExportComponent`, and
+`WrapWasiImported`. The two implementations are pinned
+byte-equivalent by `TestWASMComponentGoLangByteEquivalence`.
+
+`cmd/lang` accepts a new `-component-wrap` flag (with
+`-target wasm-bin`, no `-wasi-adapter`) that wraps the core wasm
+output as a self-contained preview-2 component via the Go encoder
+— no `wasm-tools component new --adapt` shell-out. Lifts `main`
+as a component-level u32-returning function.
+
+End-to-end exit code 42 demo (covered by
+`TestCmdLangComponentWrap`):
+
+    $ lang -target wasm-bin -component-wrap -o min.wasm min.lang
+    $ wasmtime run --invoke 'main()' min.wasm
+    42
+
+#### What's NOT yet shipped
+
+- **Default-path driver wiring.** The `-component-wrap` flag is
+  opt-in. The default `-target wasm` / `-target wasi-http` paths
+  still shell out to `wasm-tools component new --adapt` (at
+  `cmd/lang/main.go:651` inside
+  `emitPreview2ComponentFromCoreBytes`) because they wrap a core
+  module that imports `wasi_snapshot_preview1.*` — the Go
+  encoder can't produce that adapter-composed shape yet, and
+  wasmbin still emits the preview-1 imports anyway. Retiring the
+  shell-out from the default path requires either preview-2
+  import migration (next item) or a Go-side adapter-composition
+  helper.
 - **Preview-2 import migration.** `internal/codegen/wasmbin/wasi.go`
   still emits preview-1 imports (`fd_write`, `path_open`, etc.).
-  The encoder can produce a preview-2-native component, but the
-  Go-side IR backend hasn't switched its WASI import names. Even
-  with the driver wired through std/wasm/component, the produced
-  component would still need the preview-1 adapter unless this
-  migration lands first.
+  Migrating each to its preview-2 equivalent lifts more programs
+  into the no-imports class that `-component-wrap` already handles
+  end-to-end. `proc_exit` → `wasi:cli/exit::exit` is the smallest
+  first migration (signature is unchanged, just import-name byte
+  strings). HTTP body / file I/O migrations are larger because
+  they require canonical-ABI marshalling at the call site
+  (list<u8> instead of raw pointers + lengths).
 - **Compound canonical-ABI shapes.** `canon lower` with
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering
