@@ -33,16 +33,17 @@
 //     (method: string, params: object).
 //
 //   langCompile(src, target) -> {
-//       asm:    string,        // emitted assembly / WAT text
+//       asm:    string,        // emitted assembly
 //       error:  string | null, // parse / check / codegen failure
 //   }
 //     Compiles src for one of the supported targets and returns
 //     the textual output the corresponding cmd/lang `-target`
 //     flag would have written. Targets: "arm64" (Linux ELF),
-//     "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF),
-//     "wasm" (WebAssembly text format / .wat). The playground's
-//     "View assembly" pane consumes this for the Godbolt-style
-//     side-by-side experience.
+//     "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF).
+//     The playground's "View assembly" pane consumes this for
+//     the Godbolt-style side-by-side experience. (The wasm
+//     target retired with the WAT backend — the wasmbin path
+//     emits binary bytes, not human-readable text.)
 //
 // State is fresh per call for langInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
@@ -60,7 +61,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	wasmcodegen "github.com/jakechampion/lang/internal/codegen/wasm"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
@@ -225,15 +225,8 @@ func compile(src, target string) map[string]any {
 		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
 	case "x86-64":
 		out, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
-	case "wasm":
-		// Return the .wat text directly — the Preview 2 component
-		// wrapping the CLI does for `-o file.wasm` only matters
-		// when producing a runnable artefact. For a Godbolt-style
-		// inspection pane, the .wat is what the user wants to
-		// read.
-		out, err = wasmcodegen.Emit(prog, info)
 	default:
-		result["error"] = fmt.Sprintf("unknown target %q (want arm64, arm64-darwin, x86-64, wasm)", target)
+		result["error"] = fmt.Sprintf("unknown target %q (want arm64, arm64-darwin, x86-64)", target)
 		return result
 	}
 	if err != nil {
