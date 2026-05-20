@@ -9417,6 +9417,114 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentInstantiateWithTwoInstanceArgs covers
+// put_core_instance_section_instantiate_with_instance_args in its
+// multi-arg shape. Builds a core module that imports two functions
+// from two different instance names ("host_a" and "host_b"),
+// packages a single host instance per name, then instantiates the
+// core module passing both instances as args. Confirms the
+// multi-arg form encodes correctly.
+func TestWASMComponentInstantiateWithTwoInstanceArgs(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    // Core module: imports host_a.f and host_b.f, both () -> i32.
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.import_modules = ["host_a", "host_b"];
+    m.import_names = ["f", "f"];
+    m.import_kinds = [imports.import_func(), imports.import_func()];
+    m.import_descs = [imports.import_desc_func(0u32), imports.import_desc_func(0u32)];
+    // No funcs of our own.
+    m.function_typeidxs = [];
+    m.code_bodies = [];
+    var core_bytes: u8[] = module.build(m);
+
+    // Component: 1 type, 2 imports, 2 lowers, 2 single-export
+    // instances, then instantiate the core with both.
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+
+    var imp_names: string[] = ["a", "b"];
+    var imp_types: u32[] = [0u32, 0u32];
+    comp = component.put_import_section_funcs(comp, imp_names, imp_types);
+
+    var lower_funcs: u32[] = [0u32, 1u32];
+    comp = component.put_canon_section_lowers_no_opts(comp, lower_funcs);
+
+    // Two instances, each wrapping one lowered core func under name "f".
+    comp = component.put_core_instance_section_from_one_func_export(comp, "f", 0u32);
+    comp = component.put_core_instance_section_from_one_func_export(comp, "f", 1u32);
+
+    // Core module section + instantiate-with-two-args section.
+    comp = component.put_core_module_section(comp, core_bytes);
+    var arg_names: string[] = ["host_a", "host_b"];
+    var arg_instance_idxs: u32[] = [0u32, 1u32];
+    comp = component.put_core_instance_section_instantiate_with_instance_args(comp, 0u32, arg_names, arg_instance_idxs);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"with \"host_a\"",
+		"with \"host_b\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentImportLoweredIntoCoreModule covers the
 // other half of the canonical-ABI boundary: a host-imported function
 // is lowered into a core function and threaded down as a core
