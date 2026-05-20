@@ -12639,6 +12639,25 @@ func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	}
 }
 
+// Phase 1d-iii: `y = x;` reassignment also bumps the rc on x.
+// The motivating parser.lang shape is `nfuncs = into.funcs;`
+// followed by an in-loop `nfuncs = nfuncs.push(...);` — the
+// first assignment is an alias (FieldAccess RHS), the second
+// rebinds with a fresh push result. Here we test the explicit
+// `y = x;` form directly.
+func TestArm64RcAliasIncReassign(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var other: u8[] = __alloc_u8(8);
+    other = arr;
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

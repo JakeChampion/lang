@@ -5543,6 +5543,17 @@ func (b *builder) assign(n *ast.Assign) error {
 		if !ok {
 			return fmt.Errorf("ir: cannot assign to %q (no slot)", t.Name)
 		}
+		// Phase 1d: same alias-bump as the Var-binding path —
+		// `y = x;` shares an existing array reference, so the
+		// new binding needs its own rc. The matching dec on
+		// the old value-of-y arrives in a later slice (the
+		// parser.lang `nfuncs = into.funcs; nfuncs = nfuncs
+		// .push(...);` loop currently relies on the inc but
+		// orphans the previous nfuncs allocation; bump
+		// allocator absorbs the leak until Phase 3).
+		if needsRcIncOnAlias(n.Value, b) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
 		// via exprLeavesValue + OpDrop.

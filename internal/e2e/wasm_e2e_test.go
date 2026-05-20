@@ -11924,3 +11924,16 @@ function main(): i32 {
 		})
 	}
 }
+
+// Phase 1d-iii: `y = x;` reassignment bumps the rc on x.
+func TestWASMRcAliasIncReassign(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var other: u8[] = __alloc_u8(8);
+    other = arr;
+    return __rc_get(arr) - 2;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", got)
+	}
+}
