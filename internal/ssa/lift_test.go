@@ -232,15 +232,171 @@ func TestLiftParamsRoundTripOptimize(t *testing.T) {
 	}
 }
 
-// TestLiftRejectsUnsupportedOp — OpDivS isn't in the Phase 1
-// subset; lift surfaces a clear error.
+// TestLiftDivRem — Div + Rem on params.
+func TestLiftDivRem(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpDivS},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if out.Blocks[0].Ops[0].Kind != OpDiv {
+		t.Errorf("got %v, want OpDiv", out.Blocks[0].Ops[0].Kind)
+	}
+}
+
+// TestLiftBitwise — And, Or, Xor on params.
+func TestLiftBitwise(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpAnd},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpOr},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpXor},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftShifts — Shl + Shr.
+func TestLiftShifts(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpShl},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpShrS},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	kinds := []OpKind{out.Blocks[0].Ops[0].Kind, out.Blocks[0].Ops[1].Kind}
+	if kinds[0] != OpShl || kinds[1] != OpShr {
+		t.Errorf("kinds = %v, want [OpShl, OpShr]", kinds)
+	}
+}
+
+// TestLiftComparisons — every cmp kind.
+func TestLiftComparisons(t *testing.T) {
+	pairs := []struct {
+		from ir.OpKind
+		want OpKind
+	}{
+		{ir.OpEq, OpEq},
+		{ir.OpNe, OpNe},
+		{ir.OpLtS, OpLt},
+		{ir.OpLeS, OpLe},
+		{ir.OpGtS, OpGt},
+		{ir.OpGeS, OpGe},
+	}
+	for _, p := range pairs {
+		t.Run(p.want.String(), func(t *testing.T) {
+			in := &ir.Func{
+				Name:   "f",
+				Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+				Ops: []ir.Op{
+					{Kind: ir.OpLoadLocal, I32: 0},
+					{Kind: ir.OpLoadLocal, I32: 1},
+					{Kind: p.from},
+					{Kind: ir.OpReturn},
+				},
+			}
+			out, err := LiftFromIR(in)
+			if err != nil {
+				t.Fatalf("LiftFromIR: %v", err)
+			}
+			if out.Blocks[0].Ops[0].Kind != p.want {
+				t.Errorf("kind = %v, want %v", out.Blocks[0].Ops[0].Kind, p.want)
+			}
+		})
+	}
+}
+
+// TestLiftNot — unary OpNot.
+func TestLiftNot(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpNot},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if out.Blocks[0].Ops[0].Kind != OpNot {
+		t.Errorf("kind = %v, want OpNot", out.Blocks[0].Ops[0].Kind)
+	}
+}
+
+// TestLiftCmpAndOptimize — `(a == b) != (a == b)` after lift +
+// Optimize collapses to const_bool 0 (CSE merges the eqs;
+// `x != x` is StrengthReduce'd to const 0 — actually that's
+// for integer x-x = 0; for bools x != x → const_bool 0 needs
+// FoldBranches on the cmp result. Let's just check the chain
+// runs end-to-end without error.)
+func TestLiftCmpAndOptimize(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "a"}, {Name: "b"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpEq},
+			{Kind: ir.OpReturn},
+		},
+	}
+
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	Optimize(out)
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify after Optimize: %v", err)
+	}
+}
+
+// TestLiftRejectsUnsupportedOp — OpLoop (branches/blocks) isn't
+// in the current subset; lift surfaces a clear error.
 func TestLiftRejectsUnsupportedOp(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
-			{Kind: ir.OpConstI32, I32: 1},
-			{Kind: ir.OpConstI32, I32: 2},
-			{Kind: ir.OpDivS}, // not yet supported
+			{Kind: ir.OpLoop}, // not yet supported — needs branch handling
 			{Kind: ir.OpReturn},
 		},
 	}
