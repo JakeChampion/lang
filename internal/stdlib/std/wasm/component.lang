@@ -444,6 +444,57 @@ pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typei
     return put_canon_section_lifts_no_opts(buf, core_idxs, type_idxs);
 }
 
+// Canonical-ABI option discriminator bytes (canonopt production in
+// Binary.md). 0x00 / 0x01 / 0x02 are standalone (string-encoding
+// selection); 0x03 / 0x04 / 0x05 are followed by a uleb index.
+pub function canonopt_string_encoding_utf8(): u8         { return 0u8; }
+pub function canonopt_string_encoding_utf16(): u8        { return 1u8; }
+pub function canonopt_string_encoding_latin1_utf16(): u8 { return 2u8; }
+pub function canonopt_memory(): u8                       { return 3u8; }
+pub function canonopt_realloc(): u8                      { return 4u8; }
+pub function canonopt_post_return(): u8                  { return 5u8; }
+
+// put_canon_section_lift_mem_realloc — emit a canon section with
+// one `canon lift` entry carrying the two most common opts:
+// `(memory $mem)` and `(realloc (func $realloc))`. Default string
+// encoding (utf8) — left implicit by omitting the
+// `string-encoding-*` discriminators. No post-return.
+//
+// This is the canonical shape for lifting a core function whose
+// signature mentions strings or lists: the canonical-ABI needs
+// somewhere in core memory to materialize the bytes (`memory`) and
+// a way to grow that storage (`realloc`, signature
+// `(i32 i32 i32 i32) -> i32`). HTTP-handler exports and any CLI
+// world function returning strings all go through this lift shape.
+//
+// Encoded body for one canon-lift entry with two opts:
+//
+//   01                  // vec(1) canon entries
+//   00 00               // canon-lift + function sub-tag
+//   <core-func-idx:uleb>
+//   02                  // opts vec count = 2
+//   03 <mem-idx:uleb>     // memory option + core-mem-idx
+//   04 <realloc-idx:uleb> // realloc option + core-func-idx
+//   <typeidx:uleb>
+pub function put_canon_section_lift_mem_realloc(buf: u8[], core_func_idx: u32, typeidx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) canon entries
+    body = body.push(0u8);                       // canon-lift
+    body = body.push(0u8);                       // function-lift sub-tag
+    body = leb128.uleb_u32(body, core_func_idx);
+    body = leb128.uleb_u32(body, 2u32);          // opts vec count = 2
+    body = body.push(canonopt_memory());
+    body = leb128.uleb_u32(body, mem_idx);
+    body = body.push(canonopt_realloc());
+    body = leb128.uleb_u32(body, realloc_func_idx);
+    body = leb128.uleb_u32(body, typeidx);
+
+    var out: u8[] = buf;
+    out = out.push(section_canon());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_import_section_one_func — emit a component-level import
 // section with a single entry that declares an imported function
 // at the given name, of the given component-level functype.
