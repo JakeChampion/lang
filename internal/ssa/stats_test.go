@@ -136,14 +136,54 @@ func TestStatsBeforeAndAfterOptimize(t *testing.T) {
 // TestStatsString — Stats.String renders the expected
 // single-line summary form.
 func TestStatsString(t *testing.T) {
-	s := Stats{Blocks: 3, Reachable: 2, Ops: 7, Phis: 1, Consts: 2, Params: 1, MaxBlockOps: 4}
+	s := Stats{Blocks: 3, Reachable: 2, Ops: 7, Impure: 1, Phis: 1, Consts: 2, Params: 1, MaxBlockOps: 4}
 	got := s.String()
 	for _, want := range []string{
-		"blocks=3", "reachable=2", "ops=7", "phis=1", "consts=2", "params=1", "max_block_ops=4",
+		"blocks=3", "reachable=2", "ops=7", "impure=1", "phis=1", "consts=2", "params=1", "max_block_ops=4",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Stats.String() = %q missing %q", got, want)
 		}
+	}
+}
+
+// TestStatsImpureCountsCalls — Impure counts every non-pure
+// op (Call, Load, Store, Alloc, MakeClosure/Env). A function
+// with pure-only ops reports Impure=0.
+func TestStatsImpureCountsCalls(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	// Mix of pure + impure ops.
+	f.AddOp(entry, OpAdd, a, a) // pure
+	f.AddOp(entry, OpCall)      // impure
+	f.AddOp(entry, OpAlloc)     // impure
+	f.AddOp(entry, OpLoad, a)   // impure
+	f.AddOp(entry, OpConstInt)  // pure
+	f.SetRet(entry, Value{})
+
+	s := f.Stats()
+	if s.Impure != 3 {
+		t.Errorf("Impure = %d, want 3 (Call + Alloc + Load)", s.Impure)
+	}
+	if s.Ops != 5 {
+		t.Errorf("Ops = %d, want 5", s.Ops)
+	}
+}
+
+// TestStatsImpureZeroOnPureFunc — a function with only pure
+// ops reports Impure=0.
+func TestStatsImpureZeroOnPureFunc(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	f.AddOp(entry, OpAdd, a, a)
+	f.AddOp(entry, OpMul, a, a)
+	f.SetRet(entry, Value{})
+
+	s := f.Stats()
+	if s.Impure != 0 {
+		t.Errorf("Impure = %d, want 0 (pure function)", s.Impure)
 	}
 }
 

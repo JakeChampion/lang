@@ -14,6 +14,7 @@ type Stats struct {
 	Blocks      int              // total Block count in f.Blocks
 	Reachable   int              // count of Blocks reachable from f.Entry (≤ Blocks)
 	Ops         int              // total Op count across all Blocks
+	Impure      int              // count of !IsPure Ops (Call/Load/Store/Alloc/MakeClosure/Env)
 	Phis        int              // OpPhi count (subset of Ops)
 	Consts      int              // ConstInt/Bool/String count (subset of Ops)
 	Params      int              // len(f.Params), excluding the zero sentinel
@@ -53,6 +54,9 @@ func (f *Func) Stats() Stats {
 			case OpConstInt, OpConstBool, OpConstString:
 				s.Consts++
 			}
+			if !IsPure(op.Kind) {
+				s.Impure++
+			}
 		}
 		s.Terminators[b.Term.Kind]++
 	}
@@ -66,8 +70,8 @@ func (f *Func) Stats() Stats {
 // yet (or skipped a block); a healthy post-Optimize function
 // has reachable==blocks.
 func (s Stats) String() string {
-	return fmt.Sprintf("blocks=%d reachable=%d ops=%d phis=%d consts=%d params=%d max_block_ops=%d",
-		s.Blocks, s.Reachable, s.Ops, s.Phis, s.Consts, s.Params, s.MaxBlockOps)
+	return fmt.Sprintf("blocks=%d reachable=%d ops=%d impure=%d phis=%d consts=%d params=%d max_block_ops=%d",
+		s.Blocks, s.Reachable, s.Ops, s.Impure, s.Phis, s.Consts, s.Params, s.MaxBlockOps)
 }
 
 // Sub returns a Stats whose scalar fields are `s` minus
@@ -91,6 +95,7 @@ func (s Stats) Sub(other Stats) Stats {
 		Blocks:      s.Blocks - other.Blocks,
 		Reachable:   s.Reachable - other.Reachable,
 		Ops:         s.Ops - other.Ops,
+		Impure:      s.Impure - other.Impure,
 		Phis:        s.Phis - other.Phis,
 		Consts:      s.Consts - other.Consts,
 		Params:      s.Params - other.Params,
