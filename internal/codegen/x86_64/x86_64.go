@@ -95,6 +95,17 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // dst) flips the operands and is harder to align with the
 // arm64 emit.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
+	// Acquire `ast.CodegenMu` so `ir.LowerWith`'s read of
+	// `ast.TwoWordOverride` isn't races against a concurrent
+	// `arm64.Emit` that's mid-toggle. x86_64 doesn't write the
+	// flag (it always wants the single-word string ABI on
+	// ptrW=8) but it READS it transitively via the IR's
+	// `twoWordStrings()` helper. Without the lock, parallel
+	// `TestDifferential` seeds running x86_64 + arm64
+	// simultaneously would let arm64's mid-emit `true` leak
+	// into x86_64's lowering — producing mixed-ABI code.
+	ast.CodegenMu.Lock()
+	defer ast.CodegenMu.Unlock()
 	treeshake.Run(prog)
 	ip, err := ir.LowerWith(prog, info, 8)
 	if err != nil {
