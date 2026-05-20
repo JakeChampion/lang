@@ -89,6 +89,32 @@ func TestEmitArithmeticChain(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitLinearChain — a two-block chain where entry has
+// ops then br to a block that returns. Emits as a single
+// straight-line wasm body.
+func TestEmitLinearChain(t *testing.T) {
+	f := ssa.NewFunc("main")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	tail := f.NewBlock()
+	c := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 1
+	doubled := f.AddOp(entry, ssa.OpAdd, a, a)
+	_ = doubled
+	f.SetBr(entry, tail)
+	sum := f.AddOp(tail, ssa.OpAdd, doubled, c)
+	f.SetRet(tail, sum)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitIfElseDiamond — `function(c, a, b) { return c ? a : b }`
 // compiled to an if-else diamond with a phi at the merge.
 // Emits a valid module.

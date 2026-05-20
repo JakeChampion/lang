@@ -8,14 +8,16 @@
 //
 //   - i32 parameters
 //   - i32 return type
-//   - Single-block functions
+//   - Linear chain shape: entry → b1 → b2 → ... → ret (every
+//     non-terminal block ends with `br`, last with `ret`).
+//     Covers the single-block case (chain of length 1).
 //   - If-else diamond shape:
 //     entry ─brif─→ T ┐
 //     ├─→ merge ─ret
 //     entry ─brif─→ F ┘
 //   - While loop shape:
 //     entry ─br─→ header ─brif─→ body ─br─→ header (back-edge)
-//                            └─→ done ─ret
+//     └─→ done ─ret
 //     Header phis (loop-carried values) become shared wasm
 //     locals — entry writes initial values; the back-edge
 //     re-writes them at each iteration.
@@ -127,9 +129,12 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 // per non-param Op.Result.
 //
 // CFG dispatch:
-//   - 1 block ending in TermRet → straight-line emission.
+//   - Linear chain (entry → ... → ret, each block ends with
+//     unconditional br to the next) → straight-line emission.
 //   - 4 blocks shaped as if-else diamond → wasm `if`/`else`/
 //     `end` form with phi-write into shared locals.
+//   - 4 blocks shaped as while loop → wasm `block`/`loop`/
+//     `br_if` form with phi locals carrying loop state.
 //   - Anything else → unsupported error.
 func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 	valueToLocal := map[int32]uint32{}
@@ -154,18 +159,20 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		}
 	}
 
-	// Single-block case.
-	if len(f.Blocks) == 1 {
-		entry := f.Blocks[0]
-		if entry.Term.Kind != ssa.TermRet {
-			return nil, nil, fmt.Errorf("wasmssa: single-block func must end with TermRet, got %v",
-				entry.Term.Kind)
+	// Single-block case or linear chain of unconditional br's
+	// terminating in TermRet. Concatenate their ops + emit the
+	// last block's ret.
+	if chain, ok := classifyLinearChain(f); ok {
+		var body []byte
+		var err error
+		for _, b := range chain {
+			body, err = emitStraightBlock(body, b, valueToLocal)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
-		body, err := emitStraightBlock(nil, entry, valueToLocal)
-		if err != nil {
-			return nil, nil, err
-		}
-		body = emitRet(body, entry.Term, valueToLocal)
+		last := chain[len(chain)-1]
+		body = emitRet(body, last.Term, valueToLocal)
 		return body, valueToLocal, nil
 	}
 
@@ -187,7 +194,7 @@ func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 		return body, valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only single-block, if-else diamonds, and while loops handled",
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, and while loops handled",
 		len(f.Blocks))
 }
 
@@ -216,6 +223,49 @@ func emitRet(body []byte, term ssa.Terminator, valueToLocal map[int32]uint32) []
 		body = inst.InstI32Const(body, 0)
 	}
 	return inst.InstReturn(body)
+}
+
+// classifyLinearChain walks the CFG starting at f.Entry,
+// following unconditional TermBr edges. If every block in
+// the walk has exactly one pred (except entry) and the chain
+// terminates with a TermRet (and no other block exists), it
+// returns the chain in walk order. Returns nil, false on
+// any deviation (branching, back-edges, dangling blocks).
+//
+// Covers both the single-block case (entry ends with ret)
+// and the multi-block straight line the lifter sometimes
+// emits (e.g. entry → const-init → ret).
+func classifyLinearChain(f *ssa.Func) ([]*ssa.Block, bool) {
+	if f.Entry == nil {
+		return nil, false
+	}
+	chain := []*ssa.Block{f.Entry}
+	seen := map[*ssa.Block]bool{f.Entry: true}
+	cur := f.Entry
+	for cur.Term.Kind == ssa.TermBr {
+		nxt := cur.Term.Target
+		if nxt == nil || seen[nxt] {
+			return nil, false // back-edge or nil target
+		}
+		// Each non-entry block must have exactly one pred —
+		// otherwise some other path could reach it and the
+		// straight-line emission would miss them.
+		if len(nxt.Preds) != 1 || nxt.Preds[0] != cur {
+			return nil, false
+		}
+		chain = append(chain, nxt)
+		seen[nxt] = true
+		cur = nxt
+	}
+	if cur.Term.Kind != ssa.TermRet {
+		return nil, false
+	}
+	// Every block in f.Blocks must be in the chain — otherwise
+	// there are orphan blocks we're ignoring.
+	if len(chain) != len(f.Blocks) {
+		return nil, false
+	}
+	return chain, true
 }
 
 // ifElseDiamond captures the four blocks of a recognised
