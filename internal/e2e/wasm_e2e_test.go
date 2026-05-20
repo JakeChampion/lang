@@ -8978,21 +8978,22 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 }
 
 // TestCmdLangComponentWrapWrapsExit drives a Lang program that
-// calls exit() through `-component-wrap`. With the proc_exit
-// preview-2 migration shipped, the driver should detect the
-// `wasi:cli/exit@0.2.0::exit` import in the core module and wrap
-// it via `WrapWasiImportedWithExport` instead of erroring out.
+// calls exit() through `-component-wrap` end-to-end. With the
+// preview-2 migration of proc_exit and the result-type encoding
+// for the wasi:cli/exit interface shipped, the driver detects the
+// `wasi:cli/exit@0.2.0::exit` import, wraps it via
+// `WrapWasiImportedWithExport`, and the produced component links
+// against wasmtime's host wasi:cli/exit implementation.
 //
-// End-to-end execution under wasmtime is intentionally NOT
-// exercised here — the canonical-ABI signature of
-// `wasi:cli/exit::exit` is `(param result<_, _>)`, not `(param
-// u32)`, so the host linker rejects our current u32 declaration.
-// Result-type encoding is a later slice; for now this test pins
-// the driver routing + structural correctness (wasm-tools
-// validate + the import name appearing in the printed component).
+// wasmtime's wasi:cli/exit::exit treats the err arm of `result<_,
+// _>` as a non-zero exit. The Lang `exit(0)` lowers to
+// `result::ok` so wasmtime exits 0.
 func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "exits.lang")
@@ -9024,6 +9025,11 @@ func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 	}
 	if !strings.Contains(string(printOut), "export \"main\"") {
 		t.Errorf("expected main export in component, got:\n%s", printOut)
+	}
+	// End-to-end: wasmtime accepts and runs the component.
+	// exit(0) → result::ok → wasmtime exits 0.
+	if out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
 	}
 }
 

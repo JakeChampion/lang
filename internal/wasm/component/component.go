@@ -112,15 +112,46 @@ func wrapSection(buf []byte, id byte, body []byte) []byte {
 // no-result functype and exports it under exportName. Mirrors
 // std/wasm/component's `put_type_section_one_instance_one_func_export`.
 func PutTypeSectionOneInstanceOneFuncNoResultExport(buf []byte, exportName string, paramNames []string, paramValtypes []byte) []byte {
+	return PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf, nil, exportName, paramNames, paramValtypes)
+}
+
+// PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport
+// generalises PutTypeSectionOneInstanceOneFuncNoResultExport by
+// declaring N inner defvaltype entries inside the instance type
+// before the functype. Param valtype bytes referencing inner
+// typeidxs (i.e. byte 0x00..0x72) read as those inner-scope
+// types after the binary parser; primitive valtype bytes
+// (0x73..0x7f) stay primitive.
+//
+// Layout when len(innerTypes) > 0:
+//
+//	01                       // vec(1) type entries
+//	42                       // instance-type form
+//	<2+N>                    // vec(2+N) decls: N inner types + functype + export
+//	(01 <inner-type-body>)*N // N type decls
+//	01 40 ...                // functype decl (uses inner typeidxs)
+//	04 00 <name> 01 <N>      // export decl referencing the functype at inner-typeidx N
+//
+// This is the shape wasm-tools emits for wasi:cli/exit's
+// `func(status: result)`: one inner result type, one functype
+// referencing it by inner-typeidx 0, and an export of the
+// functype at inner-typeidx 1.
+func PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf []byte, innerTypes [][]byte, exportName string, paramNames []string, paramValtypes []byte) []byte {
 	if len(paramNames) != len(paramValtypes) {
 		panic("component: paramNames and paramValtypes must have equal length")
 	}
 	body := []byte{}
-	body = leb128.UlebU64(body, 1) // vec(1) type entries
-	body = append(body, 0x42)         // instance-type form
-	body = leb128.UlebU64(body, 2) // vec(2) decls
+	body = leb128.UlebU64(body, 1)                            // vec(1) type entries
+	body = append(body, 0x42)                                 // instance-type form
+	body = leb128.UlebU64(body, uint64(2+len(innerTypes)))    // vec(2+N) decls
 
-	// decl 0: inline functype, no result.
+	// N inner type decls: each `01 <defvaltype-body>`.
+	for _, it := range innerTypes {
+		body = append(body, 0x01) // type decl
+		body = append(body, it...)
+	}
+
+	// Functype decl at inner-typeidx N.
 	body = append(body, 0x01) // type decl
 	body = append(body, 0x40) // functype form
 	body = leb128.UlebU64(body, uint64(len(paramNames)))
@@ -128,18 +159,26 @@ func PutTypeSectionOneInstanceOneFuncNoResultExport(buf []byte, exportName strin
 		body = putName(body, paramNames[i])
 		body = append(body, paramValtypes[i])
 	}
-	body = append(body, 0x01) // resultlist: named
+	body = append(body, 0x01)      // resultlist: named
 	body = leb128.UlebU64(body, 0)
 
-	// decl 1: export func at typeidx 0.
+	// Export decl referencing the functype at inner-typeidx N.
 	body = append(body, 0x04) // export decl
 	body = append(body, 0x00) // exportname kind = label
 	body = putName(body, exportName)
-	body = append(body, 0x01) // externdesc kind = func
-	body = leb128.UlebU64(body, 0)
+	body = append(body, 0x01)                              // externdesc kind = func
+	body = leb128.UlebU64(body, uint64(len(innerTypes)))   // typeidx = N (count of inner types)
 
 	return wrapSection(buf, SectionType, body)
 }
+
+// InnerTypeResultEmpty is the defvaltype-body bytes for a
+// `result<_, _>` (no payloads on either arm). Suitable as an entry
+// in the `innerTypes` argument to
+// PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport. The
+// bytes are: 0x6a (result form), 0x00 (ok absent), 0x00 (err
+// absent).
+var InnerTypeResultEmpty = []byte{0x6a, 0x00, 0x00}
 
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.

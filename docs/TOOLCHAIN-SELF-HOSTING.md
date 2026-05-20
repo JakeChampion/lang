@@ -369,28 +369,33 @@ End-to-end exit code 42 demo (covered by
   - `component.WrapWasiImportedWithExport` composes the
     import-wiring with a lifted-export pipeline so a core module
     that both imports WASI AND exports `main` gets wrapped in a
-    single pass. Unit-tested via `TestWrapWasiImportedWithExport_Structural`.
-  - `-component-wrap` driver now routes through
+    single pass.
+  - `-component-wrap` driver routes through
     `WrapWasiImportedWithExport` when the core module's imports
     are known preview-2 ones (currently only
     `wasi:cli/exit@0.2.0.exit`). Other imports still hit the
     "unrecognised imports" error pointing at `-wasi-adapter`.
-    End-to-end driver test:
-    `TestCmdLangComponentWrapWrapsExit`.
-  - **Known limitation:** the produced component validates under
-    `wasm-tools` but isn't runnable yet under wasmtime because
-    `wasi:cli/exit::exit`'s canonical-ABI signature is
-    `func(status: result<_, _>)`, not `func(status: u32)`. Result-
-    type encoding is a future slice. Until then, tests assert on
-    structural shape (`wasm-tools validate` + `print`), not
-    `wasmtime run`.
-  - **Still to do:** add `result` / other defined-valtype encoding
-    so wasmtime accepts the linkage; migrate the remaining
-    preview-1 imports (`fd_write`, `fd_read`, `random_get`,
-    `clock_time_get`, `environ_*`, `args_*`, `path_*`); HTTP body /
-    file I/O migrations are larger because they require canonical-
-    ABI marshalling at the call site (list<u8> instead of raw
-    pointers + lengths).
+  - **Result-type encoding.** The instance-type composer now
+    supports inner defvaltype declarations (via
+    `PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport`).
+    Param valtype bytes < 0x73 read as inner-scope typeidxs after
+    the binary parser; `InnerTypeResultEmpty` ships the
+    `result<_, _>` defvaltype body. The `wasi:cli/exit` import
+    in the driver registry uses this to match wasmtime's
+    canonical-ABI signature, so a Lang `exit(0)` component
+    now LINKS AND RUNS under `wasmtime`. End-to-end test:
+    `TestCmdLangComponentWrapWrapsExit` actually invokes
+    `wasmtime run --invoke main()` and asserts a clean exit.
+  - **Still to do:** migrate the remaining preview-1 imports
+    (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
+    `environ_*`, `args_*`, `path_*`). HTTP body / file I/O
+    migrations are larger because they require canonical-ABI
+    marshalling at the call site (list<u8> instead of raw
+    pointers + lengths). Default-path driver wiring (replacing
+    the `wasm-tools component new --adapt` shell-out in
+    `emitPreview2ComponentFromCoreBytes`) lights up once enough
+    imports are migrated that the no-adapter path covers a
+    useful program set.
 - **Compound canonical-ABI shapes.** `canon lower` with
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering

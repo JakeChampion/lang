@@ -20,8 +20,11 @@ type WasiImport struct {
 	// must equal ParamValtypes.
 	ParamNames []string
 
-	// ParamValtypes are component-level cvaltype bytes for each
-	// parameter (CValtype* constants).
+	// ParamValtypes are component-level valtype bytes for each
+	// parameter. Each byte is either a primitive cvaltype constant
+	// (CValtype* in 0x73..0x7f) or an inner-scope typeidx into
+	// InnerTypes (byte 0x00..0x72, where 0x00 references
+	// InnerTypes[0]).
 	ParamValtypes []byte
 
 	// CoreImportModule is the module name the core wasm module
@@ -29,6 +32,16 @@ type WasiImport struct {
 	// component's instantiate-with-args section will pass the
 	// packaged core instance under this name.
 	CoreImportModule string
+
+	// InnerTypes are optional defvaltype encodings declared inside
+	// the instance type before the function declaration. Used when
+	// the imported function's signature references a non-primitive
+	// type (e.g. `result<_, _>` for wasi:cli/exit::exit). Each
+	// entry is the raw defvaltype body (form byte + payload);
+	// InnerTypeResultEmpty packages the empty-arm result type.
+	// nil/empty preserves the original behaviour
+	// (primitive-only params).
+	InnerTypes [][]byte
 }
 
 // WrapWasiImported produces a Component-Model binary that wraps
@@ -68,7 +81,7 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 
 	// For each WASI import: type, import, alias, lower, core-instance.
 	for i, imp := range imports {
-		buf = PutTypeSectionOneInstanceOneFuncNoResultExport(buf, imp.FuncName, imp.ParamNames, imp.ParamValtypes)
+		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes)
 		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
 		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
 		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
@@ -160,7 +173,7 @@ func WrapWasiImportedWithExport(
 
 	n := uint32(len(imports))
 	for i, imp := range imports {
-		buf = PutTypeSectionOneInstanceOneFuncNoResultExport(buf, imp.FuncName, imp.ParamNames, imp.ParamValtypes)
+		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes)
 		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
 		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
 		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
