@@ -327,6 +327,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if g.usesStrBuf {
+		g.emitStrBufRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -2055,6 +2058,171 @@ func (g *generator) emitExitRuntime() {
 	g.syscallExit()
 	g.emit("ret")
 	g.sizeDirective("__lang_exit")
+	g.line(".ltorg")
+}
+
+// emitStrBufRuntime emits the three global mutable-string-builder
+// helpers and the BSS scratch they share. arm64 mirror of the
+// x86_64 emission — see that comment for the user-facing spec.
+//
+// The strbuf is a 64 MiB BSS region + a single 8-byte length
+// counter. Heap-form output only (no inline-SSO encoding) since
+// the asm-self-host use case always exceeds the 7-byte inline cap.
+func (g *generator) emitStrBufRuntime() {
+	twoWord := ast.UseTwoWordStrings(8)
+
+	g.line("")
+	g.line(".section .bss")
+	g.line(".align 8")
+	g.label("__lang_strbuf_len")
+	g.emit(".skip 8")
+	g.line(".align 8")
+	g.label("__lang_strbuf_data")
+	g.emit(".skip 67108864") // 64 MiB
+	g.line(".section .text")
+
+	// __lang_strbuf_reset(): len = 0.
+	g.line("")
+	g.line(".global __lang_strbuf_reset")
+	g.typeDirective("__lang_strbuf_reset")
+	g.label("__lang_strbuf_reset")
+	g.emit("adrp x0, __lang_strbuf_len")
+	g.emit("add x0, x0, :lo12:__lang_strbuf_len")
+	g.emit("str xzr, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__lang_strbuf_reset")
+
+	// __lang_strbuf_append: (x0, x1) = (data, len-with-tag) on two-
+	// word ABI, (x0) = string ptr on legacy. Materialise byte ptr +
+	// byte length via the SSO-aware helpers, memcpy into the BSS
+	// buffer past the current tail, bump the counter.
+	g.line("")
+	g.line(".global __lang_strbuf_append")
+	g.typeDirective("__lang_strbuf_append")
+	g.label("__lang_strbuf_append")
+	if twoWord {
+		// Frame: fp/lr (16) + x19/x20 (16) + 16-byte spill for inline
+		// data + 16 align = 64.
+		g.emit("stp x29, x30, [sp, #-64]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("mov x19, x0") // a_data
+		g.emit("mov x20, x1") // a_len-with-tag
+		g.emitStrLen2W("w20", "x20")               // w20 = byte length (untagged)
+		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
+		// dst = strbuf_data + strbuf_len
+		g.emit("adrp x2, __lang_strbuf_len")
+		g.emit("add x2, x2, :lo12:__lang_strbuf_len")
+		g.emit("ldr x3, [x2]")
+		g.emit("adrp x0, __lang_strbuf_data")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_data")
+		g.emit("add x0, x0, x3")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		// bump len
+		g.emit("adrp x2, __lang_strbuf_len")
+		g.emit("add x2, x2, :lo12:__lang_strbuf_len")
+		g.emit("ldr x3, [x2]")
+		g.emit("add x3, x3, x20")
+		g.emit("str x3, [x2]")
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #64")
+		g.emit("ret")
+	} else {
+		// Legacy single-pointer ABI: length at [x0 - 4].
+		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("mov x29, sp")
+		g.emit("str x19, [sp, #16]")
+		g.emit("mov x19, x0")
+		g.emitStrLen("w20", "x19")                 // w20 = byte length
+		g.emitStrDataPtr("x19", "x19", 24)         // x19 = byte ptr
+		g.emit("adrp x2, __lang_strbuf_len")
+		g.emit("add x2, x2, :lo12:__lang_strbuf_len")
+		g.emit("ldr x3, [x2]")
+		g.emit("adrp x0, __lang_strbuf_data")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_data")
+		g.emit("add x0, x0, x3")
+		g.emit("mov x1, x19")
+		g.emit("mov x2, x20")
+		g.emit("bl __lang_memcpy")
+		g.emit("adrp x2, __lang_strbuf_len")
+		g.emit("add x2, x2, :lo12:__lang_strbuf_len")
+		g.emit("ldr x3, [x2]")
+		g.emit("add x3, x3, x20")
+		g.emit("str x3, [x2]")
+		g.emit("ldr x19, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+	}
+	g.sizeDirective("__lang_strbuf_append")
+
+	// __lang_strbuf_take(): allocate fresh buffer of current len,
+	// memcpy from strbuf, reset len, return string.
+	g.line("")
+	g.line(".global __lang_strbuf_take")
+	g.typeDirective("__lang_strbuf_take")
+	g.label("__lang_strbuf_take")
+	if twoWord {
+		// Two-word return: (x0 = data ptr, x1 = byte length). Heap
+		// form only (no inline-SSO output since len is usually huge).
+		// Frame: fp/lr (16) + x19/x20 (16) = 32.
+		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("adrp x0, __lang_strbuf_len")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_len")
+		g.emit("ldr x19, [x0]")
+		// alloc x19 bytes
+		g.emit("mov x0, x19")
+		g.emit("bl __lang_alloc")
+		g.emit("mov x20, x0")
+		// memcpy(dst, strbuf_data, len)
+		g.emit("mov x0, x20")
+		g.emit("adrp x1, __lang_strbuf_data")
+		g.emit("add x1, x1, :lo12:__lang_strbuf_data")
+		g.emit("mov x2, x19")
+		g.emit("bl __lang_memcpy")
+		// reset
+		g.emit("adrp x0, __lang_strbuf_len")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_len")
+		g.emit("str xzr, [x0]")
+		// return (dst, len) — no SSO tag for plain heap form.
+		g.emit("mov x0, x20")
+		g.emit("mov x1, x19")
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+	} else {
+		// Legacy single-pointer ABI: alloc len+4 bytes, write length
+		// prefix at [base], data at [base+4], return base+4.
+		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("adrp x0, __lang_strbuf_len")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_len")
+		g.emit("ldr x19, [x0]") // x19 = len
+		// alloc len + 4
+		g.emit("add x0, x19, #4")
+		g.emit("bl __lang_alloc")
+		g.emit("add x20, x0, #4") // x20 = data ptr
+		g.emitStrLenStore("w19", "x20")
+		// memcpy(data, strbuf_data, len)
+		g.emit("mov x0, x20")
+		g.emit("adrp x1, __lang_strbuf_data")
+		g.emit("add x1, x1, :lo12:__lang_strbuf_data")
+		g.emit("mov x2, x19")
+		g.emit("bl __lang_memcpy")
+		// reset
+		g.emit("adrp x0, __lang_strbuf_len")
+		g.emit("add x0, x0, :lo12:__lang_strbuf_len")
+		g.emit("str xzr, [x0]")
+		g.emit("mov x0, x20")
+		g.emit("ldp x19, x20, [sp, #16]")
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+	}
+	g.sizeDirective("__lang_strbuf_take")
 	g.line(".ltorg")
 }
 
@@ -3883,6 +4051,11 @@ type generator struct {
 	// usesEprint pulls in `__lang_eprint(s)` — stderr counterpart
 	// to print(). Two write(2)s to fd 2.
 	usesEprint bool
+	// usesStrBuf — strbuf_reset / strbuf_append / strbuf_take —
+	// global mutable scratch buffer primitive for O(1) amortised
+	// append. Mirror of the x86_64 backend's emission.
+	usesStrBuf bool
+
 	// usesExit pulls in `__lang_exit(code)` — direct exit syscall.
 	// Doesn't return; the post-call push x0 the caller emits is
 	// harmless because exit() never comes back.
@@ -5938,6 +6111,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__lang_exit"
 			g.usesExit = true
+		case "strbuf_reset":
+			target = "__lang_strbuf_reset"
+			g.usesStrBuf = true
+		case "strbuf_append":
+			target = "__lang_strbuf_append"
+			g.usesStrBuf = true
+		case "strbuf_take":
+			target = "__lang_strbuf_take"
+			g.usesStrBuf = true
 		case "now_unix_ms":
 			// now_unix_ms(): wall-clock ms since the Unix
 			// epoch via clock_gettime(CLOCK_REALTIME, ...).

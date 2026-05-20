@@ -692,8 +692,14 @@ function new_state(): EmitState {
 }
 
 function (s: EmitState) write(text: string): EmitState {
+    // O(N) amortised: route through the global strbuf primitive
+    // instead of `s.out + text` (which is O(N²) — fatal for self-
+    // hosting). The .out field stays "" through the build; the
+    // accumulated bytes live in the strbuf until emit_module's
+    // tail calls strbuf_take to materialise the final string.
+    strbuf_append(text);
     return EmitState {
-        out: s.out + text,
+        out: s.out,
         label_n: s.label_n,
         local_names: s.local_names,
         in_function: s.in_function,
@@ -4423,6 +4429,10 @@ function escape_for_ascii(s: string): string {
 }
 
 pub function emit_module(mod: parser.Module): string {
+    // Reset the global strbuf before any .write calls. Output is
+    // accumulated there (amortised O(1) per append) and materialised
+    // into a fresh string at the tail via strbuf_take().
+    strbuf_reset();
     var s: EmitState = new_state();
     // Seed the struct-decl table so emit_expr's ExprStructLit
     // / ExprFieldAccess paths can look up field layout.
@@ -6207,7 +6217,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $-1, %rax\n");
         s = s.write("    ret\n");
     }
-    return s.out;
+    // s.out is always empty by design (writes route through the
+    // strbuf primitive instead). Materialise the accumulated bytes.
+    return strbuf_take();
 }
 
 // =================== VALIDATION ====================

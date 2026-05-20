@@ -210,6 +210,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesExit {
 		g.emitExitRuntime()
 	}
+	if g.usesStrBuf {
+		g.emitStrBufRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -321,6 +324,12 @@ type generator struct {
 	// exit(code) → direct exit_group syscall. Both mirror arm64.
 	usesEprint bool
 	usesExit   bool
+	// usesStrBuf — strbuf_reset / strbuf_append / strbuf_take —
+	// global mutable scratch buffer primitive for O(1) amortised
+	// append (escape hatch from O(N²) `s.out + text`). 64 MiB BSS
+	// region + 8-byte len counter. Single-threaded; one builder
+	// at a time. See checker.go for the user-facing spec.
+	usesStrBuf bool
 	// usesNowUnixMs pulls in `__lang_now_unix_ms()` — wall-
 	// clock-ms via the x86_64 `clock_gettime(CLOCK_REALTIME,
 	// &ts)` syscall (#228). Returns
@@ -413,6 +422,15 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
+	case "strbuf_reset", "strbuf_append", "strbuf_take":
+		g.usesStrBuf = true
+		if target == "strbuf_take" {
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		}
+		if target == "strbuf_append" {
+			g.usesMemcpy = true
+		}
 	case "now_unix_ms":
 		g.usesNowUnixMs = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
@@ -1493,6 +1511,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__lang_eprint"
 		case "exit":
 			target = "__lang_exit"
+		case "strbuf_reset":
+			target = "__lang_strbuf_reset"
+		case "strbuf_append":
+			target = "__lang_strbuf_append"
+		case "strbuf_take":
+			target = "__lang_strbuf_take"
 		case "now_unix_ms":
 			target = "__lang_now_unix_ms"
 		case "tcp_listen":
@@ -2821,6 +2845,119 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __lang_eprint, .-__lang_eprint")
+}
+
+// emitStrBufRuntime emits the three global mutable-string-builder
+// helpers and the BSS scratch they share.
+//
+//   __lang_strbuf_data: .skip 64 MiB
+//   __lang_strbuf_len:  .quad 0 (current byte count)
+//
+//   __lang_strbuf_reset()       — len = 0
+//   __lang_strbuf_append(s)     — memcpy s past current tail, bump len
+//   __lang_strbuf_take() -> str — allocate fresh string of accumulated
+//                                 bytes, copy, reset len, return it
+//
+// Built for the asm self-host backend's emit_module — the
+// `s = s.out + text` per write pattern allocates O(N²) bytes
+// through the bump heap, which can't compile asm.lang through itself
+// (~60 GB needed). With the strbuf the same loop is O(N).
+//
+// Single-threaded; only one strbuf active at a time. The 64 MiB cap
+// is generous for the asm-self-host use case (asm.lang's expected
+// output is ~2 MB) but documented.
+func (g *generator) emitStrBufRuntime() {
+	g.line("")
+	g.line(".section .bss")
+	g.line(".align 8")
+	g.line("__lang_strbuf_len: .skip 8")
+	g.line(".align 8")
+	g.line("__lang_strbuf_data: .skip 67108864") // 64 MiB
+	g.line(".section .text")
+
+	// __lang_strbuf_reset(): len = 0
+	g.line("")
+	g.line(".globl __lang_strbuf_reset")
+	g.line(".type __lang_strbuf_reset, @function")
+	g.label("__lang_strbuf_reset")
+	g.emit("mov qword ptr [rip + __lang_strbuf_len], 0")
+	g.emit("ret")
+	g.line(".size __lang_strbuf_reset, .-__lang_strbuf_reset")
+
+	// __lang_strbuf_append(s): rdi = string (may be inline-tagged).
+	// Reads len via emitStrLen, materialises data ptr via
+	// emitStrDataPtr (spilling inline form to a frame slot), then
+	// memcpys bytes to __lang_strbuf_data + __lang_strbuf_len and
+	// bumps the counter. No bounds check — overflow is UB (caller
+	// keeps total under 64 MiB).
+	g.line("")
+	g.line(".globl __lang_strbuf_append")
+	g.line(".type __lang_strbuf_append, @function")
+	g.label("__lang_strbuf_append")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("sub rsp, 16") // 8 spill for inline data + 8 align
+	g.emit("mov r12, rdi")
+	g.emitStrLen("ebx", "r12")             // ebx = src len
+	g.emitStrDataPtr("r12", "r12", "[rbp - 32]") // r12 = src data ptr
+	// dst = strbuf_data + strbuf_len
+	g.emit("mov rcx, qword ptr [rip + __lang_strbuf_len]")
+	g.emit("lea rdi, [rip + __lang_strbuf_data]")
+	g.emit("add rdi, rcx")
+	g.emit("mov rsi, r12")
+	g.emit("mov edx, ebx")
+	g.emit("call __lang_memcpy")
+	// strbuf_len += src len
+	g.emit("mov rcx, qword ptr [rip + __lang_strbuf_len]")
+	g.emit("add ecx, ebx")
+	g.emit("mov qword ptr [rip + __lang_strbuf_len], rcx")
+	g.emit("add rsp, 16")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_strbuf_append, .-__lang_strbuf_append")
+
+	// __lang_strbuf_take(): allocates a fresh `[prefix(4) + data(N) +
+	// NUL(1)]` block, copies the accumulated bytes into it, writes
+	// the length prefix, NUL-terminates, resets the strbuf, returns
+	// the data pointer.
+	g.line("")
+	g.line(".globl __lang_strbuf_take")
+	g.line(".type __lang_strbuf_take, @function")
+	g.label("__lang_strbuf_take")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("sub rsp, 8")                                       // align
+	g.emit("mov r12, qword ptr [rip + __lang_strbuf_len]")     // r12 = current len
+	// alloc len + 5 bytes
+	g.emit("lea rdi, [r12 + 5]")
+	g.emit("call __lang_alloc")
+	g.emit("lea rbx, [rax + 4]") // rbx = data ptr
+	// length prefix
+	g.emit("mov ecx, r12d")
+	g.emitStrLenStore("ecx", "rbx")
+	// memcpy(rbx, &__lang_strbuf_data, r12)
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [rip + __lang_strbuf_data]")
+	g.emit("mov edx, r12d")
+	g.emit("call __lang_memcpy")
+	// NUL terminator at rbx + r12
+	g.emit("lea rdi, [rbx + r12]")
+	g.emit("mov byte ptr [rdi], 0")
+	// reset
+	g.emit("mov qword ptr [rip + __lang_strbuf_len], 0")
+	g.emit("mov rax, rbx")
+	g.emit("add rsp, 8")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __lang_strbuf_take, .-__lang_strbuf_take")
 }
 
 // emitExitRuntime emits `__lang_exit(code)` — direct exit
