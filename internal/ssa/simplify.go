@@ -205,9 +205,9 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		if lhsConst && lhsImm == 0 {
 			return rhs, true
 		}
-	case OpShl, OpShr:
-		// x << 0 → x ; x >> 0 → x. Shift count on the right
-		// only; no commutative form.
+	case OpShl, OpShr, OpShrU:
+		// x << 0 → x ; x >> 0 → x ; x >>u 0 → x. Shift count
+		// on the right only; no commutative form.
 		if rhsConst && rhsImm == 0 {
 			return lhs, true
 		}
