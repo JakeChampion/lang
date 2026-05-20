@@ -431,6 +431,16 @@ End-to-end exit code 42 demo (covered by
     `datetime` record whose canonical-ABI lowering needs
     multi-value return support. End-to-end test:
     `TestCmdLangComponentWrapCliWithMonotonic`.
+  - **`random_bytes` migration.** `__lang_random_bytes` rounds
+    out the random story: under `EmitOptions.Preview2WASI` it
+    rounds the requested length up to a multiple of 8 and fills
+    the (padded) buffer by calling
+    `wasi:random/random@0.2.0::get-random-u64()` once per
+    8 bytes. Returns the original (unpadded) length so readers
+    see exactly the requested byte count. Unlocks `random_int`
+    (the stdlib helper used by user code via `std/math` — calls
+    `random_bytes(3)` internally) under `-component-wrap-cli`.
+    End-to-end test: `TestCmdLangComponentWrapCliWithRandomBytes`.
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
     `environ_*`, `args_*`, `path_*`). HTTP body / file I/O
