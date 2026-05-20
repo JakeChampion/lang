@@ -138,3 +138,22 @@ func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 		t.Errorf("expected 0 funcs, got %d", len(prog.Funcs))
 	}
 }
+
+// TestShakeWalksLambdaBody — anonymous `function (...) { ... }`
+// expressions live inline at treeshake time (closureconv hoists
+// them later, after treeshake runs). Without a Lambda case in
+// walkExpr, any top-level function referenced only from inside
+// a lambda body — most commonly a mangled method name like
+// `__method_string_trim` — got pruned, and link fired
+// "undefined reference to __method_string_trim".
+func TestShakeWalksLambdaBody(t *testing.T) {
+	src := `function helper(): i32 { return 7; }
+function main(): i32 {
+    var f = function (): i32 { return helper(); };
+    return f();
+}`
+	names := runShake(t, src)
+	if !hasName(names, "helper") {
+		t.Errorf("helper should survive (referenced inside lambda body): %v", names)
+	}
+}

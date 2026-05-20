@@ -11381,6 +11381,26 @@ function main(): i32 {
 	}
 }
 
+// Method call on a captured string from inside an anonymous
+// lambda. Closureconv hoists Lambda → MakeClosure at IR-lower
+// time, but treeshake runs FIRST — so without a Lambda case
+// in `walkExpr`, the lambda body is invisible to liveness
+// analysis and `__method_string_trim` (only reachable through
+// the lambda) gets pruned. Link then fires "undefined
+// reference to __method_string_trim".
+func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
+	src := `function main(): i32 {
+    var s: string = "  hi  ";
+    var f = function (): string { return s.trim(); };
+    var got = f();
+    if (got == "hi") { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got %d, want 0 (s.trim() inside lambda body)", code)
+	}
+}
+
 // Two anonymous lambdas hoisted in the same converter session.
 // Both arrive at closureconv with origin name "lambda"; the
 // freshName counter used to key off `len(c.hoisted)` so both
