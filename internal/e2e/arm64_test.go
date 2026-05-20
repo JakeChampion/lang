@@ -12916,6 +12916,47 @@ func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	}
 }
 
+// Phase 2b extension: `obj.field[i] = v` for a writable local-
+// ident struct holding an array field. CoW applies to the
+// array buffer; the field's pointer is updated to the new
+// buffer on rc>1.
+func TestArm64ArrayIndexSetStructField(t *testing.T) {
+	src := `struct State { items: i32[] }
+function main(): i32 {
+    var s: State = State{items: [10, 20, 30]};
+    s.items[1] = 999;
+    if (s.items[0] != 10) { return 1; }
+    if (s.items[1] != 999) { return 2; }
+    if (s.items[2] != 30) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (struct.field[i]=v in-place when rc==1)", code)
+	}
+}
+
+// Aliased struct-field array: writing through s.field must
+// copy when the underlying buffer is shared with another
+// holder. The caller's `arr` should stay unchanged.
+func TestArm64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
+	src := `struct State { items: i32[] }
+function main(): i32 {
+    var arr: i32[] = [10, 20, 30];
+    var s: State = State{items: arr};
+    s.items[1] = 999;
+    if (arr[0] != 10) { return 1; }
+    if (arr[1] != 20) { return 2; }
+    if (arr[2] != 30) { return 3; }
+    if (s.items[0] != 10) { return 4; }
+    if (s.items[1] != 999) { return 5; }
+    if (s.items[2] != 30) { return 6; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased struct.field[i]=v must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

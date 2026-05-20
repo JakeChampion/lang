@@ -2958,3 +2958,39 @@ func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (u8 arr[i]=v preserves all writes)", code)
 	}
 }
+
+// Mirror of TestArm64ArrayIndexSetStructField.
+func TestX86_64ArrayIndexSetStructField(t *testing.T) {
+	src := `struct State { items: i32[] }
+function main(): i32 {
+    var s: State = State{items: [10, 20, 30]};
+    s.items[1] = 999;
+    if (s.items[0] != 10) { return 1; }
+    if (s.items[1] != 999) { return 2; }
+    if (s.items[2] != 30) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (struct.field[i]=v in-place when rc==1)", code)
+	}
+}
+
+// Mirror of TestArm64ArrayIndexSetStructFieldAliasedCopies.
+func TestX86_64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
+	src := `struct State { items: i32[] }
+function main(): i32 {
+    var arr: i32[] = [10, 20, 30];
+    var s: State = State{items: arr};
+    s.items[1] = 999;
+    if (arr[0] != 10) { return 1; }
+    if (arr[1] != 20) { return 2; }
+    if (arr[2] != 30) { return 3; }
+    if (s.items[0] != 10) { return 4; }
+    if (s.items[1] != 999) { return 5; }
+    if (s.items[2] != 30) { return 6; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased struct.field[i]=v must copy)", code)
+	}
+}

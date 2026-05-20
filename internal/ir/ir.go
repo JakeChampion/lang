@@ -5844,6 +5844,28 @@ func (b *builder) assign(n *ast.Assign) error {
 					return b.emitArrayIndexAssignCoW(arrIdent, slot, t, n, stride, storeOp, storeWidth, helper)
 				}
 			}
+			if fa, ok := t.Array.(*ast.FieldAccess); ok {
+				if objIdent, ok2 := fa.Target.(*ast.Ident); ok2 {
+					if _, isLocal := b.locals[objIdent.Name]; isLocal && !isParamName(objIdent.Name, b) {
+						st := b.fieldOwner(fa.Target)
+						if sd, sdOk := b.info.Structs[st]; sdOk {
+							offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+							off := int32(-1)
+							var ft ast.Type
+							for _, f := range sd.Fields {
+								if f.Name == fa.Field {
+									off = offs[f.Name]
+									ft = f.Type
+									break
+								}
+							}
+							if _, isArr := ft.(ast.ArrayType); isArr && off >= 0 {
+								return b.emitArrayIndexAssignCoWField(fa, off, ft, t, n, stride, storeOp, storeWidth, helper)
+							}
+						}
+					}
+				}
+			}
 		}
 		if err := b.expr(t.Array); err != nil {
 			return err
@@ -6692,6 +6714,56 @@ func (b *builder) emitArrayIndexAssignCoW(arrIdent *ast.Ident, arrSlot int32, t 
 	// the store is a no-op semantically.
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
+	return nil
+}
+
+// emitArrayIndexAssignCoWField lowers `obj.field[i] = v` for a
+// writable local-ident-target struct field whose type is an
+// array. Same CoW shape as emitArrayIndexAssignCoW but the
+// "slot" the new buffer flows back into is the struct field's
+// memory location rather than a local-variable slot. The
+// helper still internalises rc bookkeeping; the caller stashes
+// the field's byte address up-front so both the field load
+// (read OLD arr) and the field store (write NEW buf) hit the
+// same address.
+func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset int32, fieldType ast.Type, t *ast.Index, n *ast.Assign, stride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// fieldAddr = &obj.field
+	fieldAddrSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_fld_%d", fieldAddrSlot)] = fieldAddrSlot
+	if err := b.expr(fa.Target); err != nil {
+		return err
+	}
+	if fieldOffset > 0 {
+		b.emit(Op{Kind: OpConstI32, I32: fieldOffset})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: fieldAddrSlot})
+	// arr = *fieldAddr (load the array pointer from the field).
+	b.emit(Op{Kind: OpLoadLocal, I32: fieldAddrSlot})
+	b.emit(payloadLoadOpFor(fieldType, b.ptrW))
+	// buf = __lang_arr_cow_inplace(arr, stride)
+	b.emit(Op{Kind: OpConstI32, I32: stride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address via the per-stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write buf back into obj.field. In the in-place case buf
+	// == OLD arr (no change). In the copy case buf is the new
+	// buffer and the field's pointer flips to it.
+	b.emit(Op{Kind: OpLoadLocal, I32: fieldAddrSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(payloadStoreOpFor(fieldType, b.ptrW))
 	return nil
 }
 
