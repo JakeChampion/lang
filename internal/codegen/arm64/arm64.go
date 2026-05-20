@@ -152,6 +152,20 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// emission so the package-level flag doesn't leak to other
 	// codegen calls (e.g. when wasm and arm64 share a test
 	// fixture).
+	//
+	// `ast.CodegenMu` serialises this toggle against itself
+	// (multiple arm64 Emit goroutines) and against
+	// `x86_64.Emit` (which reads `TwoWordOverride` via
+	// ir.LowerWith without setting it). Without the lock,
+	// `TestDifferential_LangsmithMain`'s seed-level
+	// `t.Parallel` lets one arm64 emit's `defer` restore the
+	// flag to false while another arm64 emit was still in
+	// flight — producing single-word string_from_bytes /
+	// strcat helpers inside a program the rest of the
+	// codegen built for two-word strings, and SIGSEGV on
+	// the first string op.
+	ast.CodegenMu.Lock()
+	defer ast.CodegenMu.Unlock()
 	prevOverride := ast.TwoWordOverride
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
