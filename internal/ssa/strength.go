@@ -15,6 +15,20 @@ package ssa
 //	x & 0   ⇒ const_int 0
 //	0 & x   ⇒ const_int 0
 //
+// Integer self-comparison identities (Phase 2):
+//
+//	x == x  ⇒ const_bool true
+//	x != x  ⇒ const_bool false
+//	x <  x  ⇒ const_bool false   (signed + unsigned)
+//	x <= x  ⇒ const_bool true    (signed + unsigned)
+//	x >  x  ⇒ const_bool false   (signed + unsigned)
+//	x >= x  ⇒ const_bool true    (signed + unsigned)
+//
+// Float self-comparison is intentionally NOT folded: IEEE-754
+// NaN compares unequal to itself, so `x == x` may be false and
+// `x != x` may be true for x = NaN. Integer values can't be NaN
+// so the integer forms are safe.
+//
 // Not yet handled (would need a "definitely non-zero" check
 // on x that we don't track yet):
 //
@@ -58,6 +72,16 @@ func StrengthReduce(f *Func) {
 				}
 				if rImm, rOK := constInt(op.Args[1], defs); rOK && rImm == 0 {
 					rewriteInt(op, 0)
+				}
+			case OpEq, OpLe, OpLeU, OpGe, OpGeU:
+				// x == x, x <= x, x >= x ⇒ true.
+				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
+					rewriteBool(op, true)
+				}
+			case OpNe, OpLt, OpLtU, OpGt, OpGtU:
+				// x != x, x < x, x > x ⇒ false.
+				if len(op.Args) == 2 && op.Args[0].IsValid() && op.Args[0] == op.Args[1] {
+					rewriteBool(op, false)
 				}
 			}
 		}
