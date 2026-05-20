@@ -160,6 +160,71 @@ func TestBuildLiftedExportComponent_RunsUnderWasmtime(t *testing.T) {
 	}
 }
 
+// runCoreModule returns the bytes of a tiny core wasm module that
+// exports `_run` with signature `() -> i32` returning 0. Hand-
+// rolled so the test doesn't depend on the rest of the wasm
+// encoder.
+func runCoreModule() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: vec(1), 0x60 vec(0) params vec(1) result i32
+		0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+		// function section: vec(1) typeidx [0]
+		0x03, 0x02, 0x01, 0x00,
+		// export section: "_run" -> func 0
+		0x07, 0x08, 0x01, 0x04, '_', 'r', 'u', 'n', 0x00, 0x00,
+		// code section: i32.const 0, end
+		0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x00, 0x0b,
+	}
+}
+
+// TestBuildWasiCliRunComponent_RunsUnderWasmtime exercises the
+// "wasi:cli/run-exporting" component shape end-to-end. The
+// produced component must be runnable directly via `wasmtime run`
+// (no `--invoke`) — the host invokes the lifted run function, the
+// returned i32 (0) lowers to result::ok, and wasmtime exits 0.
+func TestBuildWasiCliRunComponent_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+
+	core := runCoreModule()
+	comp := component.BuildWasiCliRunComponent(core, "_run")
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "out.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:cli/run@0.2.0",
+		"canon lift",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+	// End-to-end: `wasmtime run` (no --invoke) accepts and runs
+	// the component. _run returns 0 → result::ok → exit 0.
+	if out, err := exec.Command("wasmtime", "run", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
+	}
+}
+
 // exitMainCoreModule returns the bytes of a tiny core wasm module
 // that both imports `wasi-exit::exit(i32) -> ()` AND exports
 // `main() -> i32`. The exported `main` does:

@@ -134,6 +134,41 @@ func BuildLiftedExportComponent(coreBytes []byte, coreExportName, exportName str
 	return buf
 }
 
+// BuildWasiCliRunComponent wraps a core module that exports a
+// `() -> i32`-typed function as a preview-2 component implementing
+// the `wasi:cli/run@0.2.0` world. Wasmtime can run such a
+// component directly with `wasmtime run prog.wasm` (no `--invoke`
+// flag) — the host treats the lifted return value (i32 → result<_,
+// _>: 0 = ok, non-zero = err) as the process exit signal.
+//
+// Recipe:
+//
+//  1. core-module: embed the core module.
+//  2. core-instance: instantiate it (no args).
+//  3. alias: surface the named core export as core-func 0.
+//  4. type: declare result<_, _> at type 0 + func() -> result<0>
+//     at type 1.
+//  5. canon: lift core-func 0 → component-func 0 of type 1 (no
+//     opts).
+//  6. instance: package component-func 0 into an instance with
+//     the inline export name "run".
+//  7. export: expose instance 0 as "wasi:cli/run@0.2.0".
+//
+// The core export's signature must be `() -> i32` for the canon
+// lift to succeed (the wasmtime linker will reject any other
+// shape).
+func BuildWasiCliRunComponent(coreBytes []byte, coreExportName string) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)
+	buf = PutAliasSectionCoreExportFunc(buf, 0, coreExportName)
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf)
+	buf = PutCanonSectionLiftNoOpts(buf, 0, 1)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 0)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 0)
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
