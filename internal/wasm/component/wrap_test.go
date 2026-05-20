@@ -159,3 +159,115 @@ func TestBuildLiftedExportComponent_RunsUnderWasmtime(t *testing.T) {
 		t.Errorf("wasmtime stdout = %q, want %q", got, "7")
 	}
 }
+
+// exitMainCoreModule returns the bytes of a tiny core wasm module
+// that both imports `wasi-exit::exit(i32) -> ()` AND exports
+// `main() -> i32`. The exported `main` does:
+//
+//	i32.const 99
+//	call exit         ; conceptually never returns
+//	i32.const 42      ; dead code for the validator
+//	end
+//
+// This exercises both the import-wiring path AND the export-lifting
+// path of WrapWasiImportedWithExport: when wasmtime --invokes main,
+// the embedded core dispatches into the host-provided exit handler.
+func exitMainCoreModule() []byte {
+	return []byte{
+		// magic + version 1
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section (id 1), size 9; body:
+		//   vec(2) functypes
+		//   type 0: 0x60 vec(1) [i32] vec(0) []      ; (param i32) -> ()
+		//   type 1: 0x60 vec(0) []     vec(1) [i32]  ; () -> (result i32)
+		0x01, 0x09, 0x02,
+		0x60, 0x01, 0x7f, 0x00,
+		0x60, 0x00, 0x01, 0x7f,
+		// import section (id 2), size 18; body:
+		//   vec(1)
+		//   module "wasi-exit" (len 9), name "exit" (len 4),
+		//   kind=func (0x00), typeidx 0
+		0x02, 0x12,
+		0x01,
+		0x09, 'w', 'a', 's', 'i', '-', 'e', 'x', 'i', 't',
+		0x04, 'e', 'x', 'i', 't',
+		0x00, 0x00,
+		// function section (id 3), size 2; body:
+		//   vec(1) typeidxs = [1]
+		0x03, 0x02, 0x01, 0x01,
+		// export section (id 7), size 8; body:
+		//   vec(1) exports
+		//   name "main" (len 4), kind=func, funcidx 1
+		//   (the imported exit is funcidx 0, so our defined main
+		//    sits at funcidx 1 after the import-shift)
+		0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x01,
+		// code section (id 10), size 10; body:
+		//   vec(1) bodies
+		//   body length 8: vec(0) locals,
+		//     i32.const 99 (0x41 0x63), call 0 (0x10 0x00),
+		//     i32.const 42 (0x41 0x2a), end (0x0b)
+		0x0a, 0x0a,
+		0x01, 0x08, 0x00,
+		0x41, 0x63, 0x10, 0x00, 0x41, 0x2a, 0x0b,
+	}
+}
+
+// TestWrapWasiImportedWithExport_Structural exercises the combined
+// import + export pipeline structurally. The produced component
+// must validate under wasm-tools and surface both the import and
+// the export at the component level.
+//
+// End-to-end execution under wasmtime is intentionally NOT
+// exercised here. The `wasi:cli/exit@0.2.0::exit` interface takes a
+// canonical-ABI `result<_, _>` (not a `u32`), so the host linker
+// rejects our `(param code u32)` declaration. Result-type encoding
+// is a future slice; for now this test pins the structural shape.
+func TestWrapWasiImportedWithExport_Structural(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+
+	core := exitMainCoreModule()
+	comp := component.WrapWasiImportedWithExport(
+		core,
+		[]component.WasiImport{
+			{
+				InterfaceName:    "wasi:cli/exit@0.2.0",
+				FuncName:         "exit",
+				ParamNames:       []string{"code"},
+				ParamValtypes:    []byte{component.CValtypeU32},
+				CoreImportModule: "wasi-exit",
+			},
+		},
+		"main", "main",
+		nil, nil,
+		component.CValtypeU32,
+	)
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "out.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:cli/exit@0.2.0",
+		"export \"main\"",
+		"canon lift",
+		"canon lower",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}

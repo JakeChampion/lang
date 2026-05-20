@@ -360,19 +360,37 @@ End-to-end exit code 42 demo (covered by
 - **Preview-2 import migration.** `internal/codegen/wasmbin/wasi.go`
   still emits preview-1 imports (`fd_write`, `path_open`, etc.).
   Migrating each to its preview-2 equivalent lifts more programs
-  into the no-imports class that `-component-wrap` already handles
-  end-to-end. **First migration shipped:** `proc_exit` →
-  `wasi:cli/exit@0.2.0.exit` under `BuildOptions.Preview2WASI`
-  (opt-in; default still emits preview-1). The core-wasm signature
-  is unchanged ((i32) → ()) so `__lang_exit`'s call site stays
-  untouched. Pinned by `TestBuildPreview2WASIRenamesProcExit` /
-  `TestBuildPreview2WASIDefaultLeavesProcExit` in
-  `internal/codegen/wasmbin/build_test.go`. Still to do: wire
-  `-component-wrap` to detect the new import + drive
-  `WrapWasiImported`, then migrate the remaining imports.
-  HTTP body / file I/O migrations are larger because they require
-  canonical-ABI marshalling at the call site (list<u8> instead of
-  raw pointers + lengths).
+  into the class that `-component-wrap` can handle. **What's
+  shipped so far:**
+  - `proc_exit` → `wasi:cli/exit@0.2.0.exit` under
+    `BuildOptions.Preview2WASI` (opt-in; default still emits
+    preview-1). The core-wasm signature is unchanged ((i32) → ())
+    so `__lang_exit`'s call site stays untouched.
+  - `component.WrapWasiImportedWithExport` composes the
+    import-wiring with a lifted-export pipeline so a core module
+    that both imports WASI AND exports `main` gets wrapped in a
+    single pass. Unit-tested via `TestWrapWasiImportedWithExport_Structural`.
+  - `-component-wrap` driver now routes through
+    `WrapWasiImportedWithExport` when the core module's imports
+    are known preview-2 ones (currently only
+    `wasi:cli/exit@0.2.0.exit`). Other imports still hit the
+    "unrecognised imports" error pointing at `-wasi-adapter`.
+    End-to-end driver test:
+    `TestCmdLangComponentWrapWrapsExit`.
+  - **Known limitation:** the produced component validates under
+    `wasm-tools` but isn't runnable yet under wasmtime because
+    `wasi:cli/exit::exit`'s canonical-ABI signature is
+    `func(status: result<_, _>)`, not `func(status: u32)`. Result-
+    type encoding is a future slice. Until then, tests assert on
+    structural shape (`wasm-tools validate` + `print`), not
+    `wasmtime run`.
+  - **Still to do:** add `result` / other defined-valtype encoding
+    so wasmtime accepts the linkage; migrate the remaining
+    preview-1 imports (`fd_write`, `fd_read`, `random_get`,
+    `clock_time_get`, `environ_*`, `args_*`, `path_*`); HTTP body /
+    file I/O migrations are larger because they require canonical-
+    ABI marshalling at the call site (list<u8> instead of raw
+    pointers + lengths).
 - **Compound canonical-ABI shapes.** `canon lower` with
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering
