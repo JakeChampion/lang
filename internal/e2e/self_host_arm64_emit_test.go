@@ -616,6 +616,24 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			"i32-sign-positive",
+			"function main(): i32 { var n: i32 = 42; return n.sign(); }",
+			1,
+			"",
+		},
+		{
+			"i32-sign-zero",
+			"function main(): i32 { var n: i32 = 0; return n.sign(); }",
+			0,
+			"",
+		},
+		{
+			"i32-sign-negative",
+			"function main(): i32 { var n: i32 = 0 - 7; print_int(n.sign()); return 0; }",
+			0,
+			"-1",
+		},
+		{
 			"i32-pow-2-10",
 			"function main(): i32 { var n: i32 = 2; print_int(n.pow(10)); return 0; }",
 			0,

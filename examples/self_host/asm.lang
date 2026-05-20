@@ -461,7 +461,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow")) {
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign")) {
                         return "i32";
                     }
                     if (fa.field == "len"
@@ -2516,6 +2516,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    call __lang_i32_pow\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_i32_pow();
+                            return s;
+                        }
+                        if (fa.field == "sign" && c.args.len() == 0) {
+                            // sign(n) = 1 if n>0, -1 if n<0, 0 if 0.
+                            // Computed as `(n>0) - (n<0)`.
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    cmpq $0, %rax\n");
+                            s = s.write("    setg %dl\n");
+                            s = s.write("    setl %cl\n");
+                            s = s.write("    movzbq %dl, %rdx\n");
+                            s = s.write("    movzbq %cl, %rcx\n");
+                            s = s.write("    subq %rcx, %rdx\n");
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    pushq %rax\n");
                             return s;
                         }
                     }
