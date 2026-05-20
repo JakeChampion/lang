@@ -33,6 +33,7 @@ func IsPure(k OpKind) bool {
 		OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U,
 		OpStore8, OpStore16,
 		OpLoadF, OpStoreF,
+		OpAlloc,
 		OpMakeClosure, OpMakeEnv:
 		return false
 	default:

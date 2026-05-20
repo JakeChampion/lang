@@ -230,6 +230,19 @@ const (
 	OpLoadF
 	OpStoreF
 
+	// OpAlloc reserves N bytes from the bump allocator and
+	// pushes the result pointer. Args[0] is the size; result
+	// is the new pointer. Impure — allocator state changes
+	// across calls so CSE/DCE must treat each Alloc as unique.
+	OpAlloc
+
+	// OpEnumSentinel pushes the address of a shared static
+	// 4-byte sentinel whose tag is op.Imm. The op is pure —
+	// two OpEnumSentinel with the same Imm produce the same
+	// pointer, so CSE can merge them; DCE can drop unused
+	// ones.
+	OpEnumSentinel
+
 	// Phi — SSA merge. In a block B with predecessors
 	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
 	// from P[i]. Phi ops MUST appear at the top of B before
@@ -384,6 +397,10 @@ func (k OpKind) String() string {
 		return "load_f"
 	case OpStoreF:
 		return "store_f"
+	case OpAlloc:
+		return "alloc"
+	case OpEnumSentinel:
+		return "enum_sentinel"
 	case OpPhi:
 		return "phi"
 	default:
