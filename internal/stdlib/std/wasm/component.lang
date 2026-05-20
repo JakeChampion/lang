@@ -1954,13 +1954,71 @@ pub function build_lifted_export_component_with_params(core_bytes: u8[], core_ex
 //     surface area exposed beyond its WASI imports; useful for
 //     a CLI handler that just runs side effects.
 pub function build_wasi_imported_component(core_bytes: u8[], interface_name: string, func_name: string, wasi_param_names: string[], wasi_param_valtypes: u8[], core_import_module: string): u8[] {
+    var interface_names: string[] = [interface_name];
+    var func_names: string[] = [func_name];
+    var names_per: string[][] = [wasi_param_names];
+    var valtypes_per: u8[][] = [wasi_param_valtypes];
+    var core_modules: string[] = [core_import_module];
+    return build_wasi_multi_imported_component(core_bytes, interface_names, func_names, names_per, valtypes_per, core_modules);
+}
+
+// build_wasi_multi_imported_component — multi-import generalisation
+// of `build_wasi_imported_component`. Wraps a core module that
+// imports from N distinct WASI interfaces, threading each WASI
+// import through the full type / import / alias / canon-lower /
+// core-instance pipeline.
+//
+// All five "per-import" arrays must have equal length N:
+//   interface_names[i]      — e.g. "wasi:cli/exit@0.2.0"
+//   func_names[i]           — function name within the interface
+//   wasi_param_names_per[i] — component-level param names
+//   wasi_param_valtypes_per[i] — component-level param valtypes
+//   core_import_modules[i]  — name the core module uses for the
+//                             instance arg (e.g. "wasi" or whatever
+//                             the (import "X" "Y" ...) "X" is)
+//
+// The core module is instantiated with N instance args wired to
+// the N lowered host instances.
+//
+// Pipeline per import i:
+//   - type i:    instance type { export func_names[i](...) }
+//   - import i:  (instance i) of type i, named interface_names[i]
+//   - alias 2i:  alias instance i's func export -> component func i
+//   - lower i:   canon lower component func i -> core func i
+//   - core-inst i: wrap core func i as a core instance with one
+//                  export named func_names[i]
+//
+// Then a single core-module + a single core-instance "instantiate"
+// with N args (core_import_modules[i] -> core-instance i).
+//
+// Note: each canon-lower currently emits its own section (the
+// existing API is one-entry-per-call); same for alias and
+// core-instance. wasm-tools accepts repeated sections at component
+// level so this still produces a valid component, just with more
+// section headers than a hand-optimised one would have.
+pub function build_wasi_multi_imported_component(core_bytes: u8[], interface_names: string[], func_names: string[], wasi_param_names_per: string[][], wasi_param_valtypes_per: u8[][], core_import_modules: string[]): u8[] {
     var comp: u8[] = put_component_header([]);
-    comp = put_type_section_one_instance_one_func_export(comp, func_name, wasi_param_names, wasi_param_valtypes);
-    comp = put_import_section_one_instance(comp, interface_name, 0u32);
-    comp = put_alias_section_instance_export_func(comp, 0u32, func_name);
-    comp = put_canon_section_lower_no_opts(comp, 0u32);
-    comp = put_core_instance_section_from_one_func_export(comp, func_name, 0u32);
+    var n: i32 = interface_names.len();
+
+    // For each import: type, import, alias, lower, core-instance.
+    var i: i32 = 0;
+    while (i < n) {
+        comp = put_type_section_one_instance_one_func_export(comp, func_names[i], wasi_param_names_per[i], wasi_param_valtypes_per[i]);
+        comp = put_import_section_one_instance(comp, interface_names[i], i as u32);
+        comp = put_alias_section_instance_export_func(comp, i as u32, func_names[i]);
+        comp = put_canon_section_lower_no_opts(comp, i as u32);
+        comp = put_core_instance_section_from_one_func_export(comp, func_names[i], i as u32);
+        i = i + 1;
+    }
+
+    // Embed the core module + instantiate with N instance args.
     comp = put_core_module_section(comp, core_bytes);
-    comp = put_core_instance_section_instantiate_with_one_instance_arg(comp, 0u32, core_import_module, 0u32);
+    var instance_idxs: u32[] = [];
+    var j: i32 = 0;
+    while (j < n) {
+        instance_idxs = instance_idxs.push(j as u32);
+        j = j + 1;
+    }
+    comp = put_core_instance_section_instantiate_with_instance_args(comp, 0u32, core_import_modules, instance_idxs);
     return comp;
 }
