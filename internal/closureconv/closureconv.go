@@ -105,7 +105,12 @@ type converter struct {
 
 func (c *converter) freshName(orig string) string {
 	c.hoisted[orig]++
-	return fmt.Sprintf("__closure_%s_%d", orig, len(c.hoisted))
+	// Per-origin counter — using `len(c.hoisted)` would collide
+	// when the same orig (e.g. "lambda" for every anonymous
+	// function expression) gets hoisted more than once: both
+	// hoists see the same map length and produce the same
+	// `__closure_lambda_1` symbol, which the assembler rejects.
+	return fmt.Sprintf("__closure_%s_%d", orig, c.hoisted[orig])
 }
 
 // detectMutualRecSCCs is the closureconv-side mirror of the
@@ -662,6 +667,18 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 			Body:       n.Body,
 			IsLocal:    true,
 			Captures:   n.Captures,
+		}
+		// Re-key the body locals the checker registered against
+		// the throwaway synthetic FuncDecl (see ast.Lambda.Synthetic)
+		// onto the hoisted FuncDecl. Without this, `lowerFunc` reads
+		// `info.Locals[fn]` and sees an empty list, then the body
+		// walk hits "var X has no slot" on every `var x = ...`
+		// inside the lambda body.
+		if n.Synthetic != nil {
+			if locals, ok := c.info.Locals[n.Synthetic]; ok {
+				c.info.Locals[fn] = locals
+				delete(c.info.Locals, n.Synthetic)
+			}
 		}
 		// Build the lambda's own capture context — same shape
 		// hoist() builds for named local FuncDecls. Walk the body

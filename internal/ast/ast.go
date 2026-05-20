@@ -940,6 +940,13 @@ type Lambda struct {
 	// FuncDecl.Captures. closureconv reads it to size the env
 	// block.
 	Captures []Param
+	// Synthetic is the throwaway FuncDecl the checker swaps in
+	// as `c.current` while walking this lambda's body. Var
+	// statements inside the body append themselves to
+	// `info.Locals[Synthetic]`; closureconv re-keys those locals
+	// onto the hoisted FuncDecl it produces. Nil until the
+	// checker visits this node.
+	Synthetic *FuncDecl
 }
 
 // CaptureRef is a synthetic expression introduced by closure

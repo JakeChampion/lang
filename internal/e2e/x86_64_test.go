@@ -1388,6 +1388,55 @@ function main(): i32 { return outer("hello"); }`
 	}
 }
 
+// Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
+// used to drop the body's Var declarations on the floor: the
+// checker stored them against a throwaway synthetic FuncDecl
+// pointer that closureconv never re-keyed onto the hoisted
+// lambda, so lowerFunc would panic with "var X has no slot".
+// String-typed body local exercises the pointer-width slot
+// path under x86-64's two-word string ABI.
+func TestX86_64LambdaWithBodyLocals(t *testing.T) {
+	src := `function main(): i32 {
+    var greet = "hi";
+    var f = function (n: i32): i32 {
+        var sq = n * n;
+        var tag = greet + "!";
+        print(tag);
+        return sq;
+    };
+    return f(6);
+}`
+	stdout, code := compileAndRunX86_64(t, src)
+	if code != 36 {
+		t.Errorf("got exit %d, want 36", code)
+	}
+	if stdout != "hi!\n" {
+		t.Errorf("got stdout %q, want %q", stdout, "hi!\n")
+	}
+}
+
+// Mirror of TestArm64NestedLambdaUniqueNames. Two anonymous
+// lambdas hoisted in the same converter session used to
+// collide on `__closure_lambda_1` because freshName keyed off
+// `len(c.hoisted)` (which doesn't grow when an existing key
+// gets incremented).
+func TestX86_64NestedLambdaUniqueNames(t *testing.T) {
+	src := `function main(): i32 {
+    var outer = function (): i32 {
+        var inner = function (): i32 {
+            var x = 21;
+            return x * 2;
+        };
+        var y = inner();
+        return y;
+    };
+    return outer();
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 42 {
+		t.Errorf("got %d, want 42", code)
+	}
+}
+
 // Multi-capture closure: two i32 captures laid out at offsets 0
 // and 4 in the env block. Verifies the running-offset
 // arithmetic in emitMakeClosureOrEnv.

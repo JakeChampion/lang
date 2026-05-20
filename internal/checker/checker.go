@@ -4974,12 +4974,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		prevOuter := c.captureOuter
 		prevLoop := c.loopDepth
 		prevSwitch := c.switchDepth
-		c.current = &ast.FuncDecl{
+		// Stash the synthetic FuncDecl on the Lambda so
+		// closureconv can recover the Var statements registered
+		// against it during body-checking. Without this, the
+		// hoisted FuncDecl that closureconv synthesises has no
+		// entry in `info.Locals`, and `lowerFunc` panics with
+		// "var X has no slot" when it tries to allocate slots
+		// for body-local vars.
+		synth := &ast.FuncDecl{
 			P:          n.P,
 			Params:     n.Params,
 			ReturnType: n.ReturnType,
 			Body:       n.Body,
 		}
+		n.Synthetic = synth
+		c.current = synth
 		c.loopDepth = 0
 		c.switchDepth = 0
 		c.captureSink = func(name string, t ast.Type) {
