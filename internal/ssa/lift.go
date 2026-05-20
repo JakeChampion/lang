@@ -116,6 +116,14 @@ import (
 //     emits a side-effect-only Op with no Result. DCE keeps both
 //     since they're impure.
 //
+//   Phase 13:
+//   - Integer width conversions:
+//       OpExtendI32S → OpExtendS
+//       OpExtendI32U → OpExtendU
+//       OpWrapI64    → OpTrunc
+//       OpSignExtend8  → OpExtend8S
+//       OpSignExtend16 → OpExtend16S
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -346,6 +354,28 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		arg := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
 		v := l.out.AddOp(l.cur, OpFNeg, arg)
+		l.stack = append(l.stack, v)
+	case ir.OpExtendI32S, ir.OpExtendI32U, ir.OpWrapI64,
+		ir.OpSignExtend8, ir.OpSignExtend16:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs 1 operand", op.Kind, i)
+		}
+		arg := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		var kind OpKind
+		switch op.Kind {
+		case ir.OpExtendI32S:
+			kind = OpExtendS
+		case ir.OpExtendI32U:
+			kind = OpExtendU
+		case ir.OpWrapI64:
+			kind = OpTrunc
+		case ir.OpSignExtend8:
+			kind = OpExtend8S
+		case ir.OpSignExtend16:
+			kind = OpExtend16S
+		}
+		v := l.out.AddOp(l.cur, kind, arg)
 		l.stack = append(l.stack, v)
 	case ir.OpDrop:
 		if len(l.stack) < 1 {
