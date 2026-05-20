@@ -324,6 +324,93 @@ func TestEmitWhileLoopBodyOnFalseArm(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitEarlyReturnChain — hand-built `sign`-shaped CFG:
+//
+//	entry ─brif─→ retNeg ─ret(-1)
+//	        └─→ b1 ─brif─→ retPos ─ret(1)
+//	               └─→ final ─ret(0)
+//
+// Exercises the early-return chain classifier + emitter end
+// to end. The emitted module must validate under wasm-tools.
+func TestEmitEarlyReturnChain(t *testing.T) {
+	f := ssa.NewFunc("sign")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	retNeg := f.NewBlock()
+	b1 := f.NewBlock()
+	retPos := f.NewBlock()
+	final := f.NewBlock()
+
+	zero := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 0
+	lt := f.AddOp(entry, ssa.OpLt, a, zero)
+	f.SetBrIf(entry, lt, retNeg, b1)
+
+	negOne := f.AddOp(retNeg, ssa.OpConstInt)
+	retNeg.Ops[0].Imm = -1
+	f.SetRet(retNeg, negOne)
+
+	gt := f.AddOp(b1, ssa.OpGt, a, zero)
+	f.SetBrIf(b1, gt, retPos, final)
+
+	one := f.AddOp(retPos, ssa.OpConstInt)
+	retPos.Ops[0].Imm = 1
+	f.SetRet(retPos, one)
+
+	f.SetRet(final, zero)
+
+	mod, err := EmitModule(f, "sign")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitEarlyReturnChainRetOnFalseArm — same shape but with
+// both brifs' False arm holding the early-return target.
+// Exercises the `i32.eqz` flip path in emitEarlyReturnChain
+// (twice, once per step).
+func TestEmitEarlyReturnChainRetOnFalseArm(t *testing.T) {
+	f := ssa.NewFunc("sign")
+	a := f.AddParam()
+	entry := f.NewBlock()
+	cont := f.NewBlock()
+	retNeg := f.NewBlock()
+	retPos := f.NewBlock()
+	final := f.NewBlock()
+
+	zero := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 0
+	// cond1 = (a >= 0); early-return when !cond1 → False arm
+	// holds retNeg.
+	cond1 := f.AddOp(entry, ssa.OpGe, a, zero)
+	f.SetBrIf(entry, cond1, cont, retNeg)
+
+	negOne := f.AddOp(retNeg, ssa.OpConstInt)
+	retNeg.Ops[0].Imm = -1
+	f.SetRet(retNeg, negOne)
+
+	// cond2 = (a <= 0); early-return when !cond2 → False arm
+	// holds retPos.
+	cond2 := f.AddOp(cont, ssa.OpLe, a, zero)
+	f.SetBrIf(cont, cond2, final, retPos)
+
+	one := f.AddOp(retPos, ssa.OpConstInt)
+	retPos.Ops[0].Imm = 1
+	f.SetRet(retPos, one)
+
+	f.SetRet(final, zero)
+
+	mod, err := EmitModule(f, "sign")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitRejectsUnknownCFG — a CFG that doesn't match any
 // recognised shape (e.g. 5 blocks with arbitrary edges)
 // returns a clear error.

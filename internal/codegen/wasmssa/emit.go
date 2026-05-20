@@ -30,6 +30,14 @@
 //     Header phis (loop-carried values) become shared wasm
 //     locals — entry writes initial values; the back-edge
 //     re-writes them at each iteration.
+//   - Early-return chain shape:
+//     entry ─brif─→ retA ─ret
+//             └─→ b1 ─brif─→ retB ─ret
+//                     └─→ ... ─→ bN ─ret  (final)
+//     A composition of brifs where one arm of every brif is a
+//     terminal early-return block (sole pred = current, term =
+//     ret) and the other arm is the next continuation. Covers
+//     `if (cond) return …; if (cond2) return …; return …;`.
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
@@ -167,8 +175,9 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	} else {
 		localsBytes = inst.PutLocalsOneGroup(nil, localCount, encode.ValtypeI32)
 	}
-	bodyWithEnd := inst.InstEnd(body)
-	funcBody := inst.PutFunctionBody(nil, localsBytes, bodyWithEnd)
+	// PutFunctionBody appends the trailing 0x0b end byte itself,
+	// so callers pass the body without one.
+	funcBody := inst.PutFunctionBody(nil, localsBytes, body)
 	codeSectionBody := leb128.UlebU32(nil, 1) // one function entry
 	codeSectionBody = append(codeSectionBody, funcBody...)
 	out = encode.PutSection(out, encode.SectionCode, codeSectionBody)
@@ -320,7 +329,19 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32) ([]b
 		return body, ctx.valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, dual-return diamonds, and while loops handled",
+	// Early-return chain — `if (a) return …; if (b) return …;
+	// return …;` and friends. Strictly more general than
+	// dualReturn, but placed after it so the simpler classifier
+	// keeps owning the 3-block case.
+	if chain, ok := classifyEarlyReturnChain(f); ok {
+		body, err := emitEarlyReturnChain(nil, chain, ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return body, ctx.valueToLocal, nil
+	}
+
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, dual-return diamonds, while loops, and early-return chains handled",
 		len(f.Blocks))
 }
 
@@ -835,6 +856,161 @@ func emitWhileLoop(body []byte, lp whileLoop, ctx *emitCtx) ([]byte, error) {
 		return nil, err
 	}
 	body = emitRet(body, lp.done.Term, ctx)
+	return body, nil
+}
+
+// earlyReturnStep records one early-return brif in a chain.
+// `block` holds the cond + ops; `retBlock` is the immediate-
+// ret target of one brif arm. `retOnTrueArm` flags which arm
+// of `block.Term` `retBlock` sits on — emit flips the cond via
+// i32.eqz when it's on False so the wasm `if` enters when the
+// original True arm should have.
+type earlyReturnStep struct {
+	block         *ssa.Block
+	retBlock      *ssa.Block
+	retOnTrueArm  bool
+}
+
+// earlyReturnChain is the recognised CFG: a sequence of
+// brif-steps each shedding one early-return arm, ending at a
+// final block whose terminator is ret.
+type earlyReturnChain struct {
+	steps []earlyReturnStep
+	final *ssa.Block
+}
+
+// classifyEarlyReturnChain walks from f.Entry following the
+// continuation arm of each brif. At each step it expects:
+//
+//   - Current block ends with TermBrIf.
+//   - One arm is a terminal early-return block (sole pred is
+//     current, terminator is ret).
+//   - Other arm is the next continuation (sole pred is current).
+//
+// The walk terminates when the current block's terminator is
+// TermRet. The classifier requires len(f.Blocks) >= 5 so it
+// leaves the 3-block dualReturn case to the simpler classifier;
+// every block in f.Blocks must be exactly one of {step.block,
+// step.retBlock, final}.
+func classifyEarlyReturnChain(f *ssa.Func) (earlyReturnChain, bool) {
+	if f.Entry == nil {
+		return earlyReturnChain{}, false
+	}
+	if len(f.Blocks) < 5 {
+		return earlyReturnChain{}, false
+	}
+	var chain earlyReturnChain
+	visited := map[*ssa.Block]bool{f.Entry: true}
+	cur := f.Entry
+	for {
+		switch cur.Term.Kind {
+		case ssa.TermRet:
+			chain.final = cur
+			// Every block accounted for: 2 per step (block +
+			// retBlock) plus the final.
+			if 2*len(chain.steps)+1 != len(f.Blocks) {
+				return earlyReturnChain{}, false
+			}
+			if len(chain.steps) == 0 {
+				// Pure linear walk — handled by classifyLinearChain.
+				return earlyReturnChain{}, false
+			}
+			return chain, true
+		case ssa.TermBrIf:
+			t, fb := cur.Term.True, cur.Term.False
+			if t == nil || fb == nil || t == fb {
+				return earlyReturnChain{}, false
+			}
+			var ret, next *ssa.Block
+			retOnTrue := false
+			switch {
+			case isTerminalRet(t, cur) && isSolePredOf(fb, cur):
+				ret, next, retOnTrue = t, fb, true
+			case isTerminalRet(fb, cur) && isSolePredOf(t, cur):
+				ret, next, retOnTrue = fb, t, false
+			default:
+				return earlyReturnChain{}, false
+			}
+			if visited[next] || visited[ret] {
+				return earlyReturnChain{}, false
+			}
+			chain.steps = append(chain.steps, earlyReturnStep{
+				block:        cur,
+				retBlock:     ret,
+				retOnTrueArm: retOnTrue,
+			})
+			visited[next] = true
+			visited[ret] = true
+			cur = next
+		default:
+			return earlyReturnChain{}, false
+		}
+	}
+}
+
+// isTerminalRet reports whether `b` is a sole-pred-of-`pred`
+// block whose terminator is ret — the shape of an early-return
+// arm.
+func isTerminalRet(b, pred *ssa.Block) bool {
+	if b == nil {
+		return false
+	}
+	if len(b.Preds) != 1 || b.Preds[0] != pred {
+		return false
+	}
+	return b.Term.Kind == ssa.TermRet
+}
+
+// isSolePredOf reports whether `b`'s only pred is `pred`.
+func isSolePredOf(b, pred *ssa.Block) bool {
+	if b == nil {
+		return false
+	}
+	return len(b.Preds) == 1 && b.Preds[0] == pred
+}
+
+// emitEarlyReturnChain lowers the chain as a flat sequence of
+// `if cond ... return end` segments — each wasm `if` body
+// emits the early-return arm's ops + a wasm `return`, so
+// control naturally falls through into the next continuation
+// when the cond is false.
+//
+//	step.block.ops
+//	push cond [i32.eqz if early-ret is on False arm]
+//	if
+//	  step.retBlock.ops
+//	  return
+//	end
+//	... next step ...
+//	final.ops
+//	return
+func emitEarlyReturnChain(body []byte, chain earlyReturnChain, ctx *emitCtx) ([]byte, error) {
+	for _, step := range chain.steps {
+		var err error
+		body, err = emitStraightBlock(body, step.block, ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !step.block.Term.Cond.IsValid() {
+			return nil, fmt.Errorf("wasmssa: early-return chain brif has invalid cond")
+		}
+		body = pushValue(body, step.block.Term.Cond, ctx)
+		if !step.retOnTrueArm {
+			body = append(body, 0x45) // i32.eqz — flip so wasm `if` enters on the early-ret arm
+		}
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body, err = emitStraightBlock(body, step.retBlock, ctx)
+		if err != nil {
+			return nil, err
+		}
+		body = emitRet(body, step.retBlock.Term, ctx)
+		body = inst.InstEnd(body)
+	}
+	body, err := emitStraightBlock(body, chain.final, ctx)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, chain.final.Term, ctx)
 	return body, nil
 }
 
