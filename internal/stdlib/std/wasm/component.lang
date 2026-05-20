@@ -537,17 +537,49 @@ pub function put_canon_section_lower_no_opts(buf: u8[], func_idx: u32): u8[] {
 //   01                  // sort = func (0x01)
 //   <func_idx:uleb>
 //   00                  // no externdesc tag
-pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32): u8[] {
+// put_export_section_funcs — emit a component-level export section
+// containing N function exports, all of the label-form exportname
+// kind (0x00). Each entry has its own name + component-level
+// func-idx; the two parallel arrays must have equal length.
+//
+// Spec (Binary.md):
+//   export     ::= n:<exportname> si:<sortidx> [t:<externdesc>]?
+//   exportname ::= 0x00 <name>   -- label
+//                | 0x01 <name>   -- deprecated label
+//                | ...           -- interface name, etc.
+//   sortidx    ::= s:<sort> i:<u32>
+//
+// Encoded body for N label-form func exports:
+//
+//   <N:uleb>            // vec(N) exports
+//   (00 <name> 01 <func-idx> 00)*  // N entries: kind label + name +
+//                                  //   sort func + idx + no externdesc
+pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32[]): u8[] {
     var body: u8[] = [];
-    body = leb128.uleb_u32(body, 1u32);          // vec(1)
-    body = body.push(0u8);                       // exportname kind = label
-    body = encode.put_name(body, name);
-    body = body.push(1u8);                       // sort: func
-    body = leb128.uleb_u32(body, func_idx);
-    body = body.push(0u8);                       // no externdesc
+    var n: i32 = names.len();
+    body = leb128.uleb_u32(body, n as u32);      // vec(N) exports
+    var i: i32 = 0;
+    while (i < n) {
+        body = body.push(0u8);                   // exportname kind = label
+        body = encode.put_name(body, names[i]);
+        body = body.push(1u8);                   // sort: func
+        body = leb128.uleb_u32(body, func_idxs[i]);
+        body = body.push(0u8);                   // no externdesc
+        i = i + 1;
+    }
 
     var out: u8[] = buf;
     out = out.push(section_export());
     out = leb128.uleb_u32(out, body.len() as u32);
     return encode.put_bytes(out, body);
+}
+
+// put_export_section_one_func — convenience wrapper over
+// put_export_section_funcs for the single-export case. Existing
+// call sites in the e2e tests use this; new multi-export code
+// should reach for put_export_section_funcs directly.
+pub function put_export_section_one_func(buf: u8[], name: string, func_idx: u32): u8[] {
+    var names: string[] = [name];
+    var func_idxs: u32[] = [func_idx];
+    return put_export_section_funcs(buf, names, func_idxs);
 }

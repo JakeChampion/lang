@@ -9201,6 +9201,84 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentExportSectionTwoFuncs covers put_export_section_funcs
+// in its multi-entry shape. Builds a component that imports one
+// function and re-exports it under two different names — the
+// simplest shape that exercises multi-export without needing two
+// canon-lifts.
+func TestWASMComponentExportSectionTwoFuncs(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_import_section_one_func(comp, "h", 0u32);
+
+    // Re-export the imported func twice under different names.
+    var exp_names: string[] = ["g0", "g1"];
+    var exp_funcs: u32[] = [0u32, 0u32];
+    comp = component.put_export_section_funcs(comp, exp_names, exp_funcs);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"\"g0\"",
+		"\"g1\"",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+	// Both export declarations should appear.
+	if strings.Count(watStr, "(export ") < 2 {
+		t.Errorf("expected at least 2 (export) declarations, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentLiftedExport is the first end-to-end shape that
 // exercises every section composer std/wasm/component currently
 // ships: preamble + core-module + core-instance + alias + type +
