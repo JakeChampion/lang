@@ -30,7 +30,7 @@ pub function csv_escape(s: string): string {
 }
 
 pub function csv_join(arr: string[]): string {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
@@ -53,7 +53,7 @@ pub function csv_join(arr: string[]): string {
 // this helper covers the surface.
 pub function csv_parse_line(s: string): string[] {
     var out: string[] = [];
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var i: i32 = 0;
     var field: string = "";
     var in_quotes: boolean = false;
@@ -78,7 +78,7 @@ pub function csv_parse_line(s: string): string[] {
                 out = out.push(field);
                 field = "";
                 i = i + 1;
-            } else if (c == 34 && len(field) == 0) {
+            } else if (c == 34 && field.len() == 0) {
                 in_quotes = true;
                 i = i + 1;
             } else {

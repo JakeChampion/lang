@@ -146,7 +146,7 @@ function test_count_i32_wrong_count_reports(): Option[string] {
     }
 }
 
-function is_non_empty(s: string): boolean { return len(s) > 0; }
+function is_non_empty(s: string): boolean { return s.len() > 0; }
 
 function test_count_string_pass(): Option[string] {
     return assert_count_string(["", "x", "", "y", "z"], is_non_empty, 3);

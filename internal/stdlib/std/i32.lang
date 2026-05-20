@@ -93,7 +93,7 @@ pub function (b: i32) is_control(): boolean {
 // custom classifier predicates without writing a chain of
 // `b == x || b == y || ...` comparisons.
 pub function (b: i32) matches_any(bytes: string): boolean {
-    var n: i32 = len(bytes);
+    var n: i32 = bytes.len();
     var i: i32 = 0;
     while (i < n) {
         if (bytes[i] == b) { return true; }
@@ -741,10 +741,10 @@ pub function (n: i32) to_string(): string {
 // "0-042"). Already-wide values pass through.
 pub function (n: i32) to_string_padded(width: i32): string {
     var s: string = n.to_string();
-    if (len(s) >= width) { return s; }
+    if (s.len() >= width) { return s; }
     if (n >= 0) { return s.pad_start(width, "0"); }
     // For negatives, pad the body and re-prefix with '-'.
-    var body: string = s[1:len(s)];
+    var body: string = s[1:s.len()];
     return "-" + body.pad_start(width - 1, "0");
 }
 
@@ -757,9 +757,9 @@ pub function (n: i32) to_string_with_sep(sep: string): string {
     var sign: string = "";
     if (n < 0) {
         sign = "-";
-        s = s[1:len(s)];
+        s = s[1:s.len()];
     }
-    var L: i32 = len(s);
+    var L: i32 = s.len();
     if (L <= 3) { return sign + s; }
     var out: string = "";
     var i: i32 = 0;

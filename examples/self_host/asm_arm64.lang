@@ -40,7 +40,7 @@ import "./parser";
 function sanitize_label(name: string): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(name)) {
+    while (i < name.len()) {
         var b: i32 = name[i];
         if (b == 46) { out = out + "__"; }
         else { out = out + name[i:i + 1]; }
@@ -73,13 +73,13 @@ function i32_to_string(n: i32): string {
 // leading `-`). Stops at the first non-digit byte. Mirrors
 // the x86-64 backend helper of the same name.
 function digits_to_i32(s: string): i32 {
-    if (len(s) == 0) { return 0; }
+    if (s.len() == 0) { return 0; }
     var neg: boolean = false;
     var start: i32 = 0;
     if (s[0] == 45) { neg = true; start = 1; }
     var acc: i32 = 0;
     var i: i32 = start;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b < 48 || b > 57) {
             if (neg) { return 0 - acc; }
@@ -96,9 +96,9 @@ function digits_to_i32(s: string): i32 {
 // byte is an ASCII digit. Used by ExprFieldAccess to detect
 // tuple-style numeric field names versus struct field names.
 function is_all_digits(s: string): boolean {
-    if (len(s) == 0) { return false; }
+    if (s.len() == 0) { return false; }
     var i: i32 = 0;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b < 48 || b > 57) { return false; }
         i = i + 1;
@@ -112,7 +112,7 @@ function is_all_digits(s: string): boolean {
 
 function has_str(xs: string[], s: string): boolean {
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         if (xs[i] == s) { return true; }
         i = i + 1;
     }
@@ -133,7 +133,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprCall(c) => {
             acc = collect_idents_expr(c.callee, acc);
             var i: i32 = 0;
-            while (i < len(c.args)) {
+            while (i < c.args.len()) {
                 acc = collect_idents_expr(c.args[i], acc);
                 i = i + 1;
             }
@@ -141,7 +141,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < len(a.elements)) {
+            while (i < a.elements.len()) {
                 acc = collect_idents_expr(a.elements[i], acc);
                 i = i + 1;
             }
@@ -149,7 +149,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < len(t.elements)) {
+            while (i < t.elements.len()) {
                 acc = collect_idents_expr(t.elements[i], acc);
                 i = i + 1;
             }
@@ -166,7 +166,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         },
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
-            while (i < len(sl.field_values)) {
+            while (i < sl.field_values.len()) {
                 acc = collect_idents_expr(sl.field_values[i], acc);
                 i = i + 1;
             }
@@ -175,7 +175,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
         parser.ExprLambda(lm) => {
             var i: i32 = 0;
-            while (i < len(lm.body)) {
+            while (i < lm.body.len()) {
                 acc = collect_idents_stmt(lm.body[i], acc);
                 i = i + 1;
             }
@@ -194,12 +194,12 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtIf(i) => {
             acc = collect_idents_expr(i.cond, acc);
             var ti: i32 = 0;
-            while (ti < len(i.then_body)) {
+            while (ti < i.then_body.len()) {
                 acc = collect_idents_stmt(i.then_body[ti], acc);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
-            while (ei < len(i.else_body)) {
+            while (ei < i.else_body.len()) {
                 acc = collect_idents_stmt(i.else_body[ei], acc);
                 ei = ei + 1;
             }
@@ -208,7 +208,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtWhile(w) => {
             acc = collect_idents_expr(w.cond, acc);
             var i: i32 = 0;
-            while (i < len(w.body)) {
+            while (i < w.body.len()) {
                 acc = collect_idents_stmt(w.body[i], acc);
                 i = i + 1;
             }
@@ -218,9 +218,9 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtMatch(m) => {
             acc = collect_idents_expr(m.scrutinee, acc);
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 var bi: i32 = 0;
-                while (bi < len(m.arms[ai].body)) {
+                while (bi < m.arms[ai].body.len()) {
                     acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
                     bi = bi + 1;
                 }
@@ -231,7 +231,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtFor(f) => {
             acc = collect_idents_expr(f.iter, acc);
             var i: i32 = 0;
-            while (i < len(f.body)) {
+            while (i < f.body.len()) {
                 acc = collect_idents_stmt(f.body[i], acc);
                 i = i + 1;
             }
@@ -251,12 +251,12 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
             var ti: i32 = 0;
-            while (ti < len(i.then_body)) {
+            while (ti < i.then_body.len()) {
                 acc = collect_bound_stmt(i.then_body[ti], acc);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
-            while (ei < len(i.else_body)) {
+            while (ei < i.else_body.len()) {
                 acc = collect_bound_stmt(i.else_body[ei], acc);
                 ei = ei + 1;
             }
@@ -264,7 +264,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         },
         parser.StmtWhile(w) => {
             var i: i32 = 0;
-            while (i < len(w.body)) {
+            while (i < w.body.len()) {
                 acc = collect_bound_stmt(w.body[i], acc);
                 i = i + 1;
             }
@@ -273,15 +273,15 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtAssign(_) => { return acc; },
         parser.StmtMatch(m) => {
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 match (m.arms[ai].pattern) {
                     parser.PatVariant(pv) => {
-                        if (len(pv.binding) > 0) { acc = acc.push(pv.binding); }
+                        if (pv.binding.len() > 0) { acc = acc.push(pv.binding); }
                     },
                     parser.PatWildcard(_) => { }
                 }
                 var bi: i32 = 0;
-                while (bi < len(m.arms[ai].body)) {
+                while (bi < m.arms[ai].body.len()) {
                     acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
                     bi = bi + 1;
                 }
@@ -292,7 +292,7 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtFor(f) => {
             acc = acc.push(f.var_name);
             var i: i32 = 0;
-            while (i < len(f.body)) {
+            while (i < f.body.len()) {
                 acc = collect_bound_stmt(f.body[i], acc);
                 i = i + 1;
             }
@@ -308,24 +308,24 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
-    while (bi < len(lm.body)) {
+    while (bi < lm.body.len()) {
         refs = collect_idents_stmt(lm.body[bi], refs);
         bi = bi + 1;
     }
     var bound: string[] = [];
     var pi: i32 = 0;
-    while (pi < len(lm.params)) {
+    while (pi < lm.params.len()) {
         bound = bound.push(lm.params[pi].name);
         pi = pi + 1;
     }
     var si: i32 = 0;
-    while (si < len(lm.body)) {
+    while (si < lm.body.len()) {
         bound = collect_bound_stmt(lm.body[si], bound);
         si = si + 1;
     }
     var caps: string[] = [];
     var ri: i32 = 0;
-    while (ri < len(refs)) {
+    while (ri < refs.len()) {
         var nm: string = refs[ri];
         if (!has_str(bound, nm) && !has_str(caps, nm) && outer.has_local(nm)) {
             caps = caps.push(nm);
@@ -503,7 +503,7 @@ function (s: EmitState) bind_local_typed(name: string, ty: string): EmitState {
 }
 
 function (s: EmitState) local_type_of(name: string): string {
-    var i: i32 = len(s.local_names) - 1;
+    var i: i32 = s.local_names.len() - 1;
     while (i >= 0) {
         if (s.local_names[i] == name) { return s.local_types[i]; }
         i = i - 1;
@@ -1022,7 +1022,7 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
-    if (len(name) > 0 && name[len(name) - 1] == 93) { return "array"; }
+    if (name.len() > 0 && name[name.len() - 1] == 93) { return "array"; }
     return "unknown";
 }
 
@@ -1032,7 +1032,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
         parser.ExprBool(_) => { return "bool"; },
         parser.ExprString(_) => { return "string"; },
         parser.ExprArray(a) => {
-            if (len(a.elements) == 0) { return "array"; }
+            if (a.elements.len() == 0) { return "array"; }
             var et: string = infer_expr_type(a.elements[0], s);
             if (et == "string") { return "array_string"; }
             return "array";
@@ -1106,8 +1106,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                         if (lt == "fn_array_i32") { return "array_i32"; }
                     }
                     var fi: i32 = 0;
-                    while (fi < len(s.funcs)) {
-                        if (s.funcs[fi].name == id.name && len(s.funcs[fi].receiver_type) == 0) {
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
                             return ret_tag_of(s.funcs[fi].ret_type);
                         }
                         fi = fi + 1;
@@ -1167,7 +1167,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     }
                     if (rt == "string" || rt == "i32" || rt == "bool" || rt == "f64") {
                         var mi: i32 = 0;
-                        while (mi < len(s.funcs)) {
+                        while (mi < s.funcs.len()) {
                             if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type == rt) {
                                 return ret_tag_of(s.funcs[mi].ret_type);
                             }
@@ -1309,7 +1309,7 @@ function (s: EmitState) pop_loop_labels(): EmitState {
     var nex: string[] = [];
     var ncn: string[] = [];
     var i: i32 = 0;
-    while (i < len(s.loop_exit_labels) - 1) {
+    while (i < s.loop_exit_labels.len() - 1) {
         nex = nex.push(s.loop_exit_labels[i]);
         ncn = ncn.push(s.loop_cont_labels[i]);
         i = i + 1;
@@ -1350,13 +1350,13 @@ function (s: EmitState) pop_loop_labels(): EmitState {
 }
 
 function (s: EmitState) top_loop_exit(): string {
-    if (len(s.loop_exit_labels) == 0) { return ""; }
-    return s.loop_exit_labels[len(s.loop_exit_labels) - 1];
+    if (s.loop_exit_labels.len() == 0) { return ""; }
+    return s.loop_exit_labels[s.loop_exit_labels.len() - 1];
 }
 
 function (s: EmitState) top_loop_cont(): string {
-    if (len(s.loop_cont_labels) == 0) { return ""; }
-    return s.loop_cont_labels[len(s.loop_cont_labels) - 1];
+    if (s.loop_cont_labels.len() == 0) { return ""; }
+    return s.loop_cont_labels[s.loop_cont_labels.len() - 1];
 }
 
 function (s: EmitState) leave_function(): EmitState {
@@ -1396,7 +1396,7 @@ function (s: EmitState) leave_function(): EmitState {
 }
 
 function (s: EmitState) lookup_local(name: string): i32 {
-    var i: i32 = len(s.local_names) - 1;
+    var i: i32 = s.local_names.len() - 1;
     while (i >= 0) {
         if (s.local_names[i] == name) {
             return 0 - 8 * (i + 1);
@@ -1408,7 +1408,7 @@ function (s: EmitState) lookup_local(name: string): i32 {
 
 function (s: EmitState) has_local(name: string): boolean {
     var i: i32 = 0;
-    while (i < len(s.local_names)) {
+    while (i < s.local_names.len()) {
         if (s.local_names[i] == name) { return true; }
         i = i + 1;
     }
@@ -1463,7 +1463,7 @@ function fresh_label(s: EmitState): LabelOut {
 function count_locals(body: parser.Stmt[]): i32 {
     var n: i32 = 0;
     var i: i32 = 0;
-    while (i < len(body)) {
+    while (i < body.len()) {
         n = n + count_locals_in_stmt(body[i]);
         i = i + 1;
     }
@@ -1481,10 +1481,10 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             // counts. Wildcard arms add no binding.
             var n: i32 = 1;
             var i: i32 = 0;
-            while (i < len(m.arms)) {
+            while (i < m.arms.len()) {
                 match (m.arms[i].pattern) {
                     parser.PatVariant(pv) => {
-                        if (len(pv.binding) > 0 && pv.binding != "_") { n = n + 1; }
+                        if (pv.binding.len() > 0 && pv.binding != "_") { n = n + 1; }
                     },
                     parser.PatWildcard(_) => { }
                 }
@@ -1513,13 +1513,13 @@ function add_string_lit(s: EmitState, v: string): StringLitOut {
     // Dedup: load-bearing for shape-pointer dispatch in
     // ExprFieldAccess + StmtMatch. See asm.lang for rationale.
     var i: i32 = 0;
-    while (i < len(s.string_lits)) {
+    while (i < s.string_lits.len()) {
         if (s.string_lits[i] == v) {
             return StringLitOut { state: s, idx: i };
         }
         i = i + 1;
     }
-    var idx: i32 = len(s.string_lits);
+    var idx: i32 = s.string_lits.len();
     var sl: string[] = s.string_lits.push(v);
     var ns: EmitState = EmitState {
         out: s.out,
@@ -1672,7 +1672,7 @@ function (s: EmitState) mark_read_int(): EmitState {
 function escape_for_ascii(s: string): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(s)) {
+    while (i < s.len()) {
         var b: i32 = s[i];
         if (b == 34) { out = out + "\\\""; }
         else if (b == 92) { out = out + "\\\\"; }
@@ -1876,7 +1876,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             s = s.write("    adrp x1, .S" + i32_to_string(lo.idx) + "\n");
             s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(lo.idx) + "\n");
             s = s.write("    str x1, [x0]\n");
-            s = s.write("    mov x1, #" + i32_to_string(len(sv.value)) + "\n");
+            s = s.write("    mov x1, #" + i32_to_string(sv.value.len()) + "\n");
             s = s.write("    str x1, [x0, #8]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
@@ -1895,7 +1895,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // generic path below would chase a
                     // `__fn_i32.to_string` symbol that no FuncDecl
                     // emits, producing a link error.
-                    if (fa.field == "to_string" && len(c.args) == 0
+                    if (fa.field == "to_string" && c.args.len() == 0
                             && (prim_recv == "i32" || prim_recv == "string")) {
                         s = emit_expr(fa.obj, s);
                         if (prim_recv == "i32") {
@@ -1909,7 +1909,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.len()` / `.is_empty()` on
                     // strings and arrays. Inline — they read
                     // the length word directly.
-                    if (fa.field == "len" && len(c.args) == 0
+                    if (fa.field == "len" && c.args.len() == 0
                             && (prim_recv == "string"
                                 || prim_recv == "array_i32"
                                 || prim_recv == "array_string"
@@ -1924,7 +1924,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
-                    if (fa.field == "is_empty" && len(c.args) == 0
+                    if (fa.field == "is_empty" && c.args.len() == 0
                             && (prim_recv == "string"
                                 || prim_recv == "array_i32"
                                 || prim_recv == "array_string"
@@ -1944,7 +1944,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in i32 numeric methods. Inline — no
                     // runtime helper needed.
                     if (prim_recv == "i32") {
-                        if (fa.field == "abs" && len(c.args) == 0) {
+                        if (fa.field == "abs" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
                             // cneg: conditional negate. If x0 < 0
@@ -1954,7 +1954,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    str x0, [sp, #-16]!\n");
                             return s;
                         }
-                        if (fa.field == "min" && len(c.args) == 1) {
+                        if (fa.field == "min" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -1964,7 +1964,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    str x0, [sp, #-16]!\n");
                             return s;
                         }
-                        if (fa.field == "max" && len(c.args) == 1) {
+                        if (fa.field == "max" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -1979,7 +1979,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // single 8-byte payload (i32 or string-box
                     // ptr; both are 8 bytes in the operand-stack
                     // representation). Returns a fresh array.
-                    if (fa.field == "push" && len(c.args) == 1
+                    if (fa.field == "push" && c.args.len() == 1
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -1995,7 +1995,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // order. Same 8-byte payload assumption as
                     // `.push` / `.slice`; works for both i32[]
                     // and string[].
-                    if (fa.field == "reverse" && len(c.args) == 0
+                    if (fa.field == "reverse" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2010,7 +2010,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // element type (the helper just copies 8-byte
                     // payloads, so layout-compatible types — i32[]
                     // and string[] — both work).
-                    if (fa.field == "concat" && len(c.args) == 1
+                    if (fa.field == "concat" && c.args.len() == 1
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -2023,7 +2023,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.first()` / `.last()` on arrays —
                     // O(1) element access. UB on empty arrays.
-                    if (fa.field == "first" && len(c.args) == 0
+                    if (fa.field == "first" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2031,7 +2031,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
-                    if (fa.field == "last" && len(c.args) == 0
+                    if (fa.field == "last" && c.args.len() == 0
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2044,7 +2044,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // concatenates all elements with `sep` between
                     // them. Empty array → empty string. Single
                     // element → that element.
-                    if (fa.field == "join" && len(c.args) == 1
+                    if (fa.field == "join" && c.args.len() == 1
                             && prim_recv == "array_string") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
@@ -2060,7 +2060,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // element so content equality matches even
                     // when the .rodata slots differ.
                     if ((fa.field == "index_of" || fa.field == "contains")
-                            && len(c.args) == 1 && prim_recv == "array_string") {
+                            && c.args.len() == 1 && prim_recv == "array_string") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
@@ -2076,7 +2076,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     // Built-in `.sum()` on i32 arrays — returns
                     // the sum of all elements (0 if empty).
-                    if (fa.field == "sum" && len(c.args) == 0
+                    if (fa.field == "sum" && c.args.len() == 0
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
@@ -2092,7 +2092,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // (above) that calls `__lang_str_eq`; i32
                     // just uses register compare.
                     if ((fa.field == "index_of" || fa.field == "contains")
-                            && len(c.args) == 1 && prim_recv == "array_i32") {
+                            && c.args.len() == 1 && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
@@ -2113,7 +2113,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // the same emit shape so users can write
                     // `s.split(",")` instead of `str_split(s, ",")`.
                     if (prim_recv == "string") {
-                        if (fa.field == "split" && len(c.args) == 1) {
+                        if (fa.field == "split" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2124,7 +2124,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "contains" && len(c.args) == 1) {
+                        if (fa.field == "contains" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2136,7 +2136,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "starts_with" && len(c.args) == 1) {
+                        if (fa.field == "starts_with" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2146,7 +2146,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "ends_with" && len(c.args) == 1) {
+                        if (fa.field == "ends_with" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2156,7 +2156,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "index_of" && len(c.args) == 1) {
+                        if (fa.field == "index_of" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2166,7 +2166,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_search();
                             return s;
                         }
-                        if (fa.field == "trim" && len(c.args) == 0) {
+                        if (fa.field == "trim" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
                             s = s.write("    bl __lang_str_trim\n");
@@ -2175,7 +2175,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "to_upper" && len(c.args) == 0) {
+                        if (fa.field == "to_upper" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
                             s = s.write("    bl __lang_str_to_upper\n");
@@ -2184,7 +2184,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "to_lower" && len(c.args) == 0) {
+                        if (fa.field == "to_lower" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
                             s = s.write("    bl __lang_str_to_lower\n");
@@ -2193,7 +2193,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "repeat" && len(c.args) == 1) {
+                        if (fa.field == "repeat" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
@@ -2204,7 +2204,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_heap();
                             return s;
                         }
-                        if (fa.field == "replace" && len(c.args) == 2) {
+                        if (fa.field == "replace" && c.args.len() == 2) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
                             s = emit_expr(c.args[1], s);
@@ -2219,14 +2219,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         }
                     }
                     if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
-                        var pmi: i32 = len(c.args) - 1;
+                        var pmi: i32 = c.args.len() - 1;
                         while (pmi >= 0) {
                             s = emit_expr(c.args[pmi], s);
                             pmi = pmi - 1;
                         }
                         s = emit_expr(fa.obj, s);
                         s = s.write("    bl __fn_" + sanitize_label(prim_recv + "." + fa.field) + "\n");
-                        s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
+                        s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
@@ -2235,7 +2235,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // receiver lands at +16(x29) and arg[0] at
                     // +32(x29) in the callee. Dispatch on the
                     // receiver's shape pointer.
-                    var mi: i32 = len(c.args) - 1;
+                    var mi: i32 = c.args.len() - 1;
                     while (mi >= 0) {
                         s = emit_expr(c.args[mi], s);
                         mi = mi - 1;
@@ -2279,9 +2279,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_sum: s.needs_arr_i32_sum
                     };
                     var fdi: i32 = 0;
-                    while (fdi < len(s.funcs)) {
+                    while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
-                        if (fd_m.name == fa.field && len(fd_m.receiver_type) > 0) {
+                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
                             var arm_lit: StringLitOut = add_string_lit(s, fd_m.receiver_type);
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
@@ -2291,14 +2291,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    cmp x1, x2\n");
                             s = s.write("    b.ne " + next_l.name + "\n");
                             s = s.write("    bl __fn_" + sanitize_label(fd_m.receiver_type + "." + fd_m.name) + "\n");
-                            s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
+                            s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.write("    b .Lmethod_end_" + i32_to_string(m_end_lbl) + "\n");
                             s = s.write(next_l.name + ":\n");
                         }
                         fdi = fdi + 1;
                     }
-                    s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
+                    s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                     s = s.write("    mov x0, #-1\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.write(".Lmethod_end_" + i32_to_string(m_end_lbl) + ":\n");
@@ -2318,7 +2318,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // syscall directly.
             // len(arr) — load the length prefix at offset 0.
             // Same semantics as the x86-64 backend.
-            if (name == "len" && len(c.args) == 1) {
+            if (name == "len" && c.args.len() == 1) {
                 // Dispatch on operand type: string box → load
                 // len at +8; array box → load len at +0.
                 var lt: string = infer_expr_type(c.args[0], s);
@@ -2332,7 +2332,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
-            if (name == "print" && len(c.args) == 1) {
+            if (name == "print" && c.args.len() == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
@@ -2342,7 +2342,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    mov x0, #1\n");     // fd
                         s = s.write("    adrp x1, " + lbl + "\n");
                         s = s.write("    add x1, x1, :lo12:" + lbl + "\n");
-                        s = s.write("    mov x2, #" + i32_to_string(len(sv.value)) + "\n");
+                        s = s.write("    mov x2, #" + i32_to_string(sv.value.len()) + "\n");
                         s = s.write("    mov x8, #64\n");    // sys_write
                         s = s.write("    svc #0\n");
                         s = s.write("    mov x0, #0\n");
@@ -2364,7 +2364,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
             }
             // eprint(s) — same as print but writes to stderr.
-            if (name == "eprint" && len(c.args) == 1) {
+            if (name == "eprint" && c.args.len() == 1) {
                 var earg: parser.Expr = c.args[0];
                 match (earg) {
                     parser.ExprString(esv) => {
@@ -2374,7 +2374,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    mov x0, #2\n");     // fd 2 stderr
                         s = s.write("    adrp x1, " + elbl + "\n");
                         s = s.write("    add x1, x1, :lo12:" + elbl + "\n");
-                        s = s.write("    mov x2, #" + i32_to_string(len(esv.value)) + "\n");
+                        s = s.write("    mov x2, #" + i32_to_string(esv.value.len()) + "\n");
                         s = s.write("    mov x8, #64\n");
                         s = s.write("    svc #0\n");
                         s = s.write("    mov x0, #0\n");
@@ -2397,7 +2397,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // print_int(i32_expr) — builtin lowering to a call into
             // a runtime helper that converts the value to decimal
             // text and writes it to stdout.
-            if (name == "print_int" && len(c.args) == 1) {
+            if (name == "print_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_print_int\n");
@@ -2406,7 +2406,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_print_int();
                 return s;
             }
-            if (name == "eprint_int" && len(c.args) == 1) {
+            if (name == "eprint_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_i32_to_string\n");
@@ -2417,7 +2417,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_eprint();
                 return s;
             }
-            if (name == "exit" && len(c.args) == 1) {
+            if (name == "exit" && c.args.len() == 1) {
                 // sys_exit is syscall #93 on aarch64.
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
@@ -2427,7 +2427,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
-            if (name == "args_count" && len(c.args) == 0) {
+            if (name == "args_count" && c.args.len() == 0) {
                 s = s.write("    adrp x0, __lang_argc\n");
                 s = s.write("    add x0, x0, :lo12:__lang_argc\n");
                 s = s.write("    ldr x0, [x0]\n");
@@ -2435,7 +2435,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_args();
                 return s;
             }
-            if (name == "arg_at" && len(c.args) == 1) {
+            if (name == "arg_at" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_arg_at\n");
@@ -2443,7 +2443,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_args();
                 return s;
             }
-            if (name == "str_split" && len(c.args) == 2) {
+            if (name == "str_split" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2456,21 +2456,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // read_int() — builtin no-arg call to the read_int
             // helper. Returns the value in x0; push to rt-stack.
-            if (name == "read_int" && len(c.args) == 0) {
+            if (name == "read_int" && c.args.len() == 0) {
                 s = s.write("    bl __lang_read_int\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_read_int();
                 return s;
             }
             // read_line() — no-arg builtin. Returns string box.
-            if (name == "read_line" && len(c.args) == 0) {
+            if (name == "read_line" && c.args.len() == 0) {
                 s = s.write("    bl __lang_read_line\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_read_line();
                 return s;
             }
             // i32_to_string(n) — decimal text → string box.
-            if (name == "i32_to_string" && len(c.args) == 1) {
+            if (name == "i32_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_i32_to_string\n");
@@ -2479,7 +2479,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 return s;
             }
             // str_to_i32(s) — parse string box to i32.
-            if (name == "str_to_i32" && len(c.args) == 1) {
+            if (name == "str_to_i32" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_to_i32\n");
@@ -2490,7 +2490,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // str_starts_with / str_contains / str_index_of —
             // shared __lang_str_starts_with + __lang_str_index_of
             // runtime helpers.
-            if (name == "str_starts_with" && len(c.args) == 2) {
+            if (name == "str_starts_with" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2500,7 +2500,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_search();
                 return s;
             }
-            if (name == "str_ends_with" && len(c.args) == 2) {
+            if (name == "str_ends_with" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2510,7 +2510,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_search();
                 return s;
             }
-            if (name == "str_contains" && len(c.args) == 2) {
+            if (name == "str_contains" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2522,7 +2522,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_search();
                 return s;
             }
-            if (name == "str_index_of" && len(c.args) == 2) {
+            if (name == "str_index_of" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2532,7 +2532,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_search();
                 return s;
             }
-            if (name == "str_trim" && len(c.args) == 1) {
+            if (name == "str_trim" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_trim\n");
@@ -2541,7 +2541,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "str_to_upper" && len(c.args) == 1) {
+            if (name == "str_to_upper" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_to_upper\n");
@@ -2550,7 +2550,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "str_to_lower" && len(c.args) == 1) {
+            if (name == "str_to_lower" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_str_to_lower\n");
@@ -2559,7 +2559,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "str_repeat" && len(c.args) == 2) {
+            if (name == "str_repeat" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -2570,7 +2570,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "str_replace" && len(c.args) == 3) {
+            if (name == "str_replace" && c.args.len() == 3) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = emit_expr(c.args[2], s);
@@ -2583,7 +2583,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
-            if (name == "chr" && len(c.args) == 1) {
+            if (name == "chr" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __lang_chr\n");
@@ -2596,7 +2596,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // holding a closure box ptr. See asm.lang for the
             // calling convention rationale.
             if (s.has_local(name)) {
-                var ci: i32 = len(c.args) - 1;
+                var ci: i32 = c.args.len() - 1;
                 while (ci >= 0) {
                     s = emit_expr(c.args[ci], s);
                     ci = ci - 1;
@@ -2608,19 +2608,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x1, [sp]\n");
                 s = s.write("    ldr x2, [x1]\n");
                 s = s.write("    blr x2\n");
-                s = s.write("    add sp, sp, #" + i32_to_string((len(c.args) + 1) * 16) + "\n");
+                s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
-            var i: i32 = len(c.args) - 1;
+            var i: i32 = c.args.len() - 1;
             while (i >= 0) {
                 s = emit_expr(c.args[i], s);
                 i = i - 1;
             }
             s = s.write("    bl __fn_" + sanitize_label(name) + "\n");
             // Caller cleans up stack args.
-            if (len(c.args) > 0) {
-                s = s.write("    add sp, sp, #" + i32_to_string(len(c.args) * 16) + "\n");
+            if (c.args.len() > 0) {
+                s = s.write("    add sp, sp, #" + i32_to_string(c.args.len() * 16) + "\n");
             }
             // Result in x0 — push for the surrounding expr's
             // stack-machine semantics.
@@ -2632,7 +2632,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // pointer, same as the x86-64 backend; tuple field
             // access uses numeric `.0` / `.1` / … spellings and
             // resolves to a direct offset at the access site.
-            var n_elems: i32 = len(t.elements);
+            var n_elems: i32 = t.elements.len();
             var ti: i32 = 0;
             while (ti < n_elems) {
                 s = emit_expr(t.elements[ti], s);
@@ -2656,7 +2656,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Layout: [len: 8 bytes, val0, val1, …, val_(N-1)].
             // Same shape as the x86-64 backend; see asm.lang
             // for the rationale.
-            var n_elems: i32 = len(a.elements);
+            var n_elems: i32 = a.elements.len();
             var ai: i32 = 0;
             while (ai < n_elems) {
                 s = emit_expr(a.elements[ai], s);
@@ -2749,7 +2749,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Layout: [shape_ptr, val0, val1, …, val_(N-1)].
             // Same shape as the x86-64 backend; see asm.lang
             // for the rationale.
-            var n_fields: i32 = len(sl.field_values);
+            var n_fields: i32 = sl.field_values.len();
             var i: i32 = 0;
             while (i < n_fields) {
                 s = emit_expr(sl.field_values[i], s);
@@ -2823,11 +2823,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         needs_arr_i32_sum: s.needs_arr_i32_sum
             };
             var di: i32 = 0;
-            while (di < len(s.struct_decls)) {
+            while (di < s.struct_decls.len()) {
                 var sd: parser.StructDecl = s.struct_decls[di];
                 var fi: i32 = 0;
                 var found_idx: i32 = 0 - 1;
-                while (fi < len(sd.fields)) {
+                while (fi < sd.fields.len()) {
                     if (sd.fields[fi].name == fa.field) { found_idx = fi; }
                     fi = fi + 1;
                 }
@@ -2891,7 +2891,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // offset above the saved fp (callee sees it at
             // +16(x29), then args at +32, +48, …).
             var caps: string[] = lambda_captures(lm, s);
-            var n_caps: i32 = len(caps);
+            var n_caps: i32 = caps.len();
             var lam_id: i32 = s.label_n;
             s = EmitState {
                 out: s.out,
@@ -2935,7 +2935,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var saved_locals: string[] = s.local_names;
             var saved_local_types: string[] = s.local_types;
             var saved_in_function: boolean = s.in_function;
-            var argc_l: i32 = len(lm.params);
+            var argc_l: i32 = lm.params.len();
             var n_body_locals_l: i32 = count_locals(lm.body);
             var total_locals_l: i32 = 1 + n_caps + argc_l + n_body_locals_l;
             if (total_locals_l > 0) {
@@ -2963,10 +2963,10 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             while (ci < n_caps) {
                 var cap_ty: string = "unknown";
                 var li: i32 = 0;
-                while (li < len(saved_locals)) {
+                while (li < saved_locals.len()) {
                     if (saved_locals[li] == caps[ci]) {
                         cap_ty = saved_local_types[li];
-                        li = len(saved_locals);
+                        li = saved_locals.len();
                     } else {
                         li = li + 1;
                     }
@@ -2989,7 +2989,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 pi2 = pi2 + 1;
             }
             var bi_l: i32 = 0;
-            while (bi_l < len(lm.body)) {
+            while (bi_l < lm.body.len()) {
                 s = emit_stmt(lm.body[bi_l], s);
                 bi_l = bi_l + 1;
             }
@@ -3064,7 +3064,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
 
 function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
     var i: i32 = 0;
-    while (i < len(body)) {
+    while (i < body.len()) {
         s = emit_stmt(body[i], s);
         i = i + 1;
     }
@@ -3104,7 +3104,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = else_l.state;
             s = s.write("    cbz x0, " + else_l.name + "\n");
             s = emit_block(ifs.then_body, s);
-            if (len(ifs.else_body) > 0) {
+            if (ifs.else_body.len() > 0) {
                 var end_l: LabelOut = fresh_label(s);
                 s = end_l.state;
                 s = s.write("    b " + end_l.name + "\n");
@@ -3142,7 +3142,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             // Infer init type for string-aware dispatch.
             // Explicit annotation overrides inference.
             var ity: string = infer_expr_type(v.init, s);
-            if (len(v.type_name) > 0) {
+            if (v.type_name.len() > 0) {
                 ity = ret_tag_of(v.type_name);
             }
             s = emit_expr(v.init, s);
@@ -3218,7 +3218,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         needs_arr_i32_sum: s.needs_arr_i32_sum
             };
             var ai: i32 = 0;
-            while (ai < len(m.arms)) {
+            while (ai < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[ai];
                 var next_lbl: i32 = s.label_n;
                 s = EmitState {
@@ -3264,7 +3264,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         s = s.write("    add x2, x2, :lo12:.S" + i32_to_string(nameLit.idx) + "\n");
                         s = s.write("    cmp x1, x2\n");
                         s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
-                        if (len(pv.binding) > 0 && pv.binding != "_") {
+                        if (pv.binding.len() > 0 && pv.binding != "_") {
                             s = s.bind_local(pv.binding);
                             var bind_off: i32 = s.lookup_local(pv.binding);
                             s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
@@ -3273,7 +3273,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                     parser.PatWildcard(_) => { }
                 }
                 var bi: i32 = 0;
-                while (bi < len(arm.body)) {
+                while (bi < arm.body.len()) {
                     s = emit_stmt(arm.body[bi], s);
                     bi = bi + 1;
                 }
@@ -3360,7 +3360,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             // Body — break → .Lfor_end; continue → .Lfor_cont.
             s = s.push_loop_labels(".Lfor_end_" + i32_to_string(end_lbl), ".Lfor_cont_" + i32_to_string(cont_lbl));
             var bi: i32 = 0;
-            while (bi < len(f.body)) {
+            while (bi < f.body.len()) {
                 s = emit_stmt(f.body[bi], s);
                 bi = bi + 1;
             }
@@ -3376,12 +3376,12 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
         },
         parser.StmtBreak(_) => {
             var lbl: string = s.top_loop_exit();
-            if (len(lbl) == 0) { return s.write("    // break outside loop\n"); }
+            if (lbl.len() == 0) { return s.write("    // break outside loop\n"); }
             return s.write("    b " + lbl + "\n");
         },
         parser.StmtContinue(_) => {
             var lbl: string = s.top_loop_cont();
-            if (len(lbl) == 0) { return s.write("    // continue outside loop\n"); }
+            if (lbl.len() == 0) { return s.write("    // continue outside loop\n"); }
             return s.write("    b " + lbl + "\n");
         },
         parser.StmtUnknown(_) => { return s.write("    // unsupported: StmtUnknown\n"); }
@@ -3399,14 +3399,14 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
 // uniformly.
 function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     var label_name: string = fd.name;
-    if (len(fd.receiver_type) > 0) {
+    if (fd.receiver_type.len() > 0) {
         label_name = fd.receiver_type + "." + fd.name;
     }
     s = s.write("__fn_" + sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    var has_recv: boolean = len(fd.receiver_name) > 0;
-    var argc: i32 = len(fd.params);
+    var has_recv: boolean = fd.receiver_name.len() > 0;
+    var argc: i32 = fd.params.len();
     if (has_recv) { argc = argc + 1; }
     var n_body_locals: i32 = count_locals(fd.body);
     var total_locals: i32 = argc + n_body_locals;
@@ -3428,7 +3428,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     }
     var recv_shift: i32 = 0;
     if (has_recv) { recv_shift = 1; }
-    var n_params: i32 = len(fd.params);
+    var n_params: i32 = fd.params.len();
     var i: i32 = 0;
     while (i < n_params) {
         s = s.bind_local_typed(fd.params[i].name, ret_tag_of(fd.params[i].type_name));
@@ -3439,7 +3439,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
         i = i + 1;
     }
     var bi: i32 = 0;
-    while (bi < len(fd.body)) {
+    while (bi < fd.body.len()) {
         s = emit_stmt(fd.body[bi], s);
         bi = bi + 1;
     }
@@ -3456,7 +3456,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
 
 function has_main(mod: parser.Module): boolean {
     var i: i32 = 0;
-    while (i < len(mod.funcs)) {
+    while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") { return true; }
         i = i + 1;
     }
@@ -3506,7 +3506,7 @@ pub function emit_module(mod: parser.Module): string {
     // __fn_<name>: label; _start dispatches into main() if it
     // exists.
     var fi: i32 = 0;
-    while (fi < len(mod.funcs)) {
+    while (fi < mod.funcs.len()) {
         s = emit_function(mod.funcs[fi], s);
         fi = fi + 1;
     }
@@ -3536,7 +3536,7 @@ pub function emit_module(mod: parser.Module): string {
             s = s.write("    sub sp, sp, #" + i32_to_string(bytes) + "\n");
         }
         var i: i32 = 0;
-        while (i < len(mod.top_stmts)) {
+        while (i < mod.top_stmts.len()) {
             s = emit_stmt(mod.top_stmts[i], s);
             i = i + 1;
         }
@@ -4473,10 +4473,10 @@ pub function emit_module(mod: parser.Module): string {
     // sequences in the quoted string, so a `\n` byte in the
     // source string lands as a single LF in the resulting
     // .rodata bytes.
-    if (len(s.string_lits) > 0) {
+    if (s.string_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
-        while (li < len(s.string_lits)) {
+        while (li < s.string_lits.len()) {
             s = s.write(".S" + i32_to_string(li) + ": .ascii \"" + escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
@@ -4843,11 +4843,11 @@ pub function emit_module(mod: parser.Module): string {
 // =================== VALIDATION ====================
 
 function contains(haystack: string, needle: string): boolean {
-    if (len(needle) == 0) { return true; }
-    if (len(haystack) < len(needle)) { return false; }
+    if (needle.len() == 0) { return true; }
+    if (haystack.len() < needle.len()) { return false; }
     var i: i32 = 0;
-    while (i <= len(haystack) - len(needle)) {
-        if (haystack[i:i + len(needle)] == needle) { return true; }
+    while (i <= haystack.len() - needle.len()) {
+        if (haystack[i:i + needle.len()] == needle) { return true; }
         i = i + 1;
     }
     return false;

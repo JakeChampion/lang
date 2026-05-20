@@ -416,7 +416,7 @@ defer w.close();
 func TestFormatEnumAndMatchRoundTrip(t *testing.T) {
 	got := formatSrc(t, `pub enum Status { Ok, Err(string) }
 function f(s: Status): i32 {
-match (s) { Ok => { return 0; }, Err(msg) => { return len(msg); } }
+match (s) { Ok => { return 0; }, Err(msg) => { return msg.len(); } }
 return 0;
 }`)
 	for _, want := range []string{

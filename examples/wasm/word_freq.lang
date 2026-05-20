@@ -44,7 +44,7 @@ function tokenize(s: string): string[] {
   var lower: string = s.to_lower();
   var out: string[] = [];
   var i: i32 = 0;
-  var sLen: i32 = len(lower);
+  var sLen: i32 = lower.len();
   var start: i32 = 0;
   while (i <= sLen) {
     var b: i32 = 0;
@@ -78,7 +78,7 @@ function sort_pairs(keys: string[], counts: i32[]): void {
     counts[j] = tc;
   }
   var i: i32 = 1;
-  while (i < len(counts)) {
+  while (i < counts.len()) {
     var j: i32 = i;
     while (j > 0 && counts[j] > counts[j - 1]) {
       swap(j, j - 1);
@@ -95,7 +95,7 @@ function main(): i32 {
   var words: string[] = tokenize(text);
   var counts: Map[string, i32] = map_new(64);
   var i: i32 = 0;
-  while (i < len(words)) {
+  while (i < words.len()) {
     var w: string = words[i];
     match (counts.get(w)) {
       Some(n) => {
@@ -114,8 +114,8 @@ function main(): i32 {
   var vals_arr: i32[] = counts.values();
   sort_pairs(keys_arr, vals_arr);
   var topN: i32 = 5;
-  if (len(keys_arr) < topN) {
-    topN = len(keys_arr);
+  if (keys_arr.len() < topN) {
+    topN = keys_arr.len();
   }
   var k: i32 = 0;
   while (k < topN) {

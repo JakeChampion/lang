@@ -21,8 +21,8 @@ function check_always_ok(input: string): Option[string] {
 // Property: len(input) is non-negative — always true, but
 // useful as a smoke test of the integer-comparison path.
 function check_len_nonneg(input: string): Option[string] {
-    if (len(input) >= 0) { return None; }
-    return Some("len returned negative for input of " + len(input).to_string() + " bytes");
+    if (input.len() >= 0) { return None; }
+    return Some("len returned negative for input of " + input.len().to_string() + " bytes");
 }
 
 // Property: an idempotent transform — `to_upper(to_upper(s))`
@@ -39,11 +39,11 @@ function check_to_upper_idempotent(input: string): Option[string] {
 // path is exercising both sides.
 function check_trim_strips_spaces(input: string): Option[string] {
     var trimmed: string = input.trim();
-    if (len(trimmed) == 0) { return None; }
+    if (trimmed.len() == 0) { return None; }
     if (trimmed[0] == 32) {
         return Some("trim left a leading space: \"" + trimmed + "\"");
     }
-    if (trimmed[len(trimmed) - 1] == 32) {
+    if (trimmed[trimmed.len() - 1] == 32) {
         return Some("trim left a trailing space: \"" + trimmed + "\"");
     }
     return None;

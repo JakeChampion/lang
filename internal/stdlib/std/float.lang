@@ -56,7 +56,7 @@ function __float_to_string(n: f64, k: i32): string {
     // Pad fracInt's decimal repr to k digits with leading
     // zeros, then truncate to `effective`.
     var fracStr: string = fracInt.to_string();
-    while (len(fracStr) < k) { fracStr = "0" + fracStr; }
+    while (fracStr.len() < k) { fracStr = "0" + fracStr; }
     return out + "." + fracStr[0:effective];
 }
 

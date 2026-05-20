@@ -1307,7 +1307,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// `len(s)` — string-to-i32 byte-count. Same shape as the
+	// `s.len()` — string-to-i32 byte-count. Same shape as the
 	// array-index path: every string is observable byte-wise,
 	// so this is the channel through which string ops flow
 	// into the byte oracle's i32 return path.
@@ -1315,7 +1315,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		strs := sc.inScope(tString)
 		if len(strs) > 0 {
 			name := strs[g.ch.intN(len(strs))]
-			fmt.Fprintf(b, "len(%s)", name)
+			fmt.Fprintf(b, "%s.len()", name)
 			return true
 		}
 	}

@@ -35,7 +35,7 @@ function __url_hex_val(c: i32): i32 {
 }
 
 pub function url_encode(s: string): string {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
@@ -63,7 +63,7 @@ pub function url_encode(s: string): string {
 }
 
 pub function url_decode(s: string): string {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
@@ -88,7 +88,7 @@ pub function url_decode(s: string): string {
 
 
 pub function url_parse(s: string): Option[Url] {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     if (n == 0) { return None; }
 
     var u: Url = Url {
@@ -191,7 +191,7 @@ pub function url_parse(s: string): Option[Url] {
 
 pub function query_parse(s: string): Map[string, string[]] {
     var m: Map[string, string[]] = map_new(8);
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     if (n == 0) { return m; }
 
     var pair_start: i32 = 0;

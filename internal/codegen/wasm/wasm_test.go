@@ -500,7 +500,7 @@ func TestStrEqHelperHasInlineHeapFastPaths(t *testing.T) {
 }
 
 func TestLenOfStringRoutesThroughSSOHelper(t *testing.T) {
-	wat := compileToWAT(t, `function f(): i32 { return len("hello"); }`)
+	wat := compileToWAT(t, `function f(): i32 { return ("hello").len(); }`)
 	// `len(s)` lowers to OpStrLen, which the wasm backend
 	// emits as a call into the SSO seam `$__lang_str_len`.
 	// That helper branches on the top-bit inline flag: inline
@@ -629,7 +629,7 @@ func TestStringFromBytesHelperHasInlineOutputFastPath(t *testing.T) {
 func TestArgsHelperHasInlineOutputFastPath(t *testing.T) {
 	wat := compileToWAT(t, `function main(): i32 {
 		var a: string[] = args();
-		return len(a);
+		return a.len();
 	}`)
 	mustContain(t, wat, "(func $args")
 	mustContain(t, wat, "i32.const 0x80000000")
@@ -953,7 +953,7 @@ func TestStringFieldOffsetIsTwoWord(t *testing.T) {
 // i32 { return len(s); }` emits
 // `(param $s_data i32) (param $s_len i32) (result i32)`.
 func TestStringParamFansToDataLenPair(t *testing.T) {
-	wat := compileToWAT(t, `function f(s: string): i32 { return len(s); }`)
+	wat := compileToWAT(t, `function f(s: string): i32 { return s.len(); }`)
 	mustContain(t, wat, `(func $f (param $s_data i32) (param $s_len i32) (result i32)`)
 	// The pre-flip single-i32 shape MUST NOT appear.
 	mustNotContain(t, wat, `(func $f (param $s i32) (result i32)`)

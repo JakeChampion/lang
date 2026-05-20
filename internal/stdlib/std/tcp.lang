@@ -86,7 +86,7 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
         };
         while (true) {
             var chunk: string = tcp_recv(fd, 4096);
-            if (len(chunk) == 0) {
+            if (chunk.len() == 0) {
                 // EOF before request complete.
                 break;
             }
@@ -95,7 +95,7 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
             // pinning unbounded memory. Headers must fit in
             // the first 8 KiB; body capped at 1 MiB. Matches
             // http_parse_request's internal caps.
-            if (len(buf) > 8192 + 1048576) {
+            if (buf.len() > 8192 + 1048576) {
                 break;
             }
             match (http.http_parse_request(buf)) {
@@ -147,7 +147,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
         Some(s) => {
             var n: i32 = 0;
             var i: i32 = 0;
-            while (i < len(s)) {
+            while (i < s.len()) {
                 var b: i32 = s[i];
                 if (b < 48 || b > 57) { return fallback; }
                 n = n * 10 + (b - 48);

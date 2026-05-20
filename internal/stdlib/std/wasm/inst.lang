@@ -259,6 +259,6 @@ pub function put_function_body(buf: u8[], locals_bytes: u8[], body_bytes: u8[]):
     inner = encode.put_bytes(inner, locals_bytes);
     inner = encode.put_bytes(inner, body_bytes);
     inner = inner.push(11u8);  // 0x0B end-of-function
-    var out: u8[] = leb128.uleb_u32(buf, len(inner) as u32);
+    var out: u8[] = leb128.uleb_u32(buf, inner.len() as u32);
     return encode.put_bytes(out, inner);
 }

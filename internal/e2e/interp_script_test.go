@@ -126,7 +126,7 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`function main(): i32 {
     var s: string = read_all_stdin();
     print("read: " + s);
-    return len(s);
+    return s.len();
 }
 `), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -189,11 +189,11 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`function main(): i32 {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
-    if (len(bs) != 5) { return 1; }
+    if (bs.len() != 5) { return 1; }
     if (bs[0] != 72) { return 2; }
     if (bs[4] != 111) { return 3; }
     var ab: [u8] = s.as_bytes();
-    if (len(ab) != 5) { return 4; }
+    if (ab.len() != 5) { return 4; }
     if (ab[0] != 72) { return 5; }
     if (s.to_upper() != "HELLO") { return 6; }
     if (s.to_lower() != "hello") { return 7; }
@@ -356,7 +356,7 @@ function main(): i32 {
     h.append("Set-Cookie", "c=3");
     var all: string[] = h.get_all("set-cookie");
     var i: i32 = 0;
-    while (i < len(all)) {
+    while (i < all.len()) {
         print(all[i]);
         i = i + 1;
     }
@@ -398,7 +398,7 @@ function main(): i32 {
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
     h.append("X", "1");
-    return len(h.get_all("Y"));
+    return (h.get_all("Y")).len();
 }`,
 			wantExit: 0,
 		},
@@ -473,7 +473,7 @@ function main(): i32 {
         Some(req) => {
             var all: string[] = req.headers.get_all("Set-Cookie");
             var i: i32 = 0;
-            while (i < len(all)) {
+            while (i < all.len()) {
                 print(all[i]);
                 i = i + 1;
             }
@@ -1569,7 +1569,7 @@ function main(): i32 {
             if (req.body_string() != "hello world") { return 1; }
             if (req.body_len() != 11) { return 2; }
             var bs: u8[] = req.body_bytes();
-            if (len(bs) != 11) { return 3; }
+            if (bs.len() != 11) { return 3; }
             if (bs[0] != 104) { return 4; }  // 'h'
             if (bs[10] != 100) { return 5; } // 'd'
             return 0;
@@ -1623,7 +1623,7 @@ function main(): i32 {
     var bs: u8[] = "abc".bytes();
     var s: Stream = stream.stream_from_bytes(bs);
     var got: u8[] = s.read_all();
-    print(len(got).to_string());
+    print(got.len().to_string());
     print((got[0] as i32).to_string());
     print((got[2] as i32).to_string());
     return 0;
@@ -1652,7 +1652,7 @@ function main(): i32 {
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
     var bs: u8[] = s.read_all();
-    if (len(bs) != 0) { return 4; }
+    if (bs.len() != 0) { return 4; }
     print("ok");
     return 0;
 }`,
@@ -1863,7 +1863,7 @@ function main(): i32 {
     match (json.json_parse("{\"tags\":[\"a\",\"b\",\"c\"]}")) {
         Some(v) => {
             match (json.json_get_array(v, "tags")) {
-                Some(arr) => { print(len(arr).to_string()); },
+                Some(arr) => { print(arr.len().to_string()); },
                 None => { print("none"); }
             }
             return 0;
@@ -1990,11 +1990,11 @@ function main(): i32 {
 function main(): i32 {
     var s: Stream = stream.stream_from_string("hello");
     var first: u8[] = s.read_n(3);
-    print(len(first).to_string());
+    print(first.len().to_string());
     var rest: u8[] = s.read_n(99);
-    print(len(rest).to_string());
+    print(rest.len().to_string());
     var empty: u8[] = s.read_n(1);
-    print(len(empty).to_string());
+    print(empty.len().to_string());
     return 0;
 }`,
 			wantStdout: "3\n2\n0\n",
