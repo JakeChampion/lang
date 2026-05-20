@@ -89,19 +89,79 @@ func TestEmitArithmeticChain(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitRejectsMultiBlock — multi-block functions aren't
-// supported yet; EmitModule returns a clear error.
-func TestEmitRejectsMultiBlock(t *testing.T) {
+// TestEmitIfElseDiamond — `function(c, a, b) { return c ? a : b }`
+// compiled to an if-else diamond with a phi at the merge.
+// Emits a valid module.
+func TestEmitIfElseDiamond(t *testing.T) {
 	f := ssa.NewFunc("main")
+	c := f.AddParam()
 	a := f.AddParam()
+	b := f.AddParam()
 	entry := f.NewBlock()
-	mid := f.NewBlock()
-	f.SetBr(entry, mid)
-	f.SetRet(mid, a)
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	f.SetBr(thenB, merge)
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, a, b)
+	f.SetRet(merge, phi)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	if len(mod) < 8 {
+		t.Fatalf("module too short: %d bytes", len(mod))
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitIfElseDiamondWithOps — both arms compute distinct
+// expressions; phi merges them. Exercises arm-internal ops +
+// phi-arg writeback at branch sites.
+func TestEmitIfElseDiamondWithOps(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	f.SetBrIf(entry, c, thenB, elseB)
+	tVal := f.AddOp(thenB, ssa.OpAdd, a, b)
+	f.SetBr(thenB, merge)
+	fVal := f.AddOp(elseB, ssa.OpSub, a, b)
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, tVal, fVal)
+	f.SetRet(merge, phi)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitRejectsLoopShape — a function with a back-edge
+// (loop) is not yet supported; EmitModule returns a clear
+// error.
+func TestEmitRejectsLoopShape(t *testing.T) {
+	f := ssa.NewFunc("main")
+	c := f.AddParam()
+	entry := f.NewBlock()
+	header := f.NewBlock()
+	body := f.NewBlock()
+	done := f.NewBlock()
+	f.SetBr(entry, header)
+	f.SetBrIf(header, c, body, done)
+	f.SetBr(body, header) // back-edge
+	f.SetRet(done, ssa.Value{})
 
 	_, err := EmitModule(f, "main")
 	if err == nil {
-		t.Fatal("expected error for multi-block function")
+		t.Fatal("expected error for loop CFG")
 	}
 }
 

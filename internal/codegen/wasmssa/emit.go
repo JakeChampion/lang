@@ -4,28 +4,27 @@
 // (the flat op-list shape); this package consumes ssa.Func
 // instead, proving the direct path works end-to-end.
 //
-// Coverage is intentionally tiny in this PR — just enough to
-// produce a runnable module for a single-block, integer-only
-// function. Future PRs ramp the op set + control-flow coverage
-// until wasmssa reaches parity with wasmbin, at which point
-// wasmbin retires.
-//
-// Currently supported:
+// Coverage grows incrementally. Currently supported:
 //
 //   - i32 parameters
 //   - i32 return type
-//   - Single-block functions (no control flow; entry block ends
-//     with TermRet)
+//   - Single-block functions
+//   - If-else diamond shape:
+//     entry ─brif─→ T ┐
+//     ├─→ merge ─ret
+//     entry ─brif─→ F ┘
+//     T and F each end with `br merge`; merge may have phis
+//     (one wasm local per phi) and additional ops; merge ends
+//     with TermRet.
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
-//     OpGeU, OpNeg, OpNot
+//     OpGeU, OpNeg, OpNot, OpPhi (only in if-else merge blocks)
 //
 // Not yet supported (returns an unsupportedOp error):
 //
-//   - Multi-block CFGs
+//   - Loops (back-edges) and other multi-block CFG shapes
 //   - i64 / f32 / f64 / string values
-//   - OpPhi
 //   - Function calls, memory ops, alloc
 //   - Pair-return
 //
@@ -58,16 +57,7 @@ func EmitModule(f *ssa.Func, exportName string) ([]byte, error) {
 	if f.Entry == nil {
 		return nil, errors.New("wasmssa.EmitModule: func has no entry block")
 	}
-	if len(f.Blocks) != 1 {
-		return nil, fmt.Errorf("wasmssa.EmitModule: only single-block functions supported, got %d blocks",
-			len(f.Blocks))
-	}
-	entry := f.Blocks[0]
-	if entry.Term.Kind != ssa.TermRet {
-		return nil, fmt.Errorf("wasmssa.EmitModule: entry must end with TermRet, got %v", entry.Term.Kind)
-	}
-
-	body, valueToLocal, err := emitBody(f, entry)
+	body, valueToLocal, err := emitFunc(f)
 	if err != nil {
 		return nil, err
 	}
@@ -125,62 +115,230 @@ func realParams(f *ssa.Func) []ssa.Value {
 
 func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 
-// emitBody lowers f's single entry block to wasm instruction
-// bytes. Returns the body bytes (without trailing end), a
-// map from ssa.Value.ID to wasm local index, and any error.
+// emitFunc lowers f to wasm instruction bytes. Returns the
+// body bytes (without trailing end), a map from ssa.Value.ID
+// to wasm local index, and any error.
 //
 // Local layout: params first (indices 0..N-1), then one local
 // per non-param Op.Result.
-func emitBody(f *ssa.Func, b *ssa.Block) ([]byte, map[int32]uint32, error) {
+//
+// CFG dispatch:
+//   - 1 block ending in TermRet → straight-line emission.
+//   - 4 blocks shaped as if-else diamond → wasm `if`/`else`/
+//     `end` form with phi-write into shared locals.
+//   - Anything else → unsupported error.
+func emitFunc(f *ssa.Func) ([]byte, map[int32]uint32, error) {
 	valueToLocal := map[int32]uint32{}
-	var nextLocal uint32
+	nextLocal := uint32(0)
 	for _, p := range realParams(f) {
 		valueToLocal[p.ID] = nextLocal
 		nextLocal++
 	}
 
-	var body []byte
-	for _, op := range b.Ops {
-		newBody, err := emitOp(body, op, valueToLocal, &nextLocal)
+	// Pre-assign locals for every Op.Result across all
+	// blocks (including phis). Doing this up front lets
+	// downstream emission look up a local by Value ID
+	// regardless of which block emits the def.
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Result.IsValid() {
+				if _, ok := valueToLocal[op.Result.ID]; !ok {
+					valueToLocal[op.Result.ID] = nextLocal
+					nextLocal++
+				}
+			}
+		}
+	}
+
+	// Single-block case.
+	if len(f.Blocks) == 1 {
+		entry := f.Blocks[0]
+		if entry.Term.Kind != ssa.TermRet {
+			return nil, nil, fmt.Errorf("wasmssa: single-block func must end with TermRet, got %v",
+				entry.Term.Kind)
+		}
+		body, err := emitStraightBlock(nil, entry, valueToLocal)
 		if err != nil {
 			return nil, nil, err
 		}
-		body = newBody
+		body = emitRet(body, entry.Term, valueToLocal)
+		return body, valueToLocal, nil
 	}
 
-	// Terminator (TermRet only, asserted by caller).
-	if b.Term.Value.IsValid() {
-		body = pushValue(body, b.Term.Value, valueToLocal)
+	// If-else diamond case.
+	if diamond, ok := classifyIfElseDiamond(f); ok {
+		body, err := emitIfElseDiamond(nil, diamond, valueToLocal)
+		if err != nil {
+			return nil, nil, err
+		}
+		return body, valueToLocal, nil
+	}
+
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only single-block and if-else diamonds handled",
+		len(f.Blocks))
+}
+
+// emitStraightBlock emits the ops of `b` (skipping phis,
+// which are handled separately at block-entry sites).
+func emitStraightBlock(body []byte, b *ssa.Block, valueToLocal map[int32]uint32) ([]byte, error) {
+	for _, op := range b.Ops {
+		if op.Kind == ssa.OpPhi {
+			continue // phis are written by predecessors at branch sites
+		}
+		newBody, err := emitOp(body, op, valueToLocal)
+		if err != nil {
+			return nil, err
+		}
+		body = newBody
+	}
+	return body, nil
+}
+
+// emitRet emits the bytes that materialise a TermRet — push
+// the return value (or zero), `return`.
+func emitRet(body []byte, term ssa.Terminator, valueToLocal map[int32]uint32) []byte {
+	if term.Value.IsValid() {
+		body = pushValue(body, term.Value, valueToLocal)
 	} else {
-		// Void-style ret with no value isn't supported here
-		// because we declared an i32 result. Return 0 to keep
-		// the module valid; real handling lands when we grow
-		// the type-tagging story.
 		body = inst.InstI32Const(body, 0)
 	}
-	body = inst.InstReturn(body)
-	return body, valueToLocal, nil
+	return inst.InstReturn(body)
+}
+
+// ifElseDiamond captures the four blocks of a recognised
+// if-else CFG shape.
+type ifElseDiamond struct {
+	entry, t, f, merge *ssa.Block
+}
+
+// classifyIfElseDiamond detects the canonical if-else shape:
+//
+//	entry ends with brif T, F
+//	T's only pred is entry; T ends with br merge
+//	F's only pred is entry; F ends with br merge
+//	merge has T and F as its preds; merge ends with ret
+//
+// Returns the recognised shape + true on a match.
+func classifyIfElseDiamond(f *ssa.Func) (ifElseDiamond, bool) {
+	if len(f.Blocks) != 4 || f.Entry == nil {
+		return ifElseDiamond{}, false
+	}
+	entry := f.Entry
+	if entry.Term.Kind != ssa.TermBrIf {
+		return ifElseDiamond{}, false
+	}
+	t, fb := entry.Term.True, entry.Term.False
+	if t == nil || fb == nil || t == fb {
+		return ifElseDiamond{}, false
+	}
+	if len(t.Preds) != 1 || t.Preds[0] != entry {
+		return ifElseDiamond{}, false
+	}
+	if len(fb.Preds) != 1 || fb.Preds[0] != entry {
+		return ifElseDiamond{}, false
+	}
+	if t.Term.Kind != ssa.TermBr || fb.Term.Kind != ssa.TermBr {
+		return ifElseDiamond{}, false
+	}
+	merge := t.Term.Target
+	if merge == nil || merge != fb.Term.Target {
+		return ifElseDiamond{}, false
+	}
+	if merge.Term.Kind != ssa.TermRet {
+		return ifElseDiamond{}, false
+	}
+	if len(merge.Preds) != 2 {
+		return ifElseDiamond{}, false
+	}
+	// Either pred order is acceptable; phi-arg lookup uses the
+	// recorded order.
+	return ifElseDiamond{entry: entry, t: t, f: fb, merge: merge}, true
+}
+
+// emitIfElseDiamond walks the diamond shape, emitting wasm
+// `if cond` / `else` / `end` around the two arms. Phis at
+// the merge block become shared locals; each arm writes to
+// the phi's local just before branching.
+func emitIfElseDiamond(body []byte, d ifElseDiamond, valueToLocal map[int32]uint32) ([]byte, error) {
+	body, err := emitStraightBlock(body, d.entry, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	// Push the brif cond + open `if` (no result; we use locals
+	// for cross-arm communication).
+	body = pushValue(body, d.entry.Term.Cond, valueToLocal)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// True arm.
+	body, err = emitStraightBlock(body, d.t, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = writePhiArgs(body, d.merge, d.t, valueToLocal)
+	body = inst.InstElse(body)
+	// False arm.
+	body, err = emitStraightBlock(body, d.f, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = writePhiArgs(body, d.merge, d.f, valueToLocal)
+	body = inst.InstEnd(body) // end if
+	// Merge ops (post-phi) + ret.
+	body, err = emitStraightBlock(body, d.merge, valueToLocal)
+	if err != nil {
+		return nil, err
+	}
+	body = emitRet(body, d.merge.Term, valueToLocal)
+	return body, nil
+}
+
+// writePhiArgs emits, for every phi at `merge`, the bytes
+// that push the phi-arg coming from `fromBlock` and store it
+// into the phi's local. fromBlock must be one of merge.Preds.
+func writePhiArgs(body []byte, merge, fromBlock *ssa.Block, valueToLocal map[int32]uint32) []byte {
+	predIdx := -1
+	for i, p := range merge.Preds {
+		if p == fromBlock {
+			predIdx = i
+			break
+		}
+	}
+	if predIdx < 0 {
+		return body // shouldn't happen; classifyIfElseDiamond guarantees
+	}
+	for _, op := range merge.Ops {
+		if op.Kind != ssa.OpPhi {
+			continue
+		}
+		if predIdx >= len(op.Args) {
+			continue
+		}
+		body = pushValue(body, op.Args[predIdx], valueToLocal)
+		if local, ok := valueToLocal[op.Result.ID]; ok {
+			body = inst.InstLocalSet(body, local)
+		}
+	}
+	return body
 }
 
 // emitOp lowers a single Op to wasm bytes. Appends to body
-// and returns the extended slice. Assigns a fresh local to
-// op.Result if it's valid + not already mapped.
-func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32, nextLocal *uint32) ([]byte, error) {
+// and returns the extended slice. Reads op.Result's local
+// (pre-assigned by emitFunc) to emit local.set.
+func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) ([]byte, error) {
 	switch op.Kind {
 	case ssa.OpConstInt:
 		body = inst.InstI32Const(body, int32(op.Imm))
-		return assignResult(body, op, valueToLocal, nextLocal), nil
+		return storeResult(body, op, valueToLocal), nil
 	case ssa.OpNeg:
 		// neg x → 0 - x; push 0, push x, i32.sub.
 		body = inst.InstI32Const(body, 0)
 		body = pushValue(body, op.Args[0], valueToLocal)
 		body = append(body, 0x6b) // i32.sub
-		return assignResult(body, op, valueToLocal, nextLocal), nil
+		return storeResult(body, op, valueToLocal), nil
 	case ssa.OpNot:
 		// not x → i32.eqz x (returns 1 if x == 0 else 0).
 		body = pushValue(body, op.Args[0], valueToLocal)
 		body = append(body, 0x45) // i32.eqz
-		return assignResult(body, op, valueToLocal, nextLocal), nil
+		return storeResult(body, op, valueToLocal), nil
 	}
 	// Binary i32 ops.
 	opcode, ok := binaryI32Opcode(op.Kind)
@@ -193,7 +351,7 @@ func emitOp(body []byte, op *ssa.Op, valueToLocal map[int32]uint32, nextLocal *u
 	body = pushValue(body, op.Args[0], valueToLocal)
 	body = pushValue(body, op.Args[1], valueToLocal)
 	body = append(body, opcode)
-	return assignResult(body, op, valueToLocal, nextLocal), nil
+	return storeResult(body, op, valueToLocal), nil
 }
 
 // pushValue emits a local.get for the wasm local backing v.
@@ -212,20 +370,15 @@ func pushValue(body []byte, v ssa.Value, valueToLocal map[int32]uint32) []byte {
 	return inst.InstLocalGet(body, idx)
 }
 
-// assignResult assigns op.Result a fresh wasm local (if not
-// already assigned) and emits local.set so the value on top
-// of the wasm stack ends up there.
-func assignResult(body []byte, op *ssa.Op, valueToLocal map[int32]uint32, nextLocal *uint32) []byte {
+// storeResult emits local.set for op.Result (pre-assigned by
+// emitFunc). No-op for side-effect-only ops with no Result.
+func storeResult(body []byte, op *ssa.Op, valueToLocal map[int32]uint32) []byte {
 	if !op.Result.IsValid() {
-		// Side-effect-only op (none currently supported but
-		// guard for forward-compat).
 		return body
 	}
 	idx, ok := valueToLocal[op.Result.ID]
 	if !ok {
-		idx = *nextLocal
-		*nextLocal++
-		valueToLocal[op.Result.ID] = idx
+		return body // shouldn't happen — emitFunc pre-assigns
 	}
 	return inst.InstLocalSet(body, idx)
 }
