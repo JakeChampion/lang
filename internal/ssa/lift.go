@@ -187,6 +187,11 @@ import (
 //     Load variants take (addr); push result. Stores take
 //     (addr, val); no result.
 //
+//   Phase 23:
+//   - Float memory access:
+//       OpFLoad  → OpLoadF
+//       OpFStore → OpStoreF
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -524,6 +529,22 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpStore16
 		}
 		l.out.AddOpNoResult(l.cur, kind, addr, val)
+	case ir.OpFLoad:
+		if len(l.stack) < 1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpFLoad at op[%d] needs addr operand", i)
+		}
+		addr := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		v := l.out.AddOp(l.cur, OpLoadF, addr)
+		l.stack = append(l.stack, v)
+	case ir.OpFStore:
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpFStore at op[%d] needs (addr, value) operands", i)
+		}
+		val := l.stack[len(l.stack)-1]
+		addr := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		l.out.AddOpNoResult(l.cur, OpStoreF, addr, val)
 	case ir.OpCallDirect:
 		argc := int(op.I32)
 		if len(l.stack) < argc {

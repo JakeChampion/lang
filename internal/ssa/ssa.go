@@ -224,6 +224,12 @@ const (
 	OpStore8
 	OpStore16
 
+	// Float load / store. The internal SSA float type is f64;
+	// backend codegen decides f32 vs f64 from the type-tagging
+	// story once it lands.
+	OpLoadF
+	OpStoreF
+
 	// Phi — SSA merge. In a block B with predecessors
 	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
 	// from P[i]. Phi ops MUST appear at the top of B before
@@ -374,6 +380,10 @@ func (k OpKind) String() string {
 		return "store8"
 	case OpStore16:
 		return "store16"
+	case OpLoadF:
+		return "load_f"
+	case OpStoreF:
+		return "store_f"
 	case OpPhi:
 		return "phi"
 	default:
