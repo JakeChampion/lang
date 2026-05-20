@@ -59,6 +59,7 @@ func (f *Func) Clone() *Func {
 					Result: op.Result,
 					Args:   append([]Value(nil), op.Args...),
 					Imm:    op.Imm,
+					F64:    op.F64,
 					Str:    op.Str,
 				}
 			}

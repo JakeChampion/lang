@@ -40,7 +40,7 @@ func IsPure(k OpKind) bool {
 // reduction lookups).
 func IsConst(k OpKind) bool {
 	switch k {
-	case OpConstInt, OpConstBool, OpConstString:
+	case OpConstInt, OpConstBool, OpConstString, OpConstFloat:
 		return true
 	default:
 		return false

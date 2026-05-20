@@ -99,6 +99,9 @@ func writeOp(b *strings.Builder, op *Op, blk *Block) {
 	case OpConstInt, OpConstBool:
 		b.WriteByte(' ')
 		b.WriteString(strconv.FormatInt(op.Imm, 10))
+	case OpConstFloat:
+		b.WriteByte(' ')
+		b.WriteString(strconv.FormatFloat(op.F64, 'g', -1, 64))
 	case OpConstString:
 		b.WriteByte(' ')
 		b.WriteString(strconv.Quote(op.Str))

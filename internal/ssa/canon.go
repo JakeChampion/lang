@@ -52,7 +52,8 @@ func Canonicalize(f *Func) {
 
 func isCommutative(k OpKind) bool {
 	switch k {
-	case OpAdd, OpMul, OpAnd, OpOr, OpXor, OpEq, OpNe:
+	case OpAdd, OpMul, OpAnd, OpOr, OpXor, OpEq, OpNe,
+		OpFAdd, OpFMul, OpFEq, OpFNe:
 		return true
 	default:
 		return false
