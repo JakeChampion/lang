@@ -8728,6 +8728,78 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentWasiStdMultiExport covers
+// put_type_section_one_instance_with_func_exports. Builds an
+// instance type with two no-result func exports, like
+// `wasi:io/streams::{blocking-flush, blocking-skip}` or the
+// `wasi:cli/std{in,out,err}` family. Verifies wasm-tools picks up
+// both exports.
+func TestWASMComponentWasiStdMultiExport(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var names: string[] = ["flush", "close"];
+    var ps0: string[] = [];
+    var pv0: u8[] = [];
+    var ps1: string[] = [];
+    var pv1: u8[] = [];
+    var names_per: string[][] = [ps0, ps1];
+    var valtypes_per: u8[][] = [pv0, pv1];
+
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_type_section_one_instance_with_func_exports(comp, names, names_per, valtypes_per);
+    comp = component.put_import_section_one_instance(comp, "test:multi/iface", 0u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	if vout, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{"\"flush\"", "\"close\"", "instance"} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentWasiExitImport covers
 // put_type_section_one_instance_one_func_export + put_import_section_one_instance.
 // Builds the WASI `wasi:cli/exit@0.2.0` interface shape: an instance
