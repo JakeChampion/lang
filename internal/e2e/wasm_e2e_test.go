@@ -11996,3 +11996,18 @@ func TestWASMRcAliasIncReassign(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", got)
 	}
 }
+
+// Phase 1d-iv: passing an array as a function-call argument
+// is an aliasing site — the callee receives a fresh reference
+// of the same buffer. The inc fires before the call.
+func TestWASMRcAliasIncCallArg(t *testing.T) {
+	src := `function f(arr: u8[]): i32 { return 0; }
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var _: i32 = f(arr);
+    return __rc_get(arr) - 2;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (call-arg should bump rc to 2)", got)
+	}
+}
