@@ -2744,3 +2744,17 @@ function main(): i32 {
 		})
 	}
 }
+
+// Phase 1d-iii: `y = x;` reassignment bumps the rc on x.
+func TestX86_64RcAliasIncReassign(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var other: u8[] = __alloc_u8(8);
+    other = arr;
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (assign-alias should bump rc to 2)", code)
+	}
+}
