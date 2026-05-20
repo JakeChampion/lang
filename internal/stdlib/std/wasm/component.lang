@@ -558,6 +558,44 @@ pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_result_ok_err — emit a component-level type
+// section that defines a single `result<ok, err>` type, with both
+// the ok arm and err arm explicitly typed. This is the most common
+// result shape in WASI worlds: HTTP request handlers, file ops,
+// network ops all return `result<T, error-code>` or similar.
+//
+// The four-way matrix (ok present, err present) collapses to
+// separate functions; only the both-present form ships in this
+// slice. Ok-only / err-only / empty results will land as later
+// composers if a real consumer needs them.
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x6a t?:<valtype> e?:<valtype>          -- result
+//
+// Each optional valtype is encoded as `0x01 + valtype` (present)
+// or `0x00` (absent). This composer always emits both as present.
+//
+// Encoded body for one `result<ok, err>`:
+//
+//   01           // vec(1) defvaltype entries
+//   6a           // result form (0x6a)
+//   01 <ok>      // ok present + valtype byte
+//   01 <err>     // err present + valtype byte
+pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_valtype: u8): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(106u8);                      // result form (0x6a)
+    body = body.push(1u8);                        // ok present
+    body = body.push(ok_valtype);
+    body = body.push(1u8);                        // err present
+    body = body.push(err_valtype);
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
