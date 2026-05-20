@@ -162,6 +162,11 @@ import (
 //     call. Args layout: (args..., env_ptr); I32 = arg count
 //     including env_ptr. Lifts to ssa.OpCall with Str = callee.
 //
+//   Phase 19:
+//   - OpMakeClosure → ssa.OpMakeClosure with Str = target name,
+//     Args = the N captures (per op.I32).
+//   - OpMakeEnv → ssa.OpMakeEnv with Args = the N captures.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -542,6 +547,29 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-argc]
 		result := l.out.AddOp(l.cur, OpCall, args...)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, result)
+	case ir.OpMakeClosure:
+		// (cap_0 ... cap_{n-1}) → i32 closure ptr.
+		capc := int(op.I32)
+		if len(l.stack) < capc {
+			return fmt.Errorf("ssa.LiftFromIR: OpMakeClosure at op[%d] needs %d captures, stack has %d",
+				i, capc, len(l.stack))
+		}
+		caps := append([]Value(nil), l.stack[len(l.stack)-capc:]...)
+		l.stack = l.stack[:len(l.stack)-capc]
+		result := l.out.AddOp(l.cur, OpMakeClosure, caps...)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, result)
+	case ir.OpMakeEnv:
+		// (cap_0 ... cap_{n-1}) → i32 env ptr.
+		capc := int(op.I32)
+		if len(l.stack) < capc {
+			return fmt.Errorf("ssa.LiftFromIR: OpMakeEnv at op[%d] needs %d captures, stack has %d",
+				i, capc, len(l.stack))
+		}
+		caps := append([]Value(nil), l.stack[len(l.stack)-capc:]...)
+		l.stack = l.stack[:len(l.stack)-capc]
+		result := l.out.AddOp(l.cur, OpMakeEnv, caps...)
 		l.stack = append(l.stack, result)
 	case ir.OpIf:
 		switch op.I32 {
