@@ -1017,6 +1017,41 @@ pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]
     return encode.put_bytes(out, body);
 }
 
+// put_start_section_no_args_no_results — emit a component-level
+// start section that calls `funcidx` once at component
+// instantiation time, with no value arguments and binding no
+// component-level value results.
+//
+// The component-level start section differs from the core wasm
+// start section: it can take and return component-level values
+// (used for build-time constant computation). This composer covers
+// the simplest case — no values either way — which matches the
+// shape of a setup hook that runs side effects (initialisation,
+// logging, …) and binds nothing.
+//
+// Spec (Binary.md):
+//   start ::= f:<funcidx> args:vec(<value-idx>) results:u32
+//
+// `results` is the COUNT of resulting value bindings to declare,
+// not their indices; we always emit 0.
+//
+// Encoded body:
+//
+//   <funcidx:uleb>      // function to call
+//   00                  // args vec count = 0
+//   00                  // results count = 0
+pub function put_start_section_no_args_no_results(buf: u8[], funcidx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, funcidx);
+    body = leb128.uleb_u32(body, 0u32);          // args vec count
+    body = leb128.uleb_u32(body, 0u32);          // results count
+
+    var out: u8[] = buf;
+    out = out.push(section_start());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_alias_section_core_export_func — emit an alias section
 // containing one entry that surfaces a core function export of a
 // core instance as a top-level core-sort func. After this alias

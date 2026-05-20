@@ -10355,6 +10355,84 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentStartSection covers
+// put_start_section_no_args_no_results. Declares a no-result
+// functype, imports a function of that type, then a start section
+// calling the imported function with no value args. Verifies
+// wasm-tools picks up the `(start ...)` form.
+//
+// Component-level start sections are how a component runs build-
+// time initialisation (computing constants at instantiation time,
+// running setup hooks). This composer covers the simplest case
+// (no value args, no result bindings).
+func TestWASMComponentStartSection(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/component";
+function main(): i32 {
+    var no_params: string[] = [];
+    var no_valtypes: u8[] = [];
+
+    var comp: u8[] = component.put_component_header([]);
+    // Type 0: (func)
+    comp = component.put_type_section_one_func_no_result(comp, no_params, no_valtypes);
+    // Import "f" of type 0.
+    comp = component.put_import_section_one_func(comp, "f", 0u32);
+    // Start: call func 0 with no args, no result bindings.
+    comp = component.put_start_section_no_args_no_results(comp, 0u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	// The component-level start section binds component-level
+	// `value`s, which wasm-tools considers an experimental feature.
+	// Default `validate` rejects without `--features all`; this
+	// just means the start composer's bytes are structurally
+	// correct but only usable under hosts that opt in.
+	if vout, err := exec.Command("wasm-tools", "validate", "--features", "all", compPath).CombinedOutput(); err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate (--features all) failed: %v\n%s\nbytes:\n%s", err, vout, hexBytes)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, wat)
+	}
+	watStr := string(wat)
+	if !strings.Contains(watStr, "(start") {
+		t.Errorf("expected (start ...) in printed component, got:\n%s", watStr)
+	}
+}
+
 // TestWASMComponentResourceNewsRepsTwo covers
 // put_canon_section_resource_news + put_canon_section_resource_reps
 // in their multi-entry shapes: two resource types declared, then
