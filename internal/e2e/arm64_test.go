@@ -12610,6 +12610,35 @@ function main(): i32 {
 	}
 }
 
+// TestArm64HeapAddressFits32Bits is a diagnostic probe that
+// exits non-zero iff the bump heap's first allocation lands
+// at an address that doesn't fit in i32. The runtime's
+// __lang_alloc currently uses a 0x10000000 hint without
+// MAP_FIXED — qemu-aarch64 honors the hint exactly, but the
+// native-arm64 kernel may relocate the mmap into the standard
+// high mmap region (above 4 GiB). When that happens, any
+// stdlib code that casts a heap pointer to i32 silently
+// truncates and traps on the bad address.
+//
+// Currently expected to pass on every host (the post-fix
+// stdlib doesn't truncate pointers anymore), but the test
+// stays as a regression watch — if a future change lands a
+// new `as i32` on a pointer path, the probe surfaces it
+// before the langsmith corpus does.
+func TestArm64HeapAddressFits32Bits(t *testing.T) {
+	src := `function main(): i32 {
+    var p: usize = __alloc(8);
+    var pi: i64 = p as i64;
+    var hi: i32 = (pi >> (32 as i64)) as i32;
+    return hi;
+}`
+	out, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Errorf("first alloc has high bits set (hi=%d) — heap is above 4 GiB; stdlib `pointer as i32` casts will truncate.\noutput:\n%s",
+			code, out)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
