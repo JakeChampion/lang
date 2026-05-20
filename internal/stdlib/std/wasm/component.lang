@@ -634,6 +634,44 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
     return encode.put_bytes(out, body);
 }
 
+// put_type_section_one_flags — emit a component-level type section
+// that defines a single `flags` type with the given label list. A
+// flags value carries any subset of the labelled bits — like a
+// Rust `bitflags!` or a C bitmask. Semantically a bitset; encoding-
+// wise identical to enum (same labels vec), only the form byte
+// changes (0x6e vs 0x6d).
+//
+// WASI uses flags for permission-style values like
+// `wasi:filesystem/types::descriptor-flags` (read / write /
+// file-integrity-sync / data-integrity-sync / ...).
+//
+// Spec (Binary.md, `defvaltype` production):
+//   defvaltype ::= ... | 0x6e ls:vec(<label>)          -- flags
+//
+// Encoded body for an N-flag type:
+//
+//   01           // vec(1) defvaltype entries
+//   6e           // flags form (0x6e)
+//   <N:uleb>     // vec(N) labels
+//   <label0> <label1> …    // N uleb-prefixed UTF-8 names
+pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1)
+    body = body.push(110u8);                      // flags form (0x6e)
+    var n: i32 = labels.len();
+    body = leb128.uleb_u32(body, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = encode.put_name(body, labels[i]);
+        i = i + 1;
+    }
+
+    var out: u8[] = buf;
+    out = out.push(section_type());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // put_canon_section_resource_drop — emit a canon section
 // containing a single `canon resource.drop` entry. The dropped
 // resource type is given by typeidx. resource.drop is one of
