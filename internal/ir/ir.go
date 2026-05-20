@@ -1474,6 +1474,23 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		// balanced.
 		b.emit(Op{Kind: OpDrop})
 	}
+	// Use b.locals[name] so we only dec slots that user code
+	// actually writes to. Two scope-separated Var declarations
+	// sharing a name (e.g. `var ns` declared 9 times across
+	// different branches of vm.lang) all map to the SAME
+	// physical slot via b.locals[name] — only the last entry
+	// wins in the slot map, and every Var-decl Store reaches
+	// that last slot. The "earlier" slot indices that
+	// info.Locals[fn] tracks are never written by user code, so
+	// dec'ing them at exit by index would read uninitialised
+	// memory and trap.
+	//
+	// Dedup via a per-name set so we only dec each unique slot
+	// once even if the same name appears multiple times in
+	// info.Locals[fn].
+	// Params first: each parameter name is unique in the
+	// function signature, so name lookup is safe. Caller-side
+	// inc (Phase 1d-iv) balanced by callee-exit dec here.
 	for _, p := range b.fn.Params {
 		if _, isArr := p.Type.(ast.ArrayType); !isArr {
 			continue
@@ -1484,10 +1501,15 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		}
 		emitDec(slot)
 	}
+	seen := map[string]bool{}
 	for _, v := range b.info.Locals[b.fn] {
 		if _, isArr := v.Type.(ast.ArrayType); !isArr {
 			continue
 		}
+		if seen[v.Name] {
+			continue
+		}
+		seen[v.Name] = true
 		slot, ok := b.locals[v.Name]
 		if !ok {
 			continue
@@ -1538,6 +1560,37 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		slot := b.allocSlot()
 		b.deferSlots = append(b.deferSlots, slot)
 		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
+	}
+	// Phase 1d-v safety net: zero-init every array-typed local
+	// slot at function entry. The function-exit dec sweep (in
+	// `emitRcDecLocalsAtExit`) visits every declared
+	// array-typed local regardless of whether its Var statement
+	// was reached at runtime — a conditional `if (false) { var
+	// arr = [1, 2]; }` registers `arr` in info.Locals but never
+	// runs its Var. Pre-zeroing makes the dec helper's `if ptr
+	// == 0` short-circuit fire on never-initialised slots.
+	//
+	// Zero by slot — same `b.locals[name]` slot the dec sweep
+	// resolves — so the two sides agree even when multiple Var
+	// declarations across separate scopes share a name (the slot
+	// map only keeps the last entry, all those declarations
+	// store to the same physical slot, and only that slot needs
+	// the safety zero).
+	zeroSeen := map[string]bool{}
+	for _, v := range info.Locals[fn] {
+		if _, isArr := v.Type.(ast.ArrayType); !isArr {
+			continue
+		}
+		if zeroSeen[v.Name] {
+			continue
+		}
+		zeroSeen[v.Name] = true
+		slot, ok := b.locals[v.Name]
+		if !ok {
+			continue
+		}
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
 	if err := b.stmt(fn.Body); err != nil {
 		return nil, err
