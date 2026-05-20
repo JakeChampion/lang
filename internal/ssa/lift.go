@@ -74,6 +74,15 @@ import (
 //     their target. Non-void OpBlock + OpBr/OpBrIf land in
 //     follow-up PRs.
 //
+//   Phase 9b:
+//   - OpBr to an enclosing OpBlock scope. The current block's
+//     terminator becomes `br target.postB`; the slot snapshot
+//     + (for non-void scopes) the popped stack-top become a
+//     branch source on the target scope, merged via phi at
+//     scope close. cur is set to nil after the OpBr — subsequent
+//     ops up to the matching OpEnd are unreachable and skipped
+//     by the per-handler `if cur == nil` guard.
+//
 // Anything else returns an `unsupported op` error. OpBlock /
 // OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
 // ops land in follow-up PRs.
@@ -112,23 +121,24 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		if err := l.handle(i, op); err != nil {
 			return nil, err
 		}
-		if l.cur == nil {
-			// Op terminated the function (Return/ReturnVoid) and
-			// we've returned early already; remaining ops would be
-			// dead code, just ignore. Actually handle() returns nil
-			// when the function ended via Return — bail.
+		// Bail early only when both the function is terminated
+		// (cur == nil) AND every scope is closed (no more
+		// OpElse/OpEnd to process). Otherwise keep walking so
+		// scope-closers can run.
+		if l.cur == nil && len(l.scopes) == 0 {
 			return l.out, nil
 		}
 	}
 
-	// Implicit void return at function end. Active block may have
-	// already been terminated by OpReturn/OpReturnVoid above (in
-	// which case l.cur is nil — the early-return above caught it).
-	// If we're still here, the active block has no terminator yet.
 	if len(l.scopes) > 0 {
 		return nil, fmt.Errorf("ssa.LiftFromIR: %d unclosed scope(s) at end of function", len(l.scopes))
 	}
-	l.out.SetRet(l.cur, Value{})
+	// Implicit void return at function end — only if execution
+	// can still reach here. If cur is nil, every path already
+	// terminated via OpReturn/OpReturnVoid.
+	if l.cur != nil {
+		l.out.SetRet(l.cur, Value{})
+	}
 	return l.out, nil
 }
 
@@ -154,7 +164,7 @@ type lifter struct {
 
 // scope describes one open control-flow construct.
 type scope struct {
-	kind ir.OpKind // ir.OpIf for now; ir.OpBlock / ir.OpLoop in later PRs.
+	kind ir.OpKind // ir.OpIf or ir.OpBlock (ir.OpLoop in later PRs).
 
 	thenB *Block
 	elseB *Block
@@ -172,13 +182,38 @@ type scope struct {
 	blockType    int32
 	thenStackTop Value
 	stackHeight  int // entry stack height (used to slice off the arm's pushed value)
+
+	// Branch sources — every OpBr/OpBrIf targeting this scope
+	// adds one. Merged with the fall-through (and, for OpIf,
+	// with the arm-end states) at scope close.
+	brSources []brSource
+}
+
+// brSource captures the state at one branch site into a scope.
+type brSource struct {
+	block    *Block  // the block whose terminator branches to scope.postB
+	slots    []Value // slot snapshot at the branch site
+	stackTop Value   // for non-void scopes, the popped stack-top value
+}
+
+// mergeSource is one input to a phi merge at a scope's postB.
+// Tracks per-slot snapshot + (for value-producing scopes) the
+// stack-top value that the merge phi needs.
+type mergeSource struct {
+	slots    []Value
+	stackTop Value
 }
 
 func (l *lifter) handle(i int, op ir.Op) error {
+	// OpEnd / OpElse manage the scope stack — they must run even
+	// when cur is nil (an OpBr or OpReturn earlier in the arm).
+	// Every other op handler bails when cur is nil.
 	if l.cur == nil {
-		// We've already returned from the function but the IR has
-		// trailing ops. Skip silently — they're dead.
-		return nil
+		switch op.Kind {
+		case ir.OpEnd, ir.OpElse:
+		default:
+			return nil
+		}
 	}
 	switch op.Kind {
 	case ir.OpConstI32:
@@ -333,19 +368,25 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		if top.sawElse {
 			return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] is the second else for this if", i)
 		}
-		// For value-producing ifs, snapshot the then-arm's pushed
-		// value and pop it off the stack before resetting.
-		if top.blockType != ir.BlockTypeVoid {
-			if len(l.stack) != top.stackHeight+1 {
-				return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] then-arm produced %d values, want 1",
-					i, len(l.stack)-top.stackHeight)
-			}
-			top.thenStackTop = l.stack[len(l.stack)-1]
-			l.stack = l.stack[:len(l.stack)-1]
-		}
-		l.out.SetBr(l.cur, top.postB)
-		top.thenSlots = append([]Value(nil), l.slots...)
 		top.sawElse = true
+		if l.cur != nil {
+			// Then-arm fell through. For value-producing ifs,
+			// snapshot the pushed value before resetting.
+			if top.blockType != ir.BlockTypeVoid {
+				if len(l.stack) != top.stackHeight+1 {
+					return fmt.Errorf("ssa.LiftFromIR: OpElse at op[%d] then-arm produced %d values, want 1",
+						i, len(l.stack)-top.stackHeight)
+				}
+				top.thenStackTop = l.stack[len(l.stack)-1]
+				l.stack = l.stack[:len(l.stack)-1]
+			}
+			l.out.SetBr(l.cur, top.postB)
+			top.thenSlots = append([]Value(nil), l.slots...)
+		} else {
+			// Then-arm exited via OpBr/OpReturn — no fall-through
+			// merge source. Leave thenSlots nil as sentinel.
+			top.thenSlots = nil
+		}
 		l.slots = append([]Value(nil), top.preSlots...)
 		l.cur = top.elseB
 	case ir.OpEnd:
@@ -364,6 +405,31 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		default:
 			return fmt.Errorf("ssa.LiftFromIR: OpEnd at op[%d] for unsupported scope kind %v", i, top.kind)
 		}
+	case ir.OpBr:
+		depth := int(op.I32)
+		if depth < 0 || depth >= len(l.scopes) {
+			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] depth %d out of range (have %d scopes)",
+				i, depth, len(l.scopes))
+		}
+		target := &l.scopes[len(l.scopes)-1-depth]
+		if target.kind != ir.OpBlock {
+			return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] targets scope kind %v; only OpBlock supported in Phase 9b",
+				i, target.kind)
+		}
+		var stackTop Value
+		if target.blockType != ir.BlockTypeVoid {
+			if len(l.stack) < 1 {
+				return fmt.Errorf("ssa.LiftFromIR: OpBr at op[%d] needs 1 value (target is non-void scope)", i)
+			}
+			stackTop = l.stack[len(l.stack)-1]
+		}
+		target.brSources = append(target.brSources, brSource{
+			block:    l.cur,
+			slots:    append([]Value(nil), l.slots...),
+			stackTop: stackTop,
+		})
+		l.out.SetBr(l.cur, target.postB)
+		l.cur = nil
 	case ir.OpReturn:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpReturn at op[%d] needs 1 operand", i)
@@ -379,82 +445,181 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	return nil
 }
 
-// endIfScope finalises an OpIf scope. The active block (l.cur)
-// has the current arm's final state — terminate it with a br
-// to postB, build any required phis at postB to merge slot
-// values from the then + else arms, then switch l.cur to
-// postB. For value-producing ifs (blockType != Void), also
-// snap the arm's pushed value and emit a phi pushing it back
-// onto the stack.
+// endIfScope finalises an OpIf scope. Merges every "still
+// alive" arm-end + every OpBr/OpBrIf into the scope at postB,
+// emitting phis for slots that differ across sources.
+//
+// "Source order" matches postB.Preds order, which matches
+// SetBr call order:
+//  1. SetBr(thenExit, postB) at OpElse time (if then arm fell
+//     through).
+//  2. brSources from OpBr/OpBrIf during the scope.
+//  3. SetBr(elseExit, postB) at OpEnd time (if else arm fell
+//     through; or for no-OpElse: SetBr(elseB, postB)).
+//
+// For value-producing ifs (blockType != Void) both arms must
+// fall through; the per-source stack-tops merge into a phi
+// pushed back onto the stack.
 func (l *lifter) endIfScope(top scope) error {
-	// Terminate the active arm.
-	thenSlots, elseSlots := top.thenSlots, l.slots
-	if !top.sawElse {
-		if top.blockType != ir.BlockTypeVoid {
-			return fmt.Errorf("ssa.LiftFromIR: OpIf with BlockType %d requires OpElse", top.blockType)
+	if !top.sawElse && top.blockType != ir.BlockTypeVoid {
+		return fmt.Errorf("ssa.LiftFromIR: OpIf with BlockType %d requires OpElse", top.blockType)
+	}
+
+	var sources []mergeSource
+
+	// Source 1: then-arm fall-through.
+	thenAlive := false
+	if top.sawElse {
+		// SetBr was emitted at OpElse time iff cur was alive there;
+		// detect that via top.thenSlots != nil.
+		if top.thenSlots != nil {
+			thenAlive = true
+			sources = append(sources, mergeSource{
+				slots:    top.thenSlots,
+				stackTop: top.thenStackTop,
+			})
 		}
-		// No OpElse — current arm is the then-arm. The else-side
-		// is the empty elseB; terminate it with a br to postB.
-		thenSlots = append([]Value(nil), l.slots...)
-		elseSlots = top.preSlots
-		l.out.SetBr(l.cur, top.postB)
-		l.out.SetBr(top.elseB, top.postB)
 	} else {
-		l.out.SetBr(l.cur, top.postB)
+		// No OpElse: then-arm body is l.cur. If alive, SetBr now.
+		if l.cur != nil {
+			thenAlive = true
+			l.out.SetBr(l.cur, top.postB)
+			sources = append(sources, mergeSource{
+				slots: append([]Value(nil), l.slots...),
+			})
+		}
 	}
 
-	// Slot phi merges.
-	for i := range l.slots {
-		var tv, ev Value
-		if i < len(thenSlots) {
-			tv = thenSlots[i]
-		}
-		if i < len(elseSlots) {
-			ev = elseSlots[i]
-		}
-		if tv == ev {
-			continue
-		}
-		if !tv.IsValid() && !ev.IsValid() {
-			continue
-		}
-		if !tv.IsValid() || !ev.IsValid() {
-			if tv.IsValid() {
-				l.slots[i] = tv
-			} else {
-				l.slots[i] = ev
+	// Sources 2…N: any OpBr/OpBrIf into postB.
+	for _, br := range top.brSources {
+		sources = append(sources, mergeSource{slots: br.slots, stackTop: br.stackTop})
+	}
+
+	// Source N+1: else-arm fall-through.
+	elseAlive := false
+	if top.sawElse {
+		if l.cur != nil {
+			elseAlive = true
+			var elseTop Value
+			if top.blockType != ir.BlockTypeVoid {
+				if len(l.stack) != top.stackHeight+1 {
+					return fmt.Errorf("ssa.LiftFromIR: OpEnd: else-arm produced %d values, want 1",
+						len(l.stack)-top.stackHeight)
+				}
+				elseTop = l.stack[len(l.stack)-1]
+				l.stack = l.stack[:len(l.stack)-1]
 			}
-			continue
+			l.out.SetBr(l.cur, top.postB)
+			sources = append(sources, mergeSource{
+				slots:    append([]Value(nil), l.slots...),
+				stackTop: elseTop,
+			})
 		}
-		phi := l.out.AddPhi(top.postB, tv, ev)
-		l.slots[i] = phi
+	} else {
+		// No OpElse: the else-side is the still-empty elseB.
+		l.out.SetBr(top.elseB, top.postB)
+		elseAlive = true
+		sources = append(sources, mergeSource{slots: top.preSlots})
 	}
 
-	// Value-producing if: pop the else-arm's pushed value, emit
-	// phi merging it with the then-arm's value (captured at OpElse),
-	// push the phi result onto the stack.
+	if top.blockType != ir.BlockTypeVoid && (!thenAlive || !elseAlive) {
+		return fmt.Errorf("ssa.LiftFromIR: value-producing OpIf needs both arms to fall through")
+	}
+
+	// Value-producing if: phi the per-source stack-tops.
 	if top.blockType != ir.BlockTypeVoid {
-		if len(l.stack) != top.stackHeight+1 {
-			return fmt.Errorf("ssa.LiftFromIR: OpEnd: else-arm produced %d values, want 1",
-				len(l.stack)-top.stackHeight)
+		args := make([]Value, len(sources))
+		for j, s := range sources {
+			args[j] = s.stackTop
 		}
-		elseTop := l.stack[len(l.stack)-1]
-		l.stack = l.stack[:len(l.stack)-1]
-		phi := l.out.AddPhi(top.postB, top.thenStackTop, elseTop)
+		phi := l.out.AddPhi(top.postB, args...)
 		l.stack = append(l.stack, phi)
+	}
+
+	if len(sources) > 0 {
+		l.mergeSlotsViaPhi(top.postB, sources)
 	}
 
 	l.cur = top.postB
 	return nil
 }
 
-// endBlockScope closes an OpBlock scope. Without any OpBr from
-// inside, this is just a linear pass-through: br cur → postB,
-// cur = postB. Future PRs add the multi-pred merge case once
-// OpBr is implemented; for now postB only has one pred (the
-// fall-through) so no phi insertion is needed.
+// mergeSlotsViaPhi looks at every slot index across the merge
+// sources; if any source differs in that slot, emit a phi at
+// `postB` with args in source order; otherwise the slot takes
+// the common value.
+func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
+	for i := range l.slots {
+		var seen Value
+		varies := false
+		for j, s := range sources {
+			var v Value
+			if i < len(s.slots) {
+				v = s.slots[i]
+			}
+			if j == 0 {
+				seen = v
+				continue
+			}
+			if v != seen {
+				varies = true
+				break
+			}
+		}
+		if !varies {
+			if i < len(sources[0].slots) {
+				l.slots[i] = sources[0].slots[i]
+			}
+			continue
+		}
+		args := make([]Value, len(sources))
+		for j, s := range sources {
+			if i < len(s.slots) {
+				args[j] = s.slots[i]
+			}
+		}
+		phiable := true
+		for _, a := range args {
+			if !a.IsValid() {
+				phiable = false
+				break
+			}
+		}
+		if !phiable {
+			for _, a := range args {
+				if a.IsValid() {
+					l.slots[i] = a
+					break
+				}
+			}
+			continue
+		}
+		l.slots[i] = l.out.AddPhi(postB, args...)
+	}
+}
+
+// endBlockScope closes an OpBlock scope. Merges the fall-through
+// (if l.cur is still alive) with every OpBr/OpBrIf branch source
+// recorded during the scope. Source order matches Preds order:
+// brSources were SetBr'd at their OpBr sites earlier in time;
+// the fall-through (if alive) is SetBr'd now and appended last.
 func (l *lifter) endBlockScope(top scope) {
-	l.out.SetBr(l.cur, top.postB)
+	var sources []mergeSource
+	for _, br := range top.brSources {
+		sources = append(sources, mergeSource{slots: br.slots, stackTop: br.stackTop})
+	}
+	if l.cur != nil {
+		l.out.SetBr(l.cur, top.postB)
+		sources = append(sources, mergeSource{slots: append([]Value(nil), l.slots...)})
+	}
+
+	if len(sources) == 0 {
+		// Whole scope exited via OpReturn — postB is unreachable.
+		l.cur = top.postB
+		return
+	}
+
+	l.mergeSlotsViaPhi(top.postB, sources)
 	l.cur = top.postB
 }
 

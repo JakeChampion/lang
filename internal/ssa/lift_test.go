@@ -1078,6 +1078,103 @@ func TestLiftBlockRejectsNonVoid(t *testing.T) {
 	}
 }
 
+// TestLiftBrToBlock — early-exit from an OpBlock scope via OpBr.
+// `block { if (c) { x = 1; br 1 }  x = 2 } return x;`
+// — both paths feed into the post-block; phi merges x.
+func TestLiftBrToBlock(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Locals: []*ast.Var{{Name: "x"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid}, // outer block (depth 0)
+			{Kind: ir.OpLoadLocal, I32: 0},            // cond
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpBr, I32: 1}, // exit outer block (depth 1 from inside if)
+			{Kind: ir.OpEnd},        // close if
+			{Kind: ir.OpConstI32, I32: 2},
+			{Kind: ir.OpStoreLocal, I32: 1},
+			{Kind: ir.OpEnd}, // close outer block
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftBrTrivialExit — `block { br 0 }` — branch out of the
+// block we're in. Block becomes effectively empty.
+func TestLiftBrTrivialExit(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpBr, I32: 0},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftBrDepthOutOfRange — OpBr with depth past the scope
+// stack fails cleanly.
+func TestLiftBrDepthOutOfRange(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpBr, I32: 5},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected out-of-range error")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("error %q doesn't mention out of range", err)
+	}
+}
+
+// TestLiftBrTargetingIfRejected — Phase 9b only supports OpBlock
+// targets. OpBr targeting an open OpIf scope is rejected (lands
+// in Phase 9c).
+func TestLiftBrTargetingIfRejected(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstI32, I32: 1},
+			{Kind: ir.OpIf, I32: ir.BlockTypeVoid},
+			{Kind: ir.OpBr, I32: 0}, // targets the if scope itself
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	_, err := LiftFromIR(in)
+	if err == nil {
+		t.Fatal("expected error for OpBr to OpIf")
+	}
+	if !strings.Contains(err.Error(), "only OpBlock supported") {
+		t.Errorf("error %q doesn't mention OpBlock restriction", err)
+	}
+}
+
 // TestLiftCallDirect — `foo(a, b)` → OpCall with callee "foo".
 func TestLiftCallDirect(t *testing.T) {
 	in := &ir.Func{
