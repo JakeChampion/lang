@@ -3790,6 +3790,16 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
+			// Phase 1d-viii: array-element initialisation is an
+			// alias-creating site when the element type is also
+			// array-shaped — e.g. `var matrix: u8[][] = [inner];`
+			// stores `inner`'s pointer into the matrix's slot 0,
+			// so the new matrix co-owns `inner`. Same gating as
+			// the Var / Assign / call-arg / struct-field /
+			// closure-capture sites.
+			if needsRcIncOnAlias(el, b) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+			}
 			b.emit(storeOpAndWidth)
 		}
 		// Push the *content* pointer (base + headerBytes) so the
@@ -3862,6 +3872,12 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(elem); err != nil {
 				return err
 			}
+			// Phase 1d-viii: tuple element is a struct-lit-style
+			// alias site. See the StructLit case below for the
+			// gating rationale.
+			if needsRcIncOnAlias(elem, b) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
@@ -3887,6 +3903,19 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(f.Value); err != nil {
 				return err
+			}
+			// Phase 1d-viii: struct field initialisation is an
+			// alias-creating site. `Holder { items: existing }`
+			// stores `existing`'s pointer into the struct's
+			// slot — the struct now co-owns the reference, so
+			// the rc bumps. Same gating as the Var / Assign /
+			// closure-capture sites: only fires when the
+			// initialiser is alias-shaped (Ident, FieldAccess,
+			// Index) and the field type is an array. Strings /
+			// structs / enums / closures join in Phase 1e along
+			// with their matching drop handlers.
+			if needsRcIncOnAlias(f.Value, b) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
 			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
