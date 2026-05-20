@@ -764,6 +764,18 @@ func (g *generator) emitRcDecRuntime() {
 	g.typeDirective("__lang_rc_dec")
 	g.label("__lang_rc_dec")
 	g.emit("cbz x0, .Lrcdec_ret")
+	// Defensive low-address guard: skip any pointer in the
+	// unmappable low-memory region (< 0x10000 = 64 KiB,
+	// Linux's typical mmap_min_addr). Phase 1d-v's exit dec
+	// sweep can briefly touch slots that hold non-pointer
+	// values — Lang enum tags (e.g. 2), small i32 literals,
+	// or uninitialised stack garbage that doesn't look
+	// pointer-shaped. Treating those as "not a heap object,
+	// don't touch" keeps the dec helper safe under the
+	// no-tracking exit pass; Phase 2's mutate-in-place check
+	// will sharpen the contract.
+	g.emit("cmp x0, #0x10000")
+	g.emit("b.lo .Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
 	g.emit("sub w1, w1, #1")

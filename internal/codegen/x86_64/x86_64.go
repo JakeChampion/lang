@@ -2670,13 +2670,21 @@ func (g *generator) emitRcDecRuntime() {
 	g.line(".globl __lang_rc_dec")
 	g.line(".type __lang_rc_dec, @function")
 	g.label("__lang_rc_dec")
+	g.emit("mov rax, rdi") // return value = input ptr (matches arm64)
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcdec_ret")
-	g.emit("mov eax, dword ptr [rdi - 8]")
-	g.emit("test eax, eax")
+	// Defensive low-address guard — see emitRcDecRuntime in
+	// arm64.go for the rationale. Phase 1d-v's exit dec sweep
+	// can touch slots holding non-pointer values; treating
+	// the low 64 KiB as "not a heap object, don't touch"
+	// keeps the helper safe.
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Lrcdec_ret")
+	g.emit("mov ecx, dword ptr [rdi - 8]")
+	g.emit("test ecx, ecx")
 	g.emit("js .Lrcdec_ret") // bit 31 set ⇒ static sentinel
-	g.emit("sub eax, 1")
-	g.emit("mov dword ptr [rdi - 8], eax")
+	g.emit("sub ecx, 1")
+	g.emit("mov dword ptr [rdi - 8], ecx")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.line(".size __lang_rc_dec, .-__lang_rc_dec")

@@ -1594,6 +1594,20 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	// Defensive low-address guard — Phase 1d-v's exit dec
+	// sweep can touch slots holding non-pointer values
+	// (enum tags, small i32 literals, stack garbage). On
+	// wasm a sub-64-KiB "pointer" would read scratch /
+	// .rodata-like regions of linear memory, corrupting
+	// whatever lives there. See arm64's emitRcDecRuntime for
+	// the matching guard and full rationale.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Sub(body)
