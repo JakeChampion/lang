@@ -702,13 +702,22 @@ func (g *generator) emitMemcpyRuntime() {
 	g.line(".ltorg")
 }
 
-// emitRcIncRuntime emits `__lang_rc_inc(ptr)` — increment the
-// refcount at `[ptr - 8]`. NULL-safe and sentinel-aware: if
-// the rc word's high bit is set (0x80000000 = "static, never
-// touch"), the helper returns without modifying anything. The
-// only static sentinel today is the shared empty-array
-// (.LArr_Empty); string-literal heads will pick up the same
-// treatment when Phase 1e widens the rc layout to strings.
+// emitRcIncRuntime emits `__lang_rc_inc(ptr) -> ptr` —
+// increment the refcount at `[ptr - 8]` and return the input
+// pointer unchanged. NULL-safe and sentinel-aware: if the rc
+// word's high bit is set (0x80000000 = "static, never touch"),
+// the helper returns the input pointer without modifying
+// anything. The only static sentinel today is the shared
+// empty-array (.LArr_Empty); string-literal heads will pick
+// up the same treatment when Phase 1e widens the rc layout
+// to strings.
+//
+// Returning the input pointer (rather than void) lets the IR
+// codegen splice an inc into an expression evaluation chain
+// without spilling to a temp local: `evaluate RHS; call
+// __lang_rc_inc; store LHS` becomes a straight-line sequence
+// since x0 carries the value through unchanged.
+//
 // See docs/RC-PERCEUS-PLAN.md "Core operations".
 func (g *generator) emitRcIncRuntime() {
 	g.line("")

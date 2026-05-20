@@ -1025,6 +1025,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
+	// __rc_inc / __rc_dec / __rc_get — direct access to the
+	// refcount machinery for debugging and Phase 1 testing.
+	// They bypass the normal alias-tracking that Phase 1c/d
+	// will introduce, so they're not meant for everyday code.
+	// __rc_inc returns the input pointer so the call can be
+	// spliced into an expression chain. __rc_get reads the rc
+	// word at `[arr - 8]`. See docs/RC-PERCEUS-PLAN.md.
+	u8ArrType := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["__rc_inc"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: u8ArrType,
+	}
+	c.info.FuncSigs["__rc_dec"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__rc_get"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: ast.NumberType{},
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /

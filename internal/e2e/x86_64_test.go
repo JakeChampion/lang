@@ -2676,3 +2676,24 @@ function main(): i32 {
 		})
 	}
 }
+
+// Refcount builtins (`__rc_get` / `__rc_inc` / `__rc_dec`)
+// exposed for Phase-1 testing. Validates Phase 1a (rc=1 on
+// `__alloc_u8`) and Phase 1b (inc / dec are sentinel-aware and
+// don't corrupt the rc word). The program returns 0 iff the
+// observed rc progression is exactly 1 → 2 → 1.
+func TestX86_64RcBuiltins(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(10);
+    var r1: i32 = __rc_get(arr);
+    __rc_inc(arr);
+    var r2: i32 = __rc_get(arr);
+    __rc_dec(arr);
+    var r3: i32 = __rc_get(arr);
+    return r1 + r2 + r3 - 4;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (rc progression off)", code)
+	}
+}
