@@ -9431,6 +9431,134 @@ function main(): i32 {
 	}
 }
 
+// TestWASMComponentCanonLiftMemRealloc covers
+// put_canon_section_lift_mem_realloc. Lifts a core function under
+// the canonical-ABI `(memory, realloc)` options — the shape every
+// component-level function that returns a string or list goes
+// through. The core module exports a memory + a realloc func + the
+// lift target, the component aliases all three out of the core
+// instance, lifts the target under a string-returning type, and
+// exports the lifted func.
+//
+// wasm-tools accepts the shape even when the lifted signature
+// doesn't strictly match the canonical-ABI lowering of the core
+// signature; this test pins the BYTE shape of the canon-with-opts
+// section, not the runtime-semantic compatibility (which is the
+// component runtime's job to enforce).
+func TestWASMComponentCanonLiftMemRealloc(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `import "std/wasm/module";
+import "std/wasm/component";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    // Core module:
+    //   type 0: () -> i32 (the lift target's core signature)
+    //   type 1: (i32 i32 i32 i32) -> i32 (realloc signature)
+    //   func 0: signature 0, body i32.const 7   (the lift target)
+    //   func 1: signature 1, body i32.const 0   (the realloc stub)
+    //   memory 0: min=1
+    //   exports: "f" -> func 0, "alloc" -> func 1, "mem" -> mem 0
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    var r1: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0, p1];
+    m.type_results = [r0, r1];
+    m.function_typeidxs = [0u32, 1u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.export_names = ["f", "alloc", "mem"];
+    m.export_kinds = [sections.export_func(), sections.export_func(), sections.export_memory()];
+    m.export_idxs = [0u32, 1u32, 0u32];
+    var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 7));
+    var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
+    m.code_bodies = [body_f, body_alloc];
+    var core_bytes: u8[] = module.build(m);
+
+    // Component: header + core-module + core-instance + 2 alias
+    // calls (one for the lift target func, one for the realloc
+    // func). Memory aliasing would need a multi-sort alias composer
+    // that std/wasm/component does not yet ship; this slice tests
+    // the canon-lift binary shape only, so we feed canon-lift a
+    // memory idx that doesn t resolve to an alias — wasm-tools
+    // accepts the byte shape even when the memory idx is out of
+    // range, since validation of the component world is a separate
+    // pass.
+    var comp: u8[] = component.put_component_header([]);
+    comp = component.put_core_module_section(comp, core_bytes);
+    comp = component.put_core_instance_section_instantiate(comp, 0u32);
+    comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
+    comp = component.put_alias_section_core_export_func(comp, 0u32, "alloc");
+
+    // Type: () -> u32 (would-be string in a real lift, but u32 keeps
+    // the wasm-tools structural check happy without needing
+    // canonical-ABI lowering compatibility).
+    var no_names: string[] = [];
+    var no_valtypes: u8[] = [];
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+
+    // canon lift with mem + realloc opts. core-func 0 is the
+    // aliased "f"; we use mem idx 0 and core-func idx 1 (the
+    // aliased "alloc"). wasm-tools accepts this even without an
+    // explicit core-memory alias because the canon-lift binary
+    // form just carries the indices — wasm-tools checks they're
+    // within bounds, not that they came from an alias section.
+    comp = component.put_canon_section_lift_mem_realloc(comp, 0u32, 0u32, 0u32, 1u32);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < comp.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (comp[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	bs := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		bs = append(bs, byte(n))
+	}
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "lang_built.wasm")
+	if err := os.WriteFile(compPath, bs, 0o644); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+	wat, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		hexBytes := ""
+		for _, b := range bs {
+			hexBytes += fmt.Sprintf("%02x ", b)
+		}
+		t.Fatalf("wasm-tools print failed: %v\nbytes:\n%s\nout:\n%s", err, hexBytes, wat)
+	}
+	watStr := string(wat)
+	for _, want := range []string{
+		"canon lift",
+		"memory",
+		"realloc",
+	} {
+		if !strings.Contains(watStr, want) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, watStr)
+		}
+	}
+}
+
 // TestWASMComponentLiftedExport is the first end-to-end shape that
 // exercises every section composer std/wasm/component currently
 // ships: preamble + core-module + core-instance + alias + type +
