@@ -78,33 +78,96 @@ func Verify(f *Func) error {
 		}
 	}
 
-	// Pass 4: every used Value has a definition somewhere.
-	// (Stronger use-before-def — within-block + dominance —
-	// requires the dominator-tree builder; Phase 2 adds
-	// that. Phase 1 catches the easy "no def at all" case.)
+	// Pass 4: every used Value has a definition somewhere AND
+	// (for Op uses + terminator uses) the def-site dominates
+	// the use-site. This catches both "no def at all" and the
+	// stronger SSA invariant "uses are dominated by defs".
+	//
+	// "Dominance" here means:
+	//   - Params dominate every block (they're in scope on entry).
+	//   - An Op's Result dominates: every Op later in the same
+	//     block, that block's terminator, and every block that
+	//     the defining block dominates in the CFG.
+	//
+	// Implementation: pre-compute, for each Op result, the (block,
+	// index-within-block) where it was defined. Walk uses; if the
+	// use's block strictly differs from the def's block, fall back
+	// to the dominator tree. Else compare in-block indices.
+
+	type defSite struct {
+		block *Block // nil for Params (dominate everything)
+		index int    // -1 if a Param; otherwise position in block.Ops
+	}
+	defSites := map[int32]defSite{}
+	for _, p := range f.Params {
+		if p.ID == 0 {
+			continue
+		}
+		defSites[p.ID] = defSite{block: nil, index: -1}
+	}
 	for _, b := range f.Blocks {
-		for _, op := range b.Ops {
+		for i, op := range b.Ops {
+			if op.Result.IsValid() {
+				defSites[op.Result.ID] = defSite{block: b, index: i}
+			}
+		}
+	}
+
+	dom := BuildDomTree(f)
+
+	dominatesUse := func(def defSite, useBlock *Block, useIndex int) bool {
+		if def.block == nil {
+			return true // Param
+		}
+		if def.block == useBlock {
+			// Same block: def must come strictly before use.
+			// useIndex == len(useBlock.Ops) is the terminator slot.
+			return def.index < useIndex
+		}
+		return dom.Dominates(def.block, useBlock)
+	}
+
+	check := func(arg Value, useBlock *Block, useIndex int, what string) error {
+		if !arg.IsValid() {
+			return nil
+		}
+		if _, ok := defs[arg.ID]; !ok {
+			return fmt.Errorf("func %q: block %d %s uses undefined value %s",
+				f.Name, useBlock.ID, what, arg)
+		}
+		site, ok := defSites[arg.ID]
+		if !ok {
+			// Shouldn't happen if defs and defSites agree, but
+			// fall back to the def-existence check above so we
+			// never silently accept.
+			return fmt.Errorf("func %q: block %d %s uses value %s with no def site",
+				f.Name, useBlock.ID, what, arg)
+		}
+		if !dominatesUse(site, useBlock, useIndex) {
+			return fmt.Errorf("func %q: block %d %s uses %s before its def dominates the use",
+				f.Name, useBlock.ID, what, arg)
+		}
+		return nil
+	}
+
+	for _, b := range f.Blocks {
+		for i, op := range b.Ops {
 			for _, arg := range op.Args {
-				if !arg.IsValid() {
-					continue
-				}
-				if _, ok := defs[arg.ID]; !ok {
-					return fmt.Errorf("func %q: block %d %s uses undefined value %s",
-						f.Name, b.ID, op.Kind, arg)
+				if err := check(arg, b, i, op.Kind.String()); err != nil {
+					return err
 				}
 			}
 		}
-		// Terminator uses.
-		if b.Term.Kind == TermBrIf && b.Term.Cond.IsValid() {
-			if _, ok := defs[b.Term.Cond.ID]; !ok {
-				return fmt.Errorf("func %q: block %d brif uses undefined value %s",
-					f.Name, b.ID, b.Term.Cond)
+		// Terminator uses live in the slot just past the last Op.
+		termIdx := len(b.Ops)
+		switch b.Term.Kind {
+		case TermBrIf:
+			if err := check(b.Term.Cond, b, termIdx, "brif"); err != nil {
+				return err
 			}
-		}
-		if b.Term.Kind == TermRet && b.Term.Value.IsValid() {
-			if _, ok := defs[b.Term.Value.ID]; !ok {
-				return fmt.Errorf("func %q: block %d ret uses undefined value %s",
-					f.Name, b.ID, b.Term.Value)
+		case TermRet:
+			if err := check(b.Term.Value, b, termIdx, "ret"); err != nil {
+				return err
 			}
 		}
 	}
