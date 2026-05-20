@@ -59,6 +59,92 @@ func TestCmpFlipAllPredicates(t *testing.T) {
 	}
 }
 
+// TestCmpFlipUnsignedPredicates — unsigned variants flip too.
+func TestCmpFlipUnsignedPredicates(t *testing.T) {
+	cases := []struct {
+		from OpKind
+		want OpKind
+	}{
+		{OpLtU, OpGeU},
+		{OpLeU, OpGtU},
+		{OpGtU, OpLeU},
+		{OpGeU, OpLtU},
+	}
+	for _, c := range cases {
+		t.Run(c.from.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			a := f.AddParam()
+			b := f.AddParam()
+			entry := f.NewBlock()
+			cmp := f.AddOp(entry, c.from, a, b)
+			r := f.AddOp(entry, OpNot, cmp)
+			f.SetRet(entry, r)
+
+			CmpFlip(f)
+
+			if got := entry.Ops[1].Kind; got != c.want {
+				t.Errorf("not(%v) → %v, want %v", c.from, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCmpFlipFloatEqNe — FEq / FNe are exact complements on
+// every input (including NaN), so flipping is safe. FLt/FLe/
+// FGt/FGe are NOT flipped (see TestCmpFlipFloatOrderedUntouched).
+func TestCmpFlipFloatEqNe(t *testing.T) {
+	cases := []struct {
+		from OpKind
+		want OpKind
+	}{
+		{OpFEq, OpFNe},
+		{OpFNe, OpFEq},
+	}
+	for _, c := range cases {
+		t.Run(c.from.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			a := f.AddParam()
+			b := f.AddParam()
+			entry := f.NewBlock()
+			cmp := f.AddOp(entry, c.from, a, b)
+			r := f.AddOp(entry, OpNot, cmp)
+			f.SetRet(entry, r)
+
+			CmpFlip(f)
+
+			if got := entry.Ops[1].Kind; got != c.want {
+				t.Errorf("not(%v) → %v, want %v", c.from, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCmpFlipFloatOrderedUntouched — ordered float comparisons
+// (FLt, FLe, FGt, FGe) are NOT flipped. `not(FLt NaN NaN)` is
+// true but `FGe NaN NaN` is false — IEEE-754 says ordered
+// comparisons on NaN return false, so they're not inverse.
+func TestCmpFlipFloatOrderedUntouched(t *testing.T) {
+	for _, k := range []OpKind{OpFLt, OpFLe, OpFGt, OpFGe} {
+		t.Run(k.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			a := f.AddParam()
+			b := f.AddParam()
+			entry := f.NewBlock()
+			f.AddOp(entry, k, a, b)
+			r := f.AddOp(entry, OpNot, entry.Ops[0].Result)
+			f.SetRet(entry, r)
+
+			CmpFlip(f)
+
+			if entry.Ops[1].Kind != OpNot {
+				t.Errorf("not(%v) was flipped to %v; ordered float compares "+
+					"can't be inverted via not (NaN semantics)",
+					k, entry.Ops[1].Kind)
+			}
+		})
+	}
+}
+
 // TestCmpFlipLeavesUnrelated — OpNot whose arg isn't a
 // comparison is untouched.
 func TestCmpFlipLeavesUnrelated(t *testing.T) {
