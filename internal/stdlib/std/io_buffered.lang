@@ -45,7 +45,7 @@ pub function bytes_writer_new(): BytesWriter {
 pub function (w: BytesWriter) write_string(s: string) {
     var bs: u8[] = s.bytes();
     var i: i32 = 0;
-    while (i < len(bs)) {
+    while (i < bs.len()) {
         w.data = w.data.push(bs[i]);
         i = i + 1;
     }
@@ -55,7 +55,7 @@ pub function (w: BytesWriter) write_string(s: string) {
 // directly (no string round-trip).
 pub function (w: BytesWriter) write_bytes(bs: u8[]) {
     var i: i32 = 0;
-    while (i < len(bs)) {
+    while (i < bs.len()) {
         w.data = w.data.push(bs[i]);
         i = i + 1;
     }
@@ -71,13 +71,13 @@ pub function (w: BytesWriter) write_byte(b: i32) {
 // `len()` shadow inside the module's own bodies (same
 // workaround as HeaderMap.size + Stream.size).
 pub function (w: BytesWriter) size(): i32 {
-    return len(w.data);
+    return w.data.len();
 }
 
 // `(w: BytesWriter).is_empty()` — convenience over
 // `.size() == 0`.
 pub function (w: BytesWriter) is_empty(): boolean {
-    return len(w.data) == 0;
+    return w.data.len() == 0;
 }
 
 // `(w: BytesWriter).into_bytes()` — return the accumulated

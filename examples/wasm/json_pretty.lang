@@ -61,14 +61,14 @@ function pretty(v: JsonValue, depth: i32): string {
       return json.json_encode(JString(s));
     },
     JArray(elems) => {
-      if (len(elems) == 0) {
+      if (elems.len() == 0) {
         return "[]";
       }
       var arr_out: string = "[\n";
       var i: i32 = 0;
-      while (i < len(elems)) {
+      while (i < elems.len()) {
         arr_out = arr_out + pad_inner + pretty(elems[i], depth + 1);
-        if (i + 1 < len(elems)) {
+        if (i + 1 < elems.len()) {
           arr_out = arr_out + ",";
         }
         arr_out = arr_out + "\n";

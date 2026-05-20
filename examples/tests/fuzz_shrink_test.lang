@@ -14,7 +14,7 @@
 // shrinker still runs the mutation pass but never gets to
 // minimise anything.
 function check_len_nonneg(input: string): Option[string] {
-    if (len(input) >= 0) { return None; }
+    if (input.len() >= 0) { return None; }
     return Some("len returned negative");
 }
 
@@ -34,7 +34,7 @@ function check_reverse_idempotent(input: string): Option[string] {
 function check_to_lower_no_upper(input: string): Option[string] {
     var lowered: string = input.to_lower();
     var i: i32 = 0;
-    while (i < len(lowered)) {
+    while (i < lowered.len()) {
         var b: i32 = lowered[i];
         if (b >= 65 && b <= 90) {
             return Some("uppercase byte " + b.to_string() +

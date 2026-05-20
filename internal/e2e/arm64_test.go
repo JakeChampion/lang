@@ -183,9 +183,9 @@ func TestArm64StringLiteralLen(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 { var s: string = "hello"; return len(s); }`, 5},
-		{`function main(): i32 { return len(""); }`, 0},
-		{`function main(): i32 { return len("hi\nthere"); }`, 8},
+		{`function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
+		{`function main(): i32 { return ("").len(); }`, 0},
+		{`function main(): i32 { return ("hi\nthere").len(); }`, 8},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
 		if code != c.want {
@@ -204,12 +204,12 @@ func TestArm64StringConcat(t *testing.T) {
 	}{
 		{`function main(): i32 {
     var s: string = "hello, " + "world!";
-    return len(s);
+    return s.len();
 }`, 13},
 		{`function main(): i32 {
     var greeting: string = "good ";
     var name: string = "morning";
-    return len(greeting + name);
+    return (greeting + name).len();
 }`, 12},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -290,7 +290,7 @@ struct EvalError  { message: string }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -424,7 +424,7 @@ function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
 }
 
 function lookup(names: string[], values: i32[], name: string): Result[i32, EvalError] {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return Ok(values[i]); }
         i = i - 1;
@@ -552,7 +552,7 @@ struct ParseError { message: string, pos: i32 }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -803,7 +803,7 @@ struct FnDef { name: string, params: string[], body: Stmt[] }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -1062,7 +1062,7 @@ function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
 
 function find_fn(fns: FnDef[], name: string): i32 {
     var i: i32 = 0;
-    while (i < len(fns)) {
+    while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
     }
@@ -1070,7 +1070,7 @@ function find_fn(fns: FnDef[], name: string): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -1079,12 +1079,12 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
             var out: i32[] = [];
             var j: i32 = 0;
-            while (j < len(values)) {
+            while (j < values.len()) {
                 if (j == i) { out = out.push(v); }
                 else { out = out.push(values[j]); }
                 j = j + 1;
@@ -1119,7 +1119,7 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_n: string[] = [];
             var fresh_v: i32[] = [];
             var i: i32 = 0;
-            while (i < len(c.args)) {
+            while (i < c.args.len()) {
                 fresh_n = fresh_n.push(fns[idx].params[i]);
                 fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
                 i = i + 1;
@@ -1171,7 +1171,7 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         WhileSt(w) => {
             while (!state.done && eval_expr(w.cond, state.names, state.values, fns) != 0) {
                 i = 0;
-                while (i < len(w.body) && !state.done) {
+                while (i < w.body.len() && !state.done) {
                     state = eval_stmt(w.body[i], state, fns);
                     i = i + 1;
                 }
@@ -1181,13 +1181,13 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         IfSt(it) => {
             if (eval_expr(it.cond, state.names, state.values, fns) != 0) {
                 i = 0;
-                while (i < len(it.thn) && !state.done) {
+                while (i < it.thn.len() && !state.done) {
                     state = eval_stmt(it.thn[i], state, fns);
                     i = i + 1;
                 }
             } else {
                 i = 0;
-                while (i < len(it.els) && !state.done) {
+                while (i < it.els.len() && !state.done) {
                     state = eval_stmt(it.els[i], state, fns);
                     i = i + 1;
                 }
@@ -1209,7 +1209,7 @@ function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]):
         result: 0,
     };
     var i: i32 = 0;
-    while (i < len(stmts) && !state.done) {
+    while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state, fns);
         i = i + 1;
     }
@@ -1319,7 +1319,7 @@ struct FnDef { name: string, params: string[], body: Stmt[] }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -1568,7 +1568,7 @@ function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
 
 function find_fn(fns: FnDef[], name: string): i32 {
     var i: i32 = 0;
-    while (i < len(fns)) {
+    while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
     }
@@ -1576,7 +1576,7 @@ function find_fn(fns: FnDef[], name: string): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -1585,12 +1585,12 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
             var out: i32[] = [];
             var j: i32 = 0;
-            while (j < len(values)) {
+            while (j < values.len()) {
                 if (j == i) { out = out.push(v); }
                 else { out = out.push(values[j]); }
                 j = j + 1;
@@ -1625,7 +1625,7 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_n: string[] = [];
             var fresh_v: i32[] = [];
             var i: i32 = 0;
-            while (i < len(c.args)) {
+            while (i < c.args.len()) {
                 fresh_n = fresh_n.push(fns[idx].params[i]);
                 fresh_v = fresh_v.push(eval_expr(c.args[i], names, values, fns));
                 i = i + 1;
@@ -1682,7 +1682,7 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         WhileSt(w) => {
             while (!state.done && eval_expr(w.cond, state.names, state.values, fns) != 0) {
                 i = 0;
-                while (i < len(w.body) && !state.done) {
+                while (i < w.body.len() && !state.done) {
                     state = eval_stmt(w.body[i], state, fns);
                     i = i + 1;
                 }
@@ -1692,7 +1692,7 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
         IfSt(it) => {
             if (eval_expr(it.cond, state.names, state.values, fns) != 0) {
                 i = 0;
-                while (i < len(it.body) && !state.done) {
+                while (i < it.body.len() && !state.done) {
                     state = eval_stmt(it.body[i], state, fns);
                     i = i + 1;
                 }
@@ -1715,7 +1715,7 @@ function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]):
         result: 0,
     };
     var i: i32 = 0;
-    while (i < len(stmts) && !state.done) {
+    while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state, fns);
         i = i + 1;
     }
@@ -1827,7 +1827,7 @@ type Stmt = VarDecl | Assign | Return | WhileSt;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -2012,7 +2012,7 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = len(names) - 1;
+            var i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -2037,12 +2037,12 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
             var out: i32[] = [];
             var j: i32 = 0;
-            while (j < len(values)) {
+            while (j < values.len()) {
                 if (j == i) { out = out.push(v); }
                 else { out = out.push(values[j]); }
                 j = j + 1;
@@ -2098,7 +2098,7 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
             // (state = eval_stmt(s, state) per stmt).
             while (!state.done && eval_expr(w.cond, state.names, state.values) != 0) {
                 var i: i32 = 0;
-                while (i < len(w.body) && !state.done) {
+                while (i < w.body.len() && !state.done) {
                     state = eval_stmt(w.body[i], state);
                     i = i + 1;
                 }
@@ -2117,7 +2117,7 @@ function run(src: string): i32 {
         result: 0,
     };
     var i: i32 = 0;
-    while (i < len(stmts) && !state.done) {
+    while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state);
         i = i + 1;
     }
@@ -2224,7 +2224,7 @@ type Stmt = VarDecl | Assign | Return;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -2362,7 +2362,7 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = len(names) - 1;
+            var i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -2385,13 +2385,13 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
 // values unchanged — a real type checker would catch this as
 // "unknown identifier", but the spike intentionally stays loose.
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
             // Build a fresh array that differs in slot i.
             var out: i32[] = [];
             var j: i32 = 0;
-            while (j < len(values)) {
+            while (j < values.len()) {
                 if (j == i) { out = out.push(v); }
                 else { out = out.push(values[j]); }
                 j = j + 1;
@@ -2457,7 +2457,7 @@ function run(src: string): i32 {
         result: 0,
     };
     var i: i32 = 0;
-    while (i < len(stmts) && !state.done) {
+    while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state);
         i = i + 1;
     }
@@ -2552,7 +2552,7 @@ type Op = PushConst | Load | Bin;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -2700,7 +2700,7 @@ function compile_top(e: Expr): Op[] {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -2714,13 +2714,13 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 function execute(ops: Op[], names: string[], values: i32[]): i32 {
     var stack: i32[] = [];
     var i: i32 = 0;
-    while (i < len(ops)) {
+    while (i < ops.len()) {
         match (ops[i]) {
             PushConst(p) => { stack = stack.push(p.value); },
             Load(l) => { stack = stack.push(env_lookup(names, values, l.name)); },
             Bin(b) => {
-                var r: i32 = stack[len(stack) - 1];
-                var l: i32 = stack[len(stack) - 2];
+                var r: i32 = stack[stack.len() - 1];
+                var l: i32 = stack[stack.len() - 2];
                 var out: i32 = 0;
                 if (b.op == 43) { out = l + r; }
                 else if (b.op == 45) { out = l - r; }
@@ -2732,7 +2732,7 @@ function execute(ops: Op[], names: string[], values: i32[]): i32 {
                 // O(len) but the test loops stay small.
                 var ns: i32[] = [];
                 var j: i32 = 0;
-                while (j < len(stack) - 2) {
+                while (j < stack.len() - 2) {
                     ns = ns.push(stack[j]);
                     j = j + 1;
                 }
@@ -2788,18 +2788,18 @@ function main(): i32 {
 
     // Bare literal — one PushConst, executes to its value.
     var c1: Op[] = compile_top(parse_src("42"));
-    if (len(c1) != 1) { return 1; }
+    if (c1.len() != 1) { return 1; }
     if (execute(c1, names, values) != 42) { return 2; }
 
     // Var lookup — one Load op.
     var c2: Op[] = compile_top(parse_src("x"));
-    if (len(c2) != 1) { return 3; }
+    if (c2.len() != 1) { return 3; }
     if (op_kind(c2[0]) != 1) { return 4; }
     if (execute(c2, names, values) != 10) { return 5; }
 
     // Simple BinOp — three ops: PushConst, PushConst, Bin.
     var c3: Op[] = compile_top(parse_src("1 + 2"));
-    if (len(c3) != 3) { return 6; }
+    if (c3.len() != 3) { return 6; }
     if (op_kind(c3[0]) != 0 || op_pushconst_value(c3[0]) != 1) { return 7; }
     if (op_kind(c3[1]) != 0 || op_pushconst_value(c3[1]) != 2) { return 8; }
     if (op_kind(c3[2]) != 2 || op_bin_op(c3[2]) != 43) { return 9; }
@@ -2812,7 +2812,7 @@ function main(): i32 {
     //   Bin *           ← pops 2,3 pushes 6
     //   Bin +           ← pops 1,6 pushes 7
     var c4: Op[] = compile_top(parse_src("1 + 2 * 3"));
-    if (len(c4) != 5) { return 11; }
+    if (c4.len() != 5) { return 11; }
     if (op_kind(c4[3]) != 2 || op_bin_op(c4[3]) != 42) { return 12; }   // *
     if (op_kind(c4[4]) != 2 || op_bin_op(c4[4]) != 43) { return 13; }   // +
     if (execute(c4, names, values) != 7) { return 14; }
@@ -2830,14 +2830,14 @@ function main(): i32 {
     // shorter bytecode. fold("1 + 2 * 3") → Num(7), which
     // compiles to a SINGLE PushConst op.
     var c5: Op[] = compile_top(fold(parse_src("1 + 2 * 3")));
-    if (len(c5) != 1) { return 21; }
+    if (c5.len() != 1) { return 21; }
     if (op_pushconst_value(c5[0]) != 7) { return 22; }
 
     // Partial fold + compile — "x + 2 * 3" folds to "x + 6",
     // which compiles to three ops (Load + PushConst + Bin)
     // instead of the five the unfolded form would emit.
     var c6: Op[] = compile_top(fold(parse_src("x + 2 * 3")));
-    if (len(c6) != 3) { return 23; }
+    if (c6.len() != 3) { return 23; }
     if (execute(c6, names, values) != 16) { return 24; }
 
     return 0;
@@ -2888,7 +2888,7 @@ type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -3049,7 +3049,7 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = len(names) - 1;
+            var i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -3218,7 +3218,7 @@ type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -3495,7 +3495,7 @@ type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -3626,7 +3626,7 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = len(names) - 1;
+            var i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -3804,7 +3804,7 @@ struct FnDef { name: string, params: string[], body: Expr }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -3853,7 +3853,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -3863,7 +3863,7 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 
 function find_fn(fns: FnDef[], name: string): i32 {
     var i: i32 = 0;
-    while (i < len(fns)) {
+    while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
     }
@@ -3892,7 +3892,7 @@ function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             var fresh_n: string[] = [];
             var fresh_v: i32[] = [];
             var i: i32 = 0;
-            while (i < len(ce.args)) {
+            while (i < ce.args.len()) {
                 fresh_n = fresh_n.push(fns[idx].params[i]);
                 fresh_v = fresh_v.push(eval(ce.args[i], names, values, fns));
                 i = i + 1;
@@ -4108,7 +4108,7 @@ type Expr = Num | Var | BinOp | If | Call;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -4157,7 +4157,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -4167,7 +4167,7 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 
 function fn_index(fn_names: string[], name: string): i32 {
     var i: i32 = 0;
-    while (i < len(fn_names)) {
+    while (i < fn_names.len()) {
         if (fn_names[i] == name) { return i; }
         i = i + 1;
     }
@@ -4389,7 +4389,7 @@ type Expr = Num | Var | BinOp | Let | If;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -4434,7 +4434,7 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = len(names) - 1;
+    var i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -4596,7 +4596,7 @@ type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -4786,7 +4786,7 @@ type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -5103,7 +5103,7 @@ type Token = TokInt | TokFloat | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     var numV: i32 = 0;
     var start: i32 = 0;
@@ -5152,7 +5152,7 @@ function tokenize(src: string): Token[] {
 function main(): i32 {
     // Bare floats — text spelling round-trips byte-exact.
     var t1: Token[] = tokenize("1.5 2.0 100.001");
-    if (len(t1) != 4) { return 100 + len(t1); }
+    if (t1.len() != 4) { return 100 + t1.len(); }
     match (t1[0]) {
         TokFloat(t) => { if (t.text != "1.5") { return 1; } },
         _ => { return 2; },
@@ -5169,7 +5169,7 @@ function main(): i32 {
     // Mixed ints + floats — the int branch leaves untouched
     // tokens before/after a float for the surrounding lexer state.
     var t2: Token[] = tokenize("3 + 1.5 - 2");
-    if (len(t2) != 6) { return 200 + len(t2); }
+    if (t2.len() != 6) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => { if (t.value != 3) { return 7; } },
         _ => { return 8; },
@@ -5186,7 +5186,7 @@ function main(): i32 {
     // Disambiguation: 1. must be the int 1 + the . punctuator,
     // not a malformed float. Same for 1.x.
     var t3: Token[] = tokenize("1.");
-    if (len(t3) != 3) { return 300 + len(t3); }
+    if (t3.len() != 3) { return 300 + t3.len(); }
     match (t3[0]) {
         TokInt(t) => { if (t.value != 1) { return 13; } },
         _ => { return 14; },
@@ -5197,7 +5197,7 @@ function main(): i32 {
     }
 
     var t4: Token[] = tokenize("1.x");
-    if (len(t4) != 4) { return 400 + len(t4); }
+    if (t4.len() != 4) { return 400 + t4.len(); }
     match (t4[0]) {
         TokInt(t) => { if (t.value != 1) { return 17; } },
         _ => { return 18; },
@@ -5215,7 +5215,7 @@ function main(): i32 {
     // float branch never fires because the leading byte isn't
     // a digit.
     var t5: Token[] = tokenize(".5");
-    if (len(t5) != 3) { return 500 + len(t5); }
+    if (t5.len() != 3) { return 500 + t5.len(); }
     match (t5[0]) {
         TokPunct(t) => { if (t.text != ".") { return 23; } },
         _ => { return 24; },
@@ -5229,7 +5229,7 @@ function main(): i32 {
     // disambiguation lets the parser see int + dot + ident
     // rather than a botched float consuming to_string.
     var t6: Token[] = tokenize("0.to_string");
-    if (len(t6) != 4) { return 600 + len(t6); }
+    if (t6.len() != 4) { return 600 + t6.len(); }
     match (t6[0]) {
         TokInt(t) => { if (t.value != 0) { return 27; } },
         _ => { return 28; },
@@ -5316,7 +5316,7 @@ function escape_byte(b: i32): i32 {
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     var numV: i32 = 0;
     var s: string = "";
@@ -5378,7 +5378,7 @@ function main(): i32 {
     // Comments, keywords, idents, ints, punct in one program.
     var src1: string = "function f() {\n    var x = 42; // local\n    return x;\n}";
     var toks: Token[] = tokenize(src1);
-    if (len(toks) != 15) { return 100 + len(toks); }
+    if (toks.len() != 15) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "function") { return 1; } },
         _ => { return 2; },
@@ -5414,7 +5414,7 @@ function main(): i32 {
 
     // Underscore in idents — __alloc_u8, is_digit lex as one.
     var t2: Token[] = tokenize("__alloc_u8 is_digit _pad");
-    if (len(t2) != 4) { return 200 + len(t2); }
+    if (t2.len() != 4) { return 200 + t2.len(); }
     match (t2[0]) {
         TokIdent(t) => { if (t.name != "__alloc_u8") { return 16; } },
         _ => { return 17; },
@@ -5430,7 +5430,7 @@ function main(): i32 {
 
     // String literal with escape sequences — \n, \t, \", \\.
     var t3: Token[] = tokenize("\"hello\\nworld\\t!\"");
-    if (len(t3) != 2) { return 300 + len(t3); }
+    if (t3.len() != 2) { return 300 + t3.len(); }
     match (t3[0]) {
         TokStr(t) => { if (t.value != "hello\nworld\t!") { return 22; } },
         _ => { return 23; },
@@ -5443,7 +5443,7 @@ function main(): i32 {
 
     // Comment at EOF (no trailing newline).
     var t5: Token[] = tokenize("var x // tail");
-    if (len(t5) != 3) { return 400 + len(t5); }
+    if (t5.len() != 3) { return 400 + t5.len(); }
     match (t5[0]) {
         TokKw(t) => { if (t.name != "var") { return 26; } },
         _ => { return 27; },
@@ -5455,7 +5455,7 @@ function main(): i32 {
 
     // Sized numeric type names lex as keywords (i32 / usize etc).
     var t6: Token[] = tokenize("i32 i64 usize f64 string");
-    if (len(t6) != 6) { return 500 + len(t6); }
+    if (t6.len() != 6) { return 500 + t6.len(); }
     match (t6[0]) {
         TokKw(t) => { if (t.name != "i32") { return 30; } },
         _ => { return 31; },
@@ -5512,7 +5512,7 @@ function hex_value(b: i32): i32 {
 }
 
 function read_num_suffix(src: string, i: i32): string {
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     if (i + 3 > n) { return ""; }
     var a: i32 = src[i];
     var b: i32 = src[i + 1];
@@ -5525,7 +5525,7 @@ function read_num_suffix(src: string, i: i32): string {
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     var numV: i32 = 0;
     var numSfx: string = "";
@@ -5545,7 +5545,7 @@ function tokenize(src: string): Token[] {
                     i = i + 1;
                 }
                 numSfx = read_num_suffix(src, i);
-                if (len(numSfx) > 0) { i = i + len(numSfx); }
+                if (numSfx.len() > 0) { i = i + numSfx.len(); }
                 toks = toks.push(TokInt { value: numV, base: 16, suffix: numSfx });
             }
         } else if (b.is_digit()) {
@@ -5555,7 +5555,7 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             numSfx = read_num_suffix(src, i);
-            if (len(numSfx) > 0) { i = i + len(numSfx); }
+            if (numSfx.len() > 0) { i = i + numSfx.len(); }
             toks = toks.push(TokInt { value: numV, base: 10, suffix: numSfx });
         } else if (b.is_alpha()) {
             var start: i32 = i;
@@ -5577,7 +5577,7 @@ function tokenize(src: string): Token[] {
 
 function main(): i32 {
     var toks: Token[] = tokenize("0x1F 0xab 0XFF 42 0x10i64");
-    if (len(toks) != 6) { return 100 + len(toks); }
+    if (toks.len() != 6) { return 100 + toks.len(); }
     match (toks[0]) {
         TokInt(t) => {
             if (t.value != 31) { return 1; }
@@ -5615,7 +5615,7 @@ function main(): i32 {
         _ => { return 16; },
     }
     var t2: Token[] = tokenize("0x");
-    if (len(t2) != 3) { return 200 + len(t2); }
+    if (t2.len() != 3) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => { if (t.value != 0) { return 17; } },
         _ => { return 18; },
@@ -5657,7 +5657,7 @@ function is_keyword(name: string): boolean {
 }
 
 function read_num_suffix(src: string, i: i32): string {
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     if (i + 3 > n) { return ""; }
     var a: i32 = src[i];
     var b: i32 = src[i + 1];
@@ -5670,7 +5670,7 @@ function read_num_suffix(src: string, i: i32): string {
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -5683,7 +5683,7 @@ function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             var sfx: string = read_num_suffix(src, i);
-            if (len(sfx) > 0) { i = i + len(sfx); }
+            if (sfx.len() > 0) { i = i + sfx.len(); }
             toks = toks.push(TokInt { value: v, suffix: sfx });
         } else if (b.is_alpha()) {
             var start: i32 = i;
@@ -5706,7 +5706,7 @@ function tokenize(src: string): Token[] {
 function main(): i32 {
     // Full suffix path.
     var toks: Token[] = tokenize("var x = 42i64; var y = 7u32; var z = 99;");
-    if (len(toks) != 16) { return 100 + len(toks); }
+    if (toks.len() != 16) { return 100 + toks.len(); }
     match (toks[3]) {
         TokInt(t) => {
             if (t.value != 42) { return 1; }
@@ -5730,7 +5730,7 @@ function main(): i32 {
     }
     // Incomplete suffix: 42i6 → 42 + ident("i6").
     var t2: Token[] = tokenize("42i6");
-    if (len(t2) != 3) { return 200 + len(t2); }
+    if (t2.len() != 3) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => {
             if (t.value != 42) { return 10; }
@@ -5789,7 +5789,7 @@ function unescape(b: i32): i32 {
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -5865,14 +5865,14 @@ function tokenize(src: string): Token[] {
 function main(): i32 {
     var toks: Token[] = tokenize("/* block */ var s = \"a\\nb\";");
     // var s = "a\nb" ; EOF = 6 tokens
-    if (len(toks) != 6) { return 100 + len(toks); }
+    if (toks.len() != 6) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "var") { return 1; } },
         _ => { return 2; },
     }
     match (toks[3]) {
         TokStr(t) => {
-            if (len(t.value) != 3) { return 3; }
+            if (t.value.len() != 3) { return 3; }
             if (t.value[0] != 97) { return 4; }   // 'a'
             if (t.value[1] != 10) { return 5; }   // resolved '\n'
             if (t.value[2] != 98) { return 6; }   // 'b'
@@ -5883,7 +5883,7 @@ function main(): i32 {
     var t2: Token[] = tokenize("\"\\t\\r\\Z\"");
     match (t2[0]) {
         TokStr(t) => {
-            if (len(t.value) != 3) { return 8; }
+            if (t.value.len() != 3) { return 8; }
             if (t.value[0] != 9) { return 9; }    // '\t'
             if (t.value[1] != 13) { return 10; }  // '\r'
             if (t.value[2] != 90) { return 11; }  // 'Z' (unknown escape)
@@ -5895,7 +5895,7 @@ function main(): i32 {
     // infinite-looping.
     var t3: Token[] = tokenize("/* unterminated * comment");
     // Just EOF — the unterminated comment ate everything.
-    if (len(t3) != 1) { return 13; }
+    if (t3.len() != 1) { return 13; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -5949,7 +5949,7 @@ function is_keyword(name: string): boolean {
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -6007,7 +6007,7 @@ function tokenize(src: string): Token[] {
 function main(): i32 {
     var toks: Token[] = tokenize("var x = 42; // a comment\nfunction f() { return \"hi\"; }");
     // var x = 42 ; function f ( ) { return "hi" ; } EOF = 15 tokens.
-    if (len(toks) != 15) { return 100 + len(toks); }
+    if (toks.len() != 15) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "var") { return 1; } },
         _ => { return 2; },
@@ -6087,7 +6087,7 @@ func TestArm64SortI32(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
     var asc: i32[] = sort_i32_asc(xs);
-    if (len(asc) != 9) { return 1; }
+    if (asc.len() != 9) { return 1; }
     if (asc[0] != 1) { return 2; }
     if (asc[1] != 1) { return 3; }
     if (asc[8] != 9) { return 4; }
@@ -6098,11 +6098,11 @@ func TestArm64SortI32(t *testing.T) {
     if (desc[8] != 1) { return 7; }
 
     var empty: i32[] = [];
-    if (len(sort_i32_asc(empty)) != 0) { return 8; }
+    if ((sort_i32_asc(empty)).len() != 0) { return 8; }
 
     var one: i32[] = [42];
     var one_sorted: i32[] = sort_i32_asc(one);
-    if (len(one_sorted) != 1) { return 9; }
+    if (one_sorted.len() != 1) { return 9; }
     if (one_sorted[0] != 42) { return 10; }
 
     var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
@@ -6151,7 +6151,7 @@ function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 
 function tokenize(src: string): Token[] {
     var toks: Token[] = [];
-    var n: i32 = len(src);
+    var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i];
@@ -6179,7 +6179,7 @@ function tokenize(src: string): Token[] {
 
 function main(): i32 {
     var toks: Token[] = tokenize("foo + 42");
-    if (len(toks) != 4) { return 1; }
+    if (toks.len() != 4) { return 1; }
     match (toks[0]) {
         TokIdent(t) => { if (t.name != "foo") { return 2; } },
         TokInt(_) => { return 3; },
@@ -6310,7 +6310,7 @@ func TestArm64ArrayJoin(t *testing.T) {
     // Single element — reverse is identity.
     if (["solo"].reverse().join("|") != "solo") { return 16; }
     // Empty array — empty result.
-    if (len(none.reverse()) != 0) { return 17; }
+    if ((none.reverse()).len() != 0) { return 17; }
     // Reverse twice — identity.
     if (xs.reverse().reverse().join(",") != "a,b,c,d") { return 18; }
 
@@ -6451,7 +6451,7 @@ func TestArm64StdlibBundle31(t *testing.T) {
 
     var a: i32[] = [0 - 3, 5, 0 - 7].abs_each();
     if (a[0] != 3 || a[1] != 5 || a[2] != 7) { return 70; }
-    if (len(empty_i.abs_each()) != 0) { return 71; }
+    if ((empty_i.abs_each()).len() != 0) { return 71; }
 
     if (!"\"hello\"".is_quoted()) { return 80; }
     if (!"'hi'".is_quoted()) { return 81; }
@@ -6512,11 +6512,11 @@ func TestArm64StdlibBundle30(t *testing.T) {
     match (empty.first_index_of(0)) { Some(_) => { return 33; }, None => { } }
 
     var d: i32[] = [10, 12, 15, 20].pairwise_diffs();
-    if (len(d) != 3) { return 40; }
+    if (d.len() != 3) { return 40; }
     if (d[0] != 2 || d[1] != 3 || d[2] != 5) { return 41; }
-    if (len(empty.pairwise_diffs()) != 0) { return 42; }
+    if ((empty.pairwise_diffs()).len() != 0) { return 42; }
     var single: i32[] = [5].pairwise_diffs();
-    if (len(single) != 0) { return 43; }
+    if (single.len() != 0) { return 43; }
 
     if ((0).factorial() != 1) { return 50; }
     if ((1).factorial() != 1) { return 51; }
@@ -6579,7 +6579,7 @@ func TestArm64StdlibBundle29(t *testing.T) {
 
     var rev: i32[] = [1, 2, 3, 4].reversed();
     if (rev[0] != 4 || rev[1] != 3 || rev[2] != 2 || rev[3] != 1) { return 10; }
-    if (len(emp.reversed()) != 0) { return 11; }
+    if ((emp.reversed()).len() != 0) { return 11; }
     var single: i32[] = [7].reversed();
     if (single[0] != 7) { return 12; }
 
@@ -6650,8 +6650,8 @@ func TestArm64StdlibBundle28(t *testing.T) {
     var d: i32[] = xs.sorted_desc();
     if (d[0] != 5 || d[1] != 4 || d[2] != 3 || d[3] != 1 || d[4] != 1) { return 2; }
     var empty_i: i32[] = [];
-    if (len(empty_i.sorted_asc()) != 0) { return 3; }
-    if (len(empty_i.sorted_desc()) != 0) { return 4; }
+    if ((empty_i.sorted_asc()).len() != 0) { return 3; }
+    if ((empty_i.sorted_desc()).len() != 0) { return 4; }
 
     var ss: string[] = ["banana", "apple", "cherry"];
     var sa: string[] = ss.sorted_str_asc();
@@ -6659,11 +6659,11 @@ func TestArm64StdlibBundle28(t *testing.T) {
     var sd: string[] = ss.sorted_str_desc();
     if (sd[0] != "cherry" || sd[1] != "banana" || sd[2] != "apple") { return 11; }
     var empty_s: string[] = [];
-    if (len(empty_s.sorted_str_asc()) != 0) { return 12; }
+    if ((empty_s.sorted_str_asc()).len() != 0) { return 12; }
 
     var cs: i32[] = [1, 2, 3, 4].cumsum();
     if (cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 20; }
-    if (len(empty_i.cumsum()) != 0) { return 21; }
+    if ((empty_i.cumsum()).len() != 0) { return 21; }
     var single: i32[] = [7].cumsum();
     if (single[0] != 7) { return 22; }
 
@@ -6847,11 +6847,11 @@ func TestArm64StdlibBundle26(t *testing.T) {
 
     // lines_non_empty
     var src1: string = "a\n\nb\nc\n";
-    if (len(src1.lines_non_empty()) != 3) { return 50; }
+    if ((src1.lines_non_empty()).len() != 3) { return 50; }
     if (src1.lines_non_empty()[0] != "a") { return 51; }
     if (src1.lines_non_empty()[1] != "b") { return 52; }
     if (src1.lines_non_empty()[2] != "c") { return 53; }
-    if (len("".lines_non_empty()) != 0) { return 54; }
+    if (("".lines_non_empty()).len() != 0) { return 54; }
 
     // http builders
     var r1: HttpResponse = http_response_redirect("/login");
@@ -7082,8 +7082,8 @@ func TestArm64StdlibBundle22(t *testing.T) {
 
     // to_array
     var a: string[] = "abc".to_array();
-    if (len(a) != 3 || a[0] != "a" || a[2] != "c") { return 23; }
-    if (len("".to_array()) != 0) { return 24; }
+    if (a.len() != 3 || a[0] != "a" || a[2] != "c") { return 23; }
+    if (("".to_array()).len() != 0) { return 24; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7116,12 +7116,12 @@ func TestArm64StdlibBundle21(t *testing.T) {
     // string[] take / drop
     var arr: string[] = ["a", "b", "c", "d", "e"];
     var t: string[] = arr.take(3);
-    if (len(t) != 3 || t[0] != "a" || t[2] != "c") { return 12; }
-    if (len(arr.take(100)) != 5) { return 13; }
-    if (len(arr.take(0)) != 0) { return 14; }
+    if (t.len() != 3 || t[0] != "a" || t[2] != "c") { return 12; }
+    if ((arr.take(100)).len() != 5) { return 13; }
+    if ((arr.take(0)).len() != 0) { return 14; }
     var d: string[] = arr.drop(2);
-    if (len(d) != 3 || d[0] != "c") { return 15; }
-    if (len(arr.drop(100)) != 0) { return 16; }
+    if (d.len() != 3 || d[0] != "c") { return 15; }
+    if ((arr.drop(100)).len() != 0) { return 16; }
 
     // pack_rgb (+ round-trip via to_rgb_hex)
     if (pack_rgb(255, 0, 0) != 16711680) { return 17; }
@@ -7366,14 +7366,14 @@ func TestArm64StdlibBundle16(t *testing.T) {
 
     // csv_parse_line
     var f: string[] = csv_parse_line("a,b,c");
-    if (len(f) != 3 || f[0] != "a" || f[2] != "c") { return 14; }
+    if (f.len() != 3 || f[0] != "a" || f[2] != "c") { return 14; }
     var fq: string[] = csv_parse_line("\"a,b\",c");
-    if (len(fq) != 2 || fq[0] != "a,b") { return 15; }
+    if (fq.len() != 2 || fq[0] != "a,b") { return 15; }
     var fe: string[] = csv_parse_line("\"a\"\"b\",c");
-    if (len(fe) != 2 || fe[0] != "a\"b") { return 16; }
-    if (len(csv_parse_line("")) != 1) { return 17; }
+    if (fe.len() != 2 || fe[0] != "a\"b") { return 16; }
+    if ((csv_parse_line("")).len() != 1) { return 17; }
     var fmt: string[] = csv_parse_line("a,,b");
-    if (len(fmt) != 3 || fmt[1] != "") { return 18; }
+    if (fmt.len() != 3 || fmt[1] != "") { return 18; }
 
     // http_header_value
     var hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
@@ -7402,12 +7402,12 @@ func TestArm64StdlibBundle15(t *testing.T) {
 	src := `function main(): i32 {
     // distinct / distinct_count
     var d: string[] = ["a", "b", "a", "c", "b"].distinct();
-    if (len(d) != 3) { return 1; }
+    if (d.len() != 3) { return 1; }
     if (d[0] != "a" || d[2] != "c") { return 2; }
     if (["a", "b", "a", "c", "b"].distinct_count() != 3) { return 3; }
     var empty: string[] = [];
-    if (len(empty.distinct()) != 0) { return 4; }
-    if (len(["x", "x", "x"].distinct()) != 1) { return 5; }
+    if ((empty.distinct()).len() != 0) { return 4; }
+    if ((["x", "x", "x"].distinct()).len() != 1) { return 5; }
 
     // is_power_of_2
     if (!(1).is_power_of_2()) { return 6; }
@@ -7432,10 +7432,10 @@ func TestArm64StdlibBundle15(t *testing.T) {
 
     // http_path_segments
     var ps: string[] = http_path_segments("/api/users/42");
-    if (len(ps) != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
-    if (len(http_path_segments("/")) != 0) { return 20; }
-    if (len(http_path_segments("")) != 0) { return 21; }
-    if (len(http_path_segments("/api?q=1")) != 1) { return 22; }
+    if (ps.len() != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
+    if ((http_path_segments("/")).len() != 0) { return 20; }
+    if ((http_path_segments("")).len() != 0) { return 21; }
+    if ((http_path_segments("/api?q=1")).len() != 1) { return 22; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7490,13 +7490,13 @@ func TestArm64StdlibBundle13(t *testing.T) {
 	src := `function main(): i32 {
     // filter_non_empty / count_non_empty
     var src: string[] = "a,,b,,,c".split(",");
-    if (len(src) != 6) { return 1; }
+    if (src.len() != 6) { return 1; }
     var clean: string[] = src.filter_non_empty();
-    if (len(clean) != 3 || clean[0] != "a" || clean[2] != "c") { return 2; }
+    if (clean.len() != 3 || clean[0] != "a" || clean[2] != "c") { return 2; }
     if (src.count_non_empty() != 3) { return 3; }
 
     var empty: string[] = [];
-    if (len(empty.filter_non_empty()) != 0) { return 4; }
+    if ((empty.filter_non_empty()).len() != 0) { return 4; }
     if (empty.count_non_empty() != 0) { return 5; }
 
     // word_count
@@ -7596,15 +7596,15 @@ func TestArm64StdlibBundle11(t *testing.T) {
 	src := `function main(): i32 {
     // splitn
     var s1: string[] = "a=b=c=d".splitn("=", 2);
-    if (len(s1) != 2 || s1[0] != "a" || s1[1] != "b=c=d") { return 1; }
+    if (s1.len() != 2 || s1[0] != "a" || s1[1] != "b=c=d") { return 1; }
     var s3: string[] = "a=b=c=d".splitn("=", 1);
-    if (len(s3) != 1 || s3[0] != "a=b=c=d") { return 2; }
+    if (s3.len() != 1 || s3[0] != "a=b=c=d") { return 2; }
     var s4: string[] = "a=b=c=d".splitn("=", 0);
-    if (len(s4) != 0) { return 3; }
+    if (s4.len() != 0) { return 3; }
     var s5: string[] = "a=b".splitn("=", 100);
-    if (len(s5) != 2) { return 4; }
+    if (s5.len() != 2) { return 4; }
     var s6: string[] = "no-sep".splitn("=", 5);
-    if (len(s6) != 1 || s6[0] != "no-sep") { return 5; }
+    if (s6.len() != 1 || s6[0] != "no-sep") { return 5; }
 
     // first / last
     match ("hello".first()) { Some(b) => { if (b != 104) { return 6; } }, None => { return 7; }, }
@@ -7621,12 +7621,12 @@ func TestArm64StdlibBundle11(t *testing.T) {
 
     // chunks
     var c1: string[] = "abcdef".chunks(2);
-    if (len(c1) != 3 || c1[2] != "ef") { return 17; }
+    if (c1.len() != 3 || c1[2] != "ef") { return 17; }
     var c2: string[] = "abcdef".chunks(4);
-    if (len(c2) != 2 || c2[1] != "ef") { return 18; }   // short tail
-    if (len("".chunks(3)) != 0) { return 19; }
+    if (c2.len() != 2 || c2[1] != "ef") { return 18; }   // short tail
+    if (("".chunks(3)).len() != 0) { return 19; }
     var c4: string[] = "abc".chunks(0);
-    if (len(c4) != 1 || c4[0] != "abc") { return 20; }
+    if (c4.len() != 1 || c4[0] != "abc") { return 20; }
 
     // case-insensitive sort + cmp
     var asc: string[] = sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
@@ -7691,7 +7691,7 @@ func TestArm64StdlibBundle10(t *testing.T) {
     var desc: string[] = sort_strings_desc(unsorted);
     if (desc[0] != "cherry" || desc[2] != "apple") { return 23; }
     var empty: string[] = [];
-    if (len(sort_strings_asc(empty)) != 0) { return 24; }
+    if ((sort_strings_asc(empty)).len() != 0) { return 24; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7881,13 +7881,13 @@ func TestArm64StdlibBundle6(t *testing.T) {
 
     // range — half-open
     var r1: i32[] = range(0, 5);
-    if (len(r1) != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
-    if (len(range(5, 5)) != 0) { return 17; }   // empty when start >= end
+    if (r1.len() != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
+    if ((range(5, 5)).len() != 0) { return 17; }   // empty when start >= end
 
     // range_step — step <= 0 returns empty
     var rs: i32[] = range_step(0, 10, 2);
-    if (len(rs) != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
-    if (len(range_step(0, 10, 0)) != 0) { return 19; }
+    if (rs.len() != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
+    if ((range_step(0, 10, 0)).len() != 0) { return 19; }
 
     // repeat_with_sep
     if ("x".repeat_with_sep(3, ", ") != "x, x, x") { return 20; }
@@ -8043,9 +8043,9 @@ func TestArm64StdlibBundle3(t *testing.T) {
 
     // String chars — i32[] one element per byte.
     var cs: i32[] = "abc".chars();
-    if (len(cs) != 3) { return 18; }
+    if (cs.len() != 3) { return 18; }
     if (cs[0] != 97 || cs[1] != 98 || cs[2] != 99) { return 19; }
-    if (len("".chars()) != 0) { return 20; }
+    if (("".chars()).len() != 0) { return 20; }
 
     // String reverse_bytes — ASCII only.
     if ("hello".reverse_bytes() != "olleh") { return 21; }
@@ -8262,12 +8262,12 @@ func TestArm64StringExtras(t *testing.T) {
 function main(): i32 {
     // fields — runs of whitespace as separator, no empties.
     var fs: string[] = "  hello\tworld\nfoo bar  ".fields();
-    if (len(fs) != 4) { return 1; }
+    if (fs.len() != 4) { return 1; }
     if (fs[0] != "hello") { return 2; }
     if (fs[3] != "bar") { return 3; }
-    if (len("".fields()) != 0) { return 4; }
-    if (len("   \t\n".fields()) != 0) { return 5; }
-    if (len("solo".fields()) != 1) { return 6; }
+    if (("".fields()).len() != 0) { return 4; }
+    if (("   \t\n".fields()).len() != 0) { return 5; }
+    if (("solo".fields()).len() != 1) { return 6; }
 
     // eq_ignore_ascii_case — symmetric in both arms.
     if (!"Content-Type".eq_ignore_ascii_case("content-type")) { return 7; }
@@ -8306,28 +8306,28 @@ function main(): i32 {
 func TestArm64StringLines(t *testing.T) {
 	src := `function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
-    if (len(lf) != 3) { return 1; }
+    if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
     var crlf: string[] = "a\r\nb\r\nc".lines();
-    if (len(crlf) != 3) { return 5; }
+    if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[1] != "b") { return 7; }
     if (crlf[2] != "c") { return 8; }
 
     var trail: string[] = "a\nb\n".lines();
-    if (len(trail) != 2) { return 9; }
+    if (trail.len() != 2) { return 9; }
 
     var solo: string[] = "\n".lines();
-    if (len(solo) != 1) { return 10; }
+    if (solo.len() != 1) { return 10; }
     if (solo[0] != "") { return 11; }
 
-    if (len("".lines()) != 0) { return 12; }
+    if (("".lines()).len() != 0) { return 12; }
 
     var partial: string[] = "abc".lines();
-    if (len(partial) != 1) { return 13; }
+    if (partial.len() != 1) { return 13; }
     if (partial[0] != "abc") { return 14; }
 
     return 0;
@@ -8355,16 +8355,16 @@ func TestArm64EmptyU8Sentinel(t *testing.T) {
 	}{
 		{"len-on-empty-u8", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    return len(bs);
+    return bs.len();
 }`, 0},
 		{"string-from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
     var s: string = string_from_bytes(bs);
-    return len(s);
+    return s.len();
 }`, 0},
 		{"to-lower-empty-string", `function main(): i32 {
     var s: string = "".to_lower();
-    return len(s);
+    return s.len();
 }`, 0},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -8384,20 +8384,20 @@ func TestArm64EmptyStringSentinel(t *testing.T) {
     var s: string = "abcd";
     var a: string = s[0:0];
     var b: string = s[0:0];
-    return len(a + b);
+    return (a + b).len();
 }`, 0},
 		{"zero-width-slice", `function main(): i32 {
     var s: string = "abcd";
-    return len(s[2:2]);
+    return s[2:2].len();
 }`, 0},
 		{"from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    return len(string_from_bytes(bs));
+    return (string_from_bytes(bs)).len();
 }`, 0},
 		{"sentinel-roundtrip", `function main(): i32 {
     var s: string = "world";
     var empty: string = s[0:0];
-    return len("hello, " + empty + s);
+    return ("hello, " + empty + s).len();
 }`, 12},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -8518,13 +8518,13 @@ func TestArm64SsoInline(t *testing.T) {
 	}{
 		// __str_slice produces inline at 1..7, heap at 8+.
 		{"slice-len-1-inline", `function main(): i32 {
-    return len("abcdefghij"[0:1]);
+    return ("abcdefghij"[0:1]).len();
 }`, 1},
 		{"slice-len-7-inline", `function main(): i32 {
-    return len("abcdefghij"[0:7]);
+    return ("abcdefghij"[0:7]).len();
 }`, 7},
 		{"slice-len-8-heap", `function main(): i32 {
-    return len("abcdefghij"[0:8]);
+    return ("abcdefghij"[0:8]).len();
 }`, 8},
 		// Inline byte indexing must still match the source bytes.
 		{"inline-index-first-byte", `function main(): i32 {
@@ -8558,12 +8558,12 @@ func TestArm64SsoInline(t *testing.T) {
 		{"concat-inline-plus-inline-inline", `function main(): i32 {
     var a: string = "abcdef"[0:3];
     var b: string = "xyz";
-    return len(a + b);
+    return (a + b).len();
 }`, 6},
 		{"concat-inline-plus-inline-heap", `function main(): i32 {
     var a: string = "abcdef"[0:5];
     var b: string = "fghij";
-    return len(a + b);
+    return (a + b).len();
 }`, 10},
 		{"concat-roundtrip-bytes", `function main(): i32 {
     var a: string = "abcdef"[0:3];
@@ -8586,18 +8586,18 @@ func TestArm64SsoInline(t *testing.T) {
 		{"print-inline", `function main(): i32 {
     var s: string = "abcdefgh"[0:5];
     print(s);
-    return len(s);
+    return s.len();
 }`, 5},
 		// Triple concat.
 		{"triple-concat-via-inline", `function main(): i32 {
     var s: string = "aa" + "bb" + "ccddee";
-    return len(s);
+    return s.len();
 }`, 10},
 		// FieldAccess.len regression.
 		{"field-access-len-inline", `struct Box { s: string }
 function main(): i32 {
     var b: Box = Box { s: "abcdefgh"[0:5] };
-    return len(b.s);
+    return b.s.len();
 }`, 5},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -8621,12 +8621,12 @@ func TestArm64ArrayLiteral(t *testing.T) {
 }`, 20},
 		{`function main(): i32 {
     var xs: i32[] = [1, 2, 3, 4, 5];
-    return len(xs);
+    return xs.len();
 }`, 5},
 		{`function sum(xs: i32[]): i32 {
     var total: i32 = 0;
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         total = total + xs[i];
         i = i + 1;
     }
@@ -8756,7 +8756,7 @@ func TestArm64MapGetMatchFullPipeline(t *testing.T) {
 	src := `function tokenize(s: string): string[] {
   var out: string[] = [];
   var i: i32 = 0;
-  var sLen: i32 = len(s);
+  var sLen: i32 = s.len();
   var start: i32 = 0;
   while (i <= sLen) {
     var b: i32 = 0;
@@ -8774,7 +8774,7 @@ function main(): i32 {
   var words: string[] = tokenize("a b a c b a");
   var counts: Map[string, i32] = map_new(8);
   var i: i32 = 0;
-  while (i < len(words)) {
+  while (i < words.len()) {
     var w: string = words[i];
     match (counts.get(w)) {
       Some(n) => { counts.set(w, n + 1); },
@@ -8787,7 +8787,7 @@ function main(): i32 {
   var vals: i32[] = counts.values();
   var sum: i32 = 0;
   var j: i32 = 0;
-  while (j < len(vals)) {
+  while (j < vals.len()) {
     sum = sum + vals[j];
     j = j + 1;
   }
@@ -9336,7 +9336,7 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
     var arr: Option[i64][] = [Some(1234567890123), None, Some(9876543210)];
     var s: i64 = 0;
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         match (arr[i]) {
             Some(n) => { s = s + n; },
             None => {},
@@ -10085,7 +10085,7 @@ function main(): i32 {
 func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 	src := `function main(): i32 {
     var arr: i64[][] = [[1234567890123], [9876543210, 100], []];
-    if (len(arr) == 3 && arr[0][0] == 1234567890123 && arr[1][1] == 100) {
+    if (arr.len() == 3 && arr[0][0] == 1234567890123 && arr[1][1] == 100) {
         return 0;
     }
     return 1;
@@ -10272,11 +10272,11 @@ func TestArm64Args(t *testing.T) {
 	src := `function main(): i32 {
     var a: string[] = args();
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         print(a[i]);
         i = i + 1;
     }
-    return len(a);
+    return a.len();
 }`
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -10372,7 +10372,7 @@ func TestArm64SliceMake(t *testing.T) {
 		{"len(slice)", `function main(): i32 {
     var arr: i32[] = [1, 2, 3, 4, 5];
     var s: [i32] = arr[1:4];
-    return len(s);
+    return s.len();
 }`, 3},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -10389,7 +10389,7 @@ func TestArm64Arena(t *testing.T) {
     var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
     arena_restore(saved);
     var s3: string = "after-" + "restore"; // alloc reuses s2's space
-    return len(s1) + len(s3);
+    return s1.len() + s3.len();
 }`)
 	if code != 13+13 {
 		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
@@ -10403,7 +10403,7 @@ func TestArm64RandomBytes(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
     var s: string = random_bytes(16);
     write(s);
-    return len(s);
+    return s.len();
 }`)
 	if code != 16 {
 		t.Errorf("exit = %d, want 16 (length of returned bytes)", code)
@@ -10655,7 +10655,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// String concat — exercises SYS_mmap via __lang_alloc.
 		{"strconcat", `function main(): i32 {
     var s: string = "hello, " + "world!";
-    return len(s);
+    return s.len();
 }`, 13},
 		// TCP listen + close — exercises socket/bind/listen/close
 		// syscalls (Darwin numbers + svc #0x80 path).
@@ -10698,7 +10698,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// argc == 1. Verifies the start-runtime prologue
 		// stashed argc/argv from the kernel-delivered stack.
 		{"args", `function main(): i32 {
-    return len(args());
+    return (args()).len();
 }`, 1},
 		// arena_save / arena_restore — snapshot + rewind the
 		// bump cursor. Both leaf helpers (one ldr / one str
@@ -10708,7 +10708,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
     var saved: i32 = arena_save();
     var s2: string = "throwaway-" + "junk";
     arena_restore(saved);
-    return len(s1);
+    return s1.len();
 }`, 13},
 		// stdin().read_line() — exercises the .bss buffer +
 		// byte-by-byte read syscall + Option[string] result.
@@ -10736,7 +10736,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// (chunked, 256-byte cap per call). Just verify the
 		// length round-trips; can't assert content.
 		{"random_bytes", `function main(): i32 {
-    return len(random_bytes(32));
+    return (random_bytes(32)).len();
 }`, 32},
 		// Map[string, i32] — string keys exercise the
 		// pointer-width entry-slot fix. set("world", 99)
@@ -10760,7 +10760,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
     var m: Map[i32, string] = map_new(4);
     m.set(1, "abc");
     m.set(2, "abcdef");
-    return len(m.get_or(2, ""));
+    return (m.get_or(2, "")).len();
 }`, 6},
 		// Map[string, string] — both key and value are
 		// pointer-width. End-to-end check that the entry
@@ -10770,7 +10770,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
     var m: Map[string, string] = map_new(4);
     m.set("k1", "ab");
     m.set("k2", "abcde");
-    return len(m.get_or("k2", ""));
+    return (m.get_or("k2", "")).len();
 }`, 5},
 		// Iteration over Map[string, i32] via has_next /
 		// key / value — accumulates the sum of all values.
@@ -10816,7 +10816,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 }
 function main(): i32 {
     match (get_msg()) {
-        Some(s) => { return len(s); },
+        Some(s) => { return s.len(); },
         None => { return 0; }
     }
     return -1;
@@ -10834,7 +10834,7 @@ function build(): Msg {
 }
 function main(): i32 {
     match (build()) {
-        Text(s) => { return len(s); },
+        Text(s) => { return s.len(); },
         Empty => { return 0; }
     }
     return -1;
@@ -10850,7 +10850,7 @@ function main(): i32 {
 }
 function main(): i32 {
     var p: Person = Person { age: 30, name: "Claude", weight: 100 };
-    return len(p.name) + p.age + p.weight;
+    return p.name.len() + p.age + p.weight;
 }`, 136},
 		// Array of strings — array literal stride + element
 		// store widened to 8 bytes for pointer-typed elems
@@ -10858,7 +10858,7 @@ function main(): i32 {
 		// matching `lsl #3` address compute.
 		{"string_arr", `function main(): i32 {
     var xs: string[] = ["alpha", "beta", "gamma"];
-    return len(xs[0]) + len(xs[1]) + len(xs[2]) + len(xs);
+    return xs[0].len() + xs[1].len() + xs[2].len() + xs.len();
 }`, 17},
 		// Map[string, i32].keys() — the snapshot array is
 		// now ptrW-aware (destStride=8 on arm64 for pointer
@@ -10873,8 +10873,8 @@ function main(): i32 {
     var ks: string[] = m.keys();
     var i: i32 = 0;
     var total: i32 = 0;
-    while (i < len(ks)) {
-        total = total + len(ks[i]);
+    while (i < ks.len()) {
+        total = total + ks[i].len();
         i = i + 1;
     }
     return total;
@@ -10891,8 +10891,8 @@ function main(): i32 {
     var vs: string[] = m.values();
     var i: i32 = 0;
     var total: i32 = 0;
-    while (i < len(vs)) {
-        total = total + len(vs[i]);
+    while (i < vs.len()) {
+        total = total + vs[i].len();
         i = i + 1;
     }
     return total;
@@ -10916,7 +10916,7 @@ function main(): i32 {
     var v2: string = "be" + "ta";
     m.set(1, v1);
     m.set(2, v2);
-    return len(m.get_or(1, "")) + len(m.get_or(2, ""));
+    return (m.get_or(1, "")).len() + (m.get_or(2, "")).len();
 }`, 9},
 	}
 
@@ -11203,7 +11203,7 @@ func TestArm64PointerPayloadPairForm(t *testing.T) {
 }
 function main(): i32 {
     match (pick(true)) {
-        Some(s) => { return len(s); },
+        Some(s) => { return s.len(); },
         None    => { return -1; }
     }
 }`
@@ -11350,7 +11350,7 @@ function main(): i32 { return outer(40); }`
 // truncation path.
 func TestArm64ClosureCapturesString(t *testing.T) {
 	src := `function outer(s: string): i32 {
-    function inner(): i32 { return len(s); }
+    function inner(): i32 { return s.len(); }
     return inner();
 }
 function main(): i32 { return outer("hello"); }`
@@ -11403,7 +11403,7 @@ function main(): i32 {
 // offset arithmetic.
 func TestArm64ClosureCapturesMixedPointers(t *testing.T) {
 	src := `function outer(s: string, n: i32): i32 {
-    function inner(): i32 { return len(s) + n; }
+    function inner(): i32 { return s.len() + n; }
     return inner();
 }
 function main(): i32 { return outer("hi", 40); }`
@@ -11445,7 +11445,7 @@ func TestArm64LenOfClosureReturningString(t *testing.T) {
 }
 function main(): i32 {
     var f = makeReader();
-    return len(f());
+    return (f()).len();
 }`
 	if _, code := compileAndRunArm64(t, src); code != 5 {
 		t.Errorf("got %d, want 5", code)
@@ -11670,12 +11670,12 @@ func TestArm64FStringInterpolation(t *testing.T) {
 		{"interpolated i32", `function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
-    return len(s);
+    return s.len();
 }`, 7},
 		{"interpolated string", `function main(): i32 {
     var who: string = "world";
     var s: string = f"hello, {who}!";
-    return len(s);
+    return s.len();
 }`, 13},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -11823,7 +11823,7 @@ func TestArm64WideScalarMap(t *testing.T) {
 		{"Map[i64, string]", `function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
-    return len(m.get_or(1i64, ""));
+    return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `function main(): i32 {
     var m: Map[string, i64] = map_new(4);
@@ -11858,7 +11858,7 @@ func TestArm64WideScalarMap(t *testing.T) {
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
     var keys: i64[] = m.keys();
-    if (len(keys) != 2) { return 1; }
+    if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
     if (keys[0] == keys[1]) { return 4; }
@@ -11902,7 +11902,7 @@ function main(): i32 {
     var s: string = "hello, " + "world";
     var ptr: usize = s as usize;
     var s2: string = ptr as string;
-    return len(s2);
+    return s2.len();
 }`, 12},
 	} {
 		_, code := compileAndRunArm64(t, c.src)
@@ -11922,7 +11922,7 @@ func TestArm64SubI32(t *testing.T) {
     var xs: i8[] = [1 as i8, 2 as i8, 3 as i8, 0 - 1 as i8];
     var sum: i32 = 0;
     var i: i32 = 0;
-    while (i < len(xs)) {
+    while (i < xs.len()) {
         sum = sum + (xs[i] as i32);
         i = i + 1;
     }
@@ -12014,7 +12014,7 @@ func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout
 func TestArm64ReadFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return 0 - 1; }
     }
     return 0 - 2;
@@ -12035,7 +12035,7 @@ func TestArm64ReadFileNotFound(t *testing.T) {
         Ok(_) => { return 0; },
         Err(err) => {
             match (err) {
-                NotFound(p) => { return len(p); },
+                NotFound(p) => { return p.len(); },
                 _ => { return 99; }
             }
         }
@@ -12082,7 +12082,7 @@ func TestArm64ReadWriteFileRoundtrip(t *testing.T) {
         None => {}
     }
     match (read_file("rt.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return 2; }
     }
     return 0 - 1;
@@ -12424,7 +12424,7 @@ function main(): i32 {
 		{"fstring_interp", `function main(): i32 {
     var x: i32 = 42;
     var s: string = f"x is {x}";
-    if (len(s) == 7) { return 0; }
+    if (s.len() == 7) { return 0; }
     return 1;
 }`},
 		{"for_each_array", `function main(): i32 {

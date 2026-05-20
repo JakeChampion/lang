@@ -187,7 +187,7 @@ func TestBuildReadFile(t *testing.T) {
 	}
 	src := `function main(): i32 {
     match (read_file("greeting.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return -1; }
     }
     return -2;
@@ -243,7 +243,7 @@ func TestBuildReadFileNotFound(t *testing.T) {
         Ok(_) => { return -1; },
         Err(err) => {
             match (err) {
-                NotFound(p) => { return len(p); },
+                NotFound(p) => { return p.len(); },
                 PermissionDenied(_) => { return -10; },
                 AlreadyExists(_) => { return -11; },
                 InvalidUtf8(_) => { return -12; },
@@ -358,7 +358,7 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
         None => {}
     }
     match (read_file("roundtrip.txt")) {
-        Ok(s) => { return len(s); },
+        Ok(s) => { return s.len(); },
         Err(_) => { return -2; }
     }
     return -3;
@@ -623,6 +623,62 @@ function main(): i32 {
 	if len(bin) < 8 ||
 		bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d {
 		t.Fatalf("output doesn't start with the wasm magic; got % x", bin[:8])
+	}
+}
+
+// TestBuildHttpHandlerCompiles — pin the compile-time wiring of
+// the wasi:http/incoming-handler wrapper. A program that defines
+// `function handle(req: HttpRequest, plat: Platform):
+// HttpResponse` must reach the end of Build with HttpHandler=true
+// without surfacing "unsupported op" / "unknown callee" — i.e.
+// the wasi:http import specs (wasi.go), the __http_entry helper
+// spec (runtime.go + wasi_http.go), the live-extras pinning of
+// `handle` + `__method_HeaderMap_append` (build.go), and the
+// export rewrite to `wasi:http/incoming-handler@0.2.0#handle`
+// (wasmbin.go) are all consistently registered. Pure compile
+// check; runtime exercise under `wasmtime serve` lives in the
+// e2e suite (TestWasmPreview2HttpHandler).
+func TestBuildHttpHandlerCompiles(t *testing.T) {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/hello") {
+        return http_response_ok("world");
+    }
+    return http_response_text(404, "not found");
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{
+		ForceMemorySection: true,
+		HttpHandler:        true,
+	})
+	if err != nil {
+		t.Fatalf("Build (HttpHandler): %v", err)
+	}
+	if len(bin) == 0 {
+		t.Fatal("Build returned empty module bytes")
+	}
+	// Wasm magic.
+	if len(bin) < 8 ||
+		bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d {
+		t.Fatalf("output doesn't start with the wasm magic; got % x", bin[:8])
+	}
+	// The canonical component-model export name must be present so
+	// `wasm-tools component new` recognises the handler.
+	if !exportExists(t, bin, "wasi:http/incoming-handler@0.2.0#handle") {
+		t.Fatal("module missing wasi:http/incoming-handler@0.2.0#handle export")
+	}
+	if !exportExists(t, bin, "cabi_realloc") {
+		t.Fatal("module missing cabi_realloc export")
+	}
+	if !exportExists(t, bin, "memory") {
+		t.Fatal("module missing memory export (needed for the adapter env::memory import)")
 	}
 }
 

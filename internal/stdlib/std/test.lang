@@ -208,13 +208,13 @@ pub function test_new_filtered(suite: string, filter: string): TestRunner {
 // argv-parser module once one lands.
 pub function parse_filter_from_args(argv: string[]): string {
     var i: i32 = 0;
-    while (i < len(argv)) {
+    while (i < argv.len()) {
         var a: string = argv[i];
-        if (a == "--filter" && i + 1 < len(argv)) {
+        if (a == "--filter" && i + 1 < argv.len()) {
             return argv[i + 1];
         }
         if (a.starts_with("--filter=")) {
-            return a[9:len(a)];
+            return a[9:a.len()];
         }
         i = i + 1;
     }
@@ -269,7 +269,7 @@ pub function (r: TestRunner) with_fail_fast(): TestRunner {
 //   }
 pub function parse_fail_fast_from_args(argv: string[]): boolean {
     var i: i32 = 0;
-    while (i < len(argv)) {
+    while (i < argv.len()) {
         if (argv[i] == "--fail-fast") { return true; }
         i = i + 1;
     }
@@ -327,7 +327,7 @@ pub function (r: TestRunner) with_quiet(): TestRunner {
 //   if (parse_quiet_from_args(args())) { r = r.with_quiet(); }
 pub function parse_quiet_from_args(argv: string[]): boolean {
     var i: i32 = 0;
-    while (i < len(argv)) {
+    while (i < argv.len()) {
         if (argv[i] == "--quiet") { return true; }
         i = i + 1;
     }
@@ -376,7 +376,7 @@ pub function (r: TestRunner) it(name: string, result: Option[string]): TestRunne
     // the runner's filter pattern (set via `test_new_filter`).
     // Counted as skipped rather than not-printed so the TAP
     // stream stays a faithful record of the test list.
-    if (len(r.filter) > 0 && !display.contains(r.filter)) {
+    if (r.filter.len() > 0 && !display.contains(r.filter)) {
         return r.skip(name, "filtered out (--filter=" + r.filter + ")");
     }
     // Fail-fast short-circuit. Once any case has failed in
@@ -549,19 +549,19 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
 pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
     var fs: string[] = r.failures;
     var i: i32 = 0;
-    while (i < len(child.failures)) {
+    while (i < child.failures.len()) {
         fs = fs.push(child.failures[i]);
         i = i + 1;
     }
     var sr: string[] = r.skip_reasons;
     i = 0;
-    while (i < len(child.skip_reasons)) {
+    while (i < child.skip_reasons.len()) {
         sr = sr.push(child.skip_reasons[i]);
         i = i + 1;
     }
     var cl: string[] = r.cleanup_paths;
     i = 0;
-    while (i < len(child.cleanup_paths)) {
+    while (i < child.cleanup_paths.len()) {
         cl = cl.push(child.cleanup_paths[i]);
         i = i + 1;
     }
@@ -689,7 +689,7 @@ pub function (r: TestRunner) finish(): i32 {
     if (r.skipped > 0) {
         print("# skipped:");
         var j: i32 = 0;
-        while (j < len(r.skip_reasons)) {
+        while (j < r.skip_reasons.len()) {
             print("#   " + r.skip_reasons[j]);
             j = j + 1;
         }
@@ -701,7 +701,7 @@ pub function (r: TestRunner) finish(): i32 {
     // the test assertions themselves passed.
     var k: i32 = 0;
     var cleanup_errored: boolean = false;
-    while (k < len(r.cleanup_paths)) {
+    while (k < r.cleanup_paths.len()) {
         var p: string = r.cleanup_paths[k];
         match (remove_dir_all(p)) {
             None => { },
@@ -715,7 +715,7 @@ pub function (r: TestRunner) finish(): i32 {
     if (r.failed > 0) {
         print("# failures:");
         var i: i32 = 0;
-        while (i < len(r.failures)) {
+        while (i < r.failures.len()) {
             print("#   " + r.failures[i]);
             i = i + 1;
         }
@@ -1162,12 +1162,12 @@ pub function assert_ends_with_ci(s: string, suffix: string): Option[string] {
 // `assert_empty_string(s)` — sugar for assert_eq_i32(len(s), 0)
 // that names the assertion in the failure message.
 pub function assert_empty_string(s: string): Option[string] {
-    if (len(s) == 0) { return None; }
+    if (s.len() == 0) { return None; }
     return Some("assert_empty_string: expected \"\", got \"" + s + "\"");
 }
 
 pub function assert_non_empty_string(s: string): Option[string] {
-    if (len(s) > 0) { return None; }
+    if (s.len() > 0) { return None; }
     return Some("assert_non_empty_string: string was empty");
 }
 
@@ -1193,14 +1193,14 @@ pub function assert_string_count(haystack: string, needle: string, n: i32): Opti
 // doesn't have a `T[]` generic at the function-signature
 // level for the call sites we currently want.
 pub function assert_len_i32(arr: i32[], n: i32): Option[string] {
-    var got: i32 = len(arr);
+    var got: i32 = arr.len();
     if (got == n) { return None; }
     return Some("assert_len_i32: expected length " + n.to_string() +
                 ", got " + got.to_string());
 }
 
 pub function assert_len_string(arr: string[], n: i32): Option[string] {
-    var got: i32 = len(arr);
+    var got: i32 = arr.len();
     if (got == n) { return None; }
     return Some("assert_len_string: expected length " + n.to_string() +
                 ", got " + got.to_string());
@@ -1216,7 +1216,7 @@ pub function assert_len_string(arr: string[], n: i32): Option[string] {
 // problem distinctly from a value mismatch so the
 // regression mode is readable.
 pub function assert_at_i32(arr: i32[], idx: i32, expected: i32): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_i32: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1231,7 +1231,7 @@ pub function assert_at_i32(arr: i32[], idx: i32, expected: i32): Option[string] 
 // mirror. Quotes both sides of the diff in the failure
 // message.
 pub function assert_at_string(arr: string[], idx: i32, expected: string): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_string: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1244,7 +1244,7 @@ pub function assert_at_string(arr: string[], idx: i32, expected: string): Option
 
 // `assert_at_i64(arr, idx, expected)` — i64-element mirror.
 pub function assert_at_i64(arr: i64[], idx: i32, expected: i64): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_i64: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1260,7 +1260,7 @@ pub function assert_at_i64(arr: i64[], idx: i32, expected: i64): Option[string] 
 // site; failure message dispatches through `.to_string`
 // which respects the unsigned formatting.
 pub function assert_at_u32(arr: u32[], idx: i32, expected: u32): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_u32: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1273,7 +1273,7 @@ pub function assert_at_u32(arr: u32[], idx: i32, expected: u32): Option[string] 
 
 // `assert_at_u64(arr, idx, expected)` — u64-element mirror.
 pub function assert_at_u64(arr: u64[], idx: i32, expected: u64): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_u64: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1290,7 +1290,7 @@ pub function assert_at_u64(arr: u64[], idx: i32, expected: u64): Option[string] 
 // parameter is mandatory because exact float equality
 // is almost never what tests actually want.
 pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_f64: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1319,7 +1319,7 @@ pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): O
 // difference calc (same precision-safety trick as the
 // scalar `assert_eq_f32_near`).
 pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     if (idx < 0 || idx >= n) {
         return Some("assert_at_f32: index " + idx.to_string() +
                     " out of bounds (length " + n.to_string() + ")");
@@ -1346,8 +1346,8 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): O
 // equality. Returns the first mismatching index so the failure
 // localises a long array diff.
 pub function assert_eq_i32_array(actual: i32[], expected: i32[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_i32_array: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1365,8 +1365,8 @@ pub function assert_eq_i32_array(actual: i32[], expected: i32[]): Option[string]
 }
 
 pub function assert_eq_string_array(actual: string[], expected: string[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_string_array: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1389,8 +1389,8 @@ pub function assert_eq_string_array(actual: string[], expected: string[]): Optio
 // timestamps / sizes / process IDs needs this dedicated
 // helper rather than a cast at every call site.
 pub function assert_eq_i64_array(actual: i64[], expected: i64[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_i64_array: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1414,8 +1414,8 @@ pub function assert_eq_i64_array(actual: i64[], expected: i64[]): Option[string]
 // message's `to_string` dispatches to the unsigned
 // formatter).
 pub function assert_eq_u32_array(actual: u32[], expected: u32[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_u32_array: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1435,8 +1435,8 @@ pub function assert_eq_u32_array(actual: u32[], expected: u32[]): Option[string]
 // `assert_eq_u64_array(actual, expected)` — element-wise
 // u64 array equality.
 pub function assert_eq_u64_array(actual: u64[], expected: u64[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_u64_array: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1461,8 +1461,8 @@ pub function assert_eq_u64_array(actual: u64[], expected: u64[]): Option[string]
 // the `_near` semantics mean cumulative rounding error in
 // vector ops doesn't fail the test spuriously.
 pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f64): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_f64_array_near: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1495,8 +1495,8 @@ pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f
 // difference calc, same precision-safety trick as the
 // scalar `assert_eq_f32_near`.
 pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f32): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_eq_f32_array_near: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1544,8 +1544,8 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
 // — O(n²) on the sort but n is bounded by the array size
 // the test produced.
 pub function assert_set_eq_i32(actual: i32[], expected: i32[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_set_eq_i32: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1568,8 +1568,8 @@ pub function assert_set_eq_i32(actual: i32[], expected: i32[]): Option[string] {
 // equality for string[]. Sorts both via `sort_strings_asc`
 // then delegates to ordered compare.
 pub function assert_set_eq_string(actual: string[], expected: string[]): Option[string] {
-    var an: i32 = len(actual);
-    var en: i32 = len(expected);
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
     if (an != en) {
         return Some("assert_set_eq_string: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -1597,11 +1597,11 @@ pub function assert_subset_i32(superset: i32[], subset: i32[]): Option[string] {
     // entries we've consumed so duplicates in `subset` get
     // matched to distinct positions.
     var used: boolean[] = [];
-    var sn: i32 = len(superset);
+    var sn: i32 = superset.len();
     var i: i32 = 0;
     while (i < sn) { used = used.push(false); i = i + 1; }
     var j: i32 = 0;
-    while (j < len(subset)) {
+    while (j < subset.len()) {
         var want: i32 = subset[j];
         var matched: boolean = false;
         var k: i32 = 0;
@@ -1624,11 +1624,11 @@ pub function assert_subset_i32(superset: i32[], subset: i32[]): Option[string] {
 
 pub function assert_subset_string(superset: string[], subset: string[]): Option[string] {
     var used: boolean[] = [];
-    var sn: i32 = len(superset);
+    var sn: i32 = superset.len();
     var i: i32 = 0;
     while (i < sn) { used = used.push(false); i = i + 1; }
     var j: i32 = 0;
-    while (j < len(subset)) {
+    while (j < subset.len()) {
         var want: string = subset[j];
         var matched: boolean = false;
         var k: i32 = 0;
@@ -1665,10 +1665,10 @@ pub function assert_subset_string(superset: string[], subset: string[]): Option[
 pub function assert_exit(actual: ProcessResult, expected: i32): Option[string] {
     if (actual.exit_code == expected) { return None; }
     var tail: string = "";
-    if (len(actual.stdout) > 0) {
+    if (actual.stdout.len() > 0) {
         tail = tail + "\n  stdout: " + actual.stdout;
     }
-    if (len(actual.stderr) > 0) {
+    if (actual.stderr.len() > 0) {
         tail = tail + "\n  stderr: " + actual.stderr;
     }
     return Some("assert_exit: expected " + expected.to_string() +
@@ -1717,7 +1717,7 @@ pub function assert_process(actual: ProcessResult, expected_exit: i32, stdout_su
     if (actual.exit_code != expected_exit) {
         return assert_exit(actual, expected_exit);
     }
-    if (len(stdout_substr) > 0 && !actual.stdout.contains(stdout_substr)) {
+    if (stdout_substr.len() > 0 && !actual.stdout.contains(stdout_substr)) {
         return Some("assert_process: exit " + expected_exit.to_string() +
                     " ok, but stdout missing \"" + stdout_substr +
                     "\"\n  stdout: " + actual.stdout);
@@ -1764,7 +1764,7 @@ pub function assert_stderr_lines(actual: ProcessResult, expected_lines: string[]
 // (timestamps, random ids, etc.). Same line definition as
 // `.lines()` — trailing newline doesn't overcount.
 pub function assert_stdout_line_count(actual: ProcessResult, n: i32): Option[string] {
-    var got: i32 = len(actual.stdout.lines());
+    var got: i32 = (actual.stdout.lines()).len();
     if (got == n) { return None; }
     return Some("assert_stdout_line_count: got " + got.to_string() +
                 " lines, expected " + n.to_string());
@@ -1772,7 +1772,7 @@ pub function assert_stdout_line_count(actual: ProcessResult, n: i32): Option[str
 
 // `assert_stderr_line_count(actual, n)` — stderr mirror.
 pub function assert_stderr_line_count(actual: ProcessResult, n: i32): Option[string] {
-    var got: i32 = len(actual.stderr.lines());
+    var got: i32 = (actual.stderr.lines()).len();
     if (got == n) { return None; }
     return Some("assert_stderr_line_count: got " + got.to_string() +
                 " lines, expected " + n.to_string());
@@ -1793,7 +1793,7 @@ pub function assert_stderr_line_count(actual: ProcessResult, n: i32): Option[str
 // `index_of` checks). Empty needles list always passes.
 pub function assert_contains_all(haystack: string, needles: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(needles)) {
+    while (i < needles.len()) {
         if (!haystack.contains(needles[i])) {
             return Some("assert_contains_all: missing \"" + needles[i] +
                         "\" in:\n  " + haystack);
@@ -1808,11 +1808,11 @@ pub function assert_contains_all(haystack: string, needles: string[]): Option[st
 // EITHER X or Y" cases where the exact wording is incidental.
 // Empty needles list always fails (vacuously: nothing to match).
 pub function assert_contains_any(haystack: string, needles: string[]): Option[string] {
-    if (len(needles) == 0) {
+    if (needles.len() == 0) {
         return Some("assert_contains_any: empty needles list");
     }
     var i: i32 = 0;
-    while (i < len(needles)) {
+    while (i < needles.len()) {
         if (haystack.contains(needles[i])) {
             return None;
         }
@@ -1830,15 +1830,15 @@ pub function assert_contains_any(haystack: string, needles: string[]): Option[st
 pub function assert_contains_in_order(haystack: string, needles: string[]): Option[string] {
     var cursor: i32 = 0;
     var i: i32 = 0;
-    while (i < len(needles)) {
-        var rest: string = haystack[cursor:len(haystack)];
+    while (i < needles.len()) {
+        var rest: string = haystack[cursor:haystack.len()];
         var idx: i32 = rest.index_of(needles[i]);
         if (idx < 0) {
             return Some("assert_contains_in_order: \"" + needles[i] +
                         "\" not found after byte " + cursor.to_string() +
                         " in:\n  " + haystack);
         }
-        cursor = cursor + idx + len(needles[i]);
+        cursor = cursor + idx + needles[i].len();
         i = i + 1;
     }
     return None;
@@ -1860,14 +1860,14 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Opti
 function __diff_lines(a: string, b: string): i32 {
     var a_lines: string[] = a.lines();
     var b_lines: string[] = b.lines();
-    var n: i32 = len(a_lines);
-    if (len(b_lines) < n) { n = len(b_lines); }
+    var n: i32 = a_lines.len();
+    if (b_lines.len() < n) { n = b_lines.len(); }
     var i: i32 = 0;
     while (i < n) {
         if (a_lines[i] != b_lines[i]) { return i + 1; }
         i = i + 1;
     }
-    if (len(a_lines) != len(b_lines)) { return n + 1; }
+    if (a_lines.len() != b_lines.len()) { return n + 1; }
     return 0;
 }
 
@@ -1884,8 +1884,8 @@ pub function assert_eq_string_diff(actual: string, expected: string): Option[str
     var actual_line: string = "<past end>";
     var expected_line: string = "<past end>";
     var ix: i32 = line_no - 1;
-    if (ix >= 0 && ix < len(a_lines)) { actual_line = a_lines[ix]; }
-    if (ix >= 0 && ix < len(e_lines)) { expected_line = e_lines[ix]; }
+    if (ix >= 0 && ix < a_lines.len()) { actual_line = a_lines[ix]; }
+    if (ix >= 0 && ix < e_lines.len()) { expected_line = e_lines[ix]; }
     return Some("assert_eq_string_diff: differ at line " + line_no.to_string() +
                 "\n  expected: " + expected_line +
                 "\n  actual:   " + actual_line);
@@ -1900,8 +1900,8 @@ pub function assert_eq_string_diff(actual: string, expected: string): Option[str
 // same shape as `assert_eq_string_diff`.
 pub function assert_lines_eq(actual: string, expected_lines: string[]): Option[string] {
     var a_lines: string[] = actual.lines();
-    var an: i32 = len(a_lines);
-    var en: i32 = len(expected_lines);
+    var an: i32 = a_lines.len();
+    var en: i32 = expected_lines.len();
     if (an != en) {
         return Some("assert_lines_eq: line count differs - expected " +
                     en.to_string() + ", got " + an.to_string());
@@ -2001,7 +2001,7 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): Option[string] {
 // inversion + its index so the diagnostic is grep-able.
 pub function assert_sorted_asc_i32(arr: i32[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i - 1] > arr[i]) {
             return Some("assert_sorted_asc_i32: inversion at index " +
                         i.to_string() + ": " +
@@ -2019,7 +2019,7 @@ pub function assert_sorted_asc_i32(arr: i32[]): Option[string] {
 // `sort_strings_asc(arr)` would produce.
 pub function assert_sorted_asc_string(arr: string[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (sort.string_cmp(arr[i - 1], arr[i]) > 0) {
             return Some("assert_sorted_asc_string: inversion at index " +
                         i.to_string() + ": \"" + arr[i - 1] +
@@ -2036,7 +2036,7 @@ pub function assert_sorted_asc_string(arr: string[]): Option[string] {
 // output or any reverse-sorted-by-construction code path.
 pub function assert_sorted_desc_i32(arr: i32[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i - 1] < arr[i]) {
             return Some("assert_sorted_desc_i32: inversion at index " +
                         i.to_string() + ": " +
@@ -2050,7 +2050,7 @@ pub function assert_sorted_desc_i32(arr: i32[]): Option[string] {
 // `assert_sorted_desc_string(arr)` — descending lexicographic.
 pub function assert_sorted_desc_string(arr: string[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (sort.string_cmp(arr[i - 1], arr[i]) < 0) {
             return Some("assert_sorted_desc_string: inversion at index " +
                         i.to_string() + ": \"" + arr[i - 1] +
@@ -2068,7 +2068,7 @@ pub function assert_sorted_desc_string(arr: string[]): Option[string] {
 // assert_unique` separately.
 pub function assert_strictly_sorted_asc_i32(arr: i32[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i - 1] >= arr[i]) {
             return Some("assert_strictly_sorted_asc_i32: not strict at index " +
                         i.to_string() + ": " +
@@ -2084,7 +2084,7 @@ pub function assert_strictly_sorted_asc_i32(arr: i32[]): Option[string] {
 // contract as the i32 variant).
 pub function assert_strictly_sorted_asc_string(arr: string[]): Option[string] {
     var i: i32 = 1;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (sort.string_cmp(arr[i - 1], arr[i]) >= 0) {
             return Some("assert_strictly_sorted_asc_string: not strict at index " +
                         i.to_string() + ": \"" + arr[i - 1] +
@@ -2101,10 +2101,10 @@ pub function assert_strictly_sorted_asc_string(arr: string[]): Option[string] {
 // without any extra stdlib dependency. Failure message
 // names the first repeated value so the bug is grep-able.
 pub function assert_unique_i32(arr: i32[]): Option[string] {
-    if (len(arr) < 2) { return None; }
+    if (arr.len() < 2) { return None; }
     var sorted: i32[] = sort.sort_i32_asc(arr);
     var i: i32 = 1;
-    while (i < len(sorted)) {
+    while (i < sorted.len()) {
         if (sorted[i - 1] == sorted[i]) {
             return Some("assert_unique_i32: duplicate value " +
                         sorted[i].to_string());
@@ -2116,10 +2116,10 @@ pub function assert_unique_i32(arr: i32[]): Option[string] {
 
 // `assert_unique_string(arr)` — same pattern for strings.
 pub function assert_unique_string(arr: string[]): Option[string] {
-    if (len(arr) < 2) { return None; }
+    if (arr.len() < 2) { return None; }
     var sorted: string[] = sort.sort_strings_asc(arr);
     var i: i32 = 1;
-    while (i < len(sorted)) {
+    while (i < sorted.len()) {
         if (sorted[i - 1] == sorted[i]) {
             return Some("assert_unique_string: duplicate value \"" +
                         sorted[i] + "\"");
@@ -2203,7 +2203,7 @@ pub function assert_file_lines(path: string, expected_lines: string[]): Option[s
 pub function assert_file_line_count(path: string, n: i32): Option[string] {
     match (read_file(path)) {
         Ok(actual) => {
-            var got: i32 = len(actual.lines());
+            var got: i32 = (actual.lines()).len();
             if (got == n) { return None; }
             return Some("assert_file_line_count: \"" + path +
                         "\" has " + got.to_string() +
@@ -2371,7 +2371,7 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
 // type. O(n²) either way; sample counts stay under ~100 so
 // the absolute cost is negligible.
 function __bench_sort_us(samples: i64[]): i64[] {
-    var n: i32 = len(samples);
+    var n: i32 = samples.len();
     // Track which indices have been consumed via a parallel
     // boolean array — easier than mutating `samples` in place
     // (lang has no in-place array set today).
@@ -2590,9 +2590,9 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
         JArray(av) => {
             match (b) {
                 JArray(bv) => {
-                    if (len(av) != len(bv)) { return false; }
+                    if (av.len() != bv.len()) { return false; }
                     var i: i32 = 0;
-                    while (i < len(av)) {
+                    while (i < av.len()) {
                         if (!__json_value_eq(av[i], bv[i])) { return false; }
                         i = i + 1;
                     }
@@ -2607,7 +2607,7 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
                     if (am.len() != bm.len()) { return false; }
                     var keys: string[] = am.keys();
                     var i: i32 = 0;
-                    while (i < len(keys)) {
+                    while (i < keys.len()) {
                         var k: string = keys[i];
                         match (am.get(k)) {
                             None => { return false; },
@@ -2833,7 +2833,7 @@ pub function assert_eq_map_i32_i32(actual: Map[i32, i32], expected: Map[i32, i32
     }
     var ks: i32[] = actual.keys();
     var i: i32 = 0;
-    while (i < len(ks)) {
+    while (i < ks.len()) {
         var k: i32 = ks[i];
         if (!expected.has(k)) {
             return Some("assert_eq_map_i32_i32: key " +
@@ -2865,7 +2865,7 @@ pub function assert_eq_map_string_string(actual: Map[string, string], expected: 
     }
     var ks: string[] = actual.keys();
     var i: i32 = 0;
-    while (i < len(ks)) {
+    while (i < ks.len()) {
         var k: string = ks[i];
         if (!expected.has(k)) {
             return Some("assert_eq_map_string_string: key \"" +
@@ -2896,7 +2896,7 @@ pub function assert_eq_map_string_string(actual: Map[string, string], expected: 
 // mathematical convention `∀ x ∈ ∅ : P(x)`).
 pub function assert_all_i32(arr: i32[], pred: (i32) => boolean): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (!pred(arr[i])) {
             return Some("assert_all_i32: predicate failed at index " +
                         i.to_string() + ": value " + arr[i].to_string());
@@ -2909,7 +2909,7 @@ pub function assert_all_i32(arr: i32[], pred: (i32) => boolean): Option[string] 
 // `assert_all_string(arr, pred)` — string-typed mirror.
 pub function assert_all_string(arr: string[], pred: (string) => boolean): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (!pred(arr[i])) {
             return Some("assert_all_string: predicate failed at index " +
                         i.to_string() + ": value \"" + arr[i] + "\"");
@@ -2925,7 +2925,7 @@ pub function assert_all_string(arr: string[], pred: (string) => boolean): Option
 // classical logic). Failure message names the array length
 // so an empty-array failure is obvious.
 pub function assert_any_i32(arr: i32[], pred: (i32) => boolean): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (pred(arr[i])) { return None; }
@@ -2937,7 +2937,7 @@ pub function assert_any_i32(arr: i32[], pred: (i32) => boolean): Option[string] 
 
 // `assert_any_string(arr, pred)` — string-typed mirror.
 pub function assert_any_string(arr: string[], pred: (string) => boolean): Option[string] {
-    var n: i32 = len(arr);
+    var n: i32 = arr.len();
     var i: i32 = 0;
     while (i < n) {
         if (pred(arr[i])) { return None; }
@@ -2961,33 +2961,33 @@ pub function assert_any_string(arr: string[], pred: (string) => boolean): Option
 // arrays fail vacuously — there's no element to match.
 pub function assert_array_contains_i32(arr: i32[], needle: i32): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i] == needle) { return None; }
         i = i + 1;
     }
     return Some("assert_array_contains_i32: " +
                 needle.to_string() + " not found in array of length " +
-                len(arr).to_string());
+                arr.len().to_string());
 }
 
 // `assert_array_contains_string(arr, needle)` — same for
 // string elements. Empty array fails vacuously.
 pub function assert_array_contains_string(arr: string[], needle: string): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i] == needle) { return None; }
         i = i + 1;
     }
     return Some("assert_array_contains_string: \"" +
                 needle + "\" not found in array of length " +
-                len(arr).to_string());
+                arr.len().to_string());
 }
 
 // `assert_array_not_contains_i32(arr, needle)` — negative
 // membership; useful after a delete / filter operation.
 pub function assert_array_not_contains_i32(arr: i32[], needle: i32): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i] == needle) {
             return Some("assert_array_not_contains_i32: " +
                         needle.to_string() +
@@ -3002,7 +3002,7 @@ pub function assert_array_not_contains_i32(arr: i32[], needle: i32): Option[stri
 // membership for string arrays.
 pub function assert_array_not_contains_string(arr: string[], needle: string): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (arr[i] == needle) {
             return Some("assert_array_not_contains_string: \"" +
                         needle +
@@ -3021,7 +3021,7 @@ pub function assert_array_not_contains_string(arr: string[], needle: string): Op
 pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count: i32): Option[string] {
     var hits: i32 = 0;
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (pred(arr[i])) { hits = hits + 1; }
         i = i + 1;
     }
@@ -3036,7 +3036,7 @@ pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count
 pub function assert_count_string(arr: string[], pred: (string) => boolean, expected_count: i32): Option[string] {
     var hits: i32 = 0;
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (pred(arr[i])) { hits = hits + 1; }
         i = i + 1;
     }
@@ -3063,7 +3063,7 @@ pub function assert_count_string(arr: string[], pred: (string) => boolean, expec
 // test source.
 pub function assert_one_of_i32(actual: i32, allowed: i32[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(allowed)) {
+    while (i < allowed.len()) {
         if (allowed[i] == actual) { return None; }
         i = i + 1;
     }
@@ -3071,7 +3071,7 @@ pub function assert_one_of_i32(actual: i32, allowed: i32[]): Option[string] {
     // so the message reads like a normal failure diff.
     var rendered: string = "[";
     var j: i32 = 0;
-    while (j < len(allowed)) {
+    while (j < allowed.len()) {
         if (j > 0) { rendered = rendered + ", "; }
         rendered = rendered + allowed[j].to_string();
         j = j + 1;
@@ -3085,13 +3085,13 @@ pub function assert_one_of_i32(actual: i32, allowed: i32[]): Option[string] {
 // mirror.
 pub function assert_one_of_string(actual: string, allowed: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(allowed)) {
+    while (i < allowed.len()) {
         if (allowed[i] == actual) { return None; }
         i = i + 1;
     }
     var rendered: string = "[";
     var j: i32 = 0;
-    while (j < len(allowed)) {
+    while (j < allowed.len()) {
         if (j > 0) { rendered = rendered + ", "; }
         rendered = rendered + "\"" + allowed[j] + "\"";
         j = j + 1;
@@ -3110,7 +3110,7 @@ pub function assert_one_of_string(actual: string, allowed: string[]): Option[str
 // case immediately.
 pub function assert_none_of_i32(actual: i32, forbidden: i32[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(forbidden)) {
+    while (i < forbidden.len()) {
         if (forbidden[i] == actual) {
             return Some("assert_none_of_i32: " + actual.to_string() +
                         " matched forbidden value");
@@ -3124,7 +3124,7 @@ pub function assert_none_of_i32(actual: i32, forbidden: i32[]): Option[string] {
 // mirror.
 pub function assert_none_of_string(actual: string, forbidden: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(forbidden)) {
+    while (i < forbidden.len()) {
         if (forbidden[i] == actual) {
             return Some("assert_none_of_string: \"" + actual +
                         "\" matched forbidden value");
@@ -3296,7 +3296,7 @@ pub function assert_is_err_string_array(res: Result[string[], IoError]): Option[
     match (res) {
         Ok(v)  => {
             return Some("assert_is_err_string_array: got Ok of length " +
-                        len(v).to_string());
+                        v.len().to_string());
         },
         Err(_) => { return None; }
     }
@@ -3318,32 +3318,32 @@ pub function assert_is_err_string_array(res: Result[string[], IoError]): Option[
 // the typical short test arrays.
 pub function assert_array_intersects_i32(a: i32[], b: i32[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         var j: i32 = 0;
-        while (j < len(b)) {
+        while (j < b.len()) {
             if (a[i] == b[j]) { return None; }
             j = j + 1;
         }
         i = i + 1;
     }
     return Some("assert_array_intersects_i32: no shared element between arrays of length " +
-                len(a).to_string() + " and " + len(b).to_string());
+                a.len().to_string() + " and " + b.len().to_string());
 }
 
 // `assert_array_intersects_string(a, b)` — string-typed
 // mirror.
 pub function assert_array_intersects_string(a: string[], b: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         var j: i32 = 0;
-        while (j < len(b)) {
+        while (j < b.len()) {
             if (a[i] == b[j]) { return None; }
             j = j + 1;
         }
         i = i + 1;
     }
     return Some("assert_array_intersects_string: no shared element between arrays of length " +
-                len(a).to_string() + " and " + len(b).to_string());
+                a.len().to_string() + " and " + b.len().to_string());
 }
 
 // `assert_array_disjoint_i32(a, b)` — NO element of `a`
@@ -3353,9 +3353,9 @@ pub function assert_array_intersects_string(a: string[], b: string[]): Option[st
 // the first shared element.
 pub function assert_array_disjoint_i32(a: i32[], b: i32[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         var j: i32 = 0;
-        while (j < len(b)) {
+        while (j < b.len()) {
             if (a[i] == b[j]) {
                 return Some("assert_array_disjoint_i32: shared element " +
                             a[i].to_string());
@@ -3371,9 +3371,9 @@ pub function assert_array_disjoint_i32(a: i32[], b: i32[]): Option[string] {
 // mirror.
 pub function assert_array_disjoint_string(a: string[], b: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(a)) {
+    while (i < a.len()) {
         var j: i32 = 0;
-        while (j < len(b)) {
+        while (j < b.len()) {
             if (a[i] == b[j]) {
                 return Some("assert_array_disjoint_string: shared element \"" +
                             a[i] + "\"");
@@ -3400,10 +3400,10 @@ pub function assert_array_disjoint_string(a: string[], b: string[]): Option[stri
 // empty prefix). Failure either reports too-short OR
 // names the first non-matching index.
 pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): Option[string] {
-    var pn: i32 = len(prefix);
-    if (pn > len(arr)) {
+    var pn: i32 = prefix.len();
+    if (pn > arr.len()) {
         return Some("assert_array_starts_with_i32: array length " +
-                    len(arr).to_string() + " < prefix length " +
+                    arr.len().to_string() + " < prefix length " +
                     pn.to_string());
     }
     var i: i32 = 0;
@@ -3422,10 +3422,10 @@ pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): Option[str
 // `assert_array_starts_with_string(arr, prefix)` — string-
 // typed mirror.
 pub function assert_array_starts_with_string(arr: string[], prefix: string[]): Option[string] {
-    var pn: i32 = len(prefix);
-    if (pn > len(arr)) {
+    var pn: i32 = prefix.len();
+    if (pn > arr.len()) {
         return Some("assert_array_starts_with_string: array length " +
-                    len(arr).to_string() + " < prefix length " +
+                    arr.len().to_string() + " < prefix length " +
                     pn.to_string());
     }
     var i: i32 = 0;
@@ -3445,8 +3445,8 @@ pub function assert_array_starts_with_string(arr: string[], prefix: string[]): O
 // vacuously passes. Failure reports too-short or names
 // the first mismatching index (offset into `arr`).
 pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): Option[string] {
-    var sn: i32 = len(suffix);
-    var an: i32 = len(arr);
+    var sn: i32 = suffix.len();
+    var an: i32 = arr.len();
     if (sn > an) {
         return Some("assert_array_ends_with_i32: array length " +
                     an.to_string() + " < suffix length " +
@@ -3469,8 +3469,8 @@ pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): Option[strin
 // `assert_array_ends_with_string(arr, suffix)` — string-
 // typed mirror.
 pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Option[string] {
-    var sn: i32 = len(suffix);
-    var an: i32 = len(arr);
+    var sn: i32 = suffix.len();
+    var an: i32 = arr.len();
     if (sn > an) {
         return Some("assert_array_ends_with_string: array length " +
                     an.to_string() + " < suffix length " +
@@ -3494,9 +3494,9 @@ pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Opt
 // Plain O(N*M) scan; fine for the typical short arrays in
 // tests.
 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
-    var nn: i32 = len(needle);
+    var nn: i32 = needle.len();
     if (nn == 0) { return true; }
-    var an: i32 = len(arr);
+    var an: i32 = arr.len();
     if (nn > an) { return false; }
     var start: i32 = 0;
     while (start <= an - nn) {
@@ -3522,15 +3522,15 @@ function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
 pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): Option[string] {
     if (__match_subseq_i32(arr, needle)) { return None; }
     return Some("assert_array_contains_subseq_i32: needle of length " +
-                len(needle).to_string() +
+                needle.len().to_string() +
                 " not found in array of length " +
-                len(arr).to_string());
+                arr.len().to_string());
 }
 
 function __match_subseq_string(arr: string[], needle: string[]): boolean {
-    var nn: i32 = len(needle);
+    var nn: i32 = needle.len();
     if (nn == 0) { return true; }
-    var an: i32 = len(arr);
+    var an: i32 = arr.len();
     if (nn > an) { return false; }
     var start: i32 = 0;
     while (start <= an - nn) {
@@ -3551,9 +3551,9 @@ function __match_subseq_string(arr: string[], needle: string[]): boolean {
 pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): Option[string] {
     if (__match_subseq_string(arr, needle)) { return None; }
     return Some("assert_array_contains_subseq_string: needle of length " +
-                len(needle).to_string() +
+                needle.len().to_string() +
                 " not found in array of length " +
-                len(arr).to_string());
+                arr.len().to_string());
 }
 
 // =================== STRING-ARRAY SUBSTRING ASSERTIONS ===================
@@ -3574,7 +3574,7 @@ pub function assert_array_contains_subseq_string(arr: string[], needle: string[]
 // every non-null string.
 pub function assert_all_starts_with(arr: string[], prefix: string): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (!arr[i].starts_with(prefix)) {
             return Some("assert_all_starts_with: at index " +
                         i.to_string() + " value \"" + arr[i] +
@@ -3589,7 +3589,7 @@ pub function assert_all_starts_with(arr: string[], prefix: string): Option[strin
 // with `suffix`. Same shape as the `_starts_with` mirror.
 pub function assert_all_ends_with(arr: string[], suffix: string): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (!arr[i].ends_with(suffix)) {
             return Some("assert_all_ends_with: at index " +
                         i.to_string() + " value \"" + arr[i] +
@@ -3606,7 +3606,7 @@ pub function assert_all_ends_with(arr: string[], suffix: string): Option[string]
 // "every emitted log line has the trace id".
 pub function assert_all_contain(arr: string[], needle: string): Option[string] {
     var i: i32 = 0;
-    while (i < len(arr)) {
+    while (i < arr.len()) {
         if (!arr[i].contains(needle)) {
             return Some("assert_all_contain: at index " +
                         i.to_string() + " value \"" + arr[i] +
@@ -3629,12 +3629,12 @@ pub function assert_all_contain(arr: string[], needle: string): Option[string] {
 // list always fails (nothing to match).
 pub function assert_starts_with_any(s: string, prefixes: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(prefixes)) {
+    while (i < prefixes.len()) {
         if (s.starts_with(prefixes[i])) { return None; }
         i = i + 1;
     }
     return Some("assert_starts_with_any: \"" + s +
-                "\" matches none of " + len(prefixes).to_string() +
+                "\" matches none of " + prefixes.len().to_string() +
                 " prefixes");
 }
 
@@ -3643,12 +3643,12 @@ pub function assert_starts_with_any(s: string, prefixes: string[]): Option[strin
 // one of [.lang, .ll, .s]".
 pub function assert_ends_with_any(s: string, suffixes: string[]): Option[string] {
     var i: i32 = 0;
-    while (i < len(suffixes)) {
+    while (i < suffixes.len()) {
         if (s.ends_with(suffixes[i])) { return None; }
         i = i + 1;
     }
     return Some("assert_ends_with_any: \"" + s +
-                "\" matches none of " + len(suffixes).to_string() +
+                "\" matches none of " + suffixes.len().to_string() +
                 " suffixes");
 }
 
@@ -3764,7 +3764,7 @@ pub function assert_json_array_len(json_text: string, n: i32): Option[string] {
         Some(v) => {
             match (v) {
                 JArray(arr) => {
-                    var got: i32 = len(arr);
+                    var got: i32 = arr.len();
                     if (got == n) { return None; }
                     return Some("assert_json_array_len: expected length " +
                                 n.to_string() + ", got " + got.to_string());

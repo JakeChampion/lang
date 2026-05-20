@@ -51,7 +51,7 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 		{node: "Ident", src: `function main(): i32 { var x: i32 = 7; return x; }`},
 		{node: "ArrayLit", src: `function main(): i32 { var a: i32[] = [1, 2, 3]; return a[0]; }`},
 		{node: "Index", src: `function main(): i32 { var a: i32[] = [10, 20]; return a[1]; }`},
-		{node: "SliceExpr", src: `function main(): i32 { var a: i32[] = [1, 2, 3, 4]; var s: [i32] = a[1:3]; return len(s); }`},
+		{node: "SliceExpr", src: `function main(): i32 { var a: i32[] = [1, 2, 3, 4]; var s: [i32] = a[1:3]; return s.len(); }`},
 		{node: "Call", src: `function f(): i32 { return 1; } function main(): i32 { return f(); }`},
 		{node: "Binary", src: `function main(): i32 { return 1 + 2; }`},
 		{node: "Unary", src: `function main(): i32 { var n: i32 = 5; return -n; }`},

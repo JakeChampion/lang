@@ -207,7 +207,7 @@ function scan_number(l: Lex, start_line: i32, start_col: i32): NumResult {
     // `42f32` / `42f64` — integer text with float suffix promotes
     // the token to Float so a downstream parser routes via the
     // float-literal construction path.
-    if (!is_float && len(suffix) > 0 && suffix[0] == 102) {
+    if (!is_float && suffix.len() > 0 && suffix[0] == 102) {
         is_float = true;
     }
     var tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
@@ -275,7 +275,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
 // tokenize is the top-level entrypoint. Mirrors the Go lexer's
 // `Tokenize` — produces a Token[] slice terminated by TokEof.
 pub function tokenize(src: string): Token[] {
-    var l: Lex = Lex { src: src, i: 0, n: len(src), line: 1, col: 1 };
+    var l: Lex = Lex { src: src, i: 0, n: src.len(), line: 1, col: 1 };
     var out: Token[] = [];
     while (true) {
         l = skip_trivia(l);
@@ -305,9 +305,9 @@ pub function tokenize(src: string): Token[] {
             continue;
         }
         var mp: string = match_multipunct(l.src, l.i, l.n);
-        if (len(mp) > 0) {
+        if (mp.len() > 0) {
             var i: i32 = 0;
-            while (i < len(mp)) {
+            while (i < mp.len()) {
                 l = l.advance();
                 i = i + 1;
             }
@@ -353,7 +353,7 @@ function main(): i32 {
     //   Punct ";"
     //   Eof
 
-    if (len(toks) != 13) { return 1; }
+    if (toks.len() != 13) { return 1; }
 
     match (toks[0]) {
         TokKeyword(t) => {

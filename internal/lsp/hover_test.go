@@ -177,10 +177,10 @@ func TestHover_OnWhitespace(t *testing.T) {
 }
 
 func TestHover_LocalShadowsParameter(t *testing.T) {
-	src := "function f(x: i32): i32 {\n  var x: string = \"hi\";\n  return len(x);\n}\n"
-	// Cursor on `x` inside `len(x)` — should resolve to the local
-	// (string), not the parameter (i32).
-	got := hoverFor(src, 2, 13)
+	src := "function f(x: i32): i32 {\n  var x: string = \"hi\";\n  return x.len();\n}\n"
+	// Cursor on the `x` in `x.len()` — should resolve to the
+	// local (string), not the parameter (i32).
+	got := hoverFor(src, 2, 9)
 	if got == nil {
 		t.Fatal("expected hover for shadowed local")
 	}

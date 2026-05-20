@@ -57,7 +57,7 @@ function i32_to_string(n: i32): string {
 // prepending zeros. Used for the four-digit op index.
 function pad_left(s: string, w: i32): string {
     var out: string = s;
-    while (len(out) < w) { out = "0" + out; }
+    while (out.len() < w) { out = "0" + out; }
     return out;
 }
 
@@ -66,7 +66,7 @@ function pad_left(s: string, w: i32): string {
 // immediates line up.
 function pad_right(s: string, w: i32): string {
     var out: string = s;
-    while (len(out) < w) { out = out + " "; }
+    while (out.len() < w) { out = out + " "; }
     return out;
 }
 
@@ -135,7 +135,7 @@ function op_immediate(op: vm.Op): string {
         vm.OpLen(_) => { return ""; },
         vm.OpSlice(_) => { return ""; },
         vm.OpMakeTuple(o) => { return i32_to_string(o.n); },
-        vm.OpMakeStruct(o) => { return o.type_name + " (" + i32_to_string(len(o.field_names)) + " fields)"; },
+        vm.OpMakeStruct(o) => { return o.type_name + " (" + i32_to_string(o.field_names.len()) + " fields)"; },
         vm.OpFieldGet(o) => { return o.field_name; },
         vm.OpDup(_) => { return ""; },
         vm.OpTypeNameEq(o) => { return o.type_name; },
@@ -153,7 +153,7 @@ function op_immediate(op: vm.Op): string {
 pub function disassemble(ops: vm.Op[]): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < len(ops)) {
+    while (i < ops.len()) {
         var line: string = pad_left(i32_to_string(i), 4) + "  ";
         line = line + pad_right(op_name(ops[i]), 13) + "  ";
         line = line + op_immediate(ops[i]);
@@ -168,11 +168,11 @@ pub function disassemble(ops: vm.Op[]): string {
 // contains: trivial substring search. Used by the validation
 // harness to assert the disassembly mentions specific ops.
 function contains(haystack: string, needle: string): boolean {
-    if (len(needle) == 0) { return true; }
-    if (len(haystack) < len(needle)) { return false; }
+    if (needle.len() == 0) { return true; }
+    if (haystack.len() < needle.len()) { return false; }
     var i: i32 = 0;
-    while (i <= len(haystack) - len(needle)) {
-        if (haystack[i:i + len(needle)] == needle) { return true; }
+    while (i <= haystack.len() - needle.len()) {
+        if (haystack[i:i + needle.len()] == needle) { return true; }
         i = i + 1;
     }
     return false;

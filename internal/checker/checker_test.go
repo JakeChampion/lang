@@ -236,15 +236,51 @@ func TestStringIndexReturnsNumber(t *testing.T) {
 }
 
 func TestLenOnString(t *testing.T) {
-	src := `function f(): i32 { return len("hello"); }`
+	src := `function f(): i32 { return ("hello").len(); }`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestLenRejectsNumber(t *testing.T) {
-	if err := checkSource(t, `function f(): i32 { return len(42); }`); err == nil {
+	if err := checkSource(t, `function f(): i32 { return (42).len(); }`); err == nil {
 		t.Error("expected error len(i32)")
+	}
+}
+
+// `.len()` resolves through method dispatch on string, array,
+// and slice receivers. Verifies the generic-T substitution the
+// dispatch path stamps for slice tracks the receiver's element
+// type without surfacing a `ParamType` leak in the error path.
+func TestLenOnSlice(t *testing.T) {
+	src := `function f(): i32 {
+		var xs: i32[] = [1, 2, 3, 4];
+		var s: [i32] = xs[1:3];
+		return s.len();
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// `len` is no longer a free builtin — only the method form
+// `x.len()` resolves. Calling it as a free function must surface
+// the same "undefined identifier" diagnostic any unknown name
+// would.
+func TestFreeLenIsRejected(t *testing.T) {
+	cases := []string{
+		`function f(): i32 { var s: string = "hi"; return len(s); }`,
+		`function f(): i32 { var xs: i32[] = [1, 2]; return len(xs); }`,
+	}
+	for _, src := range cases {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%s: expected error, got none", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "undefined identifier \"len\"") {
+			t.Errorf("%s: expected `undefined identifier \"len\"` diagnostic, got %v", src, err)
+		}
 	}
 }
 
@@ -620,7 +656,7 @@ func TestNumericLiteralSuffixesRejectMismatch(t *testing.T) {
 // argument and return types substitute correctly.
 func TestArrayPushTypechecks(t *testing.T) {
 	for _, src := range []string{
-		`function f(): i32 { var xs: string[] = []; xs = xs.push("a"); return len(xs); }`,
+		`function f(): i32 { var xs: string[] = []; xs = xs.push("a"); return xs.len(); }`,
 		`function f(): i32 { var xs: i32[] = [1, 2]; xs = xs.push(3); return xs[2]; }`,
 	} {
 		if err := checkSource(t, src); err != nil {
@@ -671,7 +707,7 @@ func TestArrayPushSubI32StridePasses(t *testing.T) {
 
 // Argument type must match the receiver's Elem.
 func TestArrayPushRejectsArgTypeMismatch(t *testing.T) {
-	src := `function f(): i32 { var xs: string[] = []; xs = xs.push(1); return len(xs); }`
+	src := `function f(): i32 { var xs: string[] = []; xs = xs.push(1); return xs.len(); }`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected error: pushing i32 onto string[]")
 	}
@@ -777,12 +813,12 @@ func TestPointerCapturesTypecheck(t *testing.T) {
 	cases := []string{
 		// string
 		`function outer(s: string): i32 {
-			function inner(): i32 { return len(s); }
+			function inner(): i32 { return s.len(); }
 			return inner();
 		}`,
 		// T[] (i32 array)
 		`function outer(xs: i32[]): i32 {
-			function inner(): i32 { return len(xs); }
+			function inner(): i32 { return xs.len(); }
 			return inner();
 		}`,
 		// struct
@@ -1409,7 +1445,7 @@ func TestCastAsTypeAscription(t *testing.T) {
 		// without an outside anchor.
 		`function main(): i32 {
 			var a: i32[] = [] as i32[];
-			return len(a) as i32;
+			return a.len() as i32;
 		}`,
 		// Same-shape ascription (i.e. inner already concretely
 		// typed): a no-op annotation, but should still type-check.

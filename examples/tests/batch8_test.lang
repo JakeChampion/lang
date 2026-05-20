@@ -16,7 +16,7 @@ function test_argv_basic(): Option[string] {
     // invoked from CI via `lang -interp FILE`), so just check
     // the call doesn't crash and returns a string array.
     var a: string[] = args();
-    if (len(a) < 1) {
+    if (a.len() < 1) {
         return fail("args() returned empty (expected at least argv[0])");
     }
     return None;

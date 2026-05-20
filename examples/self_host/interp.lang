@@ -128,7 +128,7 @@ function (e: Env) bind(name: string, v: Value): Env {
 }
 
 function (e: Env) lookup(name: string): Value {
-    var i: i32 = len(e.names) - 1;
+    var i: i32 = e.names.len() - 1;
     while (i >= 0) {
         if (e.names[i] == name) { return e.values[i]; }
         i = i - 1;
@@ -145,7 +145,7 @@ function (e: Env) lookup(name: string): Value {
 // is supposed to surface that as a type error, but the interp
 // guards against it via VErr-on-read at the call site.
 function (e: Env) update(name: string, v: Value): Env {
-    var n: i32 = len(e.names);
+    var n: i32 = e.names.len();
     var ns: string[] = [];
     var vs: Value[] = [];
     var found: boolean = false;
@@ -181,7 +181,7 @@ function (e: Env) update(name: string, v: Value): Env {
 // we lump everything into i32 at this layer, mirroring the
 // checker's TypeI32-only stance for the first cut.
 function str_to_i32(s: string): i32 {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -199,7 +199,7 @@ function str_to_i32(s: string): i32 {
 // "%d.%d" shaped. Walks the integer part first, then the
 // fractional part with a 1/10**k divisor.
 function str_to_f64(s: string): f64 {
-    var n: i32 = len(s);
+    var n: i32 = s.len();
     var neg: boolean = false;
     var i: i32 = 0;
     if (n > 0 && s[0] == 45) { neg = true; i = 1; }  // '-' = 0x2D
@@ -413,8 +413,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             var qname: string = ns_id.name + "." + fa.field;
                             var qi: i32 = 0;
                             var qfound: boolean = false;
-                            while (qi < len(env.funcs)) {
-                                if (env.funcs[qi].name == qname && len(env.funcs[qi].receiver_name) == 0) {
+                            while (qi < env.funcs.len()) {
+                                if (env.funcs[qi].name == qname && env.funcs[qi].receiver_name.len() == 0) {
                                     qfound = true;
                                 }
                                 qi = qi + 1;
@@ -447,7 +447,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             // Evaluate args in order, propagating the first VErr.
             var arg_vals: Value[] = [];
             var i: i32 = 0;
-            while (i < len(c.args)) {
+            while (i < c.args.len()) {
                 var av: Value = eval_expr(c.args[i], env);
                 if (is_err(av)) { return av; }
                 arg_vals = arg_vals.push(av);
@@ -464,7 +464,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
         parser.ExprTuple(t) => {
             var elems: Value[] = [];
             var i: i32 = 0;
-            while (i < len(t.elements)) {
+            while (i < t.elements.len()) {
                 var ev: Value = eval_expr(t.elements[i], env);
                 if (is_err(ev)) { return ev; }
                 elems = elems.push(ev);
@@ -475,7 +475,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
         parser.ExprArray(a) => {
             var elems: Value[] = [];
             var i: i32 = 0;
-            while (i < len(a.elements)) {
+            while (i < a.elements.len()) {
                 var ev: Value = eval_expr(a.elements[i], env);
                 if (is_err(ev)) { return ev; }
                 elems = elems.push(ev);
@@ -492,7 +492,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 VArr(arr) => {
                     match (iv) {
                         VInt(ii) => {
-                            if (ii.v < 0 || ii.v >= len(arr.elements)) {
+                            if (ii.v < 0 || ii.v >= arr.elements.len()) {
                                 return v_err("array index out of range");
                             }
                             return arr.elements[ii.v];
@@ -508,7 +508,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     // own implementation reads bytes this way).
                     match (iv) {
                         VInt(ii) => {
-                            if (ii.v < 0 || ii.v >= len(s.v)) {
+                            if (ii.v < 0 || ii.v >= s.v.len()) {
                                 return v_err("string index out of range");
                             }
                             return v_int(s.v[ii.v]);
@@ -539,13 +539,13 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             match (av) {
                 VString(s) => {
-                    if (sb < 0 || eb > len(s.v) || sb > eb) {
+                    if (sb < 0 || eb > s.v.len() || sb > eb) {
                         return v_err("string slice out of range");
                     }
                     return v_string(s.v[sb:eb]);
                 },
                 VArr(a) => {
-                    if (sb < 0 || eb > len(a.elements) || sb > eb) {
+                    if (sb < 0 || eb > a.elements.len() || sb > eb) {
                         return v_err("array slice out of range");
                     }
                     var out: Value[] = [];
@@ -564,7 +564,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             // them as opaque strings for lookup.
             var fvs: Value[] = [];
             var i: i32 = 0;
-            while (i < len(sl.field_values)) {
+            while (i < sl.field_values.len()) {
                 var fv: Value = eval_expr(sl.field_values[i], env);
                 if (is_err(fv)) { return fv; }
                 fvs = fvs.push(fv);
@@ -583,7 +583,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             match (ov) {
                 VStruct(sv) => {
                     var i: i32 = 0;
-                    while (i < len(sv.field_names)) {
+                    while (i < sv.field_names.len()) {
                         if (sv.field_names[i] == fa.field) {
                             return sv.field_values[i];
                         }
@@ -593,7 +593,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 },
                 VTuple(tv) => {
                     var idx: i32 = str_to_i32(fa.field);
-                    if (idx < 0 || idx >= len(tv.elements)) {
+                    if (idx < 0 || idx >= tv.elements.len()) {
                         return v_err("tuple index `" + fa.field + "` out of range");
                     }
                     return tv.elements[idx];
@@ -638,10 +638,10 @@ function eval_expr(e: parser.Expr, env: Env): Value {
 // the runtime receiver is one of its variant structs.
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
     var i: i32 = 0;
-    while (i < len(aliases)) {
+    while (i < aliases.len()) {
         if (aliases[i].name == union_name) {
             var j: i32 = 0;
-            while (j < len(aliases[i].variants)) {
+            while (j < aliases[i].variants.len()) {
                 if (aliases[i].variants[j] == struct_name) { return true; }
                 j = j + 1;
             }
@@ -662,12 +662,12 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
         VFunc(v) => { fv = v; },
         _ => { return v_err("call_closure: not a VFunc"); }
     }
-    if (len(args) != len(fv.params)) {
+    if (args.len() != fv.params.len()) {
         return v_err("arity mismatch calling closure");
     }
     var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases };
     var j: i32 = 0;
-    while (j < len(fv.params)) {
+    while (j < fv.params.len()) {
         env = env.bind(fv.params[j].name, args[j]);
         j = j + 1;
     }
@@ -685,14 +685,14 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     match (recv) {
         VMap(m) => {
             if (name == "set") {
-                if (len(args) != 2) { return v_err("map.set: need 2 args"); }
+                if (args.len() != 2) { return v_err("map.set: need 2 args"); }
                 var i: i32 = 0;
-                while (i < len(m.keys)) {
+                while (i < m.keys.len()) {
                     if (value_eq(m.keys[i], args[0])) {
                         // Replace value at slot i.
                         var nvs: Value[] = [];
                         var j: i32 = 0;
-                        while (j < len(m.values)) {
+                        while (j < m.values.len()) {
                             if (j == i) { nvs = nvs.push(args[1]); }
                             else { nvs = nvs.push(m.values[j]); }
                             j = j + 1;
@@ -704,29 +704,29 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 return VMap { keys: m.keys.push(args[0]), values: m.values.push(args[1]) };
             }
             if (name == "get_or") {
-                if (len(args) != 2) { return v_err("map.get_or: need 2 args"); }
+                if (args.len() != 2) { return v_err("map.get_or: need 2 args"); }
                 var gi: i32 = 0;
-                while (gi < len(m.keys)) {
+                while (gi < m.keys.len()) {
                     if (value_eq(m.keys[gi], args[0])) { return m.values[gi]; }
                     gi = gi + 1;
                 }
                 return args[1];
             }
             if (name == "has") {
-                if (len(args) != 1) { return v_err("map.has: need 1 arg"); }
+                if (args.len() != 1) { return v_err("map.has: need 1 arg"); }
                 var hi: i32 = 0;
-                while (hi < len(m.keys)) {
+                while (hi < m.keys.len()) {
                     if (value_eq(m.keys[hi], args[0])) { return v_bool(true); }
                     hi = hi + 1;
                 }
                 return v_bool(false);
             }
             if (name == "delete") {
-                if (len(args) != 1) { return v_err("map.delete: need 1 arg"); }
+                if (args.len() != 1) { return v_err("map.delete: need 1 arg"); }
                 var nk: Value[] = [];
                 var nv: Value[] = [];
                 var di: i32 = 0;
-                while (di < len(m.keys)) {
+                while (di < m.keys.len()) {
                     if (!value_eq(m.keys[di], args[0])) {
                         nk = nk.push(m.keys[di]);
                         nv = nv.push(m.values[di]);
@@ -735,7 +735,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 }
                 return VMap { keys: nk, values: nv };
             }
-            if (name == "len") { return v_int(len(m.keys)); }
+            if (name == "len") { return v_int(m.keys.len()); }
             if (name == "keys") { return v_arr(m.keys); }
             if (name == "values") { return v_arr(m.values); }
             return v_err("unknown map method `" + name + "`");
@@ -756,7 +756,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         _ => { return v_err("method dispatch: receiver not a typed value"); }
     }
     var i: i32 = 0;
-    while (i < len(funcs)) {
+    while (i < funcs.len()) {
         var fd: parser.FuncDecl = funcs[i];
         var rt_match: boolean = fd.receiver_type == recv_type;
         // `bool` and `boolean` are interchangeable receiver
@@ -770,14 +770,14 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
             rt_match = true;
         }
-        if (fd.name == name && len(fd.receiver_name) > 0 && rt_match) {
-            if (len(args) != len(fd.params)) {
+        if (fd.name == name && fd.receiver_name.len() > 0 && rt_match) {
+            if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
             var env: Env = new_env_with_funcs_aliases(funcs, aliases);
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
-            while (j < len(fd.params)) {
+            while (j < fd.params.len()) {
                 env = env.bind(fd.params[j].name, args[j]);
                 j = j + 1;
             }
@@ -797,11 +797,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // because the parser doesn't model builtins separately and
     // the interp has no Go-side host functions yet.
     if (name == "len") {
-        if (len(args) != 1) { return v_err("len takes exactly 1 argument"); }
+        if (args.len() != 1) { return v_err("len takes exactly 1 argument"); }
         match (args[0]) {
-            VArr(a) => { return v_int(len(a.elements)); },
-            VString(s) => { return v_int(len(s.v)); },
-            VMap(m) => { return v_int(len(m.keys)); },
+            VArr(a) => { return v_int(a.elements.len()); },
+            VString(s) => { return v_int(s.v.len()); },
+            VMap(m) => { return v_int(m.keys.len()); },
             _ => { return v_err("len: argument must be array, string, or map"); }
         }
     }
@@ -811,18 +811,18 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         return v_map_new();
     }
     var i: i32 = 0;
-    while (i < len(funcs)) {
+    while (i < funcs.len()) {
         // Skip receiver methods — they're dispatched via
         // call_method only. A plain function call must match
         // a non-method (receiver_name empty) of the same name.
-        if (funcs[i].name == name && len(funcs[i].receiver_name) == 0) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) {
             var fd: parser.FuncDecl = funcs[i];
-            if (len(args) != len(fd.params)) {
+            if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling `" + name + "`");
             }
             var env: Env = new_env_with_funcs_aliases(funcs, aliases);
             var j: i32 = 0;
-            while (j < len(fd.params)) {
+            while (j < fd.params.len()) {
                 env = env.bind(fd.params[j].name, args[j]);
                 j = j + 1;
             }
@@ -873,9 +873,9 @@ function value_eq(a: Value, b: Value): boolean {
             // structurally equal via the same value_eq path.
             match (b) {
                 VArr(ba) => {
-                    if (len(aa.elements) != len(ba.elements)) { return false; }
+                    if (aa.elements.len() != ba.elements.len()) { return false; }
                     var ai: i32 = 0;
-                    while (ai < len(aa.elements)) {
+                    while (ai < aa.elements.len()) {
                         if (!value_eq(aa.elements[ai], ba.elements[ai])) { return false; }
                         ai = ai + 1;
                     }
@@ -895,9 +895,9 @@ function value_eq(a: Value, b: Value): boolean {
             match (b) {
                 VStruct(bsv) => {
                     if (asv.type_name != bsv.type_name) { return false; }
-                    if (len(asv.field_values) != len(bsv.field_values)) { return false; }
+                    if (asv.field_values.len() != bsv.field_values.len()) { return false; }
                     var si: i32 = 0;
-                    while (si < len(asv.field_values)) {
+                    while (si < asv.field_values.len()) {
                         if (!value_eq(asv.field_values[si], bsv.field_values[si])) { return false; }
                         si = si + 1;
                     }
@@ -911,9 +911,9 @@ function value_eq(a: Value, b: Value): boolean {
             // structurally equal via the same value_eq path.
             match (b) {
                 VTuple(bt) => {
-                    if (len(at.elements) != len(bt.elements)) { return false; }
+                    if (at.elements.len() != bt.elements.len()) { return false; }
                     var ti: i32 = 0;
-                    while (ti < len(at.elements)) {
+                    while (ti < at.elements.len()) {
                         if (!value_eq(at.elements[ti], bt.elements[ti])) { return false; }
                         ti = ti + 1;
                     }
@@ -965,7 +965,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // to outer-scoped names sit at index < base
                     // and survive the trim (update() rewrites
                     // slots in place).
-                    var base: i32 = len(env.names);
+                    var base: i32 = env.names.len();
                     var step: StepResult = eval_block(body, env);
                     return StepResult { env: trim_env(step.env, base), ret: step.ret };
                 },
@@ -992,7 +992,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // applies on loop exit so the outer scope sees the
             // env it started with, plus assignment updates.
             var cur: Env = env;
-            var base: i32 = len(env.names);
+            var base: i32 = env.names.len();
             while (true) {
                 var cv: Value = eval_expr(w.cond, cur);
                 if (is_err(cv)) { return StepResult { env: env, ret: cv }; }
@@ -1029,7 +1029,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // update silently no-ops on undefined names; surface
             // the error explicitly so a mistake is observable in
             // tests.
-            var i: i32 = len(env.names) - 1;
+            var i: i32 = env.names.len() - 1;
             var found: boolean = false;
             while (i >= 0 && !found) {
                 if (env.names[i] == a.target) { found = true; }
@@ -1050,7 +1050,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // scrutinee whose type_name matches the pattern's
             // type_name; PatWildcard always matches.
             var i: i32 = 0;
-            while (i < len(m.arms)) {
+            while (i < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[i];
                 var matched: boolean = false;
                 var bind_name: string = "";
@@ -1066,7 +1066,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                                     // empty for the body env;
                                     // only a named binding ends
                                     // up in scope.
-                                    if (len(pv.binding) > 0 && pv.binding != "_") {
+                                    if (pv.binding.len() > 0 && pv.binding != "_") {
                                         bind_name = pv.binding;
                                     }
                                 }
@@ -1082,9 +1082,9 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                     // before returning so the surrounding scope
                     // doesn't see the binding (or any nested
                     // `var`s) leak out.
-                    var base: i32 = len(env.names);
+                    var base: i32 = env.names.len();
                     var bodyEnv: Env = env;
-                    if (len(bind_name) > 0) { bodyEnv = bodyEnv.bind(bind_name, sv); }
+                    if (bind_name.len() > 0) { bodyEnv = bodyEnv.bind(bind_name, sv); }
                     var step: StepResult = eval_block(arm.body, bodyEnv);
                     return StepResult { env: trim_env(step.env, base), ret: step.ret };
                 }
@@ -1107,10 +1107,10 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // element, walks the body, then trims back to the
             // pre-loop env length. An in-body return short-
             // circuits the rest of the iterations.
-            var base: i32 = len(env.names);
+            var base: i32 = env.names.len();
             var cur: Env = env;
             var i: i32 = 0;
-            while (i < len(elems)) {
+            while (i < elems.len()) {
                 var iter_env: Env = cur.bind(f.var_name, elems[i]);
                 var step: StepResult = eval_block(f.body, iter_env);
                 if (is_break(step.ret)) {
@@ -1137,7 +1137,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
 // preserving any update()s to outer-scoped names (those sit at
 // index < base and aren't touched).
 function trim_env(e: Env, base: i32): Env {
-    if (len(e.names) <= base) { return e; }
+    if (e.names.len() <= base) { return e; }
     var ns: string[] = [];
     var vs: Value[] = [];
     var i: i32 = 0;
@@ -1160,7 +1160,7 @@ function trim_env(e: Env, base: i32): Env {
 function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var cur: Env = env;
     var i: i32 = 0;
-    while (i < len(body)) {
+    while (i < body.len()) {
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
         if (!is_noreturn(r.ret)) {
@@ -1201,7 +1201,7 @@ function is_continue(v: Value): boolean {
 function eval_program(prog: parser.Stmt[]): Value {
     var env: Env = new_env();
     var i: i32 = 0;
-    while (i < len(prog)) {
+    while (i < prog.len()) {
         var r: StepResult = eval_stmt(prog[i], env);
         env = r.env;
         if (!is_noreturn(r.ret)) { return r.ret; }
@@ -1216,7 +1216,7 @@ function eval_program(prog: parser.Stmt[]): Value {
 // still has access to the function table.
 pub function eval_module(mod: parser.Module): Value {
     var i: i32 = 0;
-    while (i < len(mod.funcs)) {
+    while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {
             var empty_args: Value[] = [];
             return call_func("main", empty_args, mod.funcs, mod.aliases);
@@ -1225,7 +1225,7 @@ pub function eval_module(mod: parser.Module): Value {
     }
     var env: Env = new_env_with_funcs_aliases(mod.funcs, mod.aliases);
     var j: i32 = 0;
-    while (j < len(mod.top_stmts)) {
+    while (j < mod.top_stmts.len()) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
         env = r.env;
         if (!is_noreturn(r.ret)) { return r.ret; }

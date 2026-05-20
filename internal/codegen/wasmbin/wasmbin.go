@@ -88,6 +88,16 @@ type EmitOptions struct {
 	// main's value over stdout (preview-2 hosts only surface 0/1
 	// through `wasi:cli/exit`). No-op for non-i32 / void returns.
 	PrintMainResult bool
+	// HttpHandler emits the `wasi:http/incoming-handler@0.2.0#handle`
+	// export wrapping the user-defined `function handle(req:
+	// HttpRequest, plat: Platform): HttpResponse`. The synthetic
+	// `__http_entry` helper marshals the canonical-ABI incoming-
+	// request into the user's HttpRequest struct, invokes `handle`,
+	// then streams the HttpResponse back through outgoing-body.
+	// Pulls in the wasi:http/types preview-2 imports + a
+	// `cabi_realloc` export the host calls back for list<u8>
+	// allocations. Mirrors the WAT path's `EmitOptions.HttpHandler`.
+	HttpHandler bool
 }
 
 // Emit is EmitWithOptions with the zero-value options.
@@ -134,6 +144,26 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		helpers.add("__lang_str_byte")
 		helpers.add("__lang_alloc")
 		helpers.add("__lang_print")
+	}
+	if opts.HttpHandler {
+		// __http_entry's body alloc()s the request struct, the
+		// HeaderMap parallel arrays, the body accumulator, the
+		// canonical-ABI retptr scratch, the Platform capability
+		// bag, and the response outgoing-body. It also calls
+		// __lang_arena_save / restore for per-request arena
+		// cleanup, __bytes_to_lang_string for the host-bytes →
+		// lang-string round-trip, and emitStrNormalize for the
+		// outgoing body SSO normalize. cabi_realloc is the
+		// canonical-ABI allocator the host calls back for
+		// list<u8> return-value materialisation.
+		helpers.add("__lang_alloc")
+		helpers.add("__lang_str_len")
+		helpers.add("__lang_str_byte")
+		helpers.add("__lang_arena_save")
+		helpers.add("__lang_arena_restore")
+		helpers.add("__bytes_to_lang_string")
+		helpers.add("cabi_realloc")
+		helpers.add("__http_entry")
 	}
 	importNeeds := scanImports(prog, helpers)
 
@@ -442,6 +472,29 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
 		m.CodeBodies = append(m.CodeBodies, spec.body(helperIdxs))
+	}
+
+	// HttpHandler-specific exports. Helpers are private by default
+	// (the loop above doesn't add export entries for them), but the
+	// wasi:http target needs `__http_entry` surfaced under the
+	// canonical component-model name + `cabi_realloc` as a top-
+	// level export so the host can call it for list<u8>
+	// realloc-style returns.
+	//
+	// The export name string is special-cased here rather than in
+	// runtimeHelperSpecs because that table doesn't carry export
+	// metadata; mirrors how SynthStart sets up `_start` below.
+	if opts.HttpHandler {
+		if idx, ok := funcIdx["__http_entry"]; ok {
+			m.ExportNames = append(m.ExportNames, "wasi:http/incoming-handler@0.2.0#handle")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, idx)
+		}
+		if idx, ok := funcIdx["cabi_realloc"]; ok {
+			m.ExportNames = append(m.ExportNames, "cabi_realloc")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, idx)
+		}
 	}
 
 	// OpConstFunc closure-pair cells → data segment at the

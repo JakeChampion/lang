@@ -78,7 +78,7 @@ function test_get_all_on_missing_is_empty(): Option[string] {
     var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
-            return assert_eq_i32(len(req.headers.get_all("X-Absent")), 0);
+            return assert_eq_i32((req.headers.get_all("X-Absent")).len(), 0);
         },
         None => { return fail("parse failed"); }
     }

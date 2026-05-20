@@ -1473,11 +1473,15 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 
 	// var __foreach_iter_N = expr;
 	declIter := &ast.Var{P: kw.Pos, Name: iterName, Init: expr}
-	// var __foreach_len_N = len(__foreach_iter_N);
+	// var __foreach_len_N = __foreach_iter_N.len();
 	declLen := &ast.Var{P: kw.Pos, Name: lenName, Init: &ast.Call{
-		P:      kw.Pos,
-		Callee: mkIdent("len"),
-		Args:   []ast.Expr{mkIdent(iterName)},
+		P: kw.Pos,
+		Callee: &ast.FieldAccess{
+			P:        kw.Pos,
+			Target:   mkIdent(iterName),
+			Field:    "len",
+			FieldPos: kw.Pos,
+		},
 	}}
 	// var __foreach_idx_N = 0;
 	declIdx := &ast.Var{P: kw.Pos, Name: idxName, Init: mkNum(0)}

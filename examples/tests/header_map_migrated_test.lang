@@ -65,7 +65,7 @@ function test_set_on_absent_appends(): Option[string] {
 function test_get_all_on_missing_is_empty(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
     h.append("X", "1");
-    return assert_eq_i32(len(h.get_all("Y")), 0);
+    return assert_eq_i32((h.get_all("Y")).len(), 0);
 }
 
 function main(): i32 {
