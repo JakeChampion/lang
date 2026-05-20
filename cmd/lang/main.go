@@ -800,6 +800,14 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 		innerTypes:       nil,
 		resultValtypes:   []byte{component.CValtypeU64},
 	},
+	{"wasi:clocks/monotonic-clock@0.2.0", "now"}: {
+		interfaceName:    "wasi:clocks/monotonic-clock@0.2.0",
+		paramNames:       nil,
+		paramValtypes:    nil,
+		coreImportModule: "wasi:clocks/monotonic-clock@0.2.0",
+		innerTypes:       nil,
+		resultValtypes:   []byte{component.CValtypeU64},
+	},
 }
 
 // classifyPreview2Imports walks the core module's import section

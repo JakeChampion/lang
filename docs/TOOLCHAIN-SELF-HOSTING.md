@@ -420,6 +420,17 @@ End-to-end exit code 42 demo (covered by
     `PutTypeSectionInstanceWithInnerTypesAndOneFuncExport`
     handles both no-result and one-result functions. End-to-end
     test: `TestCmdLangComponentWrapCliWithRandom`.
+  - **`clock_time_get` (monotonic) migration.** Lang's
+    `monotonic_ns()` now routes through
+    `wasi:clocks/monotonic-clock@0.2.0::now() -> u64` under
+    `EmitOptions.Preview2WASI`. Cleanest migration yet — the
+    preview-2 import returns the scalar directly, so
+    `__lang_monotonic_ns` is just `call now`. The realtime
+    variant (`__lang_now_ns` / `now_unix_ms`) stays on
+    preview-1 for now — `wasi:clocks/wall-clock::now` returns a
+    `datetime` record whose canonical-ABI lowering needs
+    multi-value return support. End-to-end test:
+    `TestCmdLangComponentWrapCliWithMonotonic`.
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
     `environ_*`, `args_*`, `path_*`). HTTP body / file I/O
