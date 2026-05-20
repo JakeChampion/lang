@@ -483,12 +483,22 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// wasi_args_get) silently fell back to funcidx 0 for missing
 	// keys, calling whatever import happened to land first. Always
 	// include both.
-	helperIdxs := make(map[string]uint32, len(helpers.order)+len(importNeeds.order))
+	helperIdxs := make(map[string]uint32, len(helpers.order)+len(importNeeds.order)+len(prog.Funcs))
 	for _, name := range importNeeds.order {
 		helperIdxs[name] = funcIdx[name]
 	}
 	for _, name := range helpers.order {
 		helperIdxs[name] = funcIdx[name]
+	}
+	// Also expose user-defined IR functions to helper bodies —
+	// HttpHandler's __http_entry calls the user's `handle()`, and
+	// `__method_HeaderMap_append` is reached from the same wrapper.
+	// Without this, lookups fall back to funcidx 0 (the first
+	// import) and the wrapper synthesises a 500 response.
+	for _, fn := range prog.Funcs {
+		if idx, ok := funcIdx[fn.Name]; ok {
+			helperIdxs[fn.Name] = idx
+		}
 	}
 	for _, name := range helpers.order {
 		spec := runtimeHelperSpecs[name]

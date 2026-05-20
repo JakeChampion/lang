@@ -434,6 +434,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_http_outgoing_body_finish": {
+		// (self, option-trailers-disc, option-trailers-value,
+		//  retptr) → (). Static method that closes the body —
+		// must be called before the response is handed to
+		// response-outparam.set so the parent has no live
+		// outgoing-body child.
+		module:  "wasi:http/types@0.2.0",
+		name:    "[static]outgoing-body.finish",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_http_response_outparam_set": {
 		// (outparam, disc, payload[7 slots, slot 2 = i64]) → ().
 		// 9 params total: the response-outparam handle + the
@@ -611,6 +622,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds) importNeeds {
 		in.add("wasi_http_response_set_status")
 		in.add("wasi_http_response_body")
 		in.add("wasi_http_outgoing_body_write")
+		in.add("wasi_http_outgoing_body_finish")
 		in.add("wasi_http_response_outparam_set")
 		in.add("wasi_io_blocking_read")
 		in.add("wasi_io_blocking_write_and_flush")

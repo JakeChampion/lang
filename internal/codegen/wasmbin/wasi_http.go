@@ -258,6 +258,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	respSetStatus := idxs["wasi_http_response_set_status"]
 	respBody := idxs["wasi_http_response_body"]
 	outBodyWrite := idxs["wasi_http_outgoing_body_write"]
+	outBodyFinish := idxs["wasi_http_outgoing_body_finish"]
 	outparamSet := idxs["wasi_http_response_outparam_set"]
 	streamDrop := idxs["wasi_io_output_stream_drop"]
 	inStreamDrop := idxs["wasi_io_input_stream_drop"]
@@ -490,10 +491,12 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstCall(body, futureTrailersDrop)
 	}
 	body = inst.InstEnd(body)
-
-	// Drop incoming-request.
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstCall(body, reqDrop)
+	// reqDrop is deferred until after fields.entries runs +
+	// req_fields is dropped — wasmtime 34's canonical-ABI checker
+	// treats request.headers() as keeping the fields tied to the
+	// request and refuses request_drop while req_fields is alive
+	// with "resource has children". See the matching reqDrop call
+	// below, just after fields_drop(req_fields).
 
 	// ================ Build HttpRequest (28 bytes) ================
 	body = inst.InstI32Const(body, 28)
@@ -626,9 +629,13 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
-	// Drop fields handle.
+	// Drop request fields, then the incoming-request itself —
+	// fields_drop has to happen before request_drop so the
+	// request's canonical-ABI child list is empty.
 	body = inst.InstLocalGet(body, 26)
 	body = inst.InstCall(body, fieldsDrop)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, reqDrop)
 
 	// ================ Build Platform { version: 1 } and call handle ================
 	body = inst.InstI32Const(body, 4)
@@ -783,18 +790,6 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 23) // out_stream
 
-	// ================ response-outparam.set(out, Ok(resp_handle)) ================
-	body = inst.InstLocalGet(body, 1) // out
-	body = inst.InstI32Const(body, 0) // disc = 0 (Ok)
-	body = inst.InstLocalGet(body, 20)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI64Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstCall(body, outparamSet)
-
 	// ================ Stream response body bytes ================
 	// SSO-normalize body string into a heap buffer (write_buf,
 	// write_chunk reused as scratch). Reuse $hm_names and
@@ -847,9 +842,33 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 
-	// Drop output-stream.
+	// Drop output-stream (child of outgoing-body).
 	body = inst.InstLocalGet(body, 23)
 	body = inst.InstCall(body, streamDrop)
+
+	// outgoing-body.finish(out_body, None=0, 0, retptr) closes the
+	// body resource and drops it from the response's child list.
+	// Has to happen BEFORE response-outparam.set — the set
+	// enforces that the response's children are all gone (the
+	// "resource has children" wasmtime trap surfaces otherwise).
+	body = inst.InstLocalGet(body, 22)
+	body = inst.InstI32Const(body, 0) // option-trailers disc = 0 (None)
+	body = inst.InstI32Const(body, 0) // option-trailers payload (unused for None)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, outBodyFinish)
+
+	// response-outparam.set(out, Ok(resp_handle)). Comes last so
+	// resp_handle is child-free at the time of the call.
+	body = inst.InstLocalGet(body, 1) // out
+	body = inst.InstI32Const(body, 0) // disc = 0 (Ok)
+	body = inst.InstLocalGet(body, 20)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstCall(body, outparamSet)
 
 	// Restore arena.
 	body = inst.InstLocalGet(body, 24)
@@ -876,7 +895,44 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 func emitMethodDispatch(body []byte, idxs map[string]uint32) []byte {
 	bytesToStr := idxs["__bytes_to_lang_string"]
 
-	// host_ptr = mem[retptr + 4]; host_len = mem[retptr + 8]
+	// disc = mem[retptr + 0] (i32, but only bit 0..3 are meaningful)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstLocalSet(body, 11)
+
+	// Wrap the named-variant fast paths in an outer block so each
+	// match arm can `br 0` out without falling through into the
+	// `other(string)` marshal.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	emitCase := func(b []byte, disc int32, data, length int32) []byte {
+		b = inst.InstLocalGet(b, 11)
+		b = inst.InstI32Const(b, disc)
+		b = numeric.InstI32Eq(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		b = inst.InstI32Const(b, data)
+		b = inst.InstLocalSet(b, 3) // method_data
+		b = inst.InstI32Const(b, length)
+		b = inst.InstLocalSet(b, 4) // method_len
+		b = inst.InstBr(b, 1)       // exit the outer block
+		b = inst.InstEnd(b)
+		return b
+	}
+
+	// Inline SSO encoding for ASCII methods. bytes pack
+	// little-endian into the data word; len holds the byte count
+	// in bits 24..26 with the high bit set as the "inline" flag.
+	body = emitCase(body, 0, ssoData("GET"), ssoLen("GET"))
+	body = emitCase(body, 1, ssoData("HEAD"), ssoLen("HEAD"))
+	body = emitCase(body, 2, ssoData("POST"), ssoLen("POST"))
+	body = emitCase(body, 3, ssoData("PUT"), ssoLen("PUT"))
+	body = emitCase(body, 4, ssoData("DELETE"), ssoLen("DELETE"))
+	body = emitCase(body, 5, ssoData("CONNECT"), ssoLen("CONNECT"))
+	body = emitCase(body, 6, ssoData("OPTIONS"), ssoLen("OPTIONS"))
+	body = emitCase(body, 7, ssoData("TRACE"), ssoLen("TRACE"))
+	body = emitCase(body, 8, ssoData("PATCH"), ssoLen("PATCH"))
+
+	// other(string) — host_ptr at retptr+4, host_len at retptr+8.
+	// Reached only when no named-variant matched.
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
@@ -892,6 +948,32 @@ func emitMethodDispatch(body []byte, idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, bytesToStr)
 	body = inst.InstLocalSet(body, 4) // method_len
 	body = inst.InstLocalSet(body, 3) // method_data
+	body = inst.InstEnd(body) // end outer block
 	return body
+}
+
+// ssoData computes the inline-SSO data word for an ASCII string
+// of length ≤ 7. Bytes pack little-endian into the i32; longer
+// strings would need to spill into the len word (bytes 4..6
+// occupy bits 0..23 of len) but `OPTIONS` (7 bytes) is the
+// longest method we ship.
+func ssoData(s string) int32 {
+	var d uint32
+	for i := 0; i < len(s) && i < 4; i++ {
+		d |= uint32(s[i]) << (8 * i)
+	}
+	return int32(d)
+}
+
+// ssoLen computes the inline-SSO len word: bytes 4..6 pack into
+// bits 0..23, byte count packs into bits 24..26, high bit set.
+func ssoLen(s string) int32 {
+	var l uint32
+	for i := 4; i < len(s) && i < 7; i++ {
+		l |= uint32(s[i]) << (8 * (i - 4))
+	}
+	l |= uint32(len(s)) << 24
+	l |= 0x80000000
+	return int32(l)
 }
 
