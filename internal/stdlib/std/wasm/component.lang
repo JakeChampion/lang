@@ -31,19 +31,30 @@
 import "std/wasm/leb128";
 import "std/wasm/encode";
 
-// Component section IDs from the Binary.md spec table. Only the
-// few production-path entries are wired so far.
-pub function section_core_module(): u8     { return 1u8; }
-pub function section_core_instance(): u8   { return 3u8; }
-pub function section_core_alias(): u8      { return 4u8; }
-pub function section_component_type(): u8  { return 5u8; }
-pub function section_component(): u8       { return 6u8; }
-pub function section_instance(): u8        { return 7u8; }
-pub function section_alias(): u8           { return 8u8; }
-pub function section_canon(): u8           { return 9u8; }
-pub function section_start(): u8           { return 10u8; }
-pub function section_import(): u8          { return 11u8; }
-pub function section_export(): u8          { return 12u8; }
+// Component section IDs from the Binary.md spec table. The
+// earlier version of this file (when only section_core_module was
+// exercised) had the rest of the IDs off by one — they were copied
+// from an older draft of the spec that had a separate `core-alias`
+// section and an explicit `component-type` section. The current
+// MVP binary format folded core-alias into the unified `alias`
+// section (id 6) and the `component-type` payload lives in a
+// custom section, not a top-level section. The constants below
+// were verified against `wasm-tools parse` output for a handful of
+// shapes (`(core module …)`, `(core instance …)`, `(alias …)`).
+//
+// One section ID is not present: section 4 = `component`, the
+// recursive case where one component embeds another. The
+// production driver doesn't need it; left out until something does.
+pub function section_core_module(): u8   { return 1u8; }
+pub function section_core_instance(): u8 { return 2u8; }
+pub function section_core_type(): u8     { return 3u8; }
+pub function section_instance(): u8      { return 5u8; }
+pub function section_alias(): u8         { return 6u8; }
+pub function section_type(): u8          { return 7u8; }
+pub function section_canon(): u8         { return 8u8; }
+pub function section_start(): u8         { return 9u8; }
+pub function section_import(): u8        { return 10u8; }
+pub function section_export(): u8        { return 11u8; }
 
 // put_component_header — append the Component Model preamble:
 // `\0asm` + version 0x000d + layer 0x0001. Always 8 bytes.
@@ -73,4 +84,38 @@ pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
     out = out.push(section_core_module());
     out = leb128.uleb_u32(out, core_bytes.len() as u32);
     return encode.put_bytes(out, core_bytes);
+}
+
+// put_core_instance_section_instantiate — emit a core-instance
+// section that contains a single "instantiate" entry: instantiate
+// a core module by index, with no `instantiation-arg`s. This is
+// the minimum shape needed by a self-contained core module (one
+// with no imports, e.g. the lang CLI core after every WASI import
+// is satisfied by canonical-ABI host imports at the component
+// level).
+//
+// Spec (Binary.md, `core:instance` production):
+//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
+//                   | 0x01 e:vec(core-instance-export)
+//
+// We emit the first form with `args = []`. Encoded body for one
+// instance with module_idx=0:
+//
+//   01           // vec length = 1 instance
+//   00           // tag = 0 (instantiate)
+//   00           // module_idx (uleb) = 0
+//   00           // args vec length = 0
+//
+// Section header wrapped on top: `id=2 + uleb size + body`.
+pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // one instance entry
+    body = body.push(0u8);                       // tag: instantiate
+    body = leb128.uleb_u32(body, module_idx);    // which core module
+    body = leb128.uleb_u32(body, 0u32);          // no args
+
+    var out: u8[] = buf;
+    out = out.push(section_core_instance());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
 }
