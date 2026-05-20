@@ -12658,6 +12658,25 @@ function main(): i32 {
 	}
 }
 
+// Phase 1d-vii: a closure that captures an array bumps the
+// rc on the captured value. The local function `f` captures
+// `arr` from main's scope; OpMakeClosure pushes each capture
+// value and the IR's emit inserts a __lang_rc_inc on each
+// alias-shaped array capture. The resulting closure's env
+// co-owns the array reference.
+func TestArm64RcClosureCaptureInc(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    function f(): u8[] { return arr; }
+    var fn_alias = f;
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (closure capture should bump rc to 2)", code)
+	}
+}
+
 // Phase 1d-vi: reassigning an existing array variable dec's
 // the OLD value it held before the new value lands. Three
 // fresh arrays + two reassignments to the same slot let us

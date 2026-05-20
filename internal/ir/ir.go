@@ -3923,9 +3923,18 @@ func (b *builder) expr(e ast.Expr) error {
 		// per-capture types live on the hoisted target's Captures
 		// list, which a backend can fetch from the AST when packing
 		// the env block.
+		//
+		// Phase 1d-vii: each captured array-typed alias gets an
+		// inc — the closure's env now co-owns the reference
+		// alongside the outer scope's local. Phase 1e's drop
+		// handlers will dec captures when the closure itself is
+		// reclaimed.
 		for _, capExpr := range n.Captures {
 			if err := b.expr(capExpr); err != nil {
 				return err
+			}
+			if needsRcIncOnAlias(capExpr, b) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
 			}
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
