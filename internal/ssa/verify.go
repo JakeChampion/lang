@@ -32,6 +32,17 @@ func Verify(f *Func) error {
 		}
 		return fmt.Errorf("func %q: has blocks but no Entry set", f.Name)
 	}
+	entryInBlocks := false
+	for _, b := range f.Blocks {
+		if b == f.Entry {
+			entryInBlocks = true
+			break
+		}
+	}
+	if !entryInBlocks {
+		return fmt.Errorf("func %q: Entry block %d is not in Blocks; would skip during walks",
+			f.Name, f.Entry.ID)
+	}
 
 	// Pass 1: every Block has a terminator + Preds is
 	// consistent with successors. Terminator pointer-fields
