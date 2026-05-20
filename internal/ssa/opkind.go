@@ -53,7 +53,9 @@ func IsConst(k OpKind) bool {
 // and by the upcoming branch-on-comparison patterns.
 func IsComparison(k OpKind) bool {
 	switch k {
-	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+	case OpEq, OpNe,
+		OpLt, OpLtU, OpLe, OpLeU,
+		OpGt, OpGtU, OpGe, OpGeU:
 		return true
 	default:
 		return false

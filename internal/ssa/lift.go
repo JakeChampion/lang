@@ -323,6 +323,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		lhs := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
 		kind := mapBinaryArith(op.Kind)
+		// Some IR kinds have signed/unsigned variants flagged via
+		// op.Unsigned. mapBinaryArith returns the signed kind by
+		// default; switch to the unsigned variant if requested.
+		if op.Unsigned {
+			kind = mapUnsignedVariant(kind)
+		}
 		v := l.out.AddOp(l.cur, kind, lhs, rhs)
 		l.stack = append(l.stack, v)
 	case ir.OpNot:
@@ -799,6 +805,31 @@ func (l *lifter) endBlockScope(top scope) {
 
 	l.mergeSlotsViaPhi(top.postB, sources)
 	l.cur = top.postB
+}
+
+// mapUnsignedVariant returns the unsigned counterpart of a
+// signed-by-default integer op (OpDiv → OpDivU, etc.). For ops
+// that aren't signedness-affected (OpAdd, OpEq, OpNe, OpAnd,
+// OpOr, OpXor, OpShl, OpMul, OpSub) it returns the input
+// unchanged.
+func mapUnsignedVariant(k OpKind) OpKind {
+	switch k {
+	case OpDiv:
+		return OpDivU
+	case OpRem:
+		return OpRemU
+	case OpShr:
+		return OpShrU
+	case OpLt:
+		return OpLtU
+	case OpLe:
+		return OpLeU
+	case OpGt:
+		return OpGtU
+	case OpGe:
+		return OpGeU
+	}
+	return k
 }
 
 func mapBinaryArith(k ir.OpKind) OpKind {
