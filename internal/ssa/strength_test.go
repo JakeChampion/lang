@@ -220,6 +220,88 @@ func TestStrengthFCmpSelfUntouched(t *testing.T) {
 	}
 }
 
+// TestStrengthOrAllSetRight — `x | -1` synthesises const_int
+// -1 (all bits set absorbs the operand).
+func TestStrengthOrAllSetRight(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	allSet := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = -1
+	r := f.AddOp(entry, OpOr, x, allSet)
+	f.SetRet(entry, r)
+	_ = r
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpConstInt || entry.Ops[1].Imm != -1 {
+		t.Errorf("Op = {%v %d}, want {OpConstInt -1}",
+			entry.Ops[1].Kind, entry.Ops[1].Imm)
+	}
+}
+
+// TestStrengthOrAllSetLeft — `-1 | x` synthesises const_int -1.
+func TestStrengthOrAllSetLeft(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	allSet := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = -1
+	r := f.AddOp(entry, OpOr, allSet, x)
+	f.SetRet(entry, r)
+	_ = r
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpConstInt || entry.Ops[1].Imm != -1 {
+		t.Errorf("Op = {%v %d}, want {OpConstInt -1}",
+			entry.Ops[1].Kind, entry.Ops[1].Imm)
+	}
+}
+
+// TestStrengthRemByOne — `x % 1` synthesises const_int 0.
+// Holds for both signed (OpRem) and unsigned (OpRemU).
+func TestStrengthRemByOne(t *testing.T) {
+	for _, k := range []OpKind{OpRem, OpRemU} {
+		t.Run(k.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			x := f.AddParam()
+			entry := f.NewBlock()
+			one := f.AddOp(entry, OpConstInt)
+			entry.Ops[0].Imm = 1
+			r := f.AddOp(entry, k, x, one)
+			f.SetRet(entry, r)
+			_ = r
+
+			StrengthReduce(f)
+
+			if entry.Ops[1].Kind != OpConstInt || entry.Ops[1].Imm != 0 {
+				t.Errorf("Op = {%v %d}, want {OpConstInt 0}",
+					entry.Ops[1].Kind, entry.Ops[1].Imm)
+			}
+		})
+	}
+}
+
+// TestStrengthRemByOneOnLeftUntouched — `1 % x` is NOT an
+// identity (depends on x), so it must NOT be folded.
+func TestStrengthRemByOneOnLeftUntouched(t *testing.T) {
+	f := NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	one := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 1
+	f.AddOp(entry, OpRem, one, x)
+	f.SetRet(entry, Value{})
+
+	StrengthReduce(f)
+
+	if entry.Ops[1].Kind != OpRem {
+		t.Errorf("Kind = %v, want OpRem (LHS=1 isn't identity)",
+			entry.Ops[1].Kind)
+	}
+}
+
 // TestStrengthNilFunc — defensive.
 func TestStrengthNilFunc(t *testing.T) {
 	defer func() {

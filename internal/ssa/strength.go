@@ -14,6 +14,10 @@ package ssa
 //	0 * x   ⇒ const_int 0
 //	x & 0   ⇒ const_int 0
 //	0 & x   ⇒ const_int 0
+//	x | -1  ⇒ const_int -1
+//	-1 | x  ⇒ const_int -1
+//	x % 1   ⇒ const_int 0        (signed remainder by 1 is always 0)
+//	x %u 1  ⇒ const_int 0        (unsigned remainder by 1 is always 0)
 //
 // Integer self-comparison identities (Phase 2):
 //
@@ -71,6 +75,27 @@ func StrengthReduce(f *Func) {
 					continue
 				}
 				if rImm, rOK := constInt(op.Args[1], defs); rOK && rImm == 0 {
+					rewriteInt(op, 0)
+				}
+			case OpOr:
+				// x | -1 → -1 (all bits set absorbs).
+				if len(op.Args) != 2 {
+					continue
+				}
+				if lImm, lOK := constInt(op.Args[0], defs); lOK && lImm == -1 {
+					rewriteInt(op, -1)
+					continue
+				}
+				if rImm, rOK := constInt(op.Args[1], defs); rOK && rImm == -1 {
+					rewriteInt(op, -1)
+				}
+			case OpRem, OpRemU:
+				// x % 1 → 0. RHS-only (LHS-1 isn't an identity:
+				// 1 % x depends on x). Same for unsigned.
+				if len(op.Args) != 2 {
+					continue
+				}
+				if rImm, rOK := constInt(op.Args[1], defs); rOK && rImm == 1 {
 					rewriteInt(op, 0)
 				}
 			case OpEq, OpLe, OpLeU, OpGe, OpGeU:
