@@ -394,11 +394,14 @@ End-to-end exit code 42 demo (covered by
     = ok, non-zero = err) as the process exit signal. Uses the
     packaged-instance form (component-instance section 0x01)
     rather than the sub-component form `wasm-tools` typically
-    emits — simpler bytes, same semantics. End-to-end test:
-    `TestBuildWasiCliRunComponent_RunsUnderWasmtime`. The driver
-    isn't yet wired to emit this shape; that's the next slice
-    (decide between main-lift and run-export defaults for
-    `-component-wrap`).
+    emits — simpler bytes, same semantics.
+  - **`-component-wrap-cli` driver flag** routes a Lang program
+    through `BuildWasiCliRunComponent` so `wasmtime run prog.wasm`
+    just works. Mutually exclusive with `-component-wrap`.
+    No-imports only for now; the import-bearing variant comes
+    in a future slice. End-to-end test:
+    `TestCmdLangComponentWrapCli` (covers both clean and
+    non-zero exit code paths).
   - **Still to do:** migrate the remaining preview-1 imports
     (`fd_write`, `fd_read`, `random_get`, `clock_time_get`,
     `environ_*`, `args_*`, `path_*`). HTTP body / file I/O

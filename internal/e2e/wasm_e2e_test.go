@@ -9033,6 +9033,67 @@ func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCli drives a Lang program through
+// `-component-wrap-cli` and confirms the produced binary runs
+// under plain `wasmtime run` (no --invoke). The cli-run shape
+// exports `wasi:cli/run@0.2.0` so wasmtime treats main's i32 as
+// a result lowering: 0 → exit 0, non-zero → exit 1.
+//
+// Two variants:
+//   - main returning 0: clean exit 0.
+//   - main returning 42: wasmtime exits non-zero (result::err).
+func TestCmdLangComponentWrapCli(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	for _, tc := range []struct {
+		name      string
+		retval    string
+		wantClean bool
+	}{
+		{"main_returns_0", "0", true},
+		{"main_returns_42", "42", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			srcPath := filepath.Join(dir, "cli.lang")
+			src := []byte("function main(): i32 { return " + tc.retval + "; }")
+			if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			compPath := filepath.Join(dir, "cli.wasm")
+			cmd := exec.Command("go", "run", "./cmd/lang",
+				"-target", "wasm-bin",
+				"-component-wrap-cli",
+				"-o", compPath, srcPath)
+			cmd.Dir = projectRoot(t)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("lang -component-wrap-cli failed: %v\n%s", err, out)
+			}
+			if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+				t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+			}
+			printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+			if err != nil {
+				t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+			}
+			if !strings.Contains(string(printOut), "wasi:cli/run@0.2.0") {
+				t.Errorf("expected wasi:cli/run@0.2.0 export, got:\n%s", printOut)
+			}
+			err = exec.Command("wasmtime", "run", compPath).Run()
+			if tc.wantClean && err != nil {
+				t.Fatalf("wasmtime run expected clean exit, got: %v", err)
+			}
+			if !tc.wantClean && err == nil {
+				t.Fatal("wasmtime run expected non-zero exit, got clean")
+			}
+		})
+	}
+}
+
 // TestCmdLangComponentWrap exercises the new `-component-wrap`
 // driver flag, which uses the Go-side encoder to produce a
 // self-contained preview-2 component without shelling out to
