@@ -12995,6 +12995,41 @@ function main(): i32 {
 	}
 }
 
+// Phase 2b extension: `mat[i][j] = v` for arr-of-arr targets.
+// Verifies the basic in-place mutation works when mat[i]'s
+// rc is 1.
+func TestArm64ArrayIndexSetMat(t *testing.T) {
+	src := `function main(): i32 {
+    var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
+    mat[0][1] = 999;
+    if (mat[0][0] != 1) { return 1; }
+    if (mat[0][1] != 999) { return 2; }
+    if (mat[0][2] != 3) { return 3; }
+    if (mat[1][0] != 4) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (mat[i][j]=v in-place when inner rc==1)", code)
+	}
+}
+
+// Phase 2b extension: aliased inner array via Phase 1d-ii inc
+// (`var inner = mat[0]`) makes the inner's rc 2; the write
+// must copy and leave the alias unchanged.
+func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var mat: i32[][] = [[1, 2], [3, 4]];
+    var inner = mat[0];     // Phase 1d-ii inc: inner.rc = 2
+    mat[0][1] = 999;        // CoW the inner; inner alias unchanged
+    if (inner[1] != 2) { return 1; }
+    if (mat[0][1] != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (mat[i][j]=v with aliased inner must copy)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

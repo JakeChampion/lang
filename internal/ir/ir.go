@@ -5866,6 +5866,29 @@ func (b *builder) assign(n *ast.Assign) error {
 					}
 				}
 			}
+			// Phase 2b extension: `mat[i][j] = v` where mat is a
+			// writable local-ident array-of-arrays. The outer
+			// store flips the inner-array pointer at mat[i] to a
+			// fresh buffer (via CoW); the outer `mat` slot itself
+			// is mutated in place, so callers that alias mat
+			// still see the new mat[i] pointer (acceptable —
+			// Phase 2c is what gates copy-on-write at the mat
+			// level too).
+			if outer, ok := t.Array.(*ast.Index); ok && !outer.IsSlice {
+				if outerIdent, ok2 := outer.Array.(*ast.Ident); ok2 {
+					if _, isLocal := b.locals[outerIdent.Name]; isLocal && isArrayTypeOfLocal(outerIdent.Name, b) && !isParamName(outerIdent.Name, b) {
+						// outer.ElemType is the inner-array type
+						// (e.g. i32[] for mat: i32[][]). Use it
+						// to pick the right pointer-shaped
+						// load/store width.
+						if outerElemT := outer.ElemType; outerElemT != nil {
+							if _, isInnerArr := outerElemT.(ast.ArrayType); isInnerArr {
+								return b.emitArrayIndexAssignCoWNested(outer, outerIdent, t, n, stride, storeOp, storeWidth, helper)
+							}
+						}
+					}
+				}
+			}
 		}
 		if err := b.expr(t.Array); err != nil {
 			return err
@@ -6786,6 +6809,88 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	b.emit(payloadStoreOpFor(fieldType, b.ptrW))
 	return nil
+}
+
+// emitArrayIndexAssignCoWNested lowers `mat[i][j] = v` for a
+// writable local-ident array-of-arrays. The outer slot — the
+// address `&mat[i]` — flows through the per-stride bounds-
+// check helper just like a regular `arr[i] = v` write. The
+// inner-array pointer at that slot is fed through
+// `__lang_arr_cow_inplace`, which mutates it in place on rc==1
+// or returns a fresh copy on rc>1. The new buffer pointer is
+// stored back into `&mat[i]`.
+//
+// Limitation: the outer `mat` slot is mutated in place. If
+// some other local also aliases `mat`, the alias's view of
+// `mat[i]` follows along (since they share the outer buffer).
+// Phase 2c will gate the outer slot's write through
+// `__lang_arr_cow_inplace` too, so aliases of mat see the
+// pre-write inner-array pointer.
+func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, outerIdent *ast.Ident, t *ast.Index, n *ast.Assign, innerStride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
+	// Outer stride + outer __arr_idx_<N> helper for resolving
+	// `&mat[i]`. Outer elements are pointer-shaped (each holds
+	// the inner array's data pointer), so stride = ptrW on
+	// natives or wasm.
+	outerStride := int32(b.ptrW)
+	outerHelper := outerArrIdxHelper(outerStride)
+	// outerSlotAddr = &mat[i] via the bounds-check helper.
+	outerSlotSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_outer_%d", outerSlotSlot)] = outerSlotSlot
+	if err := b.expr(outer.Array); err != nil {
+		return err
+	}
+	if err := b.expr(outer.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: outerHelper, I32: 2})
+	b.emit(Op{Kind: OpStoreLocal, I32: outerSlotSlot})
+	// inner = *outerSlotAddr (pointer-width load).
+	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
+	b.emit(payloadLoadOpFor(outer.ElemType, b.ptrW))
+	// buf = __lang_arr_cow_inplace(inner, innerStride)
+	b.emit(Op{Kind: OpConstI32, I32: innerStride})
+	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	bufSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
+	// Element address: buf + j*innerStride via the inner per-
+	// stride bounds-check helper.
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	if err := b.expr(t.Idx); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
+	// Element value.
+	if err := b.expr(n.Value); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	// Write buf back into *outerSlotAddr. In-place case is a
+	// no-op semantically (buf == inner); copy case updates
+	// mat[i] to point at the new buffer.
+	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
+	b.emit(payloadStoreOpFor(outer.ElemType, b.ptrW))
+	return nil
+}
+
+// outerArrIdxHelper picks the per-stride bounds-check helper
+// name for an outer-array indexing of pointer-width elements.
+// Centralises the stride → helper-name mapping so the nested
+// CoW path stays in sync with the regular `arr[i] = v` path.
+func outerArrIdxHelper(stride int32) string {
+	switch stride {
+	case 1:
+		return "__arr_idx_1"
+	case 2:
+		return "__arr_idx_2"
+	case 8:
+		return "__arr_idx_8"
+	case 16:
+		return "__arr_idx_16"
+	default:
+		return "__arr_idx"
+	}
 }
 
 func (b *builder) emitArrayPush(n *ast.Call) error {
