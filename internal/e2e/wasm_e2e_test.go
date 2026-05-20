@@ -11705,3 +11705,17 @@ func TestWASMRcBuiltins(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (rc progression off)", got)
 	}
 }
+
+// Phase 1d: `var y = x;` where x is an array variable load
+// bumps the refcount via __lang_rc_inc, so both x and y own
+// references. Returns 0 iff the post-alias rc is exactly 2.
+func TestWASMRcAliasInc(t *testing.T) {
+	src := `function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var alias: u8[] = arr;
+    return __rc_get(arr) - 2;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", got)
+	}
+}

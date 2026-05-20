@@ -12560,6 +12560,24 @@ function main(): i32 {
 	}
 }
 
+// Phase 1d: `var y = x;` where x is an array variable load
+// bumps the refcount via __lang_rc_inc, so both x and y own
+// references. With the inc, the rc goes 1 → 2 across the
+// aliasing. Without it (the pre-Phase-1d behavior), rc would
+// stay at 1, which is the bug Phase 2 will rely on NOT being
+// the case. Returns 0 iff the post-alias rc is exactly 2.
+func TestArm64RcAliasInc(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var alias: u8[] = arr;
+    return __rc_get(arr) - 2;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

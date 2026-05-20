@@ -2476,6 +2476,18 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if !ok {
 			return fmt.Errorf("ir: var %q has no slot (compiler bug)", n.Name)
 		}
+		// Phase 1d: when the init expression aliases an existing
+		// array (i.e. it's a bare ident load of an array-typed
+		// variable), bump the refcount so the new binding owns
+		// its own reference. Fresh allocations (array literals,
+		// function returns, push results) come with rc = 1
+		// already, so no inc needed there — only true aliases.
+		// __lang_rc_inc returns the input pointer so it splices
+		// into the expression chain without a temp local.
+		// See docs/RC-PERCEUS-PLAN.md "Reference-creation sites".
+		if needsRcIncOnAlias(n.Init, b) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
@@ -5685,6 +5697,22 @@ func (b *builder) assign(n *ast.Assign) error {
 		return nil
 	}
 	return fmt.Errorf("ir: assignment target %T not yet lowered", n.Target)
+}
+
+// needsRcIncOnAlias returns true iff `e` is an alias expression
+// (a load of an existing reference) whose result is an array
+// type. Used by Phase 1d to decide when to splice in
+// __lang_rc_inc: array literals, function-call returns, and
+// push results all yield rc=1 ownership; only loads of existing
+// variables share an existing reference and need the bump.
+// Other pointer-shaped types (string / struct / enum / closure)
+// will join this in Phase 1e.
+func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
+	if _, isIdent := e.(*ast.Ident); !isIdent {
+		return false
+	}
+	_, isArr := b.exprType(e).(ast.ArrayType)
+	return isArr
 }
 
 func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
