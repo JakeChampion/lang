@@ -120,6 +120,94 @@ pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): 
     return encode.put_bytes(out, body);
 }
 
+// Core sort discriminator bytes (used inside `core-sortidx` inside
+// alias and core-instance section entries).
+pub function core_sort_func(): u8     { return 0u8; }
+pub function core_sort_table(): u8    { return 1u8; }
+pub function core_sort_memory(): u8   { return 2u8; }
+pub function core_sort_global(): u8   { return 3u8; }
+pub function core_sort_type(): u8     { return 16u8; }    // 0x10
+pub function core_sort_module(): u8   { return 17u8; }    // 0x11
+pub function core_sort_instance(): u8 { return 18u8; }    // 0x12
+
+// put_core_instance_section_from_one_func_export — emit a core-
+// instance section containing one "instance-from-exports" entry
+// that packages a single core function under the given export
+// name. Used to package a `canon lower`-produced core function so
+// it can be passed as an instantiation arg to a core module's
+// import (core module imports take instances, not raw funcs).
+//
+// Spec (Binary.md, `core:instance` production, second form):
+//   core-instance ::= 0x01 e:vec(core-instance-export)
+//   core-instance-export ::= n:<name> i:<core-sortidx>
+//   core-sortidx ::= s:<core-sort> i:<u32>
+//
+// Encoded body for one instance from one func export:
+//
+//   01           // vec(1) instance entries
+//   01           // tag = 0x01 (instance-from-exports)
+//   01           // vec(1) exports
+//   <name>       // uleb-prefixed UTF-8
+//   00           // core-sort = func
+//   <func-idx>   // uleb
+pub function put_core_instance_section_from_one_func_export(buf: u8[], export_name: string, core_func_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
+    body = body.push(1u8);                       // form: from-exports
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) exports
+    body = encode.put_name(body, export_name);
+    body = body.push(core_sort_func());
+    body = leb128.uleb_u32(body, core_func_idx);
+
+    var out: u8[] = buf;
+    out = out.push(section_core_instance());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
+// put_core_instance_section_instantiate_with_one_instance_arg —
+// emit a core-instance section containing one "instantiate" entry
+// that instantiates a core module passing exactly one
+// instance-typed argument. The arg is the instance built (typically
+// by put_core_instance_section_from_one_func_export) to package a
+// lowered host function for use as a core-module import.
+//
+// Spec:
+//   core-instance ::= 0x00 m:module-idx args:vec(core-instantiation-arg)
+//   core-instantiation-arg ::= n:<name> i:<core-sortidx>
+//   core-sortidx ::= s:<core-sort> i:<u32>
+//
+// `core-sort` for an instance argument is 0x12. (Core module
+// imports take an instance, even if the instance only carries one
+// function — that matches the (module $m (import "host" "f" ...))
+// shape, where "host" names the instance.)
+//
+// Encoded body for "instantiate module M with arg `arg_name` →
+// instance `instance_idx`":
+//
+//   01                  // vec(1) instance entries
+//   00                  // tag = 0x00 (instantiate)
+//   <module-idx>        // uleb
+//   01                  // args vec count = 1
+//   <arg_name>          // uleb-prefixed UTF-8
+//   12                  // core-sort = instance
+//   <instance-idx>      // uleb
+pub function put_core_instance_section_instantiate_with_one_instance_arg(buf: u8[], module_idx: u32, arg_name: string, instance_idx: u32): u8[] {
+    var body: u8[] = [];
+    body = leb128.uleb_u32(body, 1u32);          // vec(1) instances
+    body = body.push(0u8);                       // form: instantiate
+    body = leb128.uleb_u32(body, module_idx);
+    body = leb128.uleb_u32(body, 1u32);          // args vec count = 1
+    body = encode.put_name(body, arg_name);
+    body = body.push(core_sort_instance());
+    body = leb128.uleb_u32(body, instance_idx);
+
+    var out: u8[] = buf;
+    out = out.push(section_core_instance());
+    out = leb128.uleb_u32(out, body.len() as u32);
+    return encode.put_bytes(out, body);
+}
+
 // Component primitive valtype bytes. Distinct numbering from the
 // core wasm valtypes (which live in std/wasm/encode); core i32 is
 // 0x7f whereas component bool is also 0x7f. Each space is parsed
