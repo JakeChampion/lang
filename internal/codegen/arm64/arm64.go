@@ -437,13 +437,19 @@ func (g *generator) emitDataSections() {
 	g.line(`	.asciz ""`)
 	if g.usesArrEmpty {
 		// Empty u8[] sentinel — __alloc_u8(0) returns this
-		// address instead of allocating a fresh 4-byte length-
-		// only buffer. Same shape as .LStr_Empty (4 bytes of
-		// zero length prefix + a data byte) but kept distinct
-		// so the array seam can evolve independently of the
-		// string seam.
-		g.line(`.align 2`)
-		g.line(`	.4byte 0`)
+		// address instead of allocating a fresh header-only
+		// buffer. 8-byte header matches the new RC layout:
+		//   [data - 8] = rc slot (0; phase 1 will use a static-
+		//                sentinel value to make inc/dec no-op
+		//                on this constant)
+		//   [data - 4] = length (= 0)
+		//   [.LArr_Empty] = data (a single byte for safety)
+		// Kept distinct from .LStr_Empty so the array seam can
+		// evolve independently of the string seam. See
+		// docs/RC-PERCEUS-PLAN.md.
+		g.line(`.align 3`)
+		g.line(`	.4byte 0`) // rc slot (unused in phase 0)
+		g.line(`	.4byte 0`) // length = 0
 		g.label(".LArr_Empty")
 		g.line(`	.byte 0`)
 	}
@@ -1265,7 +1271,9 @@ func (g *generator) emitMemsetRuntime() {
 
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
 // fresh length-prefixed `u8[]` of n bytes. Returns the data
-// pointer (header + 4); length at `[data - 4]`.
+// pointer (header + 8); length at `[data - 4]`, refcount slot
+// at `[data - 8]` (reserved for phase 1; not initialised here
+// yet — see docs/RC-PERCEUS-PLAN.md).
 func (g *generator) emitAllocU8Runtime() {
 	g.line("")
 	g.line(".global __alloc_u8")
@@ -1276,18 +1284,18 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
 	// Short-circuit on n == 0: return the shared static empty-
-	// array sentinel rather than allocating a fresh 4-byte
-	// length-only buffer. The sentinel's byte at offset -4 is
-	// 0 (length), so emitArrayLen reads the right value via
-	// the same `ldur w?, [ptr, #-4]` it does for heap buffers.
+	// array sentinel rather than allocating a fresh header-only
+	// buffer. The sentinel's byte at offset -4 is 0 (length), so
+	// emitArrayLen reads the right value via the same
+	// `ldur w?, [ptr, #-4]` it does for heap buffers.
 	g.emit("cbnz w19, .Lallocu8_alloc")
 	g.usesArrEmpty = true
 	g.adrpAdd("x0", ".LArr_Empty")
 	g.emit("b .Lallocu8_ret")
 	g.label(".Lallocu8_alloc")
-	g.emit("add x0, x19, #4")
+	g.emit("add x0, x19, #8")
 	g.emit("bl __lang_alloc")
-	g.emit("add x0, x0, #4")  // x0 = data ptr
+	g.emit("add x0, x0, #8")  // x0 = data ptr (past 8-byte header)
 	g.emitArrayLenStore("w19", "x0")
 	g.label(".Lallocu8_ret")
 	g.emit("ldr x19, [sp, #16]")

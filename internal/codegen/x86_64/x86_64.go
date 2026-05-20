@@ -2342,13 +2342,19 @@ func (g *generator) emitDataSections() {
 		}
 		if g.usesArrEmpty {
 			// Empty u8[] sentinel — __alloc_u8(0) returns this
-			// address instead of allocating a fresh 4-byte
-			// length-only buffer. Same shape as .LStr_Empty
-			// (4-byte length-zero prefix + a single data byte)
-			// but kept distinct so the array seam can evolve
-			// independently of the string seam.
-			g.line(".align 4")
-			g.line("\t.4byte 0")
+			// address instead of allocating a fresh header-only
+			// buffer. 8-byte header matches the new RC layout:
+			//   [data - 8] = rc slot (0; phase 1 will use a
+			//                static-sentinel value to make
+			//                inc/dec no-op on this constant)
+			//   [data - 4] = length (= 0)
+			//   [.LArr_Empty] = data (a single byte for safety)
+			// Kept distinct from .LStr_Empty so the array seam
+			// can evolve independently of the string seam. See
+			// docs/RC-PERCEUS-PLAN.md.
+			g.line(".align 8")
+			g.line("\t.4byte 0") // rc slot (unused in phase 0)
+			g.line("\t.4byte 0") // length = 0
 			g.label(".LArr_Empty")
 			g.line("\t.byte 0")
 		}
@@ -3544,7 +3550,9 @@ func (g *generator) emitArenaRuntime() {
 
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
 // fresh length-prefixed `u8[]` of n bytes. Returns the data
-// pointer (header + 4); length lives at `[data - 4]`.
+// pointer (header + 8); length lives at `[data - 4]`, refcount
+// slot at `[data - 8]` (reserved for phase 1; not initialised
+// here yet — see docs/RC-PERCEUS-PLAN.md).
 func (g *generator) emitAllocU8Runtime() {
 	g.line("")
 	g.line(".globl __alloc_u8")
@@ -3556,17 +3564,17 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi")     // rbx = n
 	// Short-circuit on n == 0: return the shared static empty-
-	// array sentinel rather than allocating a fresh 4-byte
-	// length-only buffer.
+	// array sentinel rather than allocating a fresh header-only
+	// buffer.
 	g.emit("test ebx, ebx")
 	g.emit("jnz .Lallocu8_alloc")
 	g.usesArrEmpty = true
 	g.emit("lea rax, [rip + .LArr_Empty]")
 	g.emit("jmp .Lallocu8_ret")
 	g.label(".Lallocu8_alloc")
-	g.emit("lea edi, [rbx + 4]")
+	g.emit("lea edi, [rbx + 8]")
 	g.emit("call __lang_alloc")
-	g.emit("lea rax, [rax + 4]") // rax = data ptr
+	g.emit("lea rax, [rax + 8]") // rax = data ptr (past 8-byte header)
 	g.emitArrayLenStore("ebx", "rax")
 	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")

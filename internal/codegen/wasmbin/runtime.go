@@ -1493,10 +1493,11 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 }
 
 // buildAllocU8Body — (n) → i32. Allocates a length-prefixed
-// u8[] of length n. Layout: 4-byte i32 length prefix at
-// [data_ptr - 4], n bytes of payload at data_ptr.
+// u8[] of length n. Layout: 8-byte header — refcount slot at
+// `data_ptr - 8` (reserved for phase 1, uninitialised today),
+// length at `data_ptr - 4`, n bytes of payload at data_ptr.
 //
-//	base = __lang_alloc(n + 4) + 4
+//	base = __lang_alloc(n + 8) + 8
 //	mem[base - 4] = n
 //	return base
 //
@@ -1504,15 +1505,16 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 // length prefix being present at -4 for bounds checks. Calling
 // __lang_alloc directly (the previous behavior) would leave
 // random bytes there and trip the bounds check unpredictably.
+// See docs/RC-PERCEUS-PLAN.md for the phased rollout.
 func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	alloc := helperIdxs["__lang_alloc"]
 	var body []byte
-	// base = __lang_alloc(n + 4) + 4
+	// base = __lang_alloc(n + 8) + 8
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 4)
+	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstI32Const(body, 4)
+	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalTee(body, 1) // $base
 	// mem[$base - 4] = n  (length prefix)
