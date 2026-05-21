@@ -341,8 +341,16 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32) ([]b
 		return body, ctx.valueToLocal, nil
 	}
 
-	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); only linear chains, if-else diamonds, one-armed ifs, dual-return diamonds, while loops, and early-return chains handled",
-		len(f.Blocks))
+	// Relooper fallback — handles arbitrary acyclic reducible
+	// CFGs by lowering to nested `block` wraps. Each classifier
+	// above produces tighter wasm than the relooper for its
+	// shape; the relooper picks up everything else.
+	body, err := emitRelooper(f, ctx)
+	if err == nil {
+		return body, ctx.valueToLocal, nil
+	}
+	return nil, nil, fmt.Errorf("wasmssa: unsupported CFG shape (%d blocks); relooper rejected: %v",
+		len(f.Blocks), err)
 }
 
 // emitStraightBlock emits the ops of `b` (skipping phis,

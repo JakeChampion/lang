@@ -133,3 +133,44 @@ func TestPipelineGCD(t *testing.T) {
 		}
 	}
 }
+
+// TestPipelineClassify — nested early returns with an inner
+// if-else that returns from BOTH arms. None of the shape-
+// specific classifiers (early-return chain, dual-return,
+// if-only, if-else diamond) handle this composition. It's the
+// canonical "show the relooper picking up the fallback" test.
+//
+//	if (a < 0) return -1;
+//	if (b < 0) {
+//	  if (c < 0) return -2;
+//	  return -3;
+//	}
+//	return 0;
+func TestPipelineClassify(t *testing.T) {
+	src := `
+		function classify(a: i32, b: i32, c: i32): i32 {
+			if (a < 0) { return 0 - 1; }
+			if (b < 0) {
+				if (c < 0) { return 0 - 2; }
+				return 0 - 3;
+			}
+			return 0;
+		}
+	`
+	cases := []struct {
+		a, b, c, want int
+	}{
+		{-1, 0, 0, -1},
+		{1, -1, -1, -2},
+		{1, -1, 1, -3},
+		{1, 1, 0, 0},
+		{5, 5, 5, 0},
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "classify",
+			strconv.Itoa(c.a), strconv.Itoa(c.b), strconv.Itoa(c.c))
+		if got != c.want {
+			t.Errorf("classify(%d, %d, %d) = %d, want %d", c.a, c.b, c.c, got, c.want)
+		}
+	}
+}
