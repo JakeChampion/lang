@@ -5522,12 +5522,25 @@ func (b *builder) callBody(n *ast.Call) error {
 	//     follow the cell pointer back to the real value.
 	//   - K needs boxing if K is string on wasm32 — same i32-
 	//     slot constraint applies to the helper's k arg.
+	// Phase 2c: delete and clear are always value-returning now;
+	// route them through dedicated emit helpers regardless of
+	// boxing needs.
+	switch id.Name {
+	case "__method_Map_delete":
+		kType := ast.Type(ast.NumberType{}) // i32 fallback
+		if len(n.TypeArgs) >= 1 {
+			kType = n.TypeArgs[0]
+		}
+		return b.emitMapDeleteReturningTuple(n, kType)
+	case "__method_Map_clear":
+		return b.emitMapClearReturningMap(n)
+	}
 	//
 	// Methods that return `Option[V]` or `V[]` need extra work to
 	// translate the helper's i32-cell result into a real V; the
 	// boxing-aware emitWideMap* helpers below do this. Methods
-	// whose return type passes through unchanged (`set` void,
-	// `has` / `delete` boolean, `get` when V is i32-scalar,
+	// whose return type passes through unchanged (`set` (Map[K,V]),
+	// `has` boolean, `get` when V is i32-scalar,
 	// `get_or` when V is i32-scalar) flow through
 	// emitStringKMapCall when only K needs boxing.
 	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
@@ -5546,11 +5559,11 @@ func (b *builder) callBody(n *ast.Call) error {
 				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
 			}
 			return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 3)
-		case "__method_Map_has", "__method_Map_delete":
+		case "__method_Map_has":
 			if needBoxK {
 				return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 2)
 			}
-			// Wide-V doesn't affect has/delete — fall through.
+			// Wide-V doesn't affect has — fall through.
 		case "__method_MapIter_value":
 			if needBoxV {
 				// MapIter.value() returns V — when boxed, the
@@ -7243,6 +7256,90 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 		}
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: methodName, I32: argCount})
+	return nil
+}
+
+// emitMapDeleteReturningTuple lowers `m.delete(k)` into a
+// (Map[K,V], bool) tuple. The underlying `__map_delete_impl`
+// still returns a boolean; this wrapper saves the map receiver
+// before the call, then heap-allocates a 2-element tuple and
+// stores (mapPtr, found) at the correct pointer-width offsets
+// so the tuple matches the layout `tupleElemLayout([(Map[K,V],
+// bool)], ptrW)` sees on the call side. The key arg is boxed via
+// emitStringKMapCall-style boxing if needed.
+func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error {
+	// Save the map receiver to a local slot so we can store it
+	// in the result tuple after the delete call.
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	mapSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__del_m_%d", mapSlot)] = mapSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+
+	// Push map and key for the delete call, boxing key when needed.
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	needBoxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	if needBoxK {
+		if err := b.boxIntoCell(n.Args[1], kType, "__del_kbox"); err != nil {
+			return err
+		}
+	} else {
+		if err := b.expr(n.Args[1]); err != nil {
+			return err
+		}
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_delete", I32: 2})
+
+	// Save bool result.
+	boolSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__del_ok_%d", boolSlot)] = boolSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: boolSlot})
+
+	// Allocate (Map[K,V], bool) tuple: [mapPtr:ptrW | bool:4].
+	// Layout matches tupleElemLayout([(Map[K,V], bool)], ptrW):
+	// elem 0 = map at offset 0, elem 1 = bool at offset ptrW.
+	size := int32(b.ptrW) + 4
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	tupSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__del_tup_%d", tupSlot)] = tupSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: tupSlot})
+
+	// Store map pointer at offset 0 (pointer-width).
+	b.emit(Op{Kind: OpLoadLocal, I32: tupSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	b.emit(Op{Kind: OpStore, Width: WidthPtr})
+
+	// Store bool at offset ptrW (4-byte).
+	b.emit(Op{Kind: OpLoadLocal, I32: tupSlot})
+	b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: boolSlot})
+	b.emit(Op{Kind: OpStore})
+
+	b.emit(Op{Kind: OpLoadLocal, I32: tupSlot})
+	return nil
+}
+
+// emitMapClearReturningMap lowers `m.clear()` into a Map[K,V]
+// return. The underlying `__map_clear_impl` is void; this wrapper
+// calls it for the side effect and then pushes the original map
+// receiver back so the call site sees a Map[K,V] result.
+func (b *builder) emitMapClearReturningMap(n *ast.Call) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	mapSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__clr_m_%d", mapSlot)] = mapSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_clear", I32: 1})
+
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	return nil
 }
 

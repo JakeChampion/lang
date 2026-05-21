@@ -291,7 +291,7 @@ func TestInterpMapBasic(t *testing.T) {
 			var m: Map[i32, i32] = map_new(4);
 			m.set(1, 100);
 			if (m.has(1) && !m.has(2)) {
-				if (m.delete(1)) {
+				if (m.delete(1).1) {
 					if (m.has(1)) { return -1; }
 					return 0;
 				}

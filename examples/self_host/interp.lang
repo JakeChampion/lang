@@ -68,6 +68,7 @@ function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
 function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
 function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
+function v_map(keys: Value[], values: Value[]): Value { return VMap { keys: keys, values: values }; }
 function v_map_new(): Value {
     var ks: Value[] = [];
     var vs: Value[] = [];
@@ -733,7 +734,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                     }
                     di = di + 1;
                 }
-                return VMap { keys: nk, values: nv };
+                var found: boolean = nk.len() != m.keys.len();
+                return v_tuple([v_map(nk, nv), v_bool(found)]);
             }
             if (name == "len") { return v_int(m.keys.len()); }
             if (name == "keys") { return v_arr(m.keys); }

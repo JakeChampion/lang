@@ -613,7 +613,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                         }
                         if (name == "delete") {
                             if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
-                            return recv_ty;
+                            return t_tuple([recv_ty, t_bool()]);
                         }
                         if (name == "len") {
                             if (c.args.len() != 0) { return t_unknown("map.len: 0 args"); }

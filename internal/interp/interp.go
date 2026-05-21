@@ -870,7 +870,7 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 		m.keys = append(m.keys, args[1])
 		m.vals = append(m.vals, args[2])
 	}
-	return Void{}, nil
+	return args[0], nil // Map.set is value-returning; return the map handle.
 }
 
 func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
@@ -883,11 +883,11 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	}
 	idx := m.findKey(args[1])
 	if idx < 0 {
-		return Bool(false), nil
+		return Array{args[0], Bool(false)}, nil
 	}
 	m.keys = append(m.keys[:idx], m.keys[idx+1:]...)
 	m.vals = append(m.vals[:idx], m.vals[idx+1:]...)
-	return Bool(true), nil
+	return Array{args[0], Bool(true)}, nil
 }
 
 func builtinMapClear(_ *Interp, args []Value) (Value, error) {
@@ -900,7 +900,7 @@ func builtinMapClear(_ *Interp, args []Value) (Value, error) {
 	}
 	m.keys = m.keys[:0]
 	m.vals = m.vals[:0]
-	return Void{}, nil
+	return args[0], nil // Map.clear is value-returning; return the map handle.
 }
 
 func builtinMapGetOr(_ *Interp, args []Value) (Value, error) {

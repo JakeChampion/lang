@@ -616,18 +616,25 @@ Tests on every backend cover both paths plus the
 guard for the int_to_string scratch[i] pattern that surfaced
 the wasm raw-_start `__lang_rc_dec` guard issue.
 
-#### Phase 2c: remaining work (NOT YET STARTED)
+#### Phase 2c: Map delete / clear value-returning — **SHIPPED**
 
-The user-facing API audit (see above) — Map's void-returning
-`set` / `delete` / `clear` become value-returning. Callers
-update in-tree at the same time the implementation flips.
-The `arr[i] = v` widening (slices + complex targets) lives
-here too.
+`m.delete(k)` now returns `(Map[K,V], bool)` (map handle +
+found-flag); `m.clear()` returns `Map[K,V]`. Callers can chain
+or destructure: `var (m2, ok) = m.delete(k)` or inspect the
+bool alone with `m.delete(k).1`. Statement-position calls
+auto-discard via `OpDrop`.
 
-Effect: the self-host parser + asm.lang push loops become O(N).
-This is the payoff phase. After Phase 2, no method's signature
-implies in-place mutation; every collection looks immutable to
-the user.
+Implementation: checker registers updated return types;
+`emitMapDeleteReturningTuple` and `emitMapClearReturningMap` in
+`internal/ir/ir.go` construct the result at the IR level (keeping
+`__map_delete_impl` / `__map_clear_impl` in map.lang unchanged to
+avoid the `Option[usize]` layout constraint). Interpreter and
+self-host interp/checker updated to match. 6 new e2e tests
+(arm64 / x86_64 / wasm) cover tuple destructuring, `.1` field
+access, and `m = m.clear()`.
+
+After Phase 2c, no Map or Array method implies in-place mutation;
+every collection API looks immutable to the user.
 
 Prerequisites that landed during Phase 2-prep:
 

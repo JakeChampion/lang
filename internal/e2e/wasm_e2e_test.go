@@ -1073,9 +1073,9 @@ func TestWASMWideKeyMapHasDelete(t *testing.T) {
     if (!m.has(7i64)) { return 1; }
     if (!m.has(42i64)) { return 2; }
     if (m.has(99i64)) { return 3; }
-    if (!m.delete(7i64)) { return 4; }
+    if (!m.delete(7i64).1) { return 4; }
     if (m.has(7i64)) { return 5; }
-    if (m.delete(7i64)) { return 6; }
+    if (m.delete(7i64).1) { return 6; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -1197,11 +1197,11 @@ func TestWASMMapDelete(t *testing.T) {
     m.set(2, 20);
     m.set(3, 30);
     if (m.len() != 3) { return 1; }
-    if (!m.delete(2)) { return 2; }   // present → true
+    if (!m.delete(2).1) { return 2; }   // present → true
     if (m.len() != 2) { return 3; }
     if (m.has(2)) { return 4; }
     if let Some(_) = m.get(2) { return 5; }
-    if (m.delete(99)) { return 6; }   // missing → false
+    if (m.delete(99).1) { return 6; }   // missing → false
     if (m.len() != 2) { return 7; }
     // Surviving entries still reachable.
     if let Some(v) = m.get(1) {
@@ -2030,9 +2030,9 @@ func TestWASMMapStringKeysInlineSSO(t *testing.T) {
     if let Some(v) = m.get("GET") {
         if (v != 30) { return 22; }
     } else { return 23; }
-    if (!m.delete("GET")) { return 24; }
+    if (!m.delete("GET").1) { return 24; }
     if (m.has("GET")) { return 25; }
-    if (m.delete("GET")) { return 26; }
+    if (m.delete("GET").1) { return 26; }
     if (m.len() != 5) { return 27; }
 
     return 0;
@@ -2077,10 +2077,10 @@ func TestWASMMapStringKeys(t *testing.T) {
         return 12;
     }
     // Delete.
-    if (!m.delete("foo")) { return 13; }
+    if (!m.delete("foo").1) { return 13; }
     if (m.has("foo")) { return 14; }
     if (m.len() != 2) { return 15; }
-    if (m.delete("foo")) { return 16; }
+    if (m.delete("foo").1) { return 16; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2152,7 +2152,7 @@ func TestWASMMapHashStress(t *testing.T) {
     // miss and odd keys must still hit.
     var d: i32 = 0;
     while (d < 100) {
-        if (!m.delete(d)) { return 300 + d; }
+        if (!m.delete(d).1) { return 300 + d; }
         d = d + 2;
     }
     if (m.len() != 50) { return 3; }
@@ -14778,5 +14778,46 @@ func TestWASMArraySetAliasedCopies(t *testing.T) {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", got)
+	}
+}
+
+// Mirror of TestArm64MapDeleteReturnsMapBool.
+func TestWASMMapDeleteReturnsMapBool(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("c", 3);
+    if (!m.delete("b").1) { return 1; }
+    if (m.delete("z").1)  { return 2; }
+    var (m2, ok) = m.delete("a");
+    if (!ok) { return 3; }
+    if (m2.has("a")) { return 4; }
+    if (!m2.has("c")) { return 5; }
+    if (m2.len() != 1) { return 6; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (Map.delete returns (Map, bool))", got)
+	}
+}
+
+// Mirror of TestArm64MapClearReturnsMap.
+func TestWASMMapClearReturnsMap(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("x", 10);
+    m = m.set("y", 20);
+    if (m.len() != 2) { return 1; }
+    m = m.clear();
+    if (m.len() != 0) { return 2; }
+    if (m.has("x")) { return 3; }
+    m = m.set("z", 99);
+    if (m.len() != 1) { return 4; }
+    if (m.get_or("z", 0) != 99) { return 5; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (Map.clear returns Map)", got)
 	}
 }
