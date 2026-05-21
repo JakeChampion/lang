@@ -301,6 +301,45 @@ func WasiIoErrorInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiCliStdoutInstanceTypeBody returns the type-section body
+// bytes for the `wasi:cli/stdout@0.2.0` instance type. The
+// interface declares `get-stdout: func() -> output-stream` where
+// `output-stream` is the resource type defined by
+// `wasi:io/streams`.
+//
+// `outerOutputStreamTypeidx` is the top-level component-type
+// index where the output-stream resource was surfaced via
+// `PutAliasSectionInstanceExportType` after importing
+// wasi:io/streams. The caller is responsible for ensuring that
+// alias landed at the index passed here.
+//
+// Inside-instance decl list (5 decls):
+//
+//  0. alias outer 1 <outerOutputStreamTypeidx>   -- pulls the
+//     output-stream type into inner typeidx 0.
+//  1. export "output-stream" (type (eq 0))       -- re-exports
+//     the aliased type as inner typeidx 1.
+//  2. type (own 1)                               -- own<output-stream>
+//     at inner typeidx 2.
+//  3. type (func () -> typeidx 2)                -- the
+//     get-stdout functype at inner typeidx 3.
+//  4. export "get-stdout" (func 3)
+func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x05}
+	body = append(body, OuterAliasTypeDecl(1, outerOutputStreamTypeidx)...)
+	body = append(body, ExportTypeEqDecl("output-stream", 0)...)
+	body = append(body, 0x01, 0x69, 0x01) // type decl: own<typeidx 1>
+	body = append(body,
+		0x01,       // type decl
+		0x40, 0x00, // functype form, vec(0) params
+		0x00, 0x02, // resultlist single anonymous, valtype = typeidx 2
+	)
+	body = append(body, 0x04, 0x00) // export decl, exportname kind label
+	body = append(body, 0x0a, 'g', 'e', 't', '-', 's', 't', 'd', 'o', 'u', 't')
+	body = append(body, 0x01, 0x03) // externdesc func, typeidx 3
+	return body
+}
+
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.
 // Mirrors std/wasm/component's `put_import_section_one_instance`.

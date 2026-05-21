@@ -227,3 +227,28 @@ func TestWasiIoErrorInstanceTypeBody_Bytes(t *testing.T) {
 		t.Errorf("WasiIoErrorInstanceTypeBody() = % x, want % x", got, want)
 	}
 }
+
+// TestWasiCliStdoutInstanceTypeBody_Bytes pins the bytes of the
+// wasi:cli/stdout instance type body. The expected bytes match
+// what wasm-tools emits when wasi:cli/stdout is the THIRD import
+// in a print-component (after wasi:io/error and wasi:io/streams)
+// — the output-stream type lands at outer typeidx 3.
+func TestWasiCliStdoutInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiCliStdoutInstanceTypeBody(3)
+	want := []byte{
+		0x01, 0x42, 0x05,
+		// alias outer 1 3
+		0x02, 0x03, 0x02, 0x01, 0x03,
+		// export "output-stream" (type (eq 0))
+		0x04, 0x00, 0x0d, 'o', 'u', 't', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', 0x03, 0x00, 0x00,
+		// type (own 1)
+		0x01, 0x69, 0x01,
+		// type (func () -> 2)
+		0x01, 0x40, 0x00, 0x00, 0x02,
+		// export "get-stdout" (func 3)
+		0x04, 0x00, 0x0a, 'g', 'e', 't', '-', 's', 't', 'd', 'o', 'u', 't', 0x01, 0x03,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiCliStdoutInstanceTypeBody(3) mismatch\ngot  % x\nwant % x", got, want)
+	}
+}
