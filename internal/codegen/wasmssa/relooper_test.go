@@ -439,6 +439,176 @@ func TestRelooperIfBeforeWhile(t *testing.T) {
 	})
 }
 
+// TestRelooperSequentialLoops — two while loops in sequence,
+// each with its own header and body. The single-loop variant
+// would reject; the multi-loop relooper handles it.
+//
+//	function f(n) {
+//	  var s = 0;
+//	  var i = 0;
+//	  while (i < n) { s = s + i; i = i + 1; }
+//	  var j = 0;
+//	  while (j < n) { s = s + 1; j = j + 1; }
+//	  return s;
+//	}
+//
+// 7 blocks: entry → h1 → body1 → mid → h2 → body2 → done.
+func TestRelooperSequentialLoops(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		n := f.AddParam()
+
+		entry := f.NewBlock()
+		h1 := f.NewBlock()
+		body1 := f.NewBlock()
+		mid := f.NewBlock()
+		h2 := f.NewBlock()
+		body2 := f.NewBlock()
+		done := f.NewBlock()
+
+		zero := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 0
+		f.SetBr(entry, h1)
+
+		// Loop 1: i = 0..n; s += i.
+		iVal := f.NewValue()
+		iPhi := &ssa.Op{Kind: ssa.OpPhi, Result: iVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		h1.Ops = append(h1.Ops, iPhi)
+		sVal := f.NewValue()
+		sPhi := &ssa.Op{Kind: ssa.OpPhi, Result: sVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		h1.Ops = append(h1.Ops, sPhi)
+		c1 := f.AddOp(h1, ssa.OpLt, iVal, n)
+		f.SetBrIf(h1, c1, body1, mid)
+
+		one := f.AddOp(body1, ssa.OpConstInt)
+		body1.Ops[0].Imm = 1
+		newS1 := f.AddOp(body1, ssa.OpAdd, sVal, iVal)
+		newI := f.AddOp(body1, ssa.OpAdd, iVal, one)
+		iPhi.Args[1] = newI
+		sPhi.Args[1] = newS1
+		f.SetBr(body1, h1)
+
+		// mid: bridge to next loop.
+		f.SetBr(mid, h2)
+
+		// Loop 2: j = 0..n; s += 1.
+		jVal := f.NewValue()
+		jPhi := &ssa.Op{Kind: ssa.OpPhi, Result: jVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		h2.Ops = append(h2.Ops, jPhi)
+		s2Val := f.NewValue()
+		s2Phi := &ssa.Op{Kind: ssa.OpPhi, Result: s2Val, Args: []ssa.Value{sVal, ssa.Value{}}}
+		h2.Ops = append(h2.Ops, s2Phi)
+		c2 := f.AddOp(h2, ssa.OpLt, jVal, n)
+		f.SetBrIf(h2, c2, body2, done)
+
+		one2 := f.AddOp(body2, ssa.OpConstInt)
+		body2.Ops[0].Imm = 1
+		newS2 := f.AddOp(body2, ssa.OpAdd, s2Val, one2)
+		newJ := f.AddOp(body2, ssa.OpAdd, jVal, one2)
+		jPhi.Args[1] = newJ
+		s2Phi.Args[1] = newS2
+		f.SetBr(body2, h2)
+
+		f.SetRet(done, s2Val)
+		return f
+	}
+	mod, err := EmitModule(build(), "f")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	// f(n) = sum(0..n-1) + n = n(n-1)/2 + n
+	runRelooperCase(t, mod, "f", []relooperCase{
+		{args: []string{"0"}, want: 0},  // 0 + 0
+		{args: []string{"3"}, want: 6},  // (0+1+2) + 3
+		{args: []string{"5"}, want: 15}, // (0+1+2+3+4) + 5
+	})
+}
+
+// TestRelooperNestedLoops — outer loop with an inner loop in
+// the body. Single-loop variant rejects; multi-loop handles.
+//
+//	function f(m, n) {
+//	  var s = 0;
+//	  var i = 0;
+//	  while (i < m) {
+//	    var j = 0;
+//	    while (j < n) { s = s + 1; j = j + 1; }
+//	    i = i + 1;
+//	  }
+//	  return s;
+//	}
+//
+// Returns m * n.
+func TestRelooperNestedLoops(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("f")
+		m := f.AddParam()
+		n := f.AddParam()
+
+		entry := f.NewBlock()
+		hOuter := f.NewBlock()
+		hInner := f.NewBlock()
+		bodyInner := f.NewBlock()
+		afterInner := f.NewBlock()
+		done := f.NewBlock()
+
+		zero := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 0
+		f.SetBr(entry, hOuter)
+
+		// Outer: i = 0..m; s carries.
+		iVal := f.NewValue()
+		iPhi := &ssa.Op{Kind: ssa.OpPhi, Result: iVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		hOuter.Ops = append(hOuter.Ops, iPhi)
+		sOuterVal := f.NewValue()
+		sOuterPhi := &ssa.Op{Kind: ssa.OpPhi, Result: sOuterVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		hOuter.Ops = append(hOuter.Ops, sOuterPhi)
+		cOuter := f.AddOp(hOuter, ssa.OpLt, iVal, m)
+		f.SetBrIf(hOuter, cOuter, hInner, done)
+
+		// Inner: j = 0..n; s += 1.
+		jVal := f.NewValue()
+		jPhi := &ssa.Op{Kind: ssa.OpPhi, Result: jVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		hInner.Ops = append(hInner.Ops, jPhi)
+		sInnerVal := f.NewValue()
+		sInnerPhi := &ssa.Op{Kind: ssa.OpPhi, Result: sInnerVal, Args: []ssa.Value{sOuterVal, ssa.Value{}}}
+		hInner.Ops = append(hInner.Ops, sInnerPhi)
+		cInner := f.AddOp(hInner, ssa.OpLt, jVal, n)
+		f.SetBrIf(hInner, cInner, bodyInner, afterInner)
+
+		one := f.AddOp(bodyInner, ssa.OpConstInt)
+		bodyInner.Ops[0].Imm = 1
+		newS := f.AddOp(bodyInner, ssa.OpAdd, sInnerVal, one)
+		newJ := f.AddOp(bodyInner, ssa.OpAdd, jVal, one)
+		jPhi.Args[1] = newJ
+		sInnerPhi.Args[1] = newS
+		f.SetBr(bodyInner, hInner)
+
+		one2 := f.AddOp(afterInner, ssa.OpConstInt)
+		afterInner.Ops[0].Imm = 1
+		newI := f.AddOp(afterInner, ssa.OpAdd, iVal, one2)
+		iPhi.Args[1] = newI
+		sOuterPhi.Args[1] = sInnerVal
+		f.SetBr(afterInner, hOuter)
+
+		f.SetRet(done, sOuterVal)
+		return f
+	}
+	mod, err := EmitModule(build(), "f")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	runRelooperCase(t, mod, "f", []relooperCase{
+		{args: []string{"0", "5"}, want: 0},   // m=0
+		{args: []string{"3", "0"}, want: 0},   // n=0
+		{args: []string{"3", "4"}, want: 12},  // 3*4
+		{args: []string{"5", "5"}, want: 25},  // 5*5
+		{args: []string{"7", "11"}, want: 77}, // 7*11
+	})
+}
+
 // relooperCase pairs args (as strings to pass to wasmtime
 // --invoke) with the expected i32 return value.
 type relooperCase struct {

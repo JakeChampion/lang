@@ -175,6 +175,77 @@ func TestPipelineIfThenWhile(t *testing.T) {
 	}
 }
 
+// TestPipelineSequentialWhiles — two while loops in series.
+// The single-loop relooper rejected; the multi-loop relooper
+// picks it up.
+func TestPipelineSequentialWhiles(t *testing.T) {
+	src := `
+		function f(n: i32): i32 {
+			var s: i32 = 0;
+			var i: i32 = 0;
+			while (i < n) {
+				s = s + i;
+				i = i + 1;
+			}
+			var j: i32 = 0;
+			while (j < n) {
+				s = s + 1;
+				j = j + 1;
+			}
+			return s;
+		}
+	`
+	cases := []struct {
+		n, want int
+	}{
+		{0, 0},
+		{3, 6},  // (0+1+2) + 3
+		{5, 15}, // 10 + 5
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "f", strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("f(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
+// TestPipelineNestedWhiles — outer loop with inner loop in
+// the body; verifies the multi-loop relooper handles nested
+// loops lifted from real Lang source.
+func TestPipelineNestedWhiles(t *testing.T) {
+	src := `
+		function mul(m: i32, n: i32): i32 {
+			var s: i32 = 0;
+			var i: i32 = 0;
+			while (i < m) {
+				var j: i32 = 0;
+				while (j < n) {
+					s = s + 1;
+					j = j + 1;
+				}
+				i = i + 1;
+			}
+			return s;
+		}
+	`
+	cases := []struct {
+		m, n, want int
+	}{
+		{0, 5, 0},
+		{3, 0, 0},
+		{3, 4, 12},
+		{5, 5, 25},
+		{7, 11, 77},
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "mul", strconv.Itoa(c.m), strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("mul(%d, %d) = %d, want %d", c.m, c.n, got, c.want)
+		}
+	}
+}
+
 // TestPipelineClassify — nested early returns with an inner
 // if-else that returns from BOTH arms. None of the shape-
 // specific classifiers (early-return chain, dual-return,
