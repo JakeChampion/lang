@@ -521,6 +521,15 @@ type Func struct {
 	// backend gains float support.
 	ReturnWidth int8
 
+	// ParamFloats is parallel to ParamWidths — true at index i
+	// when param i is a float (f32 if width=32, f64 if width=64).
+	// Empty / nil means "all int". Backends that don't support
+	// floats can ignore.
+	ParamFloats []bool
+	// ReturnFloat: true when the function returns a float. Combined
+	// with ReturnWidth: (true, 64) = f64, (true, 32) = f32.
+	ReturnFloat bool
+
 	// nextValueID is the counter the Builder uses to mint
 	// fresh Values. Per-Func to keep IDs dense + predictable
 	// in dumps.

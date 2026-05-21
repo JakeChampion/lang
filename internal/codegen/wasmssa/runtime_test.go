@@ -354,6 +354,50 @@ func TestRuntimeI64Add(t *testing.T) {
 	}
 }
 
+// TestRuntimeF64Add — hand-built f64 (a, b) → a + b. Verifies
+// the function signature is (f64,f64)→f64, f64.add is emitted,
+// and the f64 round-trips through wasmtime.
+func TestRuntimeF64Add(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		b := f.AddParam()
+		f.ParamWidths = []int8{64, 64}
+		f.ParamFloats = []bool{true, true}
+		f.ReturnWidth = 64
+		f.ReturnFloat = true
+		entry := f.NewBlock()
+		sumOp := &ssa.Op{Kind: ssa.OpFAdd, Result: f.NewValue(), Args: []ssa.Value{a, b}}
+		entry.Ops = append(entry.Ops, sumOp)
+		f.SetRet(entry, sumOp.Result)
+		return f
+	}
+	mod, err := EmitModule(build(), "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mod.wasm")
+	if err := os.WriteFile(p, mod, 0o644); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--invoke", "main", p, "1.5", "2.25")
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wasmtime: %v\nstderr:\n%s", err, se.String())
+	}
+	out := strings.TrimSpace(so.String())
+	if out != "3.75" {
+		t.Errorf("f64 add(1.5, 2.25) wasmtime stdout = %q, want 3.75", out)
+	}
+}
+
 // TestRuntimeStringFirstByte — OpConstString with "Hello",
 // load the first byte (i32.load8_u), return as i32. The data
 // segment + memory must wire up so that byte 'H' (= 72) is

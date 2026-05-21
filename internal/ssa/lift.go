@@ -235,11 +235,14 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
 	l.slots = make([]Value, totalSlots)
 	l.out.ParamWidths = make([]int8, 0, len(in.Params))
+	l.out.ParamFloats = make([]bool, 0, len(in.Params))
 	for i, p := range in.Params {
 		l.slots[i] = l.out.AddParam()
 		l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
+		l.out.ParamFloats = append(l.out.ParamFloats, isFloatAstType(p.Type))
 	}
 	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
+	l.out.ReturnFloat = isFloatAstType(in.ReturnType)
 
 	l.cur = l.out.NewBlock()
 
@@ -266,6 +269,16 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		l.out.SetRet(l.cur, Value{})
 	}
 	return l.out, nil
+}
+
+// isFloatAstType reports whether `t` is a FloatType (f32/f64).
+// Returns false for nil, ints, bools, and pointer-shaped types.
+func isFloatAstType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.FloatType, *ast.FloatType:
+		return true
+	}
+	return false
 }
 
 // widthOfAstType returns 32 for i32-shaped types (i32, bool,
@@ -401,10 +414,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	case ir.OpConstF32:
 		v := l.out.AddOp(l.cur, OpConstFloat)
 		l.cur.Ops[len(l.cur.Ops)-1].F64 = float64(op.F32)
+		l.cur.Ops[len(l.cur.Ops)-1].Width = 32
 		l.stack = append(l.stack, v)
 	case ir.OpConstF64:
 		v := l.out.AddOp(l.cur, OpConstFloat)
 		l.cur.Ops[len(l.cur.Ops)-1].F64 = op.F64
+		l.cur.Ops[len(l.cur.Ops)-1].Width = 64
 		l.stack = append(l.stack, v)
 	case ir.OpLoadLocal:
 		idx := int(op.I32)
