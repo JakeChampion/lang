@@ -411,12 +411,15 @@ func TestEmitEarlyReturnChainRetOnFalseArm(t *testing.T) {
 	validateModule(t, mod)
 }
 
-// TestEmitRejectsPhiInRelooperFallback — a CFG that the
-// shape-specific classifiers don't recognise but contains a
-// phi at a merge is rejected by the relooper (phi support not
-// yet implemented). 5 blocks: entry brifs to a/b, both br to
-// cb (which has a phi), cb brs to d which rets.
-func TestEmitRejectsPhiInRelooperFallback(t *testing.T) {
+// TestEmitRelooperPhiAtMerge — a 5-block CFG that the shape-
+// specific classifiers don't recognise but contains a phi at
+// a merge. The relooper should now lower it (this test
+// previously asserted rejection; the rejection is gone).
+//
+//	entry ─brif c─→ a ─br─→ cb ─br─→ d ─ret
+//	          └─→ b ─br─↗
+//	cb has a phi pulling 0 (from a) or 1 (from b).
+func TestEmitRelooperPhiAtMerge(t *testing.T) {
 	f := ssa.NewFunc("main")
 	c := f.AddParam()
 	entry := f.NewBlock()
@@ -436,10 +439,11 @@ func TestEmitRejectsPhiInRelooperFallback(t *testing.T) {
 	f.SetBr(cb, d)
 	f.SetRet(d, phi)
 
-	_, err := EmitModule(f, "main")
-	if err == nil {
-		t.Fatal("expected error for CFG whose relooper fallback contains a phi")
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
 	}
+	validateModule(t, mod)
 }
 
 // TestEmitSelfRecursiveFactorial — `factorial(n)` lowered as
