@@ -106,7 +106,7 @@ func formatLoadError(err error, srcs map[string]string, entryPath string) error 
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; i32-only, no WASI)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
 	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux, clang for arm64-darwin, x86_64-linux-gnu-gcc for x86-64")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
@@ -420,20 +420,34 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	if target == "wasm-ssa" {
 		// Experimental SSA-direct backend (internal/codegen/wasmssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR
-		// → ssa.Optimize → wasmssa.EmitModule. Currently covers i32
-		// programs only: arithmetic, control flow, recursion,
-		// memory ops (load/store/alloc). No WASI, no strings, no
-		// floats yet — see internal/codegen/wasmssa/emit.go's
-		// package doc for the supported surface.
+		// → ssa.Optimize → wasmssa.EmitModule. Covers i32/i64/f32/
+		// f64 programs with memory ops, string literals, recursion,
+		// and the full reducible-CFG surface — see
+		// internal/codegen/wasmssa/emit.go's package doc.
 		//
-		// Output: a wasm core module exporting `main`. Run with
-		// `wasmtime run --invoke main module.wasm [args...]`.
+		// Output modes:
+		//   - no flag: write the raw core module to outPath. Run
+		//     with `wasmtime run --invoke main module.wasm`.
+		//   - -component-wrap-cli: wrap as a preview-2 component
+		//     exporting wasi:cli/run@0.2.0. Run with plain
+		//     `wasmtime run prog.wasm` (no --invoke). main must
+		//     have signature () -> i32 for the canonical lift.
 		if outPath == "" {
 			return 1, fmt.Errorf("-target wasm-ssa requires -o OUTPUT")
 		}
 		bin, err := buildWasmSSA(prog, info)
 		if err != nil {
 			return 1, fmt.Errorf("wasm-ssa: %v", err)
+		}
+		if componentWrapCli {
+			// Wrap as a wasi:cli/run-exporting component. The
+			// wasmssa module already exports `main`; lift it as
+			// the component-level `run` function.
+			comp := component.BuildWasiCliRunComponent(bin, "main")
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
 		}
 		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
 			return 1, err
