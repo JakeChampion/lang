@@ -529,6 +529,39 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		if outPath == "" {
 			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
 		}
+		// `-target wasm` without `-wasi-adapter` flows through the
+		// Go-side preview-2 encoder (no `wasm-tools component new`
+		// shell-out). Equivalent to `-target wasm-bin
+		// -component-wrap-cli` but exposed as the friendlier
+		// default. The path only works when the program's imports
+		// are all preview-2-migrated (see knownPreview2Imports);
+		// anything else gets a clear "use -wasi-adapter" error.
+		// `-target wasi-http` still requires the adapter — its
+		// imports use list / record / resource shapes the Go
+		// encoder doesn't cover yet.
+		if target == "wasm" && wasiAdapter == "" {
+			bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+				Preview2WASI: true,
+				SynthCliRun:  true,
+			})
+			if err != nil {
+				return 1, err
+			}
+			wasiImports, unknown := classifyPreview2Imports(bin)
+			if len(unknown) > 0 {
+				return 1, fmt.Errorf("-target wasm without -wasi-adapter only supports programs whose imports are migrated to preview-2 (currently: wasi:cli/exit, wasi:random/random, wasi:clocks/monotonic-clock). Saw %d unrecognised: %s. Either remove the source that pulls them in or pass -wasi-adapter PATH.", len(unknown), strings.Join(unknown, ", "))
+			}
+			var comp []byte
+			if len(wasiImports) == 0 {
+				comp = component.BuildWasiCliRunComponent(bin, "_lang_run")
+			} else {
+				comp = component.WrapWasiImportedAsCliRun(bin, wasiImports, "_lang_run")
+			}
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
 		if wasiAdapter == "" {
 			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
 		}
