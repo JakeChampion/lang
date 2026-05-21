@@ -145,3 +145,16 @@ func TestPutAliasSectionInstanceExportType_Bytes(t *testing.T) {
 		t.Errorf("PutAliasSectionInstanceExportType(0, %q) = % x, want % x", "error", got, want)
 	}
 }
+
+// TestOuterAliasTypeDecl_Bytes pins the 5-byte outer-alias decl
+// emitted inside instance-type bodies. The example matches what
+// wasm-tools emits inside the wasi:io/streams instance type:
+//   `(alias outer 1 1 (type (;1;)))`
+// — 1 scope up, outer typeidx 1.
+func TestOuterAliasTypeDecl_Bytes(t *testing.T) {
+	got := component.OuterAliasTypeDecl(1, 1)
+	want := []byte{0x00, 0x03, 0x02, 0x01, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Errorf("OuterAliasTypeDecl(1, 1) = % x, want % x", got, want)
+	}
+}
