@@ -557,3 +557,103 @@ func TestRawInstanceTypeBody_ResourceDecl(t *testing.T) {
 		}
 	}
 }
+
+// printCoreModule returns a tiny hand-rolled core wasm module
+// shaped like the user-side of a WrapWasiPrintComponent input:
+//
+//   - imports wasi:cli/stdout@0.2.0::get-stdout as `() -> i32`
+//   - imports wasi:io/streams@0.2.0::[method]output-stream.blocking-write-and-flush
+//     as `(i32, i32, i32, i32) -> ()`
+//   - exports memory + cabi_realloc + a placeholder body func
+//
+// The bytes match what `wasm-tools parse` produces from the WAT:
+//
+//   (module
+//     (import "wasi:cli/stdout@0.2.0" "get-stdout"
+//             (func $get_stdout (result i32)))
+//     (import "wasi:io/streams@0.2.0"
+//             "[method]output-stream.blocking-write-and-flush"
+//             (func $write (param i32 i32 i32 i32)))
+//     (memory (export "memory") 1)
+//     (func (export "cabi_realloc")
+//           (param i32 i32 i32 i32) (result i32)
+//       i32.const 0))
+//
+// Captured by hex-dumping the same WAT in the /tmp build
+// playground.
+func printCoreModule() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: 3 types
+		//   0: () -> i32
+		//   1: (i32 i32 i32 i32) -> ()
+		//   2: (i32 i32 i32 i32) -> i32
+		0x01, 0x14, 0x03,
+		0x60, 0x00, 0x01, 0x7f,
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
+		// import section: 2 imports
+		0x02, 0x6b,
+		0x02,
+		// wasi:cli/stdout@0.2.0 . get-stdout (func type 0)
+		0x15, 'w', 'a', 's', 'i', ':', 'c', 'l', 'i', '/', 's', 't', 'd', 'o', 'u', 't', '@', '0', '.', '2', '.', '0',
+		0x0a, 'g', 'e', 't', '-', 's', 't', 'd', 'o', 'u', 't',
+		0x00, 0x00,
+		// wasi:io/streams@0.2.0 . [method]output-stream.blocking-write-and-flush (func type 1)
+		0x15, 'w', 'a', 's', 'i', ':', 'i', 'o', '/', 's', 't', 'r', 'e', 'a', 'm', 's', '@', '0', '.', '2', '.', '0',
+		0x2e,
+		'[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'o', 'u', 't', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', '.', 'b', 'l', 'o', 'c', 'k', 'i', 'n', 'g', '-', 'w', 'r', 'i', 't', 'e', '-', 'a', 'n', 'd', '-', 'f', 'l', 'u', 's', 'h',
+		0x00, 0x01,
+		// function section: vec(1) typeidx [2]  (cabi_realloc)
+		0x03, 0x02, 0x01, 0x02,
+		// memory section: vec(1), no-max flag, min=1
+		0x05, 0x03, 0x01, 0x00, 0x01,
+		// export section: vec(2)
+		//   memory 0 → "memory"
+		//   func 2 → "cabi_realloc"  (imports take funcidx 0+1, our cabi_realloc is funcidx 2)
+		0x07, 0x19, 0x02,
+		0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00,
+		0x0c, 'c', 'a', 'b', 'i', '_', 'r', 'e', 'a', 'l', 'l', 'o', 'c', 0x00, 0x02,
+		// code section: vec(1), body length 4: vec(0) locals, i32.const 0, end
+		0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x00, 0x0b,
+	}
+}
+
+// TestWrapWasiPrintComponent_Validates calls the wrap helper
+// on a hand-rolled user core module and confirms the produced
+// component validates under wasm-tools. The printed output
+// must include all three imports + the user's memory + the
+// trampoline indirection.
+func TestWrapWasiPrintComponent_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	comp := component.WrapWasiPrintComponent(printCoreModule())
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "print.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:io/error@0.2.0",
+		"wasi:io/streams@0.2.0",
+		"wasi:cli/stdout@0.2.0",
+		"call_indirect",
+		"canon lower",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}

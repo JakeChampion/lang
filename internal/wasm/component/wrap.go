@@ -256,6 +256,108 @@ func WrapWasiImportedAsCliRun(coreBytes []byte, imports []WasiImport, coreExport
 	return buf
 }
 
+// WrapWasiPrintComponent wraps a core module that imports
+// `wasi:cli/stdout::get-stdout` and
+// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`
+// into a preview-2 component. The user's core module must:
+//
+//   - import `wasi:cli/stdout@0.2.0::get-stdout` as `() -> i32`
+//   - import `wasi:io/streams@0.2.0::[method]output-stream.blocking-write-and-flush`
+//     as `(self: i32, ptr: i32, len: i32, ret_ptr: i32) -> ()`
+//   - export `memory` and `cabi_realloc`
+//
+// The wrap uses the canonical wasm-tools-equivalent shape:
+// three imported interfaces (wasi:io/error, wasi:io/streams,
+// wasi:cli/stdout) with shared resource types via outer aliases,
+// the user's core module + a trampoline + a fixup module to
+// break the canon-lower / instantiation cycle for the
+// list<u8>-shaped blocking-write-and-flush import.
+//
+// This composer returns just the component bytes. Pair with a
+// lifted-export wrap (BuildWasiCliRunComponent etc.) for a
+// runnable end product if desired.
+func WrapWasiPrintComponent(coreBytes []byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Type 0: wasi:io/error instance type. Import as instance 0.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	// Top-level alias of `error` → type 1.
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+
+	// Type 2: wasi:io/streams instance type (references type 1).
+	// Import as instance 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	// Top-level alias of `output-stream` → type 3.
+	buf = PutAliasSectionInstanceExportType(buf, 1, "output-stream")
+
+	// Type 4: wasi:cli/stdout instance type (references type 3).
+	// Import as instance 2.
+	buf = PutTypeSectionRawBody(buf, WasiCliStdoutInstanceTypeBody(3))
+	buf = PutImportSectionOneInstance(buf, "wasi:cli/stdout@0.2.0", 4)
+
+	// Core modules: user (0), trampoline (1), fixup (2).
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleFor4I32NoResult())
+	buf = PutCoreModuleSection(buf, FixupModuleFor4I32NoResult())
+
+	// Instantiate trampoline (no args) → core instance 0.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+
+	// Alias get-stdout from instance 2 → component func 0,
+	// canon-lower it (no opts — `() -> handle` doesn't need
+	// memory) → core func 0, wrap as core instance 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "get-stdout")
+	buf = PutCanonSectionLowerNoOpts(buf, 0)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-stdout", 0)
+
+	// Alias "0" func from trampoline (core instance 0) → core
+	// func 1. Wrap as core instance 2 under the method name.
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]output-stream.blocking-write-and-flush", 1)
+
+	// Instantiate user core module with stdout=instance 1,
+	// streams=instance 2 (the trampoline wrapper) → core
+	// instance 3.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{"wasi:cli/stdout@0.2.0", "wasi:io/streams@0.2.0"},
+		[]uint32{1, 2})
+
+	// Alias memory + cabi_realloc from user instance, plus the
+	// trampoline's table, all in one section (3-entry alias).
+	// Easier as 3 single-entry sections — same byte cost but
+	// less code complexity.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
+
+	// Alias blocking-write-and-flush from streams instance →
+	// component func 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]output-stream.blocking-write-and-flush")
+	// Alias cabi_realloc → core func 2 (unused by us — wasm-tools
+	// includes it because they sometimes pass realloc as a canon
+	// opt; we don't here but the alias is harmless).
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 3, "cabi_realloc")
+
+	// Canon-lower the method with memory(0) → core func 3.
+	buf = PutCanonSectionLowerWithMemory(buf, 1, 0)
+
+	// Build the fixup arg instance — packages the trampoline's
+	// table + the lowered func → core instance 4.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 3},
+	})
+
+	// Instantiate the fixup module with that arg → core
+	// instance 5. Instantiation triggers the elem segment that
+	// installs the lowered func into the trampoline's table[0].
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
+		[]string{""}, []uint32{4})
+
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
