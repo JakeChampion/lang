@@ -544,7 +544,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_fd_write")
 	}
 	if helpers.set["__lang_write"] {
-		in.add("wasi_fd_write")
+		if opts.Preview2WASI {
+			in.add("wasi_get_stdout_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_fd_write")
+		}
 	}
 	if helpers.set["__lang_putchar"] {
 		in.add("wasi_fd_write")
@@ -961,6 +966,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_monotonic_ns": buildMonotonicNsBodyP2,
 	"__lang_random_bytes": buildRandomBytesBodyP2,
 	"__lang_print":        buildPrintBodyP2,
+	"__lang_write":        buildWriteBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -987,6 +993,22 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 //	3: $dst
 //	4: $i
 func buildPrintBodyP2(idxs map[string]uint32) []byte {
+	return buildPrintLikeBodyP2(idxs, true)
+}
+
+// buildWriteBodyP2 is the preview-2 variant of buildWriteBody.
+// Same as buildPrintBodyP2 but skips the trailing newline. (The
+// pair `print` / `write` mirrors Go's `fmt.Println` /
+// `fmt.Print`.)
+func buildWriteBodyP2(idxs map[string]uint32) []byte {
+	return buildPrintLikeBodyP2(idxs, false)
+}
+
+// buildPrintLikeBodyP2 is the shared body builder for the
+// preview-2 print + write helpers. `withNewline` controls
+// whether a trailing '\n' is appended to the bytes the host
+// receives.
+func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool) []byte {
 	strLen := idxs["__lang_str_len"]
 	strByte := idxs["__lang_str_byte"]
 	alloc := idxs["__lang_alloc"]
@@ -1010,10 +1032,14 @@ func buildPrintBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 2) // $L
-	// dst = __lang_alloc($L + 1)
+	// dst = __lang_alloc($L + (1 if withNewline else 0)). The
+	// trailing newline byte for print lives one byte past the
+	// copied string content; write() skips it.
 	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
+	if withNewline {
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+	}
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 3) // $dst
 	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
@@ -1040,17 +1066,19 @@ func buildPrintBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstBr(body, 0)
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
-	// mem[dst + L] = '\n'
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstLocalGet(body, 2)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, '\n')
-	body = memory.InstI32Store8(body, 0, 0)
-	// $L = L + 1 (newline included)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, 2)
+	if withNewline {
+		// mem[dst + L] = '\n'
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, '\n')
+		body = memory.InstI32Store8(body, 0, 0)
+		// $L = L + 1 (newline included)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 2)
+	}
 	// blocking-write-and-flush(stdout, dst, $L, retBuf).
 	// stdout = mem[stdoutHandleAddr]; retBuf = __lang_alloc(16).
 	body = inst.InstI32Const(body, stdoutHandleAddr)
