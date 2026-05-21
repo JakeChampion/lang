@@ -358,6 +358,43 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 	return buf
 }
 
+// WrapWasiPrintAsCliRun extends WrapWasiPrintComponent with a
+// `wasi:cli/run@0.2.0` export so the produced component runs
+// under plain `wasmtime run prog.wasm` (no `--invoke`). The
+// user core module must additionally export `coreExportName`
+// (typically `_lang_run`) with signature `() -> i32` —
+// wasmtime treats the lifted i32 as result<_, _>: 0 = ok,
+// non-zero = err.
+//
+// After WrapWasiPrintComponent finishes, the index spaces are:
+//
+//   - Component types: 5 (3 instance types + 2 outer-aliased
+//     resource types).
+//   - Component funcs: 2 (get-stdout alias, write-and-flush
+//     alias).
+//   - Component instances: 3 (the 3 imported WASI interfaces).
+//   - Core funcs: 4 (lower get-stdout, alias trampoline, alias
+//     cabi_realloc, lower write-and-flush).
+//   - Core instances: 6 (trampoline, get-stdout wrapper,
+//     write-and-flush wrapper, user, fixup arg, fixup).
+//
+// The cli-run tail then adds:
+//   - alias core export `_lang_run` from user core instance
+//     (index 3) → core func 4.
+//   - type 5 = result<_, _>, type 6 = func() -> typeidx 5.
+//   - canon lift core func 4 → component func 2 of type 6.
+//   - packaged instance with "run" → component instance 3.
+//   - export instance 3 as wasi:cli/run@0.2.0.
+func WrapWasiPrintAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiPrintComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 3, coreExportName)
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 5)
+	buf = PutCanonSectionLiftNoOpts(buf, 4, 6)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 2)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 3)
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
