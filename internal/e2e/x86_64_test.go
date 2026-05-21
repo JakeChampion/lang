@@ -3213,3 +3213,17 @@ func TestX86_64TupleNestedTuple(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (nested tuple destructure)", code)
 	}
 }
+
+// Mirror of TestArm64LexerChainedTupleNumericAccess.
+func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
+	src := `function main(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 3));
+    if (t.0 != 1) { return 1; }
+    if (t.1.0 != 2) { return 2; }
+    if (t.1.1 != 3) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (chained t.1.0 numeric access)", code)
+	}
+}

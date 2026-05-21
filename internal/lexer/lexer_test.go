@@ -195,6 +195,56 @@ func TestFloatLiteral(t *testing.T) {
 	}
 }
 
+// Chained numeric field access (`t.1.0`) must lex as three numbers
+// joined by two dots — not as `t . 1.0` with `1.0` eaten as a float
+// literal. The lexer tracks the previous token kind and suppresses
+// the `.<digit>` → float upgrade when the prior token was `.`.
+func TestChainedTupleNumericAccess(t *testing.T) {
+	toks, _, err := Tokenize("t.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		k Kind
+		s string
+	}{
+		{Ident, "t"},
+		{Punct, "."},
+		{Number, "1"},
+		{Punct, "."},
+		{Number, "0"},
+		{EOF, ""},
+	}
+	if len(toks) != len(want) {
+		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want), toks)
+	}
+	for i, w := range want {
+		if toks[i].Kind != w.k || toks[i].Text != w.s {
+			t.Errorf("tok[%d] = (%v %q), want (%v %q)", i, toks[i].Kind, toks[i].Text, w.k, w.s)
+		}
+	}
+}
+
+// Regression-pin that a `.<digit>` AFTER a non-dot context still
+// upgrades to a float literal. Covers `var f = 1.5;` and the
+// post-paren `(1.5)` case so the afterDot suppression doesn't
+// over-fire.
+func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
+	toks, _, err := Tokenize("var f = 1.5;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var floats []string
+	for _, tok := range toks {
+		if tok.Kind == Float {
+			floats = append(floats, tok.Text)
+		}
+	}
+	if len(floats) != 1 || floats[0] != "1.5" {
+		t.Errorf("got floats %v, want exactly one [\"1.5\"]", floats)
+	}
+}
+
 // `float` was a legacy alias for `f32` in pre-i64/usize codebases.
 // Removed in the legacy-cleanup pass — `f32` is the canonical
 // spelling. Regression-pin that the bare identifier `float`
