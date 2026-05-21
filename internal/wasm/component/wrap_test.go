@@ -425,3 +425,67 @@ func TestWrapWasiImportedWithExport_Structural(t *testing.T) {
 		}
 	}
 }
+
+// TestRawInstanceTypeBody_EscapeHatch exercises
+// `WasiImport.RawInstanceTypeBody` by reproducing the
+// wasi:cli/exit@0.2.0 import using a fully-pre-encoded
+// instance-type body instead of the structured fields. The
+// bytes match what wasm-tools emits for the same interface:
+// 3 decls (result-type, func-with-result-param, export). Same
+// hand-rolled core module that imports wasi-exit::exit. The
+// produced component validates and prints with the expected
+// interface shape.
+func TestRawInstanceTypeBody_EscapeHatch(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+
+	core := helloCoreModule()
+	rawBody := []byte{
+		0x01, 0x42, 0x03,
+		// decl 0: type — result<_, _>
+		0x01, 0x6a, 0x00, 0x00,
+		// decl 1: type — func(status: typeidx 0)
+		0x01, 0x40, 0x01,
+		0x06, 's', 't', 'a', 't', 'u', 's', 0x00,
+		0x01, 0x00,
+		// decl 2: export func "exit" (typeidx 1)
+		0x04,
+		0x00, 0x04, 'e', 'x', 'i', 't',
+		0x01, 0x01,
+	}
+	comp := component.WrapWasiImported(core, []component.WasiImport{
+		{
+			InterfaceName:       "wasi:cli/exit@0.2.0",
+			FuncName:            "exit",
+			CoreImportModule:    "wasi-exit",
+			RawInstanceTypeBody: rawBody,
+		},
+	})
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "out.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:cli/exit@0.2.0",
+		"\"status\"",
+		"(result)",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}
