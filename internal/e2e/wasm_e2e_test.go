@@ -9336,6 +9336,51 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithWrite drives a Lang program
+// that calls write("hello") through `-component-wrap-cli`. With
+// __lang_write migrated to preview-2 in the same slice, the
+// program produces a component that writes "hello" (no trailing
+// newline) to stdout under `wasmtime run`.
+//
+// The print / write distinction mirrors fmt.Println / fmt.Print:
+// print appends '\n', write doesn't.
+func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "hello.lang")
+	src := []byte(`function main(): i32 {
+    write("hello");
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "hello.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (write) failed: %v\n%s", err, out)
+	}
+	runCmd := exec.Command("wasmtime", "run", compPath)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if got := stdout.String(); got != "hello" {
+		t.Errorf("wasmtime stdout = %q, want %q", got, "hello")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
 // that calls the stdlib `random_int(lo, hi)` helper (from
 // std/math) through `-component-wrap-cli`. random_int internally
