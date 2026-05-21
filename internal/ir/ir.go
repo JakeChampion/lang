@@ -1909,13 +1909,27 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		}
 	}
 	offsets, size := payloadLayout(payloadTypes, payloadCount, b.ptrW)
-	b.emit(Op{Kind: OpConstI32, I32: size})
+	// Phase 1e-enums-i: enum variant boxes grow an 8-byte rc
+	// header to match the array / struct layout. Alloc bumps by
+	// `rcHeaderBytes`; rc=1 lives at `[base + 0]`; the returned
+	// data pointer is `base + rcHeaderBytes`. Per-field offsets
+	// shift by `rcHeaderBytes` so we keep using the same
+	// baseSlot (storing `base`) — same accounting as the
+	// StructLit migration in Phase 1e-struct-i.
+	const rcHeaderBytes = 8
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	baseSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-	// Store tag at offset 0.
+	// rc = 1 at [base + 0].
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// Store tag at offset 0 of data (= base + rcHeaderBytes).
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 	b.emit(Op{Kind: OpStore})
 	for i, a := range args {
@@ -1944,13 +1958,15 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-		b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 		b.emit(payloadStoreOpFor(pt, b.ptrW))
 	}
-	// Push the result pointer.
+	// Push the user-visible data pointer (= base + rc header).
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	return nil
 }
 
