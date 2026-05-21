@@ -197,6 +197,7 @@ func Tokenize(src string) ([]Token, []ast.Comment, error) {
 		if tok.Kind == EOF {
 			return out, l.comments, nil
 		}
+		l.afterDot = tok.Kind == Punct && tok.Text == "."
 	}
 }
 
@@ -208,6 +209,13 @@ type lexer struct {
 	// order. Populated by skipTrivia; exposed via the second
 	// Tokenize return value.
 	comments []ast.Comment
+	// afterDot is true when the previously-emitted non-trivia
+	// token was a `.` punctuator. Used by the number-literal
+	// branch to suppress the `.<digit>` → float upgrade so
+	// chained tuple-field access like `t.1.0` lexes as
+	// `t . 1 . 0` (three Idents/Numbers + two Dots) rather
+	// than `t . 1.0` (an Ident + Dot + Float).
+	afterDot bool
 }
 
 func (l *lexer) peek() (rune, bool) {
@@ -312,7 +320,13 @@ func (l *lexer) next() (Token, error) {
 			l.advance()
 		}
 		isFloat := false
-		if l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
+		// When the previous emitted token was a `.`, we're parsing
+		// the index part of a chained field-access like `t.1.0`.
+		// In that context, a trailing `.<digit>` is the NEXT
+		// field-access, not a fractional part — suppress the float
+		// upgrade so the second `.0` lands as `.` `0` instead of
+		// being eaten as a continuation of `1`.
+		if !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
 			isFloat = true
 			l.advance() // '.'
 			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {

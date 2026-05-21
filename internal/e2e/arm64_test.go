@@ -13201,6 +13201,25 @@ func TestArm64TupleNestedTuple(t *testing.T) {
 	}
 }
 
+// Chained numeric tuple field access — `t.1.0` where the inner
+// is itself a tuple. The lexer previously ate `1.0` as a single
+// float token, so the second `.0` got lost and the parser failed
+// with "expected Ident, got 1.0". Fix tracks the previous-token
+// kind and suppresses the `.<digit>` → float upgrade right after
+// a `.` punctuator.
+func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
+	src := `function main(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 3));
+    if (t.0 != 1) { return 1; }
+    if (t.1.0 != 2) { return 2; }
+    if (t.1.1 != 3) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (chained t.1.0 numeric access)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
