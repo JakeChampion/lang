@@ -107,6 +107,51 @@ func wrapSection(buf []byte, id byte, body []byte) []byte {
 	return buf
 }
 
+// TrampolineModuleFor4I32NoResult returns the bytes of a tiny
+// core wasm trampoline module that exports a single function of
+// type `(param i32 i32 i32 i32) -> ()` whose body is a 1-entry
+// funcref-table call_indirect. The table is also exported. This
+// is the shape `wasm-tools component new` uses to break the
+// canon-lower / core-instantiation dependency cycle for
+// list<u8>-shaped imports — the user's core module imports the
+// trampoline func (no memory dependency yet), then after the
+// user instance is instantiated and its memory aliased, the
+// real canon-lowered func gets bound into the trampoline's
+// table[0] via an elem segment in a tiny fixup module.
+//
+// Function-type signature (4 i32, no result) matches the
+// lowered ABI for
+// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`:
+//
+//	(self: i32, ptr: i32, len: i32, ret_ptr: i32) -> ()
+//
+// Other lowered-method shapes will need their own trampoline
+// builders; this one is fd_write-specific. Output bytes match
+// what wasm-tools emits for this method (verified by hex-
+// dumping a canonical print-component).
+func TrampolineModuleFor4I32NoResult() []byte {
+	return []byte{
+		// core wasm preamble
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: vec(1) functype, (i32 i32 i32 i32) -> ()
+		0x01, 0x08, 0x01, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,
+		// function section: vec(1) typeidx 0
+		0x03, 0x02, 0x01, 0x00,
+		// table section: vec(1) funcref table, min=1, max=1
+		0x04, 0x05, 0x01, 0x70, 0x01, 0x01, 0x01,
+		// export section: vec(2) — "0" func 0, "$imports" table 0
+		0x07, 0x10, 0x02,
+		0x01, '0', 0x00, 0x00,
+		0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x00,
+		// code section: vec(1) body, body length 15: vec(0) locals,
+		//   local.get 0..3, i32.const 0, call_indirect type 0
+		//   table 0, end
+		0x0a, 0x11, 0x01, 0x0f, 0x00,
+		0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03,
+		0x41, 0x00, 0x11, 0x00, 0x00, 0x0b,
+	}
+}
+
 // PutTypeSectionOneInstanceOneFuncNoResultExport emits a type
 // section containing one instance type that inline-declares a
 // no-result functype and exports it under exportName. Mirrors
