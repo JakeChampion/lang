@@ -387,3 +387,35 @@ func TestTrampolineModuleFor4I32NoResult_Validates(t *testing.T) {
 		}
 	}
 }
+
+// TestFixupModuleFor4I32NoResult_Validates confirms the fixup
+// module is a valid core wasm binary on its own (wasm-tools
+// validate accepts it; printing shows the imports + the elem
+// segment that fills the trampoline's table[0]).
+func TestFixupModuleFor4I32NoResult_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.FixupModuleFor4I32NoResult()
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "fixup.wasm")
+	if err := os.WriteFile(modPath, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", modPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", modPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"import \"\" \"0\"",
+		"import \"\" \"$imports\"",
+		"(elem",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed fixup module, got:\n%s", want, out)
+		}
+	}
+}

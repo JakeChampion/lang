@@ -107,6 +107,47 @@ func wrapSection(buf []byte, id byte, body []byte) []byte {
 	return buf
 }
 
+// FixupModuleFor4I32NoResult returns the bytes of the tiny core
+// wasm module that, paired with TrampolineModuleFor4I32NoResult,
+// closes the canon-lower / instantiation cycle.
+//
+// The fixup module:
+//
+//   - imports the canon-lowered WASI func as `("" "0")` (i32 i32
+//     i32 i32) → ()
+//   - imports the trampoline's funcref table as `("" "$imports")`
+//   - emits an `(elem (i32.const 0) func 0)` segment that
+//     installs the lowered func into table[0]
+//
+// Instantiating this module triggers the elem segment, after
+// which the trampoline's `call_indirect` resolves to the real
+// canon-lowered host func. By then the user's core module has
+// already been instantiated (the trampoline indirection let it
+// import a memory-less func), so the lowered func can safely
+// reference the user's memory + cabi_realloc via its canon-
+// lower opts.
+//
+// Output bytes match what wasm-tools emits for this method
+// (verified by hex-dumping a canonical print-component).
+func FixupModuleFor4I32NoResult() []byte {
+	return []byte{
+		// core wasm preamble
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: vec(1) functype, (i32 i32 i32 i32) -> ()
+		0x01, 0x08, 0x01, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,
+		// import section: vec(2)
+		//   ("" "0")        func 0 (the lowered host func)
+		//   ("" "$imports") table  (the trampoline's table)
+		0x02, 0x15, 0x02,
+		0x00, 0x01, '0', 0x00, 0x00,
+		0x00, 0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x70, 0x01, 0x01, 0x01,
+		// element section: vec(1) — active segment, table 0, offset
+		// i32.const 0, vec(1) funcidx [0]. Active-segment form 0 takes
+		// no explicit table-index (defaults to 0).
+		0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00,
+	}
+}
+
 // TrampolineModuleFor4I32NoResult returns the bytes of a tiny
 // core wasm trampoline module that exports a single function of
 // type `(param i32 i32 i32 i32) -> ()` whose body is a 1-entry
