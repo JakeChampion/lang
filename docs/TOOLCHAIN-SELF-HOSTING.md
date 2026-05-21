@@ -466,44 +466,56 @@ End-to-end exit code 42 demo (covered by
     and `TestRawInstanceTypeBody_ResourceDecl` (proves
     resource declarations now encode — first step toward the
     streams / filesystem migrations).
-  - **fd_write / fd_read migration (in progress, big arc).**
-    The preview-2 shape for `print()` is:
+  - **`print()` migration (fd_write → wasi:cli/stdout +
+    wasi:io/streams).** SHIPPED end-to-end. The preview-2
+    shape:
       `wasi:cli/stdout::get-stdout() -> own<output-stream>`
       `wasi:io/streams::[method]output-stream.blocking-write-and-flush(self: borrow<output-stream>, contents: list<u8>) -> result<_, stream-error>`
-    A canonical wasm-tools-produced component for these
-    imports has 3 instance imports (wasi:io/error,
+    The wrap pattern uses 3 instance imports (wasi:io/error,
     wasi:io/streams, wasi:cli/stdout) with resource
     declarations + outer type aliases between them, plus 3
     core modules (user / trampoline / fixup) wired to satisfy
     the canon-lower / instantiation cycle.
-    **`component.WrapWasiPrintComponent` (#1240)** ties every
-    foundation piece together and produces this canonical
-    shape from a user core module that imports the two WASI
-    funcs + exports memory + cabi_realloc. The produced
-    component validates under `wasm-tools`; running it
-    end-to-end under `wasmtime` requires a user core that
-    actually calls `get_stdout` + `blocking_write_and_flush`
-    AND a top-level `wasi:cli/run` export to give wasmtime an
-    entry point. The remaining slices are:
+    Foundation pieces:
+    - `RawInstanceTypeBody` escape hatch (#1207) for
+      resource-bearing interfaces.
+    - Defvaltype helpers: `InnerTypeBorrow`,
+      `InnerTypeListU8`, `InnerTypeResultErr` (#1223),
+      `InnerTypeVariant` (#1227).
+    - Decl helpers: `OuterAliasTypeDecl` (#1215),
+      `ExportSubResourceDecl` / `ExportTypeEqDecl` (#1216).
+    - Interface body composers: `WasiIoErrorInstanceTypeBody`
+      (#1217), `WasiIoStreamsInstanceTypeBody` (#1228),
+      `WasiCliStdoutInstanceTypeBody` (#1222).
+    - Trampoline + fixup modules (#1230 / #1236).
+    - Canon-lower with `memory` opt (#1209).
+    - High-level helpers `WrapWasiPrintComponent` (#1240) and
+      `WrapWasiPrintAsCliRun` (#1243).
+    - Wasmbin's `__lang_print` body migrated to call the
+      preview-2 funcs with stdout-handle caching (#1245).
+    - Driver routes the print-only pattern through
+      `WrapWasiPrintAsCliRun` (#1248).
 
-    1. Combine the print imports with the cli-run export shape
-       (analogous to `WrapWasiImportedAsCliRun` but with the
-       print imports' trampoline pattern).
-    2. Migrate wasmbin's `__lang_print` body to call the
-       preview-2 funcs instead of preview-1 `fd_write` (the
-       core-side codegen change — needs a stdout-handle cache
-       slot in memory).
-    3. Wire the driver registry to recognise the preview-2
-       print imports and route through the new wrap helper.
-    4. End-to-end test: Lang `print("hello")` runs under
-       `wasmtime run prog.wasm` (no adapter).
-  - **Still to do (smaller migrations):** `clock_time_get`
-    realtime (`wasi:clocks/wall-clock::now -> datetime` —
-    needs canonical-ABI memory opts + the canon-lower
-    trampoline pattern because datetime uses indirect-return
-    for the record). `environ_*` / `args_*` /
-    `path_*` need lists / records / resource handles per the
-    fd_write story.
+    **End-to-end test** `TestCmdLangComponentWrapCliWithPrint`:
+    Lang `print("hello world")` → `lang -target wasm-bin
+    -component-wrap-cli` → `wasmtime run` → stdout `"hello
+    world\n"`. No wasm-tools shell-out, no preview-1 adapter,
+    no `--invoke` flag.
+  - **Still to do (smaller migrations):**
+    - `clock_time_get` realtime (`wasi:clocks/wall-clock::now
+      -> datetime` — needs canonical-ABI memory opts + the
+      canon-lower trampoline pattern because datetime uses
+      indirect-return for the record).
+    - `eprint` / `write` helpers — share the print-side
+      infrastructure but need a separate cached handle (stderr
+      for eprint) and a newline-omitting body (write).
+    - `fd_read` (`wasi:cli/stdin::get-stdin` +
+      `wasi:io/streams::[method]input-stream.blocking-read`).
+    - `environ_*` / `args_*` need lists / records.
+    - `path_*` needs filesystem resources.
+    - Mixed-import cases (e.g. print + exit) — currently
+      routed only when the imports are exactly one supported
+      pattern; combining them is a future slice.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
