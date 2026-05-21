@@ -55,6 +55,7 @@ package wasmssa
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/wasm/encode"
@@ -129,7 +130,7 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	selfFuncIdx := uint32(len(importList))
 
 	pool := buildStringPool(f)
-	body, valueToLocal, valueWidth, err := emitFunc(f, importIdx, selfFuncIdx, pool)
+	body, valueToLocal, valueWidth, valueFloat, err := emitFunc(f, importIdx, selfFuncIdx, pool)
 	if err != nil {
 		return nil, err
 	}
@@ -147,14 +148,17 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	rparams := realParams(f)
 	mainParams := make([]byte, 0, len(rparams))
 	for i := range rparams {
-		if i < len(f.ParamWidths) && f.ParamWidths[i] == 64 {
-			mainParams = append(mainParams, encode.ValtypeI64)
-		} else {
-			mainParams = append(mainParams, encode.ValtypeI32)
+		w := int8(32)
+		if i < len(f.ParamWidths) {
+			w = f.ParamWidths[i]
 		}
+		isFloat := i < len(f.ParamFloats) && f.ParamFloats[i]
+		mainParams = append(mainParams, valtypeFor(w, isFloat))
 	}
 	var mainResults []byte
-	if f.ReturnWidth == 64 {
+	if f.ReturnFloat {
+		mainResults = []byte{valtypeFor(f.ReturnWidth, true)}
+	} else if f.ReturnWidth == 64 {
 		mainResults = []byte{encode.ValtypeI64}
 	} else {
 		mainResults = []byte{encode.ValtypeI32}
@@ -206,7 +210,7 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	// runs to stay compact; the wasm format only requires that
 	// each group is (count, valtype) and the local indices match
 	// the declaration order.
-	localsBytes := encodeLocals(valueToLocal, valueWidth, paramCount(f))
+	localsBytes := encodeLocals(valueToLocal, valueWidth, valueFloat, paramCount(f))
 	// PutFunctionBody appends the trailing 0x0b end byte itself,
 	// so callers pass the body without one.
 	funcBody := inst.PutFunctionBody(nil, localsBytes, body)
@@ -266,7 +270,10 @@ type emitCtx struct {
 	// valueWidth maps a Value.ID to its bit-width (32 or 64).
 	// Built once per emitFunc by walking ops + param widths so
 	// emitOp can pick i32 vs i64 opcodes per use.
-	valueWidth  map[int32]int8
+	valueWidth map[int32]int8
+	// valueFloat parallels valueWidth — true marks a float
+	// value (f32 or f64 by width). Empty default means "int".
+	valueFloat  map[int32]bool
 	funcName    string
 	importIdx   map[string]uint32
 	selfFuncIdx uint32
@@ -274,12 +281,30 @@ type emitCtx struct {
 	// (32 or 64). Used by emitRet to pick the right placeholder
 	// when TermRet has no value.
 	returnWidth int8
+	// returnFloat: true when the function returns a float.
+	// Used by emitRet alongside returnWidth.
+	returnFloat bool
 	// stringPool holds the byte-offsets of interned string
 	// literals so OpConstString can lower to an i32.const push.
 	stringPool *stringPool
 }
 
-func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool *stringPool) ([]byte, map[int32]uint32, map[int32]int8, error) {
+// valtypeFor returns the wasm valtype byte for a value of the
+// given width (32 or 64) and float-ness. Defaults to i32 for
+// the zero case.
+func valtypeFor(width int8, isFloat bool) byte {
+	switch {
+	case isFloat && width == 64:
+		return encode.ValtypeF64
+	case isFloat:
+		return encode.ValtypeF32
+	case width == 64:
+		return encode.ValtypeI64
+	}
+	return encode.ValtypeI32
+}
+
+func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool *stringPool) ([]byte, map[int32]uint32, map[int32]int8, map[int32]bool, error) {
 	// Validate OpCall callees: must be either self-recursion
 	// (callee name == f.Name) or one of the declared imports.
 	for _, b := range f.Blocks {
@@ -293,7 +318,7 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 			if _, ok := importIdx[op.Str]; ok {
 				continue
 			}
-			return nil, nil, nil, fmt.Errorf("wasmssa: OpCall to %q is neither self-recursion (callee == %q) nor a declared import",
+			return nil, nil, nil, nil, fmt.Errorf("wasmssa: OpCall to %q is neither self-recursion (callee == %q) nor a declared import",
 				op.Str, f.Name)
 		}
 	}
@@ -304,10 +329,12 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 	ctx := &emitCtx{
 		valueToLocal: map[int32]uint32{},
 		valueWidth:   map[int32]int8{},
+		valueFloat:   map[int32]bool{},
 		funcName:     f.Name,
 		importIdx:    importIdx,
 		selfFuncIdx:  selfFuncIdx,
 		returnWidth:  rw,
+		returnFloat:  f.ReturnFloat,
 		stringPool:   pool,
 	}
 	nextLocal := uint32(0)
@@ -320,6 +347,9 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 			w = 64
 		}
 		ctx.valueWidth[p.ID] = w
+		if i < len(f.ParamFloats) && f.ParamFloats[i] {
+			ctx.valueFloat[p.ID] = true
+		}
 	}
 
 	// Pre-assign locals for every Op.Result across all
@@ -333,7 +363,11 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 					ctx.valueToLocal[op.Result.ID] = nextLocal
 					nextLocal++
 				}
-				ctx.valueWidth[op.Result.ID] = inferResultWidth(op, ctx.valueWidth)
+				w, isF := inferResultType(op, ctx.valueWidth, ctx.valueFloat)
+				ctx.valueWidth[op.Result.ID] = w
+				if isF {
+					ctx.valueFloat[op.Result.ID] = true
+				}
 			}
 		}
 	}
@@ -346,9 +380,9 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 	// currently 0-1 natural loops with a single back-edge).
 	body, err := emitRelooper(f, ctx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("wasmssa: %v (%d blocks)", err, len(f.Blocks))
+		return nil, nil, nil, nil, fmt.Errorf("wasmssa: %v (%d blocks)", err, len(f.Blocks))
 	}
-	return body, ctx.valueToLocal, ctx.valueWidth, nil
+	return body, ctx.valueToLocal, ctx.valueWidth, ctx.valueFloat, nil
 }
 
 // emitStraightBlock emits the ops of `b` (skipping phis,
@@ -373,10 +407,17 @@ func emitStraightBlock(body []byte, b *ssa.Block, ctx *emitCtx) ([]byte, error) 
 func emitRet(body []byte, term ssa.Terminator, ctx *emitCtx) []byte {
 	if term.Value.IsValid() {
 		body = pushValue(body, term.Value, ctx)
-	} else if ctx.returnWidth == 64 {
-		body = inst.InstI64Const(body, 0)
 	} else {
-		body = inst.InstI32Const(body, 0)
+		switch {
+		case ctx.returnFloat && ctx.returnWidth == 64:
+			body = inst.InstF64Const(body, 0)
+		case ctx.returnFloat:
+			body = inst.InstF32Const(body, 0)
+		case ctx.returnWidth == 64:
+			body = inst.InstI64Const(body, 0)
+		default:
+			body = inst.InstI32Const(body, 0)
+		}
 	}
 	return inst.InstReturn(body)
 }
@@ -414,36 +455,31 @@ func writePhiArgs(body []byte, target, fromBlock *ssa.Block, ctx *emitCtx) []byt
 // encodeLocals builds the locals_vec for a function body.
 // Walks local indices [paramCount, max] in order, grouping
 // consecutive same-valtype runs into wasm `(count, valtype)`
-// pairs. Handles the all-i32, all-i64, and mixed cases.
-func encodeLocals(valueToLocal map[int32]uint32, valueWidth map[int32]int8, nParams int) []byte {
+// pairs. Handles every (i32/i64/f32/f64) combination by
+// reading both the width and float-ness maps.
+func encodeLocals(valueToLocal map[int32]uint32, valueWidth map[int32]int8, valueFloat map[int32]bool, nParams int) []byte {
 	if len(valueToLocal) == nParams {
 		return inst.PutLocalsEmpty(nil)
 	}
-	// Build idx → width array (skipping params).
 	max := uint32(0)
 	for _, idx := range valueToLocal {
 		if idx > max {
 			max = idx
 		}
 	}
-	widthByIdx := make([]int8, max+1)
+	vtByIdx := make([]byte, max+1)
 	for vID, idx := range valueToLocal {
-		if valueWidth[vID] == 64 {
-			widthByIdx[idx] = 64
-		} else {
-			widthByIdx[idx] = 32
-		}
+		vtByIdx[idx] = valtypeFor(valueWidth[vID], valueFloat[vID])
 	}
-	// Group consecutive same-width runs over the non-param range.
 	type group struct {
 		count uint32
 		vt    byte
 	}
 	var groups []group
 	for i := uint32(nParams); i <= max; i++ {
-		var vt byte = encode.ValtypeI32
-		if widthByIdx[i] == 64 {
-			vt = encode.ValtypeI64
+		vt := vtByIdx[i]
+		if vt == 0 {
+			vt = encode.ValtypeI32
 		}
 		if len(groups) > 0 && groups[len(groups)-1].vt == vt {
 			groups[len(groups)-1].count++
@@ -459,72 +495,92 @@ func encodeLocals(valueToLocal map[int32]uint32, valueWidth map[int32]int8, nPar
 	return buf
 }
 
-// inferResultWidth derives the bit-width (32 or 64) of `op.Result`
-// from the op kind + the widths of its args. Used by emitFunc to
-// build the value-width map so emitOp can pick i32 vs i64 opcodes.
-func inferResultWidth(op *ssa.Op, widthOf map[int32]int8) int8 {
+// inferResultType derives the (bit-width, is-float) pair for
+// `op.Result` from the op kind + the inferred types of its args.
+// Used by emitFunc to build the value-type maps so emitOp can
+// pick i32 / i64 / f32 / f64 opcodes per use.
+func inferResultType(op *ssa.Op, widthOf map[int32]int8, floatOf map[int32]bool) (int8, bool) {
 	switch op.Kind {
+	// Float arithmetic / comparison.
+	case ssa.OpFAdd, ssa.OpFSub, ssa.OpFMul, ssa.OpFDiv, ssa.OpFNeg:
+		// Float result; width inherited from args (default 64).
+		for _, a := range op.Args {
+			if widthOf[a.ID] == 32 && floatOf[a.ID] {
+				return 32, true
+			}
+		}
+		return 64, true
+	case ssa.OpFEq, ssa.OpFNe, ssa.OpFLt, ssa.OpFLe, ssa.OpFGt, ssa.OpFGe:
+		// Boolean (i32) result.
+		return 32, false
+	case ssa.OpConstFloat:
+		if op.Width == 32 {
+			return 32, true
+		}
+		return 64, true
+	case ssa.OpFPromote:
+		return 64, true
+	case ssa.OpFDemote:
+		return 32, true
+	case ssa.OpIToFS, ssa.OpIToFU:
+		// int → float. Default to f64; explicit narrowing via
+		// OpFDemote.
+		return 64, true
+	case ssa.OpFToIS, ssa.OpFToIU:
+		// float → int. Default to i64 (matches the SSA `int64`
+		// internal representation); explicit narrowing via
+		// OpTrunc.
+		return 64, false
+
 	case ssa.OpExtendS, ssa.OpExtendU:
-		// i32 → i64 sign/zero extend.
-		return 64
+		return 64, false
 	case ssa.OpTrunc:
-		// i64 → i32.
-		return 32
+		return 32, false
 	case ssa.OpExtend8S, ssa.OpExtend16S:
-		// i32 → i32 (sign-extend low byte/halfword).
-		return 32
+		return 32, false
 	case ssa.OpEq, ssa.OpNe,
 		ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
 		ssa.OpGt, ssa.OpGtU, ssa.OpGe, ssa.OpGeU,
 		ssa.OpNot:
-		// Boolean results are always i32.
-		return 32
+		return 32, false
 	case ssa.OpConstInt:
 		if op.Width == 64 {
-			return 64
+			return 64, false
 		}
-		return 32
+		return 32, false
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul,
 		ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU,
 		ssa.OpAnd, ssa.OpOr, ssa.OpXor,
 		ssa.OpShl, ssa.OpShr, ssa.OpShrU,
 		ssa.OpNeg:
 		if op.Width == 64 {
-			return 64
+			return 64, false
 		}
-		// Fall back to args' width — handles cases where the
-		// lift didn't stamp Width (older ops keep width from
-		// their operands).
 		for _, a := range op.Args {
 			if widthOf[a.ID] == 64 {
-				return 64
+				return 64, false
 			}
 		}
-		return 32
+		return 32, false
 	case ssa.OpPhi:
-		// Phi inherits width from its incoming args (which all
-		// agree on width — verified at SSA build time).
+		// Inherit from incoming args (all agree per SSA invariants).
 		for _, a := range op.Args {
 			if a.IsValid() {
-				if widthOf[a.ID] == 64 {
-					return 64
-				}
+				return widthOf[a.ID], floatOf[a.ID]
 			}
 		}
-		return 32
+		return 32, false
 	case ssa.OpLoad, ssa.OpLoad8S, ssa.OpLoad8U, ssa.OpLoad16S, ssa.OpLoad16U:
-		return 32
-	case ssa.OpAlloc:
-		return 32 // alloc returns a wasm32 pointer
+		return 32, false
+	case ssa.OpAlloc, ssa.OpConstString:
+		return 32, false // pointer
 	case ssa.OpCall:
-		// Result width matches the callee's return width. The
-		// emitter doesn't currently know that — assume i32. (For
-		// self-recursion we COULD look at f.ReturnWidth but the
-		// inference happens per-op before that's threaded; keep
-		// it conservative.)
-		return 32
+		// Result type matches the callee's return. The emitter
+		// doesn't currently thread per-callee return info — assume
+		// i32 (matches what most calls produce).
+		return 32, false
 	}
-	return 32
+	return 32, false
 }
 
 // usesMemory reports whether `f` contains any op that touches
@@ -638,6 +694,44 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		body = inst.InstI32Const(body, off)
 		return storeResult(body, op, ctx), nil
+	case ssa.OpConstFloat:
+		// Default to f64; explicit Width=32 selects f32.
+		if op.Width == 32 {
+			bits := math.Float32bits(float32(op.F64))
+			body = inst.InstF32Const(body, bits)
+		} else {
+			bits := math.Float64bits(op.F64)
+			body = inst.InstF64Const(body, bits)
+		}
+		return storeResult(body, op, ctx), nil
+	case ssa.OpFAdd:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Add, numeric.InstF32Add)
+	case ssa.OpFSub:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Sub, numeric.InstF32Sub)
+	case ssa.OpFMul:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Mul, numeric.InstF32Mul)
+	case ssa.OpFDiv:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Div, numeric.InstF32Div)
+	case ssa.OpFNeg:
+		body = pushValue(body, op.Args[0], ctx)
+		if ctx.valueWidth[op.Args[0].ID] == 32 {
+			body = numeric.InstF32Neg(body)
+		} else {
+			body = numeric.InstF64Neg(body)
+		}
+		return storeResult(body, op, ctx), nil
+	case ssa.OpFEq:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Eq, numeric.InstF32Eq)
+	case ssa.OpFNe:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Ne, numeric.InstF32Ne)
+	case ssa.OpFLt:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Lt, numeric.InstF32Lt)
+	case ssa.OpFLe:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Le, numeric.InstF32Le)
+	case ssa.OpFGt:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Gt, numeric.InstF32Gt)
+	case ssa.OpFGe:
+		return emitFloatBinop(body, op, ctx, numeric.InstF64Ge, numeric.InstF32Ge)
 	case ssa.OpNeg:
 		// neg x → 0 - x; push 0, push x, sub.
 		argW := ctx.valueWidth[op.Args[0].ID]
@@ -807,6 +901,23 @@ func storeResult(body []byte, op *ssa.Op, ctx *emitCtx) []byte {
 // binaryIntOpcode returns the wasm opcode byte for a binary
 // integer op kind at the given width (32 or 64). Returns
 // (0, false) if the kind/width combo isn't supported.
+// emitFloatBinop emits a 2-arg float op. Picks f64 vs f32 from
+// the first arg's tracked width. Both args + the result share
+// the same width (the inference walks args).
+func emitFloatBinop(body []byte, op *ssa.Op, ctx *emitCtx, f64Op, f32Op func([]byte) []byte) ([]byte, error) {
+	if len(op.Args) != 2 {
+		return nil, fmt.Errorf("wasmssa: float %v needs 2 args, got %d", op.Kind, len(op.Args))
+	}
+	body = pushValue(body, op.Args[0], ctx)
+	body = pushValue(body, op.Args[1], ctx)
+	if ctx.valueWidth[op.Args[0].ID] == 32 {
+		body = f32Op(body)
+	} else {
+		body = f64Op(body)
+	}
+	return storeResult(body, op, ctx), nil
+}
+
 func binaryIntOpcode(k ssa.OpKind, width int8) (byte, bool) {
 	if width == 64 {
 		switch k {
