@@ -213,3 +213,17 @@ func TestWasiIoErrorInstanceTypeBody_Composed(t *testing.T) {
 		}
 	}
 }
+
+// TestWasiIoErrorInstanceTypeBody_Bytes pins the exact bytes of
+// the wasi:io/error instance type body. Matches what wasm-tools
+// emits for the canonical `interface error { resource error; }`.
+func TestWasiIoErrorInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiIoErrorInstanceTypeBody()
+	want := []byte{
+		0x01, 0x42, 0x01,
+		0x04, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r', 0x03, 0x01,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiIoErrorInstanceTypeBody() = % x, want % x", got, want)
+	}
+}

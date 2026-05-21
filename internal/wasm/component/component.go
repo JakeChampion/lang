@@ -288,6 +288,19 @@ func ExportTypeEqDecl(name string, typeidx uint32) []byte {
 	return out
 }
 
+// WasiIoErrorInstanceTypeBody returns the type-section body bytes
+// for the `wasi:io/error@0.2.0` instance type — the simplest
+// preview-2 WASI import (just declares the `error` resource
+// type). Suitable as a `WasiImport.RawInstanceTypeBody` value.
+//
+// The body is `vec(1) types + instance type form + vec(1) decls +
+// ExportSubResourceDecl("error")`.
+func WasiIoErrorInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x01}
+	body = append(body, ExportSubResourceDecl("error")...)
+	return body
+}
+
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.
 // Mirrors std/wasm/component's `put_import_section_one_instance`.
