@@ -782,10 +782,24 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 4)
 
-	// Build Reader/Writer struct: 4 bytes, fd at offset 0.
-	body = inst.InstI32Const(body, 4)
+	// Build Reader/Writer struct: 12 bytes total — 8-byte rc
+	// header (static-sentinel 0x80000000 at base+0 so
+	// __lang_rc_inc/dec short-circuit per Phase 1e-runtime) +
+	// 4-byte `{fd: i32}` payload at base+8. The slot stores
+	// the user-visible data pointer = base + 8.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 5)
+	// Static sentinel at base + 0.
+	body = inst.InstI32Const(body, -0x80000000) // 0x80000000 as i32
+	body = memory.InstI32Store(body, 2, 0)
+	// Shift slot 5 from base to base + 8 (= data pointer).
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 5)
+	// fd at data + 0 (= base + 8).
+	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 4) // fd
 	body = memory.InstI32Store(body, 2, 0)
 
