@@ -4479,6 +4479,11 @@ func (g *generator) emitWriteFileRuntime() {
 // design rationale.
 func (g *generator) emitReaderWriterRuntime() {
 	// __lang_make_handle(fd) → ptr to {fd:i32 @0}.
+	//
+	// Phase 1e-runtime: 8-byte rc header at `[ptr - 8]`
+	// holds the static-sentinel 0x80000000 so
+	// `__lang_rc_inc/dec` no-op when a Reader/Writer alias is
+	// inc'd. Alloc bumps by 8; data lives at `base + 8`.
 	g.line("")
 	g.line(".globl __lang_make_handle")
 	g.line(".type __lang_make_handle, @function")
@@ -4488,9 +4493,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi") // stash fd
-	g.emit("mov edi, 4")
+	g.emit("mov edi, 12")  // size + 8-byte rc header
 	g.emit("call __lang_alloc")
-	g.emit("mov [rax], ebx")
+	g.emit("mov dword ptr [rax], 0x80000000") // static sentinel at base + 0
+	g.emit("mov [rax + 8], ebx")              // fd at base + 8 (= data + 0)
+	g.emit("add rax, 8")                      // return base + 8 (= data)
 	g.emit("add rsp, 8")
 	g.emit("pop rbx")
 	g.emit("pop rbp")

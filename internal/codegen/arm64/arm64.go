@@ -3612,6 +3612,15 @@ func (g *generator) emitWriteFileRuntime2W() {
 func (g *generator) emitReaderWriterRuntime() {
 	// __lang_make_handle(fd_in_w0) → ptr to 4-byte struct
 	// {fd:i32 @0}. Used by stdin/stdout/stderr + open_*.
+	//
+	// Phase 1e-runtime: the struct carries an 8-byte rc
+	// header at `[ptr - 8]` (the static-sentinel 0x80000000
+	// pattern, matching the empty-array head). Phase 1e's
+	// predicate widening will inc/dec any Reader/Writer
+	// alias the user creates; the sentinel short-circuits
+	// both helpers so the runtime-owned handle behaves like
+	// a never-counted value. Alloc bumps by 8; the data
+	// pointer the caller sees is `base + 8`.
 	g.line("")
 	g.line(".global __lang_make_handle")
 	g.typeDirective("__lang_make_handle")
@@ -3620,9 +3629,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
 	g.emit("mov w19, w0")   // stash fd
-	g.emit("mov w0, #4")
+	g.emit("mov w0, #12")
 	g.emit("bl __lang_alloc")
-	g.emit("str w19, [x0]") // fd at +0
+	g.emit("mov w1, #1")
+	g.emit("lsl w1, w1, #31")     // w1 = 0x80000000 (static sentinel)
+	g.emit("str w1, [x0]")        // sentinel at base + 0
+	g.emit("str w19, [x0, #8]")   // fd at base + 8 (= data + 0)
+	g.emit("add x0, x0, #8")      // return base + 8
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
