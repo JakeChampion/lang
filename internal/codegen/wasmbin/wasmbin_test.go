@@ -2170,8 +2170,8 @@ func TestEmitConstFuncInterning(t *testing.T) {
 	if a != b {
 		t.Fatalf("ptr1 = %q, ptr2 = %q — expected same address (interning failed)", a, b)
 	}
-	if a != "80" {
-		t.Fatalf("ptr = %q, want 80 (closuresBase)", a)
+	if a != "88" {
+		t.Fatalf("ptr = %q, want 88 (closuresBase)", a)
 	}
 }
 
@@ -2191,10 +2191,10 @@ func TestEmitConstFuncTwoTargets(t *testing.T) {
 		},
 		{
 			// diff = address_of("b") - address_of("a"). With "b"
-			// interned first (cell 0, addr 80) and "a" interned
-			// second (cell 1, addr 88), the result is 80-88 = -8.
-			// Equivalent fact: distinct targets get distinct cells
-			// 8 bytes apart.
+			// interned first (cell 0, addr closuresBase) and "a"
+			// interned second (cell 1, addr closuresBase+8), the
+			// result is -8. Equivalent fact: distinct targets get
+			// distinct cells 8 bytes apart.
 			Name:       "diff",
 			ReturnType: i32(),
 			Ops: []ir.Op{

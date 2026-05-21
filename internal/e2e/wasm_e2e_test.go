@@ -8946,20 +8946,25 @@ function main(): i32 {
 // gives a clear error (instead of silently producing an invalid
 // component) when the source's wasmbin output has WASI imports the
 // driver doesn't know how to route into a preview-2 component yet.
-// `print()` pulls in `wasi_snapshot_preview1.fd_write`, which the
-// preview-2 migration hasn't covered, so the program hits the
-// "unrecognised imports" branch.
+// `args()` pulls in `wasi_args_sizes_get` + `wasi_args_get`,
+// which the preview-2 migration hasn't covered, so the program
+// hits the "unrecognised imports" branch.
+//
+// (Earlier this test used `print()`, but `print()`'s underlying
+// imports moved into the preview-2 migrated set when
+// `__lang_print` was ported in #1245; the test source switched to
+// a still-unmigrated builtin.)
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prints.lang")
+	srcPath := filepath.Join(dir, "needs_adapter.lang")
 	src := []byte(`function main(): i32 {
-    print("hi");
-    return 0;
+    var a: string[] = args();
+    return a.len();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	compPath := filepath.Join(dir, "prints.wasm")
+	compPath := filepath.Join(dir, "needs_adapter.wasm")
 	cmd := exec.Command("go", "run", "./cmd/lang",
 		"-target", "wasm-bin",
 		"-component-wrap",
@@ -8971,9 +8976,6 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "unrecognised imports") {
 		t.Errorf("expected unrecognised-imports error message in output, got:\n%s", out)
-	}
-	if !strings.Contains(string(out), "fd_write") {
-		t.Errorf("expected the offending import name (fd_write) in the error, got:\n%s", out)
 	}
 }
 
