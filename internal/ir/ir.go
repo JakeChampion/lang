@@ -3909,16 +3909,31 @@ func (b *builder) expr(e ast.Expr) error {
 		// ptrW bytes on arm64 so heap addresses survive the
 		// store/load round-trip. Wide / pointer fields are
 		// 8-byte-aligned within the heap object.
+		//
+		// Phase 1e-struct-i: user-allocated struct values carry
+		// an 8-byte rc header before `data`, mirroring the
+		// array layout's rc-at-`data-8` convention so
+		// `__lang_rc_inc/dec` work uniformly. The alloc bumps
+		// by `rcHeaderBytes`; rc=1 lives at `[base + 0]`; the
+		// returned user-visible pointer is `base + 8`. Field
+		// offsets shift by `rcHeaderBytes` so we keep using
+		// the same baseSlot (storing `base`) without changing
+		// the SSA-lift's slot accounting.
 		offs, size := structFieldLayout(sd.Fields, b.ptrW)
-		b.emit(Op{Kind: OpConstI32, I32: size})
+		const rcHeaderBytes = 8
+		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+		// rc = 1 at [base + 0].
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpStore})
 		for _, f := range n.Fields {
 			off := offs[f.Name]
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: off})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + off})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(f.Value); err != nil {
 				return err
@@ -3944,7 +3959,12 @@ func (b *builder) expr(e ast.Expr) error {
 			// on arm64).
 			b.emit(payloadStoreOpFor(fieldType(sd.Fields, f.Name), b.ptrW))
 		}
+		// Push the user-visible data pointer (= base + rc
+		// header bytes). All callers receive this and use
+		// offsets relative to it, unchanged from before.
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+		b.emit(Op{Kind: OpAdd})
 	case *ast.CaptureRef:
 		// A capture in a hoisted local function: load the captured
 		// value at `__env + offset`. The synthetic __env parameter
