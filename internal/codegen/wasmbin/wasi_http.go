@@ -498,10 +498,29 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// with "resource has children". See the matching reqDrop call
 	// below, just after fields_drop(req_fields).
 
-	// ================ Build HttpRequest (28 bytes) ================
-	body = inst.InstI32Const(body, 28)
+	// ================ Build HttpRequest (28 bytes + 8-byte rc header) ================
+	// Phase 1e-runtime: HttpRequest carries a static-sentinel
+	// rc header at `[req - 8]` so user code that aliases the
+	// request via `var r = req;` or `req.body_string()` can
+	// safely run through __lang_rc_inc/dec (Phase 1e-struct-ii
+	// widened the inc predicate to include struct types). Alloc
+	// bumps 28 → 36; sentinel at base+0; data = base+8. All
+	// field offsets below are still relative to the slot-17
+	// pointer, which now holds base+8 — same offsets as before
+	// from the data pointer's perspective.
+	body = inst.InstI32Const(body, 36)
 	body = inst.InstCall(body, alloc)
+	// Static sentinel at base + 0.
 	body = inst.InstLocalTee(body, 17)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	// Shift slot 17 from base to base + 8 (= data pointer).
+	body = inst.InstLocalGet(body, 17)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 17)
+	// method_data at data + 0.
+	body = inst.InstLocalGet(body, 17)
 	body = inst.InstLocalGet(body, 3) // method_data
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 17)
@@ -549,10 +568,21 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
 
-	// HeaderMap struct (8 bytes): names_ptr@+0, values_ptr@+4.
-	body = inst.InstI32Const(body, 8)
+	// HeaderMap struct (8 bytes + 8-byte rc header):
+	// names_ptr@+0, values_ptr@+4 (relative to data). Phase
+	// 1e-runtime sentinel at base+0 so the rc helpers stay
+	// safe when struct-ii widens the inc predicate to cover
+	// HeaderMap aliases.
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 27)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 27)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 27)
+	body = inst.InstLocalGet(body, 27)
 	body = inst.InstLocalGet(body, 28)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 27)
