@@ -305,3 +305,52 @@ func TestInnerTypeVariant_StreamError(t *testing.T) {
 		t.Errorf("InnerTypeVariant(stream-error) mismatch\ngot  % x\nwant % x", got, want)
 	}
 }
+
+// TestWasiIoStreamsInstanceTypeBody_Bytes pins the bytes of the
+// wasi:io/streams instance type body, parameterised by where
+// wasi:io/error's `error` resource lives at the top-level type
+// space (in a canonical print component, that's outer typeidx
+// 1 — wasi:io/error is the first import, its single resource
+// gets aliased to top-level type 1 right after).
+func TestWasiIoStreamsInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiIoStreamsInstanceTypeBody(1)
+	// Bytes captured from wasm-tools dump of a canonical
+	// print-component (see /tmp/print_comp.wasm in the build
+	// playground). The body sits inside the type section at the
+	// expected `42 0b ...` opening (instance form, vec(11) decls).
+	want := []byte{
+		0x01, 0x42, 0x0b,
+		// decl 0: export "output-stream" (sub resource)
+		0x04, 0x00, 0x0d, 'o', 'u', 't', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', 0x03, 0x01,
+		// decl 1: alias outer 1 1
+		0x02, 0x03, 0x02, 0x01, 0x01,
+		// decl 2: export "error" (type (eq 1))
+		0x04, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r', 0x03, 0x00, 0x01,
+		// decl 3: type own<2>
+		0x01, 0x69, 0x02,
+		// decl 4: type variant stream-error
+		0x01, 0x6b, 0x02,
+		0x15, 'l', 'a', 's', 't', '-', 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', '-', 'f', 'a', 'i', 'l', 'e', 'd', 0x01, 0x03, 0x00,
+		0x06, 'c', 'l', 'o', 's', 'e', 'd', 0x00, 0x00,
+		// decl 5: export "stream-error" (type (eq 4))
+		0x04, 0x00, 0x0c, 's', 't', 'r', 'e', 'a', 'm', '-', 'e', 'r', 'r', 'o', 'r', 0x03, 0x00, 0x04,
+		// decl 6: type borrow<0>
+		0x01, 0x68, 0x00,
+		// decl 7: type list<u8>
+		0x01, 0x70, 0x7d,
+		// decl 8: type result<_, err=5>
+		0x01, 0x6a, 0x00, 0x01, 0x05,
+		// decl 9: type func(self: 6, contents: 7) -> 8
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x06,
+		0x08, 'c', 'o', 'n', 't', 'e', 'n', 't', 's', 0x07,
+		0x00, 0x08,
+		// decl 10: export "[method]output-stream.blocking-write-and-flush" (func 9)
+		0x04, 0x00, 0x2e,
+		'[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'o', 'u', 't', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', '.', 'b', 'l', 'o', 'c', 'k', 'i', 'n', 'g', '-', 'w', 'r', 'i', 't', 'e', '-', 'a', 'n', 'd', '-', 'f', 'l', 'u', 's', 'h',
+		0x01, 0x09,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiIoStreamsInstanceTypeBody(1) mismatch\ngot  % x\nwant % x", got, want)
+	}
+}

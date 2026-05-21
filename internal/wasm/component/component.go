@@ -418,6 +418,79 @@ func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
 	return body
 }
 
+// WasiIoStreamsInstanceTypeBody returns the type-section body
+// bytes for the `wasi:io/streams@0.2.0` instance type as it
+// appears in a fd_write-shape component. Declares the
+// output-stream resource, the stream-error variant, and the
+// `[method]output-stream.blocking-write-and-flush` method.
+//
+// `outerErrorTypeidx` is the top-level component-type index
+// where wasi:io/error's `error` resource was surfaced via
+// `PutAliasSectionInstanceExportType` after importing
+// wasi:io/error.
+//
+// Inside-instance decl list (11 decls), inner typeidxs in order:
+//
+//	0  export "output-stream" (sub resource)
+//	1  alias outer 1 <outerErrorTypeidx>
+//	2  export "error" (type (eq 1))
+//	3  type own<2>                              -- own<error>
+//	4  type variant { last-operation-failed(3), closed }
+//	5  export "stream-error" (type (eq 4))
+//	6  type borrow<0>                            -- borrow<output-stream>
+//	7  type list<u8>
+//	8  type result<_, err=5>
+//	9  type func(self: 6, contents: 7) -> typeidx 8
+//	10 export "[method]output-stream.blocking-write-and-flush"
+//	   (func typeidx 9)
+//
+// The `[method]X.Y` export-name convention is what wasm-tools
+// emits for resource methods; it's what wasmtime's component-
+// model linker matches against the host's resource-method
+// table.
+func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x0b}
+	// decl 0: export "output-stream" (sub resource) → inner 0
+	body = append(body, ExportSubResourceDecl("output-stream")...)
+	// decl 1: alias outer 1 <outerErrorTypeidx> → inner 1
+	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...)
+	// decl 2: export "error" (type (eq 1)) → inner 2
+	body = append(body, ExportTypeEqDecl("error", 1)...)
+	// decl 3: type own<typeidx 2> → inner 3
+	body = append(body, 0x01, 0x69, 0x02)
+	// decl 4: type variant { last-operation-failed(3), closed } → inner 4
+	body = append(body, 0x01)
+	body = append(body, InnerTypeVariant([]VariantCase{
+		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x03},
+		{Name: "closed"},
+	})...)
+	// decl 5: export "stream-error" (type (eq 4)) → inner 5
+	body = append(body, ExportTypeEqDecl("stream-error", 4)...)
+	// decl 6: type borrow<typeidx 0> → inner 6
+	body = append(body, 0x01)
+	body = append(body, InnerTypeBorrow(0)...)
+	// decl 7: type list<u8> → inner 7
+	body = append(body, 0x01)
+	body = append(body, InnerTypeListU8...)
+	// decl 8: type result<_, err=5> → inner 8
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultErr(5)...)
+	// decl 9: type func(self: 6, contents: 7) -> typeidx 8 → inner 9
+	body = append(body,
+		0x01,                                                 // type decl
+		0x40,                                                 // functype form
+		0x02,                                                 // vec(2) params
+		0x04, 's', 'e', 'l', 'f', 0x06,                       // param "self" valtype=typeidx 6
+		0x08, 'c', 'o', 'n', 't', 'e', 'n', 't', 's', 0x07,   // param "contents" valtype=typeidx 7
+		0x00, 0x08,                                           // resultlist single anonymous, valtype = typeidx 8
+	)
+	// decl 10: export "[method]output-stream.blocking-write-and-flush" (func 9)
+	body = append(body, 0x04, 0x00, 0x2e) // export, kind=label, name-len 46
+	body = append(body, "[method]output-stream.blocking-write-and-flush"...)
+	body = append(body, 0x01, 0x09) // externdesc func, typeidx 9
+	return body
+}
+
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.
 // Mirrors std/wasm/component's `put_import_section_one_instance`.
