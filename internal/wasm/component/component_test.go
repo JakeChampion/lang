@@ -354,3 +354,36 @@ func TestWasiIoStreamsInstanceTypeBody_Bytes(t *testing.T) {
 		t.Errorf("WasiIoStreamsInstanceTypeBody(1) mismatch\ngot  % x\nwant % x", got, want)
 	}
 }
+
+// TestTrampolineModuleFor4I32NoResult_Validates emits the
+// trampoline module on its own (wrapped as a core wasm file,
+// since wasm-tools validate handles raw modules too) and
+// confirms it's a valid core wasm binary. Pins the import
+// indirection pattern wasm-tools uses for list<u8> imports.
+func TestTrampolineModuleFor4I32NoResult_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.TrampolineModuleFor4I32NoResult()
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "trampoline.wasm")
+	if err := os.WriteFile(modPath, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", modPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", modPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"(table",
+		"call_indirect",
+		"\"$imports\"",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed trampoline, got:\n%s", want, out)
+		}
+	}
+}
