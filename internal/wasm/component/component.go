@@ -240,6 +240,54 @@ func OuterAliasTypeDecl(scopesUp uint32, outerTypeidx uint32) []byte {
 	return out
 }
 
+// ExportSubResourceDecl returns the bytes for an instance-type
+// "export <name> (sub resource)" decl — the shape wasm-tools
+// emits for resource declarations like `resource error;` inside
+// wasi:io/error. Used to build RawInstanceTypeBody payloads for
+// resource-bearing interfaces.
+//
+// Inside-instance decl shape:
+//
+//	04          -- instance-decl marker: export
+//	00          -- exportname kind = label
+//	<name>      -- uleb len + bytes
+//	03          -- externdesc kind = type
+//	01          -- typedef bound: sub (new resource type)
+//
+// For "export <name> (eq <typeidx>)" (alias an existing type
+// under a name — see wasi:io/streams's `(export "error" (type
+// (eq 1)))`), see ExportTypeEqDecl.
+func ExportSubResourceDecl(name string) []byte {
+	out := []byte{0x04, 0x00}
+	out = leb128.UlebU64(out, uint64(len(name)))
+	out = append(out, name...)
+	out = append(out, 0x03, 0x01)
+	return out
+}
+
+// ExportTypeEqDecl returns the bytes for an instance-type
+// "export <name> (type (eq <typeidx>))" decl. Used to re-export
+// an aliased outer type under a name, so that downstream
+// references inside the same instance can refer to it by the
+// alias's resulting inner typeidx.
+//
+// Inside-instance decl shape:
+//
+//	04          -- instance-decl marker: export
+//	00          -- exportname kind = label
+//	<name>      -- uleb len + bytes
+//	03          -- externdesc kind = type
+//	00          -- typedef bound: eq
+//	<typeidx>   -- uleb (the typeidx the export equals)
+func ExportTypeEqDecl(name string, typeidx uint32) []byte {
+	out := []byte{0x04, 0x00}
+	out = leb128.UlebU64(out, uint64(len(name)))
+	out = append(out, name...)
+	out = append(out, 0x03, 0x00)
+	out = leb128.UlebU64(out, uint64(typeidx))
+	return out
+}
+
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.
 // Mirrors std/wasm/component's `put_import_section_one_instance`.
