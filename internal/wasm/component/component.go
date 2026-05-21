@@ -246,6 +246,47 @@ func InnerTypeResultErr(errTypeidx uint32) []byte {
 	return out
 }
 
+// VariantCase describes one arm of a variant defvaltype.
+// HasPayload selects whether the case carries a typed value.
+// PayloadValtype is the valtype byte for that value (only
+// meaningful when HasPayload is true; can be a primitive
+// cvaltype constant or an inner-scope typeidx).
+type VariantCase struct {
+	Name           string
+	HasPayload     bool
+	PayloadValtype byte
+}
+
+// InnerTypeVariant returns the defvaltype body bytes for a
+// `variant` with the given cases. Each case has a name, an
+// optional typed payload, and (always) no "refines" annotation.
+// "refines" semantics aren't needed by the preview-2 imports
+// the fd_write arc targets — adding them is a future slice.
+//
+// Encoding:
+//
+//	6b                       -- variant form (0x6b)
+//	<N>                      -- uleb: case count
+//	(per case)
+//	  <name>                 -- uleb len + bytes
+//	  00 | 01 <valtype>      -- payload optional
+//	  00                     -- no refines
+func InnerTypeVariant(cases []VariantCase) []byte {
+	out := []byte{0x6b}
+	out = leb128.UlebU64(out, uint64(len(cases)))
+	for _, c := range cases {
+		out = leb128.UlebU64(out, uint64(len(c.Name)))
+		out = append(out, c.Name...)
+		if c.HasPayload {
+			out = append(out, 0x01, c.PayloadValtype)
+		} else {
+			out = append(out, 0x00)
+		}
+		out = append(out, 0x00) // no refines
+	}
+	return out
+}
+
 // OuterAliasTypeDecl returns the bytes for an instance-type
 // "alias outer" decl that exposes a parent-scope component type
 // as an inner type in the enclosing instance type body. Used

@@ -279,3 +279,29 @@ func TestInnerTypeResultErr_Bytes(t *testing.T) {
 		t.Errorf("InnerTypeResultErr(5) = % x, want % x", got, want)
 	}
 }
+
+// TestInnerTypeVariant_StreamError pins the bytes for the
+// canonical-ABI variant `stream-error` declared inside
+// wasi:io/streams. Cases:
+//   - "last-operation-failed(error)" — payload typeidx 3
+//     (own<error>)
+//   - "closed" — no payload
+//
+// Expected wire shape (matches wasm-tools dump):
+//   6b 02
+//   15 "last-operation-failed" 01 03 00
+//   06 "closed" 00 00
+func TestInnerTypeVariant_StreamError(t *testing.T) {
+	got := component.InnerTypeVariant([]component.VariantCase{
+		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x03},
+		{Name: "closed"},
+	})
+	want := []byte{
+		0x6b, 0x02,
+		0x15, 'l', 'a', 's', 't', '-', 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', '-', 'f', 'a', 'i', 'l', 'e', 'd', 0x01, 0x03, 0x00,
+		0x06, 'c', 'l', 'o', 's', 'e', 'd', 0x00, 0x00,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeVariant(stream-error) mismatch\ngot  % x\nwant % x", got, want)
+	}
+}
