@@ -236,6 +236,35 @@ func PutAliasSectionInstanceExportFunc(buf []byte, instanceIdx uint32, name stri
 	return wrapSection(buf, SectionAlias, body)
 }
 
+// PutAliasSectionInstanceExportType emits an alias section that
+// surfaces a TYPE exported by a component instance as a top-level
+// component-level type. Used when one imported interface
+// references a type declared in another — e.g.
+// wasi:io/streams's `error` resource handle references the
+// `error` resource declared inside the wasi:io/error import.
+//
+// Wire shape:
+//
+//	06 <size>      -- section id 6 (alias), uleb size
+//	01             -- vec(1) aliases
+//	03             -- sort = type
+//	00             -- target: from-instance-export
+//	<instanceIdx>  -- uleb
+//	<name>         -- uleb len + bytes (the type's export name in the instance)
+//
+// The aliased type lands at the next free top-level component-type
+// index. Pair with an outer-alias decl inside a subsequent
+// instance type body to reference it from a nested scope.
+func PutAliasSectionInstanceExportType(buf []byte, instanceIdx uint32, name string) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x03)         // sort = type
+	body = append(body, 0x00)         // target: from-instance-export
+	body = leb128.UlebU64(body, uint64(instanceIdx))
+	body = putName(body, name)
+	return wrapSection(buf, SectionAlias, body)
+}
+
 // PutCanonSectionLowerNoOpts emits a canon section with one
 // canon-lower entry (no opts). Mirrors
 // `put_canon_section_lower_no_opts`.

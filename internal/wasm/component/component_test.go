@@ -122,3 +122,26 @@ func TestPutCanonSectionLowerWithMemoryRealloc_Bytes(t *testing.T) {
 		t.Errorf("PutCanonSectionLowerWithMemoryRealloc(2, 0, 5) = % x, want % x", got, want)
 	}
 }
+
+// TestPutAliasSectionInstanceExportType_Bytes pins the bytes of
+// a top-level alias that exposes a type exported by a component
+// instance. The expected bytes match what wasm-tools emits for
+// the wasi:io/streams component's `alias export 0 "error"` —
+// the alias that surfaces wasi:io/error's `error` resource at
+// the top-level type space.
+//
+// Wire shape:
+//
+//	06 0a                   -- section id 6 (alias), body size 10
+//	01                      -- vec(1) aliases
+//	03                      -- sort = type
+//	00                      -- target: from-instance-export
+//	00                      -- instance idx 0
+//	05 "error"              -- name (uleb 5 + 5 bytes)
+func TestPutAliasSectionInstanceExportType_Bytes(t *testing.T) {
+	got := component.PutAliasSectionInstanceExportType(nil, 0, "error")
+	want := []byte{0x06, 0x0a, 0x01, 0x03, 0x00, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r'}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutAliasSectionInstanceExportType(0, %q) = % x, want % x", "error", got, want)
+	}
+}
