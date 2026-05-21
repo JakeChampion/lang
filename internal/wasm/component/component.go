@@ -209,6 +209,37 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes
 // absent).
 var InnerTypeResultEmpty = []byte{0x6a, 0x00, 0x00}
 
+// OuterAliasTypeDecl returns the bytes for an instance-type
+// "alias outer" decl that exposes a parent-scope component type
+// as an inner type in the enclosing instance type body. Used
+// when an instance interface references a type declared by a
+// sibling instance — e.g. wasi:io/streams's `error` resource
+// references the resource declared inside wasi:io/error, after
+// a top-level PutAliasSectionInstanceExportType has surfaced
+// the cross-instance type.
+//
+// Inside-instance decl shape (5 bytes for small uleb values):
+//
+//	00          -- instance-decl marker: alias
+//	03          -- sort = type
+//	02          -- target form: outer
+//	ct          -- uleb: scope count up (1 = parent component)
+//	typeidx     -- uleb: typeidx in that outer scope
+//
+// Append these bytes to a RawInstanceTypeBody (between vec(N)
+// count and N type entries) so the alias becomes part of the
+// instance-type's decl list. The alias produces a NEW inner
+// typeidx (the next slot in the instance's local type space),
+// which the rest of the body can then reference as a primitive
+// valtype byte (when < 0x73) or via a uleb-encoded typeidx in
+// other decls.
+func OuterAliasTypeDecl(scopesUp uint32, outerTypeidx uint32) []byte {
+	out := []byte{0x00, 0x03, 0x02}
+	out = leb128.UlebU64(out, uint64(scopesUp))
+	out = leb128.UlebU64(out, uint64(outerTypeidx))
+	return out
+}
+
 // PutImportSectionOneInstance emits an import section with one
 // label-form entry naming an instance import of the given typeidx.
 // Mirrors std/wasm/component's `put_import_section_one_instance`.
