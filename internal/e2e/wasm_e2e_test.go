@@ -9449,6 +9449,84 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	}
 }
 
+// TestCmdLangTargetWasmNoAdapter exercises the new default-path
+// wiring: `-target wasm` without `-wasi-adapter` routes through
+// the Go-side preview-2 encoder (cli-run shape) and produces a
+// component runnable via plain `wasmtime run prog.wasm`. No
+// `wasm-tools` shell-out involved. Closes the loop on the
+// preview-2 import migrations — for programs whose imports are
+// all migrated, the default `-target wasm` now Just Works
+// without an adapter.
+func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "ok.lang")
+	src := []byte(`function main(): i32 {
+    exit(0);
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "ok.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -target wasm (no adapter) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/exit@0.2.0", "wasi:cli/run@0.2.0"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
+// TestCmdLangTargetWasmNoAdapterRejectsUnsupported confirms the
+// no-adapter `-target wasm` path surfaces a clear error when
+// the program pulls in WASI imports the preview-2 migration
+// hasn't covered yet — pointing the user at -wasi-adapter as
+// the workaround.
+func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "needs_adapter.lang")
+	src := []byte(`function main(): i32 {
+    print("hi");
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "needs_adapter.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected unsupported-imports rejection, got success: %s", out)
+	}
+	if !strings.Contains(string(out), "preview-2") || !strings.Contains(string(out), "-wasi-adapter") {
+		t.Errorf("expected preview-2 / -wasi-adapter hint in error, got:\n%s", out)
+	}
+}
+
 // TestCmdLangComponentWrapVoidMain confirms `-component-wrap`
 // (the non-cli variant, lifts main as a top-level export)
 // handles a void `main` via the SynthCliRun wrapper too. The
