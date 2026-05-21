@@ -456,17 +456,41 @@ End-to-end exit code 42 demo (covered by
     → pass-through. `-component-wrap-cli` flips the option on
     automatically and uses `_lang_run` as the cli-run core
     export. Pinned by `TestCmdLangComponentWrapCliVoidMain`.
-  - **Still to do:** migrate the remaining preview-1 imports
-    (`fd_write`, `fd_read`, `clock_time_get` realtime,
-    `environ_*`, `args_*`, `path_*`). The realtime wall-clock
-    migration in particular needs canonical-ABI memory opts +
-    the canon-lower trampoline pattern because
-    `wasi:clocks/wall-clock::now -> datetime` uses indirect-
-    return for the record. HTTP body / file I/O migrations are
-    larger because they require canonical-ABI marshalling at
-    the call site (list<u8> instead of raw pointers + lengths)
-    plus resource-handle support (output-stream / input-stream
-    are resources).
+  - **`RawInstanceTypeBody` escape hatch.** Added in #1207.
+    `WasiImport.RawInstanceTypeBody []byte` lets the driver
+    embed a fully-pre-encoded instance-type body for
+    interfaces whose shape the structured fields can't
+    express yet. Unit-tested via
+    `TestRawInstanceTypeBody_EscapeHatch` (reproduces
+    wasi:cli/exit byte-for-byte against the structured path)
+    and `TestRawInstanceTypeBody_ResourceDecl` (proves
+    resource declarations now encode — first step toward the
+    streams / filesystem migrations).
+  - **fd_write / fd_read migration (planned, big arc).** The
+    preview-2 shape for `print()` is:
+      `wasi:cli/stdout::get-stdout() -> own<output-stream>`
+      `wasi:io/streams::[method]output-stream.blocking-write-and-flush(self: borrow<output-stream>, contents: list<u8>) -> result<_, stream-error>`
+    A canonical wasm-tools-produced component for these
+    imports has 3 sub-components (the user code, a
+    trampoline-table module, an indirect-call fixup module),
+    3 instance imports (wasi:io/error, wasi:io/streams,
+    wasi:cli/stdout) with resource declarations + outer type
+    aliases between them, canon-lower with `mem+realloc` opts,
+    and a trampoline-table pattern for the dependency cycle
+    (core module imports lowered funcs, but lowered funcs need
+    core memory which only exists after instantiation). This
+    is genuinely multi-PR foundation work — each piece
+    (resources / outer aliases / mem+realloc opts / trampoline)
+    is its own slice. The RawInstanceTypeBody escape hatch
+    unblocks declaring the instance types; the rest needs new
+    composers + significant restructuring of the wrap pipeline.
+  - **Still to do (smaller migrations):** `clock_time_get`
+    realtime (`wasi:clocks/wall-clock::now -> datetime` —
+    needs canonical-ABI memory opts + the canon-lower
+    trampoline pattern because datetime uses indirect-return
+    for the record). `environ_*` / `args_*` /
+    `path_*` need lists / records / resource handles per the
+    fd_write story.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
