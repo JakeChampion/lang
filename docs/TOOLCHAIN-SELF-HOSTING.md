@@ -346,17 +346,17 @@ End-to-end exit code 42 demo (covered by
 
 #### What's NOT yet shipped
 
-- **Default-path driver wiring.** The `-component-wrap` flag is
-  opt-in. The default `-target wasm` / `-target wasi-http` paths
-  still shell out to `wasm-tools component new --adapt` (at
-  `cmd/lang/main.go:651` inside
-  `emitPreview2ComponentFromCoreBytes`) because they wrap a core
-  module that imports `wasi_snapshot_preview1.*` — the Go
-  encoder can't produce that adapter-composed shape yet, and
-  wasmbin still emits the preview-1 imports anyway. Retiring the
-  shell-out from the default path requires either preview-2
-  import migration (next item) or a Go-side adapter-composition
-  helper.
+- **`-target wasi-http` default-path wiring.** `-target wasm`
+  without `-wasi-adapter` now flows through the Go-side
+  preview-2 encoder when the program's imports are all
+  preview-2-migrated (wasi:cli/exit, wasi:random/random,
+  wasi:clocks/monotonic-clock); unsupported imports surface a
+  clear error pointing at `-wasi-adapter`. `-target wasi-http`
+  still requires the adapter — its imports
+  (`wasi:http/types` + `wasi:io/streams`) use list / record /
+  resource shapes the Go encoder doesn't cover yet. Migrating
+  the http path to no-adapter requires the canonical-ABI
+  list / resource pieces below.
 - **Preview-2 import migration.** `internal/codegen/wasmbin/wasi.go`
   still emits preview-1 imports (`fd_write`, `path_open`, etc.).
   Migrating each to its preview-2 equivalent lifts more programs
@@ -464,12 +464,18 @@ End-to-end exit code 42 demo (covered by
     `wasi:clocks/wall-clock::now -> datetime` uses indirect-
     return for the record. HTTP body / file I/O migrations are
     larger because they require canonical-ABI marshalling at
-    the call site (list<u8> instead of raw pointers + lengths).
-    Default-path driver wiring (replacing the `wasm-tools
-    component new --adapt` shell-out in
-    `emitPreview2ComponentFromCoreBytes`) lights up once enough
-    imports are migrated that the no-adapter path covers a
-    useful program set.
+    the call site (list<u8> instead of raw pointers + lengths)
+    plus resource-handle support (output-stream / input-stream
+    are resources).
+  - **Default-path driver wiring for `-target wasm`.** Shipped
+    in #1204. `-target wasm` without `-wasi-adapter` routes
+    through the Go-side preview-2 encoder (cli-run shape)
+    automatically. Programs covered by the current preview-2
+    import migration (no imports, or wasi:cli/exit /
+    wasi:random/random / wasi:clocks/monotonic-clock) build
+    without the `wasm-tools` shell-out. End-to-end tests:
+    `TestCmdLangTargetWasmNoAdapter` /
+    `TestCmdLangTargetWasmNoAdapterRejectsUnsupported`.
 - **Compound canonical-ABI shapes.** `canon lower` with
   `mem+realloc` is in place but multi-result lifts, post-return
   lower, and the full "string / list / record param" lowering
