@@ -1488,11 +1488,29 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	// Dedup via a per-name set so we only dec each unique slot
 	// once even if the same name appears multiple times in
 	// info.Locals[fn].
+	//
+	// Phase 1e-struct-iii: dec sweep now also covers struct-
+	// typed slots. The rc-tracked set matches the predicate
+	// used by needsRcIncOnAlias / zeroRcTracked so inc and dec
+	// agree on which slots get touched. The runtime guard
+	// inside __lang_rc_dec (high-bit sentinel + low-address
+	// short-circuit) keeps this safe for runtime-allocated
+	// struct values (Reader/Writer/Map/MapIter) whose header
+	// holds 0x80000000 instead of a real rc.
+	rcTracked := func(t ast.Type) bool {
+		if _, isArr := t.(ast.ArrayType); isArr {
+			return true
+		}
+		if _, isStruct := t.(ast.StructType); isStruct {
+			return true
+		}
+		return false
+	}
 	// Params first: each parameter name is unique in the
 	// function signature, so name lookup is safe. Caller-side
 	// inc (Phase 1d-iv) balanced by callee-exit dec here.
 	for _, p := range b.fn.Params {
-		if _, isArr := p.Type.(ast.ArrayType); !isArr {
+		if !rcTracked(p.Type) {
 			continue
 		}
 		slot, ok := b.locals[p.Name]
@@ -1503,7 +1521,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	}
 	seen := map[string]bool{}
 	for _, v := range b.info.Locals[b.fn] {
-		if _, isArr := v.Type.(ast.ArrayType); !isArr {
+		if !rcTracked(v.Type) {
 			continue
 		}
 		if seen[v.Name] {
@@ -1577,8 +1595,21 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	// store to the same physical slot, and only that slot needs
 	// the safety zero).
 	zeroSeen := map[string]bool{}
+	zeroRcTracked := func(t ast.Type) bool {
+		// Phase 1d covers arrays; Phase 1e-struct-iii widens to
+		// user structs. Matches the rc-tracked set used by the
+		// exit dec sweep so the safety zero and the dec agree on
+		// which slots they touch.
+		if _, isArr := t.(ast.ArrayType); isArr {
+			return true
+		}
+		if _, isStruct := t.(ast.StructType); isStruct {
+			return true
+		}
+		return false
+	}
 	for _, v := range info.Locals[fn] {
-		if _, isArr := v.Type.(ast.ArrayType); !isArr {
+		if !zeroRcTracked(v.Type) {
 			continue
 		}
 		if zeroSeen[v.Name] {
