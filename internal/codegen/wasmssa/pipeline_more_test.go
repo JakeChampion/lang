@@ -134,6 +134,47 @@ func TestPipelineGCD(t *testing.T) {
 	}
 }
 
+// TestPipelineIfThenWhile — an if-else preceding a while loop.
+// Existing while-loop classifier rejects (it requires exactly
+// 4 blocks, no preceding if/else); the relooper picks it up.
+//
+//	function f(p, n) {
+//	  var bonus = p ? 100 : 0;
+//	  var i = 0;
+//	  var total = 0;
+//	  while (i < n) { total = total + i; i = i + 1; }
+//	  return total + bonus;
+//	}
+func TestPipelineIfThenWhile(t *testing.T) {
+	src := `
+		function f(p: i32, n: i32): i32 {
+			var bonus: i32 = 0;
+			if (p != 0) { bonus = 100; }
+			var i: i32 = 0;
+			var total: i32 = 0;
+			while (i < n) {
+				total = total + i;
+				i = i + 1;
+			}
+			return total + bonus;
+		}
+	`
+	cases := []struct {
+		p, n, want int
+	}{
+		{1, 5, 110}, // 100 + (0+1+2+3+4)
+		{0, 5, 10},  // 0 + 10
+		{1, 0, 100}, // 100 + 0
+		{0, 10, 45}, // 0 + (0..9)
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "f", strconv.Itoa(c.p), strconv.Itoa(c.n))
+		if got != c.want {
+			t.Errorf("f(%d, %d) = %d, want %d", c.p, c.n, got, c.want)
+		}
+	}
+}
+
 // TestPipelineClassify — nested early returns with an inner
 // if-else that returns from BOTH arms. None of the shape-
 // specific classifiers (early-return chain, dual-return,

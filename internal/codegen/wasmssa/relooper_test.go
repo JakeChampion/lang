@@ -302,6 +302,143 @@ func TestRelooperPhiCascade(t *testing.T) {
 	})
 }
 
+// TestRelooperWhileLoopBasic — a canonical while-loop CFG.
+// The existing while-loop classifier already handles this
+// shape; this test confirms the relooper fallback handles it
+// too (when something prevents the classifier from firing).
+//
+//	function sum(n) {
+//	  var total = 0;
+//	  var i = 0;
+//	  while (i < n) { total += i; i++; }
+//	  return total;
+//	}
+//
+// Hand-built directly to avoid the classifier path.
+func TestRelooperWhileLoopHandBuilt(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("sum")
+		n := f.AddParam()
+		entry := f.NewBlock()
+		header := f.NewBlock()
+		body := f.NewBlock()
+		done := f.NewBlock()
+
+		zero := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 0
+		f.SetBr(entry, header)
+
+		iVal := f.NewValue()
+		iPhi := &ssa.Op{Kind: ssa.OpPhi, Result: iVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, iPhi)
+		totVal := f.NewValue()
+		totPhi := &ssa.Op{Kind: ssa.OpPhi, Result: totVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, totPhi)
+		cond := f.AddOp(header, ssa.OpLt, iVal, n)
+		f.SetBrIf(header, cond, body, done)
+
+		one := f.AddOp(body, ssa.OpConstInt)
+		body.Ops[0].Imm = 1
+		newTot := f.AddOp(body, ssa.OpAdd, totVal, iVal)
+		newI := f.AddOp(body, ssa.OpAdd, iVal, one)
+		iPhi.Args[1] = newI
+		totPhi.Args[1] = newTot
+		f.SetBr(body, header)
+
+		f.SetRet(done, totVal)
+		return f
+	}
+	mod, err := EmitModule(build(), "sum")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	// Module passes through whichever classifier matches first;
+	// this test mostly guards against the relooper regressing
+	// the trivial loop case. Verify behaviour:
+	runRelooperCase(t, mod, "sum", []relooperCase{
+		{args: []string{"0"}, want: 0},
+		{args: []string{"5"}, want: 10},  // 0+1+2+3+4
+		{args: []string{"10"}, want: 45}, // 0..9
+	})
+}
+
+// TestRelooperIfBeforeWhile — an if-else followed by a while
+// loop. The existing classifiers don't compose this shape;
+// the relooper's loop+block-wrap layout should.
+//
+//	function f(p, n) {
+//	  var bonus = p ? 100 : 0;
+//	  var total = 0;
+//	  var i = 0;
+//	  while (i < n) { total += i; i++; }
+//	  return total + bonus;
+//	}
+//
+// Hand-built: a small acyclic head (if/else) feeding a
+// while-loop tail.
+func TestRelooperIfBeforeWhile(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("ifwhile")
+		p := f.AddParam()
+		n := f.AddParam()
+
+		entry := f.NewBlock()
+		thenB := f.NewBlock()
+		elseB := f.NewBlock()
+		preLoop := f.NewBlock()
+		header := f.NewBlock()
+		body := f.NewBlock()
+		done := f.NewBlock()
+
+		f.SetBrIf(entry, p, thenB, elseB)
+		c100 := f.AddOp(thenB, ssa.OpConstInt)
+		thenB.Ops[0].Imm = 100
+		f.SetBr(thenB, preLoop)
+		c0 := f.AddOp(elseB, ssa.OpConstInt)
+		elseB.Ops[0].Imm = 0
+		f.SetBr(elseB, preLoop)
+
+		bonus := f.AddPhi(preLoop, c100, c0)
+		zero := f.AddOp(preLoop, ssa.OpConstInt)
+		// preLoop.Ops[0] is the phi; the new const is op[1].
+		preLoop.Ops[1].Imm = 0
+		f.SetBr(preLoop, header)
+
+		iVal := f.NewValue()
+		iPhi := &ssa.Op{Kind: ssa.OpPhi, Result: iVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, iPhi)
+		totVal := f.NewValue()
+		totPhi := &ssa.Op{Kind: ssa.OpPhi, Result: totVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, totPhi)
+		cond := f.AddOp(header, ssa.OpLt, iVal, n)
+		f.SetBrIf(header, cond, body, done)
+
+		one := f.AddOp(body, ssa.OpConstInt)
+		body.Ops[0].Imm = 1
+		newTot := f.AddOp(body, ssa.OpAdd, totVal, iVal)
+		newI := f.AddOp(body, ssa.OpAdd, iVal, one)
+		iPhi.Args[1] = newI
+		totPhi.Args[1] = newTot
+		f.SetBr(body, header)
+
+		final := f.AddOp(done, ssa.OpAdd, totVal, bonus)
+		f.SetRet(done, final)
+		return f
+	}
+	mod, err := EmitModule(build(), "ifwhile")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	runRelooperCase(t, mod, "ifwhile", []relooperCase{
+		{args: []string{"1", "5"}, want: 110}, // 100 + (0+1+2+3+4)
+		{args: []string{"0", "5"}, want: 10},  // 0 + 10
+		{args: []string{"1", "0"}, want: 100}, // 100 + 0
+		{args: []string{"0", "0"}, want: 0},   // 0 + 0
+	})
+}
+
 // relooperCase pairs args (as strings to pass to wasmtime
 // --invoke) with the expected i32 return value.
 type relooperCase struct {
