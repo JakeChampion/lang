@@ -524,10 +524,13 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if componentWrapCli {
 				// Wrap as a wasi:cli/run-exporting component so the
 				// produced binary runs under plain `wasmtime run` (no
-				// --invoke). Three branches:
+				// --invoke). Four branches:
 				//
+				//   - Print-only imports (preview-2 get-stdout +
+				//     blocking-write-and-flush) → WrapWasiPrintAsCliRun
+				//     (uses the trampoline / fixup pattern).
 				//   - No imports → BuildWasiCliRunComponent.
-				//   - Only known preview-2 imports →
+				//   - Only other known preview-2 imports →
 				//     WrapWasiImportedAsCliRun.
 				//   - Anything else → error pointing at
 				//     -component-wrap / -wasi-adapter.
@@ -536,6 +539,13 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// export. wasmbin's SynthCliRun has already emitted
 				// `_lang_run` as the normalised entry — main with
 				// any signature (void / i32) flows through it.
+				if usesPreview2PrintOnly(bin) {
+					comp := component.WrapWasiPrintAsCliRun(bin, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -934,6 +944,34 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 //     `WrapWasiImportedWithExport`.
 //   - unknown: the "module.name" string returned so the driver
 //     can surface a useful error pointing at -wasi-adapter.
+// usesPreview2PrintOnly reports whether the core module's
+// imports are exactly the preview-2 print pair —
+// `wasi:cli/stdout::get-stdout` plus
+// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`
+// — and nothing else. The print imports use the trampoline /
+// fixup core-module pattern (see WrapWasiPrintComponent /
+// WrapWasiPrintAsCliRun) which is fundamentally different from
+// the structured WasiImport flow used for other preview-2
+// migrations; the driver routes the print-only case through
+// the dedicated wrap helper.
+//
+// Mixed cases (print + something else) aren't supported yet.
+func usesPreview2PrintOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 2 {
+		return false
+	}
+	hasStdout, hasWrite := false, false
+	for _, p := range pairs {
+		if p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout" {
+			hasStdout = true
+		} else if p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush" {
+			hasWrite = true
+		}
+	}
+	return hasStdout && hasWrite
+}
+
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 	pairs := coreModuleImportPairs(bin)
 	var wasi []component.WasiImport

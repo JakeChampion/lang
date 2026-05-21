@@ -324,29 +324,27 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 		[]string{"wasi:cli/stdout@0.2.0", "wasi:io/streams@0.2.0"},
 		[]uint32{1, 2})
 
-	// Alias memory + cabi_realloc from user instance, plus the
-	// trampoline's table, all in one section (3-entry alias).
-	// Easier as 3 single-entry sections — same byte cost but
-	// less code complexity.
+	// Alias memory from the user core instance + the trampoline's
+	// table. We don't alias cabi_realloc — our canon-lower uses
+	// memory-only opts and the result-return area lives in the
+	// bump heap (allocated via __lang_alloc), not via realloc.
+	// Skipping the cabi_realloc alias also means wasmbin doesn't
+	// need to export it on the print-only-imports path.
 	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3, "memory")
 	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
 
 	// Alias blocking-write-and-flush from streams instance →
 	// component func 1.
 	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]output-stream.blocking-write-and-flush")
-	// Alias cabi_realloc → core func 2 (unused by us — wasm-tools
-	// includes it because they sometimes pass realloc as a canon
-	// opt; we don't here but the alias is harmless).
-	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 3, "cabi_realloc")
 
-	// Canon-lower the method with memory(0) → core func 3.
+	// Canon-lower the method with memory(0) → core func 2.
 	buf = PutCanonSectionLowerWithMemory(buf, 1, 0)
 
 	// Build the fixup arg instance — packages the trampoline's
 	// table + the lowered func → core instance 4.
 	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
 		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
-		{Name: "0", Sort: CoreSortFunc, Idx: 3},
+		{Name: "0", Sort: CoreSortFunc, Idx: 2},
 	})
 
 	// Instantiate the fixup module with that arg → core
@@ -373,23 +371,23 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 //   - Component funcs: 2 (get-stdout alias, write-and-flush
 //     alias).
 //   - Component instances: 3 (the 3 imported WASI interfaces).
-//   - Core funcs: 4 (lower get-stdout, alias trampoline, alias
-//     cabi_realloc, lower write-and-flush).
+//   - Core funcs: 3 (lower get-stdout, alias trampoline, lower
+//     write-and-flush).
 //   - Core instances: 6 (trampoline, get-stdout wrapper,
 //     write-and-flush wrapper, user, fixup arg, fixup).
 //
 // The cli-run tail then adds:
 //   - alias core export `_lang_run` from user core instance
-//     (index 3) → core func 4.
+//     (index 3) → core func 3.
 //   - type 5 = result<_, _>, type 6 = func() -> typeidx 5.
-//   - canon lift core func 4 → component func 2 of type 6.
+//   - canon lift core func 3 → component func 2 of type 6.
 //   - packaged instance with "run" → component instance 3.
 //   - export instance 3 as wasi:cli/run@0.2.0.
 func WrapWasiPrintAsCliRun(coreBytes []byte, coreExportName string) []byte {
 	buf := WrapWasiPrintComponent(coreBytes)
 	buf = PutAliasSectionCoreExportFunc(buf, 3, coreExportName)
 	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 5)
-	buf = PutCanonSectionLiftNoOpts(buf, 4, 6)
+	buf = PutCanonSectionLiftNoOpts(buf, 3, 6)
 	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 2)
 	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 3)
 	return buf

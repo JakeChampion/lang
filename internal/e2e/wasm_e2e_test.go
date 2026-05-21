@@ -9286,6 +9286,56 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithPrint drives a Lang program that
+// calls print("hello world") through `-component-wrap-cli`
+// end-to-end. With the preview-2 migration of __lang_print
+// (#1245) and the driver routing (this slice), the program
+// builds to a component that runs under `wasmtime run` and
+// writes "hello world\n" to stdout.
+//
+// First end-to-end demonstration of a Lang program writing to
+// stdout via preview-2 components — no wasm-tools shell-out, no
+// preview-1 adapter.
+func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "hello.lang")
+	src := []byte(`function main(): i32 {
+    print("hello world");
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "hello.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (print) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	runCmd := exec.Command("wasmtime", "run", compPath)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if got := stdout.String(); got != "hello world\n" {
+		t.Errorf("wasmtime stdout = %q, want %q", got, "hello world\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
 // that calls the stdlib `random_int(lo, hi)` helper (from
 // std/math) through `-component-wrap-cli`. random_int internally
