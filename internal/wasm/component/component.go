@@ -351,14 +351,14 @@ type VariantCase struct {
 //
 // Encoding:
 //
-//	6b                       -- variant form (0x6b)
+//	71                       -- variant form (0x71)
 //	<N>                      -- uleb: case count
 //	(per case)
 //	  <name>                 -- uleb len + bytes
 //	  00 | 01 <valtype>      -- payload optional
 //	  00                     -- no refines
 func InnerTypeVariant(cases []VariantCase) []byte {
-	out := []byte{0x6b}
+	out := []byte{0x71}
 	out = leb128.UlebU64(out, uint64(len(cases)))
 	for _, c := range cases {
 		out = leb128.UlebU64(out, uint64(len(c.Name)))
@@ -721,6 +721,48 @@ func PutCoreInstanceSectionFromOneFuncExport(buf []byte, exportName string, core
 	body = append(body, CoreSortFunc)
 	body = leb128.UlebU64(body, uint64(coreFuncIdx))
 	return wrapSection(buf, SectionCoreInstance, body)
+}
+
+// CoreInstanceExport describes one (name, sort, idx) entry in a
+// from-exports core instance. The sort byte uses CoreSort*
+// constants (0x00 func / 0x01 table / 0x02 memory / 0x03 global).
+type CoreInstanceExport struct {
+	Name string
+	Sort byte
+	Idx  uint32
+}
+
+// PutCoreInstanceSectionFromExports emits a core-instance section
+// with one "instance-from-exports" entry packaging N core
+// entities of mixed sorts. Generalisation of
+// PutCoreInstanceSectionFromOneFuncExport — needed for the
+// fd_write fixup-module's instance arg, which packages both a
+// table and a func into the same instance.
+func PutCoreInstanceSectionFromExports(buf []byte, exports []CoreInstanceExport) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x01)      // form: from-exports
+	body = leb128.UlebU64(body, uint64(len(exports)))
+	for _, e := range exports {
+		body = putName(body, e.Name)
+		body = append(body, e.Sort)
+		body = leb128.UlebU64(body, uint64(e.Idx))
+	}
+	return wrapSection(buf, SectionCoreInstance, body)
+}
+
+// PutAliasSectionCoreExport emits an alias section for a single
+// core-instance export of any sort (func / table / memory /
+// global). Generalisation of PutAliasSectionCoreExportFunc.
+func PutAliasSectionCoreExport(buf []byte, coreSort byte, coreInstanceIdx uint32, name string) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // sort = core
+	body = append(body, coreSort)  // core-sort byte
+	body = append(body, 0x01)      // target: from-core-instance-export
+	body = leb128.UlebU64(body, uint64(coreInstanceIdx))
+	body = putName(body, name)
+	return wrapSection(buf, SectionAlias, body)
 }
 
 // PutCoreInstanceSectionInstantiateWithInstanceArgs emits a

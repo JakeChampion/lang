@@ -297,7 +297,7 @@ func TestInnerTypeVariant_StreamError(t *testing.T) {
 		{Name: "closed"},
 	})
 	want := []byte{
-		0x6b, 0x02,
+		0x71, 0x02,
 		0x15, 'l', 'a', 's', 't', '-', 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', '-', 'f', 'a', 'i', 'l', 'e', 'd', 0x01, 0x03, 0x00,
 		0x06, 'c', 'l', 'o', 's', 'e', 'd', 0x00, 0x00,
 	}
@@ -329,7 +329,7 @@ func TestWasiIoStreamsInstanceTypeBody_Bytes(t *testing.T) {
 		// decl 3: type own<2>
 		0x01, 0x69, 0x02,
 		// decl 4: type variant stream-error
-		0x01, 0x6b, 0x02,
+		0x01, 0x71, 0x02,
 		0x15, 'l', 'a', 's', 't', '-', 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', '-', 'f', 'a', 'i', 'l', 'e', 'd', 0x01, 0x03, 0x00,
 		0x06, 'c', 'l', 'o', 's', 'e', 'd', 0x00, 0x00,
 		// decl 5: export "stream-error" (type (eq 4))
