@@ -14,24 +14,28 @@
 //     which converts any reducible CFG into structured wasm
 //     `block`/`loop`/`br`/`br_if` form. Phi nodes at merge
 //     blocks lower to per-pred local writes inserted before
-//     the branch. Loop support is currently bounded to a
-//     single natural loop per function with one back-edge.
+//     the branch. Supports multiple sequential + nested loops
+//     with single back-edges.
 //   - Op kinds: OpConstInt, OpAdd, OpSub, OpMul, OpAnd, OpOr,
 //     OpXor, OpShl, OpShr, OpShrU, OpDiv, OpDivU, OpRem, OpRemU,
 //     OpEq, OpNe, OpLt, OpLtU, OpLe, OpLeU, OpGt, OpGtU, OpGe,
 //     OpGeU, OpNeg, OpNot, OpExtend8S, OpExtend16S, OpPhi,
-//     OpCall (self-recursion + calls to declared imports —
-//     callee name must match either f.Name or an Import.Name
-//     passed to EmitModule).
+//     OpCall (self-recursion + calls to declared imports),
+//     OpLoad/OpStore + sub-word variants (OpLoad8S/U, OpLoad16S/U,
+//     OpStore8, OpStore16), OpAlloc (bump allocator).
 //   - Imports: the variadic Import args to EmitModule add
 //     host-provided functions to the module's import section;
 //     OpCall.Str = Import.Name lowers to `call <import idx>`.
+//   - Memory: a 1-page linear memory + single global (the bump
+//     allocator's heap-top) are emitted only when the function
+//     uses any memory or alloc op. Heap starts at byte 1024
+//     (leaves room for future static data).
 //
 // Not yet supported:
 //
-//   - Multiple natural loops, nested loops, multiple back-edges.
 //   - i64 / f32 / f64 / string values.
-//   - Memory ops, alloc.
+//   - Float memory ops (OpLoadF, OpStoreF).
+//   - Multi-page memory + memory.grow.
 //   - Pair-return.
 //
 // EmitModule writes the function under the export name passed in
@@ -48,8 +52,20 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/imports"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
+	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/sections"
 )
+
+// heapGlobalIdx is the wasm global index of the bump-allocator
+// "heap top" pointer. Always 0 in modules that emit memory
+// support — wasmssa only ever declares this single global.
+const heapGlobalIdx uint32 = 0
+
+// heapInitOffset is the byte offset at which the bump allocator
+// starts handing out memory. Leaves a small reserved region at
+// the bottom for static data (currently unused; placeholder for
+// future const-string + literal-data work).
+const heapInitOffset = 1024
 
 // Import describes an externally-provided wasm function the
 // emitted module pulls in. Module + Name address the import
@@ -138,6 +154,20 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 
 	// Function section: one func, type index = mainTypeIdx.
 	out = sections.EncodeFunctionSection(out, []uint32{mainTypeIdx})
+
+	// Memory + global sections: emitted only if the function
+	// uses any memory op or alloc. One linear-memory page is
+	// plenty for the test cases the relooper currently exercises;
+	// future PRs can grow it dynamically or precompute high-water
+	// usage. The global is the bump-allocator's heap-top pointer.
+	if usesMemory(f) {
+		out = sections.EncodeMemorySection(out, 1, -1)
+		initExpr := inst.InstEnd(inst.InstI32Const(nil, heapInitOffset))
+		out = sections.EncodeGlobalSection(out,
+			[]byte{encode.ValtypeI32},
+			[]byte{0x01}, // mutable
+			[][]byte{initExpr})
+	}
 
 	// Export section: export `exportName` → func `selfFuncIdx`.
 	out = sections.EncodeExportSection(out,
@@ -315,6 +345,33 @@ func writePhiArgs(body []byte, target, fromBlock *ssa.Block, ctx *emitCtx) []byt
 	return body
 }
 
+// usesMemory reports whether `f` contains any op that touches
+// linear memory or the bump allocator. Cheap O(ops) scan —
+// used by EmitModule to decide whether to emit the memory +
+// global sections.
+func usesMemory(f *ssa.Func) bool {
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			switch op.Kind {
+			case ssa.OpLoad, ssa.OpStore,
+				ssa.OpLoad8S, ssa.OpLoad8U,
+				ssa.OpLoad16S, ssa.OpLoad16U,
+				ssa.OpStore8, ssa.OpStore16,
+				ssa.OpAlloc:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// memarg widths (log2 alignment) for the i32 load/store family.
+const (
+	memAlignByte = 0 // 8-bit access
+	memAlignHalf = 1 // 16-bit access
+	memAlignWord = 2 // 32-bit access
+)
+
 // emitOp lowers a single Op to wasm bytes. Appends to body
 // and returns the extended slice. Reads op.Result's local
 // (pre-assigned by emitFunc) to emit local.set.
@@ -361,6 +418,53 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 			body = pushValue(body, a, ctx)
 		}
 		body = inst.InstCall(body, idx)
+		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad:
+		// load i32 from memory[arg0 + imm]. Args[0] is the
+		// base pointer; op.Imm is the constant byte offset.
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load(body, memAlignWord, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad8S:
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load8S(body, memAlignByte, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad8U:
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load8U(body, memAlignByte, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad16S:
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load16S(body, memAlignHalf, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad16U:
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load16U(body, memAlignHalf, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
+	case ssa.OpStore:
+		// store i32 value Args[1] to memory[Args[0] + imm].
+		body = pushValue(body, op.Args[0], ctx)
+		body = pushValue(body, op.Args[1], ctx)
+		body = memory.InstI32Store(body, memAlignWord, uint32(op.Imm))
+		return body, nil // no result
+	case ssa.OpStore8:
+		body = pushValue(body, op.Args[0], ctx)
+		body = pushValue(body, op.Args[1], ctx)
+		body = memory.InstI32Store8(body, memAlignByte, uint32(op.Imm))
+		return body, nil
+	case ssa.OpStore16:
+		body = pushValue(body, op.Args[0], ctx)
+		body = pushValue(body, op.Args[1], ctx)
+		body = memory.InstI32Store16(body, memAlignHalf, uint32(op.Imm))
+		return body, nil
+	case ssa.OpAlloc:
+		// Bump allocator: push current heap_top (the result),
+		// push (heap_top + size), store back. Args[0] = size.
+		body = inst.InstGlobalGet(body, heapGlobalIdx)         // result (old top)
+		body = inst.InstGlobalGet(body, heapGlobalIdx)         // for the bump
+		body = pushValue(body, op.Args[0], ctx)                // size
+		body = append(body, 0x6a)                              // i32.add
+		body = inst.InstGlobalSet(body, heapGlobalIdx)         // heap_top = old + size
 		return storeResult(body, op, ctx), nil
 	}
 	// Binary i32 ops.

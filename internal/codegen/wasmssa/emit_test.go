@@ -590,19 +590,97 @@ func TestEmitExtend16S(t *testing.T) {
 	validateModule(t, mod)
 }
 
+// TestEmitMemoryStoreLoad — store a value at a fixed address
+// via OpStore, then load it back via OpLoad, and return the
+// loaded value. Exercises memory + global section emission and
+// the load/store opcode lowering.
+//
+//	function f(v) {
+//	  store(100, v)     // *(i32*)100 = v
+//	  return load(100)  // return *(i32*)100
+//	}
+func TestEmitMemoryStoreLoad(t *testing.T) {
+	f := ssa.NewFunc("main")
+	v := f.AddParam()
+	entry := f.NewBlock()
+	addr := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 100
+	storeOp := &ssa.Op{Kind: ssa.OpStore, Args: []ssa.Value{addr, v}}
+	entry.Ops = append(entry.Ops, storeOp)
+	loaded := f.AddOp(entry, ssa.OpLoad, addr)
+	f.SetRet(entry, loaded)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitAllocAndStore — call OpAlloc(16) to bump the heap,
+// then store + load via the returned pointer. Validates the
+// bump-allocator lowering.
+func TestEmitAllocAndStore(t *testing.T) {
+	f := ssa.NewFunc("main")
+	v := f.AddParam()
+	entry := f.NewBlock()
+	size := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 16
+	ptr := f.AddOp(entry, ssa.OpAlloc, size)
+	storeOp := &ssa.Op{Kind: ssa.OpStore, Args: []ssa.Value{ptr, v}}
+	entry.Ops = append(entry.Ops, storeOp)
+	loaded := f.AddOp(entry, ssa.OpLoad, ptr)
+	f.SetRet(entry, loaded)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
+// TestEmitLoadStore8And16 — sub-word load/store variants.
+// Stores a byte + halfword, sign-extending loads back, and
+// returns the sum to verify both operations encoded right.
+func TestEmitLoadStore8And16(t *testing.T) {
+	f := ssa.NewFunc("main")
+	v := f.AddParam()
+	entry := f.NewBlock()
+	addrB := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[0].Imm = 100
+	storeB := &ssa.Op{Kind: ssa.OpStore8, Args: []ssa.Value{addrB, v}}
+	entry.Ops = append(entry.Ops, storeB)
+	addrH := f.AddOp(entry, ssa.OpConstInt)
+	entry.Ops[len(entry.Ops)-1].Imm = 104
+	storeH := &ssa.Op{Kind: ssa.OpStore16, Args: []ssa.Value{addrH, v}}
+	entry.Ops = append(entry.Ops, storeH)
+	loadB := f.AddOp(entry, ssa.OpLoad8S, addrB)
+	loadH := f.AddOp(entry, ssa.OpLoad16U, addrH)
+	sum := f.AddOp(entry, ssa.OpAdd, loadB, loadH)
+	f.SetRet(entry, sum)
+
+	mod, err := EmitModule(f, "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+}
+
 // TestEmitRejectsUnsupportedOp — an unsupported op kind
-// (e.g. OpLoad) surfaces a clear error.
+// (e.g. OpLoadF — float load) surfaces a clear error. The
+// i32 memory ops (OpLoad / OpStore / OpAlloc / etc.) are
+// supported; float memory ops aren't yet.
 func TestEmitRejectsUnsupportedOp(t *testing.T) {
 	f := ssa.NewFunc("main")
 	entry := f.NewBlock()
 	c := f.AddOp(entry, ssa.OpConstInt)
 	entry.Ops[0].Imm = 0
-	f.AddOp(entry, ssa.OpLoad, c)
+	f.AddOp(entry, ssa.OpLoadF, c)
 	f.SetRet(entry, c)
 
 	_, err := EmitModule(f, "main")
 	if err == nil {
-		t.Fatal("expected error for unsupported OpLoad")
+		t.Fatal("expected error for unsupported OpLoadF")
 	}
 }
 

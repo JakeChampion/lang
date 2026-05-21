@@ -317,6 +317,57 @@ func TestRuntimeExtend16S(t *testing.T) {
 	}
 }
 
+// TestRuntimeMemoryRoundtrip — store the param to memory at a
+// fixed offset, read it back, return the loaded value. Verifies
+// memory section + i32 load/store actually function under
+// wasmtime, not just validate.
+func TestRuntimeMemoryRoundtrip(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		v := f.AddParam()
+		entry := f.NewBlock()
+		addr := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 256
+		storeOp := &ssa.Op{Kind: ssa.OpStore, Args: []ssa.Value{addr, v}}
+		entry.Ops = append(entry.Ops, storeOp)
+		loaded := f.AddOp(entry, ssa.OpLoad, addr)
+		f.SetRet(entry, loaded)
+		return f
+	}
+	for _, v := range []int32{0, 1, -1, 42, 1 << 16, -1 << 16} {
+		got := runWasmtime(t, build(), strconv.Itoa(int(v)))
+		if int32(got) != v {
+			t.Errorf("roundtrip(%d) = %d, want %d", v, got, v)
+		}
+	}
+}
+
+// TestRuntimeAllocAndStore — alloc 8 bytes, write the param to
+// the returned pointer, read it back. Verifies the bump
+// allocator returns a usable pointer and that writes/reads at
+// that pointer produce the right value.
+func TestRuntimeAllocAndStore(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		v := f.AddParam()
+		entry := f.NewBlock()
+		size := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 8
+		ptr := f.AddOp(entry, ssa.OpAlloc, size)
+		storeOp := &ssa.Op{Kind: ssa.OpStore, Args: []ssa.Value{ptr, v}}
+		entry.Ops = append(entry.Ops, storeOp)
+		loaded := f.AddOp(entry, ssa.OpLoad, ptr)
+		f.SetRet(entry, loaded)
+		return f
+	}
+	for _, v := range []int32{0, 7, -99, 12345} {
+		got := runWasmtime(t, build(), strconv.Itoa(int(v)))
+		if int32(got) != v {
+			t.Errorf("alloc+store(%d) = %d, want %d", v, got, v)
+		}
+	}
+}
+
 // TestRuntimeArithSweep — checks every supported binary op
 // produces the value Go's int32 op produces. Keeps the test
 // matrix small (one pair of operands).
