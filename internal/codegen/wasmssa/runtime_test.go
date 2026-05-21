@@ -505,6 +505,37 @@ func TestRuntimeI64Mix(t *testing.T) {
 	}
 }
 
+// TestRuntimeStringLen — OpConstStringLen returns the byte
+// length of a string literal. Pure constant lowering — no
+// memory load needed.
+func TestRuntimeStringLen(t *testing.T) {
+	build := func(s string) *ssa.Func {
+		f := ssa.NewFunc("main")
+		entry := f.NewBlock()
+		strV := f.AddOp(entry, ssa.OpConstString)
+		entry.Ops[0].Str = s
+		lenV := f.AddOp(entry, ssa.OpConstStringLen, strV)
+		f.SetRet(entry, lenV)
+		return f
+	}
+	cases := []struct {
+		s    string
+		want int
+	}{
+		{"", 0},
+		{"a", 1},
+		{"Hello", 5},
+		{"αβγ", 6}, // UTF-8 byte length, not rune count
+		{"the quick brown fox jumps over the lazy dog", 43},
+	}
+	for _, c := range cases {
+		got := runWasmtime(t, build(c.s))
+		if got != c.want {
+			t.Errorf("len(%q) = %d, want %d", c.s, got, c.want)
+		}
+	}
+}
+
 // TestRuntimeStringDedup — two OpConstString ops with the same
 // literal should share a single offset in the pool. Returns the
 // difference of the two pointers — 0 means dedupped.
