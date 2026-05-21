@@ -243,6 +243,14 @@ const (
 	// ones.
 	OpEnumSentinel
 
+	// OpConstStringLen returns the byte length of a string
+	// literal as an i32. Args[0] is the result of an
+	// OpConstString — the length is whatever ran through that
+	// literal's Str field at lift time. Pure (the length is
+	// known at compile time); CSE / DCE can treat it like any
+	// other constant.
+	OpConstStringLen
+
 	// Phi — SSA merge. In a block B with predecessors
 	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
 	// from P[i]. Phi ops MUST appear at the top of B before
@@ -401,6 +409,8 @@ func (k OpKind) String() string {
 		return "alloc"
 	case OpEnumSentinel:
 		return "enum_sentinel"
+	case OpConstStringLen:
+		return "const_string_len"
 	case OpPhi:
 		return "phi"
 	default:

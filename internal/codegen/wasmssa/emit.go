@@ -267,6 +267,11 @@ func paramCount(f *ssa.Func) int { return len(realParams(f)) }
 // can lower OpCall to the right function index.
 type emitCtx struct {
 	valueToLocal map[int32]uint32
+	// valueDef maps a Value.ID to the Op that defined it.
+	// Built once per function so emitOp can look up an arg's
+	// def (e.g. OpConstStringLen needs the originating
+	// OpConstString's Str field).
+	valueDef map[int32]*ssa.Op
 	// valueWidth maps a Value.ID to its bit-width (32 or 64).
 	// Built once per emitFunc by walking ops + param widths so
 	// emitOp can pick i32 vs i64 opcodes per use.
@@ -328,6 +333,7 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 	}
 	ctx := &emitCtx{
 		valueToLocal: map[int32]uint32{},
+		valueDef:     map[int32]*ssa.Op{},
 		valueWidth:   map[int32]int8{},
 		valueFloat:   map[int32]bool{},
 		funcName:     f.Name,
@@ -363,6 +369,7 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool
 					ctx.valueToLocal[op.Result.ID] = nextLocal
 					nextLocal++
 				}
+				ctx.valueDef[op.Result.ID] = op
 				w, isF := inferResultType(op, ctx.valueWidth, ctx.valueFloat)
 				ctx.valueWidth[op.Result.ID] = w
 				if isF {
@@ -693,6 +700,20 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 			return nil, fmt.Errorf("wasmssa: OpConstString %q missing from pool", op.Str)
 		}
 		body = inst.InstI32Const(body, off)
+		return storeResult(body, op, ctx), nil
+	case ssa.OpConstStringLen:
+		// Args[0] must be the result of an OpConstString op;
+		// the length is the byte-length of that op's Str field.
+		// Lowers to a single i32.const — the length is known at
+		// emit time.
+		if len(op.Args) != 1 {
+			return nil, fmt.Errorf("wasmssa: OpConstStringLen needs 1 arg, got %d", len(op.Args))
+		}
+		def, ok := ctx.valueDef[op.Args[0].ID]
+		if !ok || def == nil || def.Kind != ssa.OpConstString {
+			return nil, fmt.Errorf("wasmssa: OpConstStringLen arg isn't an OpConstString result")
+		}
+		body = inst.InstI32Const(body, int32(len(def.Str)))
 		return storeResult(body, op, ctx), nil
 	case ssa.OpConstFloat:
 		// Default to f64; explicit Width=32 selects f32.
