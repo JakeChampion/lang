@@ -6101,25 +6101,37 @@ func (b *builder) assign(n *ast.Assign) error {
 // all yield fresh values with rc=1 already initialised by their
 // allocator path, so they're explicitly excluded.
 // isArrayTypeOfLocal reports whether the local named `name`
-// in the current function has an array type. Used by the
-// Phase 1d-vi dec-on-overwrite emission in `b.assign`. Looks
-// in the function's parameter list first (params share the
-// slot map with declared locals), then the declared locals.
-// Returns false on misses so callers stay conservative — a
-// missing slot means no inc was emitted to balance, and a
-// missing dec is preferable to a spurious one on a non-
-// pointer slot.
+// in the current function is rc-tracked. Used by the Phase
+// 1d-vi / 1e-struct-iv dec-on-overwrite emission in
+// `b.assign`. Looks in the function's parameter list first
+// (params share the slot map with declared locals), then the
+// declared locals. Returns false on misses so callers stay
+// conservative — a missing slot means no inc was emitted to
+// balance, and a missing dec is preferable to a spurious one
+// on a non-pointer slot.
+//
+// Phase 1e-struct-iv: rc-tracked set now includes user
+// structs in addition to arrays. The matching inc widening
+// (Phase 1e-struct-ii) ensures every aliasing event that
+// bumped the rc gets a balancing dec when `y` is overwritten.
 func isArrayTypeOfLocal(name string, b *builder) bool {
+	isRcTracked := func(t ast.Type) bool {
+		if _, isArr := t.(ast.ArrayType); isArr {
+			return true
+		}
+		if _, isStruct := t.(ast.StructType); isStruct {
+			return true
+		}
+		return false
+	}
 	for _, p := range b.fn.Params {
 		if p.Name == name {
-			_, isArr := p.Type.(ast.ArrayType)
-			return isArr
+			return isRcTracked(p.Type)
 		}
 	}
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name == name {
-			_, isArr := v.Type.(ast.ArrayType)
-			return isArr
+			return isRcTracked(v.Type)
 		}
 	}
 	return false
