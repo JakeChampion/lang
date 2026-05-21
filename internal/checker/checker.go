@@ -1410,8 +1410,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	registerMapMethod("set", []ast.Type{keyParam, valueParam}, mapKV)
 	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
 	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
-	registerMapMethod("delete", []ast.Type{keyParam}, ast.BoolType{})
-	registerMapMethod("clear", nil, ast.VoidType{})
+	deleteResult := ast.TupleType{Elems: []ast.Type{mapKV, ast.BoolType{}}}
+	registerMapMethod("delete", []ast.Type{keyParam}, deleteResult)
+	registerMapMethod("clear", nil, mapKV)
 	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
 	registerMapMethod("iter", nil, mapIterKV)

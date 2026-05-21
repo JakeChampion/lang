@@ -3124,3 +3124,44 @@ func TestX86_64ArraySetAliasedCopies(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (aliased arr.set must copy)", code)
 	}
 }
+
+// Mirror of TestArm64MapDeleteReturnsMapBool.
+func TestX86_64MapDeleteReturnsMapBool(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("c", 3);
+    if (!m.delete("b").1) { return 1; }
+    if (m.delete("z").1)  { return 2; }
+    var (m2, ok) = m.delete("a");
+    if (!ok) { return 3; }
+    if (m2.has("a")) { return 4; }
+    if (!m2.has("c")) { return 5; }
+    if (m2.len() != 1) { return 6; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (Map.delete returns (Map, bool))", code)
+	}
+}
+
+// Mirror of TestArm64MapClearReturnsMap.
+func TestX86_64MapClearReturnsMap(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("x", 10);
+    m = m.set("y", 20);
+    if (m.len() != 2) { return 1; }
+    m = m.clear();
+    if (m.len() != 0) { return 2; }
+    if (m.has("x")) { return 3; }
+    m = m.set("z", 99);
+    if (m.len() != 1) { return 4; }
+    if (m.get_or("z", 0) != 99) { return 5; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (Map.clear returns Map)", code)
+	}
+}
