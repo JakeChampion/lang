@@ -382,9 +382,9 @@ to return Map fixes the API and the semantics in one go.
 
 | Today | Target | Phase | Notes |
 |-------|--------|-------|-------|
-| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | **SHIPPED** — value-returning, callers can write `m = m.set(k, v)`. Still mutates in place underneath; the rc-check + copy path lands together with full Map CoW in Phase 2c. |
-| `m.delete(k): bool` | `m.delete(k): (Map[K, V], bool)` | 2 | Returns the (possibly new) map plus the present-before flag. |
-| `m.clear(): void` | `m.clear(): Map[K, V]` | 2 | Empties; returns a fresh empty map (or recycles via drop-reuse). |
+| `m.set(k, v): void` | `m.set(k, v): Map[K, V]` | 2 | **API SHIPPED (Phase 2c)** — value-returning, callers can write `m = m.set(k, v)`. Runtime still mutates in place underneath: aliased maps (`var m2 = m1; m2 = m2.set(k, v)`) see the mutation reflected in `m1`. The rc-check + copy path (full Map CoW) requires Phase 1e prereq (struct/handle rc layout); deferred to Phase 2d. |
+| `m.delete(k): bool` | `m.delete(k): (Map[K, V], bool)` | 2 | **API SHIPPED (Phase 2c)** — returns the (possibly new) map plus the present-before flag. Same aliasing caveat as `m.set` until Phase 2d. |
+| `m.clear(): void` | `m.clear(): Map[K, V]` | 2 | **API SHIPPED (Phase 2c)** — empties and returns the map. Same aliasing caveat as `m.set` until Phase 2d. |
 
 Migration sequence:
 
@@ -616,7 +616,7 @@ Tests on every backend cover both paths plus the
 guard for the int_to_string scratch[i] pattern that surfaced
 the wasm raw-_start `__lang_rc_dec` guard issue.
 
-#### Phase 2c: Map delete / clear value-returning — **SHIPPED**
+#### Phase 2c: Map delete / clear value-returning — **API SHIPPED**
 
 `m.delete(k)` now returns `(Map[K,V], bool)` (map handle +
 found-flag); `m.clear()` returns `Map[K,V]`. Callers can chain
@@ -633,8 +633,33 @@ self-host interp/checker updated to match. 6 new e2e tests
 (arm64 / x86_64 / wasm) cover tuple destructuring, `.1` field
 access, and `m = m.clear()`.
 
-After Phase 2c, no Map or Array method implies in-place mutation;
-every collection API looks immutable to the user.
+After Phase 2c, the user-facing API of Map mirrors Array: every
+collection method LOOKS value-returning. The runtime semantics
+still differ — Map mutates in place underneath while Array has
+real CoW (Phase 2a + 2b). Aliased maps will see each other's
+mutations; Map CoW lands in Phase 2d once Phase 1e adds rc
+tracking to non-array types.
+
+#### Phase 2d: Map CoW (NOT YET STARTED)
+
+Closes the gap left by Phase 2c. Requires Phase 1e prereqs:
+
+  - Add rc slot to the Map handle (or its `buf`). Current
+    `map_new_impl` does `__alloc(8)` for the handle cell with
+    no header; either grow that to `__alloc(8 + headerBytes)`
+    with rc at `[m - 8]`, or move rc onto the buffer (which
+    today also lacks an rc word).
+  - `__lang_map_cow_inplace(m) → m` runtime helper, modelled
+    on `__lang_arr_cow_inplace`: rc==1 fast path returns `m`
+    unchanged; rc>1 allocates fresh handle + buf, memcpy's the
+    buf contents, dec's the source's rc, returns new handle.
+  - Update `__map_set_impl`, `__map_delete_impl`, and
+    `__map_clear_impl` (plus their IR-side wrappers) to thread
+    through `__lang_map_cow_inplace` before mutating.
+
+Test coverage to add: aliasing tests mirroring
+`TestArm64ArraySetAliasedCopies` / `TestArm64ArrayPushAliasedCopies`
+for `Map.set` / `Map.delete` / `Map.clear`.
 
 Prerequisites that landed during Phase 2-prep:
 
