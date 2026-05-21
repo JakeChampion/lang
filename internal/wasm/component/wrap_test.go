@@ -657,3 +657,81 @@ func TestWrapWasiPrintComponent_Validates(t *testing.T) {
 		}
 	}
 }
+
+// printCliRunCoreModule is printCoreModule extended with a
+// `_lang_run() -> i32` export that just returns 0. Used to
+// exercise WrapWasiPrintAsCliRun end-to-end: the produced
+// component has the print imports + a wasi:cli/run export,
+// runs under plain `wasmtime run`.
+//
+// The body doesn't call the WASI funcs (proves the linkage
+// works without exercising the host side). A "really prints"
+// test would need more bytes for memory init and the WASI
+// calls; this one's scope is "wrap is structurally correct +
+// runnable".
+func printCliRunCoreModule() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: vec(4) — same as printCoreModule plus
+		// type 3 = () -> i32 for _lang_run.
+		0x01, 0x18, 0x04,
+		0x60, 0x00, 0x01, 0x7f,                                  // type 0: () -> i32 (get-stdout)
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,                // type 1: (i32 i32 i32 i32) -> () (write)
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,          // type 2: (i32 i32 i32 i32) -> i32 (cabi_realloc)
+		0x60, 0x00, 0x01, 0x7f,                                  // type 3: () -> i32 (_lang_run)
+		// import section (same as printCoreModule)
+		0x02, 0x6b, 0x02,
+		0x15, 'w', 'a', 's', 'i', ':', 'c', 'l', 'i', '/', 's', 't', 'd', 'o', 'u', 't', '@', '0', '.', '2', '.', '0',
+		0x0a, 'g', 'e', 't', '-', 's', 't', 'd', 'o', 'u', 't',
+		0x00, 0x00,
+		0x15, 'w', 'a', 's', 'i', ':', 'i', 'o', '/', 's', 't', 'r', 'e', 'a', 'm', 's', '@', '0', '.', '2', '.', '0',
+		0x2e,
+		'[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'o', 'u', 't', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', '.', 'b', 'l', 'o', 'c', 'k', 'i', 'n', 'g', '-', 'w', 'r', 'i', 't', 'e', '-', 'a', 'n', 'd', '-', 'f', 'l', 'u', 's', 'h',
+		0x00, 0x01,
+		// function section: vec(2) — typeidx [2, 3] for cabi_realloc + _lang_run
+		0x03, 0x03, 0x02, 0x02, 0x03,
+		// memory section
+		0x05, 0x03, 0x01, 0x00, 0x01,
+		// export section: vec(3) — memory, cabi_realloc, _lang_run.
+		// Body is 37 bytes (1 vec + 9 + 15 + 12 entries).
+		0x07, 0x25, 0x03,
+		0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00,
+		0x0c, 'c', 'a', 'b', 'i', '_', 'r', 'e', 'a', 'l', 'l', 'o', 'c', 0x00, 0x02,
+		0x09, '_', 'l', 'a', 'n', 'g', '_', 'r', 'u', 'n', 0x00, 0x03,
+		// code section: vec(2) bodies, each `vec(0) locals; i32.const 0; end`.
+		// Body is 11 bytes (1 vec + 5 + 5).
+		0x0a, 0x0b, 0x02,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+	}
+}
+
+// TestWrapWasiPrintAsCliRun_RunsUnderWasmtime end-to-end-tests
+// the cli-run-extended print component. The user core's
+// `_lang_run` returns 0, which lifts to result::ok and makes
+// wasmtime exit 0. The print imports are present but unused
+// at runtime; the test verifies the linkage works.
+func TestWrapWasiPrintAsCliRun_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	comp := component.WrapWasiPrintAsCliRun(printCliRunCoreModule(), "_lang_run")
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "print_cli.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
