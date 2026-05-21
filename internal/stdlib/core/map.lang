@@ -132,7 +132,18 @@ pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     // pointer itself rides through `usize` end-to-end so
     // arm64-darwin's >4 GiB heap addresses survive the
     // round-trip through every Map helper below.
-    var m: usize = __alloc(8);
+    //
+    // Phase 1e-runtime: 8-byte rc header at `[m - 8]` holds
+    // the static-sentinel 0x80000000 so a future Phase 1e
+    // predicate widening can inc/dec Map handles without
+    // touching real rc machinery. Alloc bumps from 8 to 16
+    // (8 sentinel + 8 buf cell); the returned `m` is base+8,
+    // and all downstream `__load_ptr(m)` / `__store_ptr(m,
+    // buf)` reads + writes hit the buf cell exactly as
+    // before — they're at offset 0 of the data pointer.
+    var base: usize = __alloc(16);
+    __store_i32(base, 0 - 2147483647 - 1);  // 0x80000000 sentinel
+    var m: usize = base + 8;
     __store_ptr(m, buf);
     return m;
 }
@@ -458,8 +469,15 @@ pub function __map_clear_impl(m: usize) {
 // __store_ptr is the full 8-byte STR). Same idea as the Map
 // handle: pick a layout that fits the widest pointer and pad
 // on narrow targets.
+//
+// Phase 1e-runtime: 8-byte rc header at `[it - 8]` holds the
+// static-sentinel 0x80000000. Alloc bumps from 16 to 24 (8
+// sentinel + 16 iter payload); the returned `it` = base + 8.
+// All `__mapiter_*` accesses are offsets from `it`, unchanged.
 pub function __map_iter_impl(m: usize): usize {
-    var it: usize = __alloc(16);
+    var base: usize = __alloc(24);
+    __store_i32(base, 0 - 2147483647 - 1);  // 0x80000000 sentinel
+    var it: usize = base + 8;
     __store_ptr(it,     __load_ptr(m));     // data ptr
     __store_i32(it + 8, 0);                  // cursor
     return it;
