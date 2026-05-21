@@ -86,6 +86,31 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 	},
+	"wasi_get_stdout_p2": {
+		// Preview-2: wasi:cli/stdout@0.2.0::get-stdout() →
+		// own<output-stream> (lowers to i32 handle). One-time
+		// call per program; the result handle is cached in the
+		// stdoutHandleAddr slot.
+		module:  "wasi:cli/stdout@0.2.0",
+		name:    "get-stdout",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_blocking_write_and_flush_p2": {
+		// Preview-2: wasi:io/streams@0.2.0::
+		//   [method]output-stream.blocking-write-and-flush(
+		//     self: borrow<output-stream>,
+		//     contents: list<u8>) -> result<_, stream-error>
+		// Canonical-ABI lowered to:
+		//   (self: i32, ptr: i32, len: i32, ret_ptr: i32) -> ()
+		// — self is the borrow handle, contents is the list
+		// lowered to (ptr, len), and the result is returned via
+		// a 12-byte indirect-return area pointed to by ret_ptr.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]output-stream.blocking-write-and-flush",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_environ_sizes_get": {
 		// (envc_ptr i32, env_buf_size_ptr i32) → errno.
 		// Writes the environment-variable count + the total
@@ -508,7 +533,12 @@ func (in *importNeeds) add(name string) {
 func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) importNeeds {
 	var in importNeeds
 	if helpers.set["__lang_print"] {
-		in.add("wasi_fd_write")
+		if opts.Preview2WASI {
+			in.add("wasi_get_stdout_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_fd_write")
+		}
 	}
 	if helpers.set["__lang_eprint"] {
 		in.add("wasi_fd_write")
@@ -684,6 +714,18 @@ const printRetAddr = 56
 // writes the random bytes consumed by __lang_random_i32. Lives
 // in the reserved low-memory window past printRetAddr.
 const randomBufAddr = 60
+
+// stdoutInitAddr / stdoutHandleAddr cache the
+// `wasi:cli/stdout::get-stdout()` own<output-stream> handle the
+// preview-2 print helper consumes. init=0 means "not yet
+// fetched"; on first call the helper invokes get-stdout, stores
+// the handle, and sets init=1. Subsequent calls read the cached
+// handle. Lives at 80..87 (low-memory window past
+// strIdxScratchAddr; closuresBase bumped to 88 to make room).
+const (
+	stdoutInitAddr   = 80
+	stdoutHandleAddr = 84
+)
 
 // Cache for __lang_arg_at / __lang_env_at. Both helpers lazily
 // initialise on first call: ask the host for sizes, alloc the
@@ -918,6 +960,109 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_random_i32":   buildRandomI32BodyP2,
 	"__lang_monotonic_ns": buildMonotonicNsBodyP2,
 	"__lang_random_bytes": buildRandomBytesBodyP2,
+	"__lang_print":        buildPrintBodyP2,
+}
+
+// buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
+//
+// Signature: (param $data i32) (param $len i32) (result)
+//
+// Logical:
+//
+//	if !mem[stdoutInitAddr]:
+//	    mem[stdoutHandleAddr] = wasi:cli/stdout::get-stdout()
+//	    mem[stdoutInitAddr]  = 1
+//	L   = __lang_str_len(data, len)
+//	dst = __lang_alloc(L + 1)
+//	for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i)
+//	mem[dst + L] = '\n'
+//	retBuf = __lang_alloc(16)
+//	wasi:io/streams::blocking-write-and-flush(
+//	    mem[stdoutHandleAddr], dst, L+1, retBuf)
+//	;; ignore the result<_, stream-error> (no error handling)
+//
+// Wasm locals (after the two params):
+//
+//	2: $L
+//	3: $dst
+//	4: $i
+func buildPrintBodyP2(idxs map[string]uint32) []byte {
+	strLen := idxs["__lang_str_len"]
+	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__lang_alloc"]
+	getStdout := idxs["wasi_get_stdout_p2"]
+	write := idxs["wasi_blocking_write_and_flush_p2"]
+	var body []byte
+	// If !init: call get-stdout, cache handle, set init=1.
+	body = inst.InstI32Const(body, stdoutInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, stdoutHandleAddr)
+	body = inst.InstCall(body, getStdout)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, stdoutInitAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	// L = __lang_str_len(data, len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 2) // $L
+	// dst = __lang_alloc($L + 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3) // $dst
+	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, strByte)
+	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	// mem[dst + L] = '\n'
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, '\n')
+	body = memory.InstI32Store8(body, 0, 0)
+	// $L = L + 1 (newline included)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 2)
+	// blocking-write-and-flush(stdout, dst, $L, retBuf).
+	// stdout = mem[stdoutHandleAddr]; retBuf = __lang_alloc(16).
+	body = inst.InstI32Const(body, stdoutHandleAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, write)
+	// Result is in retBuf; we ignore it (no error handling yet).
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildRandomBytesBodyP2 is the preview-2 variant of
