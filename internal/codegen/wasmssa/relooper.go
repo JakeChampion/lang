@@ -1,34 +1,32 @@
 // CFG relooper — converts an arbitrary reducible SSA CFG into
-// structured wasm control flow. Acts as the fallback when none
-// of the shape-specific classifiers (linear chain, if-else,
-// etc.) recognise the function.
+// structured wasm control flow. Acts as the lowering backend
+// for emitFunc.
 //
 // Algorithm overview:
 //
-//  1. Compute the dominator tree (for RPO), natural loops, and
-//     reject CFGs we don't yet handle (>1 natural loop, >1
-//     back-edge per loop, non-contiguous loop body in RPO).
-//  2. Open scopes:
-//      - For every non-entry block NOT in any loop: a wasm
-//        `block` wrap at function start (the "trivial" wrap).
-//        Reverse RPO order so later-RPO targets are outer.
-//      - For the loop header (if any): a wasm `block` (the
-//        loop's exit label) followed by a `loop` (back-edge
-//        target). The loop body blocks (other than the header)
-//        get their own `block` wraps inside the `loop`,
-//        opened in reverse RPO order.
-//  3. Walk RPO. For each block B:
-//      - If a BlockScope on top of the stack targets B, close
-//        it (`end`) before emitting B.
-//      - If B is the loop header, open the loop's scopes.
-//      - Emit B's ops, then its terminator (using the scope
-//        stack to compute label depths).
-//      - If B is the last block of the loop, close `loop` then
-//        the exit `block`.
-//  4. Terminators (TermRet / TermBr / TermBrIf) lower to
-//     `return` / `br $depth` / `br_if $depth` using scope
-//     lookup. Phi-args at branch targets are pre-written
-//     before the cond push.
+//  1. Compute the dominator tree (for RPO) and natural loops.
+//  2. For each natural loop (sorted innermost-first), reorder
+//     RPO so the loop's body blocks sit consecutively starting
+//     at the header. The bottom-up application preserves the
+//     contiguity of inner loops as outer loops are reordered.
+//  3. Compute the innermost containing loop for each block.
+//     Compute, for each block needing a `block` wrap, the scope
+//     at which it should open:
+//       - non-loop blocks open at function start (outermost).
+//       - blocks whose innermost loop is L open inside L's
+//         `loop` wrap (just after L's `loop` opens).
+//  4. Walk RPO. For each block B:
+//      - Close any BlockScope on top targeting B.
+//      - If B is a loop header H of loop L, open L's exit
+//        `block` then `loop`, then L's body BlockScopes
+//        (reverse RPO).
+//      - Emit B's ops, lower its terminator (using scope stack
+//        to compute label depths).
+//      - If B is the last block of any loop(s) ending at this
+//        position, close those loops' scopes (innermost first).
+//  5. Terminators (TermRet / TermBr / TermBrIf) lower to
+//     `return` / `br $depth` / `br_if $depth`. Phi-args at
+//     branch targets are pre-written before the cond push.
 //
 // Scope kinds:
 //   - BlockScope(target): wasm `block`. `br` to it lands at
@@ -47,6 +45,7 @@ package wasmssa
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/wasm/inst"
@@ -62,131 +61,178 @@ const (
 
 // scopeFrame is one wasm structured-control entry on the
 // emission scope stack.
+//
+// For skExit, `target` is the block control lands on AFTER
+// the loop closes — i.e. the block at loopEnd[L]+1 in RPO.
+// Branches from inside the loop body to that block lower to
+// `br $exit_L`. When no such block exists (loop is the last
+// thing in the function), target is nil and the ExitScope
+// is unreachable as a direct target.
 type scopeFrame struct {
 	kind   scopeKind
-	target *ssa.Block // skBlock: target block; skLoop: header; skExit: nil
+	target *ssa.Block
 }
 
 // emitRelooper lowers `f` to wasm bytes using the relooper.
-// Returns an error if the function uses features not yet
-// supported (>1 loop, multiple back-edges, non-contiguous loop
-// body in RPO, RetPair).
+// Returns an error for features not yet supported (RetPair).
 func emitRelooper(f *ssa.Func, ctx *emitCtx) ([]byte, error) {
 	dom := ssa.BuildDomTree(f)
 	rpo := dom.RPO()
 	if len(rpo) == 0 {
 		return nil, fmt.Errorf("relooper: empty RPO")
 	}
-	rpoIdx := map[*ssa.Block]int{}
-	for i, b := range rpo {
-		rpoIdx[b] = i
-	}
 	for _, b := range f.Blocks {
-		if _, ok := rpoIdx[b]; !ok {
+		found := false
+		for _, r := range rpo {
+			if r == b {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return nil, fmt.Errorf("relooper: unreachable block in f.Blocks")
 		}
 	}
 
-	// Loop detection + validation.
 	loops := ssa.Loops(f)
-	var loop *ssa.Loop
-	inLoop := map[*ssa.Block]bool{}
-	loopStart, loopEnd := -1, -1
-	if len(loops) > 1 {
-		return nil, fmt.Errorf("relooper: %d natural loops; only 0-1 supported", len(loops))
+	// Sort innermost-first: a loop L_a is "inside" L_b iff
+	// L_a.Header ∈ L_b.Body and L_a != L_b. Depth(L) = number
+	// of loops that contain L. Higher depth → more nested →
+	// innermost. Sort descending depth.
+	sortedLoops := sortLoopsByDepth(loops)
+
+	// Reorder RPO to make each loop's body contiguous. Apply
+	// innermost-first so outer-loop reordering doesn't disrupt
+	// inner-loop contiguity (inner blocks move as a unit).
+	for _, L := range sortedLoops {
+		inBody := map[*ssa.Block]bool{}
+		for b := range L.Body {
+			inBody[b] = true
+		}
+		rpo = reorderRPOForLoop(rpo, L.Header, inBody)
 	}
-	if len(loops) == 1 {
-		loop = loops[0]
-		if len(loop.BackEdges) > 1 {
-			return nil, fmt.Errorf("relooper: loop has %d back-edges; only 1 supported", len(loop.BackEdges))
-		}
-		for b := range loop.Body {
-			inLoop[b] = true
-		}
-		// Standard RPO doesn't guarantee loop blocks sit
-		// contiguously — a non-loop block may appear between
-		// loop blocks (e.g. when the header dominates a
-		// post-loop block whose RPO position lands before
-		// some loop-body block). Reorder so the loop's body
-		// blocks follow the header consecutively, preserving
-		// the relative order of both the body blocks and the
-		// non-loop blocks among themselves.
-		rpo = reorderRPOForLoop(rpo, loop.Header, inLoop)
-		rpoIdx = map[*ssa.Block]int{}
-		for i, b := range rpo {
-			rpoIdx[b] = i
-		}
-		loopStart = rpoIdx[loop.Header]
-		loopEnd = loopStart
-		for b := range loop.Body {
-			if rpoIdx[b] > loopEnd {
-				loopEnd = rpoIdx[b]
+
+	rpoIdx := map[*ssa.Block]int{}
+	for i, b := range rpo {
+		rpoIdx[b] = i
+	}
+
+	// Verify each loop's body is contiguous after reorder + record
+	// each loop's first/last RPO index.
+	loopStart := map[*ssa.Loop]int{}
+	loopEnd := map[*ssa.Loop]int{}
+	for _, L := range loops {
+		s := rpoIdx[L.Header]
+		e := s
+		for b := range L.Body {
+			if rpoIdx[b] > e {
+				e = rpoIdx[b]
 			}
 		}
-		for i := loopStart; i <= loopEnd; i++ {
-			if !inLoop[rpo[i]] {
-				return nil, fmt.Errorf("relooper: loop body still non-contiguous after reorder at index %d", i)
+		for i := s; i <= e; i++ {
+			if !L.Body[rpo[i]] {
+				return nil, fmt.Errorf("relooper: loop body non-contiguous after reorder at index %d", i)
+			}
+		}
+		loopStart[L] = s
+		loopEnd[L] = e
+	}
+
+	// Innermost containing loop for each block (nil if none).
+	innermost := map[*ssa.Block]*ssa.Loop{}
+	for _, L := range sortedLoops { // innermost first → first claim wins
+		for b := range L.Body {
+			if _, ok := innermost[b]; !ok {
+				innermost[b] = L
 			}
 		}
 	}
 
+	// Index loops by header for quick lookup.
+	loopByHeader := map[*ssa.Block]*ssa.Loop{}
+	for _, L := range loops {
+		loopByHeader[L.Header] = L
+	}
+
 	// Compute scope-open lists.
-	// - preOpens: BlockScopes opened at function start (non-entry, non-loop blocks).
-	// - loopBodyOpens: BlockScopes opened just after the loop's
-	//   LoopScope (loop body blocks except the header), reverse-RPO
-	//   for inner-most-first push order.
-	var preOpens, loopBodyOpens []*ssa.Block
+	// - preOpens: non-loop blocks (innermost == nil) and not entry.
+	// - loopBodyOpens[L]: blocks whose innermost loop is L,
+	//   excluding L's header.
+	var preOpens []*ssa.Block
+	loopBodyOpens := map[*ssa.Loop][]*ssa.Block{}
 	for i := 1; i < len(rpo); i++ {
 		b := rpo[i]
-		if loop != nil && b == loop.Header {
+		L := innermost[b]
+		if L == nil {
+			preOpens = append(preOpens, b)
 			continue
 		}
-		if inLoop[b] {
-			loopBodyOpens = append(loopBodyOpens, b)
-		} else {
-			preOpens = append(preOpens, b)
+		if b == L.Header {
+			continue // loop header gets LoopScope, not BlockScope
 		}
+		loopBodyOpens[L] = append(loopBodyOpens[L], b)
+	}
+
+	// Loops ending at each RPO position. When multiple loops
+	// share an end position (nested), close innermost-first.
+	loopsEndingAt := map[int][]*ssa.Loop{}
+	for _, L := range loops {
+		loopsEndingAt[loopEnd[L]] = append(loopsEndingAt[loopEnd[L]], L)
+	}
+	// depthOf: lower index in sortedLoops = innermost.
+	depthOf := map[*ssa.Loop]int{}
+	for i, L := range sortedLoops {
+		depthOf[L] = i
+	}
+	for _, list := range loopsEndingAt {
+		sort.Slice(list, func(i, j int) bool {
+			return depthOf[list[i]] < depthOf[list[j]]
+		})
 	}
 
 	var body []byte
 	var stack []scopeFrame
 
-	// Push pre-loop / non-loop BlockScopes (reverse RPO so later
-	// RPO is outermost).
+	// Push non-loop BlockScopes at function start (reverse RPO so
+	// later RPO is outermost).
 	for i := len(preOpens) - 1; i >= 0; i-- {
 		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 		stack = append(stack, scopeFrame{kind: skBlock, target: preOpens[i]})
 	}
 
 	for i, b := range rpo {
-		// Close any BlockScope on top targeting b. (At most one;
-		// each block is the target of at most one BlockScope.)
+		// Close any BlockScope on top targeting b.
 		for len(stack) > 0 && stack[len(stack)-1].kind == skBlock && stack[len(stack)-1].target == b {
 			body = inst.InstEnd(body)
 			stack = stack[:len(stack)-1]
 		}
 
-		// Open loop scopes when entering the loop header.
-		if loop != nil && b == loop.Header {
+		// Open loop scopes when entering a loop header.
+		if L, ok := loopByHeader[b]; ok {
+			// The ExitScope's "target" is the block control lands
+			// on once we br out of the loop — the RPO position
+			// right after loopEnd[L].
+			var exitTarget *ssa.Block
+			if loopEnd[L]+1 < len(rpo) {
+				exitTarget = rpo[loopEnd[L]+1]
+			}
 			body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-			stack = append(stack, scopeFrame{kind: skExit})
+			stack = append(stack, scopeFrame{kind: skExit, target: exitTarget})
 			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-			stack = append(stack, scopeFrame{kind: skLoop, target: loop.Header})
-			// Inner BlockScopes for loop body blocks (reverse RPO).
-			for j := len(loopBodyOpens) - 1; j >= 0; j-- {
+			stack = append(stack, scopeFrame{kind: skLoop, target: L.Header})
+			opens := loopBodyOpens[L]
+			for j := len(opens) - 1; j >= 0; j-- {
 				body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-				stack = append(stack, scopeFrame{kind: skBlock, target: loopBodyOpens[j]})
+				stack = append(stack, scopeFrame{kind: skBlock, target: opens[j]})
 			}
 		}
 
-		// Emit ops.
+		// Emit ops + terminator.
 		var err error
 		body, err = emitStraightBlock(body, b, ctx)
 		if err != nil {
 			return nil, err
 		}
-
-		// Lower terminator using scope stack.
 		var nextBlock *ssa.Block
 		if i+1 < len(rpo) {
 			nextBlock = rpo[i+1]
@@ -196,12 +242,14 @@ func emitRelooper(f *ssa.Func, ctx *emitCtx) ([]byte, error) {
 			return nil, err
 		}
 
-		// After the last loop block, close LoopScope + ExitScope.
-		if loop != nil && i == loopEnd {
+		// Close LoopScope + ExitScope for any loops ending at i,
+		// innermost first.
+		for _, L := range loopsEndingAt[i] {
 			if len(stack) < 2 ||
 				stack[len(stack)-1].kind != skLoop ||
+				stack[len(stack)-1].target != L.Header ||
 				stack[len(stack)-2].kind != skExit {
-				return nil, fmt.Errorf("relooper: scope-stack invariant violated at loop end")
+				return nil, fmt.Errorf("relooper: scope-stack invariant violated at end of loop with header B%d", L.Header.ID)
 			}
 			body = inst.InstEnd(body) // close loop
 			stack = stack[:len(stack)-1]
@@ -216,16 +264,48 @@ func emitRelooper(f *ssa.Func, ctx *emitCtx) ([]byte, error) {
 	return body, nil
 }
 
+// sortLoopsByDepth returns `loops` sorted innermost-first.
+// "Inner" means L_a.Header ∈ L_b.Body (and L_a != L_b).
+// Depth = number of loops containing this one; deeper first.
+func sortLoopsByDepth(loops []*ssa.Loop) []*ssa.Loop {
+	if len(loops) <= 1 {
+		out := make([]*ssa.Loop, len(loops))
+		copy(out, loops)
+		return out
+	}
+	depth := make(map[*ssa.Loop]int, len(loops))
+	for _, L := range loops {
+		d := 0
+		for _, other := range loops {
+			if L == other {
+				continue
+			}
+			if other.Body[L.Header] {
+				d++
+			}
+		}
+		depth[L] = d
+	}
+	out := make([]*ssa.Loop, len(loops))
+	copy(out, loops)
+	sort.SliceStable(out, func(i, j int) bool {
+		return depth[out[i]] > depth[out[j]]
+	})
+	return out
+}
+
 // reorderRPOForLoop produces an RPO where the loop's body
 // blocks (including the header) sit consecutively starting at
-// the header. Standard RPO can interleave a post-loop block
+// the header. Standard RPO can interleave a non-loop block
 // between loop-body blocks when both are reachable from the
 // header in different traversal orders.
 //
-// The reorder is: keep entries before the header unchanged;
-// at the header's position, emit the header followed by all
-// other body blocks in their RPO order; then emit the
-// remaining (non-loop) blocks in their RPO order.
+// The reorder: keep entries before the header unchanged; at
+// the header, emit the header followed by all other body
+// blocks in their RPO order; then emit the remaining (non-body)
+// blocks in their RPO order. When applied innermost-first to a
+// CFG with nested loops, each inner loop's already-contiguous
+// body moves as a unit during the outer's reorder.
 func reorderRPOForLoop(rpo []*ssa.Block, header *ssa.Block, inLoop map[*ssa.Block]bool) []*ssa.Block {
 	out := make([]*ssa.Block, 0, len(rpo))
 	headerPos := -1
@@ -242,13 +322,11 @@ func reorderRPOForLoop(rpo []*ssa.Block, header *ssa.Block, inLoop map[*ssa.Bloc
 		out = append(out, rpo[i])
 	}
 	out = append(out, header)
-	// Loop body blocks (except header) in their RPO order.
 	for _, b := range rpo[headerPos+1:] {
 		if inLoop[b] && b != header {
 			out = append(out, b)
 		}
 	}
-	// Remaining non-loop blocks in their RPO order.
 	for _, b := range rpo[headerPos+1:] {
 		if !inLoop[b] {
 			out = append(out, b)
@@ -258,17 +336,19 @@ func reorderRPOForLoop(rpo []*ssa.Block, header *ssa.Block, inLoop map[*ssa.Bloc
 }
 
 // findScope returns the wasm label depth for branching to
-// `target`, along with the kind of scope matched. For loop
-// headers branched to (back-edges), returns the LoopScope.
-// For normal forward branches, returns the BlockScope.
-// ExitScopes aren't matched directly — they're only reached
-// by br to a post-loop BlockScope sitting on the outer stack.
+// `target`, along with the kind of scope matched.
+//
+// Match precedence (innermost first):
+//   - BlockScope whose target == target → forward branch to a
+//     wrapped block.
+//   - LoopScope whose header == target → back-edge / continue.
+//   - ExitScope whose post-loop target == target → exit a loop
+//     and land at the block that follows it (useful when the
+//     post-loop block is itself a loop header or a function-
+//     level wrap that lives below this exit on the stack).
 func findScope(stack []scopeFrame, target *ssa.Block) (depth int, kind scopeKind, ok bool) {
 	for i := len(stack) - 1; i >= 0; i-- {
 		f := stack[i]
-		if f.kind == skExit {
-			continue
-		}
 		if f.target == target {
 			return len(stack) - 1 - i, f.kind, true
 		}
@@ -333,14 +413,11 @@ func lowerReloopTerm(body []byte, b *ssa.Block, stack []scopeFrame, nextBlock *s
 		body = pushValue(body, b.Term.Cond, ctx)
 		switch {
 		case tFall && fFall:
-			// Both arms fall through — drop cond.
 			return append(body, 0x1a), nil
 		case tFall:
-			// True is fallthrough; jump to F when !cond.
 			body = append(body, 0x45) // i32.eqz
 			return inst.InstBrIf(body, uint32(fDepth)), nil
 		case fFall:
-			// False is fallthrough; jump to T when cond.
 			return inst.InstBrIf(body, uint32(tDepth)), nil
 		default:
 			body = inst.InstBrIf(body, uint32(tDepth))
