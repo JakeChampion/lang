@@ -3,6 +3,7 @@ package ssa
 import (
 	"fmt"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -233,9 +234,12 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	// type info).
 	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
 	l.slots = make([]Value, totalSlots)
-	for i := range in.Params {
+	l.out.ParamWidths = make([]int8, 0, len(in.Params))
+	for i, p := range in.Params {
 		l.slots[i] = l.out.AddParam()
+		l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
 	}
+	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
 
 	l.cur = l.out.NewBlock()
 
@@ -262,6 +266,43 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		l.out.SetRet(l.cur, Value{})
 	}
 	return l.out, nil
+}
+
+// widthOfAstType returns 32 for i32-shaped types (i32, bool,
+// void return, pointer-shaped — string/array/struct on wasm32),
+// 64 for i64 types. Floats currently report their bit width
+// too — backends decide what to do with that. Returns 0 for
+// nil (= void return).
+//
+// Handles both pointer and value variants of NumberType/FloatType
+// since the parser/checker mix the two shapes in practice.
+func widthOfAstType(t ast.Type) int8 {
+	switch tt := t.(type) {
+	case nil:
+		return 0
+	case ast.NumberType:
+		if tt.Width == 64 {
+			return 64
+		}
+		return 32
+	case *ast.NumberType:
+		if tt.Width == 64 {
+			return 64
+		}
+		return 32
+	case ast.FloatType:
+		if tt.Width == 64 {
+			return 64
+		}
+		return 32
+	case *ast.FloatType:
+		if tt.Width == 64 {
+			return 64
+		}
+		return 32
+	default:
+		return 32 // bool / void / pointer-shaped → i32 stack slot
+	}
 }
 
 type lifter struct {
@@ -351,6 +392,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	case ir.OpConstI64:
 		v := l.out.AddOp(l.cur, OpConstInt)
 		l.cur.Ops[len(l.cur.Ops)-1].Imm = op.I64
+		l.cur.Ops[len(l.cur.Ops)-1].Width = 64
 		l.stack = append(l.stack, v)
 	case ir.OpConstStr:
 		v := l.out.AddOp(l.cur, OpConstString)
@@ -426,6 +468,12 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = mapUnsignedVariant(kind)
 		}
 		v := l.out.AddOp(l.cur, kind, lhs, rhs)
+		// Propagate width from the IR op so backends can choose
+		// between i32 and i64 opcodes. Floats carry width in their
+		// kind (OpFAdd etc.); Width stays 0 for them.
+		if op.Width == 64 {
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		}
 		l.stack = append(l.stack, v)
 	case ir.OpNot:
 		if len(l.stack) < 1 {

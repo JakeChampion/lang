@@ -246,6 +246,38 @@ func TestPipelineNestedWhiles(t *testing.T) {
 	}
 }
 
+// TestPipelineI64Sum — i64 sum loop from real Lang source.
+// Verifies the lift propagates Width=64 from ir.OpConstI64 and
+// the binary arith ops, the wasmssa backend emits i64.add etc.,
+// and the function type signature uses (i64) → i64.
+func TestPipelineI64Sum(t *testing.T) {
+	src := `
+		function f(n: i64): i64 {
+			var s: i64 = 0;
+			var i: i64 = 0;
+			while (i < n) {
+				s = s + i;
+				i = i + 1;
+			}
+			return s;
+		}
+	`
+	cases := []struct {
+		n, want int64
+	}{
+		{0, 0},
+		{10, 45},
+		{1_000, 499_500},
+		{100_000, 100_000 * 99_999 / 2},
+	}
+	for _, c := range cases {
+		got := compileAndRun(t, src, "f", strconv.FormatInt(c.n, 10))
+		if int64(got) != c.want {
+			t.Errorf("i64 sum(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
 // TestPipelineClassify — nested early returns with an inner
 // if-else that returns from BOTH arms. None of the shape-
 // specific classifiers (early-return chain, dual-return,

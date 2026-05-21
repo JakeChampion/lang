@@ -317,6 +317,106 @@ func TestRuntimeExtend16S(t *testing.T) {
 	}
 }
 
+// TestRuntimeI64Add — hand-built i64 (a, b) → a + b. Validates
+// that the function type signature uses i64, the locals are
+// declared i64, and the i64.add opcode is emitted.
+func TestRuntimeI64Add(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		b := f.AddParam()
+		f.ParamWidths = []int8{64, 64}
+		f.ReturnWidth = 64
+		entry := f.NewBlock()
+		sumOp := &ssa.Op{
+			Kind:   ssa.OpAdd,
+			Result: f.NewValue(),
+			Args:   []ssa.Value{a, b},
+			Width:  64,
+		}
+		entry.Ops = append(entry.Ops, sumOp)
+		f.SetRet(entry, sumOp.Result)
+		return f
+	}
+	cases := []struct {
+		a, b, want int64
+	}{
+		{1, 2, 3},
+		{1 << 40, 1 << 40, 1 << 41},
+		{-1, 1, 0},
+		{1<<62 - 1, 1, 1 << 62},
+	}
+	for _, c := range cases {
+		got := runWasmtime(t, build(), strconv.FormatInt(c.a, 10), strconv.FormatInt(c.b, 10))
+		if int64(got) != c.want {
+			t.Errorf("i64 add(%d, %d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestRuntimeI64Mix — a function with i64 params, a small loop,
+// and an i64 return. Verifies i64 locals + i64 ops + i64 phi
+// (via the relooper) all flow correctly.
+func TestRuntimeI64Mix(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		n := f.AddParam()
+		f.ParamWidths = []int8{64}
+		f.ReturnWidth = 64
+
+		entry := f.NewBlock()
+		header := f.NewBlock()
+		body := f.NewBlock()
+		done := f.NewBlock()
+
+		// total = 0 (i64)
+		zero := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 0
+		entry.Ops[0].Width = 64
+		f.SetBr(entry, header)
+
+		// phi: i = phi(zero, i+1); total = phi(zero, total+i)
+		iVal := f.NewValue()
+		iPhi := &ssa.Op{Kind: ssa.OpPhi, Result: iVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, iPhi)
+		totVal := f.NewValue()
+		totPhi := &ssa.Op{Kind: ssa.OpPhi, Result: totVal, Args: []ssa.Value{zero, ssa.Value{}}}
+		header.Ops = append(header.Ops, totPhi)
+		condOp := &ssa.Op{Kind: ssa.OpLt, Result: f.NewValue(), Args: []ssa.Value{iVal, n}, Width: 64}
+		header.Ops = append(header.Ops, condOp)
+		f.SetBrIf(header, condOp.Result, body, done)
+
+		one := f.AddOp(body, ssa.OpConstInt)
+		body.Ops[0].Imm = 1
+		body.Ops[0].Width = 64
+		newTotOp := &ssa.Op{Kind: ssa.OpAdd, Result: f.NewValue(), Args: []ssa.Value{totVal, iVal}, Width: 64}
+		body.Ops = append(body.Ops, newTotOp)
+		newIOp := &ssa.Op{Kind: ssa.OpAdd, Result: f.NewValue(), Args: []ssa.Value{iVal, one}, Width: 64}
+		body.Ops = append(body.Ops, newIOp)
+		iPhi.Args[1] = newIOp.Result
+		totPhi.Args[1] = newTotOp.Result
+		f.SetBr(body, header)
+
+		f.SetRet(done, totVal)
+		return f
+	}
+	// sum(0..n-1) computed in i64.
+	cases := []struct {
+		n, want int64
+	}{
+		{0, 0},
+		{5, 10},
+		{100, 4950},
+		{10_000, 10_000 * 9_999 / 2},
+	}
+	for _, c := range cases {
+		got := runWasmtime(t, build(), strconv.FormatInt(c.n, 10))
+		if int64(got) != c.want {
+			t.Errorf("i64 sum(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
 // TestRuntimeMemoryRoundtrip — store the param to memory at a
 // fixed offset, read it back, return the loaded value. Verifies
 // memory section + i32 load/store actually function under
