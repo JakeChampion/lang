@@ -4174,6 +4174,40 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.Width != 0 {
 			return ast.FloatType{Width: x.Width}
 		}
+	case *ast.StructLit:
+		// A struct literal is pointer-shaped; without this case
+		// `payloadSlotSize(nil)` defaults to 4 and an enclosing
+		// `(i32, Inner)` tuple stores the inner struct pointer at
+		// offset 4 while the load side (which DOES know the static
+		// type) reads from offset 8 on arm64. Garbage pointer →
+		// segfault. Returns just enough type info for the
+		// `IsPointerType` branch in `payloadSlotSize` —
+		// Name + Args aren't consulted by slot sizing.
+		return ast.StructType{Name: x.TypeName, Args: x.TypeArgs}
+	case *ast.TupleLit:
+		// Same shape as StructLit — a tuple-typed value is
+		// pointer-shaped from the enclosing literal's POV. Recurse
+		// on each element so the inner-tuple element types survive
+		// for any downstream code that wants them; only
+		// `IsPointerType(TupleType{...}) == true` is needed for
+		// slot sizing.
+		elems := make([]ast.Type, len(x.Elems))
+		for i, e := range x.Elems {
+			elems[i] = b.exprType(e)
+		}
+		return ast.TupleType{Elems: elems}
+	case *ast.ArrayLit:
+		// Same family as StructLit / TupleLit — an array literal
+		// stored as a tuple/struct element needs IsPointerType
+		// → true so the slot gets ptrW bytes on arm64. ElemType
+		// is set by the checker once elements are typed; nil-fall-
+		// through still returns ArrayType (the IsPointerType
+		// branch fires regardless).
+		return ast.ArrayType{Elem: x.ElemType}
+	case *ast.MapLit:
+		// Map literal lowers to `Map` (the auto-injected struct);
+		// pointer-shaped from the enclosing slot's POV.
+		return ast.StructType{Name: "Map", Args: []ast.Type{x.KeyType, x.ValueType}}
 	case *ast.FieldAccess:
 		// Qualified payload-less variant in value position
 		// (`Color.Red`). Same shape exprType expects for the

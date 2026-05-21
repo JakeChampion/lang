@@ -13150,6 +13150,57 @@ func TestArm64MapClearReturnsMap(t *testing.T) {
 	}
 }
 
+// Pointer-typed tuple element — struct, array, or nested tuple in
+// a tuple slot must round-trip through ptrW-aligned storage.
+// Bug: exprType returned nil for *ast.StructLit / *ast.ArrayLit /
+// *ast.TupleLit, so the TupleLit slot-sizing fell back to 4 bytes
+// while the load side knew the static type was 8 bytes on arm64.
+// Pointer stored at offset 4, read from offset 8 → segfault.
+func TestArm64TupleStructElem(t *testing.T) {
+	src := `struct Inner { x: i32, y: i32 }
+function main(): i32 {
+    var t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
+    if (t.0 != 1) { return 1; }
+    var inner: Inner = t.1;
+    if (inner.x != 2) { return 2; }
+    if (inner.y != 3) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (struct in tuple slot)", code)
+	}
+}
+
+func TestArm64TupleArrayElem(t *testing.T) {
+	src := `function main(): i32 {
+    var t: (i32, i32[]) = (1, [10, 20, 30]);
+    if (t.0 != 1) { return 1; }
+    var arr: i32[] = t.1;
+    if (arr.len() != 3) { return 2; }
+    if (arr[0] != 10) { return 3; }
+    if (arr[2] != 30) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (array in tuple slot)", code)
+	}
+}
+
+func TestArm64TupleNestedTuple(t *testing.T) {
+	src := `function main(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 3));
+    var (a, b) = t;
+    if (a != 1) { return 1; }
+    var (c, d) = b;
+    if (c != 2) { return 2; }
+    if (d != 3) { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (nested tuple destructure)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
