@@ -115,6 +115,16 @@ func PutTypeSectionOneInstanceOneFuncNoResultExport(buf []byte, exportName strin
 	return PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport(buf, nil, exportName, paramNames, paramValtypes)
 }
 
+// PutTypeSectionRawBody emits a type section whose body bytes are
+// supplied directly by the caller. Escape hatch for instance
+// types or defvaltype shapes that the structured composers can't
+// express (resources, methods, type aliases inside an instance,
+// etc.). The caller owns the full body — vec(N) count + N type
+// entries — exactly as the binary wire format expects.
+func PutTypeSectionRawBody(buf []byte, body []byte) []byte {
+	return wrapSection(buf, SectionType, body)
+}
+
 // PutTypeSectionInstanceWithInnerTypesAndOneFuncNoResultExport
 // generalises PutTypeSectionOneInstanceOneFuncNoResultExport by
 // declaring N inner defvaltype entries inside the instance type

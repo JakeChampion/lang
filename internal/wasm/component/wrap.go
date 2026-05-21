@@ -50,6 +50,23 @@ type WasiImport struct {
 	// wasi:random/random::get-random-u64 that return a scalar.
 	// Multi-result functions aren't supported yet.
 	ResultValtypes []byte
+
+	// RawInstanceTypeBody is an escape hatch for instance-type
+	// encodings the structured fields (FuncName, ParamNames,
+	// ParamValtypes, InnerTypes, ResultValtypes) can't express.
+	// When non-nil it's used verbatim as the type-section body
+	// bytes — vec(1) types + instance type form + decls — and
+	// the structured fields above are ignored for type-section
+	// emission.
+	//
+	// The other fields (InterfaceName, CoreImportModule, FuncName)
+	// still drive the import / alias / canon-lower / core-
+	// instance sections. Use this for interfaces that need
+	// exported type aliases inside the instance (e.g.
+	// wasi:clocks/wall-clock exports `datetime` then references
+	// it from `now`), resource type declarations, or
+	// method-call shapes (self-handle as first param).
+	RawInstanceTypeBody []byte
 }
 
 // WrapWasiImported produces a Component-Model binary that wraps
@@ -89,7 +106,11 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 
 	// For each WASI import: type, import, alias, lower, core-instance.
 	for i, imp := range imports {
-		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		if imp.RawInstanceTypeBody != nil {
+			buf = PutTypeSectionRawBody(buf, imp.RawInstanceTypeBody)
+		} else {
+			buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		}
 		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
 		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
 		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
@@ -207,7 +228,11 @@ func WrapWasiImportedAsCliRun(coreBytes []byte, imports []WasiImport, coreExport
 
 	n := uint32(len(imports))
 	for i, imp := range imports {
-		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		if imp.RawInstanceTypeBody != nil {
+			buf = PutTypeSectionRawBody(buf, imp.RawInstanceTypeBody)
+		} else {
+			buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		}
 		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
 		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
 		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
@@ -270,7 +295,11 @@ func WrapWasiImportedWithExport(
 
 	n := uint32(len(imports))
 	for i, imp := range imports {
-		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		if imp.RawInstanceTypeBody != nil {
+			buf = PutTypeSectionRawBody(buf, imp.RawInstanceTypeBody)
+		} else {
+			buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		}
 		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
 		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
 		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
