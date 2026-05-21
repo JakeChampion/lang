@@ -220,7 +220,7 @@ var InnerTypeResultEmpty = []byte{0x6a, 0x00, 0x00}
 //
 // Inside-instance decl shape (5 bytes for small uleb values):
 //
-//	00          -- instance-decl marker: alias
+//	02          -- instance-decl marker: alias
 //	03          -- sort = type
 //	02          -- target form: outer
 //	ct          -- uleb: scope count up (1 = parent component)
@@ -234,7 +234,7 @@ var InnerTypeResultEmpty = []byte{0x6a, 0x00, 0x00}
 // valtype byte (when < 0x73) or via a uleb-encoded typeidx in
 // other decls.
 func OuterAliasTypeDecl(scopesUp uint32, outerTypeidx uint32) []byte {
-	out := []byte{0x00, 0x03, 0x02}
+	out := []byte{0x02, 0x03, 0x02}
 	out = leb128.UlebU64(out, uint64(scopesUp))
 	out = leb128.UlebU64(out, uint64(outerTypeidx))
 	return out

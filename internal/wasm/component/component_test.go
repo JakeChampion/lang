@@ -153,7 +153,7 @@ func TestPutAliasSectionInstanceExportType_Bytes(t *testing.T) {
 // — 1 scope up, outer typeidx 1.
 func TestOuterAliasTypeDecl_Bytes(t *testing.T) {
 	got := component.OuterAliasTypeDecl(1, 1)
-	want := []byte{0x00, 0x03, 0x02, 0x01, 0x01}
+	want := []byte{0x02, 0x03, 0x02, 0x01, 0x01}
 	if !bytes.Equal(got, want) {
 		t.Errorf("OuterAliasTypeDecl(1, 1) = % x, want % x", got, want)
 	}
