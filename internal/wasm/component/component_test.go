@@ -158,3 +158,58 @@ func TestOuterAliasTypeDecl_Bytes(t *testing.T) {
 		t.Errorf("OuterAliasTypeDecl(1, 1) = % x, want % x", got, want)
 	}
 }
+
+// TestExportSubResourceDecl_Bytes pins the bytes for a
+// `resource error;` declaration inside an instance type body —
+// the shape used by wasi:io/error.
+func TestExportSubResourceDecl_Bytes(t *testing.T) {
+	got := component.ExportSubResourceDecl("error")
+	want := []byte{0x04, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r', 0x03, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Errorf("ExportSubResourceDecl(%q) = % x, want % x", "error", got, want)
+	}
+}
+
+// TestExportTypeEqDecl_Bytes pins the bytes for an `export
+// "error" (type (eq 1))` decl — the shape wasi:io/streams uses
+// to re-export the outer-aliased error type as its own typeidx.
+func TestExportTypeEqDecl_Bytes(t *testing.T) {
+	got := component.ExportTypeEqDecl("error", 1)
+	want := []byte{0x04, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r', 0x03, 0x00, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Errorf("ExportTypeEqDecl(%q, 1) = % x, want % x", "error", got, want)
+	}
+}
+
+// TestWasiIoErrorInstanceTypeBody_Composed exercises the
+// pieces together by composing the wasi:io/error instance type
+// body and validating it via the escape hatch. The body is
+// just `vec(1) decls + ExportSubResourceDecl("error")` plus
+// the standard instance-type framing.
+func TestWasiIoErrorInstanceTypeBody_Composed(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	resourceDecl := component.ExportSubResourceDecl("error")
+	body := []byte{0x01, 0x42, 0x01}
+	body = append(body, resourceDecl...)
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, body)
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "iee.wasm")
+	if err := os.WriteFile(compPath, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"\"error\"", "(sub resource)"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}
