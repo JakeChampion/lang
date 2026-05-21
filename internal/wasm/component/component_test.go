@@ -82,3 +82,25 @@ func TestPutComponentTypeSection_StructuralRoundTrip(t *testing.T) {
 		t.Errorf("expected `component-type` in printed output, got:\n%s", out)
 	}
 }
+
+// TestPutCanonSectionLowerWithMemory_Bytes pins the bytes of a
+// canon-lower entry carrying a single `memory` canonical-ABI
+// option. The expected bytes match what wasm-tools emits for the
+// wasi:io/streams::blocking-write-and-flush lowering: it carries
+// a list<u8> param so canon-lower needs memory to know where the
+// (ptr, len) point.
+//
+// Wire shape:
+//
+//	08 07       -- section id 8 (canon), body size 7
+//	01          -- vec(1) canons
+//	01 00 01    -- canon-lower, function sub-tag, funcIdx 1
+//	01          -- opts vec(1)
+//	03 00       -- canonopt: memory (0x03), memidx 0
+func TestPutCanonSectionLowerWithMemory_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLowerWithMemory(nil, 1, 0)
+	want := []byte{0x08, 0x07, 0x01, 0x01, 0x00, 0x01, 0x01, 0x03, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLowerWithMemory(1, 0) = % x, want % x", got, want)
+	}
+}

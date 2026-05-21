@@ -249,6 +249,37 @@ func PutCanonSectionLowerNoOpts(buf []byte, funcIdx uint32) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLowerWithMemory emits a canon section with one
+// canon-lower entry that carries a single `memory` canonical-ABI
+// option. The memory option is needed when the lowered function
+// takes or returns a value whose canonical-ABI shape includes a
+// pointer into linear memory (e.g. list<u8>, indirect-return
+// record, string).
+//
+// Opts encoding (vec of canonopt):
+//
+//	03 m:<core memidx>    -- memory
+//
+// Pair with the trampoline-table pattern when the lowered func
+// is referenced by a core module that also exports the memory —
+// the canon-lower has to come AFTER the core instantiation that
+// produces the memory, which means the core module's import
+// can't refer to the lowered func directly. Wasm-tools resolves
+// this by emitting a trampoline core module with a funcref
+// table; this composer doesn't enforce that arrangement, only
+// emits the canon-lower bytes.
+func PutCanonSectionLowerWithMemory(buf []byte, funcIdx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)             // vec(1) canons
+	body = append(body, 0x01)                  // canon-lower
+	body = append(body, 0x00)                  // function-lower sub-tag
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = leb128.UlebU64(body, 1)             // opts vec(1)
+	body = append(body, 0x03)                  // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCoreInstanceSectionFromOneFuncExport emits a core-instance
 // section with one "instance-from-exports" entry packaging a
 // single core func. Mirrors
