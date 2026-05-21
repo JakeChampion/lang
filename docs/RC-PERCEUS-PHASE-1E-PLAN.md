@@ -83,33 +83,34 @@ mutate-in-place / drop-reuse semantics.
 
 ## Phased rollout
 
-### Phase 1e-runtime: sentinel-pad every runtime struct alloc
+### Phase 1e-runtime: sentinel-pad every runtime struct alloc (SHIPPED across PRs #1237, #1238, #1242)
 
-NOT YET STARTED — first slice. Goal: every runtime helper
-that returns a struct-shaped pointer writes the static
-sentinel at `[base + 0]` and returns `base + 8`. Per-backend
-(arm64, x86_64, wasmbin) since the helpers live in each
-backend's runtime emitter.
+First slice. Goal: every runtime helper that returns a
+struct-shaped pointer writes the static sentinel at
+`[base + 0]` and returns `base + 8`. Per-backend (arm64,
+x86_64, wasmbin) since the helpers live in each backend's
+runtime emitter.
 
 Helpers to migrate (grouped roughly; exact list per backend
 to be confirmed during execution):
 
-  - **Reader / Writer**: `__lang_make_handle`,
+  - ✅ **Reader / Writer** (PR #1237): `__lang_make_handle`,
     `__lang_open_reader`, `__lang_open_writer`,
-    `__lang_open_appender`, `__lang_stdin`, `__lang_stdout`,
-    `__lang_stderr` (and their `__lang_close_fd_box` helper).
-  - **Map / MapIter**: `__lang_map_new`, `map_new_impl`'s
-    handle/buf allocations, `__lang_map_iter_new`.
-  - **Stream / BytesWriter**: `__lang_stream_*`,
-    `__lang_bytes_writer_*`.
-  - **HTTP**: `__lang_http_request_*`, `__lang_http_response_*`.
-  - **FileStat / Span / ProcessResult**: dedicated alloc
-    helpers in `wasi_misc.go` / `arm64.go` / `x86_64.go`.
-  - **TestRunner / MockPlatform / Platform**:
-    `__lang_test_runner_*`, `__lang_mock_platform_*`,
-    `__lang_platform_*`.
-  - **Misc**: `__lang_url_*`, `__lang_header_map_*`,
-    `__lang_time_zone_*`, `__lang_zoned_*`.
+    `__lang_open_appender` (and the `wasmbin/wasi_fs.go`
+    Reader/Writer struct construction).
+  - ✅ **Map / MapIter** (PR #1238): `map_new_impl`'s
+    handle allocation + `__map_iter_impl`.
+  - ✅ **HttpRequest / HeaderMap** (folded into PR #1242):
+    the wasi-http runtime's struct construction.
+  - **Stream / BytesWriter** — both are user-side
+    `StructLit`, so they migrated naturally with Phase
+    1e-struct-i (PR #1239).
+  - **HttpResponse / Url / TimeZone / Zoned / Span /
+    Duration / Instant / Time / Date / DateTime / etc.** —
+    all user-side `StructLit`, migrated with Phase 1e-struct-i.
+  - **FileStat / ProcessResult / MockCall / TestRunner /
+    Platform / MockPlatform / __JsonParser** — user-side
+    `StructLit`, migrated with Phase 1e-struct-i.
 
 After this slice ships, no semantic change is visible to
 user code — the IR predicates still gate on `ArrayType`
@@ -120,7 +121,7 @@ sentinel.
 Tests: existing e2e suite must stay green (no behavior
 change is the contract).
 
-### Phase 1e-struct-i: layout migration in IR StructLit
+### Phase 1e-struct-i: layout migration in IR StructLit (SHIPPED, PR #1239)
 
 Add an 8-byte header to user `StructLit`-allocated values:
 
@@ -147,7 +148,7 @@ After this slice, user structs allocated via `StructLit`
 carry an rc word but the IR predicates still don't fire on
 them, so no inc/dec activity. Tests stay green.
 
-### Phase 1e-struct-ii: widen `needsRcIncOnAlias`
+### Phase 1e-struct-ii: widen `needsRcIncOnAlias` (SHIPPED, PR #1242)
 
 Accept `ast.StructType` whose name is in `info.Structs`.
 Inc emissions fire at the same alias sites as the array
@@ -166,7 +167,7 @@ shipped first so the sentinel exists on runtime structs;
 otherwise an inc on `var w = open_writer(...)`'s result
 corrupts memory.
 
-### Phase 1e-struct-iii: widen `emitRcDecLocalsAtExit` + zero-init
+### Phase 1e-struct-iii: widen `emitRcDecLocalsAtExit` + zero-init (SHIPPED, PR #1244)
 
 Mirror the array exit-dec sweep for struct-typed locals:
 
@@ -179,7 +180,7 @@ Mirror the array exit-dec sweep for struct-typed locals:
 Same widening shape as Phase 1d-v: gate on the rc-tracked
 type set (`ArrayType` plus user-declared `StructType`).
 
-### Phase 1e-struct-iv: widen `isRcTrackedLocal` (dec-on-overwrite)
+### Phase 1e-struct-iv: widen `isRcTrackedLocal` (dec-on-overwrite, in this PR)
 
 `y = x;` must dec `y`'s old value before storing `x`. The
 predicate already mirrors `needsRcIncOnAlias`; widening it to
