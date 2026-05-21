@@ -252,3 +252,30 @@ func TestWasiCliStdoutInstanceTypeBody_Bytes(t *testing.T) {
 		t.Errorf("WasiCliStdoutInstanceTypeBody(3) mismatch\ngot  % x\nwant % x", got, want)
 	}
 }
+
+// TestInnerTypeBorrow_Bytes pins `borrow<0>` defvaltype bytes.
+func TestInnerTypeBorrow_Bytes(t *testing.T) {
+	got := component.InnerTypeBorrow(0)
+	want := []byte{0x68, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeBorrow(0) = % x, want % x", got, want)
+	}
+}
+
+// TestInnerTypeListU8_Bytes pins `list<u8>` defvaltype bytes.
+func TestInnerTypeListU8_Bytes(t *testing.T) {
+	got := component.InnerTypeListU8
+	want := []byte{0x70, 0x7d}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeListU8 = % x, want % x", got, want)
+	}
+}
+
+// TestInnerTypeResultErr_Bytes pins `result<_, err=5>` bytes.
+func TestInnerTypeResultErr_Bytes(t *testing.T) {
+	got := component.InnerTypeResultErr(5)
+	want := []byte{0x6a, 0x00, 0x01, 0x05}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeResultErr(5) = % x, want % x", got, want)
+	}
+}

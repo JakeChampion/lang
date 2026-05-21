@@ -209,6 +209,43 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes
 // absent).
 var InnerTypeResultEmpty = []byte{0x6a, 0x00, 0x00}
 
+// InnerTypeBorrow returns the defvaltype body bytes for a
+// `borrow<typeidx>` handle type. Used by resource-method
+// signatures where the receiver (self) is a borrowed handle to
+// a resource defined elsewhere in the same scope.
+//
+// Encoding:
+//
+//	68            -- borrow form (0x68)
+//	<typeidx>     -- uleb: the resource typeidx the borrow refers to
+func InnerTypeBorrow(resourceTypeidx uint32) []byte {
+	out := []byte{0x68}
+	out = leb128.UlebU64(out, uint64(resourceTypeidx))
+	return out
+}
+
+// InnerTypeListU8 is the defvaltype body bytes for `list<u8>` —
+// the canonical-ABI byte-buffer shape used by wasi:io/streams's
+// `blocking-write-and-flush(contents: list<u8>)` and similar.
+//
+// Encoding: `70 7d` (list form + u8 cvaltype).
+var InnerTypeListU8 = []byte{0x70, CValtypeU8}
+
+// InnerTypeResultErr returns the defvaltype body for a
+// `result<_, err=<typeidx>>` — an err-only result whose error
+// arm carries the given typeidx. The ok arm is empty.
+//
+// Encoding:
+//
+//	6a            -- result form
+//	00            -- ok absent
+//	01 <typeidx>  -- err present + typeidx uleb
+func InnerTypeResultErr(errTypeidx uint32) []byte {
+	out := []byte{0x6a, 0x00, 0x01}
+	out = leb128.UlebU64(out, uint64(errTypeidx))
+	return out
+}
+
 // OuterAliasTypeDecl returns the bytes for an instance-type
 // "alias outer" decl that exposes a parent-scope component type
 // as an inner type in the enclosing instance type body. Used
