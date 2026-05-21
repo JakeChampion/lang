@@ -30,15 +30,22 @@
 //     OpCall.Str = Import.Name lowers to `call <import idx>`.
 //   - Memory: a 1-page linear memory + single global (the bump
 //     allocator's heap-top) are emitted only when the function
-//     uses any memory or alloc op. Heap starts at byte 1024
-//     (leaves room for future static data).
+//     uses any memory, alloc, or string-literal op.
+//   - String literals (OpConstString): each unique literal is
+//     interned into a data segment starting at byte 16; the op
+//     lowers to a push of the segment offset. Consumers read
+//     bytes via OpLoad8U / OpLoad. The bump allocator starts
+//     past the pool's end (16-byte aligned, min 1024).
 //
 // Not yet supported:
 //
-//   - f32 / f64 / string values.
+//   - f32 / f64 values.
 //   - Float memory ops (OpLoadF, OpStoreF).
 //   - Multi-page memory + memory.grow.
 //   - Pair-return.
+//   - String length companion (OpConstString returns only the
+//     pointer; consumers that need a length must look it up
+//     elsewhere).
 //
 // EmitModule writes the function under the export name passed in
 // (typically "main"). The emitted module imports nothing, so it
@@ -64,10 +71,15 @@ import (
 // support — wasmssa only ever declares this single global.
 const heapGlobalIdx uint32 = 0
 
+// stringPoolStart is the byte offset where the string-literal
+// data segment begins. Leaves a 16-byte reserved region for
+// future header / sentinel use.
+const stringPoolStart = 16
+
 // heapInitOffset is the byte offset at which the bump allocator
-// starts handing out memory. Leaves a small reserved region at
-// the bottom for static data (currently unused; placeholder for
-// future const-string + literal-data work).
+// starts handing out memory when there are no string literals.
+// Modules with strings start the heap right after the pool,
+// rounded up to 16-byte alignment for safety.
 const heapInitOffset = 1024
 
 // Import describes an externally-provided wasm function the
@@ -116,7 +128,8 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	// Self-function lives just after the imports.
 	selfFuncIdx := uint32(len(importList))
 
-	body, valueToLocal, valueWidth, err := emitFunc(f, importIdx, selfFuncIdx)
+	pool := buildStringPool(f)
+	body, valueToLocal, valueWidth, err := emitFunc(f, importIdx, selfFuncIdx, pool)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +188,7 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	// usage. The global is the bump-allocator's heap-top pointer.
 	if usesMemory(f) {
 		out = sections.EncodeMemorySection(out, 1, -1)
-		initExpr := inst.InstEnd(inst.InstI32Const(nil, heapInitOffset))
+		initExpr := inst.InstEnd(inst.InstI32Const(nil, heapInitFor(pool)))
 		out = sections.EncodeGlobalSection(out,
 			[]byte{encode.ValtypeI32},
 			[]byte{0x01}, // mutable
@@ -200,6 +213,20 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 	codeSectionBody := leb128.UlebU32(nil, 1) // one function entry
 	codeSectionBody = append(codeSectionBody, funcBody...)
 	out = encode.PutSection(out, encode.SectionCode, codeSectionBody)
+
+	// Data section: emit one active segment per interned string.
+	// Each segment lays its bytes down at the offset assigned by
+	// buildStringPool; OpConstString lowers to i32.const <offset>
+	// so loads at those offsets find the literal bytes.
+	if pool != nil {
+		offsets := make([]int32, 0, len(pool.order))
+		initBytes := make([][]byte, 0, len(pool.order))
+		for _, s := range pool.order {
+			offsets = append(offsets, pool.offsets[s])
+			initBytes = append(initBytes, []byte(s))
+		}
+		out = sections.EncodeDataSection(out, offsets, initBytes)
+	}
 
 	return out, nil
 }
@@ -247,9 +274,12 @@ type emitCtx struct {
 	// (32 or 64). Used by emitRet to pick the right placeholder
 	// when TermRet has no value.
 	returnWidth int8
+	// stringPool holds the byte-offsets of interned string
+	// literals so OpConstString can lower to an i32.const push.
+	stringPool *stringPool
 }
 
-func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32) ([]byte, map[int32]uint32, map[int32]int8, error) {
+func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32, pool *stringPool) ([]byte, map[int32]uint32, map[int32]int8, error) {
 	// Validate OpCall callees: must be either self-recursion
 	// (callee name == f.Name) or one of the declared imports.
 	for _, b := range f.Blocks {
@@ -278,6 +308,7 @@ func emitFunc(f *ssa.Func, importIdx map[string]uint32, selfFuncIdx uint32) ([]b
 		importIdx:    importIdx,
 		selfFuncIdx:  selfFuncIdx,
 		returnWidth:  rw,
+		stringPool:   pool,
 	}
 	nextLocal := uint32(0)
 	rparams := realParams(f)
@@ -508,12 +539,71 @@ func usesMemory(f *ssa.Func) bool {
 				ssa.OpLoad8S, ssa.OpLoad8U,
 				ssa.OpLoad16S, ssa.OpLoad16U,
 				ssa.OpStore8, ssa.OpStore16,
-				ssa.OpAlloc:
+				ssa.OpAlloc,
+				ssa.OpConstString:
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// stringPool tracks unique string literals from a function and
+// the byte offsets where their bytes live in linear memory. The
+// pool is built by buildStringPool by pre-scanning ops and then
+// fed into the data section + emitOp's OpConstString lowering.
+type stringPool struct {
+	offsets map[string]int32
+	order   []string // deterministic emission order (insertion)
+	nextOff int32
+}
+
+// buildStringPool scans `f` for OpConstString ops, interning each
+// unique literal and assigning it a byte offset. Returns a pool
+// with offsets starting at stringPoolStart. Returns nil when the
+// function contains no string literals.
+func buildStringPool(f *ssa.Func) *stringPool {
+	var p *stringPool
+	intern := func(s string) {
+		if p == nil {
+			p = &stringPool{
+				offsets: map[string]int32{},
+				nextOff: stringPoolStart,
+			}
+		}
+		if _, ok := p.offsets[s]; ok {
+			return
+		}
+		p.offsets[s] = p.nextOff
+		p.order = append(p.order, s)
+		p.nextOff += int32(len(s))
+	}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == ssa.OpConstString {
+				intern(op.Str)
+			}
+		}
+	}
+	return p
+}
+
+// heapInitFor returns the byte offset at which the bump
+// allocator should start, given an optional string pool. With
+// strings, the heap starts past the pool's end (rounded up to
+// 16-byte alignment). Without strings, falls back to
+// heapInitOffset.
+func heapInitFor(p *stringPool) int32 {
+	if p == nil {
+		return heapInitOffset
+	}
+	end := p.nextOff
+	const align = 16
+	end = (end + align - 1) &^ (align - 1)
+	if end < heapInitOffset {
+		end = heapInitOffset
+	}
+	return end
 }
 
 // memarg widths (log2 alignment) for the i32 load/store family.
@@ -534,6 +624,19 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 		} else {
 			body = inst.InstI32Const(body, int32(op.Imm))
 		}
+		return storeResult(body, op, ctx), nil
+	case ssa.OpConstString:
+		// Look up the literal's byte offset in the data segment.
+		// The pool was built from a pre-scan of the function so
+		// every OpConstString must have an offset.
+		if ctx.stringPool == nil {
+			return nil, fmt.Errorf("wasmssa: OpConstString without a string pool")
+		}
+		off, ok := ctx.stringPool.offsets[op.Str]
+		if !ok {
+			return nil, fmt.Errorf("wasmssa: OpConstString %q missing from pool", op.Str)
+		}
+		body = inst.InstI32Const(body, off)
 		return storeResult(body, op, ctx), nil
 	case ssa.OpNeg:
 		// neg x → 0 - x; push 0, push x, sub.

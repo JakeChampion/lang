@@ -354,6 +354,50 @@ func TestRuntimeI64Add(t *testing.T) {
 	}
 }
 
+// TestRuntimeStringFirstByte — OpConstString with "Hello",
+// load the first byte (i32.load8_u), return as i32. The data
+// segment + memory must wire up so that byte 'H' (= 72) is
+// actually in linear memory at the pool offset.
+func TestRuntimeStringFirstByte(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		entry := f.NewBlock()
+		strV := f.AddOp(entry, ssa.OpConstString)
+		entry.Ops[0].Str = "Hello"
+		b0 := f.AddOp(entry, ssa.OpLoad8U, strV)
+		f.SetRet(entry, b0)
+		return f
+	}
+	got := runWasmtime(t, build())
+	if got != 72 { // 'H'
+		t.Errorf("first byte = %d, want 72 ('H')", got)
+	}
+}
+
+// TestRuntimeStringByteIndex — string + index → return the
+// indexed byte. Verifies pool offsets + memory addressing for
+// non-zero indices.
+func TestRuntimeStringByteIndex(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		i := f.AddParam()
+		entry := f.NewBlock()
+		strV := f.AddOp(entry, ssa.OpConstString)
+		entry.Ops[0].Str = "abcdef"
+		addrOp := &ssa.Op{Kind: ssa.OpAdd, Result: f.NewValue(), Args: []ssa.Value{strV, i}}
+		entry.Ops = append(entry.Ops, addrOp)
+		byteOp := f.AddOp(entry, ssa.OpLoad8U, addrOp.Result)
+		f.SetRet(entry, byteOp)
+		return f
+	}
+	for idx, want := range []int{'a', 'b', 'c', 'd', 'e', 'f'} {
+		got := runWasmtime(t, build(), strconv.Itoa(idx))
+		if got != want {
+			t.Errorf("byte at %d = %d, want %d (%c)", idx, got, want, want)
+		}
+	}
+}
+
 // TestRuntimeI64Mix — a function with i64 params, a small loop,
 // and an i64 return. Verifies i64 locals + i64 ops + i64 phi
 // (via the relooper) all flow correctly.
@@ -414,6 +458,28 @@ func TestRuntimeI64Mix(t *testing.T) {
 		if int64(got) != c.want {
 			t.Errorf("i64 sum(%d) = %d, want %d", c.n, got, c.want)
 		}
+	}
+}
+
+// TestRuntimeStringDedup — two OpConstString ops with the same
+// literal should share a single offset in the pool. Returns the
+// difference of the two pointers — 0 means dedupped.
+func TestRuntimeStringDedup(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		entry := f.NewBlock()
+		a := f.AddOp(entry, ssa.OpConstString)
+		entry.Ops[0].Str = "shared"
+		b := f.AddOp(entry, ssa.OpConstString)
+		entry.Ops[1].Str = "shared"
+		diffOp := &ssa.Op{Kind: ssa.OpSub, Result: f.NewValue(), Args: []ssa.Value{a, b}}
+		entry.Ops = append(entry.Ops, diffOp)
+		f.SetRet(entry, diffOp.Result)
+		return f
+	}
+	got := runWasmtime(t, build())
+	if got != 0 {
+		t.Errorf("dedup diff = %d, want 0", got)
 	}
 }
 
