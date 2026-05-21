@@ -6156,8 +6156,22 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	default:
 		return false
 	}
-	_, isArr := b.exprType(e).(ast.ArrayType)
-	return isArr
+	t := b.exprType(e)
+	if _, isArr := t.(ast.ArrayType); isArr {
+		return true
+	}
+	// Phase 1e-struct-ii: user-declared struct values now carry
+	// rc headers (either real rc=1 from StructLit lowering or
+	// the static-sentinel 0x80000000 from runtime helpers like
+	// __lang_make_handle / map_new_impl / __map_iter_impl).
+	// Either way, calling __lang_rc_inc/dec on a struct pointer
+	// is safe — the inc/dec helpers short-circuit on the high
+	// bit so runtime-owned values stay shareable, and user-
+	// allocated values pick up real rc tracking.
+	if _, isStruct := t.(ast.StructType); isStruct {
+		return true
+	}
+	return false
 }
 
 func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
