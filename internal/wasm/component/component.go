@@ -280,6 +280,37 @@ func PutCanonSectionLowerWithMemory(buf []byte, funcIdx uint32, memIdx uint32) [
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLowerWithMemoryRealloc emits a canon-lower entry
+// carrying both `memory` and `realloc` canonical-ABI options. The
+// realloc option is required when the lowered function needs the
+// canonical-ABI machinery to allocate space in linear memory at
+// the boundary — typically when receiving a host-supplied list /
+// string from the host through a return value (canon LOWER of a
+// function returning a heap-allocated value).
+//
+// Most preview-2 imports with list params only need memory (the
+// caller provides the bytes); imports with list / string returns
+// (or with results carrying lists in their payload) need both.
+//
+// Opts encoding (vec of canonopt, sorted by canonical-ABI
+// convention but the binary form is unordered):
+//
+//	03 m:<core memidx>      -- memory
+//	04 f:<core funcidx>     -- realloc
+func PutCanonSectionLowerWithMemoryRealloc(buf []byte, funcIdx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)                       // vec(1) canons
+	body = append(body, 0x01)                            // canon-lower
+	body = append(body, 0x00)                            // function-lower sub-tag
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = leb128.UlebU64(body, 2)                       // opts vec(2)
+	body = append(body, 0x03)                            // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = append(body, 0x04)                            // canonopt: realloc
+	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCoreInstanceSectionFromOneFuncExport emits a core-instance
 // section with one "instance-from-exports" entry packaging a
 // single core func. Mirrors

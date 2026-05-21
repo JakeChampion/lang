@@ -104,3 +104,21 @@ func TestPutCanonSectionLowerWithMemory_Bytes(t *testing.T) {
 		t.Errorf("PutCanonSectionLowerWithMemory(1, 0) = % x, want % x", got, want)
 	}
 }
+
+// TestPutCanonSectionLowerWithMemoryRealloc_Bytes pins the bytes
+// of a canon-lower entry carrying both memory + realloc opts.
+// Expected shape:
+//
+//	08 09       -- section id 8 (canon), body size 9
+//	01          -- vec(1) canons
+//	01 00 02    -- canon-lower, function sub-tag, funcIdx 2
+//	02          -- opts vec(2)
+//	03 00       -- canonopt: memory (0x03), memidx 0
+//	04 05       -- canonopt: realloc (0x04), funcidx 5
+func TestPutCanonSectionLowerWithMemoryRealloc_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLowerWithMemoryRealloc(nil, 2, 0, 5)
+	want := []byte{0x08, 0x09, 0x01, 0x01, 0x00, 0x02, 0x02, 0x03, 0x00, 0x04, 0x05}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLowerWithMemoryRealloc(2, 0, 5) = % x, want % x", got, want)
+	}
+}
