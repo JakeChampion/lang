@@ -17,20 +17,25 @@
 //     pointed at the next block).
 //  4. Terminators:
 //      - TermRet → push value + return.
-//      - TermBr → if target is the next RPO block, fall through;
-//        otherwise emit `br $depth` where depth = rpoIdx[target]
-//        - rpoIdx[current] - 1.
-//      - TermBrIf → push cond. If True is next-RPO, flip cond
-//        via i32.eqz + br_if to False's depth. If False is
-//        next-RPO, br_if to True's depth. Otherwise br_if T,
-//        br F.
+//      - TermBr → write phi-args at target, then if target is
+//        the next RPO block fall through, otherwise emit
+//        `br $depth`.
+//      - TermBrIf → write phi-args at BOTH arms first (the locals
+//        are independent so the not-taken side's writes are
+//        dead but harmless), then push cond. If True is next-RPO,
+//        flip cond via i32.eqz + br_if to False's depth. If
+//        False is next-RPO, br_if to True's depth. Otherwise
+//        br_if T, br F.
 //
-// Loops + phis aren't yet supported. The relooper rejects
-// functions containing either. Most CFG shapes the existing
+// Phi-arg pre-writing for BOTH brif arms is safe because each
+// phi has a unique result Value (and hence a unique wasm local).
+// Writing T's phi locals on the F-taken path is dead work but
+// can't corrupt F's state.
+//
+// Loops aren't yet supported. The relooper rejects any function
+// containing a natural loop. Most CFG shapes the existing
 // classifiers don't recognise (nested early-returns, switch
-// trees, composed diamonds without phis) lift+optimize without
-// phis at merge points, so this restricted relooper still
-// unlocks a meaningful slice of real programs.
+// trees, composed diamonds with phis) are acyclic.
 package wasmssa
 
 import (
@@ -59,11 +64,6 @@ func emitRelooper(f *ssa.Func, ctx *emitCtx) ([]byte, error) {
 	for _, b := range f.Blocks {
 		if _, ok := rpoIdx[b]; !ok {
 			return nil, fmt.Errorf("relooper: unreachable block in f.Blocks")
-		}
-		for _, op := range b.Ops {
-			if op.Kind == ssa.OpPhi {
-				return nil, fmt.Errorf("relooper: phis at merges not yet supported")
-			}
 		}
 	}
 
@@ -114,6 +114,8 @@ func lowerReloopTerm(body []byte, b *ssa.Block, curRPO int, rpoIdx map[*ssa.Bloc
 		if !ok || tRPO <= curRPO {
 			return nil, fmt.Errorf("relooper: TermBr target isn't forward in RPO")
 		}
+		// Write target's phi-args from b before branching.
+		body = writePhiArgs(body, target, b, ctx)
 		if tRPO == curRPO+1 {
 			return body, nil // fall through
 		}
@@ -130,6 +132,16 @@ func lowerReloopTerm(body []byte, b *ssa.Block, curRPO int, rpoIdx map[*ssa.Bloc
 		fRPO, fok := rpoIdx[fb]
 		if !tok || !fok || tRPO <= curRPO || fRPO <= curRPO {
 			return nil, fmt.Errorf("relooper: TermBrIf arm isn't forward in RPO")
+		}
+		// Pre-write phi-args for both arms. Locals are unique per
+		// phi result, so the not-taken side's writes are dead but
+		// can't corrupt the taken side's state. Skip phi-writes
+		// when both arms target the same block — they'd duplicate.
+		if t == fb {
+			body = writePhiArgs(body, t, b, ctx)
+		} else {
+			body = writePhiArgs(body, t, b, ctx)
+			body = writePhiArgs(body, fb, b, ctx)
 		}
 		nextRPO := curRPO + 1
 		body = pushValue(body, b.Term.Cond, ctx)

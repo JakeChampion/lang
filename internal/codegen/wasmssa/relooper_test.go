@@ -202,6 +202,106 @@ func TestRelooperDiamondToDiamond(t *testing.T) {
 	})
 }
 
+// TestRelooperPhiAtMerge — the relooper handles a CFG with a
+// phi at a merge block. Shape:
+//
+//	entry ─brif c─→ a ─br─→ cb ─br─→ d ─ret
+//	          └─→ b ─br──↗
+//
+// cb has a phi: phi(a: 10, b: 20). d returns the phi. With
+// c=1 the answer is 10; with c=0 the answer is 20.
+func TestRelooperPhiAtMerge(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		c := f.AddParam()
+		entry := f.NewBlock()
+		a := f.NewBlock()
+		b := f.NewBlock()
+		cb := f.NewBlock()
+		d := f.NewBlock()
+
+		ten := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 10
+		twenty := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[1].Imm = 20
+		f.SetBrIf(entry, c, a, b)
+		f.SetBr(a, cb)
+		f.SetBr(b, cb)
+		phi := f.AddPhi(cb, ten, twenty)
+		f.SetBr(cb, d)
+		f.SetRet(d, phi)
+		return f
+	}
+	mod, err := EmitModule(build(), "main")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	runRelooperCase(t, mod, "main", []relooperCase{
+		{args: []string{"1"}, want: 10},
+		{args: []string{"0"}, want: 20},
+	})
+}
+
+// TestRelooperPhiCascade — two phis flowing through nested
+// diamonds. Tests that pre-writing phi args for both arms of
+// a brif doesn't corrupt state across multiple merges.
+//
+//	entry ─brif p─→ pT ─br─→ m1 ─brif q─→ qT ─br─→ m2 ─ret(phi2)
+//	          └─→ pF ─br──↗          └─→ qF ─br──↗
+//
+// m1 has phi1: phi(pT: 100, pF: 200).
+// m2 has phi2: phi(qT: phi1+1, qF: phi1+2).
+func TestRelooperPhiCascade(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("cascade")
+		p := f.AddParam()
+		q := f.AddParam()
+		entry := f.NewBlock()
+		pT := f.NewBlock()
+		pF := f.NewBlock()
+		m1 := f.NewBlock()
+		qT := f.NewBlock()
+		qF := f.NewBlock()
+		m2 := f.NewBlock()
+
+		c100 := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[0].Imm = 100
+		c200 := f.AddOp(entry, ssa.OpConstInt)
+		entry.Ops[1].Imm = 200
+		f.SetBrIf(entry, p, pT, pF)
+		f.SetBr(pT, m1)
+		f.SetBr(pF, m1)
+		phi1 := f.AddPhi(m1, c100, c200)
+		f.SetBrIf(m1, q, qT, qF)
+
+		one := f.AddOp(qT, ssa.OpConstInt)
+		qT.Ops[0].Imm = 1
+		qTval := f.AddOp(qT, ssa.OpAdd, phi1, one)
+		f.SetBr(qT, m2)
+
+		two := f.AddOp(qF, ssa.OpConstInt)
+		qF.Ops[0].Imm = 2
+		qFval := f.AddOp(qF, ssa.OpAdd, phi1, two)
+		f.SetBr(qF, m2)
+
+		phi2 := f.AddPhi(m2, qTval, qFval)
+		f.SetRet(m2, phi2)
+		return f
+	}
+	mod, err := EmitModule(build(), "cascade")
+	if err != nil {
+		t.Fatalf("EmitModule: %v", err)
+	}
+	validateModule(t, mod)
+	runRelooperCase(t, mod, "cascade", []relooperCase{
+		{args: []string{"1", "1"}, want: 101}, // p=T,q=T → 100+1
+		{args: []string{"1", "0"}, want: 102}, // p=T,q=F → 100+2
+		{args: []string{"0", "1"}, want: 201}, // p=F,q=T → 200+1
+		{args: []string{"0", "0"}, want: 202}, // p=F,q=F → 200+2
+	})
+}
+
 // relooperCase pairs args (as strings to pass to wasmtime
 // --invoke) with the expected i32 return value.
 type relooperCase struct {
