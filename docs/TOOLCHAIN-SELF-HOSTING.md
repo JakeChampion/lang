@@ -466,24 +466,37 @@ End-to-end exit code 42 demo (covered by
     and `TestRawInstanceTypeBody_ResourceDecl` (proves
     resource declarations now encode — first step toward the
     streams / filesystem migrations).
-  - **fd_write / fd_read migration (planned, big arc).** The
-    preview-2 shape for `print()` is:
+  - **fd_write / fd_read migration (in progress, big arc).**
+    The preview-2 shape for `print()` is:
       `wasi:cli/stdout::get-stdout() -> own<output-stream>`
       `wasi:io/streams::[method]output-stream.blocking-write-and-flush(self: borrow<output-stream>, contents: list<u8>) -> result<_, stream-error>`
     A canonical wasm-tools-produced component for these
-    imports has 3 sub-components (the user code, a
-    trampoline-table module, an indirect-call fixup module),
-    3 instance imports (wasi:io/error, wasi:io/streams,
-    wasi:cli/stdout) with resource declarations + outer type
-    aliases between them, canon-lower with `mem+realloc` opts,
-    and a trampoline-table pattern for the dependency cycle
-    (core module imports lowered funcs, but lowered funcs need
-    core memory which only exists after instantiation). This
-    is genuinely multi-PR foundation work — each piece
-    (resources / outer aliases / mem+realloc opts / trampoline)
-    is its own slice. The RawInstanceTypeBody escape hatch
-    unblocks declaring the instance types; the rest needs new
-    composers + significant restructuring of the wrap pipeline.
+    imports has 3 instance imports (wasi:io/error,
+    wasi:io/streams, wasi:cli/stdout) with resource
+    declarations + outer type aliases between them, plus 3
+    core modules (user / trampoline / fixup) wired to satisfy
+    the canon-lower / instantiation cycle.
+    **`component.WrapWasiPrintComponent` (#1240)** ties every
+    foundation piece together and produces this canonical
+    shape from a user core module that imports the two WASI
+    funcs + exports memory + cabi_realloc. The produced
+    component validates under `wasm-tools`; running it
+    end-to-end under `wasmtime` requires a user core that
+    actually calls `get_stdout` + `blocking_write_and_flush`
+    AND a top-level `wasi:cli/run` export to give wasmtime an
+    entry point. The remaining slices are:
+
+    1. Combine the print imports with the cli-run export shape
+       (analogous to `WrapWasiImportedAsCliRun` but with the
+       print imports' trampoline pattern).
+    2. Migrate wasmbin's `__lang_print` body to call the
+       preview-2 funcs instead of preview-1 `fd_write` (the
+       core-side codegen change — needs a stdout-handle cache
+       slot in memory).
+    3. Wire the driver registry to recognise the preview-2
+       print imports and route through the new wrap helper.
+    4. End-to-end test: Lang `print("hello")` runs under
+       `wasmtime run prog.wasm` (no adapter).
   - **Still to do (smaller migrations):** `clock_time_get`
     realtime (`wasi:clocks/wall-clock::now -> datetime` —
     needs canonical-ABI memory opts + the canon-lower
