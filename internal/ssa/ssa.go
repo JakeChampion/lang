@@ -427,6 +427,14 @@ type Op struct {
 	Imm int64   // OpConstInt / OpConstBool
 	F64 float64 // OpConstFloat
 	Str string  // OpConstString / OpCall (callee name)
+
+	// Width selects between i32 and i64 for integer ops where
+	// the kind alone doesn't disambiguate (OpAdd, OpConstInt,
+	// OpEq, etc.). 0 (or 32) means i32; 64 means i64. Float
+	// ops carry width in their kind (OpFAdd vs hypothetical
+	// OpF32Add never materialised — floats are f64 in SSA);
+	// this field is only meaningful for integer kinds.
+	Width int8
 }
 
 // TermKind enumerates terminator shapes. Every Block ends
@@ -500,6 +508,18 @@ type Func struct {
 	Params []Value
 	Blocks []*Block
 	Entry  *Block
+
+	// ParamWidths is the bit-width of each param in `Params`
+	// (excluding the zero sentinel) — 32 by default, 64 when
+	// the param is i64. Parallel to `realParams(f)` in callers.
+	// Empty / nil means "all 32 (i32)" — backwards-compatible
+	// for builders that don't populate it.
+	ParamWidths []int8
+	// ReturnWidth is the bit-width of the function's return
+	// value. 0 (or 32) means i32; 64 means i64. Reserved
+	// values for float types will be added when the wasmssa
+	// backend gains float support.
+	ReturnWidth int8
 
 	// nextValueID is the counter the Builder uses to mint
 	// fresh Values. Per-Func to keep IDs dense + predictable
