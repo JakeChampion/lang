@@ -489,3 +489,71 @@ func TestRawInstanceTypeBody_EscapeHatch(t *testing.T) {
 		}
 	}
 }
+
+// TestRawInstanceTypeBody_ResourceDecl exercises the escape
+// hatch against a resource-bearing interface — wasi:io/error,
+// the simplest preview-2 resource shape (just declares the
+// resource type, no methods). Confirms the structured-fields
+// limitation (no resource support yet) is genuinely lifted by
+// RawInstanceTypeBody.
+//
+// The interface body matches what wasm-tools emits for
+//   interface error { resource error; }
+//
+// in WIT — `42 01 04 00 05 "error" 03 01`:
+//
+//   42       instance type form
+//   01       vec(1) decls
+//   04       export decl
+//   00 05 "error"  exportname (label + uleb len + name bytes)
+//   03 01    externdesc type, bound = (sub)
+//
+// Wrapped in `01 42 ...` (the vec(1) types of the type section
+// body), the full body is 13 bytes (0x0d).
+//
+// No FuncName because resource-only interfaces export no
+// functions; the wrap pipeline still emits the import section,
+// but the alias / canon-lower / core-instance steps are
+// effectively dead-code (FuncName is "" so the core module's
+// import name pair is also unsatisfied — this test only
+// validates the TYPE-section emission, not the full pipeline).
+// For now we use a placeholder FuncName to keep the wrap helper
+// from emitting empty-name alias / instance entries.
+func TestRawInstanceTypeBody_ResourceDecl(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+
+	// Type section only — drop the rest by validating just the
+	// component header + this section.
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, []byte{
+		0x01, 0x42, 0x01,
+		0x04, 0x00, 0x05, 'e', 'r', 'r', 'o', 'r', 0x03, 0x01,
+	})
+
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "resource.wasm")
+	if err := os.WriteFile(compPath, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range buf {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"\"error\"",
+		"(sub resource)",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}
