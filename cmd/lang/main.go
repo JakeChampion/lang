@@ -40,11 +40,14 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/codegen/wasmssa"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -103,7 +106,7 @@ func formatLoadError(err error, srcs map[string]string, entryPath string) error 
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), or wasi-http (HTTP handler component implementing wasi:http/incoming-handler)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; i32-only, no WASI)")
 	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux, clang for arm64-darwin, x86_64-linux-gnu-gcc for x86-64")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
@@ -414,6 +417,30 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 	}
 
+	if target == "wasm-ssa" {
+		// Experimental SSA-direct backend (internal/codegen/wasmssa)
+		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR
+		// → ssa.Optimize → wasmssa.EmitModule. Currently covers i32
+		// programs only: arithmetic, control flow, recursion,
+		// memory ops (load/store/alloc). No WASI, no strings, no
+		// floats yet — see internal/codegen/wasmssa/emit.go's
+		// package doc for the supported surface.
+		//
+		// Output: a wasm core module exporting `main`. Run with
+		// `wasmtime run --invoke main module.wasm [args...]`.
+		if outPath == "" {
+			return 1, fmt.Errorf("-target wasm-ssa requires -o OUTPUT")
+		}
+		bin, err := buildWasmSSA(prog, info)
+		if err != nil {
+			return 1, fmt.Errorf("wasm-ssa: %v", err)
+		}
+		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
+
 	if target == "wasm-bin" {
 		// Binary backend (internal/codegen/wasmbin) — produces
 		// wasm core module bytes directly, no `wasm-tools parse`
@@ -660,6 +687,37 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 // linkDarwin writes asm to a temp .s file and invokes clang with
 // the aarch64-apple-darwin triple + lld's Mach-O backend to
 // produce a native arm64 macOS binary at outPath. Works on both
+// buildWasmSSA lowers the program through ir.LowerWith →
+// ssa.LiftFromIR → ssa.Optimize → wasmssa.EmitModule and
+// returns the wasm core module bytes that export `main`.
+// Returns an error when the program has no `main` function,
+// when the lift fails (gap in lift coverage), or when emit
+// rejects the SSA (gap in wasmssa coverage).
+//
+// Used by -target wasm-ssa. Ptr-width is fixed at 4 (wasm32).
+func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
+	irProg, err := ir.LowerWith(prog, info, 4)
+	if err != nil {
+		return nil, fmt.Errorf("ir.LowerWith: %v", err)
+	}
+	var target *ir.Func
+	for _, fn := range irProg.Funcs {
+		if fn.Name == "main" {
+			target = fn
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("no `main` function in program")
+	}
+	f, err := ssa.LiftFromIR(target)
+	if err != nil {
+		return nil, fmt.Errorf("ssa.LiftFromIR: %v", err)
+	}
+	ssa.Optimize(f)
+	return wasmssa.EmitModule(f, "main")
+}
+
 // Linux dev hosts (cross-compiling) and Macs natively as long
 // as clang + lld are installed. The output is a full Mach-O
 // executable that runs on Apple Silicon Macs without further
