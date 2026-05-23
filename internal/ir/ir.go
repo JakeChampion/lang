@@ -4145,6 +4145,19 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 				return t
 			}
 		}
+		// Bare payload-less enum variant in value position
+		// (`Green` in `(1, Green)`). Not a local / param, so the
+		// lookups above miss; resolve it as a variant so an
+		// enclosing TupleLit / StructLit sizes the slot at ptrW
+		// (IsPointerType(EnumType) == true) instead of the
+		// payloadSlotSize(nil) 4-byte default. Without this the
+		// store side packs the variant pointer at offset 4 on
+		// arm64 while the load side reads from offset 8 → garbage
+		// pointer → segfault. Same family as the StructLit /
+		// ArrayLit / TupleLit cases below.
+		if ename, _, _, ok := b.lookupVariantOn(x.Name, x.EnumName); ok {
+			return ast.EnumType{Name: ename}
+		}
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved
 		// outer-scope type on the AST node — needed when the
@@ -4372,6 +4385,16 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			}
 			if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
 				return sig.Result
+			}
+			// Variant constructor call (`Some(42)`, `Ok(x)`,
+			// `Red(...)`). Not in FuncSigs, so resolve via the
+			// variant table — an enclosing tuple/struct slot needs
+			// EnumType (→ IsPointerType, ptrW bytes) rather than
+			// the payloadSlotSize(nil) 4-byte default. Without this
+			// `(1, Some(42))` packs the variant pointer at offset 4
+			// on arm64 but the load reads offset 8 → segfault.
+			if ename, _, _, ok := b.lookupVariantOn(id.Name, id.EnumName); ok {
+				return ast.EnumType{Name: ename}
 			}
 			// Closure-typed local / param: `len(f())` where f is
 			// a Var or param of type `() => string`. Without this

@@ -13256,6 +13256,45 @@ function main(): i32 {
 	}
 }
 
+// Enum variant in a tuple slot — payload-less (`Green`) and
+// payload-bearing constructor (`Some(42)`). exprType returned nil
+// for a bare variant ident and for a variant constructor call, so
+// the enclosing TupleLit sized the variant element at 4 bytes while
+// the load side resolved EnumType (8 bytes on arm64). Pointer stored
+// at offset 4, read from offset 8 → segfault. Same family as the
+// struct / array / nested-tuple tuple-element fix.
+func TestArm64EnumVariantInTuple(t *testing.T) {
+	src := `enum Color { Red, Green, Blue }
+function main(): i32 {
+    // payload-less variant, scalar-first to expose the offset
+    var t: (i32, Color) = (1, Green);
+    if (t.0 != 1) { return 1; }
+    match (t.1) {
+        Red => { return 2; },
+        Green => { },
+        Blue => { return 3; }
+    }
+    // payload-bearing variant constructor
+    var u: (i32, Option[i32]) = (5, Some(42));
+    if (u.0 != 5) { return 4; }
+    match (u.1) {
+        Some(v) => { if (v != 42) { return 5; } },
+        None => { return 6; }
+    }
+    // variant first, scalar second
+    var w: (Color, i32) = (Blue, 99);
+    if (w.1 != 99) { return 7; }
+    match (w.0) {
+        Blue => { return 0; },
+        _ => { return 8; }
+    }
+    return 9;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (enum variant in tuple slot)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
