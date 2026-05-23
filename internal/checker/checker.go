@@ -5737,6 +5737,18 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.settleNumeric(ent.Key, hn.Args[0])
 				c.settleNumeric(ent.Value, hn.Args[1])
 			}
+			// Empty `Map {}` with a destination annotation: stamp
+			// K / V from the destination so the literal's type
+			// flows the right shape into the assignable check
+			// (via postSettleType) and into the IR's runtime
+			// keyKind / valKind tags. Without this, `var m:
+			// Map[string, i32] = Map {};` keeps the
+			// checkExpr-default `Map[i32, i32]` shape and the
+			// assignment rejects.
+			if len(ml.Entries) == 0 {
+				ml.KeyType = hn.Args[0]
+				ml.ValueType = hn.Args[1]
+			}
 		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 {
 			// Generic struct literal with a destination
 			// annotation: `var b: Box[i64] = Box { v: 100 }`.
@@ -6202,6 +6214,14 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			x.KeyType = newK
 			x.ValueType = newV
 			return ast.StructType{Name: "Map", Args: []ast.Type{newK, newV}}
+		}
+		// Empty `Map {}` whose K / V were stamped from the
+		// destination by settleNumeric. The `prior` here is the
+		// checkExpr-default `Map[i32, i32]`; surface the
+		// post-settle K / V so the assignable check sees the
+		// destination's shape.
+		if len(x.Entries) == 0 && x.KeyType != nil && x.ValueType != nil {
+			return ast.StructType{Name: "Map", Args: []ast.Type{x.KeyType, x.ValueType}}
 		}
 	case *ast.StructLit:
 		// Generic struct literal whose TypeArgs got committed
