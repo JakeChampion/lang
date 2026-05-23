@@ -277,6 +277,24 @@ func WrapWasiImportedAsCliRun(coreBytes []byte, imports []WasiImport, coreExport
 // lifted-export wrap (BuildWasiCliRunComponent etc.) for a
 // runnable end product if desired.
 func WrapWasiPrintComponent(coreBytes []byte) []byte {
+	return wrapWasiStreamWriteComponent(coreBytes, "wasi:cli/stdout@0.2.0", "get-stdout")
+}
+
+// WrapWasiEprintComponent is the wasi:cli/stderr sibling of
+// WrapWasiPrintComponent — wraps a core module that imports
+// `wasi:cli/stderr::get-stderr` + the blocking-write-and-flush
+// method into a preview-2 component. Same trampoline / fixup
+// shape; only the stdio interface differs.
+func WrapWasiEprintComponent(coreBytes []byte) []byte {
+	return wrapWasiStreamWriteComponent(coreBytes, "wasi:cli/stderr@0.2.0", "get-stderr")
+}
+
+// wrapWasiStreamWriteComponent is the shared implementation for
+// WrapWasiPrintComponent (stdout) and WrapWasiEprintComponent
+// (stderr). `cliInterface` / `getFuncName` select the stdio
+// interface; the wasi:io/error + wasi:io/streams imports and the
+// trampoline / fixup wiring are identical for both.
+func wrapWasiStreamWriteComponent(coreBytes []byte, cliInterface, getFuncName string) []byte {
 	buf := PutComponentHeader(nil)
 
 	// Type 0: wasi:io/error instance type. Import as instance 0.
@@ -292,10 +310,14 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 	// Top-level alias of `output-stream` → type 3.
 	buf = PutAliasSectionInstanceExportType(buf, 1, "output-stream")
 
-	// Type 4: wasi:cli/stdout instance type (references type 3).
-	// Import as instance 2.
-	buf = PutTypeSectionRawBody(buf, WasiCliStdoutInstanceTypeBody(3))
-	buf = PutImportSectionOneInstance(buf, "wasi:cli/stdout@0.2.0", 4)
+	// Type 4: wasi:cli/std{out,err} instance type (references
+	// type 3). Import as instance 2.
+	if getFuncName == "get-stderr" {
+		buf = PutTypeSectionRawBody(buf, WasiCliStderrInstanceTypeBody(3))
+	} else {
+		buf = PutTypeSectionRawBody(buf, WasiCliStdoutInstanceTypeBody(3))
+	}
+	buf = PutImportSectionOneInstance(buf, cliInterface, 4)
 
 	// Core modules: user (0), trampoline (1), fixup (2).
 	buf = PutCoreModuleSection(buf, coreBytes)
@@ -305,23 +327,23 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 	// Instantiate trampoline (no args) → core instance 0.
 	buf = PutCoreInstanceSectionInstantiate(buf, 1)
 
-	// Alias get-stdout from instance 2 → component func 0,
+	// Alias get-std{out,err} from instance 2 → component func 0,
 	// canon-lower it (no opts — `() -> handle` doesn't need
 	// memory) → core func 0, wrap as core instance 1.
-	buf = PutAliasSectionInstanceExportFunc(buf, 2, "get-stdout")
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, getFuncName)
 	buf = PutCanonSectionLowerNoOpts(buf, 0)
-	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-stdout", 0)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, getFuncName, 0)
 
 	// Alias "0" func from trampoline (core instance 0) → core
 	// func 1. Wrap as core instance 2 under the method name.
 	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
 	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]output-stream.blocking-write-and-flush", 1)
 
-	// Instantiate user core module with stdout=instance 1,
+	// Instantiate user core module with std{out,err}=instance 1,
 	// streams=instance 2 (the trampoline wrapper) → core
 	// instance 3.
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
-		[]string{"wasi:cli/stdout@0.2.0", "wasi:io/streams@0.2.0"},
+		[]string{cliInterface, "wasi:io/streams@0.2.0"},
 		[]uint32{1, 2})
 
 	// Alias memory from the user core instance + the trampoline's
@@ -385,6 +407,24 @@ func WrapWasiPrintComponent(coreBytes []byte) []byte {
 //   - export instance 3 as wasi:cli/run@0.2.0.
 func WrapWasiPrintAsCliRun(coreBytes []byte, coreExportName string) []byte {
 	buf := WrapWasiPrintComponent(coreBytes)
+	return appendCliRunExport(buf, coreExportName)
+}
+
+// WrapWasiEprintAsCliRun is the wasi:cli/stderr sibling of
+// WrapWasiPrintAsCliRun. Same cli-run tail; only the wrapped
+// stdio interface differs (stderr instead of stdout).
+func WrapWasiEprintAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiEprintComponent(coreBytes)
+	return appendCliRunExport(buf, coreExportName)
+}
+
+// appendCliRunExport adds the wasi:cli/run@0.2.0 export tail to a
+// component produced by wrapWasiStreamWriteComponent. Both the
+// stdout and stderr wraps leave the index spaces in the same
+// state (component types 5, component funcs 2, component
+// instances 3, core funcs 3, core instances 6), so the tail is
+// shared.
+func appendCliRunExport(buf []byte, coreExportName string) []byte {
 	buf = PutAliasSectionCoreExportFunc(buf, 3, coreExportName)
 	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 5)
 	buf = PutCanonSectionLiftNoOpts(buf, 3, 6)

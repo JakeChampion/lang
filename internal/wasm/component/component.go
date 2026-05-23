@@ -489,6 +489,23 @@ func WasiIoErrorInstanceTypeBody() []byte {
 //     get-stdout functype at inner typeidx 3.
 //  4. export "get-stdout" (func 3)
 func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
+	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stdout")
+}
+
+// WasiCliStderrInstanceTypeBody is the wasi:cli/stderr@0.2.0
+// sibling of WasiCliStdoutInstanceTypeBody. Same instance-type
+// shape — `get-stderr: func() -> output-stream` — only the
+// exported function name differs.
+func WasiCliStderrInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
+	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stderr")
+}
+
+// wasiCliStreamGetterInstanceTypeBody builds the shared
+// instance-type body for wasi:cli/stdout / wasi:cli/stderr —
+// both declare a single `<getFuncName>: func() -> output-stream`
+// referencing the wasi:io/streams output-stream resource at
+// `outerOutputStreamTypeidx`.
+func wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx uint32, getFuncName string) []byte {
 	body := []byte{0x01, 0x42, 0x05}
 	body = append(body, OuterAliasTypeDecl(1, outerOutputStreamTypeidx)...)
 	body = append(body, ExportTypeEqDecl("output-stream", 0)...)
@@ -499,7 +516,8 @@ func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
 		0x00, 0x02, // resultlist single anonymous, valtype = typeidx 2
 	)
 	body = append(body, 0x04, 0x00) // export decl, exportname kind label
-	body = append(body, 0x0a, 'g', 'e', 't', '-', 's', 't', 'd', 'o', 'u', 't')
+	body = append(body, byte(len(getFuncName)))
+	body = append(body, getFuncName...)
 	body = append(body, 0x01, 0x03) // externdesc func, typeidx 3
 	return body
 }

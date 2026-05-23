@@ -546,6 +546,13 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if usesPreview2EprintOnly(bin) {
+					comp := component.WrapWasiEprintAsCliRun(bin, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -957,19 +964,37 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 //
 // Mixed cases (print + something else) aren't supported yet.
 func usesPreview2PrintOnly(bin []byte) bool {
+	return usesPreview2StreamWriteOnly(bin, "wasi:cli/stdout@0.2.0", "get-stdout")
+}
+
+// usesPreview2EprintOnly is the wasi:cli/stderr sibling — reports
+// whether the imports are exactly get-stderr +
+// blocking-write-and-flush (the eprint-only shape).
+func usesPreview2EprintOnly(bin []byte) bool {
+	return usesPreview2StreamWriteOnly(bin, "wasi:cli/stderr@0.2.0", "get-stderr")
+}
+
+// usesPreview2StreamWriteOnly reports whether the core module's
+// imports are exactly the preview-2 stream-write pair —
+// `<cliInterface>::<getFuncName>` plus
+// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`
+// — and nothing else. Used to route print-only / eprint-only
+// programs through the dedicated trampoline-pattern wrap
+// helper (WrapWasiPrintAsCliRun / WrapWasiEprintAsCliRun).
+func usesPreview2StreamWriteOnly(bin []byte, cliInterface, getFuncName string) bool {
 	pairs := coreModuleImportPairs(bin)
 	if len(pairs) != 2 {
 		return false
 	}
-	hasStdout, hasWrite := false, false
+	hasGetter, hasWrite := false, false
 	for _, p := range pairs {
-		if p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout" {
-			hasStdout = true
+		if p.module == cliInterface && p.name == getFuncName {
+			hasGetter = true
 		} else if p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush" {
 			hasWrite = true
 		}
 	}
-	return hasStdout && hasWrite
+	return hasGetter && hasWrite
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
