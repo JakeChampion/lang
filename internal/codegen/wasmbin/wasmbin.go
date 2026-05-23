@@ -251,8 +251,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	//	72..79  reserved for future per-helper scratch
 	//	80..83  preview-2 stdout-handle init flag
 	//	84..87  preview-2 stdout-handle cache
-	//	88..    closure pair cells (8 bytes each)
-	const closuresBase = 88
+	//	88..91  preview-2 stderr-handle init flag
+	//	92..95  preview-2 stderr-handle cache
+	//	96..    closure pair cells (8 bytes each)
+	const closuresBase = 96
 	const maxClosureCells = (1024 - closuresBase) / 8
 	closureTableIdx := map[string]int{}
 	// progFuncTableIdx maps a user-function name to its position

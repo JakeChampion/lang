@@ -96,6 +96,16 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_get_stderr_p2": {
+		// Preview-2: wasi:cli/stderr@0.2.0::get-stderr() →
+		// own<output-stream>. Mirror of get-stdout; the result
+		// handle is cached in the stderrHandleAddr slot and
+		// feeds the preview-2 eprint helper.
+		module:  "wasi:cli/stderr@0.2.0",
+		name:    "get-stderr",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_blocking_write_and_flush_p2": {
 		// Preview-2: wasi:io/streams@0.2.0::
 		//   [method]output-stream.blocking-write-and-flush(
@@ -541,7 +551,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__lang_eprint"] {
-		in.add("wasi_fd_write")
+		if opts.Preview2WASI {
+			in.add("wasi_get_stderr_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_fd_write")
+		}
 	}
 	if helpers.set["__lang_write"] {
 		if opts.Preview2WASI {
@@ -726,10 +741,17 @@ const randomBufAddr = 60
 // fetched"; on first call the helper invokes get-stdout, stores
 // the handle, and sets init=1. Subsequent calls read the cached
 // handle. Lives at 80..87 (low-memory window past
-// strIdxScratchAddr; closuresBase bumped to 88 to make room).
+// strIdxScratchAddr).
+//
+// stderrInitAddr / stderrHandleAddr cache wasi:cli/stderr's
+// handle the preview-2 eprint helper consumes. Same shape as
+// the stdout slots; lives at 88..95. closuresBase is at 96 to
+// leave room for both.
 const (
 	stdoutInitAddr   = 80
 	stdoutHandleAddr = 84
+	stderrInitAddr   = 88
+	stderrHandleAddr = 92
 )
 
 // Cache for __lang_arg_at / __lang_env_at. Both helpers lazily
@@ -967,6 +989,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_random_bytes": buildRandomBytesBodyP2,
 	"__lang_print":        buildPrintBodyP2,
 	"__lang_write":        buildWriteBodyP2,
+	"__lang_eprint":       buildEprintBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -993,7 +1016,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 //	3: $dst
 //	4: $i
 func buildPrintBodyP2(idxs map[string]uint32) []byte {
-	return buildPrintLikeBodyP2(idxs, true)
+	return buildPrintLikeBodyP2(idxs, true, "wasi_get_stdout_p2", stdoutInitAddr, stdoutHandleAddr)
 }
 
 // buildWriteBodyP2 is the preview-2 variant of buildWriteBody.
@@ -1001,29 +1024,38 @@ func buildPrintBodyP2(idxs map[string]uint32) []byte {
 // pair `print` / `write` mirrors Go's `fmt.Println` /
 // `fmt.Print`.)
 func buildWriteBodyP2(idxs map[string]uint32) []byte {
-	return buildPrintLikeBodyP2(idxs, false)
+	return buildPrintLikeBodyP2(idxs, false, "wasi_get_stdout_p2", stdoutInitAddr, stdoutHandleAddr)
+}
+
+// buildEprintBodyP2 is the preview-2 variant of buildEprintBody.
+// Same shape as buildPrintBodyP2 (newline appended) but writes
+// via the stderr handle (wasi:cli/stderr::get-stderr cached in
+// stderrHandleAddr) instead of stdout.
+func buildEprintBodyP2(idxs map[string]uint32) []byte {
+	return buildPrintLikeBodyP2(idxs, true, "wasi_get_stderr_p2", stderrInitAddr, stderrHandleAddr)
 }
 
 // buildPrintLikeBodyP2 is the shared body builder for the
-// preview-2 print + write helpers. `withNewline` controls
-// whether a trailing '\n' is appended to the bytes the host
-// receives.
-func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool) []byte {
+// preview-2 print / write / eprint helpers. `withNewline`
+// controls whether a trailing '\n' is appended; `getHandleSym`
+// selects between get-stdout and get-stderr; `initAddr` /
+// `handleAddr` point at the cache slots for the chosen handle.
+func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym string, initAddr, handleAddr int32) []byte {
 	strLen := idxs["__lang_str_len"]
 	strByte := idxs["__lang_str_byte"]
 	alloc := idxs["__lang_alloc"]
-	getStdout := idxs["wasi_get_stdout_p2"]
+	getHandle := idxs[getHandleSym]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	var body []byte
-	// If !init: call get-stdout, cache handle, set init=1.
-	body = inst.InstI32Const(body, stdoutInitAddr)
+	// If !init: call get-<handle>, cache it, set init=1.
+	body = inst.InstI32Const(body, initAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, stdoutHandleAddr)
-	body = inst.InstCall(body, getStdout)
+	body = inst.InstI32Const(body, handleAddr)
+	body = inst.InstCall(body, getHandle)
 	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstI32Const(body, stdoutInitAddr)
+	body = inst.InstI32Const(body, initAddr)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
@@ -1079,9 +1111,9 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, 2)
 	}
-	// blocking-write-and-flush(stdout, dst, $L, retBuf).
-	// stdout = mem[stdoutHandleAddr]; retBuf = __lang_alloc(16).
-	body = inst.InstI32Const(body, stdoutHandleAddr)
+	// blocking-write-and-flush(handle, dst, $L, retBuf).
+	// handle = mem[handleAddr]; retBuf = __lang_alloc(16).
+	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 2)

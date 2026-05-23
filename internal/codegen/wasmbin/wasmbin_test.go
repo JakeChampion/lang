@@ -2170,8 +2170,8 @@ func TestEmitConstFuncInterning(t *testing.T) {
 	if a != b {
 		t.Fatalf("ptr1 = %q, ptr2 = %q — expected same address (interning failed)", a, b)
 	}
-	if a != "88" {
-		t.Fatalf("ptr = %q, want 88 (closuresBase)", a)
+	if a != "96" {
+		t.Fatalf("ptr = %q, want 96 (closuresBase)", a)
 	}
 }
 

@@ -9381,6 +9381,61 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithEprint drives a Lang program
+// that calls eprint("oops") through `-component-wrap-cli`. With
+// __lang_eprint migrated to preview-2 (wasi:cli/stderr +
+// wasi:io/streams), the program produces a component that writes
+// "oops\n" to STDERR under `wasmtime run` — stdout stays empty.
+func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "oops.lang")
+	src := []byte(`function main(): i32 {
+    eprint("oops");
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "oops.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (eprint) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	if !strings.Contains(string(printOut), "wasi:cli/stderr@0.2.0") {
+		t.Errorf("expected wasi:cli/stderr@0.2.0 import in component, got:\n%s", printOut)
+	}
+	runCmd := exec.Command("wasmtime", "run", compPath)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("eprint wrote to stdout = %q, want empty", stdout.String())
+	}
+	if got := stderr.String(); got != "oops\n" {
+		t.Errorf("wasmtime stderr = %q, want %q", got, "oops\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
 // that calls the stdlib `random_int(lo, hi)` helper (from
 // std/math) through `-component-wrap-cli`. random_int internally
