@@ -193,6 +193,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
 		g.emitAllocRuntime()
+		// __lang_alloc_box piggybacks on __lang_alloc: the
+		// enum-box runtime helpers (Option / Result / IoError
+		// builders) call it to get the static-sentinel rc
+		// header. Emit it whenever alloc is present so those
+		// helpers can reach it.
+		g.emitAllocBoxRuntime()
 	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
@@ -2714,6 +2720,37 @@ func (g *generator) emitRcDecRuntime() {
 	g.line(".size __lang_rc_dec, .-__lang_rc_dec")
 }
 
+// emitAllocBoxRuntime emits `__lang_alloc_box(size) -> data`
+// — allocate a heap box with an 8-byte rc header carrying the
+// static-sentinel 0x80000000 at `[base + 0]`, returning the
+// data pointer `base + 8`. Used by every runtime helper that
+// builds an Option / Result / IoError box so Phase 1e's
+// predicate widening can call __lang_rc_inc/dec on enum
+// values safely: the inc/dec helpers see the high bit at
+// `[data - 8]` and short-circuit, leaving the runtime-owned
+// box untouched.
+//
+// The caller passes the payload size (the same value it used
+// to pass to __lang_alloc); this helper adds the header. All
+// the caller's subsequent `[rax + off]` tag / payload stores
+// stay at their existing offsets — they're relative to the
+// returned data pointer, which already points past the header.
+func (g *generator) emitAllocBoxRuntime() {
+	g.line("")
+	g.line(".globl __lang_alloc_box")
+	g.line(".type __lang_alloc_box, @function")
+	g.label("__lang_alloc_box")
+	g.emit("add edi, 8") // size + rc header
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("call __lang_alloc")
+	g.emit("pop rbp")
+	g.emit("mov dword ptr [rax], 0x80000000") // static sentinel
+	g.emit("add rax, 8")                      // return base + 8 (= data)
+	g.emit("ret")
+	g.line(".size __lang_alloc_box, .-__lang_alloc_box")
+}
+
 // emitArrPushGrowRuntime emits `__lang_arr_push_grow(arr,
 // oldLen, stride) -> new_data` — System V counterpart of the
 // arm64 helper. Inputs rdi=arr, esi=oldLen, edx=stride.
@@ -3588,7 +3625,7 @@ func (g *generator) emitEnvRuntime() {
 	//   16 bytes [tag=0, pad, ptr]
 	g.emit("mov r14, rax") // stash str ptr
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
 	g.emit("mov [rax + 8], r14")     // payload at +8 (8-byte slot)
 	g.emit("jmp .Lenv_done")
@@ -3597,7 +3634,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("jmp .Lenv_loop")
 	g.label(".Lenv_none")
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.label(".Lenv_done")
 	g.emit("add rsp, 24")
@@ -3797,7 +3834,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("test r12, r12")
 	g.emit("jnz .Lrl_some")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1")  // tag = 1 (None)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
@@ -3815,7 +3852,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("mov byte ptr [r13 + r12], 0")
 	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0")  // tag = 0 (Some)
 	g.emit("mov [rax + 8], r13")       // payload at +8 (8-byte slot)
 	g.label(".Lrl_ret")
@@ -4205,7 +4242,7 @@ func (g *generator) emitIoErrorRuntime() {
 
 	// Other(path, ""). 24-byte box: tag, pad, path, "".
 	g.emit("mov edi, 24")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 6")
 	g.emit("mov [rax + 8], r12")
 	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
@@ -4223,7 +4260,7 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("jmp .Lioe_with_path")
 	g.label(".Lioe_intr")
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 4")
 	g.emit("jmp .Lioe_done")
 
@@ -4333,7 +4370,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("syscall")
 	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13") // r13 is already the data ptr
 	g.emit("jmp .Lrf_return")
@@ -4358,7 +4395,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("call __lang_io_error")
 	g.emit("mov r13, rax") // stash IoError box across the next alloc
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
 	g.emit("mov [rax + 8], r13")
 
@@ -4433,7 +4470,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("syscall")
 	// Option.None: 8-byte box, tag=1.
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lwf_return")
 
@@ -4455,7 +4492,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("call __lang_io_error")
 	g.emit("mov r14, rax") // stash IoError box
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // tag=0 (Some)
 	g.emit("mov [rax + 8], r14")
 
@@ -4494,7 +4531,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi") // stash fd
 	g.emit("mov edi, 12")  // size + 8-byte rc header
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0x80000000") // static sentinel at base + 0
 	g.emit("mov [rax + 8], ebx")              // fd at base + 8 (= data + 0)
 	g.emit("add rax, 8")                      // return base + 8 (= data)
@@ -4555,7 +4592,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("call __lang_make_handle")
 		g.emit("mov r12, rax") // handle ptr in callee-save
 		g.emit("mov edi, 16")
-		g.emit("call __lang_alloc")
+		g.emit("call __lang_alloc_box")
 		g.emit("mov dword ptr [rax], 0") // tag=0 (Ok)
 		g.emit("mov [rax + 8], r12")
 		g.emit("jmp .Lorw_ret_" + e.sym)
@@ -4566,7 +4603,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("call __lang_io_error")
 		g.emit("mov r12, rax")    // IoError ptr
 		g.emit("mov edi, 16")
-		g.emit("call __lang_alloc")
+		g.emit("call __lang_alloc_box")
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
@@ -4611,7 +4648,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("jne .Lrrl_some")
 	// None
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lrrl_ret")
 	g.label(".Lrrl_some")
@@ -4627,7 +4664,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov byte ptr [r14 + r13], 0")
 	g.emit("mov rbx, r14")    // stash str ptr (rbx no longer needed for fd)
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lrrl_ret")
@@ -4669,13 +4706,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("lea rbx, [r13 + 4]") // data ptr
 	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Lrrc_ret")
 	g.label(".Lrrc_none")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.label(".Lrrc_ret")
 	g.emit("add rsp, 8")
@@ -4716,7 +4753,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("jmp .Lww_loop")
 	g.label(".Lww_done")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lww_ret")
 	g.label(".Lww_err")
@@ -4726,7 +4763,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __lang_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lww_ret")
@@ -4754,7 +4791,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lcfb_ret")
 	g.label(".Lcfb_err")
@@ -4764,7 +4801,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __lang_io_error")
 	g.emit("mov rbx, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __lang_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lcfb_ret")
