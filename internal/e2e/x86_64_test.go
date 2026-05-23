@@ -3227,3 +3227,28 @@ func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (chained t.1.0 numeric access)", code)
 	}
 }
+
+// Mirror of TestArm64EmptyMapDestinationInference.
+func TestX86_64EmptyMapDestinationInference(t *testing.T) {
+	src := `function take(m: Map[string, i32]): i32 { return m.len(); }
+function mkEmpty(): Map[i32, string] { return Map {}; }
+function main(): i32 {
+    var a: Map[string, i32] = Map {};
+    if (a.len() != 0) { return 1; }
+    a = a.set("k", 42);
+    if (a.get_or("k", 0) != 42) { return 2; }
+    var b: Map[i32, string] = Map {};
+    if (b.len() != 0) { return 3; }
+    b = b.set(7, "hello");
+    if (!b.has(7)) { return 4; }
+    if (take(Map {}) != 0) { return 5; }
+    var r = mkEmpty();
+    if (r.len() != 0) { return 6; }
+    var d: Map[i32, i32] = Map {};
+    if (d.len() != 0) { return 7; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (empty Map literal inherits K/V from destination)", code)
+	}
+}

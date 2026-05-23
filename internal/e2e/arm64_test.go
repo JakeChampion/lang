@@ -13220,6 +13220,42 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 	}
 }
 
+// Empty `Map {}` with a destination annotation must inherit
+// K / V from the destination rather than defaulting to
+// `Map[i32, i32]`. Previously the checker rejected `var m:
+// Map[string, i32] = Map {};` with E003 "cannot assign Map[i32,
+// i32] to variable of type Map[string, i32]" because settleNumeric
+// only walked entries (no-op for empty) and the surrounding
+// assignable check saw the pre-settle default.
+func TestArm64EmptyMapDestinationInference(t *testing.T) {
+	src := `function take(m: Map[string, i32]): i32 { return m.len(); }
+function mkEmpty(): Map[i32, string] { return Map {}; }
+function main(): i32 {
+    // Var declaration: K=string, V=i32
+    var a: Map[string, i32] = Map {};
+    if (a.len() != 0) { return 1; }
+    a = a.set("k", 42);
+    if (a.get_or("k", 0) != 42) { return 2; }
+    // Var declaration: K=i32, V=string
+    var b: Map[i32, string] = Map {};
+    if (b.len() != 0) { return 3; }
+    b = b.set(7, "hello");
+    if (!b.has(7)) { return 4; }
+    // Function argument
+    if (take(Map {}) != 0) { return 5; }
+    // Return statement
+    var r = mkEmpty();
+    if (r.len() != 0) { return 6; }
+    // Default Map[i32, i32] still works
+    var d: Map[i32, i32] = Map {};
+    if (d.len() != 0) { return 7; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (empty Map literal inherits K/V from destination)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
