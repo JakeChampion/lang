@@ -813,6 +813,110 @@ func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiFilesystemTypesReadPathInstanceTypeBody returns the single
+// `wasi:filesystem/types@0.2.0` instance type the file-read wrap
+// imports: it declares the `descriptor` resource, `error-code`, the
+// three flag types, and BOTH descriptor methods the read path
+// chains — `open-at` (open the file) and `read-via-stream` (turn
+// the descriptor into an input-stream). `input-stream` is
+// outer-aliased from wasi:io/streams (`outerInputStreamTypeidx`).
+//
+// This consolidates the per-method instance-type bodies
+// (WasiFilesystemTypesOpenAtInstanceTypeBody /
+// ...ReadViaStreamInstanceTypeBody, which validated each encoding
+// in isolation) into the one combined import a real component uses.
+//
+// Inside-instance decl list (20 decls):
+//
+//   0  descriptor (sub resource)
+//   1  alias outer input-stream            2  export "input-stream" (eq 1)
+//   3  enum error-code                      4  export "error-code" (eq 3)
+//   5  flags path-flags                     6  export "path-flags" (eq 5)
+//   7  flags open-flags                     8  export "open-flags" (eq 7)
+//   9  flags descriptor-flags              10  export "descriptor-flags" (eq 9)
+//  11  own<descriptor=0>
+//  12  own<input-stream=2>
+//  13  borrow<descriptor=0>
+//  14  result<own descriptor=11, err=4>    (open-at)
+//  15  result<own input-stream=12, err=4>  (read-via-stream)
+//  16  func open-at(...) -> 14             export "[method]descriptor.open-at" (func 16)
+//  17  func read-via-stream(...) -> 15     export "[method]descriptor.read-via-stream" (func 17)
+//
+// (func-exports don't consume a typeidx, so the two methods are
+// typeidx 16 and 17.)
+//
+// Named leaf types (input-stream, error-code, the flags) are
+// referenced in signatures via their EXPORTED typeidxs (2/4/6/8/10),
+// not the raw defvaltypes — an import's public signature can only
+// name exported types.
+func WasiFilesystemTypesReadPathInstanceTypeBody(outerInputStreamTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x14} // 20 decls
+	// 0: descriptor
+	body = append(body, ExportSubResourceDecl("descriptor")...)
+	// 1-2: input-stream (outer alias + export)
+	body = append(body, OuterAliasTypeDecl(1, outerInputStreamTypeidx)...)
+	body = append(body, ExportTypeEqDecl("input-stream", 1)...)
+	// 3-4: error-code
+	body = append(body, 0x01)
+	body = append(body, InnerTypeEnum(WasiFilesystemErrorCodeNames)...)
+	body = append(body, ExportTypeEqDecl("error-code", 3)...)
+	// 5-6: path-flags
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{"symlink-follow"})...)
+	body = append(body, ExportTypeEqDecl("path-flags", 5)...)
+	// 7-8: open-flags
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{"create", "directory", "exclusive", "truncate"})...)
+	body = append(body, ExportTypeEqDecl("open-flags", 7)...)
+	// 9-10: descriptor-flags
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{
+		"read", "write", "file-integrity-sync", "data-integrity-sync",
+		"requested-write-sync", "mutate-directory",
+	})...)
+	body = append(body, ExportTypeEqDecl("descriptor-flags", 9)...)
+	// 11: own<descriptor=0>
+	body = append(body, 0x01, 0x69, 0x00)
+	// 12: own<input-stream=2>
+	body = append(body, 0x01, 0x69, 0x02)
+	// 13: borrow<descriptor=0>
+	body = append(body, 0x01, 0x68, 0x00)
+	// 14: result<own descriptor=11, err=4>
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(11, 4)...)
+	// 15: result<own input-stream=12, err=4>
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(12, 4)...)
+	// 16: func open-at(self:13, path-flags:6, path:string, open-flags:8, flags:10) -> 14
+	body = append(body,
+		0x01, 0x40, 0x05,
+		0x04, 's', 'e', 'l', 'f', 0x0d,
+		0x0a, 'p', 'a', 't', 'h', '-', 'f', 'l', 'a', 'g', 's', 0x06,
+		0x04, 'p', 'a', 't', 'h', CValtypeString,
+		0x0a, 'o', 'p', 'e', 'n', '-', 'f', 'l', 'a', 'g', 's', 0x08,
+		0x05, 'f', 'l', 'a', 'g', 's', 0x0a,
+		0x00, 0x0e,
+	)
+	// 17: export "[method]descriptor.open-at" (func 16)
+	body = append(body, 0x04, 0x00, byte(len("[method]descriptor.open-at")))
+	body = append(body, "[method]descriptor.open-at"...)
+	body = append(body, 0x01, 0x10)
+	// 18: func read-via-stream(self:13, offset:u64) -> 15
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x0d,
+		0x06, 'o', 'f', 'f', 's', 'e', 't', CValtypeU64,
+		0x00, 0x0f,
+	)
+	// 19: export "[method]descriptor.read-via-stream" (func 17 —
+	// func-exports don't consume a typeidx, so the read functype is
+	// typeidx 17, not 18).
+	body = append(body, 0x04, 0x00, byte(len("[method]descriptor.read-via-stream")))
+	body = append(body, "[method]descriptor.read-via-stream"...)
+	body = append(body, 0x01, 0x11)
+	return body
+}
+
 // WasiFilesystemPreopensInstanceTypeBody returns the type-section
 // body for the `wasi:filesystem/preopens@0.2.0` instance type —
 // `get-directories: func() -> list<tuple<own<descriptor>, string>>`,
