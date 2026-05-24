@@ -926,6 +926,181 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildWriteFileBodyP2 is the preview-2 variant of buildWriteFileBody.
+// Writes a file through the wasi:filesystem chain:
+//
+//	base   = get-directories() -> first preopen descriptor
+//	fd     = base.open-at(symlink-follow, path, create|truncate, write)
+//	stream = fd.write-via-stream(0) -> output-stream
+//	loop: stream.blocking-write-and-flush(chunk ≤ 4096) until done
+//
+// Returns Option[IoError]: None on success, Some(err) on
+// open/write failure. Same ENOENT simplification as
+// buildReadFileBodyP2.
+//
+// Locals (after 4 params: path 0/1, content 2/3): 4=rb, 5=path_buf,
+// 6=path_byte_len, 7=content_buf, 8=content_byte_len, 9=preopen,
+// 10=fd, 11=stream, 12=cur, 13=chunk_len, 14=strnorm scratch,
+// 15=box, 16=ioerr.
+func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
+	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
+
+	const enoent = 44
+	// open-flags: create(bit0) | truncate(bit3) = 1 | 8 = 9.
+	const openFlagsCreateTrunc = 9
+	// descriptor-flags: write = bit1 = 2.
+	const descFlagsWrite = 2
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 4)
+	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 14)
+	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
+
+	// get-directories(rb); preopen = mem[mem[rb+0]+0]
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, getDirs)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 9)
+
+	// open-at(preopen, 1, path_buf, path_byte_len, create|truncate, write, rb)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, openFlagsCreateTrunc)
+	body = inst.InstI32Const(body, descFlagsWrite)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, openAt)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+	}
+	body = inst.InstEnd(body)
+	// fd = mem[rb+4]
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 10)
+
+	// write-via-stream(fd, offset=0, rb)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstCall(body, writeVia)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+	}
+	body = inst.InstEnd(body)
+	// stream = mem[rb+4]
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 11)
+
+	// cur = 0; loop: write chunks of ≤ 4096.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 12)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if cur >= content_byte_len: break
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstLocalGet(body, 8)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// chunk_len = min(content_byte_len - cur, 4096)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 12)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, 13)
+		// if chunk_len > 4096: chunk_len = 4096
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstI32Const(body, 4096)
+		body = numeric.InstI32GtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, 4096)
+			body = inst.InstLocalSet(body, 13)
+		}
+		body = inst.InstEnd(body)
+		// blocking-write-and-flush(stream, content_buf+cur, chunk_len, rb)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 12)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 13)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstCall(body, blockingWrite)
+		// disc != 0 → Some(IoError)
+		body = inst.InstLocalGet(body, 4)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+		}
+		body = inst.InstEnd(body)
+		// cur += chunk_len
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstLocalGet(body, 13)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 12)
+		body = inst.InstBr(body, 0)
+	}
+	// end $write loop, end $end block
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+
+	// Success → None (box(4), tag=1).
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 15)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 15)
+
+	locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildWriteFileErr appends the "build Some(IoError(errno)) and
+// return" tail for buildWriteFileBodyP2's failure paths. Uses local
+// 16 for the IoError ptr, local 15 for the Option box (Some: tag=0
+// @0, IoError ptr @+4 — the heap-form Option[IoError] layout).
+func buildWriteFileErr(body []byte, buildIoErr, allocBox uint32, errno int32) []byte {
+	body = inst.InstI32Const(body, errno)
+	// __build_io_error(errno, path_data, path_len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, buildIoErr)
+	body = inst.InstLocalSet(body, 16)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 15)
+	body = inst.InstI32Const(body, 0) // tag = 0 (Some)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 15)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 16)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 15)
+	body = inst.InstReturn(body)
+	return body
+}
+
 // buildOpenBody is the shared body builder for open_reader /
 // open_writer / open_appender. They differ only in the
 // path_open immediate flags + the rights bitset; the rest of

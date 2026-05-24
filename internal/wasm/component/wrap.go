@@ -945,6 +945,134 @@ func WrapWasiReadFileComponent(coreBytes []byte) []byte {
 	return buf
 }
 
+// WrapWasiWriteFileComponent is the write-side counterpart of
+// WrapWasiReadFileComponent. Identical 4-import / 4-trampoline
+// shape, with three substitutions: the io/streams import uses the
+// write (output-stream) instance type, the filesystem/types import
+// uses the write-path instance type (open-at + write-via-stream),
+// and the fourth lowered func is blocking-write-and-flush
+// `(self, ptr, len, ret_ptr)` (4×i32). Only get-directories needs
+// realloc (list return); blocking-write-and-flush takes a list
+// param (guest-provided bytes) so it needs memory only.
+func WrapWasiWriteFileComponent(coreBytes []byte) []byte {
+	i32 := byte(0x7f)
+	i64 := byte(0x7e)
+	getDirsParams := []byte{i32}
+	openAtParams := []byte{i32, i32, i32, i32, i32, i32, i32}
+	writeViaParams := []byte{i32, i64, i32}
+	blockWriteParams := []byte{i32, i32, i32, i32}
+
+	buf := PutComponentHeader(nil)
+
+	// type 0: io/error; instance 0; alias error → type 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+	// type 2: io/streams (write side); instance 1; alias output-stream → type 3.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	buf = PutAliasSectionInstanceExportType(buf, 1, "output-stream")
+	// type 4: filesystem/types write path; instance 2; alias descriptor → type 5.
+	buf = PutTypeSectionRawBody(buf, WasiFilesystemTypesWritePathInstanceTypeBody(3))
+	buf = PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
+	buf = PutAliasSectionInstanceExportType(buf, 2, "descriptor")
+	// type 6: filesystem/preopens; instance 3.
+	buf = PutTypeSectionRawBody(buf, WasiFilesystemPreopensInstanceTypeBody(5))
+	buf = PutImportSectionOneInstance(buf, "wasi:filesystem/preopens@0.2.0", 6)
+
+	// Core modules: user + 4 (trampoline, fixup) pairs.
+	buf = PutCoreModuleSection(buf, coreBytes)                                           // 0
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(getDirsParams))    // 1
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(getDirsParams))         // 2
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(openAtParams))     // 3
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(openAtParams))          // 4
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(writeViaParams))   // 5
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(writeViaParams))        // 6
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(blockWriteParams)) // 7
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(blockWriteParams))      // 8
+
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+	buf = PutCoreInstanceSectionInstantiate(buf, 3)
+	buf = PutCoreInstanceSectionInstantiate(buf, 5)
+	buf = PutCoreInstanceSectionInstantiate(buf, 7)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0") // core func 0: get-directories
+	buf = PutAliasSectionCoreExportFunc(buf, 1, "0") // core func 1: open-at
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "0") // core func 2: write-via-stream
+	buf = PutAliasSectionCoreExportFunc(buf, 3, "0") // core func 3: blocking-write-and-flush
+
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-directories", 0) // inst 4 (preopens)
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{       // inst 5 (fs/types)
+		{Name: "[method]descriptor.open-at", Sort: CoreSortFunc, Idx: 1},
+		{Name: "[method]descriptor.write-via-stream", Sort: CoreSortFunc, Idx: 2},
+	})
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]output-stream.blocking-write-and-flush", 3) // inst 6 (io/streams)
+
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{
+			"wasi:filesystem/preopens@0.2.0",
+			"wasi:filesystem/types@0.2.0",
+			"wasi:io/streams@0.2.0",
+		},
+		[]uint32{4, 5, 6}) // inst 7 (user)
+
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 7, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 7, "cabi_realloc") // core func 4
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")    // table 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 1, "$imports")    // table 1
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 2, "$imports")    // table 2
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 3, "$imports")    // table 3
+
+	// get-directories needs realloc; open-at / write-via-stream /
+	// blocking-write-and-flush need memory only (the write func's
+	// list<u8> param is guest-provided, so no realloc).
+	buf = PutAliasSectionInstanceExportFunc(buf, 3, "get-directories")
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 0, 0, 4) // core func 5
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "[method]descriptor.open-at")
+	buf = PutCanonSectionLowerWithMemory(buf, 1, 0) // core func 6
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "[method]descriptor.write-via-stream")
+	buf = PutCanonSectionLowerWithMemory(buf, 2, 0) // core func 7
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]output-stream.blocking-write-and-flush")
+	buf = PutCanonSectionLowerWithMemory(buf, 3, 0) // core func 8
+
+	// Fixup arg instances + fixup instantiations.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 5},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{8})
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 1},
+		{Name: "0", Sort: CoreSortFunc, Idx: 6},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 4, []string{""}, []uint32{10})
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 2},
+		{Name: "0", Sort: CoreSortFunc, Idx: 7},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 6, []string{""}, []uint32{12})
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 3},
+		{Name: "0", Sort: CoreSortFunc, Idx: 8},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 8, []string{""}, []uint32{14})
+	return buf
+}
+
+// WrapWasiWriteFileAsCliRun is the write-side sibling of
+// WrapWasiReadFileAsCliRun — the index spaces match, so the cli-run
+// tail is identical (run func = core func 9, lifted as component
+// func 4).
+func WrapWasiWriteFileAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiWriteFileComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 7, coreExportName)
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 7)
+	buf = PutCanonSectionLiftNoOpts(buf, 9, 8)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 4)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 4)
+	return buf
+}
+
 // WrapWasiReadFileAsCliRun extends WrapWasiReadFileComponent with a
 // wasi:cli/run@0.2.0 export. After the read-file wrap the index
 // spaces are: component types 7, component funcs 4, component
