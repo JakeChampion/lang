@@ -21,26 +21,32 @@ package component
 // get-arguments / env get-environment), and any mix of those —
 // including new combinations the bespoke wraps never covered
 // (read_line+exit, read_file+print, write_file+print, now()+print,
-// args+exit, ...). read_file and write_file in one program (both
-// descriptor stream directions), args+env together (shared
-// interface), open_* and TCP stay on their own wraps for now.
+// args+exit, ...) and bare open_reader/open_writer (a handle opened
+// but never read/written — the open-chain with no stream method).
+// read_file and write_file in one program (both descriptor stream
+// directions), args+env together (shared interface), and TCP stay on
+// their own wraps for now.
 
 // ComposeOpts describes the CLI-stream + structured imports a core
 // module needs. WriteGetter is "get-stdout", "get-stderr", or "" (no
-// write side); ReadStdin enables the stdin read side; FileRead
-// enables the read_file open-chain (get-directories → open-at →
-// read-via-stream → input-stream.blocking-read); FileWrite enables
-// the write_file open-chain (get-directories → open-at →
-// write-via-stream → output-stream.blocking-write-and-flush);
-// Structured lists the no-memory structured imports
-// (exit/random/monotonic) in the order they should appear. FileRead
-// and FileWrite are mutually exclusive (the filesystem/types
-// instance type carries one descriptor method direction).
+// write side); ReadStdin enables the stdin read side; FileRead /
+// FileWrite enable the read_file / write_file open-chains
+// (get-directories → open-at → read/write-via-stream). ReadStream /
+// WriteStream record whether the user module actually imports
+// input-stream.blocking-read / output-stream.blocking-write-and-flush
+// — these are decoupled from the producers above so a bare
+// open_reader / open_writer (opens a handle but never reads/writes)
+// composes without the stream method. Structured lists the no-memory
+// structured imports (exit/random/monotonic) in order. FileRead and
+// FileWrite are mutually exclusive (the filesystem/types instance
+// type carries one descriptor method direction).
 type ComposeOpts struct {
 	WriteGetter string
 	ReadStdin   bool
 	FileRead    bool
 	FileWrite   bool
+	ReadStream  bool
+	WriteStream bool
 	Structured  []WasiImport
 	MemTramp    []MemTrampImport
 }
@@ -221,22 +227,27 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	hasStdin := opts.ReadStdin
 	hasFileRead := opts.FileRead
 	hasFileWrite := opts.FileWrite
-	// blocking-read on input-stream backs both stdin reads and the
-	// read_file open-chain; blocking-write-and-flush on output-stream
-	// backs both print/eprint and the write_file open-chain. cli/stdin
-	// and cli/std{out,err} are only for the stdin / print sides.
-	hasInputStream := hasStdin || hasFileRead
-	hasOutputStream := hasWriteGetter || hasFileWrite
-	// get-directories + open-at + (read|write)-via-stream + the
-	// filesystem/types + preopens instances.
 	hasFile := hasFileRead || hasFileWrite
-	needStreams := hasOutputStream || hasInputStream
-	// memory is aliased for any trampoline lower (streams, file, or the
-	// standalone mem-trampoline imports).
-	needMemory := needStreams || hasFile || len(opts.MemTramp) > 0
-	// blocking-read + get-directories return lists → realloc; so do the
-	// list-returning mem-trampoline imports (args / env).
-	needRealloc := hasInputStream || hasFile
+	// useBlock{Read,Write} = the user module actually imports the
+	// stream method. need{Input,Output}Stream = io/streams must
+	// declare + alias the resource because *some* producer
+	// (get-stdin / read-via-stream result, cli/std* / write-via-stream
+	// result) or the method itself references it. Decoupling these
+	// lets a bare open_reader / open_writer (handle opened, never
+	// read/written) compose without the blocking method.
+	useBlockRead := opts.ReadStream
+	useBlockWrite := opts.WriteStream
+	needInputStream := hasStdin || hasFileRead || useBlockRead
+	needOutputStream := hasWriteGetter || hasFileWrite || useBlockWrite
+	needStreams := needInputStream || needOutputStream
+	hasMemTramp := len(opts.MemTramp) > 0
+	// memory backs every trampoline lower (block read/write, the file
+	// open-chain, the mem-trampoline imports); the no-opt getter /
+	// structured lowers don't need it.
+	needMemory := useBlockRead || useBlockWrite || hasFile || hasMemTramp
+	// list-returning lowers realloc: blocking-read, get-directories
+	// (hasFile), and the list-returning mem-trampoline imports.
+	needRealloc := useBlockRead || hasFile
 	for _, mt := range opts.MemTramp {
 		if mt.NeedsRealloc {
 			needRealloc = true
@@ -260,19 +271,19 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 		var streamsBody []byte
 		switch {
-		case hasOutputStream && hasInputStream:
+		case needOutputStream && needInputStream:
 			streamsBody = WasiIoStreamsReadWriteInstanceTypeBody(tErrAlias)
-		case hasOutputStream:
+		case needOutputStream:
 			streamsBody = WasiIoStreamsInstanceTypeBody(tErrAlias)
 		default:
 			streamsBody = WasiIoStreamsReadInstanceTypeBody(tErrAlias)
 		}
 		tStreams := c.typeRaw(streamsBody)
 		streamsInst = c.importInstance("wasi:io/streams@0.2.0", tStreams)
-		if hasOutputStream {
+		if needOutputStream {
 			tOut = c.aliasType(streamsInst, "output-stream")
 		}
-		if hasInputStream {
+		if needInputStream {
 			tIn = c.aliasType(streamsInst, "input-stream")
 		}
 	}
@@ -334,11 +345,11 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	userMod := c.coreModule(coreBytes)
 	var trampWMod, fixupWMod, trampRMod, fixupRMod uint32
 	var trampDirsMod, fixupDirsMod, trampOpenMod, fixupOpenMod, trampViaMod, fixupViaMod uint32
-	if hasOutputStream {
+	if useBlockWrite {
 		trampWMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockWriteParams))
 		fixupWMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockWriteParams))
 	}
-	if hasInputStream {
+	if useBlockRead {
 		trampRMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockReadParams))
 		fixupRMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockReadParams))
 	}
@@ -363,10 +374,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// --- Phase C: instantiate trampolines. ---
 	var trampWInst, trampRInst uint32
 	var trampDirsInst, trampOpenInst, trampViaInst uint32
-	if hasOutputStream {
+	if useBlockWrite {
 		trampWInst = c.instantiate(trampWMod)
 	}
-	if hasInputStream {
+	if useBlockRead {
 		trampRInst = c.instantiate(trampRMod)
 	}
 	if hasFile {
@@ -435,14 +446,18 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	}
 
 	// io/streams arg packages the trampoline placeholder funcs for
-	// whichever stream methods are used (fixed up after user inst).
-	if needStreams {
+	// whichever stream methods the user imports (fixed up after user
+	// inst). Only passed when a method is actually used — a bare
+	// open_reader/open_writer imports io/streams only for the
+	// input/output-stream *type* (referenced by read/write-via-stream's
+	// result), not any io/streams function, so it gets no arg here.
+	if useBlockWrite || useBlockRead {
 		var exports []CoreInstanceExport
-		if hasOutputStream {
+		if useBlockWrite {
 			tf := c.aliasCoreFunc(trampWInst, "0")
 			exports = append(exports, CoreInstanceExport{Name: composeBlockWriteName, Sort: CoreSortFunc, Idx: tf})
 		}
-		if hasInputStream {
+		if useBlockRead {
 			tf := c.aliasCoreFunc(trampRInst, "0")
 			exports = append(exports, CoreInstanceExport{Name: composeBlockReadName, Sort: CoreSortFunc, Idx: tf})
 		}
@@ -465,10 +480,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	if needRealloc {
 		reallocFunc = c.aliasReallocFunc(userInst)
 	}
-	if hasOutputStream {
+	if useBlockWrite {
 		tableW = c.aliasTable(trampWInst)
 	}
-	if hasInputStream {
+	if useBlockRead {
 		tableR = c.aliasTable(trampRInst)
 	}
 	if hasFile {
@@ -484,11 +499,11 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// --- Phase G: memory-dependent lowers. ---
 	var writeCoreF, readCoreF uint32
 	var dirsCoreF, openCoreF, viaCoreF uint32
-	if hasOutputStream {
+	if useBlockWrite {
 		cf := c.aliasInstFunc(streamsInst, composeBlockWriteName)
 		writeCoreF = c.lowerMem(cf)
 	}
-	if hasInputStream {
+	if useBlockRead {
 		cf := c.aliasInstFunc(streamsInst, composeBlockReadName)
 		readCoreF = c.lowerMemRealloc(cf, reallocFunc)
 	}
@@ -520,10 +535,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		})
 		c.instantiateArgs(mod, []string{""}, []uint32{arg})
 	}
-	if hasOutputStream {
+	if useBlockWrite {
 		fixup(fixupWMod, tableW, writeCoreF)
 	}
-	if hasInputStream {
+	if useBlockRead {
 		fixup(fixupRMod, tableR, readCoreF)
 	}
 	if hasFile {

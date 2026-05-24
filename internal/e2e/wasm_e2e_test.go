@@ -10339,6 +10339,61 @@ func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliBareOpen covers the bare-open gap: a
+// program that opens a Reader/Writer but never reads/writes it. The
+// open-chain imports only get-directories + open-at +
+// read/write-via-stream (3 calls, no blocking-read/-write), so the
+// composer must import wasi:io/streams for the input/output-stream
+// *type* (the via-stream result) yet pass no io/streams arg and
+// lower no stream method. These errored under -component-wrap-cli
+// before ReadStream/WriteStream were decoupled from the open-chain.
+func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	run := func(name, src string) {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+			t.Errorf("%s: wasmtime run failed (want exit 0): %v", name, err)
+		}
+	}
+	// open_reader, never read → Ok → exit 0.
+	run("bareread", `function main(): i32 {
+    match (open_reader("data.txt")) {
+        Ok(r) => { return 0; },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	// open_writer, never write → Ok → exit 0.
+	run("barewrite", `function main(): i32 {
+    match (open_writer("bw_out.txt")) {
+        Ok(w) => { return 0; },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the

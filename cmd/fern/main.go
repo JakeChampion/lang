@@ -1028,15 +1028,16 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	if fsAny && !(fileRead || fileWrite) {
 		return component.ComposeOpts{}, false
 	}
-	// blocking-write backs both print/eprint and the file write-chain;
-	// blocking-read backs both stdin reads and the file read-chain.
-	// Each must appear iff a producer is present (never alone, never
-	// missing).
+	// blocking-write backs print/eprint and the file write-chain;
+	// blocking-read backs stdin reads and the file read-chain. The
+	// method can't appear without a producer that yields a stream to
+	// it, but a producer *without* the method is fine — a bare
+	// open_reader/open_writer opens a handle and never reads/writes.
 	writeGetter := getStdout || getStderr
-	if (writeGetter || fileWrite) != blockWrite {
+	if blockWrite && !(writeGetter || fileWrite) {
 		return component.ComposeOpts{}, false
 	}
-	if (getStdin || fileRead) != blockRead {
+	if blockRead && !(getStdin || fileRead) {
 		return component.ComposeOpts{}, false
 	}
 	if getStdout {
@@ -1047,6 +1048,8 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	opts.ReadStdin = getStdin
 	opts.FileRead = fileRead
 	opts.FileWrite = fileWrite
+	opts.ReadStream = blockRead
+	opts.WriteStream = blockWrite
 	// Mem-trampoline imports (wall-clock now / args / env). args and
 	// env share the wasi:cli/environment interface, so they can't both
 	// be imported as separate instances — reject that combination.
