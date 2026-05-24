@@ -146,6 +146,39 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	}
 }
 
+// Bare `read_line()` builtin through the interpreter. Reads one
+// line from stdin and returns its length via the Some arm (0 at
+// EOF via None). Mirrors the wasm / native read_line coverage.
+func TestInterpScriptReadLine(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.lang")
+	if err := os.WriteFile(src, []byte(`function main(): i32 {
+    match (read_line()) {
+        Some(line) => { return line.len(); },
+        None => { return 0; }
+    }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	run := func(stdin string, want int) {
+		t.Helper()
+		cmd := exec.Command(bin, "-interp", src)
+		cmd.Stdin = strings.NewReader(stdin)
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		_ = cmd.Run()
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("stdin=%q: exit = %d, want %d\nstderr: %s", stdin, got, want, errb.String())
+		}
+	}
+	run("hi\n", 3) // "hi\n" → len 3
+	run("", 0)     // EOF → None → 0
+}
+
 // Union types + match through the script-mode interp. The union
 // desugar lives in the checker (PRs #390 / #392), so the AST
 // the interpreter sees is the synthesised enum form — no

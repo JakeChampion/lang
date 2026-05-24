@@ -1130,8 +1130,65 @@ func TestX86_64ReadLine(t *testing.T) {
 			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
 		}
 	}
-	runCase("", 0)            // EOF before any byte → None
-	runCase("hello\n", 1)     // Some(line)
+	runCase("", 0)        // EOF before any byte → None
+	runCase("hello\n", 1) // Some(line)
+}
+
+// Bare `read_line()` builtin — the stdin-only path through
+// __lang_read_line (distinct from stdin().read_line()'s
+// receiver-aware __lang_reader_read_line). Same .bss buffer +
+// byte loop + Some/None wrap.
+func TestX86_64ReadLineBuiltin(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	src := `function main(): i32 {
+    match (read_line()) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return -1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+
+	runCase := func(stdin string, want int) {
+		t.Helper()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(binPath)
+		} else {
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
+		}
+		cmd.Stdin = strings.NewReader(stdin)
+		_, _ = cmd.CombinedOutput()
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
+		}
+	}
+	runCase("", 0)        // EOF before any byte → None
+	runCase("hello\n", 1) // Some(line)
 }
 
 // Closure factory pattern: `var f = makeAdder(7); f(35)`. The

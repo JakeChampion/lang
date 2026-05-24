@@ -529,6 +529,9 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				//   - Print-only imports (preview-2 get-stdout +
 				//     blocking-write-and-flush) → WrapWasiPrintAsCliRun
 				//     (uses the trampoline / fixup pattern).
+				//   - Read-only imports (preview-2 get-stdin +
+				//     blocking-read) → WrapWasiReadAsCliRun (same
+				//     pattern, realloc-bearing canon-lower).
 				//   - No imports → BuildWasiCliRunComponent.
 				//   - Only other known preview-2 imports →
 				//     WrapWasiImportedAsCliRun.
@@ -555,6 +558,27 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				}
 				if usesPreview2WallClockOnly(bin) {
 					comp := component.WrapWasiWallClockAsCliRun(bin, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
+				if usesPreview2ReadOnly(bin) {
+					// The read wrap's blocking-read canon-lower needs a
+					// realloc to allocate the returned list<u8>; rebuild
+					// with ForceMemorySection so the core module exports
+					// cabi_realloc. Scoped to read-only programs so the
+					// other wrap paths (which don't alias cabi_realloc)
+					// are unaffected.
+					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+						ForceMemorySection: true,
+						Preview2WASI:       true,
+						SynthCliRun:        true,
+					})
+					if err != nil {
+						return 1, err
+					}
+					comp := component.WrapWasiReadAsCliRun(rb, "_lang_run")
 					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 						return 1, err
 					}
@@ -1018,6 +1042,32 @@ func usesPreview2WallClockOnly(bin []byte) bool {
 	}
 	p := pairs[0]
 	return p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now"
+}
+
+// usesPreview2ReadOnly reports whether the core module's imports
+// are exactly the preview-2 stdin-read pair —
+// `wasi:cli/stdin::get-stdin` plus
+// `wasi:io/streams::[method]input-stream.blocking-read` — and
+// nothing else. The read imports use the trampoline / fixup
+// core-module pattern with a realloc-bearing canon-lower (see
+// WrapWasiReadComponent / WrapWasiReadAsCliRun), distinct from the
+// structured WasiImport flow; the driver routes the read-only case
+// through the dedicated wrap helper. Mixed cases aren't supported
+// yet.
+func usesPreview2ReadOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 2 {
+		return false
+	}
+	hasGetter, hasRead := false, false
+	for _, p := range pairs {
+		if p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin" {
+			hasGetter = true
+		} else if p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read" {
+			hasRead = true
+		}
+	}
+	return hasGetter && hasRead
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
