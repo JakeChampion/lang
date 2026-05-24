@@ -423,6 +423,23 @@ func InnerTypeEnum(names []string) []byte {
 	return out
 }
 
+// InnerTypeFlags returns the defvaltype body for a `flags` type —
+// a bitfield of named single-bit members.
+//
+// Encoding:
+//
+//	6e            -- flags form
+//	<count>       -- uleb: number of members
+//	(<name>)*     -- each: uleb len + UTF-8 bytes
+func InnerTypeFlags(names []string) []byte {
+	out := []byte{0x6e}
+	out = leb128.UlebU64(out, uint64(len(names)))
+	for _, n := range names {
+		out = putName(out, n)
+	}
+	return out
+}
+
 // WasiFilesystemErrorCodeNames is the ordered case list of the
 // `wasi:filesystem/types@0.2.0` `error-code` enum (37 cases). Order
 // fixes the discriminant values, so it must match the WIT exactly
@@ -709,6 +726,90 @@ func WasiFilesystemTypesWriteViaStreamInstanceTypeBody(outerOutputStreamTypeidx 
 	body = append(body, 0x04, 0x00, byte(len("[method]descriptor.write-via-stream")))
 	body = append(body, "[method]descriptor.write-via-stream"...)
 	body = append(body, 0x01, 0x08)
+	return body
+}
+
+// WasiFilesystemTypesOpenAtInstanceTypeBody returns the
+// type-section body for a `wasi:filesystem/types@0.2.0` instance
+// type declaring `descriptor`, `error-code`, the path/open/
+// descriptor `flags` types, and the `open-at` method:
+//
+//	open-at: func(self: borrow<descriptor>, path-flags: path-flags,
+//	    path: string, open-flags: open-flags,
+//	    flags: descriptor-flags) -> result<own<descriptor>, error-code>
+//
+// Self-contained — descriptor is the local resource and the flag /
+// error-code types are local enums/flags, so no outer alias. This
+// is the method the file-open path starts with: a preopen
+// descriptor's open-at yields the file descriptor that
+// read-via-stream / write-via-stream then turn into a stream.
+//
+// Inside-instance decl list (14 decls):
+//
+//  0. export "descriptor" (sub resource)         → typeidx 0
+//  1. type enum error-code                         → typeidx 1
+//  2. export "error-code" (type (eq 1))           → typeidx 2
+//  3. type flags path-flags                        → typeidx 3
+//  4. export "path-flags" (type (eq 3))           → typeidx 4
+//  5. type flags open-flags                        → typeidx 5
+//  6. export "open-flags" (type (eq 5))           → typeidx 6
+//  7. type flags descriptor-flags                  → typeidx 7
+//  8. export "descriptor-flags" (type (eq 7))     → typeidx 8
+//  9. type own<descriptor=0>                       → typeidx 9
+//  10. type borrow<descriptor=0>                   → typeidx 10
+//  11. type result<ok=9, err=2>                    → typeidx 11
+//  12. type func(self,path-flags,path,open-flags,flags) -> 11 → typeidx 12
+//  13. export "[method]descriptor.open-at" (func 12)
+func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x0e}
+	// 0: descriptor resource
+	body = append(body, ExportSubResourceDecl("descriptor")...)
+	// 1: enum error-code; 2: export
+	body = append(body, 0x01)
+	body = append(body, InnerTypeEnum(WasiFilesystemErrorCodeNames)...)
+	body = append(body, ExportTypeEqDecl("error-code", 1)...)
+	// 3: flags path-flags; 4: export
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{"symlink-follow"})...)
+	body = append(body, ExportTypeEqDecl("path-flags", 3)...)
+	// 5: flags open-flags; 6: export
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{"create", "directory", "exclusive", "truncate"})...)
+	body = append(body, ExportTypeEqDecl("open-flags", 5)...)
+	// 7: flags descriptor-flags; 8: export
+	body = append(body, 0x01)
+	body = append(body, InnerTypeFlags([]string{
+		"read", "write", "file-integrity-sync", "data-integrity-sync",
+		"requested-write-sync", "mutate-directory",
+	})...)
+	body = append(body, ExportTypeEqDecl("descriptor-flags", 7)...)
+	// 9: own<descriptor=0>
+	body = append(body, 0x01, 0x69, 0x00)
+	// 10: borrow<descriptor=0>
+	body = append(body, 0x01, 0x68, 0x00)
+	// 11: result<ok=9, err=2>
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(9, 2)...)
+	// 12: func(self: borrow 10, path-flags: 4, path: string,
+	//          open-flags: 6, flags: 8) -> typeidx 11. The named
+	//          flag params reference the EXPORTED type aliases
+	//          (4/6/8), not the raw flags defvaltypes (3/5/7) —
+	//          an import's public signature can only name exported
+	//          types (mirrors read-via-stream using the exported
+	//          input-stream / error-code typeidxs).
+	body = append(body,
+		0x01, 0x40, 0x05,
+		0x04, 's', 'e', 'l', 'f', 0x0a,
+		0x0a, 'p', 'a', 't', 'h', '-', 'f', 'l', 'a', 'g', 's', 0x04,
+		0x04, 'p', 'a', 't', 'h', CValtypeString,
+		0x0a, 'o', 'p', 'e', 'n', '-', 'f', 'l', 'a', 'g', 's', 0x06,
+		0x05, 'f', 'l', 'a', 'g', 's', 0x08,
+		0x00, 0x0b,
+	)
+	// 13: export "[method]descriptor.open-at" (func 12)
+	body = append(body, 0x04, 0x00, byte(len("[method]descriptor.open-at")))
+	body = append(body, "[method]descriptor.open-at"...)
+	body = append(body, 0x01, 0x0c)
 	return body
 }
 
