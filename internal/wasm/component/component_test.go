@@ -1056,6 +1056,37 @@ func TestWasiSocketsNetworkInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiSocketsInstanceNetworkInstanceTypeBody_Validates composes
+// wasi:sockets/network, surfaces its `network` resource at the top
+// level, then imports wasi:sockets/instance-network whose
+// instance-network() -> own<network> outer-aliases that resource.
+func TestWasiSocketsInstanceNetworkInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody()) // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 0)          // instance 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "network")                       // network → type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsInstanceNetworkInstanceTypeBody(1))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/instance-network@0.2.0", 2)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "instnet.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("instance-network")) {
+		t.Errorf("expected instance-network in printed component, got:\n%s", out)
+	}
+}
+
 // TestInnerTypeTuple_Bytes pins tuple<u8,u8,u8,u8> (ipv4-address).
 func TestInnerTypeTuple_Bytes(t *testing.T) {
 	got := component.InnerTypeTuple([]byte{component.CValtypeU8, component.CValtypeU8, component.CValtypeU8, component.CValtypeU8})

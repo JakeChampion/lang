@@ -690,6 +690,30 @@ func WasiSocketsNetworkInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiSocketsInstanceNetworkInstanceTypeBody returns the type-section
+// body for `wasi:sockets/instance-network@0.2.0`:
+// `instance-network: func() -> own<network>`. The `network` resource
+// is outer-aliased from the wasi:sockets/network import (surfaced at
+// the top level via PutAliasSectionInstanceExportType, then referenced
+// here with OuterAliasTypeDecl) — the same cross-instance pattern
+// io/streams uses for io/error's `error`. outerNetworkTypeidx is that
+// top-level type index.
+//
+// Decls: 0 alias-outer network, 1 own<network>, 2 func() ->
+// own<network>, 3 export "instance-network" (func 2).
+func WasiSocketsInstanceNetworkInstanceTypeBody(outerNetworkTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x04} // 4 decls
+	body = append(body, OuterAliasTypeDecl(1, outerNetworkTypeidx)...) // 0
+	body = append(body, 0x01, 0x69, 0x00)                             // 1: own<network=0>
+	// 2: func() -> own<network=1> (no params, single anonymous result)
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x01)
+	// 3: export "instance-network" (func is type 2)
+	body = append(body, 0x04, 0x00, byte(len("instance-network")))
+	body = append(body, "instance-network"...)
+	body = append(body, 0x01, 0x02)
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
