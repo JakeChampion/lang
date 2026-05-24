@@ -526,64 +526,18 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// produced binary runs under plain `wasmtime run` (no
 				// --invoke). Routing, in order:
 				//
-				//   - Single-capability list-returning shapes
-				//     (wall-clock / args / env / filesystem) → their
-				//     dedicated wraps.
-				//   - Any CLI-stream + structured mix (stdout/stderr
-				//     write, stdin read, exit/random/monotonic) →
-				//     classifyComposeCliStream + ComposePreview2CliRun.
-				//   - Pure structured imports → WrapWasiImportedAsCliRun.
-				//   - No imports → BuildWasiCliRunComponent.
-				//   - Anything else → error pointing at
-				//     -component-wrap / -wasi-adapter.
+				// buildPreview2CliRunComponent composes any recognised
+				// CLI-stream / filesystem-open / wall-clock-args-env /
+				// structured shape (or a bare cli/run for an import-free
+				// program) and errors on imports it can't place.
 				//
 				// The cli-run lift consumes a `() -> i32` core
 				// export. wasmbin's SynthCliRun has already emitted
 				// `_lang_run` as the normalised entry — main with
 				// any signature (void / i32) flows through it.
-				if opts, ok := classifyComposeCliStream(bin); ok {
-					// General CLI-stream + structured composition: any mix of
-					// stdout/stderr write, stdin read, file open-chains,
-					// wall-clock/args/env, and no-memory structured imports the
-					// specific routes above didn't already claim (e.g.
-					// read_line+exit, read_file+print, now()+print, args+exit).
-					// The read side, the file open-chain (get-directories), and
-					// the list-returning args/env imports allocate through
-					// cabi_realloc, so rebuild with ForceMemorySection when any
-					// is present.
-					needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite
-					for _, mt := range opts.MemTramp {
-						if mt.NeedsRealloc {
-							needsRealloc = true
-						}
-					}
-					b := bin
-					if needsRealloc {
-						rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-							ForceMemorySection: true,
-							Preview2WASI:       true,
-							SynthCliRun:        true,
-						})
-						if err != nil {
-							return 1, err
-						}
-						b = rb
-					}
-					comp := component.ComposePreview2CliRun(b, opts, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				wasiImports, unknown := classifyPreview2Imports(bin)
-				if len(unknown) > 0 {
-					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
-				}
-				var comp []byte
-				if len(wasiImports) == 0 {
-					comp = component.BuildWasiCliRunComponent(bin, "_lang_run")
-				} else {
-					comp = component.WrapWasiImportedAsCliRun(bin, wasiImports, "_lang_run")
+				comp, err := buildPreview2CliRunComponent(prog, info, bin)
+				if err != nil {
+					return 1, fmt.Errorf("-component-wrap-cli %w", err)
 				}
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
@@ -627,15 +581,9 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if err != nil {
 				return 1, err
 			}
-			wasiImports, unknown := classifyPreview2Imports(bin)
-			if len(unknown) > 0 {
-				return 1, fmt.Errorf("-target wasm without -wasi-adapter only supports programs whose imports are migrated to preview-2 (currently: wasi:cli/exit, wasi:random/random, wasi:clocks/monotonic-clock). Saw %d unrecognised: %s. Either remove the source that pulls them in or pass -wasi-adapter PATH.", len(unknown), strings.Join(unknown, ", "))
-			}
-			var comp []byte
-			if len(wasiImports) == 0 {
-				comp = component.BuildWasiCliRunComponent(bin, "_lang_run")
-			} else {
-				comp = component.WrapWasiImportedAsCliRun(bin, wasiImports, "_lang_run")
+			comp, err := buildPreview2CliRunComponent(prog, info, bin)
+			if err != nil {
+				return 1, fmt.Errorf("-target wasm without -wasi-adapter %w", err)
 			}
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
@@ -977,6 +925,48 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 // ok=false if anything else appears, if both stdout and stderr are
 // used at once (the composer handles a single write stream), or if a
 // getter/method pair is half-present.
+// buildPreview2CliRunComponent routes a wasmbin core module to a
+// wasi:cli/run component without the wasm-tools adapter: the general
+// composer (ComposePreview2CliRun) for any recognised CLI-stream /
+// filesystem-open / wall-clock-args-env / structured shape, or
+// BuildWasiCliRunComponent for an import-free program. Imports the
+// composer can't place surface a clear error (the caller prefixes the
+// flag context). Shared by -component-wrap-cli and the -target wasm
+// default so the two stay in lock-step. The read side, the filesystem
+// open-chain, and the list-returning args/env imports allocate
+// through cabi_realloc, so the module is rebuilt with
+// ForceMemorySection when any is present.
+func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []byte) ([]byte, error) {
+	if opts, ok := classifyComposeCliStream(bin); ok {
+		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite
+		for _, mt := range opts.MemTramp {
+			if mt.NeedsRealloc {
+				needsRealloc = true
+			}
+		}
+		b := bin
+		if needsRealloc {
+			rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+				ForceMemorySection: true,
+				Preview2WASI:       true,
+				SynthCliRun:        true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			b = rb
+		}
+		return component.ComposePreview2CliRun(b, opts, "_lang_run"), nil
+	}
+	// classifyComposeCliStream already accepts every known import; if it
+	// declined, the module is either import-free or carries something we
+	// can't place.
+	if _, unknown := classifyPreview2Imports(bin); len(unknown) > 0 {
+		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
+	}
+	return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
+}
+
 func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	var opts component.ComposeOpts
 	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
@@ -1086,11 +1076,10 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 			NeedsRealloc:     true,
 		})
 	}
-	// Only claim shapes with a stream/file/mem-trampoline side.
-	// Pure-structured (exit/random/monotonic with no other side) stays
-	// on WrapWasiImportedAsCliRun; no imports falls to
-	// BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && len(opts.MemTramp) == 0 {
+	// Claim any shape with at least one import (stream / file /
+	// mem-trampoline / structured). Only a truly import-free program
+	// falls through — to BuildWasiCliRunComponent.
+	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
 		return component.ComposeOpts{}, false
 	}
 	return opts, true
@@ -1098,7 +1087,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 
 // classifyPreview2Imports walks the core module's import section and
 // bucketises each: known structured imports become component.WasiImport
-// entries (for WrapWasiImportedAsCliRun); anything else is returned as
+// entries (for WrapWasiImportedWithExport); anything else is returned as
 // an "module.name" string so the driver can surface a clear error.
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 	pairs := coreModuleImportPairs(bin)

@@ -9120,7 +9120,7 @@ func TestCmdLangComponentWrapCli(t *testing.T) {
 // TestCmdLangComponentWrapCliWithExit drives a Lang program that
 // calls exit() through `-component-wrap-cli` end-to-end. The
 // driver should detect the preview-2 wasi:cli/exit import, wrap
-// the core via `WrapWasiImportedAsCliRun`, and produce a
+// the core via `ComposePreview2CliRun`, and produce a
 // component that:
 //
 //   - Imports wasi:cli/exit@0.2.0 (so wasmtime provides exit).
@@ -9240,7 +9240,7 @@ func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 // that calls random_i32() through `-component-wrap-cli`. With
 // the preview-2 migration of wasi_random_get →
 // wasi:random/random::get-random-u64, the driver should route
-// the import through `WrapWasiImportedAsCliRun` and produce a
+// the import through `ComposePreview2CliRun` and produce a
 // component that runs cleanly under `wasmtime run`.
 func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -9289,7 +9289,7 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 // that calls monotonic_ns() through `-component-wrap-cli`. With
 // the preview-2 migration of wasi_clock_time_get (monotonic case)
 // → wasi:clocks/monotonic-clock@0.2.0::now, the driver should
-// route the import through `WrapWasiImportedAsCliRun` and
+// route the import through `ComposePreview2CliRun` and
 // produce a component that runs cleanly under `wasmtime run`.
 func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -10542,7 +10542,7 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 // program that pulls in TWO preview-2 WASI imports
 // simultaneously: wasi:random/random (via random_i32) and
 // wasi:cli/exit (via exit()). Confirms the multi-import loop in
-// WrapWasiImportedAsCliRun produces a component that wasmtime
+// ComposePreview2CliRun produces a component that wasmtime
 // accepts and runs cleanly under `wasmtime run` (no --invoke).
 //
 // The Lang program asks for a random i32 and exits 0 — both
@@ -10699,15 +10699,15 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 }
 
 // TestCmdLangTargetWasmNoAdapterRejectsUnsupported confirms the
-// no-adapter `-target wasm` path surfaces a clear error when
-// the program pulls in WASI imports the preview-2 migration
-// hasn't covered yet — pointing the user at -wasi-adapter as
+// no-adapter `-target wasm` path surfaces a clear error when the
+// program pulls in WASI imports the Go-side composer can't place yet
+// (here TCP / wasi:sockets) — pointing the user at -wasi-adapter as
 // the workaround.
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	src := []byte(`function main(): i32 {
-    print("hi");
+    var s: i32 = tcp_listen(8080);
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -10722,8 +10722,8 @@ func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected unsupported-imports rejection, got success: %s", out)
 	}
-	if !strings.Contains(string(out), "preview-2") || !strings.Contains(string(out), "-wasi-adapter") {
-		t.Errorf("expected preview-2 / -wasi-adapter hint in error, got:\n%s", out)
+	if !strings.Contains(string(out), "unrecognised imports") || !strings.Contains(string(out), "-wasi-adapter") {
+		t.Errorf("expected unrecognised-imports / -wasi-adapter hint in error, got:\n%s", out)
 	}
 }
 
