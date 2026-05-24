@@ -964,9 +964,25 @@ func appendCoreSec(buf []byte, id byte, body []byte) []byte {
 // linkage works without exercising the host side); the
 // cabi_realloc export just returns 0.
 func argsCliRunCoreModule() []byte {
+	return environmentGetterCliRunCoreModule("get-arguments")
+}
+
+// envCliRunCoreModule is the get-environment counterpart — same
+// shape, only the imported getter name differs.
+func envCliRunCoreModule() []byte {
+	return environmentGetterCliRunCoreModule("get-environment")
+}
+
+// environmentGetterCliRunCoreModule builds the shared hand-rolled
+// core module for the wasi:cli/environment getter wraps: imports
+// `wasi:cli/environment@0.2.0::<getFuncName>` as `(i32) -> ()`,
+// exports memory + cabi_realloc + a `_lang_run() -> i32` returning
+// 0. The bodies don't call the getter (the test's scope is "wrap is
+// structurally correct + runnable").
+func environmentGetterCliRunCoreModule(getFuncName string) []byte {
 	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	// type section: vec(3)
-	//   0: (i32)->()                 get-arguments
+	//   0: (i32)->()                 getter
 	//   1: ()->i32                   _lang_run
 	//   2: (i32 i32 i32 i32)->i32     cabi_realloc
 	typeBody := []byte{
@@ -976,12 +992,12 @@ func argsCliRunCoreModule() []byte {
 		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
 	}
 	out = appendCoreSec(out, 0x01, typeBody)
-	// import section: wasi:cli/environment@0.2.0 . get-arguments (type 0)
+	// import section: wasi:cli/environment@0.2.0 . <getFuncName> (type 0)
 	importBody := []byte{0x01}
 	importBody = append(importBody, byte(len("wasi:cli/environment@0.2.0")))
 	importBody = append(importBody, "wasi:cli/environment@0.2.0"...)
-	importBody = append(importBody, byte(len("get-arguments")))
-	importBody = append(importBody, "get-arguments"...)
+	importBody = append(importBody, byte(len(getFuncName)))
+	importBody = append(importBody, getFuncName...)
 	importBody = append(importBody, 0x00, 0x00) // func, typeidx 0
 	out = appendCoreSec(out, 0x02, importBody)
 	// function section: vec(2) typeidx [2, 1]
@@ -1041,6 +1057,46 @@ func TestWrapWasiArgsAsCliRun_RunsUnderWasmtime(t *testing.T) {
 		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
 	}
 	for _, want := range []string{"wasi:cli/environment@0.2.0", "wasi:cli/run@0.2.0", "get-arguments"} {
+		if !bytes.Contains(printOut, []byte(want)) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
+// TestWrapWasiEnvAsCliRun_RunsUnderWasmtime is the get-environment
+// counterpart of TestWrapWasiArgsAsCliRun — the component imports
+// wasi:cli/environment@0.2.0 (get-environment →
+// list<tuple<string,string>>) + exports wasi:cli/run@0.2.0; the
+// realloc-bearing canon-lower + cabi_realloc alias wire up
+// correctly and the component runs clean under wasmtime.
+func TestWrapWasiEnvAsCliRun_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	comp := component.WrapWasiEnvAsCliRun(envCliRunCoreModule(), "_lang_run")
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "env.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/environment@0.2.0", "wasi:cli/run@0.2.0", "get-environment"} {
 		if !bytes.Contains(printOut, []byte(want)) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
