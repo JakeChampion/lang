@@ -445,6 +445,26 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 			}
 		}
 	}
+	// Phase 1e-enums-runtime: these runtime helpers build Option /
+	// Result / IoError boxes through __lang_alloc_box, which
+	// prepends the 8-byte static-sentinel rc header so a future
+	// enum-ii predicate widening can run __lang_rc_inc/dec on the
+	// boxes safely (they short-circuit on the high bit).
+	// __lang_alloc_box calls __lang_alloc internally — already in
+	// the set, since every one of these also allocates directly.
+	for _, h := range []string{
+		"__lang_env", "__lang_read_line", "__build_io_error",
+		"__lang_read_file", "__lang_write_file",
+		"__lang_open_reader", "__lang_open_writer", "__lang_open_appender",
+		"__lang_reader_close_fd", "__lang_writer_close",
+		"__lang_writer_write", "__lang_reader_read_line_fd",
+		"__lang_reader_read_chunk",
+	} {
+		if needs.set[h] {
+			needs.add("__lang_alloc_box")
+			break
+		}
+	}
 	return needs
 }
 
@@ -460,6 +480,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32}, // size
 		results: []byte{encode.ValtypeI32}, // pointer
 		body:    buildAllocBody,
+	},
+	"__lang_alloc_box": {
+		params:  []byte{encode.ValtypeI32}, // payload size
+		results: []byte{encode.ValtypeI32}, // data pointer (base + 8)
+		body:    buildAllocBoxBody,
 	},
 	"__lang_str_byte": {
 		// (data, len, i) → i32 byte; inline-or-heap aware.
@@ -1213,6 +1238,39 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	// Locals declaration: three i32 scratch slots (ptr, end, need)
 	// after the single i32 param.
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildAllocBoxBody assembles wasm bytes for
+// __lang_alloc_box(size) -> data — the wasmbin counterpart of
+// the native backends' helper. Allocates `size + 8` via
+// __lang_alloc, writes the static-sentinel 0x80000000 at
+// `[base + 0]`, and returns the data pointer `base + 8`. Used
+// by the runtime helpers that build Option / Result / IoError
+// boxes so a future Phase 1e-enums-ii predicate widening can
+// call __lang_rc_inc/dec on enum values safely (they
+// short-circuit on the high bit).
+//
+// Signature: (param $size i32) (result i32). One i32 local
+// ($base) after the param.
+func buildAllocBoxBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	var body []byte
+	// base = __lang_alloc(size + 8)
+	body = inst.InstLocalGet(body, 0) // $size
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1) // $base
+	// mem[base] = 0x80000000 (static sentinel)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = memory.InstI32Store(body, 2, 0)
+	// return base + 8
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -2424,6 +2482,7 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	6: $copy_i — byte-copy loop counter
 func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	alloc := helperIdxs["__lang_alloc"]
+	allocBox := helperIdxs["__lang_alloc_box"]
 	readByte := helperIdxs["__lang_read_byte"]
 	var body []byte
 	// Initial buf: alloc(64), cap=64, n=0
@@ -2495,17 +2554,20 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Eqz(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// Phase 1e-runtime: alloc_box prepends the static-sentinel rc
+	// header so enum-ii's inc/dec no-op on this Option box.
 	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 5)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// Build Some(line) box: alloc(16), tag=0, data, len.
+	// Build Some(line) box: alloc(16), tag=0, data, len. Phase
+	// 1e-runtime: alloc_box prepends the static-sentinel rc header.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalSet(body, 5)
 	// tag = 0
 	body = inst.InstLocalGet(body, 5)

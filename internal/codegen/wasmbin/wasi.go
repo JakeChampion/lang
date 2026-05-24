@@ -1800,6 +1800,7 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 //	10: $name_real_len — strlen of name (via __lang_str_len)
 func buildEnvBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	strLen := idxs["__lang_str_len"]
 	strByte := idxs["__lang_str_byte"]
 	envSizes := idxs["wasi_environ_sizes_get"]
@@ -1923,8 +1924,11 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 					body = inst.InstEnd(body)
 					body = inst.InstEnd(body)
 					// Build Some box: alloc(16), tag=0, data, len.
+					// Phase 1e-runtime: alloc_box adds the 8-byte
+					// static-sentinel rc header so enum-ii's inc/dec
+					// no-op on this runtime-built Option box.
 					body = inst.InstI32Const(body, 16)
-					body = inst.InstCall(body, alloc)
+					body = inst.InstCall(body, allocBox)
 					body = inst.InstLocalSet(body, 9)
 					body = inst.InstLocalGet(body, 9)
 					body = inst.InstI32Const(body, 0)
@@ -1982,9 +1986,10 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // end outer loop
 	body = inst.InstEnd(body) // end outer block
-	// No match: return None. alloc(4), tag=1.
+	// No match: return None. alloc(4), tag=1. Phase 1e-runtime:
+	// alloc_box prepends the static-sentinel rc header.
 	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
