@@ -2979,6 +2979,63 @@ function main(): i32 {
 	}
 }
 
+// Phase 3 step 3: struct drop handlers. A user struct with
+// pointer-shaped rc-tracked fields drops those fields on its last
+// reference (gated by __fern_rc_is_unique) before dec'ing the box,
+// balancing the per-field inc from Phase 1e-struct-ii.
+func TestX86_64RcDropStructFields(t *testing.T) {
+	// Drop FIRES: a struct holding an aliased array drops the field
+	// on exit, so the array's rc returns to its pre-construction 1.
+	fires := `struct Holder { items: u8[] }
+function consume(inner: u8[]): i32 {
+    var h: Holder = Holder { items: inner };
+    return 0;
+}
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(4);
+    var before: i32 = __rc_get(inner);
+    var ignore: i32 = consume(inner);
+    var after: i32 = __rc_get(inner);
+    return (before - 1) + (after - 1) + __rc_underflow_count();
+}`
+	if _, code := compileAndRunX86_64(t, fires); code != 0 {
+		t.Errorf("got %d, want 0 (struct field drop must dec the array back to rc 1)", code)
+	}
+
+	// Aliased struct must NOT drop fields twice: `var h2 = h1` bumps
+	// the struct rc, so only the last holder recurses into fields.
+	aliased := `struct Holder { items: i32[] }
+function main(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var h1: Holder = Holder { items: inner };
+    var h2: Holder = h1;
+    return h2.items[2] + __rc_underflow_count() - 3;
+}`
+	if _, code := compileAndRunX86_64(t, aliased); code != 0 {
+		t.Errorf("got %d, want 0 (aliased struct: no double field-drop, 0 underflow)", code)
+	}
+
+	// Nested array field + a nested-struct field: the array field
+	// recurses one level; the struct field is flat-dec'd. Neither
+	// over-releases.
+	nested := `struct Grid { rows: i32[][] }
+struct Inner { v: i32[] }
+struct Outer { inner: Inner }
+function build(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var g: Grid = Grid { rows: [a] };
+    var arr: i32[] = [7, 8];
+    var o: Outer = Outer { inner: Inner { v: arr } };
+    return g.rows[0][1] + o.inner.v[0] + __rc_underflow_count();
+}
+function main(): i32 {
+    return build() - 9;
+}`
+	if _, code := compileAndRunX86_64(t, nested); code != 0 {
+		t.Errorf("got %d, want 0 (nested struct/array fields: correct values, 0 underflow)", code)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestX86_64RcDecOnOverwrite(t *testing.T) {

@@ -1464,32 +1464,85 @@ func (b *builder) emitDeferCleanup() error {
 // briefly to zero on the returned ptr, harmless under the
 // no-free regime.
 func (b *builder) emitRcDecLocalsAtExit() {
-	emitDec := func(slot int32, t ast.Type) {
-		// Phase 3 step 3: arrays of pointer-shaped rc-tracked
-		// elements route through __fern_drop_arr_ptr, which dec's
-		// each element (balancing the per-element inc emitted at
-		// array-literal construction) on the last reference before
-		// dec'ing the array. Wired on all three backends (wasm
-		// runtime + arm64 / x86_64 asm); the helper carries the
-		// same null / low-address / sentinel guards as
-		// __fern_rc_dec, so an array-typed slot that actually
-		// holds a non-pointer (enum tag, never-taken-branch
-		// garbage) is passed through rather than dereferenced.
-		// Pointer elements have ptr-width stride.
+	// decValueOnStack consumes a pointer value already on the
+	// operand stack and dec's it per its static type. An array of
+	// pointer-shaped rc-tracked elements routes through
+	// __fern_drop_arr_ptr (which recurses one level into the
+	// elements on the last reference); every other pointer-shaped
+	// value gets a flat __fern_rc_dec (nested fields/elements of
+	// those leak for now — safe under no-free, no over-release).
+	// Both helpers carry the null / low-address / sentinel guards.
+	decValueOnStack := func(t ast.Type) {
 		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		// __fern_rc_dec is a void-returning runtime helper but
 		// OpCallDirect's codegen always pushes the call's
-		// return-value register (x0/rax) onto the operand
-		// stack. Drop the bogus push to keep the stack
-		// balanced.
+		// return-value register (x0/rax) onto the operand stack;
+		// drop the bogus push to keep the stack balanced.
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	emitDec := func(slot int32, t ast.Type) {
+		// Phase 3 step 3: arrays of pointer-shaped rc-tracked
+		// elements route through __fern_drop_arr_ptr on every
+		// backend (wasm runtime + arm64 / x86_64 asm); the helper
+		// carries the same null / low-address / sentinel guards as
+		// __fern_rc_dec, so an array-typed slot that actually
+		// holds a non-pointer (enum tag, never-taken-branch
+		// garbage) is passed through rather than dereferenced.
+		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			decValueOnStack(t)
+			return
+		}
+		// Phase 3 step 3: a user struct with pointer-shaped
+		// rc-tracked fields drops those fields on its LAST
+		// reference before dec'ing the box — balancing the
+		// per-field inc from Phase 1e-struct-ii. Gated on
+		// __fern_rc_is_unique (rc == 1, guarded) so an aliased
+		// struct (rc > 1) or a non-pointer slot only dec's the
+		// box. Runtime handle types (Map / Reader / Writer /
+		// MapIter) have no StructDecl in info.Structs, so sdOk is
+		// false and they fall through to the plain box dec — their
+		// own drop handlers land in a follow-up. Fields are dropped
+		// at one level (decValueOnStack); nested struct/enum/closure
+		// fields are flat-dec'd (deep recursion is a later slice).
+		if st, ok := t.(ast.StructType); ok {
+			if sd, sdOk := b.info.Structs[st.Name]; sdOk {
+				offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+				var ptrFields []ast.Param
+				for _, f := range sd.Fields {
+					if arrElemIsRcTracked(f.Type) {
+						ptrFields = append(ptrFields, f)
+					}
+				}
+				if len(ptrFields) > 0 {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					for _, f := range ptrFields {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						if off := offs[f.Name]; off != 0 {
+							b.emit(Op{Kind: OpConstI32, I32: off})
+							b.emit(Op{Kind: OpAdd})
+						}
+						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+						decValueOnStack(f.Type)
+					}
+					b.emit(Op{Kind: OpEnd})
+				}
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Use b.locals[name] so we only dec slots that user code

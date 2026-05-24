@@ -310,6 +310,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
+	if g.usesRcIsUnique {
+		g.emitRcIsUniqueRuntime()
+	}
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
@@ -1160,6 +1163,33 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_drop_arr_ptr")
 	g.line(".ltorg")
+}
+
+// emitRcIsUniqueRuntime emits `__fern_rc_is_unique(ptr) -> i32` —
+// returns 1 iff ptr is a real, uniquely-owned heap value
+// (non-null, above the low-address guard, not a static sentinel,
+// rc == 1); else 0. Same guard chain as __fern_rc_dec, so it is
+// safe on a slot that might hold a non-pointer scalar. Used by the
+// Phase 3 struct drop to gate recursive field decs on "this is the
+// last reference". Leaf (no calls), so no frame.
+func (g *generator) emitRcIsUniqueRuntime() {
+	g.line("")
+	g.line(".global __fern_rc_is_unique")
+	g.typeDirective("__fern_rc_is_unique")
+	g.label("__fern_rc_is_unique")
+	g.emit("cbz x0, .Lisuniq_no")
+	g.emit("cmp x0, #0x10000")
+	g.emit("b.lo .Lisuniq_no")
+	g.emit("ldur w1, [x0, #-8]")
+	g.emit("tbnz w1, #31, .Lisuniq_no") // static sentinel
+	g.emit("cmp w1, #1")
+	g.emit("b.ne .Lisuniq_no")
+	g.emit("mov w0, #1")
+	g.emit("ret")
+	g.label(".Lisuniq_no")
+	g.emit("mov w0, #0")
+	g.emit("ret")
+	g.sizeDirective("__fern_rc_is_unique")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
@@ -4570,6 +4600,9 @@ type generator struct {
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See x86_64's mirror + the wasm runtime.
 	usesDropArrPtr bool
+	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
+	// "last reference?" check used by the Phase 3 struct drop.
+	usesRcIsUnique bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6562,6 +6595,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_drop_arr_ptr":
 			g.usesDropArrPtr = true
 			g.usesRcDec = true
+		case "__fern_rc_is_unique":
+			g.usesRcIsUnique = true
 		case "__fern_strcat":
 			g.usesStrcat = true
 			g.usesAlloc = true
