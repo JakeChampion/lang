@@ -3518,3 +3518,41 @@ func TestX86_64ScientificNotation(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (scientific-notation float literals)", code)
 	}
 }
+
+// Mirror of TestArm64SubI32ArithmeticWraps.
+func TestX86_64SubI32ArithmeticWraps(t *testing.T) {
+	src := `struct S { v: u8 }
+function main(): i32 {
+    var a: u8 = 255u8;
+    a = a + 1u8;
+    if ((a as i32) != 0) { return 1; }
+    var b: u8 = 0u8;
+    b = b - 1u8;
+    if ((b as i32) != 255) { return 2; }
+    var c: u8 = 16u8;
+    c = c * 16u8;
+    if ((c as i32) != 0) { return 3; }
+    var d: u16 = 65535u16;
+    d = d + 1u16;
+    if ((d as i32) != 0) { return 4; }
+    var e: i8 = 127i8;
+    e = e + 1i8;
+    if ((e as i32) != -128) { return 5; }
+    var f: i16 = 32767i16;
+    f = f + 1i16;
+    if ((f as i32) != -32768) { return 6; }
+    var g: u16 = 1u16;
+    g = g << 16u16;
+    if ((g as i32) != 0) { return 7; }
+    var s: S = S { v: 200u8 };
+    var h: u8 = s.v + 100u8;
+    if ((h as i32) != 44) { return 8; }
+    var k: u8 = 100u8;
+    k = k + 50u8;
+    if ((k as i32) != 150) { return 9; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (sub-i32 arithmetic wraps to width)", code)
+	}
+}
