@@ -1,0 +1,6 @@
+// Exits with a non-zero status and prints nothing. Verifies that
+// main's return value reaches the process exit code on every backend
+// (on wasm it is recovered from the result line, see the harness).
+function main(): i32 {
+    return 7;
+}

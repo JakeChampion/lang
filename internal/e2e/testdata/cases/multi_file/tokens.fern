@@ -1,0 +1,5 @@
+pub struct TokA { x: i32 }
+pub struct TokB { y: i32 }
+pub type Tok = TokA | TokB;
+pub function make_a(): Tok { return TokA { x: 5 }; }
+pub function make_b(): Tok { return TokB { y: 17 }; }
