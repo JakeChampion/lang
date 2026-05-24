@@ -1,0 +1,13 @@
+// switch with a multi-value case and a default.
+function classify(n: i32): i32 {
+    switch (n) {
+        case 0: return 100;
+        case 1, 2, 3: return 42;
+        default: return 0;
+    }
+    return 0 - 1;
+}
+
+function main(): i32 {
+    return classify(2);
+}

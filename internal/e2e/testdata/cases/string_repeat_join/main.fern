@@ -1,0 +1,7 @@
+// split then join with a different separator — a round-trip through
+// the array form.
+function main(): i32 {
+    var parts = "a,b,c".split(",");
+    print(parts.join("|"));
+    return 0;
+}

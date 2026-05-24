@@ -1,0 +1,7 @@
+// Struct literal initialising the same field twice.
+struct Point { x: i32, y: i32 }
+
+function main(): i32 {
+    var p: Point = Point { x: 1, x: 2, y: 3 };
+    return p.x;
+}

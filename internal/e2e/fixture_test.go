@@ -23,6 +23,13 @@
 //	                 {interp, x86_64, arm64, wasm}; lines starting with
 //	                 '#' are comments. Defaults to all four.
 //
+// Compile-error fixtures: if a directory contains an `expected.error`
+// file, the fixture is NOT run. Instead it is expected to FAIL the
+// front-end (parse / module-load / type-check), and the captured error
+// message must contain the trimmed `expected.error` text. This gives
+// declarative coverage of the checker's rejection paths. Such fixtures
+// ignore expected.stdout / expected.exit / stdin / match / backends.
+//
 // Backend exit-code note: native and interp backends propagate main's
 // return value straight to the process exit code (full 0..255). A
 // preview-2 wasm host only surfaces 0/1 through `wasi:cli/exit`, so we
@@ -57,14 +64,16 @@ import (
 )
 
 type fixtureSpec struct {
-	name     string
-	mainPath string
-	stdin    string
-	wantOut  string   // exact mode: full expected stdout
-	contains []string // contains mode: required substrings
-	exact    bool     // true → byte-for-byte stdout match
-	wantExit int
-	backends map[string]bool
+	name         string
+	mainPath     string
+	stdin        string
+	wantOut      string   // exact mode: full expected stdout
+	contains     []string // contains mode: required substrings
+	exact        bool     // true → byte-for-byte stdout match
+	wantExit     int
+	backends     map[string]bool
+	compileError bool   // true → expected to fail the front-end
+	wantError    string // required substring of the compile error
 }
 
 var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
@@ -76,6 +85,17 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 		mainPath: filepath.Join(dir, "main.fern"),
 		exact:    true,
 		backends: map[string]bool{},
+	}
+
+	// Compile-error fixture: expected to fail the front-end. Skip all
+	// the run-oriented sidecar parsing.
+	if raw, ok := readOptionalFile(dir, "expected.error"); ok {
+		f.compileError = true
+		f.wantError = strings.TrimSpace(raw)
+		if f.wantError == "" {
+			t.Fatalf("%s: expected.error file is empty", f.name)
+		}
+		return f
 	}
 
 	if raw, ok := readOptionalFile(dir, "stdin"); ok {
@@ -160,6 +180,17 @@ func TestFernFixtures(t *testing.T) {
 		}
 		f := loadFixture(t, dir)
 		t.Run(name, func(t *testing.T) {
+			if f.compileError {
+				t.Run("check", func(t *testing.T) {
+					errText, failed := runFixtureCompileError(f.mainPath)
+					if !failed {
+						t.Errorf("expected a compile error containing %q, but the program compiled cleanly", f.wantError)
+					} else if !strings.Contains(errText, f.wantError) {
+						t.Errorf("compile error does not contain %q\nfull error:\n%s", f.wantError, errText)
+					}
+				})
+				return
+			}
 			for _, backend := range allBackends {
 				if !f.backends[backend] {
 					continue
@@ -282,6 +313,24 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	component := finishComponentFromCoreBytes(t, core)
 	so, _, ec := runComponent(t, component, runOpts{stdin: stdin})
 	return so, ec
+}
+
+// runFixtureCompileError runs the front-end (modload → constfold →
+// check) and returns the first error's text plus whether any stage
+// failed. Backend-agnostic: parse / module-load / type errors are the
+// same regardless of target, so this runs once per fixture.
+func runFixtureCompileError(mainPath string) (string, bool) {
+	prog, _, err := modload.Load(mainPath)
+	if err != nil {
+		return err.Error(), true
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return err.Error(), true
+	}
+	if _, err := checker.Check(prog); err != nil {
+		return err.Error(), true
+	}
+	return "", false
 }
 
 // loadCheckMono runs the shared front of the pipeline (modload →

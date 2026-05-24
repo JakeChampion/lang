@@ -1,0 +1,4 @@
+// Referencing a name that was never declared.
+function main(): i32 {
+    return missing;
+}

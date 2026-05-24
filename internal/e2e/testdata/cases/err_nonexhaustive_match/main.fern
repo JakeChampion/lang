@@ -1,0 +1,13 @@
+// A match that omits one variant and has no wildcard arm.
+enum Color { Red, Green, Blue }
+
+function code(c: Color): i32 {
+    match (c) {
+        Red => { return 1; },
+        Green => { return 2; }
+    }
+}
+
+function main(): i32 {
+    return code(Red);
+}

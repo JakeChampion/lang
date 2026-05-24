@@ -1,0 +1,9 @@
+// url percent-encode/decode round-trip (checks the inverse holds
+// without pinning the exact encoded form).
+function main(): i32 {
+    var s: string = "a b/c?d&e";
+    if (url_decode(url_encode(s)) == s) {
+        return 42;
+    }
+    return 1;
+}
