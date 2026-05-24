@@ -696,6 +696,31 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if opts, ok := classifyComposeCliStream(bin); ok {
+					// General CLI-stream + structured composition: any mix of
+					// stdout/stderr write, stdin read, and no-memory structured
+					// imports (exit/random/monotonic) the specific routes above
+					// didn't already claim (e.g. read_line+exit,
+					// read_line+print+random). The read side returns a list, so
+					// rebuild with ForceMemorySection (cabi_realloc) when present.
+					b := bin
+					if opts.ReadStdin {
+						rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+							ForceMemorySection: true,
+							Preview2WASI:       true,
+							SynthCliRun:        true,
+						})
+						if err != nil {
+							return 1, err
+						}
+						b = rb
+					}
+					comp := component.ComposePreview2CliRun(b, opts, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -1309,6 +1334,68 @@ func usesPreview2ReadLinePrintOnly(bin []byte) bool {
 		}
 	}
 	return true
+}
+
+// classifyComposeCliStream inspects a core module's imports and, if
+// they all fall within the CLI-stream + structured family that
+// component.ComposePreview2CliRun handles, returns the ComposeOpts to
+// build it. The family: an optional write side (get-stdout OR
+// get-stderr paired with output-stream.blocking-write-and-flush), an
+// optional read side (get-stdin + input-stream.blocking-read), and
+// any number of no-memory structured imports (the
+// knownPreview2Imports set: exit / random / monotonic). Returns
+// ok=false if anything else appears, if both stdout and stderr are
+// used at once (the composer handles a single write stream), or if a
+// getter/method pair is half-present.
+func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
+	var opts component.ComposeOpts
+	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
+	for _, p := range coreModuleImportPairs(bin) {
+		switch {
+		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
+			getStdout = true
+		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
+			getStderr = true
+		case p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin":
+			getStdin = true
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush":
+			blockWrite = true
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
+			blockRead = true
+		default:
+			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
+			if !ok {
+				return component.ComposeOpts{}, false
+			}
+			opts.Structured = append(opts.Structured, component.WasiImport{
+				InterfaceName:    spec.interfaceName,
+				FuncName:         p.name,
+				ParamNames:       spec.paramNames,
+				ParamValtypes:    spec.paramValtypes,
+				CoreImportModule: spec.coreImportModule,
+				InnerTypes:       spec.innerTypes,
+				ResultValtypes:   spec.resultValtypes,
+			})
+		}
+	}
+	if getStdout && getStderr {
+		return component.ComposeOpts{}, false // single write stream only
+	}
+	// Each side must have both its getter and its method, or neither.
+	writeGetter := getStdout || getStderr
+	if writeGetter != blockWrite {
+		return component.ComposeOpts{}, false
+	}
+	if getStdin != blockRead {
+		return component.ComposeOpts{}, false
+	}
+	if getStdout {
+		opts.WriteGetter = "get-stdout"
+	} else if getStderr {
+		opts.WriteGetter = "get-stderr"
+	}
+	opts.ReadStdin = getStdin
+	return opts, true
 }
 
 // classifyPrintPlusStructured detects the mixed case: a stream-write
