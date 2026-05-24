@@ -649,6 +649,100 @@ func WrapWasiWallClockAsCliRun(coreBytes []byte, coreExportName string) []byte {
 	return buf
 }
 
+// WrapWasiArgsComponent wraps a core module that imports
+// `wasi:cli/environment@0.2.0::get-arguments` (lowered to
+// `(retptr: i32) -> ()` for the indirect list<string> return)
+// into a preview-2 component. The user's core module must export
+// `memory` and `cabi_realloc`.
+//
+// Same single-interface / 1-i32-trampoline shape as the wall-clock
+// wrap, with one difference: get-arguments returns a list<string>,
+// a variable-size canonical-ABI value, so its canon-lower carries
+// realloc as well as memory (the host allocates the list + each
+// string's bytes in the user's memory through cabi_realloc).
+//
+// Index assignment:
+//
+//   - Component type 0: environment instance type.
+//   - Component instance 0: the imported environment.
+//   - Component func 0: aliased `get-arguments`.
+//   - Core modules: user (0), trampoline-1i32 (1), fixup-1i32 (2).
+//   - Core instance 0: trampoline. Core func 0: its "0" export.
+//   - Core instance 1: packages core func 0 as "get-arguments".
+//   - Core instance 2: the user module, instantiated with
+//     wasi:cli/environment = core instance 1.
+//   - Core memory 0: aliased from instance 2. Core func 1:
+//     cabi_realloc aliased from instance 2. Core table 0: aliased
+//     from instance 0.
+//   - Core func 2: canon-lower of `get-arguments` with
+//     memory(0) + realloc(1).
+//   - Core instance 3: fixup arg (table + func 2).
+//   - Core instance 4: the fixup module.
+func WrapWasiArgsComponent(coreBytes []byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Type 0: environment instance type. Import as instance 0.
+	buf = PutTypeSectionRawBody(buf, WasiCliEnvironmentArgsInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:cli/environment@0.2.0", 0)
+
+	// Core modules: user (0), trampoline (1), fixup (2).
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleForNI32NoResult(1))
+	buf = PutCoreModuleSection(buf, FixupModuleForNI32NoResult(1))
+
+	// Instantiate trampoline → core instance 0.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+
+	// Alias trampoline "0" → core func 0; wrap as core instance 1
+	// under "get-arguments".
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-arguments", 0)
+
+	// Instantiate user with wasi:cli/environment = instance 1
+	// → core instance 2.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{"wasi:cli/environment@0.2.0"}, []uint32{1})
+
+	// Alias user memory + cabi_realloc (the list<string> return is
+	// allocated through it) + trampoline table.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 2, "cabi_realloc") // core func 1
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
+
+	// Alias `get-arguments` from the import → component func 0,
+	// canon-lower it with memory(0) + realloc(core func 1) → core
+	// func 2.
+	buf = PutAliasSectionInstanceExportFunc(buf, 0, "get-arguments")
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 0, 0, 1)
+
+	// Fixup arg instance (table + lowered func 2) → core instance 3,
+	// then instantiate the fixup module → core instance 4.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 2},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
+		[]string{""}, []uint32{3})
+	return buf
+}
+
+// WrapWasiArgsAsCliRun extends WrapWasiArgsComponent with a
+// wasi:cli/run@0.2.0 export. After the args wrap, the index spaces
+// are: component types 1, component funcs 1, component instances 1,
+// core funcs 3, core instances 5. The cli-run tail aliases the
+// user's `coreExportName` (core instance 2) as core func 3, lifts
+// it, and packages + exports a run instance. (One more core func
+// than the wall-clock wrap, which has no cabi_realloc alias.)
+func WrapWasiArgsAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiArgsComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 2, coreExportName)
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 1)
+	buf = PutCanonSectionLiftNoOpts(buf, 3, 2)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 1)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 1)
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
