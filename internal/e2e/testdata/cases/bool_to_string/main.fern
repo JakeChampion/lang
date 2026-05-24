@@ -1,0 +1,10 @@
+// Boolean derived from a comparison, branched on with if/else.
+function main(): i32 {
+    var t: boolean = (3 > 2);
+    if (t) {
+        print("yes");
+    } else {
+        print("no");
+    }
+    return 0;
+}

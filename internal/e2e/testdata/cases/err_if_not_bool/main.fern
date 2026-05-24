@@ -1,0 +1,7 @@
+// An if condition must be boolean, not an integer.
+function main(): i32 {
+    if (5) {
+        return 1;
+    }
+    return 0;
+}

@@ -1,0 +1,7 @@
+// reversed() returns a fresh reversed copy. [1,2,3,4] -> [4,3,2,1];
+// 4*10 + 1 = 41.
+function main(): i32 {
+    var a = [1, 2, 3, 4];
+    var r = a.reversed();
+    return r[0] * 10 + r[3];
+}

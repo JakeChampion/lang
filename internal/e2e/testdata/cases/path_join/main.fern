@@ -1,0 +1,5 @@
+// path_join concatenates path segments with a single separator.
+function main(): i32 {
+    print(path_join(["usr", "local", "bin"]));
+    return 0;
+}
