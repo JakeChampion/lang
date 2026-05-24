@@ -111,7 +111,7 @@ func TestGenMainProducesRunnablePrograms(t *testing.T) {
 			continue
 		}
 		dir := t.TempDir()
-		srcPath := filepath.Join(dir, "main.lang")
+		srcPath := filepath.Join(dir, "main.fern")
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("seed=%d write: %v", seed, err)
 		}

@@ -43,8 +43,8 @@ func TestFormatRendersSnippetAndCaret(t *testing.T) {
 
 func TestFormatIncludesFilename(t *testing.T) {
 	src := "function f() {}\n"
-	out := Format("foo.lang", src, &fakeErr{pos: ast.Position{Line: 1, Col: 1}, msg: "boom"})
-	if !strings.HasPrefix(out, "foo.lang:1:1: error: boom\n") {
+	out := Format("foo.fern", src, &fakeErr{pos: ast.Position{Line: 1, Col: 1}, msg: "boom"})
+	if !strings.HasPrefix(out, "foo.fern:1:1: error: boom\n") {
 		t.Errorf("expected filename prefix in:\n%s", out)
 	}
 }
@@ -231,7 +231,7 @@ func TestFormatLabeledWithOnlyPrimaryMatchesNonLabeled(t *testing.T) {
 
 // Filename routing: secondary labels include the filename in
 // the same shape as the primary header, so cross-file labels
-// (`declared in lib/foo.lang`) render with the right path.
+// (`declared in lib/foo.fern`) render with the right path.
 func TestFormatLabeledIncludesFilenameOnSecondary(t *testing.T) {
 	src := "var x: i32 = 1;\nx = true;\n"
 	err := &fakeLabeledErr{
@@ -244,11 +244,11 @@ func TestFormatLabeledIncludesFilenameOnSecondary(t *testing.T) {
 			{Pos: ast.Position{Line: 1, Col: 8}, Length: 3, Message: "declared here", Kind: LabelSecondary},
 		},
 	}
-	out := Format("/abs/path.lang", src, err)
-	if !strings.Contains(out, "/abs/path.lang:2:1: error:") {
-		t.Errorf("primary missing /abs/path.lang prefix:\n%s", out)
+	out := Format("/abs/path.fern", src, err)
+	if !strings.Contains(out, "/abs/path.fern:2:1: error:") {
+		t.Errorf("primary missing /abs/path.fern prefix:\n%s", out)
 	}
-	if !strings.Contains(out, "/abs/path.lang:1:8: note: declared here") {
+	if !strings.Contains(out, "/abs/path.fern:1:8: note: declared here") {
 		t.Errorf("secondary missing filename prefix:\n%s", out)
 	}
 }

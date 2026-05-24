@@ -4,7 +4,7 @@ name: Docs build
 # layers stacked on top of each other:
 #
 #   1. Build the playground wasm, stage it under site/public/,
-#      regenerate the stdlib reference via cmd/langdoc, then run
+#      regenerate the stdlib reference via cmd/ferndoc, then run
 #      `npm run build` under site/. Failures here block the PR —
 #      a docs change that breaks the build (broken MDX, missing
 #      component import) shouldn't land.
@@ -27,8 +27,8 @@ name: Docs build
 on:
   pull_request:
     paths:
-      - "cmd/lang-wasm/**"
-      - "cmd/langdoc/**"
+      - "cmd/fern-wasm/**"
+      - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"
       - "internal/ast/**"
@@ -76,10 +76,10 @@ jobs:
         run: |
           rm -rf site/public/playground
           mkdir -p site/public/playground
-          cp -L web/index.html web/wasm_exec.js web/lang.wasm site/public/playground/
+          cp -L web/index.html web/wasm_exec.js web/fern.wasm site/public/playground/
 
       - name: Generate stdlib reference
-        run: go run ./cmd/langdoc -out site/src/content/docs/stdlib/
+        run: go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
 
       - name: Install + build
         working-directory: site

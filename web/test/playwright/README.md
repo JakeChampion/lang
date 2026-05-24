@@ -1,6 +1,6 @@
 # Playground regression tests (Playwright)
 
-Scripted golden-path tests for the lang playground. Complements the
+Scripted golden-path tests for the Fern playground. Complements the
 property-based [Bombadil suite](../README.md) by gating per-PR on a
 small set of deterministic scenarios the playground must always
 pass.

@@ -178,7 +178,7 @@ function main(): i32 {
 			// Run the checker so method-call rewrites, FString
 			// desugaring, and variant-call IsVariantCall flags
 			// land before interp dispatch. This matches the
-			// `cmd/lang` script-mode pipeline.
+			// `cmd/fern` script-mode pipeline.
 			if _, err := checker.Check(prog); err != nil {
 				t.Fatalf("check: %v\nsrc:\n%s", err, c.src)
 			}

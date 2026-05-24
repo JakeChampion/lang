@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bombadil end-to-end harness for the lang playground.
+# Bombadil end-to-end harness for the Fern playground.
 #
 #   ./web/test/run.sh                       # local: assumes bombadil + chromium on PATH
 #   BOMBADIL=/path/to/bombadil ./web/test/run.sh

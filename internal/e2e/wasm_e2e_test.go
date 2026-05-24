@@ -82,7 +82,7 @@ func skipIfPreview2Missing(t *testing.T) {
 	}
 }
 
-// witRoot locates the `cmd/lang/wit` tree on disk by walking up
+// witRoot locates the `cmd/fern/wit` tree on disk by walking up
 // from the current working directory. wasm-tools resolves WIT
 // imports through a real filesystem path, so we can't ship the
 // tree as `embed.FS` from this package.
@@ -101,7 +101,7 @@ func witRoot(t *testing.T) string {
 				return
 			}
 		}
-		witErr = errors.New("cmd/lang/wit not found above " + cwd)
+		witErr = errors.New("cmd/fern/wit not found above " + cwd)
 	})
 	if witErr != nil {
 		t.Fatal(witErr)
@@ -129,7 +129,7 @@ func buildComponent(t *testing.T, src string) string {
 	skipIfPreview2Missing(t)
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.lang")
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -300,12 +300,12 @@ func runWasmMultiFile(t *testing.T, entry string, files map[string]string) int {
 
 // Cross-module struct types end-to-end on WASM, run through wasmtime.
 func TestWASMCrossModuleStructType(t *testing.T) {
-	got := runWasmMultiFile(t, "main.lang", map[string]string{
-		"point.lang": `pub struct Point { x: i32, y: i32 }
+	got := runWasmMultiFile(t, "main.fern", map[string]string{
+		"point.fern": `pub struct Point { x: i32, y: i32 }
 pub function make(x: i32, y: i32): Point {
 	return Point { x: x, y: y };
 }`,
-		"main.lang": `import "./point";
+		"main.fern": `import "./point";
 function main(): i32 {
 	var p: point.Point = point.make(3, 4);
 	return p.x + p.y;

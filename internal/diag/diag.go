@@ -2,7 +2,7 @@
 // turns a position+message pair (which lexer, parser and checker errors
 // already carry) into output like:
 //
-//	path/foo.lang:3:9: error: undefined identifier "x"
+//	path/foo.fern:3:9: error: undefined identifier "x"
 //	    return x + 1;
 //	           ^
 //	    note: did you mean "y"?
@@ -264,7 +264,7 @@ func Format(filename, src string, err error) string {
 
 // renderSecondaryLabel formats one Secondary/Help label below
 // the primary diagnostic. Each carries its own `file:L:C:`
-// header so cross-file labels (e.g. "declared in lib/foo.lang"
+// header so cross-file labels (e.g. "declared in lib/foo.fern"
 // pointing at the original decl) route correctly under
 // workspace-mode LSP. The underline uses `--` instead of `^~`
 // to visually distinguish secondaries from the primary's

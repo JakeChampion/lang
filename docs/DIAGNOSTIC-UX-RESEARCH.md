@@ -441,7 +441,7 @@ rendering that's still readable when spans cross 5+
 lines:
 
 ```
-   ┌─ src/main.lang:5:9
+   ┌─ src/main.fern:5:9
    │
  3 │     var x: i32 = 1.0;
    │            ───   ─── expected `i32`, found floating-point
@@ -742,7 +742,7 @@ Three small mappings, big visible-in-editor payoff.
 error, no source context, no colour:
 
 ```
-src/main.lang:5:9: E002 type mismatch: expected i32, found string
+src/main.fern:5:9: E002 type mismatch: expected i32, found string
 ```
 
 For `grep`-driven workflows, CI summary jobs. Cheap to

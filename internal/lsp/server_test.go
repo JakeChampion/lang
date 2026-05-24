@@ -221,7 +221,7 @@ func TestHandleMessage_DidOpenPublishesDiagnostics(t *testing.T) {
 	// didOpen with a parse error — expect at least one diagnostic.
 	openParams := didOpenParams{
 		TextDocument: textDocumentItem{
-			URI:        "file:///tmp/main.lang",
+			URI:        "file:///tmp/main.fern",
 			LanguageID: "lang",
 			Version:    1,
 			Text:       "function main(): i32 { return 0;",
@@ -271,7 +271,7 @@ func TestHandleMessage_DidChangeRepublishes(t *testing.T) {
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
-				URI:        "file:///live.lang",
+				URI:        "file:///live.fern",
 				LanguageID: "lang",
 				Version:    1,
 				Text:       "function main(): i32 { return undeclared; }",
@@ -281,7 +281,7 @@ func TestHandleMessage_DidChangeRepublishes(t *testing.T) {
 	s.HandleMessage(openMsg)
 
 	var ch didChangeParams
-	ch.TextDocument.URI = "file:///live.lang"
+	ch.TextDocument.URI = "file:///live.fern"
 	ch.TextDocument.Version = 2
 	ch.ContentChanges = []contentChange{{Text: "function main(): i32 { return 0; }"}}
 	changeMsg, _ := json.Marshal(message{
@@ -321,14 +321,14 @@ func TestHandleMessage_DidCloseClearsDiagnostics(t *testing.T) {
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
-			URI:  "file:///tmp/x.lang",
+			URI:  "file:///tmp/x.fern",
 			Text: "function main(): i32 { return 0; }",
 		}}),
 	})
 	s.HandleMessage(openMsg)
 
 	closeParams := didCloseParams{}
-	closeParams.TextDocument.URI = "file:///tmp/x.lang"
+	closeParams.TextDocument.URI = "file:///tmp/x.fern"
 	closeMsg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didClose",
@@ -336,7 +336,7 @@ func TestHandleMessage_DidCloseClearsDiagnostics(t *testing.T) {
 	})
 	s.HandleMessage(closeMsg)
 
-	if lastClearURI != "file:///tmp/x.lang" {
+	if lastClearURI != "file:///tmp/x.fern" {
 		t.Errorf("close didn't publish for the closed uri, got %q", lastClearURI)
 	}
 	if lastClearCount != 0 {
@@ -384,7 +384,7 @@ func TestServe_DidOpenThenShutdownThenExit(t *testing.T) {
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
-			URI:  "file:///tmp/bad.lang",
+			URI:  "file:///tmp/bad.fern",
 			Text: "function main(): i32 { return undeclared; }",
 		}}),
 	})
@@ -424,8 +424,8 @@ func TestServe_DidOpenThenShutdownThenExit(t *testing.T) {
 			if err := json.Unmarshal(m.Params, &p); err != nil {
 				t.Fatalf("unmarshal publish params: %v", err)
 			}
-			if p.URI != "file:///tmp/bad.lang" {
-				t.Errorf("diagnostics uri = %q, want bad.lang", p.URI)
+			if p.URI != "file:///tmp/bad.fern" {
+				t.Errorf("diagnostics uri = %q, want bad.fern", p.URI)
 			}
 			if len(p.Diagnostics) == 0 {
 				t.Errorf("expected diagnostics, got none")

@@ -60,11 +60,11 @@ function main(): i32 {
 func writeCrossModuleVariantProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "tokens.lang"), []byte(crossModuleVariantTokens), 0o644); err != nil {
-		t.Fatalf("write tokens.lang: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "tokens.fern"), []byte(crossModuleVariantTokens), 0o644); err != nil {
+		t.Fatalf("write tokens.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "main.lang"), []byte(crossModuleVariantMain), 0o644); err != nil {
-		t.Fatalf("write main.lang: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "main.fern"), []byte(crossModuleVariantMain), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
 	}
 	return dir
 }
@@ -72,7 +72,7 @@ func writeCrossModuleVariantProject(t *testing.T) string {
 func TestCrossModuleVariantPatternX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeCrossModuleVariantProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestCrossModuleVariantPatternX86_64(t *testing.T) {
 func TestCrossModuleVariantPatternArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeCrossModuleVariantProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -149,8 +149,8 @@ func TestCrossModuleVariantPatternArm64(t *testing.T) {
 // checker.go fires.
 func TestCrossModuleVariantPatternQualifierMismatch(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "tokens.lang"), []byte(crossModuleVariantTokens), 0o644); err != nil {
-		t.Fatalf("write tokens.lang: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "tokens.fern"), []byte(crossModuleVariantTokens), 0o644); err != nil {
+		t.Fatalf("write tokens.fern: %v", err)
 	}
 	bad := `import "core/no_prelude";
 import "./tokens" as lexer;
@@ -165,10 +165,10 @@ function main(): i32 {
     return 99;
 }
 `
-	if err := os.WriteFile(filepath.Join(dir, "main.lang"), []byte(bad), 0o644); err != nil {
-		t.Fatalf("write main.lang: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "main.fern"), []byte(bad), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		// modload may surface an import-name collision before the
 		// checker gets to run — that's also a valid rejection of

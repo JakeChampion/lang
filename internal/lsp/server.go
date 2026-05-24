@@ -62,7 +62,7 @@ type Server struct {
 
 	// workspace flips the URI-resolution strategy: when true, file://
 	// URIs route through modload (with the in-memory document buffer
-	// overriding disk for open files). cmd/lang-lsp sets it; the
+	// overriding disk for open files). cmd/fern-lsp sets it; the
 	// wasm wrapper leaves it off because the browser has no
 	// filesystem to read sibling modules from.
 	workspace bool
@@ -464,8 +464,8 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 //     updated.
 // updateDoc returns the list of OTHER open URIs whose cached
 // diagnostics changed as a side-effect of this update (workspace
-// mode only — a load from main.lang can update util.lang's diags
-// if util.lang is also open). The caller is responsible for
+// mode only — a load from main.fern can update util.fern's diags
+// if util.fern is also open). The caller is responsible for
 // publishing diagnostics to each URI in the returned list.
 func (s *Server) updateDoc(uri, src string) []string {
 	if prev, ok := s.docs[uri]; ok && prev.src == src {

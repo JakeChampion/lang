@@ -1,0 +1,115 @@
+// json_pretty.fern — read JSON from stdin, pretty-print to
+// stdout with 2-space indents.
+//
+// Showcases: the auto-injected JsonValue enum, recursive
+// match (over JNull / JBool / JNumber / JString / JArray /
+// JObject), MapIter for ordered object iteration, the
+// `s.repeat(n)` indentation helper, build-once-print-once
+// `arena { }` if you wanted to free the parser's intermediate
+// allocations. The implicit per-handler arena doesn't fire
+// for CLI mode — main runs once and the OS reaps the heap.
+//
+//   $ echo '{"a":1,"b":[true,null,3.14]}' | wasmtime json_pretty.wasm
+//   {
+//     "a": 1,
+//     "b": [
+//       true,
+//       null,
+//       3.14
+//     ]
+//   }
+import "core/no_prelude";
+// json.json_parse / json.json_encode for the read/write halves;
+// std/string for (string).repeat used by the indent helper.
+import "std/json";
+import "std/string";
+
+function read_all(r: Reader): string {
+  var out: string = "";
+  while (true) {
+    match (r.read_line()) {
+      Some(line) => {
+        out = out + line + "\n";
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  return out;  // unreachable
+}
+
+function pretty(v: JsonValue, depth: i32): string {
+  var pad: string = "  ".repeat(depth);
+  var pad_inner: string = "  ".repeat(depth + 1);
+  match (v) {
+    JNull => {
+      return "null";
+    },
+    JBool(b) => {
+      if (b) {
+        return "true";
+      }
+      return "false";
+    },
+    JNumber(n) => {
+      return n;
+    },
+    JString(s) => {
+      // Round-trip via json_encode so escapes are
+      // re-applied identically to the parser's input.
+      return json.json_encode(JString(s));
+    },
+    JArray(elems) => {
+      if (elems.len() == 0) {
+        return "[]";
+      }
+      var arr_out: string = "[\n";
+      var i: i32 = 0;
+      while (i < elems.len()) {
+        arr_out = arr_out + pad_inner + pretty(elems[i], depth + 1);
+        if (i + 1 < elems.len()) {
+          arr_out = arr_out + ",";
+        }
+        arr_out = arr_out + "\n";
+        i = i + 1;
+      }
+      return arr_out + pad + "]";
+    },
+    JObject(m) => {
+      if (m.len() == 0) {
+        return "{}";
+      }
+      var obj_out: string = "{\n";
+      var first: boolean = true;
+      var it: MapIter[string, JsonValue] = m.iter();
+      while (it.has_next()) {
+        if (!first) {
+          obj_out = obj_out + ",\n";
+        }
+        first = false;
+        var k: string = it.key();
+        var entry_v: JsonValue = it.value();
+        obj_out = obj_out + pad_inner + json.json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
+        it.advance();
+      }
+      return obj_out + "\n" + pad + "}";
+    }
+  }
+  return "";  // unreachable
+}
+
+function main(): i32 {
+  var input: string = read_all(stdin());
+  match (json.json_parse(input)) {
+    Some(v) => {
+      print(pretty(v, 0));
+      return 0;
+    },
+    None => {
+      eprint("json_pretty: malformed input");
+      return 1;
+    }
+  }
+  return 0;  // unreachable
+}

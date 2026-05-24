@@ -15,22 +15,22 @@ import (
 )
 
 // TestSelfHostBootstrapsItself pipes a piece of the self-host
-// source itself (lexer.lang, ~16 KB) through the asm-self-host
+// source itself (lexer.fern, ~16 KB) through the asm-self-host
 // driver and verifies the result assembles cleanly. This is the
 // first checkpoint on the road to a real bootstrap.
 //
-// Known wall *before* attempting bigger inputs (parser.lang ~80 KB
-// or asm.lang ~200 KB): the asm self-host's `s = s.out + text`
+// Known wall *before* attempting bigger inputs (parser.fern ~80 KB
+// or asm.fern ~200 KB): the asm self-host's `s = s.out + text`
 // pattern is O(N²) — for an N-byte output built via M writes, it
 // allocates roughly N*M/2 total bytes through the bump heap which
-// never reclaims. parser.lang would need ~7 GB; asm.lang ~60 GB.
+// never reclaims. parser.fern would need ~7 GB; asm.fern ~60 GB.
 // A real bootstrap needs either a growable-buffer primitive or a
 // chunked-output `string[]` accumulator (the latter requires
 // amortised-O(1) `array.push`, which today is O(N) per push).
 func TestSelfHostBootstrapsItself(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "asm.lang", "asm_run.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm.fern", "asm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -39,7 +39,7 @@ func TestSelfHostBootstrapsItself(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -63,14 +63,14 @@ func TestSelfHostBootstrapsItself(t *testing.T) {
 		t.Fatalf("driver gcc: %v\n%s", err, out)
 	}
 
-	// Read the lexer.lang source (smaller — 442 lines vs asm.lang's
+	// Read the lexer.fern source (smaller — 442 lines vs asm.fern's
 	// 6391) and pipe it into the driver. Used as a baseline probe.
-	asmLangPath := filepath.Join("../../examples/self_host", "lexer.lang")
+	asmLangPath := filepath.Join("../../examples/self_host", "lexer.fern")
 	asmLangSrc, err := os.ReadFile(asmLangPath)
 	if err != nil {
-		t.Fatalf("read lexer.lang: %v", err)
+		t.Fatalf("read lexer.fern: %v", err)
 	}
-	t.Logf("piping all %d bytes of lexer.lang", len(asmLangSrc))
+	t.Logf("piping all %d bytes of lexer.fern", len(asmLangSrc))
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {

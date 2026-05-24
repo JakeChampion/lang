@@ -1,5 +1,5 @@
 // Package module is the Go-side mirror of
-// internal/stdlib/std/wasm/module.lang — top-level module
+// internal/stdlib/std/wasm/module.fern — top-level module
 // composer for the WebAssembly Core 1.0 binary format.
 //
 // Spec: https://webassembly.github.io/spec/core/binary/modules.html

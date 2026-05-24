@@ -2,7 +2,7 @@
 
 ## Problem
 
-`internal/prelude/prelude.lang` is currently auto-injected into every
+`internal/prelude/prelude.fern` is currently auto-injected into every
 program at checker time (`injectPrelude` in `internal/checker/checker.go`).
 It's a ~6000-line grab-bag covering string / array / i32 methods, HTTP
 parsers, JSON, sort, format, URL, log, TCP, allocators, and more.
@@ -74,7 +74,7 @@ Tasks:
 
 1. New `internal/stdlib/` package:
    - `internal/stdlib/stdlib.go` exposes an embedded FS containing
-     `std/*.lang` and `core/*.lang` (`//go:embed std core`).
+     `std/*.fern` and `core/*.fern` (`//go:embed std core`).
    - Exported `Resolve(importPath string) ([]byte, ok bool)` —
      returns the source for `std/foo` / `core/bar` paths, or
      `(nil, false)` for paths that don't match the embedded set.
@@ -84,7 +84,7 @@ Tasks:
    - Loader needs to accept embedded source bytes (not just file
      paths). Refactor `Load` so the per-module read step can come
      from either disk or the embedded FS.
-3. Test fixture: `internal/stdlib/std/_test_empty.lang` with one
+3. Test fixture: `internal/stdlib/std/_test_empty.fern` with one
    trivial function; `modload_test.go` adds a case proving the
    `std/_test_empty` resolve path works end-to-end.
 
@@ -113,11 +113,11 @@ re-exports.
 
 Tasks:
 
-1. Create `internal/stdlib/std/i32.lang`. Move every
-   `function (n: i32) X(): Y { ... }` from `prelude.lang` into
+1. Create `internal/stdlib/std/i32.fern`. Move every
+   `function (n: i32) X(): Y { ... }` from `prelude.fern` into
    this file. Roughly 40-50 helpers (abs, clamp, gcd, lcm,
    is_prime, factorial, etc.).
-2. In `prelude.lang`, add `import "std/i32";` at the top.
+2. In `prelude.fern`, add `import "std/i32";` at the top.
    Prelude re-export keeps existing code (`var k: i32 = (5).abs();`)
    working unchanged.
 3. Run the full e2e suite. Any failures mean cross-module
@@ -186,7 +186,7 @@ Tasks:
 - `docs/STDLIB.md` lists every module + its public surface.
 - `docs/LANGUAGE-DIRECTION.md`: replace the "Phase B prelude"
   section with the new module strategy.
-- `CLAUDE.md`: drop the prelude.lang reference; point at the
+- `CLAUDE.md`: drop the prelude.fern reference; point at the
   module tree.
 
 ## Open questions (decide as we land each phase)
@@ -220,7 +220,7 @@ Tasks:
         `log`, `sort`, `csv`, `format`, `http`, `io`, `path`,
         `base64`, `hex`, `url`, `json`, `math`, `float`, `tcp`.
       - `core/` (3): `int`, `map`, `no_prelude`.
-      - `internal/prelude/prelude.lang` is now a bare import
+      - `internal/prelude/prelude.fern` is now a bare import
         block — every helper / receiver method / runtime
         function lives in a module.
 - [ ] Phase 5 — drop auto-injection. Foundation fully landed:
@@ -251,8 +251,8 @@ Tasks:
       hardcoded rewrites resolve cleanly under both load
       paths (#520). End-to-end coverage on arm64 / x86-64 /
       wasm32 lands as the `Test*NoPreludeStdlibImports`
-      suites (#514 / #515). Every `examples/*.lang` and
-      `examples/wasm/*.lang` program migrated to declare
+      suites (#514 / #515). Every `examples/*.fern` and
+      `examples/wasm/*.fern` program migrated to declare
       explicit imports (#517 / #518 / #519 / #520 / #521 /
       #522). Remaining work:
       - Convert every internal/e2e test program to declare

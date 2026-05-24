@@ -1,5 +1,5 @@
 // Package numeric is the Go-side mirror of
-// internal/stdlib/std/wasm/numeric.lang — arithmetic,
+// internal/stdlib/std/wasm/numeric.fern — arithmetic,
 // comparison, and bitwise instruction encoders for the
 // WebAssembly Core 1.0 binary format.
 //

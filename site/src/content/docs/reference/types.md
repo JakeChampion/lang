@@ -22,7 +22,7 @@ x86-64. Use it for "size of a thing in memory" semantics.
 
 There aren't any between numeric widths. Casts are explicit:
 
-```lang
+```fern
 var a: i32 = 7;
 var b: i64 = a as i64;
 ```
@@ -34,7 +34,7 @@ as whatever integer the context demands.
 
 Functions and structs/enums take type parameters in `[...]`:
 
-```lang
+```fern
 function id[T](x: T): T {
     return x;
 }
@@ -51,7 +51,7 @@ separate copy before codegen, so there's no runtime cost.
 
 A union is a closed sum over struct types:
 
-```lang
+```fern
 struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
 type Expr = Add | Mul;
@@ -70,7 +70,7 @@ enums.
 
 ## Built-in `Option` and `Result`
 
-```lang
+```fern
 enum Option[T] { Some(T), None }
 enum Result[T, E] { Ok(T), Err(E) }
 ```
@@ -81,7 +81,7 @@ you want to shadow them.
 The postfix `?` operator unwraps the success variant and early-
 returns the failure variant:
 
-```lang
+```fern
 function parse(s: string): Result[i32, string] {
     // ...
 }

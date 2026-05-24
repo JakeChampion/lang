@@ -11,7 +11,7 @@ The lang stdlib lives in two namespaces:
   normally shouldn't reach for these.
 
 During the prelude-to-modules migration the magic
-`internal/prelude/prelude.lang` `import`s every module below
+`internal/prelude/prelude.fern` `import`s every module below
 automatically, so existing programs that call helpers by bare
 name keep working. Phase 5 of the migration (see
 [`docs/PRELUDE-TO-MODULES.md`](./PRELUDE-TO-MODULES.md)) drops
@@ -451,14 +451,14 @@ function main(): i32 {
   pattern)` + `parse_filter_from_args(args())` — cases whose
   (prefix + name) don't contain the filter substring
   convert to skips with reason "filtered out". Pair with
-  `lang -interp test.lang -- --filter foo` on the CLI.
+  `lang -interp test.fern -- --filter foo` on the CLI.
 - **`--fail-fast` short-circuit:** `test_new_fail_fast(suite)`
   / `(r).with_fail_fast()` + `parse_fail_fast_from_args(args())`
   — once any case fails, subsequent `it()` calls auto-skip
   with reason "fail-fast: prior case failed". Each skipped
   case still emits a TAP line so the plan stays faithful.
   Off by default (the full TAP stream is usually more useful
-  in CI). Pair with `lang -interp test.lang -- --fail-fast`.
+  in CI). Pair with `lang -interp test.fern -- --fail-fast`.
 - **`--quiet` output mode:** `test_new_quiet(suite)` /
   `(r).with_quiet()` + `parse_quiet_from_args(args())` —
   suppresses the per-case `ok N - name` line for passes
@@ -578,7 +578,7 @@ function main(): i32 {
   `assert_stderr_line_count`
 
 Examples live under `examples/tests/`; the runner's own
-meta-test (`runner_self_test.lang`) walks every assertion
+meta-test (`runner_self_test.fern`) walks every assertion
 helper on both pass and fail paths.
 
 ### `std/fuzz`

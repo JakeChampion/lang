@@ -17,7 +17,7 @@ hypothetical `arr.set`, etc.). Two consequences:
    a tight loop allocates a fresh `len+1` buffer per push and copies
    the predecessor's contents. For N pushes the total allocator
    traffic is N + (N-1) + ... + 1 = O(N²) bytes. The self-host
-   `parser.lang` would need ~7 GB and `asm.lang` ~60 GB just to
+   `parser.fern` would need ~7 GB and `asm.fern` ~60 GB just to
    compile itself; both blow past the bump allocator's 512 MiB cap.
    See PR #1011's "Known wall ahead" section for the exact figures.
 
@@ -627,7 +627,7 @@ auto-discard via `OpDrop`.
 Implementation: checker registers updated return types;
 `emitMapDeleteReturningTuple` and `emitMapClearReturningMap` in
 `internal/ir/ir.go` construct the result at the IR level (keeping
-`__map_delete_impl` / `__map_clear_impl` in map.lang unchanged to
+`__map_delete_impl` / `__map_clear_impl` in map.fern unchanged to
 avoid the `Option[usize]` layout constraint). Interpreter and
 self-host interp/checker updated to match. 6 new e2e tests
 (arm64 / x86_64 / wasm) cover tuple destructuring, `.1` field
@@ -670,7 +670,7 @@ Prerequisites that landed during Phase 2-prep:
     freelist, mutate-in-place wins only the copy cost — the
     alloc itself is already O(1) under the bump allocator.
     The payoff numbers in the doc above ("self-host parser +
-    asm.lang push loops become O(N)") only fully realise once
+    asm.fern push loops become O(N)") only fully realise once
     Phase 3 lets the rc==0 path actually reclaim storage;
     Phase 2a + 2b give the algorithmic win on the rc==1 path
     (one bumped rc + len write OR no rc change, no alloc /
@@ -841,11 +841,11 @@ Top three risks that could derail this:
 
 ## Self-hosting context
 
-Specifically for the original motivation (compile asm.lang
-through asm.lang):
+Specifically for the original motivation (compile asm.fern
+through asm.fern):
 
 After phase 2 (mutating ops use rc check), the parser's hot
-loops are O(N). asm.lang's `acc.push(...)` patterns are O(N).
+loops are O(N). asm.fern's `acc.push(...)` patterns are O(N).
 Self-hosting through itself becomes tractable on a normal CI
 runner (sub-GB peak RSS).
 

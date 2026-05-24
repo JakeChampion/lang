@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the wasm bundle for the in-browser playground.
 #
-#   ./web/build.sh         # writes web/lang.wasm
+#   ./web/build.sh         # writes web/fern.wasm
 #
 # Then serve the `web/` directory with any static HTTP server,
 # e.g.  `python3 -m http.server 8000 --directory web` and open
@@ -19,7 +19,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here/.."
 
-GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$here/lang.wasm" ./cmd/lang-wasm
+GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o "$here/fern.wasm" ./cmd/fern-wasm
 
 # Refresh wasm_exec.js from whichever Go layout is in use.
 goroot="$(go env GOROOT)"
@@ -31,6 +31,6 @@ else
   echo "warning: couldn't find wasm_exec.js under $goroot" >&2
 fi
 
-size=$(stat -c%s "$here/lang.wasm" 2>/dev/null || stat -f%z "$here/lang.wasm")
-echo "wrote $here/lang.wasm  ($size bytes)"
+size=$(stat -c%s "$here/fern.wasm" 2>/dev/null || stat -f%z "$here/fern.wasm")
+echo "wrote $here/fern.wasm  ($size bytes)"
 echo "serve with:  python3 -m http.server --directory $here 8000"

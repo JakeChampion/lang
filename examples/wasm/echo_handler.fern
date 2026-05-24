@@ -1,0 +1,39 @@
+// echo_handler.fern — minimal HTTP handler. Same source
+// compiles for two targets — wasi-http components and
+// arm64 native binaries — via the auto-`main()` synthesis:
+// programs that define `function handle(req, plat): HttpResponse`
+// without their own `main()` get a synthesised
+// `main(): i32 { return tcp_serve(__port_from_env("PORT",
+// 8080), handle); }`. wasi-http drops the synthesised main at
+// codegen time and uses the `wasi:http/incoming-handler.handle`
+// export wrapper instead.
+//
+//   $ fern -target wasi-http -wasi-adapter ... -o echo.wasm echo_handler.fern
+//   $ wasmtime serve echo.wasm
+//
+//   $ fern -target arm64 -o echo echo_handler.fern
+//   $ PORT=8080 ./echo &
+//
+//   $ curl -X POST -d 'hello' http://localhost:8080/foo/bar
+//   POST /foo/bar (5 bytes)
+//
+//   hello
+//
+// Showcases: `function handle(req: HttpRequest, plat: Platform): HttpResponse`
+// — the canonical handler entry point. The codegen wraps each
+// invocation in an implicit arena (PR #200): all the strings
+// the handler builds get reclaimed at handler-return, so
+// multi-request long-running deployments don't leak.
+import "core/no_prelude";
+// HttpRequest / HttpResponse struct types live in std/http; the
+// synthesised `main()` calls into std/tcp; the f-string in
+// `body` interpolates an i32 length, which the formatter
+// dispatches through (i32).to_string from std/i32.
+import "std/http";
+import "std/tcp";
+import "std/i32";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  var body: string = f"{req.method} {req.path} ({req.body_len()} bytes)\n\n{req.body_string()}";
+  return http.http_response_ok(body);
+}

@@ -1,0 +1,29 @@
+// examples/self_host/vm_run.fern — stdin-driven driver for
+// vm.fern's bytecode evaluator. Reads lang source from stdin,
+// runs lexer + parser + vm.compile_program + vm.exec_program,
+// and exits with the program's VInt return value (or 254 if
+// the program failed / returned non-i32). Companion to
+// asm_run.fern and interp_run.fern; used by the cross-
+// validation test to assert all three engines agree.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./vm";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var prog: vm.CompiledProgram = vm.compile_program(mod);
+    var result: vm.Value = vm.exec_program(prog);
+    match (result) {
+        vm.VInt(i) => { return i.v; },
+        vm.VBool(b) => {
+            if (b.v) { return 1; }
+            return 0;
+        },
+        _ => { return 254; }
+    }
+    return 254;
+}

@@ -1,6 +1,6 @@
 ---
-title: lang
-description: A small, fast-startup language with native arm64 / x86-64 / wasm backends.
+title: Fern
+description: Fern is a small, fast-startup language with native arm64 / x86-64 / wasm backends.
 template: splash
 # Hero `link:` values are passed verbatim to `<a href>` by
 # Starlight's Hero / LinkButton — base path is NOT auto-prepended
@@ -8,7 +8,7 @@ template: splash
 # resolve to `/lang/tutorial/install/` etc. instead of 404-ing
 # at the apex `/tutorial/install/`.
 hero:
-  tagline: A small, fast-startup language for CLI tools and edge-function HTTP servers.
+  tagline: Fern is a small, fast-startup language for CLI tools and edge-function HTTP servers — lean, fresh, and at home on every target.
   actions:
     - text: Get started
       link: /lang/tutorial/install/
@@ -24,7 +24,13 @@ hero:
 ---
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
-import LangPlayground from "../../components/LangPlayground.astro";
+import FernPlayground from "../../components/FernPlayground.astro";
+
+**Fern** is a small, statically-typed compiled language that grows
+everywhere — lean binaries for CLI tools, tiny wasm modules for
+short-lived edge HTTP servers, and the same source compiling to
+arm64 (Linux + macOS), x86-64, and WebAssembly. Fast to start, fresh
+to write, and low to the ground.
 
 <CardGrid stagger>
   <Card title="Fast-startup binaries" icon="rocket">
@@ -36,7 +42,7 @@ import LangPlayground from "../../components/LangPlayground.astro";
     or any other host with no glue code.
   </Card>
   <Card title="Real LSP, real editor support" icon="laptop">
-    `cmd/lang-lsp` ships hover, goto-definition, completion,
+    `fern-lsp` ships hover, goto-definition, completion,
     signature help, inlay hints, rename, format-on-save, and a
     VS Code extension that wraps it.
   </Card>
@@ -49,7 +55,7 @@ import LangPlayground from "../../components/LangPlayground.astro";
 
 ## Hello, world
 
-<LangPlayground
+<FernPlayground
   code={`function main(): i32 {
     print("hello, world");
     return 0;
@@ -64,5 +70,5 @@ import LangPlayground from "../../components/LangPlayground.astro";
   system docs.
 - **[Standard library](stdlib/)** — every public function in
   `std/*` with signatures and inline examples.
-- **[Playground](playground/)** — try lang in your browser. No
+- **[Playground](playground/)** — try Fern in your browser. No
   install required.

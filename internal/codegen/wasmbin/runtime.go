@@ -362,7 +362,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
 				// Each is a one-instruction wrapper around a wasm
-				// load / store / bulk-memory op so stdlib `.lang`
+				// load / store / bulk-memory op so stdlib `.fern`
 				// code can drop into raw memory without leaving the
 				// language.
 				switch op.Str {
@@ -759,7 +759,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	"__ptr_width": {
 		// () → i32 — 4 on wasm32. Stdlib uses this in size
 		// computations that vary between 4-byte and 8-byte
-		// targets (the same .lang code runs on arm64).
+		// targets (the same .fern code runs on arm64).
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildPtrWidthBody,
@@ -2885,7 +2885,7 @@ func buildArenaRestoreBody(_ map[string]uint32) []byte {
 
 // buildSqrtF64Body — (f64) → f64. Thin wrapper around the
 // wasm-native f64.sqrt instruction. Exposed via the source-
-// language method `(x: f64) sqrt()` in std/float.lang which
+// language method `(x: f64) sqrt()` in std/float.fern which
 // calls __sqrt_f64 directly.
 func buildSqrtF64Body(_ map[string]uint32) []byte {
 	var body []byte

@@ -1,0 +1,107 @@
+// examples/tests/float_test.fern — f32 / f64 assertion family.
+//
+// The interp had no float values for most of its lifetime
+// (the native + wasm backends owned floats end-to-end), which
+// blocked unit-testing any property that touched
+// floating-point arithmetic. This file pins the post-Float-
+// support behaviour: tolerance comparisons, exact equality
+// (for bit-pattern round-trips), and NaN handling.
+//
+// The naive `actual == expected` is almost never what you
+// want on floats — `assert_eq_f64_near(actual, expected,
+// epsilon)` is the typical entry point. `_exact` is reserved
+// for canonicalisation tests where bit-equal IS the
+// contract (`f32_bits` round-trips, NaN payload preservation).
+
+function test_f64_addition(): Option[string] {
+    return assert_eq_f64_near(1.5 + 2.5, 4.0, 0.001);
+}
+
+function test_f64_multiplication(): Option[string] {
+    return assert_eq_f64_near(3.7 * 3.7, 13.69, 0.001);
+}
+
+function test_f64_division_by_negative(): Option[string] {
+    return assert_eq_f64_near(10.0 / (0.0 - 4.0), 0.0 - 2.5, 0.001);
+}
+
+function test_f32_precision_loss(): Option[string] {
+    // 0.1 + 0.1 + 0.1 in f32 isn't exactly 0.3 — the textbook
+    // FP-precision example. Tolerance must cover it.
+    var f: f32 = 0.1 as f32;
+    var sum: f32 = f + f + f;
+    return assert_eq_f32_near(sum, 0.3 as f32, 0.0001 as f32);
+}
+
+function test_f64_exact_equality_on_integral(): Option[string] {
+    // Integer-valued f64s round-trip exactly. `_exact` works
+    // here.
+    return assert_eq_f64_exact(2.0 * 21.0, 42.0);
+}
+
+function test_nan_detection(): Option[string] {
+    // 0.0 / 0.0 is the canonical NaN constructor per IEEE-754.
+    var z: f64 = 0.0;
+    var nan: f64 = z / z;
+    return assert_is_nan_f64(nan);
+}
+
+function test_nan_compares_unequal_to_itself(): Option[string] {
+    var z: f64 = 0.0;
+    var nan: f64 = z / z;
+    // The textbook NaN property; failure here would mean
+    // either the interp or std/float misclassified NaN.
+    if (nan == nan) {
+        return fail("NaN compared equal to itself");
+    }
+    return None;
+}
+
+function test_f32_bits_round_trip(): Option[string] {
+    // 1.0f32 has the IEEE bit pattern 0x3F800000 = 1065353216.
+    // Round-tripping `f32_from_bits(f32_bits(x))` must be a
+    // no-op for every finite, non-NaN value.
+    var x: f32 = 1.0 as f32;
+    var bits: i32 = f32_bits(x);
+    return assert_eq_i32(bits, 1065353216);
+}
+
+function test_f32_from_bits_round_trips(): Option[string] {
+    var x: f32 = 3.14 as f32;
+    var bits: i32 = f32_bits(x);
+    var back: f32 = f32_from_bits(bits);
+    return assert_eq_f32_near(back, x, 0.000001 as f32);
+}
+
+function test_negative_zero(): Option[string] {
+    // IEEE-754 defines -0.0; it compares equal to +0.0 under
+    // `==` but the bit patterns differ. Our tolerance helpers
+    // pass because the difference is exactly 0.
+    var neg: f64 = 0.0 - 0.0;
+    return assert_eq_f64_near(neg, 0.0, 0.0);
+}
+
+function test_inf_handling(): Option[string] {
+    // 1.0 / 0.0 is +Inf per IEEE-754. The diff helper short-
+    // circuits when actual == expected, so two ±Inf values
+    // match without a NaN-yielding subtraction.
+    var inf: f64 = 1.0 / 0.0;
+    var also_inf: f64 = 2.0 / 0.0;
+    return assert_eq_f64_near(inf, also_inf, 0.0);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("floats");
+    r = r.it("f64 addition",                    test_f64_addition());
+    r = r.it("f64 multiplication",              test_f64_multiplication());
+    r = r.it("f64 division by negative",        test_f64_division_by_negative());
+    r = r.it("f32 precision loss tolerance",    test_f32_precision_loss());
+    r = r.it("f64 exact on integral",           test_f64_exact_equality_on_integral());
+    r = r.it("NaN detection",                   test_nan_detection());
+    r = r.it("NaN compares unequal to itself",  test_nan_compares_unequal_to_itself());
+    r = r.it("f32_bits gives expected pattern", test_f32_bits_round_trip());
+    r = r.it("f32_from_bits round trips",       test_f32_from_bits_round_trips());
+    r = r.it("negative zero",                   test_negative_zero());
+    r = r.it("Inf vs Inf",                      test_inf_handling());
+    return r.finish();
+}

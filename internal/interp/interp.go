@@ -1,6 +1,6 @@
 // Package interp is a small tree-walking interpreter for the lang AST.
 //
-// It's used by the REPL (cmd/lang -repl) and by tests; production
+// It's used by the REPL (cmd/fern -repl) and by tests; production
 // builds still go through the ARM64 / WASM code generators.
 //
 // Control flow inside a function uses a flow-tagged result value
@@ -451,7 +451,7 @@ func New() *Interp {
 	//     module) explicitly `import`s a path that pulls in
 	//     core/int. modload's combine step prepends `<modname>__`
 	//     to non-receiver-method functions; `importLocalName` of
-	//     `stdlib://core/int.lang` is `int`, so the form is
+	//     `stdlib://core/int.fern` is `int`, so the form is
 	//     `int__int_to_string`. Without the alias, the interp
 	//     would fall through to the Lang body and crash on the
 	//     `scratch as i32` cast.
@@ -737,7 +737,7 @@ func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 // magnitude separately). Output is `"-" + decimal(mag)` when
 // `neg != 0`, plain decimal otherwise.
 //
-// Mirrors the Lang body in `core/int.lang` byte-for-byte;
+// Mirrors the Lang body in `core/int.fern` byte-for-byte;
 // only difference is the Lang version pokes raw memory which
 // the interp can't model, hence the Go override.
 func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {

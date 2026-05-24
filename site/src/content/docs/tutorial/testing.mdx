@@ -1,20 +1,20 @@
 ---
 title: Testing
-description: Writing unit tests in lang with std/test.
+description: Writing unit tests in Fern with std/test.
 sidebar:
   order: 5
 ---
 
-import LangPlayground from "../../../components/LangPlayground.astro";
+import FernPlayground from "../../../components/FernPlayground.astro";
 
-lang ships with a pure-Lang unit-test runner under
-[`std/test`](../../stdlib/test/). Tests are ordinary `.lang`
+Fern ships with a pure-Fern unit-test runner under
+[`std/test`](../../stdlib/test/). Tests are ordinary `.fern`
 files: write functions that return `Option[string]`, list them
 in `main`, and the runner prints
 [TAP-13](https://testanything.org/) to stdout.
 
 The runner does **not** depend on the Go toolchain, so the same
-program runs under `lang -interp`, compiles to a native binary,
+program runs under `fern -interp`, compiles to a native binary,
 and (once the compiler is self-hosted) keeps working unchanged.
 
 ## Hello, test
@@ -24,7 +24,7 @@ A test function returns `None` when the assertion holds and
 `TestRunner`, `test_new`, and every `assert_*` helper available
 by bare name — no imports needed.
 
-<LangPlayground
+<FernPlayground
   code={`function test_addition(): Option[string] {
     return assert_eq_i32(2 + 2, 4);
 }
@@ -41,10 +41,10 @@ function main(): i32 {
 }`}
 />
 
-Save as `hello_test.lang` and run it:
+Save as `hello_test.fern` and run it:
 
 ```bash
-lang -interp hello_test.lang
+fern -interp hello_test.fern
 ```
 
 Output:
@@ -99,7 +99,7 @@ The TAP output emits `# SKIP` so consumers can distinguish a
 skip from a real pass; skipped cases don't influence the exit
 code.
 
-```lang
+```fern
 function main(): i32 {
     var r: TestRunner = test_new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
@@ -116,7 +116,7 @@ TAP stays flat (one stream, monotonically numbered) but case
 names print with `parent / child / case` so the hierarchy is
 visible in the log.
 
-```lang
+```fern
 var arm: TestRunner = r.subsuite("arm64");
 arm = arm.it("exit code", run_arm64_exit());
 arm = arm.it("stdout",    run_arm64_stdout());
@@ -130,10 +130,10 @@ returns a `ProcessResult { stdout, stderr, exit_code }`. The
 assertion family above (`assert_exit` / `assert_stdout_eq` /
 `assert_process`) operates on that struct.
 
-```lang
-function test_lang_hello(): Option[string] {
-    var r: ProcessResult = subprocess("./lang",
-        ["-interp", "/tmp/hello.lang"], "");
+```fern
+function test_fern_hello(): Option[string] {
+    var r: ProcessResult = subprocess("./fern",
+        ["-interp", "/tmp/hello.fern"], "");
     return assert_process(r, 0, "hello");
 }
 ```
@@ -147,7 +147,7 @@ write linear assertions without an extra `Result` unwrap.
 Tests that need a scratch directory call `temp_dir(prefix)`
 and register cleanup at the runner level:
 
-```lang
+```fern
 match (temp_dir("my-fixture")) {
     Ok(dir) => {
         r = r.defer_cleanup(dir);
@@ -174,7 +174,7 @@ A fuzz target is a `(string) => Option[string]` — same shape
 as a regular test, but called repeatedly with mutated inputs
 from a seed corpus.
 
-```lang
+```fern
 function check_to_upper_idempotent(input: string): Option[string] {
     if (input.to_upper().to_upper() == input.to_upper()) { return None; }
     return Some("to_upper is not idempotent");
@@ -200,12 +200,12 @@ For dev-loop iteration, run a single case (or a substring
 match) via the runner's built-in `--filter` flag:
 
 ```bash
-lang -interp my_test.lang -- --filter addition
+fern -interp my_test.fern -- --filter addition
 ```
 
 The example file lifts the pattern off `args()`:
 
-```lang
+```fern
 function main(): i32 {
     var f: string = parse_filter_from_args(args());
     var r: TestRunner = test_new_filtered("my suite", f);
@@ -224,7 +224,7 @@ of the test list.
 For tests whose expected output is too verbose to inline,
 compare against a saved file on disk:
 
-```lang
+```fern
 r = r.it("renderer matches golden",
          assert_matches_golden("testdata/render.golden",
                                render(input)));
@@ -265,7 +265,7 @@ A test function can run any logic that returns `Option[string]`
 — the assertions above are conveniences. For a hand-rolled diff,
 return `fail(...)` directly:
 
-```lang
+```fern
 function test_modulo_table(): Option[string] {
     var inputs: i32[] = [0, 1, 5, 10, 11];
     var expected: i32[] = [0, 1, 5, 0, 1];
@@ -282,7 +282,7 @@ function test_modulo_table(): Option[string] {
 
 ## Why explicit registration?
 
-lang has no reflection, so `main` lists the cases it runs. That
+Fern has no reflection, so `main` lists the cases it runs. That
 mirrors Zig's `test` blocks (which compile down to the same
 shape) and keeps the runner a plain library — no build-system
 magic, no framework runtime. If a `discover_tests()` macro lands
@@ -300,7 +300,7 @@ Buildkite — without further configuration. TAP consumers
 Today the compiler's own tests live in Go (`internal/e2e/*.go`).
 The plan ([`docs/ROADMAP-AND-SELF-HOSTING.md`](https://github.com/JakeChampion/lang/blob/main/docs/ROADMAP-AND-SELF-HOSTING.md))
 is to retire them once the compiler is self-hosted; new tests
-for stdlib helpers and Lang code should be written against
+for stdlib helpers and Fern code should be written against
 `std/test` so they're already in the right shape for the
 migration.
 
@@ -308,42 +308,42 @@ See the working examples under
 [`examples/tests/`](https://github.com/JakeChampion/lang/tree/main/examples/tests)
 in the repo:
 
-- `arithmetic_test.lang` — basic integer assertions
-- `strings_test.lang` — string-method coverage
-- `runner_self_test.lang` — the runner's meta-test (verifies
+- `arithmetic_test.fern` — basic integer assertions
+- `strings_test.fern` — string-method coverage
+- `runner_self_test.fern` — the runner's meta-test (verifies
   every helper on both pass and fail paths)
-- `skip_and_subsuites_test.lang` — skip / skip_if / subsuite /
+- `skip_and_subsuites_test.fern` — skip / skip_if / subsuite /
   merge end-to-end
-- `process_assertions_test.lang` — `subprocess` + `temp_dir`
+- `process_assertions_test.fern` — `subprocess` + `temp_dir`
   + the process assertion family (echo / cat / sh fixtures)
-- `fuzz_example_test.lang` — three benign property fuzzers
+- `fuzz_example_test.fern` — three benign property fuzzers
   plus a trim-strips-spaces invariant
-- `wide_numerics_test.lang` — i64 / u32 / u64 assertions
-- `filesystem_ops_test.lang` — read_dir / remove_file /
+- `wide_numerics_test.fern` — i64 / u32 / u64 assertions
+- `filesystem_ops_test.fern` — read_dir / remove_file /
   remove_dir_all builtins
-- `lang_binary_e2e_test.lang` — the canonical migration
-  shape: spawn the `lang` binary itself, drive it through
+- `fern_binary_e2e_test.fern` — the canonical migration
+  shape: spawn the `fern` binary itself, drive it through
   `-interp` / `-check` against tempdir fixtures, assert on
   `(exit, stdout, stderr)`. Gated on `$LANG_BIN` being set
   so dev laptops without the env var skip cleanly.
-- `helpers_test.lang` — multi-substring / string-diff /
+- `helpers_test.fern` — multi-substring / string-diff /
   range / file-state / `must_temp_dir` convenience helpers
-- `float_test.lang` — f32 / f64 tolerance + exact + NaN +
+- `float_test.fern` — f32 / f64 tolerance + exact + NaN +
   f32_bits round-trip coverage
-- `fuzz_shrink_test.lang` — `r.fuzz_shrink` walkthrough on
+- `fuzz_shrink_test.fern` — `r.fuzz_shrink` walkthrough on
   three benign properties; the failure-path shrinking
   contract is pinned by the Go-side
   `TestRunnerFuzzShrinkSurfacesMinimisedInput` gate
-- `batch7_test.lang` — wider-int relational, `f64_bits`
+- `batch7_test.fern` — wider-int relational, `f64_bits`
   round-trips, `stat()` + file-state helpers, and
   `assert_json_eq` order-independent JSON equality
-- `batch8_test.lang` — argv passthrough, `--filter PATTERN`
+- `batch8_test.fern` — argv passthrough, `--filter PATTERN`
   selection, golden-file assertions, Map receiver
   assertions
-- `float_math_test.lang` — `(x: f64).sqrt()` / `.pow()` /
+- `float_math_test.fern` — `(x: f64).sqrt()` / `.pow()` /
   `.log()` etc., the IEEE-754 classification helpers, and
   the round-trip property tests
   (`exp(log(x)) == x`, `sin² + cos² = 1`)
-- `timing_test.lang` — `monotonic_ns()` / `now_unix_ms()` /
+- `timing_test.fern` — `monotonic_ns()` / `now_unix_ms()` /
   `sleep_ms()` builtins + `assert_elapsed_lt_ms` for
   benchmark-style "completes within N ms" assertions

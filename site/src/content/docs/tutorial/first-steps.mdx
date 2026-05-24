@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import LangPlayground from "../../../components/LangPlayground.astro";
+import FernPlayground from "../../../components/FernPlayground.astro";
 
 ## Variables
 
@@ -13,7 +13,7 @@ import LangPlayground from "../../../components/LangPlayground.astro";
 binding (covered later). Annotate the type explicitly, or let the
 checker infer it from the initialiser.
 
-<LangPlayground
+<FernPlayground
   code={`function main(): i32 {
     var x: i32 = 7;
     var y = x * 2;       // type inferred as i32
@@ -29,7 +29,7 @@ There's no untyped `int`. The eight integer types are `i8`, `i16`,
 plus `usize` for native pointer-width counts. Two float types:
 `f32` and `f64`. Mixing widths needs an explicit cast.
 
-```lang
+```fern
 var a: i32 = 7;
 var b: i64 = a as i64;   // narrow → wide cast
 var c: i32 = b as i32;   // wide → narrow (may truncate)
@@ -39,7 +39,7 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 
 `if` / `else`, `while`, and three-part `for` — straightforward.
 
-<LangPlayground
+<FernPlayground
   code={`function main(): i32 {
     var sum: i32 = 0;
     for (var i: i32 = 0; i < 10; i = i + 1) {
@@ -54,13 +54,13 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 
 `if` is also an expression — useful for one-line ternaries.
 
-```lang
+```fern
 var max: i32 = if (a > b) { a } else { b };
 ```
 
 ## Functions
 
-```lang
+```fern
 function add(a: i32, b: i32): i32 {
     return a + b;
 }

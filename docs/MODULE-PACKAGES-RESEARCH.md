@@ -639,10 +639,10 @@ version = "0.1.0"
 edition = "2026"               # opt-in to language flavour year
 
 [targets.wasi-http]
-entry = "src/main.lang"
+entry = "src/main.fern"
 
 [targets.arm64-linux]
-entry = "src/main.lang"
+entry = "src/main.fern"
 
 [dependencies]
 auth = "1.2"                                # registry-resolved (later)
@@ -777,11 +777,11 @@ target codebase.**
 
 ```toml
 [targets.wasi-http]
-entry = "src/main.lang"
+entry = "src/main.fern"
 deps = ["std/wasi-http"]
 
 [targets.arm64-linux]
-entry = "src/main.lang"
+entry = "src/main.fern"
 deps = ["std/tcp"]
 ```
 

@@ -61,7 +61,7 @@ the audit history is preserved.
 
 ### 4. Map runtime-tag dispatch in hot paths — perf + code size
 
-- **Where**: `internal/prelude/prelude.lang` —
+- **Where**: `internal/prelude/prelude.fern` —
   `__map_hash`, `__map_lookup`, `__map_set_impl`,
   `__map_delete_impl`, `__map_keys_impl`,
   `__map_values_impl`. `docs/MAP-SPECIALIZATION.md` plan

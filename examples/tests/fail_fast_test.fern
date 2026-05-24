@@ -1,0 +1,108 @@
+// examples/tests/fail_fast_test.fern — exercises the
+// new fail-fast mode added to std/test:
+//   * `test_new_fail_fast(suite)` — constructor that
+//     enables fail-fast from the start.
+//   * `(r).with_fail_fast()` — flip the mode on an
+//     existing runner (typical pattern: opt in via CLI).
+//   * `parse_fail_fast_from_args(argv)` — pull the
+//     boolean off `--fail-fast` in `args()`.
+//
+// The fail-fast contract: once any case has failed,
+// subsequent `it()` calls auto-skip with reason
+// "fail-fast: prior case failed". Each skipped case
+// still emits a TAP line, it just runs as a skip
+// rather than really executing the predicate.
+//
+// Exercising the behaviour requires a case that
+// deliberately fails to trigger the short-circuit.
+// We can't put that inside the outer suite (the outer
+// would then exit 1), so we build a SECONDARY runner
+// in fail-fast mode and assert on its post-run
+// counters from the outer suite — same shape the
+// runner_self_test.fern uses to exercise failure
+// reporting without poisoning the parent's exit code.
+
+function intentional_fail(): Option[string] {
+    return fail("expected fail used to trigger fail-fast");
+}
+
+function trivial_pass(): Option[string] {
+    return None;
+}
+
+function test_fail_fast_short_circuits_post_fail(): Option[string] {
+    // Build an independent runner with fail-fast on.
+    // Using `test_new_fail_fast` so the same call path
+    // gets exercised. Its output WILL appear in the
+    // combined TAP stream (TAP version 13 + suite
+    // header + three cases), but its counters live in
+    // an isolated value we then inspect.
+    var sub: TestRunner = test_new_fail_fast("ff-inner");
+    sub = sub.it("c1 pass before fail", trivial_pass());
+    sub = sub.it("c2 fail triggers fast", intentional_fail());
+    sub = sub.it("c3 should auto-skip after fail",
+                 trivial_pass());
+    // Expectations: 1 pass, 1 fail, 1 skip. Any deviation
+    // means fail-fast didn't behave as documented.
+    if (sub.passed != 1) {
+        return fail("expected 1 pass, got " + sub.passed.to_string());
+    }
+    if (sub.failed != 1) {
+        return fail("expected 1 fail, got " + sub.failed.to_string());
+    }
+    if (sub.skipped != 1) {
+        return fail("expected 1 skip, got " + sub.skipped.to_string());
+    }
+    return None;
+}
+
+function test_fail_fast_off_runs_every_case(): Option[string] {
+    // Sanity check: without fail-fast, the same shape
+    // produces 2 pass + 1 fail (c3 actually runs).
+    // Pins the contract that fail-fast is OPT-IN.
+    var sub: TestRunner = test_new("ff-control");
+    sub = sub.it("c1 pass", trivial_pass());
+    sub = sub.it("c2 fail", intentional_fail());
+    sub = sub.it("c3 still runs", trivial_pass());
+    if (sub.passed != 2 || sub.failed != 1 || sub.skipped != 0) {
+        return fail("default mode counters off: passed=" +
+                    sub.passed.to_string() + " failed=" +
+                    sub.failed.to_string() + " skipped=" +
+                    sub.skipped.to_string());
+    }
+    return None;
+}
+
+function test_parse_fail_fast_present(): Option[string] {
+    var argv: string[] = ["lang", "-interp", "test.fern", "--", "--fail-fast"];
+    if (parse_fail_fast_from_args(argv)) { return None; }
+    return fail("--fail-fast not detected in argv");
+}
+
+function test_parse_fail_fast_absent(): Option[string] {
+    var argv: string[] = ["lang", "-interp", "test.fern"];
+    if (!parse_fail_fast_from_args(argv)) { return None; }
+    return fail("false-positive: detected --fail-fast in clean argv");
+}
+
+function test_with_fail_fast_preserves_filter(): Option[string] {
+    var r0: TestRunner = test_new_filtered("with-ff", "x");
+    var r1: TestRunner = r0.with_fail_fast();
+    if (r1.filter == "x" && r1.fail_fast) { return None; }
+    return fail("with_fail_fast clobbered an unrelated field");
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("fail-fast");
+    r = r.it("fail-fast short-circuits post-fail",
+             test_fail_fast_short_circuits_post_fail());
+    r = r.it("default mode runs every case",
+             test_fail_fast_off_runs_every_case());
+    r = r.it("parse_fail_fast detects --fail-fast",
+             test_parse_fail_fast_present());
+    r = r.it("parse_fail_fast no false-positive",
+             test_parse_fail_fast_absent());
+    r = r.it("with_fail_fast preserves filter",
+             test_with_fail_fast_preserves_filter());
+    return r.finish();
+}

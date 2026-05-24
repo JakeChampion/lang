@@ -9,7 +9,7 @@ name: Build & release
 #
 # The compiler is pure Go (no cgo, no external module deps; the
 # prelude + WIT files are `//go:embed`-ed into the binary), so each
-# matrix entry is a one-shot `go build ./cmd/lang` with the right
+# matrix entry is a one-shot `go build ./cmd/fern` with the right
 # GOOS/GOARCH. No cross-toolchain needed.
 #
 # Host coverage matches `README.md`:
@@ -59,7 +59,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o dist/lang ./cmd/lang
+          go build -trimpath -ldflags="-s -w" -o dist/fern ./cmd/fern
 
       - name: Package archive
         run: |

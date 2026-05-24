@@ -329,7 +329,7 @@ func (p *parser) parseProgram() *ast.Program {
 // parseImport parses `import "<path>";` and returns the
 // declaration. The local name (used as the prefix in qualified
 // calls like `mod.fn(args)`) is derived from the path's basename
-// without the `.lang` extension. The path is otherwise opaque to
+// without the `.fern` extension. The path is otherwise opaque to
 // the parser — relative-path resolution lives in the driver.
 func (p *parser) parseImport() (*ast.Import, error) {
 	kw := p.advance() // import
@@ -349,14 +349,14 @@ func (p *parser) parseImport() (*ast.Import, error) {
 
 // importLocalName returns the binding name a qualified call uses
 // for an imported module — `import "./math/vec";` → `vec`. Drops
-// any directory prefix and a trailing `.lang` extension.
+// any directory prefix and a trailing `.fern` extension.
 func importLocalName(path string) string {
 	base := path
 	if i := strings.LastIndex(base, "/"); i >= 0 {
 		base = base[i+1:]
 	}
-	if strings.HasSuffix(base, ".lang") {
-		base = base[:len(base)-len(".lang")]
+	if strings.HasSuffix(base, ".fern") {
+		base = base[:len(base)-len(".fern")]
 	}
 	return base
 }

@@ -111,11 +111,11 @@ func callsDirect(fn *ast.FuncDecl, target string) bool {
 // reference.
 func TestLoadCombinesEntryAndImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `pub function greet(): i32 { return 42; }`,
-		"main.lang": `import "./util";
+		"util.fern": `pub function greet(): i32 { return 42; }`,
+		"main.fern": `import "./util";
 function main(): i32 { return util.greet(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,12 +143,12 @@ function main(): i32 { return util.greet(); }`,
 // still a reference to the now-mangled name.
 func TestLoadRenamesSameModuleFunctionValue(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function add(a: i32, b: i32): i32 { return a + b; }
+		"util.fern": `function add(a: i32, b: i32): i32 { return a + b; }
 function pickAdd(): (i32, i32) => i32 { return add; }`,
-		"main.lang": `import "./util";
+		"main.fern": `import "./util";
 function main(): i32 { return 0; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,13 +174,13 @@ function main(): i32 { return 0; }`,
 // import in a sibling subdirectory resolves through filepath.Join.
 func TestLoadResolvesRelativeToImporter(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"helpers/inner.lang": `pub function answer(): i32 { return 7; }`,
-		"helpers/util.lang": `import "./inner";
+		"helpers/inner.fern": `pub function answer(): i32 { return 7; }`,
+		"helpers/util.fern": `import "./inner";
 pub function call_inner(): i32 { return inner.answer(); }`,
-		"main.lang": `import "./helpers/util";
+		"main.fern": `import "./helpers/util";
 function main(): i32 { return util.call_inner(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,12 +196,12 @@ function main(): i32 { return util.call_inner(); }`,
 // from Load rather than spinning forever or stack-overflowing.
 func TestLoadDetectsCycle(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"a.lang": `import "./b";
+		"a.fern": `import "./b";
 pub function fa(): i32 { return b.fb(); }`,
-		"b.lang": `import "./a";
+		"b.fern": `import "./a";
 pub function fb(): i32 { return a.fa(); }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "a.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "a.fern"))
 	if err == nil {
 		t.Fatal("expected cycle error from Load")
 	}
@@ -221,7 +221,7 @@ pub function fb(): i32 { return a.fa(); }`,
 // load of core/int has the decl under the mangled name only.
 func TestLoadStdlibFlatSkippingRewritesToMangledForSkippedPaths(t *testing.T) {
 	skip := map[string]bool{
-		"stdlib://core/int.lang": true,
+		"stdlib://core/int.fern": true,
 	}
 	prog, err := modload.LoadStdlibFlatSkipping([]string{"std/u32"}, skip)
 	if err != nil {
@@ -285,11 +285,11 @@ func TestLoadStdlibFlatAllowsCycles(t *testing.T) {
 // codepath.
 func TestLoadAllowsStdlibCyclesViaUserImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "core/no_prelude";
+		"main.fern": `import "core/no_prelude";
 import "std/_test_empty";
 function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 	})
-	if _, _, err := modload.Load(filepath.Join(dir, "main.lang")); err != nil {
+	if _, _, err := modload.Load(filepath.Join(dir, "main.fern")); err != nil {
 		t.Fatalf("Load of program importing cyclic stdlib failed: %v", err)
 	}
 }
@@ -298,13 +298,13 @@ function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 // load-time error — qualified calls would be ambiguous.
 func TestLoadRejectsDuplicateLocalName(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"a/util.lang": `pub function fa(): i32 { return 1; }`,
-		"b/util.lang": `pub function fb(): i32 { return 2; }`,
-		"main.lang": `import "./a/util";
+		"a/util.fern": `pub function fa(): i32 { return 1; }`,
+		"b/util.fern": `pub function fb(): i32 { return 2; }`,
+		"main.fern": `import "./a/util";
 import "./b/util";
 function main(): i32 { return util.fa(); }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected duplicate-import error from Load")
 	}
@@ -315,9 +315,9 @@ function main(): i32 { return util.fa(); }`,
 // to round-trip cleanly.
 func TestLoadSingleFileNoImports(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `function main(): i32 { return 99; }`,
+		"main.fern": `function main(): i32 { return 99; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,17 +332,17 @@ func TestLoadSingleFileNoImports(t *testing.T) {
 // reference to it gets flattened.
 func TestLoadRewritesCrossModuleStructType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: i32, y: i32 }
+		"point.fern": `pub struct Point { x: i32, y: i32 }
 pub function make(x: i32, y: i32): Point {
 	return Point { x: x, y: y };
 }`,
-		"main.lang": `import "./point";
+		"main.fern": `import "./point";
 function main(): i32 {
 	var p: point.Point = point.make(3, 4);
 	return p.x + p.y;
 }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,14 +380,14 @@ function main(): i32 {
 // flatten it to the mangled form before the checker sees it.
 func TestLoadRewritesCrossModuleStructLit(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: i32, y: i32 }`,
-		"main.lang": `import "./point";
+		"point.fern": `pub struct Point { x: i32, y: i32 }`,
+		"main.fern": `import "./point";
 function main(): i32 {
 	var p: point.Point = point.Point { x: 5, y: 7 };
 	return p.x;
 }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,13 +407,13 @@ function main(): i32 {
 // position the parser might emit.
 func TestLoadRewritesCrossModuleReturnType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `pub struct Point { x: i32, y: i32 }
+		"point.fern": `pub struct Point { x: i32, y: i32 }
 pub function origin(): Point { return Point { x: 0, y: 0 }; }`,
-		"main.lang": `import "./point";
+		"main.fern": `import "./point";
 function pickOrigin(): point.Point { return point.origin(); }
 function main(): i32 { return pickOrigin().x; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,11 +435,11 @@ function main(): i32 { return pickOrigin().x; }`,
 // hints at the fix.
 func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function secret(): i32 { return 9; }`,
-		"main.lang": `import "./util";
+		"util.fern": `function secret(): i32 { return 9; }`,
+		"main.fern": `import "./util";
 function main(): i32 { return util.secret(); }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -452,14 +452,14 @@ function main(): i32 { return util.secret(); }`,
 // as a value, not calling it) are equally rejected.
 func TestLoadRejectsPrivateFunctionValueReference(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function secret(): i32 { return 9; }`,
-		"main.lang": `import "./util";
+		"util.fern": `function secret(): i32 { return 9; }`,
+		"main.fern": `import "./util";
 function main(): i32 {
 	var f: () => i32 = util.secret;
 	return f();
 }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -472,14 +472,14 @@ function main(): i32 {
 // rejected. The fix-hint mentions `pub struct`.
 func TestLoadRejectsPrivateStructType(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"point.lang": `struct Point { x: i32, y: i32 }`,
-		"main.lang": `import "./point";
+		"point.fern": `struct Point { x: i32, y: i32 }`,
+		"main.fern": `import "./point";
 function main(): i32 {
 	var p: point.Point = point.Point { x: 1, y: 2 };
 	return p.x;
 }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -493,12 +493,12 @@ function main(): i32 {
 // referenced from a `pub` function in the same file loads cleanly.
 func TestLoadAllowsPrivateAccessWithinSameModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `function helper(): i32 { return 1; }
+		"util.fern": `function helper(): i32 { return 1; }
 pub function exposed(): i32 { return helper() + 1; }`,
-		"main.lang": `import "./util";
+		"main.fern": `import "./util";
 function main(): i32 { return util.exposed(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatalf("private same-module access should be allowed: %v", err)
 	}
@@ -516,11 +516,11 @@ function main(): i32 { return util.exposed(); }`,
 // for resolving references afterwards.
 func TestLoadCombinesPubConstAcrossModules(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"limits.lang": `pub const MAX: i32 = 100;`,
-		"main.lang": `import "./limits";
+		"limits.fern": `pub const MAX: i32 = 100;`,
+		"main.fern": `import "./limits";
 function main(): i32 { return limits.MAX; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,11 +553,11 @@ function main(): i32 { return limits.MAX; }`,
 // module's decls so the diagnostic matches the actual decl kind.
 func TestLoadRejectsPrivateConstAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"limits.lang": `const MAX: i32 = 100;`,
-		"main.lang": `import "./limits";
+		"limits.fern": `const MAX: i32 = 100;`,
+		"main.fern": `import "./limits";
 function main(): i32 { return limits.MAX; }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected visibility error from Load")
 	}
@@ -573,11 +573,11 @@ function main(): i32 { return limits.MAX; }`,
 // diagnostics can find the right file for any error position.
 func TestLoadReturnsPerFileSources(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `pub function f(): i32 { return 1; }`,
-		"main.lang": `import "./util";
+		"util.fern": `pub function f(): i32 { return 1; }`,
+		"main.fern": `import "./util";
 function main(): i32 { return util.f(); }`,
 	})
-	_, srcs, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, srcs, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,10 +593,10 @@ function main(): i32 { return util.f(); }`,
 // real stdlib modules land.
 func TestLoadResolvesStdlibImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "std/_test_empty";
+		"main.fern": `import "std/_test_empty";
 function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,10 +614,10 @@ function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 // proves the prefix-classifier in modload accepts both.
 func TestLoadResolvesCoreImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "core/_test_empty";
+		"main.fern": `import "core/_test_empty";
 function main(): i32 { return _test_empty.core_test_marker(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,10 +631,10 @@ function main(): i32 { return _test_empty.core_test_marker(); }`,
 // "read stdlib://…: no such file" message from os.ReadFile).
 func TestLoadUnknownStdlibModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "std/does_not_exist";
+		"main.fern": `import "std/does_not_exist";
 function main(): i32 { return 0; }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err == nil {
 		t.Fatal("expected error for unknown stdlib module")
 	}
@@ -650,16 +650,16 @@ function main(): i32 { return 0; }`,
 // callable from files whose import closure reaches A.
 func TestLoadStampsFuncDeclSourceModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"util.lang": `pub function f(): i32 { return 1; }`,
-		"main.lang": `import "./util";
+		"util.fern": `pub function f(): i32 { return 1; }`,
+		"main.fern": `import "./util";
 function main(): i32 { return util.f(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainAbs, _ := filepath.Abs(filepath.Join(dir, "main.lang"))
-	utilAbs, _ := filepath.Abs(filepath.Join(dir, "util.lang"))
+	mainAbs, _ := filepath.Abs(filepath.Join(dir, "main.fern"))
+	utilAbs, _ := filepath.Abs(filepath.Join(dir, "util.fern"))
 	got := map[string]string{}
 	for _, fn := range prog.Funcs {
 		got[fn.Name] = fn.SourceModule
@@ -678,19 +678,19 @@ function main(): i32 { return util.f(); }`,
 // module visible from here?" question during method dispatch.
 func TestLoadComputesImportClosures(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"c.lang": `pub function c_fn(): i32 { return 3; }`,
-		"b.lang": `import "./c";
+		"c.fern": `pub function c_fn(): i32 { return 3; }`,
+		"b.fern": `import "./c";
 pub function b_fn(): i32 { return c.c_fn() + 2; }`,
-		"a.lang": `import "./b";
+		"a.fern": `import "./b";
 function main(): i32 { return b.b_fn() + 1; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "a.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "a.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	aAbs, _ := filepath.Abs(filepath.Join(dir, "a.lang"))
-	bAbs, _ := filepath.Abs(filepath.Join(dir, "b.lang"))
-	cAbs, _ := filepath.Abs(filepath.Join(dir, "c.lang"))
+	aAbs, _ := filepath.Abs(filepath.Join(dir, "a.fern"))
+	bAbs, _ := filepath.Abs(filepath.Join(dir, "b.fern"))
+	cAbs, _ := filepath.Abs(filepath.Join(dir, "c.fern"))
 
 	if prog.ModuleImports == nil {
 		t.Fatal("ModuleImports map is nil")
@@ -725,11 +725,11 @@ function main(): i32 { return b.b_fn() + 1; }`,
 // Importer sees the method:
 func TestMethodVisibleAcrossExplicitImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"lib.lang":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
-		"main.lang": `import "./lib";
+		"lib.fern":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
+		"main.fern": `import "./lib";
 function main(): i32 { return (5).my_method(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,10 +746,10 @@ function main(): i32 { return (5).my_method(); }`,
 // silently accepting the call would defeat module scoping.
 func TestMethodNotVisibleWithoutImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"lib.lang":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
-		"main.lang": `function main(): i32 { return (5).my_method(); }`,
+		"lib.fern":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
+		"main.fern": `function main(): i32 { return (5).my_method(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,13 +763,13 @@ func TestMethodNotVisibleWithoutImport(t *testing.T) {
 // C in).
 func TestMethodVisibleViaTransitiveImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"c.lang": `pub function (n: i32) deep(): i32 { return n * 3; }`,
-		"b.lang": `import "./c";
+		"c.fern": `pub function (n: i32) deep(): i32 { return n * 3; }`,
+		"b.fern": `import "./c";
 pub function passthrough(n: i32): i32 { return n.deep(); }`,
-		"a.lang": `import "./b";
+		"a.fern": `import "./b";
 function main(): i32 { return (4).deep(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "a.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "a.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,10 +784,10 @@ function main(): i32 { return (4).deep(); }`,
 // method redeclaration check doesn't fire.
 func TestUserImportOfStdI32CoexistsWithAutoPrelude(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "std/i32";
+		"main.fern": `import "std/i32";
 function main(): i32 { return (0 - 9).abs(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -817,10 +817,10 @@ function main(): i32 { return (0 - 9).abs(); }`,
 // the stdlib will hit unresolved-name errors.
 func TestNoPreludeBareProgramTypechecks(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "core/no_prelude";
+		"main.fern": `import "core/no_prelude";
 function main(): i32 { return 42; }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -836,10 +836,10 @@ function main(): i32 { return 42; }`,
 // the missing import is caught.
 func TestNoPreludeMissingImportErrors(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "core/no_prelude";
+		"main.fern": `import "core/no_prelude";
 function main(): i32 { return (5).abs(); }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -934,7 +934,7 @@ func TestCheckStdlibToStdlibMethodsVisibleAcrossModules(t *testing.T) {
 		// stdlib-internal import graph. Extra stdlib imports
 		// satisfy ancillary method-source visibility needs
 		// (std/array body also calls (string).contains, etc.).
-		"main.lang": `import "core/no_prelude";
+		"main.fern": `import "core/no_prelude";
 import "std/array";
 import "std/i32";
 import "std/string";
@@ -945,7 +945,7 @@ function main(): i32 {
     return ys[0] + ys[1] + ys[2];
 }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,13 +969,13 @@ function main(): i32 {
 // `Array.sum` / `Array.avg`.
 func TestLoadPreservesManuallyHoistedMethodNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "std/array";
+		"main.fern": `import "std/array";
 function main(): i32 {
     var xs: i32[] = [1, 2, 3, 4, 5];
     return xs.sum();
 }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1004,7 +1004,7 @@ function main(): i32 {
 // `undefined reference to map_new_impl` from the linker.
 func TestLoadPreservesMapRuntimeHelperNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.lang": `import "core/no_prelude";
+		"main.fern": `import "core/no_prelude";
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -1012,7 +1012,7 @@ function main(): i32 {
     return m.get_or("answer", 0);
 }`,
 	})
-	prog, _, err := modload.Load(filepath.Join(dir, "main.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}

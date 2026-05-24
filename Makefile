@@ -1,20 +1,20 @@
 AARCH64_GCC ?= aarch64-linux-gnu-gcc
 QEMU        ?= qemu-aarch64
 
-EXAMPLES := $(basename $(notdir $(wildcard examples/*.lang)))
+EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
-LANG_SRCS := $(wildcard examples/*.lang)
+LANG_SRCS := $(wildcard examples/*.fern)
 
 .PHONY: all build test vet clean examples run-% fmt fmt-check
 
 all: build test
 
-build: bin/lang
+build: bin/fern
 
-bin/lang: $(shell find . -name '*.go' -not -path './build/*')
+bin/fern: $(shell find . -name '*.go' -not -path './build/*')
 	@mkdir -p bin
-	go build -o $@ ./cmd/lang
+	go build -o $@ ./cmd/fern
 
 test:
 	go test ./...
@@ -26,9 +26,9 @@ vet:
 # cross-compiler is present) link to a static arm64 binary.
 examples: $(BINS)
 
-build/%.s: examples/%.lang bin/lang
+build/%.s: examples/%.fern bin/fern
 	@mkdir -p build
-	./bin/lang -target arm64 $< > $@
+	./bin/fern -target arm64 $< > $@
 
 build/%: build/%.s
 	$(AARCH64_GCC) -static -nostdlib $< -o $@
@@ -37,21 +37,21 @@ build/%: build/%.s
 run-%: build/%
 	$(QEMU) $<
 
-# Re-format every .lang source under examples/ in place. Useful as
+# Re-format every .fern source under examples/ in place. Useful as
 # a one-shot before-commit cleanup; the formatter is idempotent so
 # running it on already-formatted files is a no-op.
-fmt: bin/lang
+fmt: bin/fern
 	@for f in $(LANG_SRCS); do \
-		./bin/lang -fmt -w "$$f"; \
+		./bin/fern -fmt -w "$$f"; \
 	done
 
-# Verify every .lang source is already formatted. Prints the
+# Verify every .fern source is already formatted. Prints the
 # unified-diff hunks for any file that would change and exits
 # non-zero so CI fails on unformatted submissions.
-fmt-check: bin/lang
+fmt-check: bin/fern
 	@status=0; \
 	for f in $(LANG_SRCS); do \
-		if ! ./bin/lang -fmt -d "$$f"; then status=1; fi; \
+		if ! ./bin/fern -fmt -d "$$f"; then status=1; fi; \
 	done; \
 	exit $$status
 

@@ -1,4 +1,4 @@
-// Playwright config for the lang playground regression suite.
+// Playwright config for the Fern playground regression suite.
 //
 // Spins up a local `python3 -m http.server` against `web/` and runs
 // every spec under ./ against it. Single chromium project — the

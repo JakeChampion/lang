@@ -1,0 +1,109 @@
+// examples/tests/batch8_test.fern — exercises the additions
+// from the eighth test-runner-migration tranche:
+//   - argv passthrough (`args()` populated from `lang -interp
+//     FILE.fern -- ARGS...`)
+//   - `--filter PATTERN` test-case selection via the runner's
+//     built-in `parse_filter_from_args` + `test_new_filtered`
+//   - golden-file assertions (`assert_matches_golden` /
+//     `_strict`)
+//   - Map assertions (len / has / lacks for i32-i32 + string-
+//     string)
+
+function test_argv_basic(): Option[string] {
+    // args()[0] is conventionally the program path; subsequent
+    // entries come from `-- ...` on the lang command line. We
+    // can't pin a specific argv shape here (this file is
+    // invoked from CI via `lang -interp FILE`), so just check
+    // the call doesn't crash and returns a string array.
+    var a: string[] = args();
+    if (a.len() < 1) {
+        return fail("args() returned empty (expected at least argv[0])");
+    }
+    return None;
+}
+
+function test_map_len_string_string(): Option[string] {
+    var m: Map[string, string] = map_new(8);
+    m.set("a", "alpha");
+    m.set("b", "beta");
+    return assert_map_len_string_string(m, 2);
+}
+
+function test_map_has_string_string(): Option[string] {
+    var m: Map[string, string] = map_new(4);
+    m.set("ok", "yes");
+    return assert_map_has_string_string(m, "ok", "yes");
+}
+
+function test_map_lacks_string_string(): Option[string] {
+    var m: Map[string, string] = map_new(4);
+    m.set("ok", "yes");
+    return assert_map_lacks_string_string(m, "missing");
+}
+
+function test_map_has_i32_i32(): Option[string] {
+    var m: Map[i32, i32] = map_new(4);
+    m.set(1, 100);
+    m.set(2, 200);
+    return assert_map_has_i32_i32(m, 1, 100);
+}
+
+function test_map_has_wrong_value_reports(): Option[string] {
+    var m: Map[string, string] = map_new(4);
+    m.set("k", "actual");
+    match (assert_map_has_string_string(m, "k", "expected")) {
+        Some(msg) => {
+            if (!msg.contains("\"actual\"")) {
+                return fail("missing actual value in msg: " + msg);
+            }
+            if (!msg.contains("\"expected\"")) {
+                return fail("missing expected value in msg: " + msg);
+            }
+            return None;
+        },
+        None => { return fail("expected wrong-value to fail"); }
+    }
+    return None;
+}
+
+function test_golden_bootstrap_and_compare(r: TestRunner): TestRunner {
+    var (dir, rr) = must_temp_dir(r, "golden");
+    if (dir == "") { return rr; }
+    var path: string = dir + "/golden.txt";
+    var actual: string = "line 1\nline 2\n";
+    // First call: file missing → bootstrap (writes + passes).
+    rr = rr.it("bootstrap golden",      assert_matches_golden(path, actual));
+    // Second call: file present → compare equal.
+    rr = rr.it("compare existing",      assert_matches_golden(path, actual));
+    // Strict mode on a missing file must fail.
+    rr = rr.it("strict missing fails",
+               invert_pass_b8(assert_matches_golden_strict(dir + "/no-such.txt", "x")));
+    return rr;
+}
+
+function invert_pass_b8(result: Option[string]): Option[string] {
+    match (result) {
+        Some(_) => { return None; },
+        None => { return fail("expected failure"); }
+    }
+    return None;
+}
+
+function main(): i32 {
+    // Lift `--filter PATTERN` off the command line. Falls back
+    // to "" (no filter) when the flag is absent, which makes
+    // `test_new_filtered` behave identically to `test_new`.
+    var filter: string = parse_filter_from_args(args());
+    var r: TestRunner = test_new_filtered("batch 8", filter);
+
+    r = r.it("argv populated",                  test_argv_basic());
+    r = r.it("map len string-string",           test_map_len_string_string());
+    r = r.it("map has string-string",           test_map_has_string_string());
+    r = r.it("map lacks string-string",         test_map_lacks_string_string());
+    r = r.it("map has i32-i32",                 test_map_has_i32_i32());
+    r = r.it("map has wrong-value diagnostic",  test_map_has_wrong_value_reports());
+
+    r = test_golden_bootstrap_and_compare(r);
+
+    return r.finish();
+}

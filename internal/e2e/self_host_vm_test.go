@@ -15,7 +15,7 @@ import (
 )
 
 // Seventh self-host milestone — first "lower-level
-// representation" layer. `vm.lang` compiles a parser.Module's
+// representation" layer. `vm.fern` compiles a parser.Module's
 // top-level stmts to a linear Op[] bytecode stream and then
 // executes it on a tiny stack machine. Sits next to the
 // tree-walking interp (#623) as a parallel evaluator: same
@@ -37,7 +37,7 @@ import (
 func writeSelfHostVMProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "vm.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "vm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -52,7 +52,7 @@ func writeSelfHostVMProject(t *testing.T) string {
 func TestSelfHostVMX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostVMProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "vm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "vm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSelfHostVMX86_64(t *testing.T) {
 func TestSelfHostVMArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostVMProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "vm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "vm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

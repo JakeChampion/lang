@@ -621,9 +621,9 @@ to smallest. Status pending unless marked.
   slices follow — enforced socially via the bump allocator's
   per-arena reset.
 
-  `examples/wasm/word_freq.lang`'s `swap_pairs` is now an
+  `examples/wasm/word_freq.fern`'s `swap_pairs` is now an
   inline closure inside `sort_pairs` that captures `keys` and
-  `counts` directly. `use_chain.lang` and `url_router.lang`
+  `counts` directly. `use_chain.fern` and `url_router.fern`
   unblock too (no longer scalar-only).
 
   **Wide captures (i64, u64, f64) — shipped.** The env-block
@@ -646,7 +646,7 @@ to smallest. Status pending unless marked.
   wide-slot work too — pre-existing latent bug).
 
 - **`?` operator for `Option` / `Result`.** `extract_text`
-  in `todo_api.lang` is 22 lines of nested match for
+  in `todo_api.fern` is 22 lines of nested match for
   "match `JObject(m)`; pull `text`; match `JString(t)`; else
   `None`". With `?` it collapses to:
 
@@ -756,7 +756,7 @@ to smallest. Status pending unless marked.
   `f"{ {1,2} }"` parses), splits on `{...}` boundaries, and
   emits a sequence of literal-string tokens + parsed
   expression sub-trees the parser stitches back together.
-  `echo_handler.lang`, `shape_area.lang`, and `wc.lang` use
+  `echo_handler.fern`, `shape_area.fern`, and `wc.fern` use
   the form.
 
 - **`for x in arr` / `for (k, v) in map` — shipped.** Both
@@ -767,7 +767,7 @@ to smallest. Status pending unless marked.
   Detection happens by lookahead in `parseFor` — a leading
   `IDENT in` or `( IDENT , IDENT ) in` selects the foreach
   shape; everything else falls through to the C-style for.
-  `word_freq.lang`, `json_pretty.lang`, `csv_to_json.lang`
+  `word_freq.fern`, `json_pretty.fern`, `csv_to_json.fern`
   all use the form.
 
 - **Drop `__array_append_T` from user surface — shipped.**
@@ -791,8 +791,8 @@ to smallest. Status pending unless marked.
   drops in as one IR helper instead of duplicating the
   whole stack per stride.
 
-  All four examples (`word_freq.lang`, `csv_to_json.lang`,
-  `url_router.lang`, `todo_api.lang`) and the prelude itself
+  All four examples (`word_freq.fern`, `csv_to_json.fern`,
+  `url_router.fern`, `todo_api.fern`) and the prelude itself
   use `.push(v)` instead of the per-T helpers.
 
 - **Module-level `var` with handler-scoped lifetime — full
@@ -905,7 +905,7 @@ to smallest. Status pending unless marked.
   The statement-printer switch has a `case *ast.Defer` arm
   now (`internal/printer/format.go`); round-trip is covered
   by `TestFormatDeferRoundTrip`. The earlier comment scars
-  across `wc.lang` / `word_freq.lang` should be cleared in a
+  across `wc.fern` / `word_freq.fern` should be cleared in a
   follow-up examples cleanup pass.
 
 ### Shipping order
@@ -918,8 +918,8 @@ example cleanup. Each item lands as its own PR:
    `internal/printer/format_test.go:TestFormatDeferRoundTrip`
    covers `defer r.close()` survival.
 2. ~~String interpolation~~ — **shipped.** `f"..."` syntax
-   live in the lexer; used by `echo_handler.lang`,
-   `shape_area.lang`, `wc.lang`.
+   live in the lexer; used by `echo_handler.fern`,
+   `shape_area.fern`, `wc.fern`.
 3. ~~`_` wildcard in match~~ — **shipped.** Both statement
    and expression form;
    `TestWASMMatchExprWildcardArm` covers it.
@@ -1033,7 +1033,7 @@ tests.
     (`-2^31..=2^31-1`) is exact. **Migrated to the lang
     prelude** in PR 174 — was ~190 lines of hand-written
     wat, now ~25 lines of lang code in
-    `internal/prelude/prelude.lang`.
+    `internal/prelude/prelude.fern`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
     [(e|E)[+-]?<digits>]`, with at least one of integer or
@@ -1140,7 +1140,7 @@ Two flavours of stdlib helper coexist:
    call sites (`OpCallDirect "name"`); helper bodies bypass
    the IR entirely.
 
-2. **Lang prelude (IR-routed).** `internal/prelude/prelude.lang`
+2. **Lang prelude (IR-routed).** `internal/prelude/prelude.fern`
    — a small embedded source file parsed at checker startup
    and prepended to the user's program. Goes through the
    regular parser → checker → IR → codegen pipeline like any
@@ -1180,7 +1180,7 @@ the lang's abstraction layers.
 **Migration path** (split into per-helper PRs):
 
 1. ✅ **Phase A: prelude infrastructure + first migration.**
-   `internal/prelude/prelude.go` embeds the `prelude.lang`
+   `internal/prelude/prelude.go` embeds the `prelude.fern`
    source via `//go:embed`; `injectPrelude` parses it on
    each `checker.Check` call and appends the decls to
    `prog.Funcs` (with `IsPrelude=true` for filtering in

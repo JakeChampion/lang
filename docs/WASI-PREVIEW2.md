@@ -7,7 +7,7 @@ Move the WASM backend from WASI Preview 1 (the legacy core-module
 Component Model components, native resource types, streams, and the
 `wasi:http` interface for edge-function serving.
 
-End state: `lang -target=wasm prog.lang` produces a `.component.wasm`
+End state: `lang -target=wasm prog.fern` produces a `.component.wasm`
 that runs in any preview-2 host (`wasmtime run`, edge-function
 runtimes, etc.) and uses the modern WASI interfaces directly.
 
@@ -152,7 +152,7 @@ wasmtime allows `create-tcp-socket` and `start-bind`.
 
 ### Step 5 — Add `wasi:http` handler target (shipped)
 
-A new compile mode: `lang -target wasi-http prog.lang` produces
+A new compile mode: `lang -target wasi-http prog.fern` produces
 a component implementing `wasi:http/incoming-handler.handle`.
 The lang program declares:
 
@@ -324,6 +324,6 @@ Two latent bugs surfaced and got fixed in passing:
   `lang` CLI download it on first preview-2 build and cache in
   `~/.cache/lang/`. Decision deferred to step 2.
 - **Multi-target binary names.** Currently
-  `lang -o prog prog.lang` produces a single output. Preview 2 mode
+  `lang -o prog prog.fern` produces a single output. Preview 2 mode
   produces a `.component.wasm` instead — same path, different
   contents, or `.component.wasm` extension forced? Settle in step 2.

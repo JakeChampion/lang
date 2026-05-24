@@ -1,5 +1,22 @@
 # Project notes for Claude Code
 
+## Name
+
+The language is named **Fern**. Source files use the `.fern`
+extension; the CLI is `fern` (built from `cmd/fern`), the LSP is
+`fern-lsp` (`cmd/fern-lsp`), the wasm playground bundle is
+`cmd/fern-wasm`, and the stdlib doc generator is `cmd/ferndoc`.
+Deliberately left on the old `lang` name for now (not part of the
+rename): the Go module path `github.com/jakechampion/lang`, the
+GitHub repo + Pages URLs (`jakechampion.github.io/lang`), the
+internal packages `internal/langsmith` / `internal/langstring`,
+the emitted runtime symbols `__lang_*`, the `LANG_WASI_ADAPTER`
+build/test env var, and the wasm JS-interop globals
+(`langCompile` / `langInterpret` / `langLsp`) with their
+`"lang:theme"` postMessage protocol. Renaming those is tracked
+separately because they cross the GitHub-repo boundary or are
+tightly coupled across the wasm bundle.
+
 ## Language direction
 
 This language started TypeScript-flavoured (the syntax for functions, `var`,
@@ -105,19 +122,19 @@ flow rather than driving manual CI checks after the fact.
 
 ## Test runner
 
-`internal/stdlib/std/test.lang` is the pure-Lang test runner —
+`internal/stdlib/std/test.fern` is the pure-Lang test runner —
 the shape the project plans to migrate to once the compiler is
 self-hosted and Go-side `*_test.go` files retire. It's part of
 the auto-prelude, so test programs reach for `TestRunner`,
 `test_new`, `assert_eq_i32`, etc. by bare name. Output is
-TAP-13. Examples under `examples/tests/` (`arithmetic_test.lang`,
-`strings_test.lang`, `runner_self_test.lang`) — the self-test
+TAP-13. Examples under `examples/tests/` (`arithmetic_test.fern`,
+`strings_test.fern`, `runner_self_test.fern`) — the self-test
 walks every assertion helper on both pass + fail paths. The
 Go-side gate that keeps the runner from regressing lives at
 `internal/e2e/test_runner_test.go`.
 
 When adding NEW assertion helpers or extending the runner,
-add a corresponding case to `runner_self_test.lang` covering
+add a corresponding case to `runner_self_test.fern` covering
 both the passing and failing path — the failure-reporting
 contract (predicate name in the message, actual + expected
 both quoted) is the runner's most regression-prone surface.

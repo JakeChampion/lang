@@ -120,7 +120,7 @@ func TestHandleMessage_Completion(t *testing.T) {
 	s.SetPublisher(func(string, any) {})
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
-			URI:        "file:///c.lang",
+			URI:        "file:///c.fern",
 			LanguageID: "lang",
 			Text:       "function add(a: i32, b: i32): i32 {\n  return a + b;\n}\n",
 		},
@@ -129,7 +129,7 @@ func TestHandleMessage_Completion(t *testing.T) {
 	s.HandleMessage(openMsg)
 
 	cp := completionParams{}
-	cp.TextDocument.URI = "file:///c.lang"
+	cp.TextDocument.URI = "file:///c.fern"
 	cp.Position = Position{Line: 1, Character: 2}
 	msg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",

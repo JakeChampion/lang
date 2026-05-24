@@ -118,7 +118,7 @@ func TestHandleMessage_Definition(t *testing.T) {
 	s.SetPublisher(func(string, any) {})
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
-			URI:        "file:///def.lang",
+			URI:        "file:///def.fern",
 			LanguageID: "lang",
 			Text:       "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n",
 		},
@@ -127,7 +127,7 @@ func TestHandleMessage_Definition(t *testing.T) {
 	s.HandleMessage(openMsg)
 
 	dp := definitionParams{}
-	dp.TextDocument.URI = "file:///def.lang"
+	dp.TextDocument.URI = "file:///def.fern"
 	dp.Position = Position{Line: 2, Character: 9}
 	defMsg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",
@@ -147,7 +147,7 @@ func TestHandleMessage_Definition(t *testing.T) {
 	if err := json.Unmarshal(m.Result, &loc); err != nil {
 		t.Fatalf("unmarshal location: %v", err)
 	}
-	if loc.URI != "file:///def.lang" {
+	if loc.URI != "file:///def.fern" {
 		t.Errorf("location uri = %q", loc.URI)
 	}
 	if loc.Range.Start.Line != 1 {

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// buildLangBinForCheck compiles cmd/lang to a temp binary the
+// buildLangBinForCheck compiles cmd/fern to a temp binary the
 // `-check` tests below invoke. Mirrors buildLangBinForInterp;
 // duplicated rather than shared because each top-level test file
 // in this package owns its harness, and Go's build cache makes
@@ -18,20 +18,20 @@ func buildLangBinForCheck(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
 	return bin
 }
 
-// `lang -check FILE.lang` — happy path. A well-typed program
+// `lang -check FILE.fern` — happy path. A well-typed program
 // produces no output and exits 0. Mirrors `tsc --noEmit` /
 // `go vet` semantics: silent success is the success signal.
 func TestCheckCleanProgram(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "prog.lang")
+	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`function add(a: i32, b: i32): i32 {
     return a + b;
 }
@@ -57,13 +57,13 @@ function main(): i32 {
 	}
 }
 
-// `lang -check FILE.lang` against a program with a type error.
+// `lang -check FILE.fern` against a program with a type error.
 // Exit code is 1, stderr carries a formatted diagnostic that
 // mentions the source file and the offending construct.
 func TestCheckTypeError(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "bad.lang")
+	src := filepath.Join(dir, "bad.fern")
 	if err := os.WriteFile(src, []byte(`function main(): i32 {
     return "not an int";
 }
@@ -79,7 +79,7 @@ func TestCheckTypeError(t *testing.T) {
 		t.Fatalf("exit = 0, want non-zero\nstdout: %s\nstderr: %s", out.String(), errb.String())
 	}
 	msg := errb.String()
-	if !strings.Contains(msg, "bad.lang") {
+	if !strings.Contains(msg, "bad.fern") {
 		t.Errorf("stderr did not mention source file: %q", msg)
 	}
 	if !strings.Contains(msg, "return type mismatch") {
@@ -94,7 +94,7 @@ func TestCheckTypeError(t *testing.T) {
 func TestCheckLibraryNoMain(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "lib.lang")
+	src := filepath.Join(dir, "lib.fern")
 	if err := os.WriteFile(src, []byte(`function helper(n: i32): i32 {
     return n * 2;
 }
@@ -145,7 +145,7 @@ func TestCheckStdinTypeError(t *testing.T) {
 	}
 }
 
-// `lang -check ENTRY.lang` follows imports — a type error in a
+// `lang -check ENTRY.fern` follows imports — a type error in a
 // transitive dep is surfaced with the dep's own filename, not
 // the entry file's. This is the payoff of the check command:
 // running it on a project root finds errors everywhere modload
@@ -153,14 +153,14 @@ func TestCheckStdinTypeError(t *testing.T) {
 func TestCheckFollowsImports(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
-	lib := filepath.Join(dir, "lib.lang")
+	lib := filepath.Join(dir, "lib.fern")
 	if err := os.WriteFile(lib, []byte(`pub function broken(): i32 {
     return "still not an int";
 }
 `), 0o644); err != nil {
 		t.Fatalf("write lib: %v", err)
 	}
-	entry := filepath.Join(dir, "main.lang")
+	entry := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(entry, []byte(`import "./lib";
 function main(): i32 {
     return lib.broken();
@@ -176,7 +176,7 @@ function main(): i32 {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Fatalf("exit = 0, want non-zero (broken import should fail check)\nstdout: %s\nstderr: %s", out.String(), errb.String())
 	}
-	if !strings.Contains(errb.String(), "lib.lang") {
+	if !strings.Contains(errb.String(), "lib.fern") {
 		t.Errorf("stderr did not point at the offending import file: %q", errb.String())
 	}
 }

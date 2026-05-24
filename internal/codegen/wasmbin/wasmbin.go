@@ -8,7 +8,7 @@
 // The aim is for this package to fully replace the WAT emitter and
 // the `wasm-tools parse` shell-out it depends on. Each PR lands
 // another slice of op coverage; the package is exercised via
-// `lang -target wasm-bin -o prog.wasm prog.lang` end-to-end.
+// `lang -target wasm-bin -o prog.wasm prog.fern` end-to-end.
 //
 // Current op coverage:
 //
@@ -1756,7 +1756,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 //   - Synthetic helper aliases (e.g. `print` → `__lang_print`)
 //     route to runtime-emitted wasm helpers in runtime.go / wasi.go.
 //   - Codegen aliases (e.g. `map_new` → `map_new_impl`) route to
-//     stdlib `.lang` functions that exist as regular IR functions
+//     stdlib `.fern` functions that exist as regular IR functions
 //     but only get referenced by their alias-target name at emit
 //     time. The IR-level reachability walker has to know about
 //     these so the impls survive dead-function elimination —

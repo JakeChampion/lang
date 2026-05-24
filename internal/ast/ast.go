@@ -1372,7 +1372,7 @@ type FuncDecl struct {
 	// Nil otherwise.
 	UseInferSource *Call
 	// IsPrelude is true for declarations sourced from the
-	// auto-injected lang prelude (internal/prelude/prelude.lang).
+	// auto-injected lang prelude (internal/prelude/prelude.fern).
 	// The flag is set at injection time so tests / dump tools
 	// can filter prelude noise out of "user code" listings; it
 	// has no semantic effect on type-checking, IR, or codegen.
@@ -1429,7 +1429,7 @@ type StructDecl struct {
 	// the canonical module path that declared this struct so the
 	// LSP can answer cross-module goto-definition queries (jump
 	// from `util.Point` use site to `Point`'s declaration in
-	// util.lang). Empty for parser-only single-file programs and
+	// util.fern). Empty for parser-only single-file programs and
 	// prelude-injected decls.
 	SourceModule string
 }

@@ -5,14 +5,14 @@ sidebar:
   order: 4
 ---
 
-A multi-file lang program is one entry file that `import`s
-siblings. The entry file is whichever `.lang` you pass to the
+A multi-file Fern program is one entry file that `import`s
+siblings. The entry file is whichever `.fern` you pass to the
 compiler.
 
 ## Imports
 
-```lang
-// main.lang
+```fern
+// main.fern
 import "./util";
 
 function main(): i32 {
@@ -20,22 +20,22 @@ function main(): i32 {
 }
 ```
 
-```lang
-// util.lang
+```fern
+// util.fern
 pub function run(): i32 {
     return 42;
 }
 ```
 
 The local name (`util.run`) comes from the path's basename without
-the `.lang` extension. Re-aliasing isn't supported yet.
+the `.fern` extension. Re-aliasing isn't supported yet.
 
 ## Visibility
 
 Top-level declarations default to private. Prefix with `pub` to
 export across modules:
 
-```lang
+```fern
 pub function exported(): i32 { return 0; }
 pub struct Public { x: i32 }
 pub enum Status { Active, Inactive }
@@ -52,7 +52,7 @@ load time with a diagnostic naming the offending qualifier.
 The standard library lives at `std/*` — `std/io`, `std/string`,
 `std/json`, etc. Import them the same way:
 
-```lang
+```fern
 import "std/io";
 
 function main(): i32 {
@@ -65,9 +65,9 @@ The full list is under [Standard library →](../../stdlib/).
 
 ## Working with the language server
 
-`cmd/lang-lsp` resolves imports across the whole workspace. With
+`fern-lsp` resolves imports across the whole workspace. With
 the VS Code extension installed:
 
 - Hover over `util.run()` to see the imported function's signature.
-- Cmd/Ctrl-click jumps from the call site to `util.lang`.
+- Cmd/Ctrl-click jumps from the call site to `util.fern`.
 - Rename a `pub` function and every cross-file caller updates.

@@ -83,12 +83,12 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	// Route the source through modload so cross-module qualified
 	// imports inside the stdlib (e.g. `int.int_to_string_radix(…)`
 	// in std/i32) get the proper rewriting — that's the same
-	// pipeline `cmd/lang` uses. Without this, bare in-source
+	// pipeline `cmd/fern` uses. Without this, bare in-source
 	// qualified calls would hit "undefined identifier" because
 	// modload's rewriter is the only thing that recognises the
 	// `mod.fn(args)` shape.
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.lang")
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -104,7 +104,7 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.
@@ -10290,7 +10290,7 @@ func TestArm64Args(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.
@@ -10529,7 +10529,7 @@ func TestArm64HttpHandler(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.
@@ -10957,7 +10957,7 @@ function main(): i32 {
 				// libSystem.dylib linked. `-nostdlib`
 				// suppresses crt0/libc startup; `-lSystem`
 				// re-adds just the dyld-stub linkage. See
-				// cmd/lang/main.go's linkDarwin for matching
+				// cmd/fern/main.go's linkDarwin for matching
 				// production-driver behaviour.
 				args = []string{"-nostdlib", "-lSystem", asmPath, "-o", binPath}
 			} else {
@@ -11101,7 +11101,7 @@ function main(): i32 {
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.
@@ -12048,7 +12048,7 @@ func compileArm64InDir(t *testing.T, src string, seed map[string]string) (stdout
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.
@@ -12318,7 +12318,7 @@ func TestArm64ReadLine(t *testing.T) {
 		t.Fatalf("check: %v", err)
 	}
 	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/lang) always runs this; the e2e
+	// production driver (cmd/fern) always runs this; the e2e
 	// harness was missing it which only mattered once OpCallDirect
 	// started consulting per-arg types for SysV register allocation
 	// under the two-word string ABI.

@@ -33,7 +33,7 @@ is "edge handlers don't allocate on the happy path of
   `Result[Writer, IoError]`. None pass `isI32StackShape`
   (`internal/ir/ir.go:778-790`).
 - **Edge handler examples use `Option`, not `Result`.**
-  `examples/wasm/todo_api.lang`, `examples/native_http_handler.lang`.
+  `examples/wasm/todo_api.fern`, `examples/native_http_handler.fern`.
 - **The only `Result[i32, i32]` in the repo is the test code
   this PR adds.** `internal/e2e/x86_64_test.go:1061-1095`,
   `internal/e2e/arm64_test.go:1435-1467`.

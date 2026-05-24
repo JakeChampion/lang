@@ -41,7 +41,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "hello.lang")
+	srcPath := filepath.Join(dir, "hello.fern")
 	// Exercises three native preview-2 paths through one program:
 	//   - wasi:random/random.get-random-bytes (canonical-ABI list<u8>
 	//     return + cabi_realloc, from step 2);
@@ -65,7 +65,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	// the in-tree post-process pipeline rather than whatever happens
 	// to be on PATH.
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -136,7 +136,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "echo.lang")
+	srcPath := filepath.Join(dir, "echo.fern")
 	// Loop until EOF, writing each line back. write() doesn't add
 	// a newline; read_line preserves the trailing '\n', so we get
 	// byte-for-byte echo.
@@ -154,7 +154,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -216,7 +216,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "fs.lang")
+	srcPath := filepath.Join(dir, "fs.fern")
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
     match (open_writer("out.txt")) {
         Ok(w) => {
@@ -242,7 +242,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -310,7 +310,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "rwf.lang")
+	srcPath := filepath.Join(dir, "rwf.fern")
 	// Force the read_file accumulator to grow at least once so we
 	// also exercise the doubling + memory.copy path. The initial
 	// buffer is 4 KiB, so we write a payload past that.
@@ -339,7 +339,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -421,7 +421,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	probe.Close()
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "echo.lang")
+	srcPath := filepath.Join(dir, "echo.fern")
 	// Hardcode the port in the source instead of plumbing
 	// args() — args() comes back as `Array<string>` and the
 	// language doesn't have a string-to-int builtin yet, so
@@ -446,7 +446,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -587,7 +587,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	probe.Close()
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "router.lang")
+	srcPath := filepath.Join(dir, "router.fern")
 	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return http_response_ok("world");
@@ -603,7 +603,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}

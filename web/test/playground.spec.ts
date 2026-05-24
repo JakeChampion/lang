@@ -1,4 +1,4 @@
-// Bombadil specification for the lang playground.
+// Bombadil specification for the Fern playground.
 //
 // Bombadil is a property-based browser tester (antithesishq/bombadil)
 // that autonomously fuzzes the page: random clicks, random keystrokes,

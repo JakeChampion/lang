@@ -11,7 +11,7 @@
 // linking against wasm-tools.
 //
 // Regeneration: see doc.go for the exact wasm-tools invocation
-// that produced lang.bin / http.bin from cmd/lang/wit/.
+// that produced lang.bin / http.bin from cmd/fern/wit/.
 package componenttype
 
 import (

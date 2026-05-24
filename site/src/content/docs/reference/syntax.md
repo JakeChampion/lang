@@ -29,7 +29,7 @@ defer arena
 Only line comments, introduced by `//`. The formatter preserves
 them in their original position.
 
-```lang
+```fern
 // Header comment.
 function main(): i32 {
     var x: i32 = 7;  // Trailing comment.
@@ -78,7 +78,7 @@ significant whitespace.
 Double-quoted, escape with `\\`. The prefix `f` introduces an
 f-string with `{expr}` interpolation:
 
-```lang
+```fern
 var name: string = "world";
 print(f"hello, {name}");
 ```

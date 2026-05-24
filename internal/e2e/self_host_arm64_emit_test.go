@@ -14,15 +14,15 @@ import (
 )
 
 // Sibling to TestSelfHostAsmRunX86_64 — exercises the
-// asm_arm64.lang ARM64 codegen layer. The driver
-// (asm_arm64_run.lang) is compiled on the host (x86_64),
+// asm_arm64.fern ARM64 codegen layer. The driver
+// (asm_arm64_run.fern) is compiled on the host (x86_64),
 // reads lang source from stdin, and prints aarch64 assembly
 // to stdout. The Go test pipes each source in, gcc-assembles
 // the output with aarch64-linux-gnu-gcc, then runs the
 // resulting binary under qemu-aarch64 (or natively on arm64
 // hosts) and asserts the exit code matches.
 //
-// Scope mirrors asm_arm64.lang's: i32 literals + arithmetic
+// Scope mirrors asm_arm64.fern's: i32 literals + arithmetic
 // (+ - * / %) + unary `-` + `return` only. Locals / control
 // flow / functions land in follow-up PRs.
 
@@ -30,7 +30,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "asm_arm64.lang", "asm_arm64_run.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -41,7 +41,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	}
 	// Build the driver as an x86_64 binary — the driver itself
 	// runs on the test host, only its OUTPUT is arm64 asm.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_run.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

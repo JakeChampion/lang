@@ -1,4 +1,4 @@
-// Package leb128 is the Go-side mirror of internal/stdlib/std/wasm/leb128.lang.
+// Package leb128 is the Go-side mirror of internal/stdlib/std/wasm/leb128.fern.
 //
 // Same function set, same semantics, same wire format — the two
 // implementations stay in lock-step so that when the compiler

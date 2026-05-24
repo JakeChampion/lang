@@ -13,27 +13,27 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// Bootstrap-style end-to-end demo. asm_run.lang is a driver
+// Bootstrap-style end-to-end demo. asm_run.fern is a driver
 // that reads lang source from stdin, runs it through the
 // self-host lexer + parser + asm emitter, and prints the
 // resulting AT&T x86_64 assembly to stdout. This table-driven
 // test runs every entry through that pipeline:
 //
-//   1. Build asm_run.lang once via the production langc.
+//   1. Build asm_run.fern once via the production langc.
 //   2. For each test case: pipe its source to the driver,
 //      capture stdout (= emitted asm), gcc-assemble the asm
 //      into a standalone Linux ELF, run it, assert the inner
 //      exit code matches the entry's expected value.
 //
 // End-to-end: lang source → lang-port asm emitter → real
-// native binary → expected exit code. Proves the asm.lang
+// native binary → expected exit code. Proves the asm.fern
 // lowering produces working executables across the full
 // feature matrix it covers.
 
 func TestSelfHostAsmRunX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "asm.lang", "asm_run.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm.fern", "asm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -43,7 +43,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		}
 	}
 	// Build the driver once.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

@@ -1,5 +1,5 @@
 // Package convert is the Go-side mirror of
-// internal/stdlib/std/wasm/convert.lang — conversion /
+// internal/stdlib/std/wasm/convert.fern — conversion /
 // reinterpret / sign-extend instruction encoders for the
 // WebAssembly Core 1.0 binary format.
 //

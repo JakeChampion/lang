@@ -15,7 +15,7 @@ import (
 )
 
 // Fourth self-host milestone after the lexer (#609), parser (#611 /
-// #617) and checker (#619). `examples/self_host/interp.lang` is a
+// #617) and checker (#619). `examples/self_host/interp.fern` is a
 // tree-walking interpreter written in lang — it imports `./lexer`
 // and `./parser`, evaluates the Stmt[] tree from
 // `parser.parse_program(toks)`, and produces a runtime Value
@@ -29,7 +29,7 @@ import (
 // string-concat ops over the parser's op set, integer literal
 // parsing from the lexer's TokNumber text.
 //
-// The .lang file's main() runs seven sub-checks: arithmetic +
+// The .fern file's main() runs seven sub-checks: arithmetic +
 // ident lookup, string concat, logical + equality, unary minus,
 // integer division, division-by-zero VErr propagation, and
 // undefined-identifier VErr propagation. Exit code 0 means every
@@ -38,7 +38,7 @@ import (
 func writeSelfHostInterpProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "interp.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "interp.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -53,7 +53,7 @@ func writeSelfHostInterpProject(t *testing.T) string {
 func TestSelfHostInterpX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostInterpProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "interp.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "interp.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSelfHostInterpX86_64(t *testing.T) {
 func TestSelfHostInterpArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostInterpProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "interp.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "interp.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

@@ -23,7 +23,7 @@
 // entry per currently-supported target. Phase 2 will use the
 // descriptors to drive the auto-injected Platform struct shape
 // per target; Phase 3 will accept user-defined platforms via
-// `internal/platforms/<custom>/platform.lang` files.
+// `internal/platforms/<custom>/platform.fern` files.
 package platforms
 
 import (
@@ -65,7 +65,7 @@ type Descriptor struct {
 }
 
 // table is the per-target descriptor registry. Keys match the
-// `-target` flag values cmd/lang accepts. Adding a new target
+// `-target` flag values cmd/fern accepts. Adding a new target
 // is a single entry here plus the codegen-side support.
 var table = map[string]Descriptor{
 	"arm64": {
@@ -122,7 +122,7 @@ var table = map[string]Descriptor{
 // ForTarget returns the descriptor for the given target name.
 // Unknown targets return a nil descriptor; callers should treat
 // that as a hard error (the target list should be exhaustive).
-// Mirrors `cmd/lang`'s -target flag-value set.
+// Mirrors `cmd/fern`'s -target flag-value set.
 func ForTarget(name string) *Descriptor {
 	d, ok := table[name]
 	if !ok {

@@ -1,4 +1,4 @@
-# lang
+# Fern
 
 📚 **Documentation: <https://jakechampion.github.io/lang/>**
 ([tutorial](https://jakechampion.github.io/lang/tutorial/install/) ·
@@ -6,8 +6,9 @@
 [standard library](https://jakechampion.github.io/lang/stdlib/) ·
 [playground](https://jakechampion.github.io/lang/playground/))
 
-A small statically-typed language with several backends, written in Go.
-Targets so far:
+Fern is a small statically-typed language with several backends, written
+in Go. Built for fast-startup CLI tools and short-lived edge-function HTTP
+servers. Targets so far:
 
 - **ARM64 / aarch64** Linux ELF — Raspberry Pi 4+, AWS Graviton,
   Android, qemu-aarch64 under test. The **default** target;
@@ -62,30 +63,30 @@ ideas in Go.
 ## Build & run
 
 ```
-go build ./cmd/lang
+go build ./cmd/fern
 
 # ARM64 Linux (default target)
-./lang examples/factorial.lang > factorial.s
+./fern examples/factorial.fern > factorial.s
 aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
 qemu-aarch64 factorial
 
 # ARM64 macOS (Apple Silicon)
 #   Run natively on a Mac with clang:
-./lang -target arm64-darwin -o factorial examples/factorial.lang
+./fern -target arm64-darwin -o factorial examples/factorial.fern
 ./factorial
 #   ...or cross-compile from Linux with clang + lld (the binary
 #   ships unchanged; copy to a Mac to run):
-./lang -target arm64-darwin -cc clang -o factorial examples/factorial.lang
+./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
 
 # WASM (preview-2 component)
-./lang -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
-    -o factorial.wasm examples/factorial.lang
+./fern -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
+    -o factorial.wasm examples/factorial.fern
 wasmtime run factorial.wasm
 
 # Formatter
-./lang -fmt examples/factorial.lang        # writes idiomatic source to stdout
-./lang -fmt -w examples/factorial.lang     # overwrite the file in place
-./lang -fmt -d examples/factorial.lang     # print a unified diff against
+./fern -fmt examples/factorial.fern        # writes idiomatic source to stdout
+./fern -fmt -w examples/factorial.fern     # overwrite the file in place
+./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
 ```
 
@@ -106,9 +107,9 @@ the arm64-darwin Mach-O target natively on Apple Silicon.
 The `Makefile` wraps the common flows:
 
 ```
-make build           # go build → bin/lang
+make build           # go build → bin/fern
 make test            # go test ./...
-make examples        # compile + cross-link every examples/*.lang (arm64 Linux)
+make examples        # compile + cross-link every examples/*.fern (arm64 Linux)
 make run-factorial   # compile, link, run under qemu-aarch64
 ```
 
@@ -137,7 +138,7 @@ Supported:
 
 - **Modules / imports** — split a program across files via
   `import "./path";` at the top of the entry file. Imports resolve
-  relative to the importing file's directory; `.lang` is appended
+  relative to the importing file's directory; `.fern` is appended
   automatically. Functions from `import "./util";` are addressed
   as `util.fn(args)`; struct types as `util.Foo` (in `var x: util.Foo`
   / `function f(): util.Foo` / `util.Foo { … }` literal). The loader
@@ -320,7 +321,7 @@ length-prefixed bump-allocated layout as ARM64.
 ## Repository layout
 
 ```
-cmd/lang/                  # CLI driver
+cmd/fern/                  # CLI driver
 internal/lexer/            # token stream
 internal/parser/           # recursive-descent parser → AST
 internal/ast/              # AST types + Position

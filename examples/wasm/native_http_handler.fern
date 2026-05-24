@@ -1,0 +1,30 @@
+// native_http_handler.fern — same `function handle(req, plat): resp`
+// shape as echo_handler.fern, but explicitly intended for the
+// arm64 / arm64-darwin native HTTP path.
+//
+// The checker auto-synthesises a `main(): i32 { return
+// tcp_serve(__port_from_env("PORT", 8080), handle); }` whenever
+// it sees a `handle` without a `main`, so this file compiles
+// to a self-contained Linux ELF (or Mach-O on `-target
+// arm64-darwin`) that serves HTTP/1.1 on $PORT — no Linux
+// container, no wasmtime, no separate runtime to ship.
+//
+//   $ fern -target arm64 -o serve native_http_handler.fern
+//   $ PORT=8080 qemu-aarch64 ./serve &
+//   $ curl http://localhost:8080/foo
+//
+// The per-request arena is wrapped around the handler call
+// inside `tcp_serve`, so every allocation this handler makes
+// (the response string concat, the parsed request fields, the
+// serialised wire bytes) is reclaimed before the next
+// `tcp_accept` — bump-allocator semantics matching the wasi-
+// http path's implicit `__http_entry` arena.
+import "core/no_prelude";
+// HttpRequest / HttpResponse struct types live in std/http; the
+// auto-synthesised `main()` calls into std/tcp.
+import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  return http.http_response_ok("method=" + req.method + " path=" + req.path + "\n");
+}

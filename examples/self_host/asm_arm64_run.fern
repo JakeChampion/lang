@@ -1,0 +1,22 @@
+// examples/self_host/asm_arm64_run.fern — bootstrap-demo driver
+// for the ARM64 codegen. Reads lang source from stdin, runs it
+// through lexer + parser + asm_arm64.emit_module, and prints
+// the resulting aarch64 assembly to stdout. The companion
+// Go-side test pipes a source program in, captures the asm,
+// assembles with aarch64-linux-gnu-gcc -nostdlib, and runs
+// the resulting binary under qemu-aarch64 — asserting the
+// exit code matches the expected value.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./asm_arm64";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var emitted: string = asm_arm64.emit_module(mod);
+    print(emitted);
+    return 0;
+}

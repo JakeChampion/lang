@@ -1,0 +1,67 @@
+// csv_to_json.fern — read RFC-4180-ish CSV from stdin (header
+// + data rows), emit a JSON array of objects keyed by the
+// header columns.
+//
+// Showcases: building JsonValue trees by hand (JArray /
+// JObject / JString), Map[string, JsonValue] for the
+// per-row object, the pipe operator for the row → JsonValue
+// transform, generic-style dispatch through method receivers
+// on `string` (split / trim).
+//
+// Simplifications: no quoted-field handling (commas inside
+// quoted strings would split). The point is to show the
+// data-flow shape, not ship a hardened CSV parser.
+//
+//   $ printf 'name,age\nada,36\ngrace,85\n' | wasmtime csv_to_json.wasm
+//   [{"name":"ada","age":"36"},{"name":"grace","age":"85"}]
+import "core/no_prelude";
+// json.json_encode for the final emit; std/string for the
+// (string).split / (string).trim methods inside row_to_object.
+import "std/json";
+import "std/string";
+
+function read_all(r: Reader): string {
+  var out: string = "";
+  while (true) {
+    match (r.read_line()) {
+      Some(line) => {
+        out = out + line + "\n";
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  return out;  // unreachable
+}
+
+function row_to_object(headers: string[], row: string[]): JsonValue {
+  var m: Map[string, JsonValue] = map_new(headers.len());
+  var i: i32 = 0;
+  while (i < headers.len() && i < row.len()) {
+    m.set(headers[i].trim(), JString(row[i].trim()));
+    i = i + 1;
+  }
+  return JObject(m);
+}
+
+function main(): i32 {
+  var raw: string = read_all(stdin()).trim();
+  var lines: string[] = raw.split("\n");
+  if (lines.len() == 0 || lines[0].is_empty()) {
+    print("[]");
+    return 0;
+  }
+  var headers: string[] = lines[0].split(",");
+  var rows: JsonValue[] = [];
+  var i: i32 = 1;
+  while (i < lines.len()) {
+    if (!lines[i].is_empty()) {
+      var fields: string[] = lines[i].split(",");
+      rows = rows.push(row_to_object(headers, fields));
+    }
+    i = i + 1;
+  }
+  print(json.json_encode(JArray(rows)));
+  return 0;
+}

@@ -50,7 +50,7 @@ func langSrcAbs(t *testing.T, rel string) string {
 //   - `buildLangBinForInterp` caches the compiled binary
 //     in a package-lifetime tempdir (not `t.TempDir()`),
 //     so parallel callers all read the same path.
-//   - Each gate uses its own `*_test.lang` source file
+//   - Each gate uses its own `*_test.fern` source file
 //     under `examples/tests/`; no shared writable state.
 //   - The lang binary is read-only at this point; the
 //     `lang -interp src` subprocess gets its own stdio
@@ -69,13 +69,13 @@ func runLangInterp(t *testing.T, bin, src string) (int, string, string) {
 	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
-// `examples/tests/arithmetic_test.lang` is the canonical
+// `examples/tests/arithmetic_test.fern` is the canonical
 // "all cases pass" run. Exercises assert_eq_i32 +
 // assert_{lt,le,gt,ge}_i32 + fail()/pass() and a hand-rolled
 // table walk. Exit code is 0; the TAP plan line is `1..10`.
 func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/arithmetic_test.lang")
+	src := langSrcAbs(t, "examples/tests/arithmetic_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -97,12 +97,12 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/strings_test.lang` covers the string-method
+// `examples/tests/strings_test.fern` covers the string-method
 // assertion helpers (contains, starts_with, ends_with, etc.).
 // Passing suite → exit 0.
 func TestRunnerStringsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/strings_test.lang")
+	src := langSrcAbs(t, "examples/tests/strings_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -112,14 +112,14 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/runner_self_test.lang` is the runner's own
+// `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected Option[string] shape on both pass and fail paths.
 // If THIS regresses, the rest of the suite reports false
 // positives.
 func TestRunnerSelfTestPasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/runner_self_test.lang")
+	src := langSrcAbs(t, "examples/tests/runner_self_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -179,7 +179,7 @@ function main(): i32 {
 	}
 }
 
-// `examples/tests/skip_and_subsuites_test.lang` covers the
+// `examples/tests/skip_and_subsuites_test.fern` covers the
 // skip / skip_if / subsuite / merge surface. Skips don't count
 // as failures (exit 0) and the TAP stream stays monotonic
 // across subsuite boundaries — the harness threads a base_idx
@@ -187,7 +187,7 @@ function main(): i32 {
 // `ok 5` (not `ok 1` again) when the parent ran 4 cases first.
 func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/skip_and_subsuites_test.lang")
+	src := langSrcAbs(t, "examples/tests/skip_and_subsuites_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -210,7 +210,7 @@ func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/fuzz_example_test.lang` exercises the
+// `examples/tests/fuzz_example_test.fern` exercises the
 // `std/fuzz` harness on three benign properties (always-OK,
 // non-negative length, idempotent to_upper) and one transform
 // invariant (trim strips edge spaces). The seeds are arranged
@@ -219,7 +219,7 @@ func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 // byte flips into / out of the upper range get tested.
 func TestRunnerFuzzExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/fuzz_example_test.lang")
+	src := langSrcAbs(t, "examples/tests/fuzz_example_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -279,7 +279,7 @@ function main(): i32 {
 	}
 }
 
-// `examples/tests/process_assertions_test.lang` exercises the
+// `examples/tests/process_assertions_test.fern` exercises the
 // `subprocess(cmd, args, stdin) -> ProcessResult` builtin and
 // the assert_exit / assert_stdout_eq / assert_process /
 // assert_stderr_contains family layered on top of it. The
@@ -295,7 +295,7 @@ function main(): i32 {
 // on its output.
 func TestRunnerProcessAssertionsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/process_assertions_test.lang")
+	src := langSrcAbs(t, "examples/tests/process_assertions_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -318,16 +318,16 @@ func TestRunnerProcessAssertionsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/wide_numerics_test.lang` covers the i64 /
+// `examples/tests/wide_numerics_test.fern` covers the i64 /
 // u32 / u64 assertion family. The corresponding i32 helpers
-// are pinned by `arithmetic_test.lang`; this exercises the
+// are pinned by `arithmetic_test.fern`; this exercises the
 // wider widths so a regression in the interp's
 // `__int_to_string_u64` override (the one Lang code in
-// `core/int.lang` whose body the interp can't run) would
+// `core/int.fern` whose body the interp can't run) would
 // surface here.
 func TestRunnerWideNumericsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/wide_numerics_test.lang")
+	src := langSrcAbs(t, "examples/tests/wide_numerics_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -345,7 +345,7 @@ func TestRunnerWideNumericsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/filesystem_ops_test.lang` exercises the
+// `examples/tests/filesystem_ops_test.fern` exercises the
 // `read_dir` / `remove_file` / `remove_dir_all` builtins and
 // pins the matching semantics for each — particularly the
 // "missing target" cases where remove_file is an error
@@ -353,7 +353,7 @@ func TestRunnerWideNumericsExample(t *testing.T) {
 // OK (matches `os.RemoveAll`).
 func TestRunnerFilesystemOpsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/filesystem_ops_test.lang")
+	src := langSrcAbs(t, "examples/tests/filesystem_ops_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -448,7 +448,7 @@ function main(): i32 {
 	}
 }
 
-// `examples/tests/lang_binary_e2e_test.lang` is the canonical
+// `examples/tests/lang_binary_e2e_test.fern` is the canonical
 // migration-pattern example: a Lang test file spawns the
 // `lang` binary itself (path read from `$LANG_BIN`), drives
 // it through `-interp` / `-check` against inline source +
@@ -464,7 +464,7 @@ function main(): i32 {
 //      explicit env setup don't see false negatives.
 func TestRunnerLangBinaryE2EExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/lang_binary_e2e_test.lang")
+	src := langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern")
 
 	t.Run("with LANG_BIN set", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
@@ -526,7 +526,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 	})
 }
 
-// `examples/tests/helpers_test.lang` covers the convenience
+// `examples/tests/helpers_test.fern` covers the convenience
 // helpers layered on top of the base assertion family:
 // multi-substring (`contains_all` / `contains_any` /
 // `contains_in_order`), string-diff (`assert_eq_string_diff`
@@ -543,7 +543,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 // names the line number where the values diverge.
 func TestRunnerHelpersExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/helpers_test.lang")
+	src := langSrcAbs(t, "examples/tests/helpers_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -564,7 +564,7 @@ func TestRunnerHelpersExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/float_test.lang` pins the f32 / f64
+// `examples/tests/float_test.fern` pins the f32 / f64
 // assertion family + the underlying interp Float support.
 // Before this work the interp errored out on `*ast.FloatLit`,
 // which made float-touching code impossible to unit-test
@@ -578,7 +578,7 @@ func TestRunnerHelpersExample(t *testing.T) {
 // itself property, ±0.0, ±Inf, and f32_bits round-trips.
 func TestRunnerFloatExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/float_test.lang")
+	src := langSrcAbs(t, "examples/tests/float_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -598,7 +598,7 @@ func TestRunnerFloatExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/fuzz_shrink_test.lang` exercises the
+// `examples/tests/fuzz_shrink_test.fern` exercises the
 // `r.fuzz_shrink` receiver method on three benign properties
 // (no failures expected) — the harness's mutation loop runs
 // each one through `fuzz_default_iterations()` mutated
@@ -607,7 +607,7 @@ func TestRunnerFloatExample(t *testing.T) {
 // returns exit 0.
 func TestRunnerFuzzShrinkExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/fuzz_shrink_test.lang")
+	src := langSrcAbs(t, "examples/tests/fuzz_shrink_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -675,7 +675,7 @@ function main(): i32 {
 	}
 }
 
-// `examples/tests/batch7_test.lang` is the omnibus example
+// `examples/tests/batch7_test.fern` is the omnibus example
 // for the seventh test-runner-migration tranche: wider-int
 // relational asserts (lt / le / gt / ge on i64 / u32 / u64),
 // `f64_bits` / `f64_from_bits`, the `stat(...)` builtin +
@@ -690,7 +690,7 @@ function main(): i32 {
 // serialized output.
 func TestRunnerBatch7Example(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/batch7_test.lang")
+	src := langSrcAbs(t, "examples/tests/batch7_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -711,7 +711,7 @@ func TestRunnerBatch7Example(t *testing.T) {
 	}
 }
 
-// `examples/tests/batch8_test.lang` exercises the additions
+// `examples/tests/batch8_test.fern` exercises the additions
 // from the eighth tranche: argv passthrough,
 // `--filter PATTERN` selection via `parse_filter_from_args` +
 // `test_new_filtered`, golden-file assertions, and Map
@@ -723,7 +723,7 @@ func TestRunnerBatch7Example(t *testing.T) {
 // "filtered out").
 func TestRunnerBatch8Example(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/batch8_test.lang")
+	src := langSrcAbs(t, "examples/tests/batch8_test.fern")
 
 	t.Run("unfiltered", func(t *testing.T) {
 		code, out, errOut := runLangInterp(t, bin, src)
@@ -771,7 +771,7 @@ func TestRunnerBatch8Example(t *testing.T) {
 	})
 }
 
-// `examples/tests/float_math_test.lang` exercises the f64
+// `examples/tests/float_math_test.fern` exercises the f64
 // math primitives (sqrt / pow / abs / floor / ceil / round /
 // trunc / log / exp / sin / cos) added to std/float, plus
 // the IEEE-754 classification helpers (is_nan / is_finite /
@@ -784,7 +784,7 @@ func TestRunnerBatch8Example(t *testing.T) {
 // where applicable (exp(log(x))==x, sin^2+cos^2==1).
 func TestRunnerFloatMathExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/float_math_test.lang")
+	src := langSrcAbs(t, "examples/tests/float_math_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -806,7 +806,7 @@ func TestRunnerFloatMathExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/timing_test.lang` exercises the time
+// `examples/tests/timing_test.fern` exercises the time
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers (`assert_elapsed_lt_ms`
 // / `_us`). Six cases — the failure-message case verifies
@@ -816,7 +816,7 @@ func TestRunnerFloatMathExample(t *testing.T) {
 // bound.
 func TestRunnerTimingExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/timing_test.lang")
+	src := langSrcAbs(t, "examples/tests/timing_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -834,7 +834,7 @@ func TestRunnerTimingExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/lines_log_test.lang` exercises the
+// `examples/tests/lines_log_test.fern` exercises the
 // `assert_lines_eq(actual, expected_lines)` helper +
 // `(r).log(msg)` chainable TAP-comment emitter. Four cases
 // + interleaved log breadcrumbs verify both the matching
@@ -842,7 +842,7 @@ func TestRunnerTimingExample(t *testing.T) {
 // paths.
 func TestRunnerLinesLogExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/lines_log_test.lang")
+	src := langSrcAbs(t, "examples/tests/lines_log_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -862,7 +862,7 @@ func TestRunnerLinesLogExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/fuzz_corpus_test.lang` exercises the
+// `examples/tests/fuzz_corpus_test.fern` exercises the
 // `fuzz_corpus_from_dir` + `fuzz_corpus_from_dir_or` helpers
 // that load seed corpora from disk. Six cases cover the
 // loaded-seeds path, the fallback paths (missing directory
@@ -870,7 +870,7 @@ func TestRunnerLinesLogExample(t *testing.T) {
 // mutators (bit flip / byte duplicate / byte zero / byte max).
 func TestRunnerFuzzCorpusExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/fuzz_corpus_test.lang")
+	src := langSrcAbs(t, "examples/tests/fuzz_corpus_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -889,7 +889,7 @@ func TestRunnerFuzzCorpusExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/bench_test.lang` exercises the bench
+// `examples/tests/bench_test.fern` exercises the bench
 // harness: `r.bench(name, iter, fn)` reports timing as a TAP
 // comment and always passes; `r.bench_max_us(name, iter, fn,
 // budget)` fails when the median exceeds the budget. We
@@ -897,7 +897,7 @@ func TestRunnerFuzzCorpusExample(t *testing.T) {
 // fields) and the budgeted case's pass path.
 func TestRunnerBenchExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/bench_test.lang")
+	src := langSrcAbs(t, "examples/tests/bench_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -917,7 +917,7 @@ func TestRunnerBenchExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/array_reductions_test.lang` exercises the
+// `examples/tests/array_reductions_test.fern` exercises the
 // new wider-int / float array reductions added as free
 // functions to std/array: `sum_i64` / `max_i64` / `min_i64` /
 // `avg_i64`, `sum_u32` / `max_u32` / `min_u32`,
@@ -927,7 +927,7 @@ func TestRunnerBenchExample(t *testing.T) {
 // compare correctness check.
 func TestRunnerArrayReductionsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/array_reductions_test.lang")
+	src := langSrcAbs(t, "examples/tests/array_reductions_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -946,7 +946,7 @@ func TestRunnerArrayReductionsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/set_eq_test.lang` exercises the order-
+// `examples/tests/set_eq_test.fern` exercises the order-
 // independent (multiset) array assertions:
 // `assert_set_eq_i32` / `_string` and `assert_subset_i32` /
 // `_string`. Ten cases cover passing, reversed order,
@@ -955,7 +955,7 @@ func TestRunnerArrayReductionsExample(t *testing.T) {
 // case.
 func TestRunnerSetEqExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/set_eq_test.lang")
+	src := langSrcAbs(t, "examples/tests/set_eq_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -975,14 +975,14 @@ func TestRunnerSetEqExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/env_unreachable_test.lang` exercises the
+// `examples/tests/env_unreachable_test.fern` exercises the
 // `assert_env_set` / `_unset` / `_eq` env-var assertion
 // family and `unreachable(label)`. Five cases — every
 // helper exercised in both directions where applicable,
 // plus the failure-message context checks.
 func TestRunnerEnvUnreachableExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/env_unreachable_test.lang")
+	src := langSrcAbs(t, "examples/tests/env_unreachable_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1000,7 +1000,7 @@ func TestRunnerEnvUnreachableExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/rel_tol_and_ms_bench_test.lang` exercises
+// `examples/tests/rel_tol_and_ms_bench_test.fern` exercises
 // the two batch-18 additions to std/test:
 //   - `assert_eq_f64_rel(actual, expected, rel_tol)` /
 //     `assert_eq_f32_rel` — relative-tolerance float
@@ -1014,7 +1014,7 @@ func TestRunnerEnvUnreachableExample(t *testing.T) {
 // so a regression in either helper surfaces immediately.
 func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/rel_tol_and_ms_bench_test.lang")
+	src := langSrcAbs(t, "examples/tests/rel_tol_and_ms_bench_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1037,7 +1037,7 @@ func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/sorted_unique_range_test.lang` exercises
+// `examples/tests/sorted_unique_range_test.fern` exercises
 // the batch-19 additions to std/test:
 //   - `assert_in_range_f64(v, lo, hi)` — inclusive float
 //     range; NaN always fails
@@ -1052,7 +1052,7 @@ func TestRunnerRelTolAndMsBenchExample(t *testing.T) {
 // the vacuous empty / single-element cases.
 func TestRunnerSortedUniqueRangeExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/sorted_unique_range_test.lang")
+	src := langSrcAbs(t, "examples/tests/sorted_unique_range_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1073,7 +1073,7 @@ func TestRunnerSortedUniqueRangeExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/float_array_strict_sort_test.lang`
+// `examples/tests/float_array_strict_sort_test.fern`
 // exercises the batch-20 additions:
 //   - `assert_eq_f64_array_near` / `_f32_array_near` —
 //     element-wise float array compare with tolerance.
@@ -1089,7 +1089,7 @@ func TestRunnerSortedUniqueRangeExample(t *testing.T) {
 // 15 cases.
 func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/float_array_strict_sort_test.lang")
+	src := langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1111,7 +1111,7 @@ func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/map_eq_and_predicates_test.lang` exercises
+// `examples/tests/map_eq_and_predicates_test.fern` exercises
 // batch-21 additions:
 //   - `assert_eq_map_i32_i32` / `_string_string` — full
 //     map deep equality (length + key-with-matching-value
@@ -1127,7 +1127,7 @@ func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
 // 16 cases total.
 func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.lang")
+	src := langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1149,7 +1149,7 @@ func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/wider_array_contains_count_test.lang`
+// `examples/tests/wider_array_contains_count_test.fern`
 // exercises batch-22 additions:
 //   - `assert_eq_i64_array` / `_u32_array` / `_u64_array`
 //     — wider-int element-wise array equality (i32 variant
@@ -1165,7 +1165,7 @@ func TestRunnerMapEqAndPredicatesExample(t *testing.T) {
 // 20 cases.
 func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/wider_array_contains_count_test.lang")
+	src := langSrcAbs(t, "examples/tests/wider_array_contains_count_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1187,7 +1187,7 @@ func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/one_of_none_of_test.lang` exercises
+// `examples/tests/one_of_none_of_test.fern` exercises
 // batch-23 additions:
 //   - `assert_one_of_i32(actual, allowed)` / `_string` —
 //     positive enumerated-set membership. Failure embeds
@@ -1200,7 +1200,7 @@ func TestRunnerWiderArrayContainsCountExample(t *testing.T) {
 // 13 cases.
 func TestRunnerOneOfNoneOfExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/one_of_none_of_test.lang")
+	src := langSrcAbs(t, "examples/tests/one_of_none_of_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1221,7 +1221,7 @@ func TestRunnerOneOfNoneOfExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/all_substring_array_test.lang` exercises
+// `examples/tests/all_substring_array_test.fern` exercises
 // batch-24 additions:
 //   - `assert_all_starts_with(arr, prefix)` /
 //     `assert_all_ends_with` / `assert_all_contain` —
@@ -1235,7 +1235,7 @@ func TestRunnerOneOfNoneOfExample(t *testing.T) {
 // 13 cases.
 func TestRunnerAllSubstringArrayExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/all_substring_array_test.lang")
+	src := langSrcAbs(t, "examples/tests/all_substring_array_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1257,7 +1257,7 @@ func TestRunnerAllSubstringArrayExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/file_lines_and_timestamp_test.lang`
+// `examples/tests/file_lines_and_timestamp_test.fern`
 // exercises batch-25 additions:
 //   - `assert_file_lines(path, expected_lines)` — read +
 //     line-by-line compare; delegates to `assert_lines_eq`.
@@ -1269,7 +1269,7 @@ func TestRunnerAllSubstringArrayExample(t *testing.T) {
 // 9 cases.
 func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/file_lines_and_timestamp_test.lang")
+	src := langSrcAbs(t, "examples/tests/file_lines_and_timestamp_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1291,7 +1291,7 @@ func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/option_and_set_ops_test.lang` exercises
+// `examples/tests/option_and_set_ops_test.fern` exercises
 // batch-26 additions:
 //   - Option result family: `assert_is_some_i32` /
 //     `_string`, `assert_is_none_i32` / `_string`, and the
@@ -1310,7 +1310,7 @@ func TestRunnerFileLinesAndTimestampExample(t *testing.T) {
 // 19 cases.
 func TestRunnerOptionAndSetOpsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/option_and_set_ops_test.lang")
+	src := langSrcAbs(t, "examples/tests/option_and_set_ops_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1333,7 +1333,7 @@ func TestRunnerOptionAndSetOpsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/array_prefix_suffix_subseq_test.lang`
+// `examples/tests/array_prefix_suffix_subseq_test.fern`
 // exercises batch-27 additions:
 //   - `assert_array_starts_with_i32(arr, prefix)` /
 //     `_string` — `arr[0..len(prefix)] == prefix`.
@@ -1350,7 +1350,7 @@ func TestRunnerOptionAndSetOpsExample(t *testing.T) {
 // after partial match" scan corner of subseq).
 func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/array_prefix_suffix_subseq_test.lang")
+	src := langSrcAbs(t, "examples/tests/array_prefix_suffix_subseq_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1372,7 +1372,7 @@ func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/array_at_and_f32_range_test.lang`
+// `examples/tests/array_at_and_f32_range_test.fern`
 // exercises batch-28 additions:
 //   - `assert_at_i32(arr, idx, expected)` / `_string` /
 //     `_i64` — single-position spot check with a distinct
@@ -1384,7 +1384,7 @@ func TestRunnerArrayPrefixSuffixSubseqExample(t *testing.T) {
 // 15 cases.
 func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.lang")
+	src := langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1407,7 +1407,7 @@ func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/ci_string_and_log_kv_test.lang`
+// `examples/tests/ci_string_and_log_kv_test.fern`
 // exercises batch-29 additions:
 //   - Case-insensitive string assertions (`_eq_string_ci`,
 //     `_neq_string_ci`, `_contains_ci`, `_starts_with_ci`,
@@ -1423,7 +1423,7 @@ func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
 // surfaces immediately.
 func TestRunnerCIStringAndLogKVExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/ci_string_and_log_kv_test.lang")
+	src := langSrcAbs(t, "examples/tests/ci_string_and_log_kv_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1448,7 +1448,7 @@ func TestRunnerCIStringAndLogKVExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/result_assertions_test.lang` exercises
+// `examples/tests/result_assertions_test.fern` exercises
 // batch-30 additions:
 //   - `assert_is_ok_string(res)` / `_string_array` —
 //     Result must be Ok variant.
@@ -1466,7 +1466,7 @@ func TestRunnerCIStringAndLogKVExample(t *testing.T) {
 // 10 cases.
 func TestRunnerResultAssertionsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/result_assertions_test.lang")
+	src := langSrcAbs(t, "examples/tests/result_assertions_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1487,7 +1487,7 @@ func TestRunnerResultAssertionsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/process_output_shortcuts_test.lang`
+// `examples/tests/process_output_shortcuts_test.fern`
 // exercises batch-31 process-result shortcuts:
 //   - `assert_exit_zero(proc)` /
 //     `assert_exit_nonzero(proc)` — sugar for the most
@@ -1503,7 +1503,7 @@ func TestRunnerResultAssertionsExample(t *testing.T) {
 // 10 cases.
 func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/process_output_shortcuts_test.lang")
+	src := langSrcAbs(t, "examples/tests/process_output_shortcuts_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1523,7 +1523,7 @@ func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/assert_at_wider_test.lang` exercises
+// `examples/tests/assert_at_wider_test.fern` exercises
 // batch-32 additions filling out the `assert_at_*` spot-
 // check family for wider integer + float widths:
 //   - `assert_at_u32` / `_u64` — unsigned-int variants.
@@ -1534,7 +1534,7 @@ func TestRunnerProcessOutputShortcutsExample(t *testing.T) {
 // 13 cases.
 func TestRunnerAssertAtWiderExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/assert_at_wider_test.lang")
+	src := langSrcAbs(t, "examples/tests/assert_at_wider_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1556,7 +1556,7 @@ func TestRunnerAssertAtWiderExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/json_detail_test.lang` exercises batch-33
+// `examples/tests/json_detail_test.fern` exercises batch-33
 // additions — narrower JSON assertions:
 //   - `assert_json_has_key` / `assert_json_lacks_key` —
 //     top-level JObject key presence checks.
@@ -1572,7 +1572,7 @@ func TestRunnerAssertAtWiderExample(t *testing.T) {
 // 14 cases.
 func TestRunnerJSONDetailExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/json_detail_test.lang")
+	src := langSrcAbs(t, "examples/tests/json_detail_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1595,7 +1595,7 @@ func TestRunnerJSONDetailExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/json_field_eq_test.lang` exercises
+// `examples/tests/json_field_eq_test.fern` exercises
 // batch-34 additions — JSON field extraction:
 //   - `assert_json_eq_field_string(json_text, key, exp)`
 //     — key is JString equal to exp.
@@ -1613,7 +1613,7 @@ func TestRunnerJSONDetailExample(t *testing.T) {
 // 14 cases.
 func TestRunnerJSONFieldEqExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/json_field_eq_test.lang")
+	src := langSrcAbs(t, "examples/tests/json_field_eq_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1635,7 +1635,7 @@ func TestRunnerJSONFieldEqExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/string_count_and_dir_listing_test.lang`
+// `examples/tests/string_count_and_dir_listing_test.fern`
 // exercises batch-35 additions:
 //   - `assert_string_count(haystack, needle, n)` —
 //     non-overlapping occurrence count of `needle`.
@@ -1647,7 +1647,7 @@ func TestRunnerJSONFieldEqExample(t *testing.T) {
 // 10 cases.
 func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/string_count_and_dir_listing_test.lang")
+	src := langSrcAbs(t, "examples/tests/string_count_and_dir_listing_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1668,7 +1668,7 @@ func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/string_prelude_migrated_test.lang` is a
+// `examples/tests/string_prelude_migrated_test.fern` is a
 // proof-of-concept Lang port of `TestInterpScriptStringPrelude`
 // in `interp_script_test.go`. Same 8-property surface, but
 // instead of piping an inline Lang program through
@@ -1684,7 +1684,7 @@ func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 // once `lang -interp` itself stops being a Go target.
 func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/string_prelude_migrated_test.lang")
+	src := langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1703,7 +1703,7 @@ func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/unions_migrated_test.lang` — Lang port
+// `examples/tests/unions_migrated_test.fern` — Lang port
 // of `TestInterpScriptUnions` from `interp_script_test.go`.
 // Second migration in the runner-adoption campaign
 // (after the string-prelude port). Original Go test pinned
@@ -1714,7 +1714,7 @@ func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 // Both versions stay live until the broader cutover.
 func TestRunnerUnionsMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/unions_migrated_test.lang")
+	src := langSrcAbs(t, "examples/tests/unions_migrated_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1733,7 +1733,7 @@ func TestRunnerUnionsMigratedExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/header_map_migrated_test.lang` — Lang
+// `examples/tests/header_map_migrated_test.fern` — Lang
 // port of `TestInterpScriptHeaderMap`. Third migration in
 // the runner-adoption campaign. The Go original was 5
 // table-driven subprocess cases; the migrated form folds
@@ -1748,7 +1748,7 @@ func TestRunnerUnionsMigratedExample(t *testing.T) {
 // codepath.
 func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/header_map_migrated_test.lang")
+	src := langSrcAbs(t, "examples/tests/header_map_migrated_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1768,7 +1768,7 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/http_request_headers_migrated_test.lang`
+// `examples/tests/http_request_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpRequestHeaders`.
 // Fourth migration in the runner-adoption campaign.
 // Original was 3 table-driven subprocess cases; migrated
@@ -1784,7 +1784,7 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 // path.
 func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.lang")
+	src := langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1803,7 +1803,7 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/http_response_headers_migrated_test.lang`
+// `examples/tests/http_response_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpResponseHeaders`.
 // Fifth migration in the runner-adoption campaign.
 // Original was 4 table-driven subprocess cases; migrated
@@ -1817,7 +1817,7 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 // trailing newline was print()'s, not the wire's).
 func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.lang")
+	src := langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1837,7 +1837,7 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/fail_fast_test.lang` exercises the new
+// `examples/tests/fail_fast_test.fern` exercises the new
 // fail-fast mode added to std/test:
 //   - `test_new_fail_fast(suite)` constructor.
 //   - `(r).with_fail_fast()` post-init opt-in.
@@ -1854,7 +1854,7 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 // wording shows up in the combined stream.
 func TestRunnerFailFastExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/fail_fast_test.lang")
+	src := langSrcAbs(t, "examples/tests/fail_fast_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
@@ -1877,7 +1877,7 @@ func TestRunnerFailFastExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/quiet_mode_test.lang` exercises the new
+// `examples/tests/quiet_mode_test.fern` exercises the new
 // --quiet mode added to std/test:
 //   - `test_new_quiet(suite)` / `(r).with_quiet()` /
 //     `parse_quiet_from_args(argv)` — the constructor +
@@ -1889,7 +1889,7 @@ func TestRunnerFailFastExample(t *testing.T) {
 //     are unaffected.
 //
 // 7 cases (isolated-child-runner pattern from
-// fail_fast_test.lang). The interleaved TAP output is
+// fail_fast_test.fern). The interleaved TAP output is
 // part of what we pin: child runners' `# Suite:` headers
 // still appear (those come from `test_new`, not quiet
 // mode), but their `ok N - p1` / `ok N - p2` per-case
@@ -1897,7 +1897,7 @@ func TestRunnerFailFastExample(t *testing.T) {
 // per-case prints.
 func TestRunnerQuietModeExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/quiet_mode_test.lang")
+	src := langSrcAbs(t, "examples/tests/quiet_mode_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
