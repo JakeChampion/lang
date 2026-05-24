@@ -121,6 +121,18 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_get_stdin_p2": {
+		// Preview-2: wasi:cli/stdin@0.2.0::get-stdin() →
+		// own<input-stream> (lowers to i32 handle). One-time call
+		// per program; the result handle is cached (handle+1, 0 =
+		// uninit) in the readByteScratchAddr slot, which the
+		// preview-1 iovec scratch otherwise owns — the two read
+		// paths are mutually exclusive (selected by Preview2WASI).
+		module:  "wasi:cli/stdin@0.2.0",
+		name:    "get-stdin",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_blocking_write_and_flush_p2": {
 		// Preview-2: wasi:io/streams@0.2.0::
 		//   [method]output-stream.blocking-write-and-flush(
@@ -650,7 +662,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_environ_get")
 	}
 	if helpers.set["__lang_read_byte"] {
-		in.add("wasi_fd_read")
+		if opts.Preview2WASI {
+			in.add("wasi_get_stdin_p2")
+			in.add("wasi_io_blocking_read")
+		} else {
+			in.add("wasi_fd_read")
+		}
 	}
 	if helpers.set["__lang_read_file"] {
 		in.add("wasi_path_open")
@@ -1021,6 +1038,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_putchar":      buildPutcharBodyP2,
 	"__lang_now_ns":       buildNowNsBodyP2,
 	"__lang_now_unix_ms":  buildNowUnixMsBodyP2,
+	"__lang_read_byte":    buildReadByteBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -1722,6 +1740,100 @@ func buildReadByteBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 12)
 	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReadByteBodyP2 is the preview-2 variant of buildReadByteBody.
+//
+// Signature: () → i32 — returns 0..255 for a byte read from stdin,
+// or -1 for EOF / error.
+//
+// Preview-2 has no fd_read; bytes come from
+// `wasi:io/streams::[method]input-stream.blocking-read` on the
+// `wasi:cli/stdin::get-stdin()` handle. The stdin handle is fetched
+// once and cached in readByteScratchAddr as handle+1 (0 = uninit) —
+// the +1 bias lets handle 0 (a legal resource index) round-trip
+// through the zero sentinel without a separate init flag.
+//
+// Each call: blocking-read(handle, 1, retbuf) where retbuf is a
+// 12-byte indirect-return area holding
+// `result<list<u8>, stream-error>`:
+//
+//	retbuf + 0:      disc byte (0 = ok, 1 = err)
+//	retbuf + 4..7:   list data ptr  (ok arm)
+//	retbuf + 8..11:  list length    (ok arm)
+//
+// disc != 0 (any stream-error, incl. `closed` = EOF) → -1. An ok
+// arm with zero length → -1. Otherwise return the byte at the list
+// data pointer.
+//
+// Locals (no params):
+//
+//	0: $handle
+//	1: $retbuf
+func buildReadByteBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	getStdin := idxs["wasi_get_stdin_p2"]
+	blockingRead := idxs["wasi_io_blocking_read"]
+	var body []byte
+	// $handle: load cached (handle+1); if 0, fetch + cache, else
+	// decode by subtracting 1. Both branches leave $0 = handle.
+	body = inst.InstI32Const(body, readByteScratchAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// mem[readByteScratchAddr] = get-stdin() + 1; $0 = handle.
+		body = inst.InstI32Const(body, readByteScratchAddr)
+		body = inst.InstCall(body, getStdin)
+		body = inst.InstLocalTee(body, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstElse(body)
+	{
+		// $0 = cached - 1.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, 0)
+	}
+	body = inst.InstEnd(body)
+	// $retbuf = __lang_alloc(12)
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	// blocking-read(handle, 1 /* len u64 */, retbuf)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, blockingRead)
+	// If disc byte != 0 (stream-error / EOF), return -1.
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// If list length (retbuf+8) == 0, return -1.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Return the byte at the list data pointer (retbuf+4).
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
 	body = memory.InstI32Load8U(body, 0, 0)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

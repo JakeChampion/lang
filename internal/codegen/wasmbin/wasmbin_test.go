@@ -3736,6 +3736,57 @@ func TestEmitReadByte(t *testing.T) {
 	}
 }
 
+// TestEmitPreview2ReadByteUsesStreams — with Preview2WASI=true, a
+// program that reads stdin via read_byte imports
+// `wasi:cli/stdin@0.2.0::get-stdin` +
+// `wasi:io/streams@0.2.0::[method]input-stream.blocking-read`
+// instead of the preview-1 `wasi_snapshot_preview1::fd_read`.
+func TestEmitPreview2ReadByteUsesStreams(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+		},
+	}}}
+	bin, err := EmitWithOptions(prog, EmitOptions{Preview2WASI: true})
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if importExists(t, bin, "wasi_snapshot_preview1", "fd_read") {
+		t.Errorf("module still has preview-1 fd_read import under Preview2WASI=true")
+	}
+	if !importExists(t, bin, "wasi:cli/stdin@0.2.0", "get-stdin") {
+		t.Errorf("module missing wasi:cli/stdin@0.2.0::get-stdin import under Preview2WASI=true")
+	}
+	if !importExists(t, bin, "wasi:io/streams@0.2.0", "[method]input-stream.blocking-read") {
+		t.Errorf("module missing wasi:io/streams blocking-read import under Preview2WASI=true")
+	}
+}
+
+// TestEmitPreview2ReadByteDefaultUsesFdRead — the default
+// (Preview2WASI=false) path still reads stdin via the preview-1
+// fd_read import. Pins the opt-in shape of the migration.
+func TestEmitPreview2ReadByteDefaultUsesFdRead(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{{
+		Name:       "main",
+		ReturnType: i32(),
+		Ops: []ir.Op{
+			{Kind: ir.OpCallDirect, Str: "read_byte"},
+		},
+	}}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !importExists(t, bin, "wasi_snapshot_preview1", "fd_read") {
+		t.Errorf("default build missing preview-1 fd_read import")
+	}
+	if importExists(t, bin, "wasi:cli/stdin@0.2.0", "get-stdin") {
+		t.Errorf("default build has preview-2 get-stdin import without opt-in")
+	}
+}
+
 // TestEmitReadByteEOF — with empty stdin, the first read_byte
 // returns -1 (EOF).
 func TestEmitReadByteEOF(t *testing.T) {
