@@ -9674,6 +9674,76 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithWriteFile drives a Fern program
+// that writes a file via write_file() through `-component-wrap-cli`.
+// The driver detects the four-import write-file preview-2 shape
+// (get-directories + descriptor.{open-at,write-via-stream} +
+// output-stream.blocking-write-and-flush), rebuilds with
+// cabi_realloc exported, and routes via WrapWasiWriteFileAsCliRun.
+// The chain runs under `wasmtime run --dir` and the host file is
+// checked afterward.
+func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	// > 4096 bytes to exercise the chunked blocking-write-and-flush
+	// loop (wasmtime caps each write at 4096).
+	const n = 5000
+	srcPath := filepath.Join(dir, "wf.fern")
+	src := []byte(`function main(): i32 {
+    match (write_file("out.txt", "` + strings.Repeat("z", n) + `")) {
+        Some(e) => { return 1; },
+        None => { return 0; }
+    }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "wf.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (write_file) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{
+		"wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0",
+		"wasi:io/streams@0.2.0", "wasi:cli/run@0.2.0",
+	} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// Run → None (success) → exit 0; then verify the host file.
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Fatalf("write_file: wasmtime run failed (want exit 0): %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read back out.txt: %v", err)
+	}
+	if len(got) != n {
+		t.Errorf("out.txt = %d bytes, want %d", len(got), n)
+	}
+	if want := strings.Repeat("z", n); string(got) != want {
+		t.Errorf("out.txt content mismatch (len got=%d want=%d)", len(got), n)
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the

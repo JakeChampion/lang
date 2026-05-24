@@ -149,6 +149,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_write_via_stream_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.write-via-stream lowered to
+		//   (self: i32, offset: i64, retptr: i32) -> (). retptr holds
+		//   result<own<output-stream>, error-code>: disc @ +0,
+		//   stream handle (ok) / error-code disc (err) @ +4.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.write-via-stream",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -763,9 +774,16 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_write_file"] {
-		in.add("wasi_path_open")
-		in.add("wasi_fd_write")
-		in.add("wasi_fd_close")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_path_open")
+			in.add("wasi_fd_write")
+			in.add("wasi_fd_close")
+		}
 	}
 	if helpers.set["__fern_open_reader"] ||
 		helpers.set["__fern_open_writer"] ||
@@ -1132,6 +1150,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_args":         buildArgsBodyP2,
 	"__fern_env":          buildEnvBodyP2,
 	"__fern_read_file":    buildReadFileBodyP2,
+	"__fern_write_file":   buildWriteFileBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
