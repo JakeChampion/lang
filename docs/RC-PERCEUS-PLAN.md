@@ -806,25 +806,26 @@ Phase 3 CANNOT start with the freelist — it must start by
    rather than the unconditional dec used today. Natives get their
    own counter slot once the SSO flip frees up the string work
    around the same `rc_dec` helper.
-2. **Drift audit + fixes — map self-assign DONE.** The dominant
-   source the detector found, `m = m.set(...)` / `m = m.clear()`,
-   is fixed: `b.assign` now suppresses the dec-on-overwrite for a
-   self-mutating map reassignment (`isSelfMapMutation`). Map
-   mutators cow in place WITHOUT bumping rc (unlike array push, so
-   that statement-position `m.set(...)` sequences and MapLit's
-   repeated per-entry sets don't spuriously copy), which means the
-   call returns the same handle the slot holds and no reference is
-   released — dec'ing it would drop a live rc to 0. With the skip,
-   `TestWASMRcMapSelfAssignNoUnderflow` shows 0 over-releases
-   across a run of self-assignments (overwrite + clear + re-add)
-   with correct contents.
-   - **Known residual (follow-up):** when the map is ALSO aliased
-     (`var m2 = m1; m2 = m2.set(...)`), cow copies and the skip
-     leaves the source's rc over-counted by 1 — a leak, not an
-     over-release, so it stays detector-clean and UAF-free under
-     the no-free arena. A cow-aware *conditional* dec (release the
-     old handle only when the mutator returned a different one)
-     closes it; deferred so it can land with the drop-handler work.
+2. **Drift audit + fixes — map self-assign DONE (drift-free,
+   leak-free).** The dominant source the detector found,
+   `m = m.set(...)` / `m = m.clear()`, is fixed with a COW-AWARE
+   dec in `b.assign` (`isSelfMapMutation`). Map mutators cow in
+   place WITHOUT bumping rc (unlike array push, so that
+   statement-position `m.set(...)` sequences and MapLit's repeated
+   per-entry sets don't spuriously copy). The assignment therefore
+   dec's the old handle **iff it differs from the call's result**
+   (an `OpNe` guard):
+   - rc==1 in-place → call returns the same handle → no dec →
+     rc stays 1 (no over-release; the second self-assign that used
+     to hit 0→−1 is gone).
+   - rc>1 aliased → call returns a fresh copy → old handle is
+     dec'd → source nets to its remaining aliases (no leak), copy
+     starts at 1.
+   `TestWASMRcMapSelfAssignNoUnderflow` pins 0 over-releases across
+   overwrite + clear + re-add with correct contents;
+   `Test*MapSetAliasedCopies` confirms the aliased copy path stays
+   value-correct. (The earlier skip-only form left the aliased
+   source over-counted by 1; the `OpNe` conditional closes that.)
    - Arrays / structs / enums / closures were already drift-free
      (arrays via the push/set in-place rc bump; struct/enum/closure
      reassignment genuinely releases the old value).
