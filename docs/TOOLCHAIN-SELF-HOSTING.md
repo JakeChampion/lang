@@ -617,14 +617,28 @@ End-to-end exit code 42 demo (covered by
     superseded wraps + tests were deleted (#1328). This unlocked new
     combinations the per-shape wraps never covered — `read_line+exit`,
     `read_line+print+exit`, `read_line+random`, … (e2e:
-    `TestCmdLangComponentWrapCliComposedCombos`).
+    `TestCmdLangComponentWrapCliComposedCombos`). The filesystem
+    open-chains then folded in too: `FileRead` (#1330) and `FileWrite`
+    (#1333) add the get-directories → open-at → read/write-via-stream
+    → blocking-read/-write pipelines, decoupling the io/streams
+    input/output sides from cli/stdin and cli/std{out,err}. This
+    unlocked `read_file+print` (cat), `write_file+exit`,
+    `write_file+print` (which shares one blocking-write lowering
+    between the file and stdout), etc. Finally the standalone
+    read_file / write_file / open_reader / open_writer shapes were
+    routed through the composer and their bespoke wraps deleted
+    (#1334) — together with #1328, ~1500 lines of hand-rolled wraps
+    retired. The composer is now the sole component-builder for the
+    CLI-stream + filesystem-open + structured space.
   - **Still to do:**
-    - Fold the filesystem open-chain (read_file / write_file /
-      open_reader / open_writer) into the composer too, so
-      combinations like `read_file + print` or `write_file + exit`
-      compose without a bespoke wrap. This also subsumes the bare
-      `open_reader` / `open_writer`-with-no-read/write gap (the
-      3-call open chain) once the composer drives the lowering.
+    - Fold the remaining single-capability wraps (wall-clock / args /
+      env, each a 1-i32 list-returning trampoline) into the composer
+      for full coverage; then `WrapWasiImported*` (pure-structured /
+      non-cli) and TCP are the only bespoke component-builders left.
+    - The bare `open_reader` / `open_writer`-with-no-read/write gap
+      (the 3-call open chain, no blocking-read/-write) still needs the
+      adapter — the composer requires the via-stream method to pair
+      with its stream method.
     - `open_appender` (CREATE without TRUNCATE + append semantics)
       is still preview-1 only — preview-2 has no fd-append flag, so
       it needs `append-via-stream` (or an explicit seek-to-end
