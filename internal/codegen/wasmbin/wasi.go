@@ -86,6 +86,21 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 	},
+	"wasi_wall_clock_now_p2": {
+		// Preview-2: wasi:clocks/wall-clock@0.2.0::now() →
+		// datetime { seconds: u64; nanoseconds: u32 }. The
+		// record is returned via the canonical-ABI indirect
+		// convention, so the lowered core import is
+		// `(out_ptr i32) -> ()` — the host writes the 16-byte
+		// datetime at out_ptr (u64 seconds at +0, u32
+		// nanoseconds at +8). Replaces wasi_clock_time_get for
+		// the realtime helpers (__lang_now_ns / __lang_now_unix_ms)
+		// under EmitOptions.Preview2WASI.
+		module:  "wasi:clocks/wall-clock@0.2.0",
+		name:    "now",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_stdout_p2": {
 		// Preview-2: wasi:cli/stdout@0.2.0::get-stdout() →
 		// own<output-stream> (lowers to i32 handle). One-time
@@ -592,10 +607,18 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__lang_now_ns"] {
-		in.add("wasi_clock_time_get")
+		if opts.Preview2WASI {
+			in.add("wasi_wall_clock_now_p2")
+		} else {
+			in.add("wasi_clock_time_get")
+		}
 	}
 	if helpers.set["__lang_now_unix_ms"] {
-		in.add("wasi_clock_time_get")
+		if opts.Preview2WASI {
+			in.add("wasi_wall_clock_now_p2")
+		} else {
+			in.add("wasi_clock_time_get")
+		}
 	}
 	if helpers.set["__lang_monotonic_ns"] {
 		if opts.Preview2WASI {
@@ -996,6 +1019,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_write":        buildWriteBodyP2,
 	"__lang_eprint":       buildEprintBodyP2,
 	"__lang_putchar":      buildPutcharBodyP2,
+	"__lang_now_ns":       buildNowNsBodyP2,
+	"__lang_now_unix_ms":  buildNowUnixMsBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -1216,6 +1241,75 @@ func buildMonotonicNsBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstCall(body, monoNow)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildNowNsBodyP2 is the preview-2 variant of buildNowNsBody.
+//
+// Signature: () → i64
+//
+// Allocates a 16-byte datetime out-buffer, calls
+// wasi:clocks/wall-clock@0.2.0::now(buf), reads seconds (u64 at
+// +0) and nanoseconds (u32 at +8), and returns
+// seconds*1_000_000_000 + nanoseconds.
+//
+// Locals (no params):
+//
+//	0: $buf
+func buildNowNsBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	wallNow := idxs["wasi_wall_clock_now_p2"]
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 0) // $buf, leave on stack for the call
+	body = inst.InstCall(body, wallNow)
+	// seconds (i64 at $buf+0) * 1e9
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstI64Const(body, 1_000_000_000)
+	body = numeric.InstI64Mul(body)
+	// + nanoseconds (u32 at $buf+8, zero-extended)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Add(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildNowUnixMsBodyP2 is the preview-2 variant of
+// buildNowUnixMsBody.
+//
+// Signature: () → i64
+//
+// Same datetime read as buildNowNsBodyP2 but returns
+// milliseconds: seconds*1000 + nanoseconds/1_000_000.
+//
+// Locals (no params):
+//
+//	0: $buf
+func buildNowUnixMsBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	wallNow := idxs["wasi_wall_clock_now_p2"]
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 0)
+	body = inst.InstCall(body, wallNow)
+	// seconds * 1000
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstI64Const(body, 1000)
+	body = numeric.InstI64Mul(body)
+	// + nanoseconds / 1_000_000
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = convert.InstI64ExtendI32U(body)
+	body = inst.InstI64Const(body, 1_000_000)
+	body = numeric.InstI64DivU(body)
+	body = numeric.InstI64Add(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildRandomI32BodyP2 is the preview-2 variant of buildRandomI32Body.

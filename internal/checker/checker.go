@@ -1253,6 +1253,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// now_ns(): i64 — wall-clock nanoseconds since the Unix
+	// epoch. Same time source as `now_unix_ms` but at
+	// nanosecond resolution. Wraps WASI's wall-clock now
+	// (preview-1 `clock_time_get(realtime)`, preview-2
+	// `wasi:clocks/wall-clock::now`) on wasm.
+	c.info.FuncSigs["now_ns"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	// sleep_ms(ms): void — best-effort sleep for the given
 	// duration. Useful in tests that want to wait for a
 	// timer / background process to make progress. Not
