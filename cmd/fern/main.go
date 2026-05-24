@@ -584,6 +584,25 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if usesPreview2ArgsOnly(bin) {
+					// get-arguments returns list<string>; its canon-lower
+					// needs realloc to allocate the list + string bytes,
+					// so rebuild with ForceMemorySection (cabi_realloc
+					// export). Scoped to args-only programs.
+					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+						ForceMemorySection: true,
+						Preview2WASI:       true,
+						SynthCliRun:        true,
+					})
+					if err != nil {
+						return 1, err
+					}
+					comp := component.WrapWasiArgsAsCliRun(rb, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -1068,6 +1087,23 @@ func usesPreview2ReadOnly(bin []byte) bool {
 		}
 	}
 	return hasGetter && hasRead
+}
+
+// usesPreview2ArgsOnly reports whether the core module's imports
+// are exactly the single preview-2 args pair —
+// `wasi:cli/environment@0.2.0::get-arguments` — and nothing else.
+// get-arguments returns list<string>, so its wrap
+// (WrapWasiArgsAsCliRun) uses the 1-i32 trampoline with a
+// realloc-bearing canon-lower, distinct from the structured
+// WasiImport flow; the driver routes the args-only case through
+// the dedicated wrap helper. Mixed cases aren't supported yet.
+func usesPreview2ArgsOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 1 {
+		return false
+	}
+	p := pairs[0]
+	return p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments"
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
