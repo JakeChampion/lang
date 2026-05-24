@@ -1524,19 +1524,17 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		}
 		return false
 	}
-	// Params first: each parameter name is unique in the
-	// function signature, so name lookup is safe. Caller-side
-	// inc (Phase 1d-iv) balanced by callee-exit dec here.
-	for _, p := range b.fn.Params {
-		if !rcTracked(p.Type) {
-			continue
-		}
-		slot, ok := b.locals[p.Name]
-		if !ok {
-			continue
-		}
-		emitDec(slot)
-	}
+	// Phase 2d-borrow: parameters are BORROWED, not owned. The
+	// caller no longer inc's a tracked argument when passing it
+	// (the matching arg-inc at the OpCallDirect site is gone), so
+	// the callee must NOT dec its parameters at exit — doing so
+	// would underflow the rc. A borrowed value's lifetime is
+	// owned by the caller; the callee only reads/mutates through
+	// the borrow. This is what lets a Map passed to a function be
+	// mutated in place (the handle stays rc==1, so the Phase 2d
+	// copy-on-write check mutates rather than copies), while a
+	// genuine local alias (`var m2 = m1`) still inc's and so gets
+	// a copy on write. Only OWNED locals are dec'd below.
 	seen := map[string]bool{}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
@@ -5783,20 +5781,15 @@ func (b *builder) callBody(n *ast.Call) error {
 		if err := b.expr(a); err != nil {
 			return err
 		}
-		// Phase 1d-iv: function-call arg pass is an aliasing
-		// site. The caller still owns its reference after the
-		// call returns (value semantics — the callee gets a
-		// fresh alias of the same buffer). Splice in
-		// __fern_rc_inc so the rc reflects the new co-owner.
-		// __fern_rc_inc returns the input pointer, so it
-		// passes through the operand stack without a temp.
-		// Same gating as the Var / Assign sites: only fires
-		// for alias-shaped expressions of array type. The
-		// matching dec on the callee's parameter at function
-		// exit lands in a later slice (Phase 1d-v).
-		if needsRcIncOnAlias(a, b) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
-		}
+		// Phase 2d-borrow: function parameters are borrowed, not
+		// owned, so passing a tracked argument is NOT an
+		// ownership-creating alias — no __fern_rc_inc here. The
+		// callee reads/mutates through the borrow and does not dec
+		// the parameter at exit (see emitRcDecLocalsAtExit). This
+		// keeps a Map passed to a function at rc==1 so the callee
+		// mutates it in place (visible to the caller), while
+		// genuine ownership transfers (Var init, struct/array/
+		// closure capture, assignment) still inc at their sites.
 	}
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper

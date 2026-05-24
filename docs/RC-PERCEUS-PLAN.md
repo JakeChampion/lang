@@ -640,7 +640,30 @@ real CoW (Phase 2a + 2b). Aliased maps will see each other's
 mutations; Map CoW lands in Phase 2d once Phase 1e adds rc
 tracking to non-array types.
 
-#### Phase 2d: Map CoW (NOT YET STARTED)
+#### Phase 2d-borrow: borrowed parameters (SHIPPED — Map CoW enabler)
+
+Prerequisite for Map CoW. Previously a tracked argument was
+inc'd at the call site (Phase 1d-iv) and the callee dec'd its
+parameter at exit (Phase 1d-v) — an "owned parameter" model.
+That breaks copy-on-write for maps passed to functions: the
+arg-inc bumps the Map handle to rc=2, so the CoW check inside
+`m.set(...)` sees an alias and copies, and the callee's mutation
+(expected to be visible to the caller — `inner(trace)` mutating
+`trace`) goes to the discarded copy.
+
+The fix is the Perceus borrow model: **parameters are borrowed,
+not owned.** No caller-side inc, no callee-side exit dec. A Map
+passed to a function stays rc==1, so the callee mutates it in
+place (visible to the caller). A genuine local alias
+(`var m2 = m1`) still inc's at the Var/Assign site and so gets a
+copy on write. Ownership transfers (Var init, struct/array/
+closure-capture stores, assignment) keep their inc. Net rc
+traffic across a call is unchanged (was +1/−1, now 0/0), so the
+observable behavior is identical except where the exact rc was
+asserted — the `*RcAliasIncCallArg` / `Arm64RcDecAtExit` tests
+were updated to the borrow counts.
+
+#### Phase 2d: Map CoW (handle rc=1 + `__map_cow_inplace`)
 
 Closes the gap left by Phase 2c. Requires Phase 1e prereqs:
 
