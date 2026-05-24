@@ -2862,6 +2862,114 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildArgsBodyP2 is the preview-2 variant of buildArgsBody —
+// builds the length-prefixed string[] of argv from the
+// wasi:cli/environment::get-arguments list<string> instead of
+// preview-1 args_sizes_get / args_get. The canonical list elements
+// are already (ptr, len) pairs, so each entry is a straight copy
+// (no NUL walk). The built array is cached in the args_sizes
+// scratch slots (argsSizesArgcAddr = result ptr, argsSizesBufAddr =
+// built flag) — safe under preview-2 since the indexed helpers
+// don't touch those slots.
+//
+// Locals: 0=$rb, 1=$argc, 2=$raw, 3=$result, 4=$list, 5=$i, 6=$el.
+func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
+	getArgs := helperIdxs["wasi_get_arguments_p2"]
+	alloc := helperIdxs["__fern_alloc"]
+	var body []byte
+	body = appendArgsInitP2(body, getArgs, alloc, 0)
+	// Built-array cache check: argsSizesBufAddr == 1 → return
+	// the cached result ptr from argsSizesArgcAddr.
+	body = inst.InstI32Const(body, argsSizesBufAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, argsSizesArgcAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// $argc = mem[argsCountAddr]
+	body = inst.InstI32Const(body, argsCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 1)
+	// $raw = __fern_alloc($argc*8 + 4)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	// mem[$raw] = $argc (length prefix)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// $result = $raw + 4
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 3)
+	// $list = mem[argsPtrsAddr]
+	body = inst.InstI32Const(body, argsPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 4)
+	// for i in 0..argc: copy (ptr, len) from $list+i*8 to $result+i*8
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 5)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $el = $list + i*8
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		// mem[$result + i*8] = mem[$el]
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 6)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		// mem[$result + i*8 + 4] = mem[$el + 4]
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 6)
+		body = memory.InstI32Load(body, 2, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		// $i++
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 5)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	// Cache: argsSizesArgcAddr = $result, argsSizesBufAddr = 1
+	body = inst.InstI32Const(body, argsSizesArgcAddr)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, argsSizesBufAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 3)
+	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildArenaSaveBody — () → i32. Returns mem[allocCursorAddr]
 // (the bump-allocator cursor). Used by lang's `arena_save()`
 // to snapshot the heap before a transient allocation phase.

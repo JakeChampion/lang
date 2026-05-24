@@ -863,6 +863,58 @@ function main(): i32 {
 	}
 }
 
+// TestBuildPreview2ArgsUsesEnvironment — with Preview2WASI=true, a
+// program that reads argv via args() imports
+// `wasi:cli/environment@0.2.0::get-arguments` instead of the
+// preview-1 `args_sizes_get` / `args_get`.
+func TestBuildPreview2ArgsUsesEnvironment(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    return args().len();
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{Preview2WASI: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if importExists(t, bin, "wasi_snapshot_preview1", "args_get") ||
+		importExists(t, bin, "wasi_snapshot_preview1", "args_sizes_get") {
+		t.Errorf("module still has preview-1 args imports under Preview2WASI=true")
+	}
+	if !importExists(t, bin, "wasi:cli/environment@0.2.0", "get-arguments") {
+		t.Errorf("module missing wasi:cli/environment::get-arguments import under Preview2WASI=true")
+	}
+}
+
+// TestBuildPreview2ArgsDefaultUsesPreview1 — the default
+// (Preview2WASI=false) path still reads argv via the preview-1
+// args_sizes_get / args_get imports.
+func TestBuildPreview2ArgsDefaultUsesPreview1(t *testing.T) {
+	src := `import "core/no_prelude";
+function main(): i32 {
+    return args().len();
+}
+`
+	bin, err := buildFromSource(t, src)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !importExists(t, bin, "wasi_snapshot_preview1", "args_get") {
+		t.Errorf("default build missing preview-1 args_get import")
+	}
+	if importExists(t, bin, "wasi:cli/environment@0.2.0", "get-arguments") {
+		t.Errorf("default build has preview-2 get-arguments import without opt-in")
+	}
+}
+
 // TestBuildPreview2WASIDefaultLeavesProcExit — the default
 // (Preview2WASI=false) path still emits the preview-1
 // proc_exit import. Pins the opt-in shape of the migration.

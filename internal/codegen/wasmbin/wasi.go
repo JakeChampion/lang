@@ -111,6 +111,19 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_get_arguments_p2": {
+		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
+		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
+		// ()`: retptr holds the list header (data ptr @ +0, element
+		// count @ +4). Each element is a string (ptr @ +0, len @ +4)
+		// — 8 bytes — already allocated in the user's memory through
+		// cabi_realloc, so the args helpers read (ptr, len) directly
+		// without the preview-1 NUL walk.
+		module:  "wasi:cli/environment@0.2.0",
+		name:    "get-arguments",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_stderr_p2": {
 		// Preview-2: wasi:cli/stderr@0.2.0::get-stderr() →
 		// own<output-stream>. Mirror of get-stdout; the result
@@ -643,15 +656,27 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_environ_sizes_get")
 	}
 	if helpers.set["__fern_arg_count"] {
-		in.add("wasi_args_sizes_get")
+		if opts.Preview2WASI {
+			in.add("wasi_get_arguments_p2")
+		} else {
+			in.add("wasi_args_sizes_get")
+		}
 	}
 	if helpers.set["__fern_arg_at"] {
-		in.add("wasi_args_sizes_get")
-		in.add("wasi_args_get")
+		if opts.Preview2WASI {
+			in.add("wasi_get_arguments_p2")
+		} else {
+			in.add("wasi_args_sizes_get")
+			in.add("wasi_args_get")
+		}
 	}
 	if helpers.set["__fern_args"] {
-		in.add("wasi_args_sizes_get")
-		in.add("wasi_args_get")
+		if opts.Preview2WASI {
+			in.add("wasi_get_arguments_p2")
+		} else {
+			in.add("wasi_args_sizes_get")
+			in.add("wasi_args_get")
+		}
 	}
 	if helpers.set["__fern_env_at"] {
 		in.add("wasi_environ_sizes_get")
@@ -1039,6 +1064,9 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_now_ns":       buildNowNsBodyP2,
 	"__fern_now_unix_ms":  buildNowUnixMsBodyP2,
 	"__fern_read_byte":    buildReadByteBodyP2,
+	"__fern_arg_count":    buildArgCountBodyP2,
+	"__fern_arg_at":       buildArgAtBodyP2,
+	"__fern_args":         buildArgsBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -1564,6 +1592,100 @@ func buildArgAtBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 6)
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// appendArgsInitP2 appends the lazy-init for the preview-2 args
+// cache: if not yet fetched, call get-arguments into an 8-byte
+// retbuf (allocated into local `rbLocal`), then cache the element
+// count (retbuf+4) at argsCountAddr and the list base pointer
+// (retbuf+0) at argsPtrsAddr, and set argsInitAddr=1. Unlike the
+// preview-1 path, the args_sizes scratch slots
+// (argsSizesArgcAddr / argsSizesBufAddr) are left untouched here,
+// so they're free for __fern_args's built-array cache without the
+// preview-1 slot-aliasing hazard.
+func appendArgsInitP2(body []byte, getArgs, alloc, rbLocal uint32) []byte {
+	body = inst.InstI32Const(body, argsInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// $rb = alloc(8); get-arguments($rb)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, rbLocal)
+		body = inst.InstLocalGet(body, rbLocal)
+		body = inst.InstCall(body, getArgs)
+		// mem[argsCountAddr] = mem[$rb + 4]
+		body = inst.InstI32Const(body, argsCountAddr)
+		body = inst.InstLocalGet(body, rbLocal)
+		body = memory.InstI32Load(body, 2, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		// mem[argsPtrsAddr] = mem[$rb + 0]
+		body = inst.InstI32Const(body, argsPtrsAddr)
+		body = inst.InstLocalGet(body, rbLocal)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		// mem[argsInitAddr] = 1
+		body = inst.InstI32Const(body, argsInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	return body
+}
+
+// buildArgCountBodyP2 is the preview-2 variant of buildArgCountBody
+// — () → argc via wasi:cli/environment::get-arguments.
+func buildArgCountBodyP2(idxs map[string]uint32) []byte {
+	getArgs := idxs["wasi_get_arguments_p2"]
+	alloc := idxs["__fern_alloc"]
+	var body []byte
+	body = appendArgsInitP2(body, getArgs, alloc, 0) // local 0 = $rb
+	body = inst.InstI32Const(body, argsCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArgAtBodyP2 is the preview-2 variant of buildArgAtBody —
+// (i) → (data, len). The canonical list elements are already
+// (ptr, len) pairs (8 bytes each), so there's no NUL walk: element
+// i lives at listBase + i*8. Out-of-range i returns (0, 0).
+//
+// Locals (after the one param):
+//
+//	1: $rb
+//	2: $el
+func buildArgAtBodyP2(idxs map[string]uint32) []byte {
+	getArgs := idxs["wasi_get_arguments_p2"]
+	alloc := idxs["__fern_alloc"]
+	var body []byte
+	body = appendArgsInitP2(body, getArgs, alloc, 1) // local 1 = $rb
+	// Bounds check (unsigned): i >= count → (0, 0).
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, argsCountAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// $el = mem[argsPtrsAddr] + i*8
+	body = inst.InstI32Const(body, argsPtrsAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 2)
+	// return (mem[$el], mem[$el + 4])
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
