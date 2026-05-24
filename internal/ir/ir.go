@@ -1469,19 +1469,19 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		// elements route through __fern_drop_arr_ptr, which dec's
 		// each element (balancing the per-element inc emitted at
 		// array-literal construction) on the last reference before
-		// dec'ing the array. WASM-only for now (ptrW==4); the
-		// drop helper is wired in the wasm runtime. Native backends
-		// keep the plain dec (their nested elements still leak, as
-		// before — no regression). Pointer elements have ptr-width
-		// stride.
-		if b.ptrW == 4 {
-			if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
-				b.emit(Op{Kind: OpLoadLocal, I32: slot})
-				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
-				b.emit(Op{Kind: OpDrop})
-				return
-			}
+		// dec'ing the array. Wired on all three backends (wasm
+		// runtime + arm64 / x86_64 asm); the helper carries the
+		// same null / low-address / sentinel guards as
+		// __fern_rc_dec, so an array-typed slot that actually
+		// holds a non-pointer (enum tag, never-taken-branch
+		// garbage) is passed through rather than dereferenced.
+		// Pointer elements have ptr-width stride.
+		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			return
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})

@@ -2933,6 +2933,52 @@ func TestX86_64RcUnderflowDetector(t *testing.T) {
 	}
 }
 
+// Phase 3 step 3: drop handlers, native parity. An array of
+// pointer-shaped rc-tracked elements routes its scope-exit dec
+// through __fern_drop_arr_ptr, which on the last reference dec's
+// each element — balancing the per-element inc the IR emits at
+// array-literal construction (Phase 1d-viii). Mirrors the wasm
+// TestWASMRcDropArrayElements. The native helper additionally
+// carries the low-address guard __fern_rc_dec has, so an
+// array-typed slot that actually holds a non-pointer (an enum
+// tag, stack garbage from a never-taken branch) is passed through
+// instead of faulting — that case is exercised end-to-end by
+// TestSelfHostVMX86_64.
+func TestX86_64RcDropArrayElements(t *testing.T) {
+	// Proof the drop FIRES: `consume` nests `inner` into a local
+	// array and drops it on exit; inner's rc must return to its
+	// pre-call value (1), not stay at the constructed 2.
+	fires := `function consume(inner: u8[]): i32 {
+    var outer: u8[][] = [inner];
+    return 0;
+}
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(4);
+    var before: i32 = __rc_get(inner);
+    var ignore: i32 = consume(inner);
+    var after: i32 = __rc_get(inner);
+    return (before - 1) + (after - 1);
+}`
+	if _, code := compileAndRunX86_64(t, fires); code != 0 {
+		t.Errorf("got %d, want 0 (drop must dec the nested element back to rc 1)", code)
+	}
+
+	// And no over-release: nesting fresh + aliased elements and
+	// dropping the outer array reports 0 underflows.
+	noUnder := `function build(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var a: i32[][] = [inner];
+    var b: i32[][] = [[4, 5], [6]];
+    return a[0][1] + b[1][0];
+}
+function main(): i32 {
+    return (build() - 8) + __rc_underflow_count();
+}`
+	if _, code := compileAndRunX86_64(t, noUnder); code != 0 {
+		t.Errorf("got %d, want 0 (nested-array drop: correct values, 0 underflow)", code)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestX86_64RcDecOnOverwrite(t *testing.T) {
