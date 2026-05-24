@@ -4939,7 +4939,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
 			}
-			c.requireNumber(n.P, t, n.Op)
+			// Unary minus applies to any integer width, not just
+			// i32 — `-5i64`, `-x` on an i8, etc. requireNumber
+			// only accepted the bare i32 NumberType, so negating
+			// any wider/narrower integer was wrongly rejected.
+			c.requireInteger(n.P, t, n.Op)
 			// Propagate the operand's NumberType (including its
 			// Polymorphic flag) so unary minus on a polymorphic
 			// literal stays polymorphic; otherwise `var s: i8 =

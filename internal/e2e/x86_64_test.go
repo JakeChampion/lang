@@ -3420,3 +3420,29 @@ func TestX86_64UnsignedComparison(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (unsigned comparison condition codes)", code)
 	}
 }
+
+// Mirror of TestArm64UnaryMinusWideTypes.
+func TestX86_64UnaryMinusWideTypes(t *testing.T) {
+	src := `function main(): i32 {
+    var a: i64 = -5i64;
+    if (a != 0i64 - 5i64) { return 1; }
+    var b: f64 = -5.0;
+    if (!(b < 0.0)) { return 2; }
+    var c: f64 = -b;
+    if (c != 5.0) { return 3; }
+    var d: i8 = -5i8;
+    if ((d as i32) != -5) { return 4; }
+    var e: i16 = -1000i16;
+    if ((e as i32) != -1000) { return 5; }
+    var f: f32 = -2.5f32;
+    if (!(f < 0.0f32)) { return 6; }
+    var z: f64 = -0.0;
+    if (f64_bits(z) == 0i64) { return 7; }
+    var g: i64 = 10i64 + -3i64;
+    if (g != 7i64) { return 8; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (unary minus on wide / non-i32 types)", code)
+	}
+}
