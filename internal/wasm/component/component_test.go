@@ -271,6 +271,43 @@ func TestWasiFilesystemTypesDescriptorInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiFilesystemPreopensInstanceTypeBody_Validates composes
+// the preopens instance type (which outer-aliases the descriptor
+// resource from a wasi:filesystem/types import) and confirms
+// wasm-tools accepts it + the get-directories / descriptor / tuple
+// names appear.
+func TestWasiFilesystemPreopensInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	// wasi:filesystem/types import (instance 0) so the outer alias
+	// of `descriptor` (top-level type 1) resolves.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesDescriptorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 0)
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "descriptor")
+	// The preopens instance type referencing top-level type 1.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemPreopensInstanceTypeBody(1))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/preopens@0.2.0", 2)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "preopens.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"get-directories", "descriptor", "tuple"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiCliStdoutInstanceTypeBody_Bytes pins the bytes of the
 // wasi:cli/stdout instance type body. The expected bytes match
 // what wasm-tools emits when wasi:cli/stdout is the THIRD import

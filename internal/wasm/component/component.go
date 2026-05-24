@@ -573,6 +573,47 @@ func WasiFilesystemTypesDescriptorInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiFilesystemPreopensInstanceTypeBody returns the type-section
+// body for the `wasi:filesystem/preopens@0.2.0` instance type —
+// `get-directories: func() -> list<tuple<own<descriptor>, string>>`,
+// the preopened (descriptor, mount-path) pairs a component starts
+// with. The descriptor resource lives in wasi:filesystem/types, so
+// it's pulled in via an outer alias of `outerDescriptorTypeidx`
+// (the io/error → io/streams cross-interface resource pattern).
+//
+// The returned list<tuple<own<descriptor>, string>> is a
+// variable-size value, so its canon-lower needs memory + realloc.
+//
+// Inside-instance decl list (7 decls):
+//
+//  0. alias outer 1 <outerDescriptorTypeidx>     → typeidx 0
+//  1. export "descriptor" (type (eq 0))          → typeidx 1
+//  2. type own<typeidx 1>                         → typeidx 2
+//  3. type tuple<own=2, string>                   → typeidx 3
+//  4. type list<typeidx 3>                        → typeidx 4
+//  5. type func() -> typeidx 4                     → typeidx 5
+//  6. export "get-directories" (func 5)
+func WasiFilesystemPreopensInstanceTypeBody(outerDescriptorTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x07}
+	// decl 0: alias outer 1 <descriptor>
+	body = append(body, OuterAliasTypeDecl(1, outerDescriptorTypeidx)...)
+	// decl 1: export "descriptor" (type (eq 0))
+	body = append(body, ExportTypeEqDecl("descriptor", 0)...)
+	// decl 2: type own<typeidx 1>
+	body = append(body, 0x01, 0x69, 0x01)
+	// decl 3: type tuple<own=2, string>
+	body = append(body, 0x01, 0x6f, 0x02, 0x02, CValtypeString)
+	// decl 4: type list<typeidx 3>
+	body = append(body, 0x01, 0x70, 0x03)
+	// decl 5: type func() -> typeidx 4
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x04)
+	// decl 6: export "get-directories" (func 5)
+	body = append(body, 0x04, 0x00, byte(len("get-directories")))
+	body = append(body, "get-directories"...)
+	body = append(body, 0x01, 0x05)
+	return body
+}
+
 // WasiCliStdoutInstanceTypeBody returns the type-section body
 // bytes for the `wasi:cli/stdout@0.2.0` instance type. The
 // interface declares `get-stdout: func() -> output-stream` where
