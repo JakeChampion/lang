@@ -836,36 +836,53 @@ Phase 3 CANNOT start with the freelist — it must start by
    - Arrays / structs / enums / closures were already drift-free
      (arrays via the push/set in-place rc bump; struct/enum/closure
      reassignment genuinely releases the old value).
-3. **Drop handlers (recursive dec, no free yet) — arrays STARTED
-   (wasm).** Dispatch is IR-side, NOT in `rc_dec`: every dec site
-   already holds the static `ast.Type`, so the dec emitter routes
-   to a type-specific drop helper while `rc_dec` stays the generic
-   rc-arithmetic / sentinel / underflow chokepoint (Open-Question
-   #3 resolved in favour of generated direct calls, no header
-   type-id). First slice shipped:
-   - `__fern_drop_arr_ptr(ptr, stride)` (wasm runtime): on the
-     LAST reference (rc==1) walks the `len` elements, dec's each
-     via `__fern_rc_dec`, then dec's the array. Returns the ptr to
-     match `rc_dec`'s stack shape. Guards null + the static
+3. **Drop handlers (recursive dec, no free yet) — arrays SHIPPED
+   ON ALL THREE BACKENDS.** Dispatch is IR-side, NOT in `rc_dec`:
+   every dec site already holds the static `ast.Type`, so the dec
+   emitter routes to a type-specific drop helper while `rc_dec`
+   stays the generic rc-arithmetic / sentinel / underflow
+   chokepoint (Open-Question #3 resolved in favour of generated
+   direct calls, no header type-id). Shipped:
+   - `__fern_drop_arr_ptr(ptr, stride)` — wasm runtime
+     (`buildDropArrPtrBody`), x86_64 (`emitDropArrPtrRuntime`),
+     arm64 (`emitDropArrPtrRuntime`). On the LAST reference (rc==1)
+     walks the `len` elements, dec's each via `__fern_rc_dec`, then
+     dec's the array. Returns the ptr to match `rc_dec`'s stack
+     shape. Guards: null + **low-address (`<0x10000`)** + static
      sentinel before recursing.
    - `emitRcDecLocalsAtExit` routes an `ArrayType` whose element
      is pointer-shaped rc-tracked (`arrElemIsRcTracked`: array /
      struct / Map / enum / closure — **string excluded**, it's not
-     rc-tracked until the SSO flip) through the drop helper instead
-     of the plain dec. This balances the per-element inc from
-     Phase 1d-viii that previously leaked.
-   - Scope: wasm only (ptrW==4) and the scope-exit sweep only;
-     dec-on-overwrite and the native backends keep the plain dec
-     (no regression — their nested elements still leak as before).
-     Since free isn't enabled, the only effect is correct element
-     counting. `TestWASMRcDropArrayElements` proves the drop fires
-     (a nested element's rc returns to its pre-construction value)
-     with 0 over-releases.
+     rc-tracked until the SSO flip) through the drop helper on
+     every backend (no longer gated on `ptrW==4`). This balances
+     the per-element inc from Phase 1d-viii that previously leaked.
+   - **Root cause of the earlier native regression (resolved).**
+     The first native-parity attempt SIGSEGV'd `TestSelfHostVMX86_64`.
+     The cause was NOT an inline-stored struct/enum or a non-`ptrW`
+     stride (the elements are clean `ptrW` pointers): the drop
+     helper was missing the **low-address guard** that `__fern_rc_dec`
+     carries. The scope-exit dec sweep visits array-typed slots that
+     can hold a non-pointer scalar — e.g. an enum tag like `2`, or
+     stack garbage from a `Var` decl inside a never-taken branch
+     (the `exec_program` opcode switch in `vm.fern` has many such
+     `Value[]` locals). Reading `[ptr-8]` / `[ptr-4]` on such a
+     value faults; the plain-dec baseline tolerated it precisely
+     because `__fern_rc_dec` short-circuits sub-64-KiB "pointers".
+     The drop helper now replicates the guard on all three backends.
+     Per-element decs route through `__fern_rc_dec`, so garbage
+     element slots are guarded there too.
+   - Scope: still the scope-exit sweep only; dec-on-overwrite keeps
+     the plain dec (no regression — its nested elements still leak
+     as before). Since free isn't enabled, the only effect is
+     correct element counting. `TestWASMRcDropArrayElements`,
+     `TestX86_64RcDropArrayElements`, `TestArm64RcDropArrayElements`
+     prove the drop fires (a nested element's rc returns to its
+     pre-construction value) with 0 over-releases;
+     `TestSelfHostVM{X86_64,Arm64}` exercise the low-address guard.
    - **Remaining:** struct / enum / closure / map drop handlers;
-     the dec-on-overwrite site; native (arm64/x86_64) parity; and
-     deep (nested-of-nested) recursion via per-element `drop_<T>`
-     rather than the flat `rc_dec` used now (sufficient while free
-     is off).
+     the dec-on-overwrite site; and deep (nested-of-nested)
+     recursion via per-element `drop_<T>` rather than the flat
+     `rc_dec` used now (sufficient while free is off).
 4. **Freelist allocator, behind a build flag.** Per-size-class
    free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
    1024/2048; larger → bump+unmap). The free path needs the

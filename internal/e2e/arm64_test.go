@@ -12895,6 +12895,42 @@ func TestArm64RcUnderflowDetector(t *testing.T) {
 	}
 }
 
+// Phase 3 step 3: drop handlers, native parity. Mirrors the wasm
+// TestWASMRcDropArrayElements + x86's TestX86_64RcDropArrayElements.
+// The arm64 __fern_drop_arr_ptr carries __fern_rc_dec's
+// low-address guard so an array-typed slot holding a non-pointer
+// (enum tag, never-taken-branch garbage) is passed through rather
+// than faulting — exercised end-to-end by TestSelfHostVMArm64.
+func TestArm64RcDropArrayElements(t *testing.T) {
+	fires := `function consume(inner: u8[]): i32 {
+    var outer: u8[][] = [inner];
+    return 0;
+}
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(4);
+    var before: i32 = __rc_get(inner);
+    var ignore: i32 = consume(inner);
+    var after: i32 = __rc_get(inner);
+    return (before - 1) + (after - 1);
+}`
+	if _, code := compileAndRunArm64(t, fires); code != 0 {
+		t.Errorf("got %d, want 0 (drop must dec the nested element back to rc 1)", code)
+	}
+
+	noUnder := `function build(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var a: i32[][] = [inner];
+    var b: i32[][] = [[4, 5], [6]];
+    return a[0][1] + b[1][0];
+}
+function main(): i32 {
+    return (build() - 8) + __rc_underflow_count();
+}`
+	if _, code := compileAndRunArm64(t, noUnder); code != 0 {
+		t.Errorf("got %d, want 0 (nested-array drop: correct values, 0 underflow)", code)
+	}
+}
+
 // Phase 2: arr.push(v) checks rc + cap. When rc==1 and cap >
 // len, the helper mutates in place — the returned pointer
 // equals the input pointer. First push of a 3-element literal

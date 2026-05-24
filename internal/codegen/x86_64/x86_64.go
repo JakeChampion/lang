@@ -224,6 +224,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
 	}
+	if g.usesDropArrPtr {
+		g.emitDropArrPtrRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -444,6 +447,10 @@ type generator struct {
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. See arm64's mirror.
 	usesArrCowInPlace bool
+	// usesDropArrPtr gates `__fern_drop_arr_ptr` — the Phase 3
+	// drop handler for arrays of pointer-shaped rc-tracked
+	// elements. See arm64's mirror + the wasm runtime.
+	usesDropArrPtr bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -480,6 +487,9 @@ func (g *generator) recordUse(target string) {
 		g.usesArrCowInPlace = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "__fern_drop_arr_ptr":
+		g.usesDropArrPtr = true
+		g.usesRcDec = true
 	case "__alloc":
 		g.usesAlloc = true
 	case "__slice_make":
@@ -3021,6 +3031,78 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_arr_cow_inplace, .-__fern_arr_cow_inplace")
+}
+
+// emitDropArrPtrRuntime emits `__fern_drop_arr_ptr(ptr, stride)
+// -> ptr` — Phase 3 drop handler for an array whose elements are
+// pointer-shaped rc-tracked values. Mirrors the wasm
+// buildDropArrPtrBody: NULL + low-address + static-sentinel
+// guards, then on the LAST reference (rc == 1) walk the `len`
+// elements and dec each via __fern_rc_dec before dec'ing the
+// array itself. Returns the input ptr (matching __fern_rc_dec's
+// contract).
+//
+// System V inputs: rdi = ptr, rsi = stride. Live values kept in
+// callee-saved regs across the __fern_rc_dec calls: rbx = ptr,
+// r12 = len, r13 = i, r14 = stride.
+func (g *generator) emitDropArrPtrRuntime() {
+	g.line("")
+	g.line(".globl __fern_drop_arr_ptr")
+	g.line(".type __fern_drop_arr_ptr, @function")
+	g.label("__fern_drop_arr_ptr")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	// rsp is now 16-aligned at the call sites below.
+	g.emit("mov rbx, rdi") // rbx = ptr
+	g.emit("mov r14, rsi") // r14 = stride
+	// NULL guard.
+	g.emit("test rbx, rbx")
+	g.emit("jz .Ldrop_ret_ptr")
+	// Low-address guard — mirror __fern_rc_dec. The exit dec sweep
+	// can visit array-typed slots that actually hold a non-pointer
+	// (an enum tag, a small i32, stack garbage from a never-taken
+	// branch's Var decl). Reading [ptr-8] / [ptr-4] on such a value
+	// would fault; treat the low 64 KiB as "not a heap object".
+	g.emit("cmp rbx, 0x10000")
+	g.emit("jb .Ldrop_ret_ptr")
+	// Static-sentinel guard: high bit of rc word set ⇒ never recurse.
+	g.emit("mov ecx, dword ptr [rbx - 8]")
+	g.emit("test ecx, ecx")
+	g.emit("js .Ldrop_ret_ptr")
+	// Only the last reference walks elements (rc == 1).
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Ldrop_decarr")
+	g.emit("mov r12d, dword ptr [rbx - 4]") // r12 = len
+	g.emit("xor r13, r13")                  // i = 0
+	g.label(".Ldrop_loop")
+	g.emit("cmp r13, r12")
+	g.emit("jge .Ldrop_decarr")
+	// rdi = mem[ptr + i*stride] (8-byte element load).
+	g.emit("mov rax, r13")
+	g.emit("imul rax, r14")
+	g.emit("mov rdi, qword ptr [rbx + rax]")
+	g.emit("call __fern_rc_dec")
+	g.emit("inc r13")
+	g.emit("jmp .Ldrop_loop")
+	g.label(".Ldrop_decarr")
+	// Dec the array itself; __fern_rc_dec returns the ptr in rax.
+	g.emit("mov rdi, rbx")
+	g.emit("call __fern_rc_dec")
+	g.emit("jmp .Ldrop_done")
+	g.label(".Ldrop_ret_ptr")
+	g.emit("mov rax, rbx")
+	g.label(".Ldrop_done")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_drop_arr_ptr, .-__fern_drop_arr_ptr")
 }
 
 // emitStrcatRuntime emits `__fern_strcat(a, b)` — concat two
