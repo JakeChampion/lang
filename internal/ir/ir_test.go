@@ -537,34 +537,26 @@ function main(): i32 {
     return s.len();
 }`
 	// ptrW=8 (native). Pair-form Option[string] generic-position
-	// call reboxes into a 16-byte heap box, payload at +8 — the
-	// natural alignment for the 8-byte pointer-payload store.
+	// call reboxes into a heap box: 16-byte payload area (payload
+	// at +8, the natural alignment for the 8-byte pointer payload)
+	// plus the Phase 1e-enums-ii 8-byte rc header → 24-byte alloc.
 	prog := lowerSourceWith(t, src, 8)
 	fn := findFunc(prog, "main")
 	if fn == nil {
 		t.Fatal("main not found")
 	}
-	if !rebox16BytePresent(fn.Ops) {
-		t.Errorf("ptrW=8 rebox must alloc 16 bytes (Option[string] payload = 8-byte pointer on natives):\n%s", prog)
+	if !reboxAllocSizePresent(fn.Ops, 24) {
+		t.Errorf("ptrW=8 rebox must alloc 24 bytes (16-byte Option[string] box + 8-byte rc header):\n%s", prog)
 	}
 }
 
-func rebox8BytePresent(ops []Op) bool {
-	// Find an `OpConstI32 8` immediately followed by `OpAlloc` —
-	// the rebox's `boxSize` const + alloc shape. There are other
-	// 8-byte alloc sites (Some-wrapper, Map V-box, …) so this
-	// is a presence check, not a uniqueness check.
+func reboxAllocSizePresent(ops []Op, size int32) bool {
+	// Find an `OpConstI32 size` immediately followed by `OpAlloc` —
+	// the rebox's `boxSize + rcHeaderBytes` const + alloc shape.
+	// There are other alloc sites, so this is a presence check,
+	// not a uniqueness check.
 	for i := 0; i+1 < len(ops); i++ {
-		if ops[i].Kind == OpConstI32 && ops[i].I32 == 8 && ops[i+1].Kind == OpAlloc {
-			return true
-		}
-	}
-	return false
-}
-
-func rebox16BytePresent(ops []Op) bool {
-	for i := 0; i+1 < len(ops); i++ {
-		if ops[i].Kind == OpConstI32 && ops[i].I32 == 16 && ops[i+1].Kind == OpAlloc {
+		if ops[i].Kind == OpConstI32 && ops[i].I32 == size && ops[i+1].Kind == OpAlloc {
 			return true
 		}
 	}

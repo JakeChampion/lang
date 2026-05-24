@@ -326,7 +326,17 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		if off, ok := enumSentinels[tag]; ok {
 			return off
 		}
-		off := stringNextOff
+		// Phase 1e-enums-ii: an 8-byte rc header precedes the tag
+		// cell (rc=0x80000000 at [data-8], pad at [data-4]) so the
+		// __lang_rc_inc/dec helpers short-circuit on the high bit
+		// once the enum-ii predicate widening starts dec'ing enum
+		// locals that hold a payloadless variant. The returned
+		// offset still points at the tag, so OpMatchTag's
+		// `[ptr + 0]` load is unchanged.
+		dataBytes = append(dataBytes,
+			0x00, 0x00, 0x00, 0x80, // rc = 0x80000000 (LE)
+			0x00, 0x00, 0x00, 0x00) // pad
+		off := stringNextOff + 8
 		enumSentinels[tag] = off
 		// Append 4 LE bytes for the tag value.
 		dataBytes = append(dataBytes,

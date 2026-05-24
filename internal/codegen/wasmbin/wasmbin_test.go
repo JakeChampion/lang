@@ -2280,8 +2280,12 @@ func TestEmitEnumSentinelInterning(t *testing.T) {
 	if len(segs) != 1 {
 		t.Fatalf("expected 1 data segment, got %d", len(segs))
 	}
-	if len(segs[0]) != 8 {
-		t.Fatalf("segment size = %d, want 8 (two unique cells)", len(segs[0]))
+	// Two unique tags, each a 12-byte cell: an 8-byte rc header
+	// (Phase 1e-enums-ii static sentinel 0x80000000 + pad) followed
+	// by the 4-byte tag. The repeated tag 0 in func `c` interns to
+	// the same cell, so 2 cells × 12 = 24 bytes.
+	if len(segs[0]) != 24 {
+		t.Fatalf("segment size = %d, want 24 (two 12-byte cells: 8-byte rc header + 4-byte tag)", len(segs[0]))
 	}
 	if got := runUnderWasmtime(t, bin, "a"); got != "0" {
 		t.Fatalf("a = %q, want 0", got)
