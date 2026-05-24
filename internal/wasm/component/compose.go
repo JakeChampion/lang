@@ -15,23 +15,30 @@ package component
 //
 // It currently subsumes: structured-only (exit/random/monotonic),
 // print/eprint, read_line, read_line+print, the read_file open-chain
-// (get-directories → open-at → read-via-stream → blocking-read), and
+// (get-directories → open-at → read-via-stream → blocking-read), the
+// write_file open-chain (… → write-via-stream → blocking-write), and
 // any mix of those — including new combinations the bespoke wraps
-// never covered (read_line+exit, read_file+print, read_file+exit,
-// eprint+monotonic, ...). The write_file open-chain, open_* and TCP
-// stay on their own wraps for now.
+// never covered (read_line+exit, read_file+print, write_file+exit,
+// write_file+print, eprint+monotonic, ...). read_file and write_file
+// in one program (both descriptor stream directions) plus open_* and
+// TCP stay on their own wraps for now.
 
 // ComposeOpts describes the CLI-stream + structured imports a core
 // module needs. WriteGetter is "get-stdout", "get-stderr", or "" (no
 // write side); ReadStdin enables the stdin read side; FileRead
 // enables the read_file open-chain (get-directories → open-at →
-// read-via-stream → input-stream.blocking-read); Structured lists
-// the no-memory structured imports (exit/random/monotonic) in the
-// order they should appear.
+// read-via-stream → input-stream.blocking-read); FileWrite enables
+// the write_file open-chain (get-directories → open-at →
+// write-via-stream → output-stream.blocking-write-and-flush);
+// Structured lists the no-memory structured imports
+// (exit/random/monotonic) in the order they should appear. FileRead
+// and FileWrite are mutually exclusive (the filesystem/types
+// instance type carries one descriptor method direction).
 type ComposeOpts struct {
 	WriteGetter string
 	ReadStdin   bool
 	FileRead    bool
+	FileWrite   bool
 	Structured  []WasiImport
 }
 
@@ -52,6 +59,7 @@ const (
 	composeGetDirsName    = "get-directories"
 	composeOpenAtName     = "[method]descriptor.open-at"
 	composeReadViaName    = "[method]descriptor.read-via-stream"
+	composeWriteViaName   = "[method]descriptor.write-via-stream"
 )
 
 type p2composer struct {
@@ -187,19 +195,32 @@ func (c *p2composer) structuredType(imp WasiImport) uint32 {
 
 // ComposePreview2CliRun builds a wasi:cli/run component for a core
 // module that imports any mix of CLI-stream functions (stdout/stderr
-// write via print, stdin read via read_line), the read_file
-// open-chain (FileRead), and no-memory structured functions
-// (exit/random/monotonic). coreExportName is the lifted run entry
-// (e.g. "_lang_run").
+// write via print, stdin read via read_line), the read_file /
+// write_file open-chains (FileRead / FileWrite), and no-memory
+// structured functions (exit/random/monotonic). coreExportName is the
+// lifted run entry (e.g. "_lang_run").
 func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName string) []byte {
-	hasWrite := opts.WriteGetter != ""
+	hasWriteGetter := opts.WriteGetter != ""
 	hasStdin := opts.ReadStdin
 	hasFileRead := opts.FileRead
+	hasFileWrite := opts.FileWrite
 	// blocking-read on input-stream backs both stdin reads and the
-	// read_file open-chain, so the io/streams read side is needed when
-	// either is present; cli/stdin is only for stdin reads.
+	// read_file open-chain; blocking-write-and-flush on output-stream
+	// backs both print/eprint and the write_file open-chain. cli/stdin
+	// and cli/std{out,err} are only for the stdin / print sides.
 	hasInputStream := hasStdin || hasFileRead
-	needStreams := hasWrite || hasInputStream
+	hasOutputStream := hasWriteGetter || hasFileWrite
+	// get-directories + open-at + (read|write)-via-stream + the
+	// filesystem/types + preopens instances.
+	hasFile := hasFileRead || hasFileWrite
+	needStreams := hasOutputStream || hasInputStream
+	// blocking-read and get-directories both return lists → realloc.
+	needRealloc := hasInputStream || hasFile
+	// Which descriptor stream method the file open-chain uses.
+	viaName := composeReadViaName
+	if hasFileWrite {
+		viaName = composeWriteViaName
+	}
 
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
@@ -213,16 +234,16 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 		var streamsBody []byte
 		switch {
-		case hasWrite && hasInputStream:
+		case hasOutputStream && hasInputStream:
 			streamsBody = WasiIoStreamsReadWriteInstanceTypeBody(tErrAlias)
-		case hasWrite:
+		case hasOutputStream:
 			streamsBody = WasiIoStreamsInstanceTypeBody(tErrAlias)
 		default:
 			streamsBody = WasiIoStreamsReadInstanceTypeBody(tErrAlias)
 		}
 		tStreams := c.typeRaw(streamsBody)
 		streamsInst = c.importInstance("wasi:io/streams@0.2.0", tStreams)
-		if hasWrite {
+		if hasOutputStream {
 			tOut = c.aliasType(streamsInst, "output-stream")
 		}
 		if hasInputStream {
@@ -230,13 +251,20 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		}
 	}
 
-	// Filesystem read path: import wasi:filesystem/types (read body,
-	// referencing input-stream) then wasi:filesystem/preopens
-	// (referencing the descriptor that types exports). Emitted right
-	// after io/streams so the input-stream alias (tIn) is in scope.
+	// Filesystem open path: import wasi:filesystem/types (read or
+	// write body, referencing input-stream / output-stream) then
+	// wasi:filesystem/preopens (referencing the descriptor that types
+	// exports). Emitted right after io/streams so the stream aliases
+	// (tIn / tOut) are in scope.
 	var fsTypesInst, preopensInst uint32
-	if hasFileRead {
-		tFsTypes := c.typeRaw(WasiFilesystemTypesReadPathInstanceTypeBody(tIn))
+	if hasFile {
+		var fsBody []byte
+		if hasFileWrite {
+			fsBody = WasiFilesystemTypesWritePathInstanceTypeBody(tOut)
+		} else {
+			fsBody = WasiFilesystemTypesReadPathInstanceTypeBody(tIn)
+		}
+		tFsTypes := c.typeRaw(fsBody)
 		fsTypesInst = c.importInstance("wasi:filesystem/types@0.2.0", tFsTypes)
 		tDesc := c.aliasType(fsTypesInst, "descriptor")
 		tPreopens := c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc))
@@ -245,7 +273,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 	var cliWInst, cliRInst uint32
 	var cliWInterface string
-	if hasWrite {
+	if hasWriteGetter {
 		var body []byte
 		if opts.WriteGetter == "get-stderr" {
 			body = WasiCliStderrInstanceTypeBody(tOut)
@@ -272,7 +300,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	userMod := c.coreModule(coreBytes)
 	var trampWMod, fixupWMod, trampRMod, fixupRMod uint32
 	var trampDirsMod, fixupDirsMod, trampOpenMod, fixupOpenMod, trampViaMod, fixupViaMod uint32
-	if hasWrite {
+	if hasOutputStream {
 		trampWMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockWriteParams))
 		fixupWMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockWriteParams))
 	}
@@ -280,11 +308,13 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		trampRMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockReadParams))
 		fixupRMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockReadParams))
 	}
-	if hasFileRead {
+	if hasFile {
 		trampDirsMod = c.coreModule(TrampolineModuleForParamsNoResult(composeGetDirsParams))
 		fixupDirsMod = c.coreModule(FixupModuleForParamsNoResult(composeGetDirsParams))
 		trampOpenMod = c.coreModule(TrampolineModuleForParamsNoResult(composeOpenAtParams))
 		fixupOpenMod = c.coreModule(FixupModuleForParamsNoResult(composeOpenAtParams))
+		// read-via-stream and write-via-stream share the (self, offset,
+		// ret_ptr) shape.
 		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(composeReadViaParams))
 		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(composeReadViaParams))
 	}
@@ -292,13 +322,13 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// --- Phase C: instantiate trampolines. ---
 	var trampWInst, trampRInst uint32
 	var trampDirsInst, trampOpenInst, trampViaInst uint32
-	if hasWrite {
+	if hasOutputStream {
 		trampWInst = c.instantiate(trampWMod)
 	}
 	if hasInputStream {
 		trampRInst = c.instantiate(trampRMod)
 	}
-	if hasFileRead {
+	if hasFile {
 		trampDirsInst = c.instantiate(trampDirsMod)
 		trampOpenInst = c.instantiate(trampOpenMod)
 		trampViaInst = c.instantiate(trampViaMod)
@@ -309,7 +339,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	var argNames []string
 	var argInsts []uint32
 
-	if hasWrite {
+	if hasWriteGetter {
 		cf := c.aliasInstFunc(cliWInst, opts.WriteGetter)
 		coreF := c.lowerNoOpts(cf)
 		wrap := c.coreInstOneFunc(opts.WriteGetter, coreF)
@@ -333,8 +363,8 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 	// Filesystem args package the open-chain trampoline placeholders:
 	// preopens {get-directories} and filesystem/types
-	// {open-at, read-via-stream} (all fixed up after user inst).
-	if hasFileRead {
+	// {open-at, read|write-via-stream} (all fixed up after user inst).
+	if hasFile {
 		dirsTramp := c.aliasCoreFunc(trampDirsInst, "0")
 		preopensArg := c.coreInstOneFunc(composeGetDirsName, dirsTramp)
 		argNames = append(argNames, "wasi:filesystem/preopens@0.2.0")
@@ -344,7 +374,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		viaTramp := c.aliasCoreFunc(trampViaInst, "0")
 		typesArg := c.coreInstExports([]CoreInstanceExport{
 			{Name: composeOpenAtName, Sort: CoreSortFunc, Idx: openTramp},
-			{Name: composeReadViaName, Sort: CoreSortFunc, Idx: viaTramp},
+			{Name: viaName, Sort: CoreSortFunc, Idx: viaTramp},
 		})
 		argNames = append(argNames, "wasi:filesystem/types@0.2.0")
 		argInsts = append(argInsts, typesArg)
@@ -354,7 +384,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// whichever stream methods are used (fixed up after user inst).
 	if needStreams {
 		var exports []CoreInstanceExport
-		if hasWrite {
+		if hasOutputStream {
 			tf := c.aliasCoreFunc(trampWInst, "0")
 			exports = append(exports, CoreInstanceExport{Name: composeBlockWriteName, Sort: CoreSortFunc, Idx: tf})
 		}
@@ -378,16 +408,16 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	}
 	// blocking-read + get-directories return lists → their canon-lower
 	// needs realloc.
-	if hasInputStream {
+	if needRealloc {
 		reallocFunc = c.aliasReallocFunc(userInst)
 	}
-	if hasWrite {
+	if hasOutputStream {
 		tableW = c.aliasTable(trampWInst)
 	}
 	if hasInputStream {
 		tableR = c.aliasTable(trampRInst)
 	}
-	if hasFileRead {
+	if hasFile {
 		tableDirs = c.aliasTable(trampDirsInst)
 		tableOpen = c.aliasTable(trampOpenInst)
 		tableVia = c.aliasTable(trampViaInst)
@@ -396,7 +426,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// --- Phase G: memory-dependent lowers. ---
 	var writeCoreF, readCoreF uint32
 	var dirsCoreF, openCoreF, viaCoreF uint32
-	if hasWrite {
+	if hasOutputStream {
 		cf := c.aliasInstFunc(streamsInst, composeBlockWriteName)
 		writeCoreF = c.lowerMem(cf)
 	}
@@ -404,14 +434,14 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		cf := c.aliasInstFunc(streamsInst, composeBlockReadName)
 		readCoreF = c.lowerMemRealloc(cf, reallocFunc)
 	}
-	if hasFileRead {
+	if hasFile {
 		// get-directories returns a list → realloc; open-at +
-		// read-via-stream need memory only.
+		// read/write-via-stream need memory only.
 		cfDirs := c.aliasInstFunc(preopensInst, composeGetDirsName)
 		dirsCoreF = c.lowerMemRealloc(cfDirs, reallocFunc)
 		cfOpen := c.aliasInstFunc(fsTypesInst, composeOpenAtName)
 		openCoreF = c.lowerMem(cfOpen)
-		cfVia := c.aliasInstFunc(fsTypesInst, composeReadViaName)
+		cfVia := c.aliasInstFunc(fsTypesInst, viaName)
 		viaCoreF = c.lowerMem(cfVia)
 	}
 
@@ -423,13 +453,13 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		})
 		c.instantiateArgs(mod, []string{""}, []uint32{arg})
 	}
-	if hasWrite {
+	if hasOutputStream {
 		fixup(fixupWMod, tableW, writeCoreF)
 	}
 	if hasInputStream {
 		fixup(fixupRMod, tableR, readCoreF)
 	}
-	if hasFileRead {
+	if hasFile {
 		fixup(fixupDirsMod, tableDirs, dirsCoreF)
 		fixup(fixupOpenMod, tableOpen, openCoreF)
 		fixup(fixupViaMod, tableVia, viaCoreF)

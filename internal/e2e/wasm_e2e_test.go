@@ -9749,6 +9749,77 @@ func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliComposedFileWrite exercises the
+// composer's filesystem-write fold: write_file's open-chain
+// (get-directories → open-at → write-via-stream →
+// output-stream.blocking-write-and-flush) combined with a
+// stream/structured side. write_file+print notably shares one
+// blocking-write-and-flush lowering between the file's output-stream
+// and stdout's. Both combos errored under -component-wrap-cli before
+// the fold.
+func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	build := func(name, src string) string {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		return compPath
+	}
+
+	// write_file + exit: write "composed!\n", exit 0 on success.
+	wfe := build("wfe", `function main(): i32 {
+    match (write_file("wfe_out.txt", "composed!\n")) {
+        Some(e) => { exit(2); return 2; },
+        None => { exit(0); return 0; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, wfe).Run(); err != nil {
+		t.Errorf("write_file+exit: want exit 0, got %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "wfe_out.txt")); err != nil || string(got) != "composed!\n" {
+		t.Errorf("write_file+exit wrote %q (err %v), want %q", got, err, "composed!\n")
+	}
+
+	// write_file + print: writes a file AND prints a status; both use
+	// the shared blocking-write-and-flush. stdout = "ok", file = "data\n".
+	wfp := build("wfp", `function main(): i32 {
+    match (write_file("wfp_out.txt", "data\n")) {
+        Some(e) => { print("fail"); return 2; },
+        None => { print("ok"); return 0; }
+    }
+    return 5;
+}`)
+	cmd := exec.Command("wasmtime", "run", "--dir", dir, wfp)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Errorf("write_file+print: want exit 0, got %v", err)
+	}
+	if out.String() != "ok\n" {
+		t.Errorf("write_file+print stdout = %q, want %q", out.String(), "ok\n")
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "wfp_out.txt")); err != nil || string(got) != "data\n" {
+		t.Errorf("write_file+print wrote %q (err %v), want %q", got, err, "data\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithStdinReadLine drives the Reader
 // streaming API — stdin().read_line() — through `-component-wrap-cli`.
 // Preview-2 has no fds, so the stdin Reader holds the get-stdin
