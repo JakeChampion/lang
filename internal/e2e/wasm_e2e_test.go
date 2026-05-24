@@ -10008,6 +10008,59 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithOpenWriter drives the file Writer
+// API — open_writer(path) then Writer.write — through
+// `-component-wrap-cli`. Preview-2 has no fds: open_writer opens via
+// get-directories → open-at(create|truncate) → write-via-stream and
+// stores the output-stream handle in the Writer; write
+// blocking-write-and-flushes on it. The import set (open chain +
+// blocking-write-and-flush) matches the write-file route.
+func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "ow.fern")
+	src := []byte(`function main(): i32 {
+    match (open_writer("out.txt")) {
+        Ok(w) => {
+            match (w.write("hello world\n")) {
+                Some(e) => { return 2; },
+                None => { return 0; }
+            }
+            return 4;
+        },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "ow.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (open_writer) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Errorf("open_writer.write: wasmtime run failed (want exit 0): %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read out.txt: %v", err)
+	}
+	if string(got) != "hello world\n" {
+		t.Errorf("out.txt = %q, want %q", string(got), "hello world\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the
