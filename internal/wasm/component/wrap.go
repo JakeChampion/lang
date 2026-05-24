@@ -528,14 +528,37 @@ func WrapWasiEprintAsCliRun(coreBytes []byte, coreExportName string) []byte {
 // stdout and stderr wraps leave the index spaces in the same
 // state (component types 5, component funcs 2, component
 // instances 3, core funcs 3, core instances 6), so the tail is
-// shared.
+// shared. The run export is core func 3 (the first func after the
+// three lowers).
 func appendCliRunExport(buf []byte, coreExportName string) []byte {
+	return appendCliRunExportAt(buf, coreExportName, 3)
+}
+
+// appendCliRunExportAt is the core-func-index-parameterised
+// appendCliRunExport. `runCoreFuncIdx` is the index the run
+// export's core func lands at — i.e. the count of core funcs the
+// wrap already defined (3 for the write/print wrap, 4 for the read
+// wrap, which has an extra cabi_realloc alias). The component-level
+// indices (type 5/6, component func 2, instance 3) are the same
+// across these wraps, so only the lifted core func index varies.
+func appendCliRunExportAt(buf []byte, coreExportName string, runCoreFuncIdx uint32) []byte {
 	buf = PutAliasSectionCoreExportFunc(buf, 3, coreExportName)
 	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 5)
-	buf = PutCanonSectionLiftNoOpts(buf, 3, 6)
+	buf = PutCanonSectionLiftNoOpts(buf, runCoreFuncIdx, 6)
 	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 2)
 	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 3)
 	return buf
+}
+
+// WrapWasiReadAsCliRun extends WrapWasiReadComponent with a
+// `wasi:cli/run@0.2.0` export so the produced component runs under
+// plain `wasmtime run prog.wasm`. Like WrapWasiPrintAsCliRun but
+// for the read wrap, whose index spaces match the write wrap
+// except for one extra core func (the cabi_realloc alias) — so the
+// run export lifts core func 4 instead of 3.
+func WrapWasiReadAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiReadComponent(coreBytes)
+	return appendCliRunExportAt(buf, coreExportName, 4)
 }
 
 // WrapWasiWallClockComponent wraps a core module that imports
