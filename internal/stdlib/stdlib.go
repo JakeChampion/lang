@@ -15,7 +15,7 @@
 //
 // Resolve treats the import path as a filesystem-style path rooted
 // at this package's `embed` (so `std/i32` maps to
-// `internal/stdlib/std/i32.lang`). The `.lang` extension is appended
+// `internal/stdlib/std/i32.fern`). The `.fern` extension is appended
 // automatically if missing, mirroring the disk resolver in modload.
 //
 // See docs/PRELUDE-TO-MODULES.md for the migration plan that drives
@@ -30,8 +30,8 @@ import (
 
 // `all:` is required so go:embed includes files / directories
 // whose names start with `_` or `.` (default embed semantics skip
-// them). The Phase 1 test fixtures live at `std/_test_empty.lang`
-// and `core/_test_empty.lang`; dropping `all:` would silently
+// them). The Phase 1 test fixtures live at `std/_test_empty.fern`
+// and `core/_test_empty.fern`; dropping `all:` would silently
 // exclude them.
 //
 //go:embed all:std all:core
@@ -50,8 +50,8 @@ func Resolve(importPath string) (string, bool) {
 		return "", false
 	}
 	fsPath := importPath
-	if !strings.HasSuffix(fsPath, ".lang") {
-		fsPath += ".lang"
+	if !strings.HasSuffix(fsPath, ".fern") {
+		fsPath += ".fern"
 	}
 	data, err := fs.ReadFile(src, fsPath)
 	if err != nil {
@@ -69,7 +69,7 @@ func IsStdlibPath(importPath string) bool {
 }
 
 // FS returns the embedded filesystem so tooling can iterate the
-// stdlib tree (cmd/langdoc uses this to enumerate std/*.lang for
+// stdlib tree (cmd/ferndoc uses this to enumerate std/*.fern for
 // reference-page generation). Read-only by virtue of embed.FS;
 // callers that mutate the result would get a runtime panic.
 func FS() fs.FS { return src }

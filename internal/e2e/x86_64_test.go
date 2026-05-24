@@ -79,7 +79,7 @@ func compileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 	// skipped modload's rewriter entirely. Mirrors the same
 	// refactor in `compileAndRunArm64`.
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.lang")
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}

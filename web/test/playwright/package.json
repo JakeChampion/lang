@@ -1,7 +1,7 @@
 {
   "name": "lang-playground-playwright",
   "version": "0.0.0",
-  "description": "Scripted browser regressions for the lang playground.",
+  "description": "Scripted browser regressions for the Fern playground.",
   "private": true,
   "scripts": {
     "test": "playwright test",

@@ -53,7 +53,7 @@ The codebase has tentative answers for all three:
    stdlib (`tcp_serve` etc.) plus the auto-prelude.
 2. Per-handler-invocation lifecycle. The arena is reset
    between requests (see comment in
-   `examples/wasm/echo_handler.lang`).
+   `examples/wasm/echo_handler.fern`).
 3. Trap → process exit on native; trap → component instance
    destroyed on wasi-http. No structured recovery yet.
 
@@ -64,7 +64,7 @@ preserve, so the migration cost is internal-only.
 
 ## What we already do well — call out so we don't drift
 
-- **One source, many targets.** `echo_handler.lang` compiles
+- **One source, many targets.** `echo_handler.fern` compiles
   to a wasi-http component, a Linux arm64 ELF, and (by
   inference from `BACKEND-PARITY.md`) an arm64-darwin Mach-O.
   This is the *correct* posture: the handler signature is the
@@ -76,7 +76,7 @@ preserve, so the migration cost is internal-only.
   8080), handle); }`. This is the right ergonomic — handler
   code is a half-line; the noise lives in the platform.
 - **Per-handler arena, automatically inserted.** Comment in
-  `examples/wasm/echo_handler.lang`: "all the strings the
+  `examples/wasm/echo_handler.fern`: "all the strings the
   handler builds get reclaimed at handler-return." Matches
   Roc's Task-based isolation by construction. Strong default.
 - **Limits-on-everything in the prelude HTTP parser.**
@@ -178,7 +178,7 @@ the platform's lifecycle.
   verifies the application stays within them. Sketch:
 
   ```
-  // platform/wasi-http/platform.lang
+  // platform/wasi-http/platform.fern
   pub platform "wasi-http" {
       capabilities {
           fetch: (HttpRequest) -> Task[HttpResponse, FetchError],
@@ -191,7 +191,7 @@ the platform's lifecycle.
       }
   }
 
-  // user.lang
+  // user.fern
   function handle(req: HttpRequest, plat: Platform): HttpResponse {
       var maybe_session = plat.kv.get("session:" + req.cookie).await;
       // …
@@ -833,7 +833,7 @@ A per-target file declaring:
 - Bindings consumed (kv namespaces, service bindings,
   config dictionaries).
 
-Lives at `internal/platforms/<target>/platform.lang` (or
+Lives at `internal/platforms/<target>/platform.fern` (or
 `.toml` — see below). The compiler reads it during
 `-target=...` resolution and generates the per-target
 `Platform` struct + glue.
@@ -924,7 +924,7 @@ defining only some handlers gets only those exports.
 
 **Cost: 2 weeks.** **Impact: high for test ergonomics; the
 test runner is already pure-lang per
-`internal/stdlib/std/test.lang`.**
+`internal/stdlib/std/test.fern`.**
 
 `MockPlatform` is a `Platform` impl that records every
 effect call and returns canned responses:

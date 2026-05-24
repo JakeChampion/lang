@@ -5,13 +5,13 @@ sidebar:
   order: 3
 ---
 
-## Compiler — `lang`
+## Compiler — `fern`
 
 ```bash
-lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] FILE.lang
-lang -fmt [-w | -d] FILE.lang
-lang -interp FILE.lang
-lang -repl
+fern [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] FILE.fern
+fern -fmt [-w | -d] FILE.fern
+fern -interp FILE.fern
+fern -repl
 ```
 
 ### Common flags
@@ -28,19 +28,19 @@ lang -repl
 
 ## Formatter
 
-`lang -fmt` rewrites a file to the canonical style: two-space
+`fern -fmt` rewrites a file to the canonical style: two-space
 indent, one statement per line, trailing newline at EOF.
 Comments survive the round trip in their original position.
 
 ```bash
-lang -fmt -w foo.lang   # rewrite in place
-lang -fmt -d foo.lang   # show the diff instead
+fern -fmt -w foo.fern   # rewrite in place
+fern -fmt -d foo.fern   # show the diff instead
 ```
 
-The formatter is idempotent: `lang -fmt | lang -fmt` produces
+The formatter is idempotent: `fern -fmt | fern -fmt` produces
 identical output.
 
-## Language server — `lang-lsp`
+## Language server — `fern-lsp`
 
 Speaks LSP over stdin/stdout. Spawn it from any editor with a
 generic LSP client.
@@ -73,15 +73,15 @@ cd editors/vscode
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension lang-vscode-0.1.0.vsix
+code --install-extension fern-vscode-0.1.0.vsix
 ```
 
-Set `lang.serverPath` if `lang-lsp` isn't on your `$PATH`.
+Set `fern.serverPath` if `fern-lsp` isn't on your `$PATH`.
 
 ## REPL
 
 ```bash
-lang -repl
+fern -repl
 > var x = 7;
 > x * 2
 14
@@ -93,13 +93,13 @@ reads until braces balance.
 
 ## Running tests
 
-lang's pure-Lang test runner lives in [`std/test`](../../stdlib/test/).
-Tests are ordinary `.lang` files — run them with `-interp` (or
+Fern's pure-Fern test runner lives in [`std/test`](../../stdlib/test/).
+Tests are ordinary `.fern` files — run them with `-interp` (or
 compile + execute the produced binary):
 
 ```bash
-lang -interp my_test.lang        # AST interpreter
-lang my_test.lang -o my_test --run   # compile + run
+fern -interp my_test.fern        # AST interpreter
+fern my_test.fern -o my_test --run   # compile + run
 ```
 
 Output is [TAP-13](https://testanything.org/). Exit code is `0`

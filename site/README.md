@@ -1,4 +1,4 @@
-# lang docs site
+# Fern docs site
 
 Astro + Starlight build of the documentation that publishes to
 GitHub Pages at the repo root, with the playground bundled at
@@ -17,8 +17,8 @@ site/
 │   │   ├── reference/*.md      Syntax, types, tooling
 │   │   └── stdlib/*.md         Auto-generated (gitignored)
 │   ├── components/
-│   │   └── LangPlayground.astro  Embedded playground iframe
-│   └── styles/lang.css         Brand accent overrides
+│   │   └── FernPlayground.astro  Embedded playground iframe
+│   └── styles/fern.css         Brand accent overrides
 └── public/playground/          Playground bundle (gitignored,
                                   copied in at build time)
 ```
@@ -32,10 +32,10 @@ npm install
 # Build the playground bundle once + stage it under public/.
 ( cd .. && ./web/build.sh )
 mkdir -p public/playground
-cp -L ../web/index.html ../web/wasm_exec.js ../web/lang.wasm public/playground/
+cp -L ../web/index.html ../web/wasm_exec.js ../web/fern.wasm public/playground/
 
 # Generate the stdlib reference pages.
-go run ../cmd/langdoc -out src/content/docs/stdlib/
+go run ../cmd/ferndoc -out src/content/docs/stdlib/
 
 # Run the dev server (live-reload on .md changes).
 npm run dev
@@ -61,9 +61,9 @@ or the stdlib.
 title: My page
 ---
 
-import LangPlayground from "../../components/LangPlayground.astro";
+import FernPlayground from "../../components/FernPlayground.astro";
 
-<LangPlayground
+<FernPlayground
   code={`function main(): i32 {
     print("hello");
     return 0;
@@ -86,12 +86,12 @@ so URLs are interchangeable.
 
 ## Stdlib reference is auto-generated
 
-`cmd/langdoc` parses `internal/stdlib/std/*.lang` for every public
+`cmd/ferndoc` parses `internal/stdlib/std/*.fern` for every public
 declaration + the doc comment immediately above it, then emits
 one Markdown page per module. The output lives under
 `src/content/docs/stdlib/` and is gitignored — committing it
 would put generated content under review with no source-of-truth.
 
 If you want to expand or correct the reference, edit the doc
-comments in the source `.lang` files. The next build will pick
+comments in the source `.fern` files. The next build will pick
 them up.

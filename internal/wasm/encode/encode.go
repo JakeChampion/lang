@@ -1,5 +1,5 @@
 // Package encode is the Go-side mirror of
-// internal/stdlib/std/wasm/encode.lang — container-level
+// internal/stdlib/std/wasm/encode.fern — container-level
 // binary writers for the WebAssembly Core 1.0 binary format.
 //
 // Spec: https://webassembly.github.io/spec/core/binary/modules.html

@@ -6,7 +6,7 @@
 //
 // Module identity is path-derived: the local name a qualified call
 // uses (`mod.fn(args)`) comes from the import path's basename
-// without the `.lang` extension. `import "./math/vec";` binds the
+// without the `.fern` extension. `import "./math/vec";` binds the
 // remote module as `vec` in the importing file.
 //
 // Names from non-entry modules are mangled to `<mod>__<name>` so
@@ -192,7 +192,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 }
 
 // module bundles a parsed file with its canonical path and the
-// derived module name (basename without `.lang`).
+// derived module name (basename without `.fern`).
 type module struct {
 	path    string
 	name    string
@@ -380,20 +380,20 @@ func resolveCyclicImports(loaded map[string]*module) {
 // imports the key is the absolute filesystem path; for stdlib
 // imports (paths prefixed with `std/` or `core/`) the key is a
 // `stdlib://…` URI so the loader knows to fetch source from the
-// embedded FS instead of the disk. We auto-append `.lang` if the
+// embedded FS instead of the disk. We auto-append `.fern` if the
 // import path doesn't already include the extension, so users
 // can write either form.
 func resolveImportPath(importingDir, importPath string) string {
 	if stdlib.IsStdlibPath(importPath) {
 		key := importPath
-		if !strings.HasSuffix(key, ".lang") {
-			key += ".lang"
+		if !strings.HasSuffix(key, ".fern") {
+			key += ".fern"
 		}
 		return stdlibPrefix + key
 	}
 	resolved := filepath.Join(importingDir, importPath)
 	if filepath.Ext(resolved) == "" {
-		resolved += ".lang"
+		resolved += ".fern"
 	}
 	abs, err := filepath.Abs(resolved)
 	if err != nil {
@@ -482,13 +482,13 @@ func importClosures(loaded map[string]*module) map[string]map[string]bool {
 
 // importLocalName mirrors the parser-side helper but is duplicated
 // here so the driver doesn't need to re-parse to compute it. Stdlib
-// path keys (`stdlib://std/i32.lang`) get their basename extracted
+// path keys (`stdlib://std/i32.fern`) get their basename extracted
 // the same way as disk paths — the `stdlib://` prefix doesn't
 // participate.
 func importLocalName(path string) string {
 	trimmed := strings.TrimPrefix(path, stdlibPrefix)
 	base := filepath.Base(trimmed)
-	if ext := filepath.Ext(base); ext == ".lang" {
+	if ext := filepath.Ext(base); ext == ".fern" {
 		base = base[:len(base)-len(ext)]
 	}
 	return base

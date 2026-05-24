@@ -16,7 +16,7 @@ func evalProgramValue(t *testing.T, src string) Value {
 }
 
 // evalProgram parses, type-checks, registers, and calls `main`.
-// Match the cmd/lang script-mode pipeline so method-call rewrites,
+// Match the cmd/fern script-mode pipeline so method-call rewrites,
 // FString desugaring, and variant-call IsVariantCall flags land
 // before interp dispatch — early tests had separate "checked" and
 // "parser-only" helpers because some checker features arrived

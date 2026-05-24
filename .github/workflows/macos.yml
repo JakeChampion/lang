@@ -58,7 +58,7 @@ on:
       # both backends use.
       - "internal/langstring/**"
       # Driver wiring + example surface.
-      - "cmd/lang/**"
+      - "cmd/fern/**"
       - "examples/**"
       # This workflow itself + go module declarations.
       - ".github/workflows/macos.yml"
@@ -105,17 +105,17 @@ jobs:
         run: go test -v -run TestArm64Darwin ./internal/e2e/
 
       - name: Compile + run every example for arm64-darwin
-        # Build each examples/*.lang via the driver, then actually
+        # Build each examples/*.fern via the driver, then actually
         # execute the Mach-O. Catches codegen regressions across
         # the example surface that wouldn't surface from the
         # targeted go-test alone (new IR ops, new builtins,
         # prelude changes).
         run: |
-          go build -o bin/lang ./cmd/lang
+          go build -o bin/fern ./cmd/fern
           mkdir -p build
-          for f in examples/*.lang; do
-            name=$(basename "$f" .lang)
-            ./bin/lang -target arm64-darwin -cc clang -o "build/$name" "$f"
+          for f in examples/*.fern; do
+            name=$(basename "$f" .fern)
+            ./bin/fern -target arm64-darwin -cc clang -o "build/$name" "$f"
             echo "::group::run $name"
             ./build/$name || echo "(exited $?)"
             echo "::endgroup::"

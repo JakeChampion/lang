@@ -128,7 +128,7 @@ func TestPublishDiagnostics_FirstPublishAlwaysFiresEvenWhenEmpty(t *testing.T) {
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
-				URI:        "file:///clean.lang",
+				URI:        "file:///clean.fern",
 				LanguageID: "lang",
 				Text:       src,
 			},
@@ -156,7 +156,7 @@ func TestPublishDiagnostics_DedupsIdentical(t *testing.T) {
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
-				URI:        "file:///d.lang",
+				URI:        "file:///d.fern",
 				LanguageID: "lang",
 				Text:       src,
 			},
@@ -166,7 +166,7 @@ func TestPublishDiagnostics_DedupsIdentical(t *testing.T) {
 	// Now send didChange with the SAME source — diagnostics
 	// shouldn't move.
 	var ch didChangeParams
-	ch.TextDocument.URI = "file:///d.lang"
+	ch.TextDocument.URI = "file:///d.fern"
 	ch.TextDocument.Version = 2
 	ch.ContentChanges = []contentChange{{Text: src}}
 	changeMsg, _ := json.Marshal(message{

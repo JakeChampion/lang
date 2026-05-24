@@ -15,11 +15,11 @@ import (
 // EnableWorkspace switches the server into workspace mode: file://
 // URIs are resolved through modload so cross-module imports load,
 // type-check, and contribute to symbol-table lookups. Non-file URIs
-// (file:///playground.lang from the wasm wrapper, opaque test URIs)
+// (file:///playground.fern from the wasm wrapper, opaque test URIs)
 // still use the single-file pipeline.
 //
-// Workspace mode requires filesystem access. cmd/lang-lsp enables
-// it by default; cmd/lang-wasm leaves it off because the browser
+// Workspace mode requires filesystem access. cmd/fern-lsp enables
+// it by default; cmd/fern-wasm leaves it off because the browser
 // can't read sibling files.
 func (s *Server) EnableWorkspace() { s.workspace = true }
 

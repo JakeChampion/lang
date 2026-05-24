@@ -33,7 +33,7 @@ import (
 func writeSelfHostDisasmProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "vm.lang", "disasm.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "vm.fern", "disasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -48,7 +48,7 @@ func writeSelfHostDisasmProject(t *testing.T) string {
 func TestSelfHostDisasmX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostDisasmProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "disasm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "disasm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSelfHostDisasmX86_64(t *testing.T) {
 func TestSelfHostDisasmArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostDisasmProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "disasm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "disasm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

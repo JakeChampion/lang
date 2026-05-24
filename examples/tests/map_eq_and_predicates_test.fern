@@ -1,0 +1,179 @@
+// examples/tests/map_eq_and_predicates_test.fern — batch 21
+// additions to std/test:
+//   * `assert_eq_map_i32_i32` / `_string_string` — full map
+//     deep equality (length + all-keys-with-matching-values).
+//   * `assert_all_i32` / `_string` — every element satisfies
+//     a `(T) => boolean` predicate. Vacuously holds on []
+//     (∀ over ∅).
+//   * `assert_any_i32` / `_string` — at least one element
+//     satisfies the predicate. Vacuously FAILS on [] (∃
+//     over ∅).
+
+function test_map_i32_eq_pass(): Option[string] {
+    var a: Map[i32, i32] = map_new(4);
+    a.set(1, 10); a.set(2, 20); a.set(3, 30);
+    var b: Map[i32, i32] = map_new(4);
+    b.set(3, 30); b.set(2, 20); b.set(1, 10); // insertion order differs
+    return assert_eq_map_i32_i32(a, b);
+}
+
+function test_map_i32_eq_length_mismatch(): Option[string] {
+    var a: Map[i32, i32] = map_new(4);
+    a.set(1, 10);
+    var b: Map[i32, i32] = map_new(4);
+    b.set(1, 10); b.set(2, 20);
+    match (assert_eq_map_i32_i32(a, b)) {
+        None => { return fail("expected length-mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("length differs")) {
+                return Some("expected 'length differs': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_map_i32_eq_value_mismatch(): Option[string] {
+    var a: Map[i32, i32] = map_new(4);
+    a.set(1, 10); a.set(2, 20);
+    var b: Map[i32, i32] = map_new(4);
+    b.set(1, 10); b.set(2, 99);
+    match (assert_eq_map_i32_i32(a, b)) {
+        None => { return fail("expected value-mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("at key 2")) {
+                return Some("expected 'at key 2': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_map_i32_eq_disjoint_keys_same_len(): Option[string] {
+    // Same length, different key sets — must fail.
+    var a: Map[i32, i32] = map_new(4);
+    a.set(1, 10);
+    var b: Map[i32, i32] = map_new(4);
+    b.set(2, 10);
+    match (assert_eq_map_i32_i32(a, b)) {
+        None => { return fail("disjoint same-length should fail"); },
+        Some(msg) => {
+            if (!msg.contains("missing from expected")) {
+                return Some("expected 'missing from expected': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_map_i32_eq_both_empty(): Option[string] {
+    var a: Map[i32, i32] = map_new(4);
+    var b: Map[i32, i32] = map_new(4);
+    return assert_eq_map_i32_i32(a, b);
+}
+
+function test_map_string_eq_pass(): Option[string] {
+    var a: Map[string, string] = map_new(4);
+    a.set("k1", "v1"); a.set("k2", "v2");
+    var b: Map[string, string] = map_new(4);
+    b.set("k2", "v2"); b.set("k1", "v1");
+    return assert_eq_map_string_string(a, b);
+}
+
+function test_map_string_eq_value_mismatch(): Option[string] {
+    var a: Map[string, string] = map_new(4);
+    a.set("k", "alpha");
+    var b: Map[string, string] = map_new(4);
+    b.set("k", "beta");
+    match (assert_eq_map_string_string(a, b)) {
+        None => { return fail("expected value-mismatch"); },
+        Some(_) => { return None; }
+    }
+}
+
+function is_positive(n: i32): boolean { return n > 0; }
+function is_even(n: i32): boolean { return n % 2 == 0; }
+
+function test_assert_all_i32_pass(): Option[string] {
+    return assert_all_i32([2, 4, 6, 8], is_even);
+}
+
+function test_assert_all_i32_inline_lambda(): Option[string] {
+    return assert_all_i32([1, 2, 3],
+                          function(n: i32): boolean { return n > 0; });
+}
+
+function test_assert_all_i32_fails_with_index(): Option[string] {
+    match (assert_all_i32([2, 4, 5, 8], is_even)) {
+        None => { return fail("expected predicate fail"); },
+        Some(msg) => {
+            // value 5 at index 2.
+            if (!msg.contains("index 2") || !msg.contains("value 5")) {
+                return Some("expected 'index 2' + 'value 5': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_assert_all_i32_empty_vacuous(): Option[string] {
+    var empty: i32[] = [];
+    return assert_all_i32(empty, is_positive);
+}
+
+function test_assert_any_i32_pass(): Option[string] {
+    return assert_any_i32([1, 3, 4, 7], is_even);
+}
+
+function test_assert_any_i32_fail(): Option[string] {
+    match (assert_any_i32([1, 3, 5, 7], is_even)) {
+        None => { return fail("expected no-match fail"); },
+        Some(msg) => {
+            if (!msg.contains("no element")) {
+                return Some("expected 'no element': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_assert_any_i32_empty_fails(): Option[string] {
+    // ∃ over ∅ is vacuously false — must fail.
+    var empty: i32[] = [];
+    match (assert_any_i32(empty, is_positive)) {
+        None => { return fail("∃ over empty must fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function is_non_empty(s: string): boolean { return s.len() > 0; }
+
+function test_assert_all_string_pass(): Option[string] {
+    return assert_all_string(["a", "bc", "def"], is_non_empty);
+}
+
+function test_assert_any_string_pass(): Option[string] {
+    return assert_any_string(["", "", "found-it"], is_non_empty);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("map-eq + array predicates");
+    r = r.it("map i32 eq pass (order-indep)",      test_map_i32_eq_pass());
+    r = r.it("map i32 eq length mismatch",         test_map_i32_eq_length_mismatch());
+    r = r.it("map i32 eq value mismatch + key",    test_map_i32_eq_value_mismatch());
+    r = r.it("map i32 eq disjoint same-len fails", test_map_i32_eq_disjoint_keys_same_len());
+    r = r.it("map i32 eq both empty",              test_map_i32_eq_both_empty());
+    r = r.it("map string eq pass",                 test_map_string_eq_pass());
+    r = r.it("map string eq value mismatch",       test_map_string_eq_value_mismatch());
+    r = r.it("all_i32 pass",                       test_assert_all_i32_pass());
+    r = r.it("all_i32 inline lambda",              test_assert_all_i32_inline_lambda());
+    r = r.it("all_i32 fail names index + value",   test_assert_all_i32_fails_with_index());
+    r = r.it("all_i32 empty vacuous",              test_assert_all_i32_empty_vacuous());
+    r = r.it("any_i32 pass",                       test_assert_any_i32_pass());
+    r = r.it("any_i32 no match reports",           test_assert_any_i32_fail());
+    r = r.it("any_i32 empty fails (exists over empty)",
+             test_assert_any_i32_empty_fails());
+    r = r.it("all_string pass",                    test_assert_all_string_pass());
+    r = r.it("any_string finds non-empty",         test_assert_any_string_pass());
+    return r.finish();
+}

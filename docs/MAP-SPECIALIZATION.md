@@ -7,7 +7,7 @@ monomorphic clones per (K, V) pair.
 ## Current state
 
 `Map[K, V]` is implemented as a single set of runtime helpers
-in `internal/prelude/prelude.lang` (`map_new_impl` /
+in `internal/prelude/prelude.fern` (`map_new_impl` /
 `__map_set_impl` / `__map_get_impl` / `__map_lookup` /
 `__map_hash` / `__map_delete_impl` / `__map_string_column` /
 `__map_iter_impl` / etc.). All Map values — regardless of K
@@ -247,7 +247,7 @@ Five steps, each touching a different prelude helper +
 needing its own e2e test pass on all three backends (wasm /
 arm64-linux / arm64-darwin / x86-64). The risk profile is
 "every Map-using example must keep working" — that's roughly
-half of `examples/wasm/*.lang` plus the HTTP handler tests.
+half of `examples/wasm/*.fern` plus the HTTP handler tests.
 The doc exists so the work can be picked up incrementally
 without re-deriving the design each time.
 

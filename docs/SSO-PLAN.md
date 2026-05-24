@@ -104,7 +104,7 @@ review tractable.
 
 ### Step 6 — Prelude migration
 
-Walk `internal/prelude/prelude.lang`, update every string-
+Walk `internal/prelude/prelude.fern`, update every string-
 typed return / arg / local to the new ABI. Most of the source
 is unaffected (lang-level code references `string` opaquely);
 the prelude's hand-rolled `__str_*` helpers in `wasm.go` /
@@ -275,7 +275,7 @@ branches on `IsInlineWasm(len)`:
 
 ### Lang prelude
 
-`internal/prelude/prelude.lang` is ~2k lines. Most prelude
+`internal/prelude/prelude.fern` is ~2k lines. Most prelude
 functions have string args / returns and don't change at
 the lang-source level — the compiler-side ABI flip means
 the lowered code calls the new wasm shapes automatically.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>lang playground</title>
+<title>Fern playground</title>
 <style>
   /* ---- theme tokens ----
    *
@@ -14,42 +14,42 @@
    * `prefers-color-scheme` on first load.
    */
   :root {
-    --bg-page:       #fafafa;
+    --bg-page:       #f6faf6;
     --bg-card:       #ffffff;
-    --bg-toolbar:    #f4f4f4;
-    --bg-hover:      #f0f0f0;
-    --fg-primary:    #1a1a1a;
-    --fg-secondary:  #555555;
-    --fg-tertiary:   #888888;
-    --border:        #d0d0d0;
-    --border-strong: #c4c4c4;
-    --border-soft:   #e5e5e5;
-    --accent:        #2563eb;
+    --bg-toolbar:    #eef5ef;
+    --bg-hover:      #e6f0e8;
+    --fg-primary:    #14241a;
+    --fg-secondary:  #4a5a50;
+    --fg-tertiary:   #7d8f83;
+    --border:        #cdddd0;
+    --border-strong: #b9cdbd;
+    --border-soft:   #e2ece4;
+    --accent:        #2d6a4f;
     --accent-fg:     #ffffff;
-    --accent-hover:  #1d4ed8;
-    --ok:            #16a34a;
+    --accent-hover:  #1b4332;
+    --ok:            #2d6a4f;
     --err:           #b00020;
-    --kbd-bg:        #f0f0f0;
-    --kbd-border:    #cccccc;
+    --kbd-bg:        #e6f0e8;
+    --kbd-border:    #c4d6c9;
   }
   body.dark {
-    --bg-page:       #0d0f12;
-    --bg-card:       #161a20;
-    --bg-toolbar:    #1c2128;
-    --bg-hover:      #1f242c;
-    --fg-primary:    #e6edf3;
-    --fg-secondary:  #b6c1cf;
-    --fg-tertiary:   #7d8590;
-    --border:        #30363d;
-    --border-strong: #444c56;
-    --border-soft:   #21262d;
-    --accent:        #4493f8;
-    --accent-fg:     #0d0f12;
-    --accent-hover:  #6daafb;
-    --ok:            #2ea043;
+    --bg-page:       #0c110d;
+    --bg-card:       #131a15;
+    --bg-toolbar:    #18211a;
+    --bg-hover:      #1d271f;
+    --fg-primary:    #e4f0e7;
+    --fg-secondary:  #b3c6ba;
+    --fg-tertiary:   #7d917f;
+    --border:        #2c382f;
+    --border-strong: #3f5044;
+    --border-soft:   #1e271f;
+    --accent:        #52b788;
+    --accent-fg:     #0c110d;
+    --accent-hover:  #74c69d;
+    --ok:            #52b788;
     --err:           #f85149;
-    --kbd-bg:        #21262d;
-    --kbd-border:    #30363d;
+    --kbd-bg:        #1d271f;
+    --kbd-border:    #2c382f;
   }
 
   body {
@@ -59,9 +59,33 @@
     color: var(--fg-primary);
     background: var(--bg-page);
   }
+  /* Faint fern-frond watermark in the bottom-right corner — the
+   * brand motif, kept low-opacity so it never competes with the
+   * editor or output panes. */
+  body::before {
+    content: "";
+    position: fixed;
+    right: -32px;
+    bottom: -32px;
+    width: 360px;
+    height: 360px;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.06;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120' fill='none' stroke='%2352b788' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M62 116 Q54 78 60 44 Q64 22 76 6'/%3E%3Cpath d='M61 104 Q48 100 42 88'/%3E%3Cpath d='M59 92 Q46 89 40 78'/%3E%3Cpath d='M58 80 Q46 77 41 67'/%3E%3Cpath d='M58 68 Q47 65 43 56'/%3E%3Cpath d='M59 56 Q49 53 46 45'/%3E%3Cpath d='M61 44 Q52 41 50 34'/%3E%3Cpath d='M64 33 Q57 30 56 24'/%3E%3Cpath d='M61 104 Q74 98 82 88'/%3E%3Cpath d='M59 92 Q72 87 79 77'/%3E%3Cpath d='M58 80 Q71 75 77 66'/%3E%3Cpath d='M58 68 Q70 63 75 55'/%3E%3Cpath d='M59 56 Q70 51 74 44'/%3E%3Cpath d='M61 44 Q70 40 73 34'/%3E%3Cpath d='M64 33 Q71 29 73 24'/%3E%3C/svg%3E") no-repeat center / contain;
+  }
+  body.dark::before { opacity: 0.08; }
   h1 {
     margin: 0 0 0.25em;
     font-size: 1.4em;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+  }
+  h1 .leaf {
+    width: 1.1em;
+    height: 1.1em;
+    flex: none;
   }
   .subtitle {
     color: var(--fg-secondary);
@@ -468,15 +492,15 @@
 </style>
 </head>
 <body>
-<h1>lang playground</h1>
+<h1><svg class="leaf" viewBox="0 0 120 120" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M62 116 Q54 78 60 44 Q64 22 76 6"/><path d="M61 104 Q48 100 42 88"/><path d="M59 92 Q46 89 40 78"/><path d="M58 80 Q46 77 41 67"/><path d="M58 68 Q47 65 43 56"/><path d="M59 56 Q49 53 46 45"/><path d="M61 44 Q52 41 50 34"/><path d="M61 104 Q74 98 82 88"/><path d="M59 92 Q72 87 79 77"/><path d="M58 80 Q71 75 77 66"/><path d="M58 68 Q70 63 75 55"/><path d="M59 56 Q70 51 74 44"/><path d="M61 44 Q70 40 73 34"/></svg>Fern playground</h1>
 <p class="subtitle">
-  Edit a lang program on the left, hit <strong>Run</strong>
+  Edit a Fern program on the left, hit <strong>Run</strong>
   (or <kbd>Ctrl/Cmd+Enter</kbd>), and see its output on the
   right. Drives the in-tree AST interpreter (no codegen, no
   link) compiled to wasm. The editor is CodeMirror 6;
   hover for types, <kbd>Ctrl/Cmd+Space</kbd> for completion,
   inline squiggles for errors — all powered by the in-process
-  language server the same <code>cmd/lang-lsp</code> binary
+  language server the same <code>cmd/fern-lsp</code> binary
   speaks. State is fresh per run. <strong>Share</strong>
   encodes the source into the URL so you can hand someone a
   snippet without a server.
@@ -564,7 +588,7 @@ function main(): i32 {
     return f;
 }`,
   strings: `function main(): i32 {
-    var s: string = "  Hello, lang!  ";
+    var s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
     print("byte[2]:    " + s[2].to_string());
@@ -572,7 +596,7 @@ function main(): i32 {
     if (s.trim().starts_with("Hello")) { starts = "yes"; }
     print("starts:     " + starts);
     var contains: string = "no";
-    if (s.contains("lang")) { contains = "yes"; }
+    if (s.contains("Fern")) { contains = "yes"; }
     print("contains:   " + contains);
     var parts: string[] = "a,b,c,d".split(",");
     var i: i32 = 0;
@@ -583,7 +607,7 @@ function main(): i32 {
         i = i + 1;
     }
     print("split:      " + joined);
-    print("replace:    " + "hello world".replace("world", "lang"));
+    print("replace:    " + "hello world".replace("world", "Fern"));
     return parts.len();
 }`,
   sort: `function join_i32s(arr: i32[]): string {
@@ -652,7 +676,7 @@ function main(): i32 {
         Err(e) => { print("error at " + e.pos.to_string() + ": " + e.message); return 1; },
     }
 }`,
-  interp: `// Tiny arithmetic interpreter — lexer + parser + eval in lang.
+  interp: `// Tiny arithmetic interpreter — lexer + parser + eval in Fern.
 struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -773,7 +797,7 @@ struct Person { name: string, age: i32, city: string }
 function describe(p: Person): string {
     // The args[] vector pre-stringifies non-string values via
     // .to_string(). A typed-overload story would need trait
-    // dispatch which lang doesn't have yet.
+    // dispatch which Fern doesn't have yet.
     return format(
         "{} (age {}) lives in {}",
         [p.name, p.age.to_string(), p.city]
@@ -1131,7 +1155,7 @@ if (embedTargetEl) {
 // ---- Language server wiring ----
 //
 // The wasm bundle exposes the same in-tree LSP server that
-// `cmd/lang-lsp` runs over stdio. We talk to it through two
+// `cmd/fern-lsp` runs over stdio. We talk to it through two
 // globals:
 //
 //   langLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
@@ -1140,7 +1164,7 @@ if (embedTargetEl) {
 // Synchronous from JS's point of view (the wasm call returns
 // before yielding), but we still tag requests with ids so the
 // server's response shape is spec-compliant.
-const LSP_URI = "file:///playground.lang";
+const LSP_URI = "file:///playground.fern";
 let lspReady = false;
 let docOpen = false;
 let docVersion = 0;
@@ -1493,7 +1517,7 @@ editorView = new EditorView({
 
 // Boot the wasm runtime.
 const go = new Go();
-WebAssembly.instantiateStreaming(fetch("lang.wasm"), go.importObject)
+WebAssembly.instantiateStreaming(fetch("fern.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;

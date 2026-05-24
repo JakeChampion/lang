@@ -15,7 +15,7 @@ import (
 )
 
 // Tenth self-host milestone — first true codegen layer.
-// asm.lang walks a parser.Module and emits AT&T x86_64 assembly
+// asm.fern walks a parser.Module and emits AT&T x86_64 assembly
 // text for `return <i32-arithmetic>;` programs. The emitted asm
 // is assemble-able with `gcc -nostdlib`.
 //
@@ -34,7 +34,7 @@ import (
 func writeSelfHostAsmProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "asm.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -49,7 +49,7 @@ func writeSelfHostAsmProject(t *testing.T) string {
 func TestSelfHostAsmX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "asm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestSelfHostAsmX86_64(t *testing.T) {
 func TestSelfHostAsmArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "asm.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "asm.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

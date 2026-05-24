@@ -1,0 +1,68 @@
+// examples/tests/arithmetic_test.fern — example Lang-native
+// test file using `std/test`. Demonstrates the shape we'll
+// adopt once the compiler is self-hosted and the Go-side
+// `*_test.go` harness retires.
+//
+// Run:
+//   lang -interp examples/tests/arithmetic_test.fern
+//
+// Output is TAP-13. Exit code is 0 if every case passes, 1
+// if any case fails.
+
+function test_addition(): Option[string] {
+    return assert_eq_i32(2 + 2, 4);
+}
+
+function test_subtraction(): Option[string] {
+    return assert_eq_i32(10 - 7, 3);
+}
+
+function test_multiplication(): Option[string] {
+    return assert_eq_i32(6 * 7, 42);
+}
+
+function test_integer_division(): Option[string] {
+    return assert_eq_i32(20 / 6, 3);
+}
+
+function test_modulo(): Option[string] {
+    return assert_eq_i32(17 % 5, 2);
+}
+
+// Tests that walk a fixture and bail out on the first
+// failure. Returns None ("pass") if every iteration
+// agrees with the table.
+function test_modulo_table(): Option[string] {
+    var inputs: i32[] = [0, 1, 5, 10, 11, 100];
+    var expected: i32[] = [0, 1, 5, 0, 1, 0];
+    var i: i32 = 0;
+    while (i < inputs.len()) {
+        var got: i32 = inputs[i] % 10;
+        if (got != expected[i]) {
+            return fail("modulo table mismatch at " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return pass();
+}
+
+// Comparison predicates.
+function test_lt(): Option[string] { return assert_lt_i32(3, 7); }
+function test_le(): Option[string] { return assert_le_i32(7, 7); }
+function test_gt(): Option[string] { return assert_gt_i32(9, 1); }
+function test_ge(): Option[string] { return assert_ge_i32(9, 9); }
+
+function main(): i32 {
+    var r: TestRunner = test_new("arithmetic");
+    r = r.it("addition", test_addition());
+    r = r.it("subtraction", test_subtraction());
+    r = r.it("multiplication", test_multiplication());
+    r = r.it("integer division", test_integer_division());
+    r = r.it("modulo", test_modulo());
+    r = r.it("modulo table", test_modulo_table());
+    r = r.it("less than", test_lt());
+    r = r.it("less or equal", test_le());
+    r = r.it("greater than", test_gt());
+    r = r.it("greater or equal", test_ge());
+    return r.finish();
+}

@@ -1,0 +1,131 @@
+// examples/tests/one_of_none_of_test.fern — batch 23
+// additions to std/test:
+//   * `assert_one_of_i32(actual, allowed)` /
+//     `assert_one_of_string` — value belongs to an
+//     allowed set.
+//   * `assert_none_of_i32(actual, forbidden)` /
+//     `assert_none_of_string` — negative membership;
+//     value must NOT match any in the forbidden set.
+
+function test_one_of_i32_pass(): Option[string] {
+    // Classic "exit code is one of [0, 1, 2]" use case.
+    return assert_one_of_i32(1, [0, 1, 2]);
+}
+
+function test_one_of_i32_single_element(): Option[string] {
+    // Degenerate case — single-element allowed set works
+    // the same as `assert_eq_i32` but reads at the call
+    // site as "this is the only acceptable value".
+    return assert_one_of_i32(42, [42]);
+}
+
+function test_one_of_i32_first_element(): Option[string] {
+    return assert_one_of_i32(0, [0, 1, 2]);
+}
+
+function test_one_of_i32_last_element(): Option[string] {
+    return assert_one_of_i32(2, [0, 1, 2]);
+}
+
+function test_one_of_i32_missing_reports_set(): Option[string] {
+    match (assert_one_of_i32(99, [0, 1, 2])) {
+        None => { return fail("expected fail for value not in set"); },
+        Some(msg) => {
+            // Diagnostic must embed both the actual and the
+            // rendered allowed list.
+            if (!msg.contains("99") || !msg.contains("[0, 1, 2]")) {
+                return Some("expected '99' + '[0, 1, 2]' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_one_of_i32_empty_set_always_fails(): Option[string] {
+    var empty: i32[] = [];
+    match (assert_one_of_i32(0, empty)) {
+        None => { return fail("empty allowed set should always fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_one_of_string_pass(): Option[string] {
+    // "HTTP method is one of the safe ones".
+    return assert_one_of_string("GET",
+                                ["GET", "HEAD", "OPTIONS"]);
+}
+
+function test_one_of_string_missing_reports(): Option[string] {
+    match (assert_one_of_string("POST",
+                                ["GET", "HEAD", "OPTIONS"])) {
+        None => { return fail("expected POST to fail"); },
+        Some(msg) => {
+            // Allowed values must be quoted in the diagnostic so
+            // "GET" reads distinctly from `GET` (unquoted i32-
+            // style rendering would be wrong here).
+            if (!msg.contains("\"POST\"") || !msg.contains("\"GET\"")) {
+                return Some("expected quoted POST + GET in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_none_of_i32_pass(): Option[string] {
+    // "Exit code is not any of these failure sentinels".
+    return assert_none_of_i32(0, [127, 128, 130]);
+}
+
+function test_none_of_i32_match_reports(): Option[string] {
+    match (assert_none_of_i32(127, [127, 128, 130])) {
+        None => { return fail("expected forbidden-match to fail"); },
+        Some(msg) => {
+            if (!msg.contains("127")) {
+                return Some("expected '127' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_none_of_i32_empty_forbidden_always_passes(): Option[string] {
+    // Vacuous: nothing forbidden, anything is OK.
+    var empty: i32[] = [];
+    return assert_none_of_i32(42, empty);
+}
+
+function test_none_of_string_pass(): Option[string] {
+    return assert_none_of_string("hello",
+                                 ["error", "fatal", "panic"]);
+}
+
+function test_none_of_string_match_reports(): Option[string] {
+    match (assert_none_of_string("fatal",
+                                 ["error", "fatal", "panic"])) {
+        None => { return fail("expected forbidden-match to fail"); },
+        Some(msg) => {
+            if (!msg.contains("\"fatal\"")) {
+                return Some("expected '\"fatal\"' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("one_of / none_of");
+    r = r.it("one_of_i32 middle element",        test_one_of_i32_pass());
+    r = r.it("one_of_i32 single-element set",    test_one_of_i32_single_element());
+    r = r.it("one_of_i32 first element",         test_one_of_i32_first_element());
+    r = r.it("one_of_i32 last element",          test_one_of_i32_last_element());
+    r = r.it("one_of_i32 missing renders set",   test_one_of_i32_missing_reports_set());
+    r = r.it("one_of_i32 empty set always fails", test_one_of_i32_empty_set_always_fails());
+    r = r.it("one_of_string pass",               test_one_of_string_pass());
+    r = r.it("one_of_string missing quotes both", test_one_of_string_missing_reports());
+    r = r.it("none_of_i32 pass",                 test_none_of_i32_pass());
+    r = r.it("none_of_i32 match reports value",  test_none_of_i32_match_reports());
+    r = r.it("none_of_i32 empty list vacuous",   test_none_of_i32_empty_forbidden_always_passes());
+    r = r.it("none_of_string pass",              test_none_of_string_pass());
+    r = r.it("none_of_string match quoted",      test_none_of_string_match_reports());
+    return r.finish();
+}

@@ -1,5 +1,5 @@
 // Package imports is the Go-side mirror of
-// internal/stdlib/std/wasm/imports.lang — import + global
+// internal/stdlib/std/wasm/imports.fern — import + global
 // section composers for the WebAssembly Core 1.0 binary format.
 //
 // Spec: https://webassembly.github.io/spec/core/binary/modules.html#import-section
@@ -96,7 +96,7 @@ func EncodeImportSection(buf []byte, modules, names []string, kinds []byte, desc
 //
 // (sections.EncodeGlobalSection also exists for the single-
 // const-i32 shape on its own; this one provides the
-// rich parallel-array variant matching imports.lang.)
+// rich parallel-array variant matching imports.fern.)
 func EncodeGlobalSection(buf []byte, valtypes, muts []byte, initExprs [][]byte) []byte {
 	body := leb128.UlebU32(nil, uint32(len(valtypes)))
 	for i := range valtypes {

@@ -44,7 +44,7 @@ test("stdlib index links to at least one auto-generated module", async ({
 
 test("stdlib string page renders its first public function", async ({ page }) => {
   await page.goto("stdlib/string/");
-  // is_empty is the first decl in std/string.lang.
+  // is_empty is the first decl in std/string.fern.
   await expect(page.locator("main")).toContainText("is_empty");
   await expect(page.locator("main")).toContainText("pub function");
 });
@@ -53,9 +53,9 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
   page,
 }) => {
   await page.goto("tutorial/first-steps/");
-  // The <LangPlayground> Astro component renders <figure class="lang-playground">
+  // The <FernPlayground> Astro component renders <figure class="fern-playground">
   // wrapping an iframe pointing at /lang/playground/?embed=1...#src=…
-  const figure = page.locator("figure.lang-playground").first();
+  const figure = page.locator("figure.fern-playground").first();
   await expect(figure).toBeVisible();
   const iframe = figure.locator("iframe");
   // Embed-mode flag + hash payload — both have to be present.

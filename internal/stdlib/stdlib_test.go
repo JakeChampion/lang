@@ -28,17 +28,17 @@ func TestResolveCore(t *testing.T) {
 	}
 }
 
-// Auto-append `.lang` extension: callers pass either `std/foo` or
-// `std/foo.lang` and both resolve to the same module. Mirrors the
+// Auto-append `.fern` extension: callers pass either `std/foo` or
+// `std/foo.fern` and both resolve to the same module. Mirrors the
 // extension-tolerance of the disk resolver in modload.
 func TestResolveAutoAppendsExtension(t *testing.T) {
 	src1, ok1 := Resolve("std/_test_empty")
-	src2, ok2 := Resolve("std/_test_empty.lang")
+	src2, ok2 := Resolve("std/_test_empty.fern")
 	if !ok1 || !ok2 {
 		t.Fatalf("both forms should resolve; got ok1=%v ok2=%v", ok1, ok2)
 	}
 	if src1 != src2 {
-		t.Errorf("with and without .lang extension should match")
+		t.Errorf("with and without .fern extension should match")
 	}
 }
 
@@ -73,7 +73,7 @@ func TestIsStdlibPath(t *testing.T) {
 	}{
 		{"std/foo", true},
 		{"core/bar", true},
-		{"std/foo.lang", true},
+		{"std/foo.fern", true},
 		{"./foo", false},
 		{"/abs", false},
 		{"stdlib/foo", false}, // not the namespace prefix

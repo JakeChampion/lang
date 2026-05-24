@@ -771,7 +771,7 @@ the LSP parser.
 only.**
 
 After Rec §3, persist the `ModuleInterface` cache to disk
-(`.lang/cache/<module>.iface`). On LSP launch, hydrate
+(`.fern/cache/<module>.iface`). On LSP launch, hydrate
 the cache from disk → instant warm-state.
 
 Defer until LSP startup latency measurably matters.
@@ -822,7 +822,7 @@ Defer until LSP startup latency measurably matters.
   reporting bugs. At that point, Rec §5 (lossless syntax
   tree) jumps in priority.
 
-- **When a contributor opens a 5k-line .lang file.** Edit
+- **When a contributor opens a 5k-line .fern file.** Edit
   latency past 50 ms triggers Rec §3 + §4 + §7 in that
   order.
 

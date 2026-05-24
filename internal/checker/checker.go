@@ -60,7 +60,7 @@ type Info struct {
 	// MethodSources records the canonical source-module path each
 	// registered method's body came from. Mangled-name keys mirror
 	// the values in Methods (e.g. `__method_i32_abs` →
-	// `stdlib://std/i32.lang`). Entries with an empty value are
+	// `stdlib://std/i32.fern`). Entries with an empty value are
 	// universally visible — that's the case for synthetic methods
 	// the checker registers itself (Reader / Writer / Map /
 	// MapIter, the inline-IR `Array.push`, and the built-in string
@@ -306,7 +306,7 @@ func builtinStructDecls() []*ast.StructDecl {
 		// typical <20-header request and matches the spirit of
 		// hyper's HeaderMap without the indexing overhead.
 		// Methods (`get`, `get_all`, `set`, `append`, `len`)
-		// live in `internal/stdlib/std/headers.lang`; this PR
+		// live in `internal/stdlib/std/headers.fern`; this PR
 		// lands the type + module only and defers the
 		// `headers: HeaderMap` integration into HttpRequest /
 		// HttpResponse to a follow-up so the wasi-http
@@ -564,7 +564,7 @@ func builtinStructDecls() []*ast.StructDecl {
 }
 
 // injectPrelude parses the embedded prelude source (from
-// internal/prelude/prelude.lang) and appends its top-level
+// internal/prelude/prelude.fern) and appends its top-level
 // declarations to `prog`. Idempotent — re-running on a program
 // whose Funcs already contain a prelude marker is a no-op.
 //
@@ -606,7 +606,7 @@ func injectPrelude(prog *ast.Program) error {
 	// leave LoadedStdlibPaths nil) can't opt out today — but
 	// they also don't import stdlib paths, so the auto-prelude
 	// is the right behaviour for them.
-	if prog.LoadedStdlibPaths["stdlib://core/no_prelude.lang"] {
+	if prog.LoadedStdlibPaths["stdlib://core/no_prelude.fern"] {
 		return nil
 	}
 	pre, err := parser.Parse(prelude.Source)
@@ -639,8 +639,8 @@ func injectPrelude(prog *ast.Program) error {
 			continue
 		}
 		key := imp.Path
-		if !strings.HasSuffix(key, ".lang") {
-			key += ".lang"
+		if !strings.HasSuffix(key, ".fern") {
+			key += ".fern"
 		}
 		canonical := "stdlib://" + key
 		if prog.LoadedStdlibPaths[canonical] {
@@ -1012,7 +1012,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// accumulated bytes and resets. Built for the asm self-host
 	// backend's emit_module — `s = s.out + text` per write
 	// allocates O(N²) bytes through the bump heap (~60 GB to compile
-	// asm.lang through itself). With strbuf the same loop is O(N).
+	// asm.fern through itself). With strbuf the same loop is O(N).
 	c.info.FuncSigs["strbuf_reset"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.VoidType{},
@@ -1155,7 +1155,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.NumberType{},
 	}
 	// `int_to_string(n)` migrated to the lang prelude
-	// (internal/prelude/prelude.lang); its signature is
+	// (internal/prelude/prelude.fern); its signature is
 	// registered via the prelude's FuncDecl.
 	// TCP socket builtins. C-style API: each returns a raw
 	// fd or a negative errno. A Result-wrapped layer can sit
@@ -1358,7 +1358,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// supported on this target" error from codegen.
 	//
 	// Named `subprocess` rather than the obvious `exec` to
-	// stay clear of `examples/self_host/vm.lang`'s long-
+	// stay clear of `examples/self_host/vm.fern`'s long-
 	// standing `pub function exec(ops: Op[]): Value` and any
 	// user code that wraps an interpreter.
 	procResult := ast.StructType{Name: "ProcessResult"}
@@ -1551,14 +1551,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `starts_with` / `ends_with` / `contains` / `index_of`
 	// / `trim` / `to_lower` / `to_upper` / `bytes` / `split`
 	// / `replace` migrated to the lang prelude
-	// (internal/prelude/prelude.lang); their signatures are
+	// (internal/prelude/prelude.fern); their signatures are
 	// registered via the prelude's FuncDecls.
 	// `s.is_empty()` lives in the lang prelude
-	// (internal/prelude/prelude.lang); the receiver-hoisting
+	// (internal/prelude/prelude.fern); the receiver-hoisting
 	// machinery + builtin-receivers extension wires it
 	// through automatically.
 	// `s.repeat(n)` lives in the lang prelude
-	// (internal/prelude/prelude.lang).
+	// (internal/prelude/prelude.fern).
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
 	// payload and whose len is `len(s)`. Sharing the parent's
@@ -1570,7 +1570,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// future SSO pass can change the encoding in one place.
 	registerStringMethod("len", nil, ast.NumberType{})
 	// `s.parse_int()` lives in the lang prelude
-	// (internal/prelude/prelude.lang). The receiver-hoisting
+	// (internal/prelude/prelude.fern). The receiver-hoisting
 	// + dispatch wires it through the same way as any
 	// `__method_string_*`.
 	// `s.parse_float()` lives in the lang prelude.
@@ -1581,18 +1581,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 
 	// `base64_encode` / `base64_decode` migrated to the
-	// lang prelude (internal/prelude/prelude.lang); their
+	// lang prelude (internal/prelude/prelude.fern); their
 	// signatures are registered via the prelude's FuncDecls.
 
 	// `hex_encode` / `hex_decode` migrated to the lang
-	// prelude (internal/prelude/prelude.lang); their
+	// prelude (internal/prelude/prelude.fern); their
 	// signatures are registered via the prelude's FuncDecls.
 
 	// `url_parse(s)` lives in the lang prelude
-	// (internal/prelude/prelude.lang).
+	// (internal/prelude/prelude.fern).
 
 	// `__array_append_string(arr, v)` migrated to the lang
-	// prelude (internal/prelude/prelude.lang); its
+	// prelude (internal/prelude/prelude.fern); its
 	// signature is registered via the prelude's FuncDecl.
 
 
@@ -1692,13 +1692,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// needs them.
 
 	// `url_encode(s)` / `url_decode(s)` live in the lang
-	// prelude (internal/prelude/prelude.lang).
+	// prelude (internal/prelude/prelude.fern).
 
 	// `query_parse(s)` lives in the lang prelude.
 
 	// `json_encode(v)` lives in the lang prelude.
 	// `json_parse` migrated to the lang prelude
-	// (internal/prelude/prelude.lang); its signature is
+	// (internal/prelude/prelude.fern); its signature is
 	// registered via the prelude's FuncDecl.
 
 	// Built-in numeric methods. The receiver type is `NumberType`
@@ -1707,13 +1707,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// corresponding `__method_<typename>_<method>` mangled name.
 	// `i32.to_string()` / `u32.to_string()` /
 	// `i64.to_string()` / `u64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.lang) — its
+	// lang prelude (internal/prelude/prelude.fern) — its
 	// receiver-method declarations register the
 	// `string.*_to_string` mangled names automatically via
 	// the receiver-hoisting pass below.
 
 	// `f32.to_string()` / `f64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.lang).
+	// lang prelude (internal/prelude/prelude.fern).
 
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled

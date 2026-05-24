@@ -1,0 +1,136 @@
+// std/wasm/encode — container-level binary writers for the
+// WebAssembly Core 1.0 binary format.
+//
+// Spec: https://webassembly.github.io/spec/core/binary/modules.html
+//
+// Second slice of Phase 1 of docs/TOOLCHAIN-SELF-HOSTING.md. The
+// leb128 sibling module handles variable-length integers; this
+// module sits on top of it and handles:
+//   - the module preamble (magic + version)
+//   - generic section wrapping (id + uleb length + body bytes)
+//   - the type section's function-type encoding
+//   - utility byte writers (raw byte append, u32 little-endian for
+//     the version field, uleb-prefixed names for imports/exports)
+//
+// The big remaining Phase 1 piece is the per-IR-op instruction
+// encoder (opcode + immediates), which becomes the body of the
+// code section. That goes in its own module / slice.
+//
+// Same shape as leb128: every writer takes a `u8[]`, appends to
+// it, and returns the extended buffer. No I/O, no globals.
+
+import "std/wasm/leb128";
+
+// Valtype byte constants — one per primitive wasm number type.
+// Spec: https://webassembly.github.io/spec/core/binary/types.html#binary-valtype
+// Lang doesn't have source-level const decls wired through the
+// codegen everywhere yet, so these are zero-arg functions —
+// inliner / constant-folder collapse them to a single byte at
+// the call site.
+pub function valtype_i32(): u8 { return 127u8; }
+pub function valtype_i64(): u8 { return 126u8; }
+pub function valtype_f32(): u8 { return 125u8; }
+pub function valtype_f64(): u8 { return 124u8; }
+
+// Section IDs (https://webassembly.github.io/spec/core/binary/modules.html#sections).
+// section_custom is shipped as a constant for symmetry with the
+// rest of the table; the per-section composer lives in
+// sections.fern::encode_custom_section because its body needs a
+// name prefix that the generic put_section doesn't handle.
+pub function section_custom(): u8   { return 0u8; }
+pub function section_type(): u8     { return 1u8; }
+pub function section_import(): u8   { return 2u8; }
+pub function section_function(): u8 { return 3u8; }
+pub function section_table(): u8    { return 4u8; }
+pub function section_memory(): u8   { return 5u8; }
+pub function section_global(): u8   { return 6u8; }
+pub function section_export(): u8   { return 7u8; }
+pub function section_start(): u8    { return 8u8; }
+pub function section_element(): u8  { return 9u8; }
+pub function section_code(): u8     { return 10u8; }
+pub function section_data(): u8     { return 11u8; }
+
+// put_bytes — append the raw contents of `src` to `buf`. Used to
+// splice a precomputed section body onto a growing module, or to
+// concatenate two preallocated chunks.
+pub function put_bytes(buf: u8[], src: u8[]): u8[] {
+    var n: i32 = src.len();
+    var out: u8[] = buf;
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(src[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// put_u32_le — append a fixed 4-byte little-endian u32. The wasm
+// preamble's version field is the only place the binary format
+// uses a fixed-width integer (everything else is leb128); this is
+// what writes those four bytes.
+pub function put_u32_le(buf: u8[], v: u32): u8[] {
+    var out: u8[] = buf;
+    out = out.push((v & 255u32) as u8);
+    out = out.push(((v >> 8) & 255u32) as u8);
+    out = out.push(((v >> 16) & 255u32) as u8);
+    out = out.push(((v >> 24) & 255u32) as u8);
+    return out;
+}
+
+// put_module_header — append the wasm preamble:
+// magic "\0asm" (0x00 0x61 0x73 0x6D) followed by version 1 as
+// a fixed-width u32 LE (0x01 0x00 0x00 0x00). Always 8 bytes.
+pub function put_module_header(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(0u8);
+    out = out.push(97u8);   // 'a'
+    out = out.push(115u8);  // 's'
+    out = out.push(109u8);  // 'm'
+    out = put_u32_le(out, 1u32);
+    return out;
+}
+
+// put_name — append a wasm "name" (UTF-8 bytes, uleb-prefixed
+// length). Used by import / export descriptors and by the names
+// custom section. Iterating `s` by index gives the raw bytes —
+// Lang's string is a byte sequence underneath, and this matches
+// the wasm spec's "name = vec(byte)" definition.
+pub function put_name(buf: u8[], s: string): u8[] {
+    var n: i32 = s.len();
+    var out: u8[] = leb128.uleb_u32(buf, n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.push(s[i] as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+// put_section — wrap a precomputed section body with its header:
+// `id : u8` + `size : uleb` + `body bytes`. The caller builds
+// `body` first, in its own buffer, so the size prefix can be
+// written before the body bytes themselves. Spec:
+// https://webassembly.github.io/spec/core/binary/modules.html#sections
+pub function put_section(buf: u8[], id: u8, body: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(id);
+    out = leb128.uleb_u32(out, body.len() as u32);
+    out = put_bytes(out, body);
+    return out;
+}
+
+// put_func_type — append a function type to a type-section body:
+// `0x60` + `vec(params)` + `vec(results)`, where each param /
+// result element is a single valtype byte. `params` and `results`
+// arrive as `u8[]` of valtype bytes — the caller composes them
+// from the `valtype_*` helpers above. Spec:
+// https://webassembly.github.io/spec/core/binary/types.html#function-types
+pub function put_func_type(buf: u8[], params: u8[], results: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(96u8);    // 0x60 functype tag
+    out = leb128.uleb_u32(out, params.len() as u32);
+    out = put_bytes(out, params);
+    out = leb128.uleb_u32(out, results.len() as u32);
+    out = put_bytes(out, results);
+    return out;
+}

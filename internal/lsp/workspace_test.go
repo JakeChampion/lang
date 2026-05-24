@@ -19,14 +19,14 @@ func writeFile(t *testing.T, path, content string) {
 
 func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	// Set up a two-file workspace on disk:
-	//   util.lang  — declares struct Point
-	//   main.lang  — imports ./util, uses util.Point in a function
+	//   util.fern  — declares struct Point
+	//   main.fern  — imports ./util, uses util.Point in a function
 	//                signature; cursor on `Point` should jump to
-	//                util.lang.
+	//                util.fern.
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "util.lang"),
+	writeFile(t, filepath.Join(dir, "util.fern"),
 		"pub struct Point { x: i32, y: i32 }\n")
-	mainPath := filepath.Join(dir, "main.lang")
+	mainPath := filepath.Join(dir, "main.fern")
 	mainSrc := "import \"./util\";\n" +
 		"function origin(): util.Point { return util.Point { x: 0, y: 0 }; }\n" +
 		"function main(): i32 { var p: util.Point = origin(); return p.x; }\n"
@@ -83,23 +83,23 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	if err := json.Unmarshal(m.Result, &loc); err != nil {
 		t.Fatalf("unmarshal location: %v", err)
 	}
-	// The struct Point lives in util.lang — definition should jump
-	// there, not echo back the main.lang URI.
-	if !strings.HasSuffix(loc.URI, "util.lang") {
-		t.Errorf("definition uri = %q, want a util.lang URI", loc.URI)
+	// The struct Point lives in util.fern — definition should jump
+	// there, not echo back the main.fern URI.
+	if !strings.HasSuffix(loc.URI, "util.fern") {
+		t.Errorf("definition uri = %q, want a util.fern URI", loc.URI)
 	}
 	if loc.Range.Start.Line != 0 {
-		t.Errorf("definition start line = %d, want 0 (struct Point in util.lang)", loc.Range.Start.Line)
+		t.Errorf("definition start line = %d, want 0 (struct Point in util.fern)", loc.Range.Start.Line)
 	}
 }
 
 func TestWorkspace_CrossModuleCallJump(t *testing.T) {
-	// `util.foo()` cursor on `foo` should jump to util.lang at the
+	// `util.foo()` cursor on `foo` should jump to util.fern at the
 	// declaration of `foo`. modload preserves the FieldPos on
 	// Call.Module so the LSP can locate it after the rewrite.
 	dir := t.TempDir()
-	utilPath := filepath.Join(dir, "util.lang")
-	mainPath := filepath.Join(dir, "main.lang")
+	utilPath := filepath.Join(dir, "util.fern")
+	mainPath := filepath.Join(dir, "main.fern")
 	writeFile(t, utilPath, "pub function foo(): i32 { return 42; }\n")
 	mainSrc := "import \"./util\";\nfunction main(): i32 { return util.foo(); }\n"
 	writeFile(t, mainPath, mainSrc)
@@ -142,11 +142,11 @@ func TestWorkspace_CrossModuleCallJump(t *testing.T) {
 	if err := json.Unmarshal(m.Result, &loc); err != nil {
 		t.Fatalf("unmarshal location: %v", err)
 	}
-	if !strings.HasSuffix(loc.URI, "util.lang") {
-		t.Errorf("definition uri = %q, want a util.lang URI", loc.URI)
+	if !strings.HasSuffix(loc.URI, "util.fern") {
+		t.Errorf("definition uri = %q, want a util.fern URI", loc.URI)
 	}
 	if loc.Range.Start.Line != 0 {
-		t.Errorf("definition start line = %d, want 0 (foo in util.lang)", loc.Range.Start.Line)
+		t.Errorf("definition start line = %d, want 0 (foo in util.fern)", loc.Range.Start.Line)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestWorkspace_UnsavedBufferOverridesDisk(t *testing.T) {
 	// to disk; open the file in the LSP with the FRESH version;
 	// verify the fresh version drives diagnostics.
 	dir := t.TempDir()
-	stale := filepath.Join(dir, "main.lang")
+	stale := filepath.Join(dir, "main.fern")
 	writeFile(t, stale, "function main(): i32 { return undeclared_in_stale; }\n")
 	freshSrc := "function main(): i32 { return 0; }\n"
 
@@ -193,7 +193,7 @@ func TestWorkspace_UnsavedBufferOverridesDisk(t *testing.T) {
 
 func TestUriToPath_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "x.lang")
+	path := filepath.Join(dir, "x.fern")
 	uri := pathToURI(path)
 	got, ok := uriToPath(uri)
 	if !ok {
@@ -205,13 +205,13 @@ func TestUriToPath_RoundTrip(t *testing.T) {
 }
 
 func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
-	// Two-file workspace: main.lang is clean; util.lang has a type
+	// Two-file workspace: main.fern is clean; util.fern has a type
 	// error. Both are open in the editor. After opening main, the
 	// workspace load should publish empty diagnostics for main and
 	// the util-side error for util.
 	dir := t.TempDir()
-	mainPath := filepath.Join(dir, "main.lang")
-	utilPath := filepath.Join(dir, "util.lang")
+	mainPath := filepath.Join(dir, "main.fern")
+	utilPath := filepath.Join(dir, "util.fern")
 	writeFile(t, mainPath,
 		"import \"./util\";\nfunction main(): i32 { return util.thing(); }\n")
 	writeFile(t, utilPath,
@@ -273,10 +273,10 @@ func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
 }
 
 func TestUriToPath_RejectsNonFileScheme(t *testing.T) {
-	if _, ok := uriToPath("inmemory:///x.lang"); ok {
+	if _, ok := uriToPath("inmemory:///x.fern"); ok {
 		t.Errorf("expected uriToPath to reject non-file scheme")
 	}
-	if _, ok := uriToPath("https://example.com/x.lang"); ok {
+	if _, ok := uriToPath("https://example.com/x.fern"); ok {
 		t.Errorf("expected uriToPath to reject http scheme")
 	}
 }

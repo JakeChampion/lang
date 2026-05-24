@@ -1,0 +1,111 @@
+// examples/tests/process_output_shortcuts_test.fern — batch
+// 31 additions to std/test:
+//   * `assert_exit_zero(proc)` / `assert_exit_nonzero(proc)`
+//     — sugar for the most common exit-code checks.
+//   * `assert_stdout_lines(proc, lines[])` /
+//     `assert_stderr_lines(proc, lines[])` — multi-line
+//     compare (delegates to `assert_lines_eq` so the diff
+//     message wording is identical to file/in-memory).
+//   * `assert_stdout_line_count(proc, n)` /
+//     `assert_stderr_line_count(proc, n)` — line
+//     cardinality without pinning content.
+
+function test_exit_zero_pass(): Option[string] {
+    var res: ProcessResult = subprocess("true", [], "");
+    return assert_exit_zero(res);
+}
+
+function test_exit_zero_fail_reports(): Option[string] {
+    var res: ProcessResult = subprocess("false", [], "");
+    match (assert_exit_zero(res)) {
+        None => { return fail("non-zero exit should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_exit_nonzero_pass(): Option[string] {
+    var res: ProcessResult = subprocess("false", [], "");
+    return assert_exit_nonzero(res);
+}
+
+function test_exit_nonzero_zero_fails(): Option[string] {
+    var res: ProcessResult = subprocess("true", [], "");
+    match (assert_exit_nonzero(res)) {
+        None => { return fail("exit 0 should fail nonzero check"); },
+        Some(msg) => {
+            if (!msg.contains("exited 0")) {
+                return Some("expected 'exited 0' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_stdout_lines_pass(): Option[string] {
+    var res: ProcessResult = subprocess("printf",
+        ["alpha\nbeta\ngamma\n"], "");
+    return assert_stdout_lines(res, ["alpha", "beta", "gamma"]);
+}
+
+function test_stdout_lines_mismatch(): Option[string] {
+    var res: ProcessResult = subprocess("printf",
+        ["alpha\nWRONG\ngamma\n"], "");
+    match (assert_stdout_lines(res, ["alpha", "beta", "gamma"])) {
+        None => { return fail("mismatch should fail"); },
+        Some(msg) => {
+            // assert_lines_eq names the differing line.
+            if (!msg.contains("line 2")) {
+                return Some("expected 'line 2' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_stderr_lines_pass(): Option[string] {
+    // Send something to stderr via sh -c.
+    var res: ProcessResult = subprocess("sh",
+        ["-c", "printf 'err1\\nerr2\\n' >&2"], "");
+    return assert_stderr_lines(res, ["err1", "err2"]);
+}
+
+function test_stdout_line_count_pass(): Option[string] {
+    var res: ProcessResult = subprocess("printf",
+        ["x\ny\nz\n"], "");
+    return assert_stdout_line_count(res, 3);
+}
+
+function test_stdout_line_count_wrong_reports(): Option[string] {
+    var res: ProcessResult = subprocess("printf",
+        ["x\ny\n"], "");
+    match (assert_stdout_line_count(res, 5)) {
+        None => { return fail("expected count mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("got 2") || !msg.contains("expected 5")) {
+                return Some("expected both counts in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_stderr_line_count_pass(): Option[string] {
+    var res: ProcessResult = subprocess("sh",
+        ["-c", "printf 'a\\nb\\nc\\n' >&2"], "");
+    return assert_stderr_line_count(res, 3);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("process output shortcuts");
+    r = r.it("exit_zero pass",                test_exit_zero_pass());
+    r = r.it("exit_zero on non-zero fails",   test_exit_zero_fail_reports());
+    r = r.it("exit_nonzero pass",             test_exit_nonzero_pass());
+    r = r.it("exit_nonzero on 0 names code",  test_exit_nonzero_zero_fails());
+    r = r.it("stdout_lines pass",             test_stdout_lines_pass());
+    r = r.it("stdout_lines mismatch line N",  test_stdout_lines_mismatch());
+    r = r.it("stderr_lines pass",             test_stderr_lines_pass());
+    r = r.it("stdout_line_count pass",        test_stdout_line_count_pass());
+    r = r.it("stdout_line_count wrong reports", test_stdout_line_count_wrong_reports());
+    r = r.it("stderr_line_count pass",        test_stderr_line_count_pass());
+    return r.finish();
+}

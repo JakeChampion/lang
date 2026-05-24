@@ -1,7 +1,7 @@
-# lang VS Code extension
+# Fern VS Code extension
 
 Language Server Protocol + TextMate-grammar syntax highlighting for
-the lang language. Provides:
+the Fern language. Provides:
 
 - Inline error squiggles (parser + checker diagnostics).
 - Hover-for-type on variables, parameters, fields, method calls,
@@ -17,13 +17,13 @@ the lang language. Provides:
 
 ## Install
 
-1. Build `lang-lsp` and put it on your `$PATH`:
+1. Build `fern-lsp` and put it on your `$PATH`:
 
    ```bash
-   go build -o ~/.local/bin/lang-lsp ./cmd/lang-lsp
+   go build -o ~/.local/bin/fern-lsp ./cmd/fern-lsp
    ```
 
-   Or set an explicit path via the `lang.serverPath` setting.
+   Or set an explicit path via the `fern.serverPath` setting.
 
 2. Build + install the extension:
 
@@ -31,29 +31,29 @@ the lang language. Provides:
    cd editors/vscode
    npm install
    npm run compile
-   # Then package + install, or symlink ~/.vscode/extensions/lang-vscode
+   # Then package + install, or symlink ~/.vscode/extensions/fern-vscode
    npx @vscode/vsce package
-   code --install-extension lang-vscode-0.1.0.vsix
+   code --install-extension fern-vscode-0.1.0.vsix
    ```
 
 ## Settings
 
 | Setting             | Default     | Meaning                                     |
 | ------------------- | ----------- | ------------------------------------------- |
-| `lang.serverPath`   | `lang-lsp`  | Path to the binary. Absolute or on PATH.    |
-| `lang.trace.server` | `off`       | LSP trace level. `messages` or `verbose`.   |
+| `fern.serverPath`   | `fern-lsp`  | Path to the binary. Absolute or on PATH.    |
+| `fern.trace.server` | `off`       | LSP trace level. `messages` or `verbose`.   |
 
 ## Commands
 
-- **lang: Restart Server** — kills + respawns lang-lsp. Useful
+- **Fern: Restart Server** — kills + respawns fern-lsp. Useful
   when the binary is rebuilt while the extension is running.
 
 ## Troubleshooting
 
-- "lang-lsp binary not found" — set `lang.serverPath` or add it
+- "fern-lsp binary not found" — set `fern.serverPath` or add it
   to PATH.
-- No diagnostics — turn on `lang.trace.server` to `verbose` and
-  check the lang language server output channel for protocol
+- No diagnostics — turn on `fern.trace.server` to `verbose` and
+  check the Fern language server output channel for protocol
   errors.
 - Slow / unresponsive on large files — the server doesn't yet do
   incremental re-checking; debounce defaults are tuned for files

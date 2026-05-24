@@ -19,7 +19,7 @@ name: Playground E2E
 on:
   pull_request:
     paths:
-      - "cmd/lang-wasm/**"
+      - "cmd/fern-wasm/**"
       - "web/**"
       - "internal/ast/**"
       - "internal/checker/**"

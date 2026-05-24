@@ -2548,7 +2548,7 @@ func (g *generator) emitDataSections() {
 // the program lifetime). See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.lang through itself (its O(N²) string-builder allocates ~290 MB for that)
+	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.fern through itself (its O(N²) string-builder allocates ~290 MB for that)
 	g.line("")
 	g.line(".globl __lang_alloc")
 	g.line(".type __lang_alloc, @function")
@@ -3265,11 +3265,11 @@ func (g *generator) emitEprintRuntime() {
 //
 // Built for the asm self-host backend's emit_module — the
 // `s = s.out + text` per write pattern allocates O(N²) bytes
-// through the bump heap, which can't compile asm.lang through itself
+// through the bump heap, which can't compile asm.fern through itself
 // (~60 GB needed). With the strbuf the same loop is O(N).
 //
 // Single-threaded; only one strbuf active at a time. The 64 MiB cap
-// is generous for the asm-self-host use case (asm.lang's expected
+// is generous for the asm-self-host use case (asm.fern's expected
 // output is ~2 MB) but documented.
 func (g *generator) emitStrBufRuntime() {
 	g.line("")

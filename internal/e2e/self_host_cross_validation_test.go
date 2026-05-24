@@ -14,10 +14,10 @@ import (
 )
 
 // Cross-validation across the three execution engines in the
-// lang-port: the tree-walking interpreter (interp.lang), the
-// bytecode VM (vm.lang), and the native asm emitter (asm.lang).
+// lang-port: the tree-walking interpreter (interp.fern), the
+// bytecode VM (vm.fern), and the native asm emitter (asm.fern).
 // Every test source is piped through ALL THREE drivers
-// (interp_run.lang, vm_run.lang, asm_run.lang) and the test
+// (interp_run.fern, vm_run.fern, asm_run.fern) and the test
 // asserts they all return the same exit code.
 //
 // This is the "every layer agrees" demo — a regression suite
@@ -38,9 +38,9 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// imports, but using a shared dir means we can build all
 	// three side-by-side.)
 	for _, name := range []string{
-		"lexer.lang", "parser.lang",
-		"interp.lang", "vm.lang", "asm.lang",
-		"interp_run.lang", "vm_run.lang", "asm_run.lang",
+		"lexer.fern", "parser.fern",
+		"interp.fern", "vm.fern", "asm.fern",
+		"interp_run.fern", "vm_run.fern", "asm_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -79,9 +79,9 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		return binPath
 	}
 
-	interpBin := buildDriver(t, "interp_run.lang")
-	vmBin := buildDriver(t, "vm_run.lang")
-	asmBin := buildDriver(t, "asm_run.lang")
+	interpBin := buildDriver(t, "interp_run.fern")
+	vmBin := buildDriver(t, "vm_run.fern")
+	asmBin := buildDriver(t, "asm_run.fern")
 
 	runDriver := func(t *testing.T, bin string, source string, captureStdout bool) (int, string) {
 		t.Helper()

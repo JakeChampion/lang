@@ -1,6 +1,6 @@
 # Test runner migration audit
 
-The pure-Lang test runner (`internal/stdlib/std/test.lang`,
+The pure-Lang test runner (`internal/stdlib/std/test.fern`,
 TAP-13) was built so the project's regression suite can
 eventually run without a Go dependency — landing point
 for the compiler self-host effort. This doc inventories
@@ -23,7 +23,7 @@ vs **which need other work first**.
 | **A) Partially migrated (PoC campaign)**  |     1 | `interp_script_test.go` — 5 of its 10 cases now have side-by-side Lang versions; rest unmigratable |
 | **B) Subprocess-shape, low migration ROI** |     1 | `check_test.go` — could flip via `subprocess(...)` but stays subprocess-shaped                    |
 | **C) Cross-backend orchestration**        |     7 | Inherently spawn N backends per case. Need a Lang-driven multi-backend runner first (see below)   |
-| **D) Self-host Lang programs**            |    13 | The `.lang` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
+| **D) Self-host Lang programs**            |    13 | The `.fern` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
 | **E) Compiler-internal Go API tests**     |    39 | Call Go-side parser / checker / IR / codegen directly. Gated on **self-hosting the compiler**.    |
 | **F) LSP + wasm-binary infrastructure**   |    22 | Test Go service code that has no Lang counterpart (LSP, raw wasm encoding). Likely stay Go.       |
 | **G) Test-runner gate itself**            |     1 | `internal/e2e/test_runner_test.go` — collapses to a shell wrapper post-self-host.                 |
@@ -37,17 +37,17 @@ self-hosting; ~26% (22 files) likely stays Go forever.
 
 ## A) Already migrated
 
-Lang versions live in `examples/tests/*_migrated_test.lang`
+Lang versions live in `examples/tests/*_migrated_test.fern`
 with `TestRunner*MigratedExample` gates. Originals stay
 live until the wider campaign cuts over.
 
 | Lang file                                  | Original                                                                                                              |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `string_prelude_migrated_test.lang`        | `TestInterpScriptStringPrelude` ([#874](https://github.com/JakeChampion/lang/pull/874))                               |
-| `unions_migrated_test.lang`                | `TestInterpScriptUnions` ([#878](https://github.com/JakeChampion/lang/pull/878))                                      |
-| `header_map_migrated_test.lang`            | `TestInterpScriptHeaderMap` ([#880](https://github.com/JakeChampion/lang/pull/880))                                   |
-| `http_request_headers_migrated_test.lang`  | `TestInterpScriptHttpRequestHeaders` ([#882](https://github.com/JakeChampion/lang/pull/882))                          |
-| `http_response_headers_migrated_test.lang` | `TestInterpScriptHttpResponseHeaders` ([#886](https://github.com/JakeChampion/lang/pull/886))                         |
+| `string_prelude_migrated_test.fern`        | `TestInterpScriptStringPrelude` ([#874](https://github.com/JakeChampion/lang/pull/874))                               |
+| `unions_migrated_test.fern`                | `TestInterpScriptUnions` ([#878](https://github.com/JakeChampion/lang/pull/878))                                      |
+| `header_map_migrated_test.fern`            | `TestInterpScriptHeaderMap` ([#880](https://github.com/JakeChampion/lang/pull/880))                                   |
+| `http_request_headers_migrated_test.fern`  | `TestInterpScriptHttpRequestHeaders` ([#882](https://github.com/JakeChampion/lang/pull/882))                          |
+| `http_response_headers_migrated_test.fern` | `TestInterpScriptHttpResponseHeaders` ([#886](https://github.com/JakeChampion/lang/pull/886))                         |
 
 ## B) Migratable today
 
@@ -108,11 +108,11 @@ its own module), every case in this category becomes
 
 ## D) Self-host Lang programs
 
-The `examples/self_host/*.lang` files are the Go
+The `examples/self_host/*.fern` files are the Go
 compiler stages (lexer, parser, checker, IR passes,
 codegen) re-implemented in Lang. The Go tests for
 those (`self_host_*_test.go`) are **cross-backend
-gates** — same `.lang` file compiled by N backends,
+gates** — same `.fern` file compiled by N backends,
 expected to exit 0.
 
 - `self_host_lexer_test.go`
@@ -129,7 +129,7 @@ expected to exit 0.
 - `self_host_cross_validation_test.go`
 - `self_host_pipeline_test.go`
 
-The `.lang` files **already are the tests** — they
+The `.fern` files **already are the tests** — they
 contain in-program assertions and return non-zero on
 failure. The Go gates only multiplex them across
 backends.
@@ -254,9 +254,9 @@ get rewritten in Lang, which isn't a stated goal.
 ## G) Test-runner gate itself
 
 `internal/e2e/test_runner_test.go` — the file that
-runs every `examples/tests/*.lang` through `lang
+runs every `examples/tests/*.fern` through `lang
 -interp` and pins TAP outputs. **Collapses to a shell
-wrapper post-self-host** (`lang test_dir/*.lang` would
+wrapper post-self-host** (`lang test_dir/*.fern` would
 just be the test command).
 
 Right now it's the most useful Go test in the repo
@@ -294,7 +294,7 @@ hardest:
 For reference, the Lang assertion surface that's
 already in place — every entry has a Go-suite
 analogue and the migration playbook in
-`examples/tests/string_prelude_migrated_test.lang`
+`examples/tests/string_prelude_migrated_test.fern`
 (et al) shows how the shapes line up:
 
 - Numeric: i32 / i64 / u32 / u64 / f32 / f64 eq/neq/

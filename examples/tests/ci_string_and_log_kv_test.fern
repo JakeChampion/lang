@@ -1,0 +1,117 @@
+// examples/tests/ci_string_and_log_kv_test.fern — batch 29
+// additions to std/test:
+//   * Case-insensitive string assertions wrapping the
+//     existing CI string methods:
+//     `assert_eq_string_ci` / `assert_neq_string_ci` /
+//     `assert_contains_ci` / `assert_starts_with_ci` /
+//     `assert_ends_with_ci`.
+//   * Structured-breadcrumb log methods on TestRunner:
+//     `(r).log_kv_string(key, value)` (quoted),
+//     `(r).log_kv_i32(key, value)` (unquoted),
+//     `(r).log_kv_i64(key, value)` (unquoted).
+
+function test_eq_string_ci_same_case(): Option[string] {
+    return assert_eq_string_ci("hello", "hello");
+}
+
+function test_eq_string_ci_different_case(): Option[string] {
+    return assert_eq_string_ci("Hello", "hELLo");
+}
+
+function test_eq_string_ci_truly_different_reports(): Option[string] {
+    match (assert_eq_string_ci("hello", "world")) {
+        None => { return fail("expected ci-mismatch fail"); },
+        Some(msg) => {
+            // Both raw values should be quoted in the
+            // diagnostic (NO case-folding applied for
+            // display) so the reader sees the bytes.
+            if (!msg.contains("\"hello\"") || !msg.contains("\"world\"")) {
+                return Some("expected both quoted raw: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_neq_string_ci_pass(): Option[string] {
+    return assert_neq_string_ci("hello", "world");
+}
+
+function test_neq_string_ci_matches_ci_fails(): Option[string] {
+    match (assert_neq_string_ci("Hello", "HELLO")) {
+        None => { return fail("matching case-insensitive must fail neq"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_contains_ci_pass(): Option[string] {
+    return assert_contains_ci("Content-Type: text/html", "TEXT/HTML");
+}
+
+function test_contains_ci_pass_subseq(): Option[string] {
+    return assert_contains_ci("HelloWorld", "lowo");
+}
+
+function test_contains_ci_missing_reports(): Option[string] {
+    match (assert_contains_ci("hello world", "xyz")) {
+        None => { return fail("missing should fail"); },
+        Some(msg) => {
+            if (!msg.contains("hello world") || !msg.contains("xyz")) {
+                return Some("expected both in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_starts_with_ci_pass(): Option[string] {
+    return assert_starts_with_ci("HTTP/1.1 200 OK", "http/");
+}
+
+function test_starts_with_ci_fail(): Option[string] {
+    match (assert_starts_with_ci("ABC", "xyz")) {
+        None => { return fail("mismatch should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_ends_with_ci_pass(): Option[string] {
+    return assert_ends_with_ci("script.LANG", ".fern");
+}
+
+function test_ends_with_ci_fail(): Option[string] {
+    match (assert_ends_with_ci("script.txt", ".fern")) {
+        None => { return fail("mismatch should fail"); },
+        Some(_) => { return None; }
+    }
+}
+
+// The log_kv tests exercise the chaining + output shape.
+// Verifying the actual emitted text requires the Go-side
+// gate to inspect stdout — we just confirm here that the
+// methods chain through cleanly.
+function test_log_kv_chains(r: TestRunner): TestRunner {
+    r = r.log_kv_string("session_id", "abc-123");
+    r = r.log_kv_i32("retry_count", 3);
+    r = r.log_kv_i64("bytes_seen", 1234567890123 as i64);
+    return r.it("log_kv chained without breaking state",
+                assert_true(true));
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("ci-string + log_kv");
+    r = r.it("eq_string_ci same case",          test_eq_string_ci_same_case());
+    r = r.it("eq_string_ci different case",     test_eq_string_ci_different_case());
+    r = r.it("eq_string_ci mismatch raw quoted", test_eq_string_ci_truly_different_reports());
+    r = r.it("neq_string_ci pass",              test_neq_string_ci_pass());
+    r = r.it("neq_string_ci matches CI fails",  test_neq_string_ci_matches_ci_fails());
+    r = r.it("contains_ci pass",                test_contains_ci_pass());
+    r = r.it("contains_ci subseq",              test_contains_ci_pass_subseq());
+    r = r.it("contains_ci missing reports",     test_contains_ci_missing_reports());
+    r = r.it("starts_with_ci pass",             test_starts_with_ci_pass());
+    r = r.it("starts_with_ci fail",             test_starts_with_ci_fail());
+    r = r.it("ends_with_ci pass",               test_ends_with_ci_pass());
+    r = r.it("ends_with_ci fail",               test_ends_with_ci_fail());
+    r = test_log_kv_chains(r);
+    return r.finish();
+}

@@ -1,4 +1,4 @@
-// Astro + Starlight config for the lang documentation site.
+// Astro + Starlight config for the Fern documentation site.
 //
 // Site lives at the repo root URL (https://<user>.github.io/lang/)
 // with the playground bundle nested at /playground/ — keeps the
@@ -8,11 +8,11 @@
 // Three top-level sections in the sidebar:
 //   - Tutorial: narrative learn-the-language pages, ordered.
 //   - Reference: syntax + types + tooling.
-//   - Stdlib: auto-generated from internal/stdlib/*.lang by
-//     `cmd/langdoc`; pages exist under src/content/docs/stdlib/
+//   - Stdlib: auto-generated from internal/stdlib/*.fern by
+//     `cmd/ferndoc`; pages exist under src/content/docs/stdlib/
 //     after that build step. Keeping the section here means the
 //     sidebar shape is stable even on a clean checkout where
-//     langdoc hasn't run yet.
+//     ferndoc hasn't run yet.
 //
 // `base` is set so the site works under GitHub Pages' project
 // subpath (https://<user>.github.io/lang/) without absolute-URL
@@ -29,9 +29,21 @@ export default defineConfig({
   trailingSlash: "ignore",
   integrations: [
     starlight({
-      title: "lang",
+      title: "Fern",
+      logo: {
+        src: "./src/assets/fern-logo.svg",
+        alt: "Fern",
+      },
       description:
-        "A small, fast-startup language with native arm64 / x86-64 / wasm backends.",
+        "Fern — a small, fast-startup language with native arm64 / x86-64 / wasm backends.",
+      // Fern has no dedicated Shiki grammar yet; it started TS-flavoured,
+      // so alias ```fern code fences to TypeScript highlighting. Keeps
+      // the snippets coloured and silences the "language not found" warn.
+      expressiveCode: {
+        shiki: {
+          langAlias: { fern: "typescript" },
+        },
+      },
       social: [
         {
           icon: "github",
@@ -67,7 +79,7 @@ export default defineConfig({
           attrs: { target: "_blank" },
         },
       ],
-      customCss: ["./src/styles/lang.css"],
+      customCss: ["./src/styles/fern.css"],
       lastUpdated: true,
       editLink: {
         baseUrl:

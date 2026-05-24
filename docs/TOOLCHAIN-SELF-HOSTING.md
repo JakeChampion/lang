@@ -3,7 +3,7 @@
 Goal: eliminate every external compiler / assembler / linker / wasm
 helper the driver currently shells out to, replacing each with a
 Lang-native implementation. After all phases land, building a Lang
-program with `lang -o out src.lang` requires **no binary on `$PATH`
+program with `lang -o out src.fern` requires **no binary on `$PATH`
 other than the Lang compiler itself**.
 
 This is a deliberate alternative to the position taken in
@@ -116,10 +116,10 @@ intermediate) but the production driver stops feeding it to
 
 ### Files to create
 
-- `stdlib/wasm/encode.lang` — pure encoder:
+- `stdlib/wasm/encode.fern` — pure encoder:
   module → bytes. Mirrors the structure of `wasm_ir.go` but writes
   bytes instead of text.
-- `stdlib/wasm/leb128.lang` — `put_uleb(buf, u64)` and
+- `stdlib/wasm/leb128.fern` — `put_uleb(buf, u64)` and
   `put_sleb(buf, i64)`.
 
 ### Driver wiring
@@ -145,7 +145,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 ### Progress
 
-- **LEB128 encoders shipped** in `internal/stdlib/std/wasm/leb128.lang`
+- **LEB128 encoders shipped** in `internal/stdlib/std/wasm/leb128.fern`
   with `uleb_u32` / `uleb_u64` / `sleb_i32` / `sleb_i64` plus
   `uleb_size_u32` / `uleb_size_u64`. Vector-tested against the
   Wikipedia LEB128 reference examples and the wasm-spec edge cases
@@ -154,7 +154,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   takes a `u8[]` and appends; no I/O. Not wired into the driver
   yet, per the "Lang code only, defer running it" decision.
 - **Binary-container primitives shipped** in
-  `internal/stdlib/std/wasm/encode.lang`: `put_module_header`
+  `internal/stdlib/std/wasm/encode.fern`: `put_module_header`
   (magic + version), `put_u32_le` (the one fixed-width integer the
   wasm binary uses), `put_name` (uleb-prefixed UTF-8),
   `put_section` (id + uleb size + body), `put_func_type` (the type
@@ -164,7 +164,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   build a complete 16-byte wasm module from scratch and compare
   every byte against the spec-reference encoding.
 - **Control-flow + constant + variable instruction encoders
-  shipped** in `internal/stdlib/std/wasm/inst.lang`. The subset
+  shipped** in `internal/stdlib/std/wasm/inst.fern`. The subset
   covers: i32/i64/f32/f64 consts; local/global get/set/tee; the
   block / loop / if / else / end / br / br_if / return / call /
   call_indirect family; drop and select; unreachable and nop;
@@ -176,7 +176,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   i32.const sleb bit-6 boundary (63 fits in 1 byte; 127 needs a
   continuation byte to disambiguate from -1).
 - **Numeric instruction encoders shipped** in
-  `internal/stdlib/std/wasm/numeric.lang`: every wasm numeric
+  `internal/stdlib/std/wasm/numeric.fern`: every wasm numeric
   opcode that fits the "single byte, no immediate" shape —
   i32 / i64 unary (clz, ctz, popcnt, eqz), compare (eq, ne, lt,
   gt, le, ge with signed / unsigned variants for integers),
@@ -190,7 +190,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   family with a wider compose test that builds the canonical
   `local.get 0; local.get 1; i32.add` body.
 - **Memory instruction encoders shipped** in
-  `internal/stdlib/std/wasm/memory.lang`: every wasm load / store
+  `internal/stdlib/std/wasm/memory.fern`: every wasm load / store
   variant including the narrow widths (i32.load8_s, i64.store16,
   etc.), all carrying the standard `memarg` immediate (uleb
   align + uleb offset); plus `memory.size` / `memory.grow` with
@@ -199,18 +199,18 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   full-width and narrow-width blocks plus the multi-byte uleb
   offset case (offset=128 forces a 2-byte uleb).
 - **Conversion / reinterpret / sign-extension encoders shipped**
-  in `internal/stdlib/std/wasm/convert.lang`: integer-width
+  in `internal/stdlib/std/wasm/convert.fern`: integer-width
   conversion (i32.wrap_i64, i64.extend_i32_{s,u}), float-to-int
   trapping truncation (8 variants across i32/i64 × f32/f64 × s/u),
   int-to-float conversion (8 variants), float-width
   demote / promote, the reinterpret family (i32↔f32 / i64↔f64
   bit-pattern aliases), and the sign-extension extension
   (i32.extend{8,16}_s, i64.extend{8,16,32}_s). ~28 functions, all
-  single-byte opcodes — same one-line shape as numeric.lang.
+  single-byte opcodes — same one-line shape as numeric.fern.
   Tests (`TestWASMConvertIntWidth`, `…FloatInt`) walk every
   variant.
 - **Section composers shipped** in
-  `internal/stdlib/std/wasm/sections.lang`: one function per
+  `internal/stdlib/std/wasm/sections.fern`: one function per
   section that takes the section's logical input (lists of
   typeidxs, parallel name/kind/idx arrays for exports, pre-
   wrapped bodies for code, etc.) and emits the complete
@@ -226,7 +226,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   flag=0 vs flag=1 memory limits, and a code section that wraps
   an inst.put_function_body-produced body end-to-end.
 - **Import + global section composers shipped** in
-  `internal/stdlib/std/wasm/imports.lang`. Imports needed their
+  `internal/stdlib/std/wasm/imports.fern`. Imports needed their
   own module because the import descriptor is a four-variant
   union (func / table / memory / global) — the section composer
   takes a `desc_bodies: u8[][]` parallel array, and each variant
@@ -239,7 +239,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   (`TestWASMImports{Func, DescBuilders, GlobalSection}`) walk
   every variant.
 - **Top-level module builder shipped** in
-  `internal/stdlib/std/wasm/module.lang`. Bundles every section
+  `internal/stdlib/std/wasm/module.fern`. Bundles every section
   composer behind a single `build(m: Module): u8[]` entry point:
   the caller populates a `Module` struct field-by-field
   (returning `module_new()` for an empty starting point), and
@@ -278,7 +278,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 ### Progress (refreshed 2026-05-20)
 
-The Lang-stdlib component encoder (`internal/stdlib/std/wasm/component.lang`)
+The Lang-stdlib component encoder (`internal/stdlib/std/wasm/component.fern`)
 is now structurally complete for the WASI-style component wrapping
 the production driver needs. Every section the Component Model
 binary format defines has a composer, and the canonical
@@ -340,7 +340,7 @@ as a component-level u32-returning function.
 End-to-end exit code 42 demo (covered by
 `TestCmdLangComponentWrap`):
 
-    $ lang -target wasm-bin -component-wrap -o min.wasm min.lang
+    $ lang -target wasm-bin -component-wrap -o min.wasm min.fern
     $ wasmtime run --invoke 'main()' min.wasm
     42
 
@@ -645,9 +645,9 @@ revisit then.
 
 ### Files to create
 
-- `stdlib/wasm/component.lang` — `wrap_as_component(coreModule:
+- `stdlib/wasm/component.fern` — `wrap_as_component(coreModule:
   Bytes, adapter: Bytes, world: World) -> Bytes`.
-- `stdlib/wasm/component_type.lang` — the two precomputed
+- `stdlib/wasm/component_type.fern` — the two precomputed
   `component-type` blobs (`lang_world_type` and `http_world_type`),
   one byte array each. Generate these once using `wasm-tools` and
   paste them in as constants, with a comment pointing at the WIT
@@ -706,11 +706,11 @@ from the IR — no text round-trip.
 
 Split into two pieces with a clean boundary:
 
-1. **`stdlib/arm64/encode.lang`** — instruction encoder. One
+1. **`stdlib/arm64/encode.fern`** — instruction encoder. One
    function per instruction we actually emit (the set is small,
    well under 100 distinct mnemonics — grep `arm64.go` for `g.line`
    calls to enumerate them). Each function returns a `u32`.
-2. **`stdlib/elf/write.lang`** — ELF writer. Takes a list of
+2. **`stdlib/elf/write.fern`** — ELF writer. Takes a list of
    sections (name, flags, bytes) + an entry-point symbol and
    produces a static PIE-or-non-PIE ELF executable. No dynamic
    symbol table needed (we're `-static -nostdlib`).
@@ -732,9 +732,9 @@ PLT, no GOT. This is much less code than a real linker.
 
 ### Files to create
 
-- `stdlib/arm64/encode.lang` — instruction encoders.
-- `stdlib/elf/write.lang` — ELF-64 executable writer.
-- `internal/codegen/arm64/binary.lang` — new backend entry point
+- `stdlib/arm64/encode.fern` — instruction encoders.
+- `stdlib/elf/write.fern` — ELF-64 executable writer.
+- `internal/codegen/arm64/binary.fern` — new backend entry point
   that walks the IR and emits machine code + section data,
   replacing the text-emitting `EmitWithOptions`. Keep the text
   emitter around behind `-emit-asm` for debugging.
@@ -765,7 +765,7 @@ In `cmd/lang/main.go`, branch on target before calling `link`:
 Once Phase 3 lands, x86-64 follows a near-identical path: same ELF
 writer, new instruction encoder. The codegen IR is target-agnostic
 already, so the new entry point under
-`internal/codegen/x86_64/binary.lang` re-uses the ELF writer
+`internal/codegen/x86_64/binary.fern` re-uses the ELF writer
 unchanged and only differs in:
 
 - Instruction encoding (variable-length, much messier than arm64 —
@@ -813,8 +813,8 @@ This is the *object* writer. Linking and codesigning are Phase 5.
 
 ### Files to create
 
-- `stdlib/macho/write.lang` — Mach-O 64 object writer.
-- `internal/codegen/arm64/macho.lang` — Mach-O-emitting backend
+- `stdlib/macho/write.fern` — Mach-O 64 object writer.
+- `internal/codegen/arm64/macho.fern` — Mach-O-emitting backend
   entry point. Shares the Phase 3 ARM64 encoder; only the
   container is different.
 
@@ -891,10 +891,10 @@ Spec is not officially published; the authoritative sources are:
 
 ### Files to create
 
-- `stdlib/macho/link.lang` — final-layout + load-command writer.
-- `stdlib/macho/codesign.lang` — SuperBlob + CodeDirectory
-  writer. Depends on a SHA-256 implementation (`stdlib/crypto/sha256.lang`).
-- `stdlib/crypto/sha256.lang` — pure-Lang SHA-256. Reference impl:
+- `stdlib/macho/link.fern` — final-layout + load-command writer.
+- `stdlib/macho/codesign.fern` — SuperBlob + CodeDirectory
+  writer. Depends on a SHA-256 implementation (`stdlib/crypto/sha256.fern`).
+- `stdlib/crypto/sha256.fern` — pure-Lang SHA-256. Reference impl:
   RFC 6234 Appendix B. Test against the standard NIST vectors.
 
 ### Cross-compile caveat

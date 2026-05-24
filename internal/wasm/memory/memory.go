@@ -1,5 +1,5 @@
 // Package memory is the Go-side mirror of
-// internal/stdlib/std/wasm/memory.lang — memory load / store /
+// internal/stdlib/std/wasm/memory.fern — memory load / store /
 // size / grow instruction encoders for the WebAssembly Core 1.0
 // binary format.
 //

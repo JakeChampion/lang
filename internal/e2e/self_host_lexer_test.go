@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// First step of the self-host port: `examples/self_host/lexer.lang`
+// First step of the self-host port: `examples/self_host/lexer.fern`
 // is the Go lexer (`internal/lexer/lexer.go`) re-written in lang.
 // Validates the language can express the lexer's logic end-to-end:
 // union types for Token kinds, generic-shaped helpers, struct
@@ -14,16 +14,16 @@ import (
 // over the Token union, byte-level string slicing for the
 // scan_* routines.
 //
-// The .lang file's `main()` runs the lexer on a mixed-token input
+// The .fern file's `main()` runs the lexer on a mixed-token input
 // (keyword + ident + multi-char punct + integer suffix + string
 // + line comment + float suffix + position tracking across a `\n`)
 // and asserts the produced Token[] step-by-step. Exit code 0
 // means every assertion passed; non-zero codes identify which
 // arm failed.
 func TestSelfHostLexerX86_64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/lexer.lang")
+	src, err := os.ReadFile("../../examples/self_host/lexer.fern")
 	if err != nil {
-		t.Fatalf("read lexer.lang: %v", err)
+		t.Fatalf("read lexer.fern: %v", err)
 	}
 	_, code := compileAndRunX86_64(t, string(src))
 	if code != 0 {
@@ -32,9 +32,9 @@ func TestSelfHostLexerX86_64(t *testing.T) {
 }
 
 func TestSelfHostLexerArm64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/lexer.lang")
+	src, err := os.ReadFile("../../examples/self_host/lexer.fern")
 	if err != nil {
-		t.Fatalf("read lexer.lang: %v", err)
+		t.Fatalf("read lexer.fern: %v", err)
 	}
 	_, code := compileAndRunArm64(t, string(src))
 	if code != 0 {

@@ -685,7 +685,7 @@ func TestBuildHttpHandlerCompiles(t *testing.T) {
 // TestBuildPrintReal — compile + run a real lang source program
 // that calls `print()`. With name aliasing (print → __lang_print)
 // + WASI fd_write import + the helper chain, end-to-end output
-// flows from `.lang` source to stdout.
+// flows from `.fern` source to stdout.
 func TestBuildPrintReal(t *testing.T) {
 	src := `import "core/no_prelude";
 function main(): i32 {

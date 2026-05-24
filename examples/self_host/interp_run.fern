@@ -1,0 +1,28 @@
+// examples/self_host/interp_run.fern — stdin-driven driver for
+// interp.fern's tree-walking evaluator. Reads lang source from
+// stdin, runs lexer + parser + interp.eval_module, and exits
+// with the program's VInt return value (or 254 if the program
+// failed / returned non-i32). Companion to asm_run.fern
+// (#672+); used by the cross-validation test to assert
+// interp / vm / asm all agree on the same source.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./interp";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var result: interp.Value = interp.eval_module(mod);
+    match (result) {
+        interp.VInt(i) => { return i.v; },
+        interp.VBool(b) => {
+            if (b.v) { return 1; }
+            return 0;
+        },
+        _ => { return 254; }
+    }
+    return 254;
+}

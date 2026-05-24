@@ -104,7 +104,7 @@ func TestHandleMessage_SignatureHelp(t *testing.T) {
 	s.SetPublisher(func(string, any) {})
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
-			URI:        "file:///s.lang",
+			URI:        "file:///s.fern",
 			LanguageID: "lang",
 			Text:       "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n",
 		},
@@ -113,7 +113,7 @@ func TestHandleMessage_SignatureHelp(t *testing.T) {
 	s.HandleMessage(openMsg)
 
 	sp := signatureHelpParams{}
-	sp.TextDocument.URI = "file:///s.lang"
+	sp.TextDocument.URI = "file:///s.fern"
 	sp.Position = Position{Line: 1, Character: 37}
 	msg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",

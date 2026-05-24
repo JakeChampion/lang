@@ -1,5 +1,5 @@
 // Package sections is the Go-side mirror of
-// internal/stdlib/std/wasm/sections.lang — section composers for
+// internal/stdlib/std/wasm/sections.fern — section composers for
 // the WebAssembly Core 1.0 binary format.
 //
 // One step up from internal/wasm/{encode,leb128} primitives:

@@ -9,7 +9,7 @@
 // any backend (wasm, arm64) the same way, and ~10x easier to
 // maintain than the equivalent wat.
 //
-// The embedded `prelude.lang` source is parsed once during
+// The embedded `prelude.fern` source is parsed once during
 // `checker.Check` and its top-level decls are prepended to the
 // user's program before type-checking proceeds. The user can
 // shadow / override any prelude function by declaring a
@@ -19,5 +19,5 @@ package prelude
 
 import _ "embed"
 
-//go:embed prelude.lang
+//go:embed prelude.fern
 var Source string

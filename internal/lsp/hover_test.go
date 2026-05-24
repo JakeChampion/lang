@@ -195,7 +195,7 @@ func TestHandleMessage_Hover(t *testing.T) {
 	// Open a document.
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
-			URI:        "file:///hover.lang",
+			URI:        "file:///hover.fern",
 			LanguageID: "lang",
 			Text:       "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n",
 		},
@@ -205,7 +205,7 @@ func TestHandleMessage_Hover(t *testing.T) {
 
 	// Hover on the `x` in `return x;`.
 	hp := hoverParams{}
-	hp.TextDocument.URI = "file:///hover.lang"
+	hp.TextDocument.URI = "file:///hover.fern"
 	hp.Position = Position{Line: 2, Character: 9}
 	hoverMsg, _ := json.Marshal(message{
 		Jsonrpc: "2.0",

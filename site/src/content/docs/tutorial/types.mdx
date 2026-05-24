@@ -5,14 +5,14 @@ sidebar:
   order: 3
 ---
 
-import LangPlayground from "../../../components/LangPlayground.astro";
+import FernPlayground from "../../../components/FernPlayground.astro";
 
 ## Structs
 
 Plain records. Fields are positional in memory (layout matches
 declaration order), addressed by name in source.
 
-<LangPlayground
+<FernPlayground
   code={`struct Point { x: i32, y: i32 }
 
 function origin(): Point {
@@ -31,7 +31,7 @@ function main(): i32 {
 Receiver syntax goes between `function` and the name. Method calls
 dispatch by receiver type at the call site.
 
-<LangPlayground
+<FernPlayground
   code={`struct Point { x: i32, y: i32 }
 
 function (p: Point) magnitude_sq(): i32 {
@@ -51,7 +51,7 @@ Tagged unions with optional positional payloads. The standard
 library injects `Option[T]` and `Result[T, E]` so you don't have
 to re-declare them.
 
-<LangPlayground
+<FernPlayground
   code={`enum Shape {
     Circle(i32),         // radius
     Rectangle(i32, i32), // width, height
@@ -76,7 +76,7 @@ function main(): i32 {
 The checker fails the build if a `match` misses a variant — or
 requires a wildcard `_` arm to acknowledge the gap.
 
-```lang
+```fern
 function describe(s: Shape): string {
     match (s) {
         Circle(_) => { return "round"; },

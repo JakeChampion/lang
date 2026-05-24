@@ -1,0 +1,178 @@
+// examples/tests/wider_array_contains_count_test.fern —
+// batch 22 additions to std/test:
+//   * Wider-int array equality:
+//       `assert_eq_i64_array`,
+//       `assert_eq_u32_array`,
+//       `assert_eq_u64_array`
+//   * Array membership:
+//       `assert_array_contains_i32(arr, needle)` /
+//       `assert_array_contains_string` and the negative
+//       `_not_contains_*` variants
+//   * Cardinality:
+//       `assert_count_i32(arr, pred, n)` /
+//       `assert_count_string(arr, pred, n)` — exactly N
+//       elements satisfy the predicate
+
+function test_eq_i64_array_pass(): Option[string] {
+    var actual: i64[] = [1 as i64, 2 as i64, 3 as i64];
+    var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
+    return assert_eq_i64_array(actual, expected);
+}
+
+function test_eq_i64_array_length_mismatch(): Option[string] {
+    var actual: i64[] = [1 as i64, 2 as i64];
+    var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
+    match (assert_eq_i64_array(actual, expected)) {
+        None => { return fail("expected length-mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("length differs")) {
+                return Some("expected 'length differs': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_eq_i64_array_mismatch_reports_index(): Option[string] {
+    var actual: i64[] = [10 as i64, 20 as i64, 30 as i64];
+    var expected: i64[] = [10 as i64, 99 as i64, 30 as i64];
+    match (assert_eq_i64_array(actual, expected)) {
+        None => { return fail("expected value-mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("at index 1")) {
+                return Some("expected 'at index 1': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_eq_u32_array_pass(): Option[string] {
+    var actual: u32[] = [1 as u32, 2 as u32, 3 as u32];
+    var expected: u32[] = [1 as u32, 2 as u32, 3 as u32];
+    return assert_eq_u32_array(actual, expected);
+}
+
+function test_eq_u64_array_pass(): Option[string] {
+    var actual: u64[] = [100 as u64, 200 as u64];
+    var expected: u64[] = [100 as u64, 200 as u64];
+    return assert_eq_u64_array(actual, expected);
+}
+
+function test_array_contains_i32_pass(): Option[string] {
+    return assert_array_contains_i32([1, 2, 3, 5, 8], 5);
+}
+
+function test_array_contains_i32_first(): Option[string] {
+    return assert_array_contains_i32([1, 2, 3], 1);
+}
+
+function test_array_contains_i32_last(): Option[string] {
+    return assert_array_contains_i32([1, 2, 3], 3);
+}
+
+function test_array_contains_i32_missing(): Option[string] {
+    match (assert_array_contains_i32([1, 2, 3], 99)) {
+        None => { return fail("expected missing-element fail"); },
+        Some(msg) => {
+            if (!msg.contains("99")) {
+                return Some("expected '99' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_array_contains_i32_empty_fails(): Option[string] {
+    var empty: i32[] = [];
+    match (assert_array_contains_i32(empty, 1)) {
+        None => { return fail("empty array should fail contains"); },
+        Some(_) => { return None; }
+    }
+}
+
+function test_array_contains_string_pass(): Option[string] {
+    return assert_array_contains_string(["a", "b", "c"], "b");
+}
+
+function test_array_not_contains_i32_pass(): Option[string] {
+    return assert_array_not_contains_i32([1, 2, 3], 99);
+}
+
+function test_array_not_contains_i32_fail(): Option[string] {
+    match (assert_array_not_contains_i32([1, 2, 3], 2)) {
+        None => { return fail("expected found-element fail"); },
+        Some(msg) => {
+            if (!msg.contains("index 1")) {
+                return Some("expected 'index 1' in failure: " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function test_array_not_contains_i32_empty_passes(): Option[string] {
+    var empty: i32[] = [];
+    return assert_array_not_contains_i32(empty, 1);
+}
+
+function test_array_not_contains_string_pass(): Option[string] {
+    return assert_array_not_contains_string(["a", "b"], "z");
+}
+
+function is_even(n: i32): boolean { return n % 2 == 0; }
+
+function test_count_i32_exact(): Option[string] {
+    return assert_count_i32([1, 2, 3, 4, 5, 6], is_even, 3);
+}
+
+function test_count_i32_zero(): Option[string] {
+    return assert_count_i32([1, 3, 5, 7], is_even, 0);
+}
+
+function test_count_i32_all(): Option[string] {
+    return assert_count_i32([2, 4, 6], is_even, 3);
+}
+
+function test_count_i32_wrong_count_reports(): Option[string] {
+    match (assert_count_i32([1, 2, 3, 4], is_even, 99)) {
+        None => { return fail("expected count-mismatch"); },
+        Some(msg) => {
+            if (!msg.contains("expected 99 matches") || !msg.contains("got 2")) {
+                return Some("expected '99 matches' + 'got 2': " + msg);
+            }
+            return None;
+        }
+    }
+}
+
+function is_non_empty(s: string): boolean { return s.len() > 0; }
+
+function test_count_string_pass(): Option[string] {
+    return assert_count_string(["", "x", "", "y", "z"], is_non_empty, 3);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("wider-array eq + contains + count");
+    r = r.it("eq_i64_array pass",                test_eq_i64_array_pass());
+    r = r.it("eq_i64_array length mismatch",     test_eq_i64_array_length_mismatch());
+    r = r.it("eq_i64_array reports index",       test_eq_i64_array_mismatch_reports_index());
+    r = r.it("eq_u32_array pass",                test_eq_u32_array_pass());
+    r = r.it("eq_u64_array pass",                test_eq_u64_array_pass());
+    r = r.it("array_contains_i32 middle",        test_array_contains_i32_pass());
+    r = r.it("array_contains_i32 first",         test_array_contains_i32_first());
+    r = r.it("array_contains_i32 last",          test_array_contains_i32_last());
+    r = r.it("array_contains_i32 missing",       test_array_contains_i32_missing());
+    r = r.it("array_contains_i32 empty fails",   test_array_contains_i32_empty_fails());
+    r = r.it("array_contains_string",            test_array_contains_string_pass());
+    r = r.it("array_not_contains_i32 pass",      test_array_not_contains_i32_pass());
+    r = r.it("array_not_contains_i32 fail+idx",  test_array_not_contains_i32_fail());
+    r = r.it("array_not_contains_i32 empty ok",  test_array_not_contains_i32_empty_passes());
+    r = r.it("array_not_contains_string pass",   test_array_not_contains_string_pass());
+    r = r.it("count_i32 exact match",            test_count_i32_exact());
+    r = r.it("count_i32 zero matches",           test_count_i32_zero());
+    r = r.it("count_i32 all elements",           test_count_i32_all());
+    r = r.it("count_i32 mismatch reports",       test_count_i32_wrong_count_reports());
+    r = r.it("count_string pass",                test_count_string_pass());
+    return r.finish();
+}

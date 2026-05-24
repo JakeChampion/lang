@@ -11,7 +11,7 @@ import (
 )
 
 // `buildLangBinForInterp` returns a path to a compiled
-// `cmd/lang` binary. Earlier this rebuilt per-call into
+// `cmd/fern` binary. Earlier this rebuilt per-call into
 // `t.TempDir()`; with ~60+ callsites across the runner-
 // example gates that meant 60 sequential `go build`s on
 // every run. Now the binary is built **once** per `go
@@ -42,7 +42,7 @@ func buildLangBinForInterp(t *testing.T) string {
 			return
 		}
 		bin := filepath.Join(dir, "lang")
-		build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+		build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 		if out, err := build.CombinedOutput(); err != nil {
 			langBinErr = err
 			t.Logf("go build lang failed:\n%s", out)
@@ -56,7 +56,7 @@ func buildLangBinForInterp(t *testing.T) string {
 	return langBinPath
 }
 
-// `lang -interp FILE.lang` — script-mode end-to-end. The
+// `lang -interp FILE.fern` — script-mode end-to-end. The
 // interpreter runs the lang program through the AST evaluator
 // (no codegen, no link, no temp binary) and main()'s return
 // value becomes the process exit code, clamped to 0..255.
@@ -64,7 +64,7 @@ func buildLangBinForInterp(t *testing.T) string {
 func TestInterpScriptFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "prog.lang")
+	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`function fact(n: i32): i32 {
     if (n == 0) { return 1; }
     return n * fact(n - 1);
@@ -122,7 +122,7 @@ func TestInterpScriptStdin(t *testing.T) {
 func TestInterpScriptReadAllStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "prog.lang")
+	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`function main(): i32 {
     var s: string = read_all_stdin();
     print("read: " + s);
@@ -276,7 +276,7 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 //      check that the alias doesn't break the original
 //      flat-load route.
 //
-// Each shape writes a `.lang` file to a tempdir and runs
+// Each shape writes a `.fern` file to a tempdir and runs
 // `lang -interp FILE` rather than piping over stdin: the
 // stdin path skips modload entirely (no imports), so it
 // wouldn't exercise the mangling code path the fix targets.
@@ -328,7 +328,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -440,7 +440,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -542,7 +542,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -637,7 +637,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -772,7 +772,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -820,7 +820,7 @@ function main(): i32 {
     return 0;
 }`
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prog.lang")
+	srcPath := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -977,7 +977,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1123,7 +1123,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1263,7 +1263,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1430,7 +1430,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1564,7 +1564,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1612,7 +1612,7 @@ function main(): i32 {
     return 0;
 }`
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "prog.lang")
+	srcPath := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -1696,7 +1696,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1796,7 +1796,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -1976,7 +1976,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -2050,7 +2050,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -2137,7 +2137,7 @@ function main(): i32 {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			src := filepath.Join(dir, "prog.lang")
+			src := filepath.Join(dir, "prog.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}

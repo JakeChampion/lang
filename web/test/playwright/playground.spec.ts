@@ -1,4 +1,4 @@
-// Scripted regressions for the lang playground. Complements the
+// Scripted regressions for the Fern playground. Complements the
 // Bombadil property-based suite by gating per-PR on a small set of
 // deterministic golden paths the playground must always satisfy.
 //

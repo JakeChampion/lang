@@ -6,9 +6,9 @@ import (
 )
 
 // TestForTargetCoversEveryCanonicalTarget — every -target=
-// value cmd/lang accepts must have a Descriptor entry. The
+// value cmd/fern accepts must have a Descriptor entry. The
 // canonical-set list is duplicated here as a sentinel; adding
-// a new target to cmd/lang's flag dispatch without also
+// a new target to cmd/fern's flag dispatch without also
 // landing a descriptor here surfaces immediately rather than
 // at the user-visible "platform has no capabilities" surface.
 func TestForTargetCoversEveryCanonicalTarget(t *testing.T) {

@@ -1,6 +1,6 @@
 // Package lsp implements a minimal Language Server Protocol server
 // for lang. It speaks LSP over an arbitrary byte stream so the same
-// implementation drives both `cmd/lang-lsp` (stdio for editors) and
+// implementation drives both `cmd/fern-lsp` (stdio for editors) and
 // the wasm playground (request/response over a JS-side adapter).
 //
 // The MVP covers initialize / shutdown / exit, full-sync didOpen /

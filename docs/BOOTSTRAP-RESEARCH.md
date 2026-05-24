@@ -73,7 +73,7 @@ porting effort already underway.
   Rec §6.
 
 - **Pipeline-shape demos compose** (`examples/self_host/
-  pipeline.lang` glues lexer → parser → constfold → checker
+  pipeline.fern` glues lexer → parser → constfold → checker
   → vm). The composition tests catch wiring bugs before
   the full self-host is in place.
 

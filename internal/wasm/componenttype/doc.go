@@ -3,7 +3,7 @@
 // The two .bin files hold the inner *payload* of the
 // `component-type` custom section that wasm-tools writes when
 // you run `wasm-tools component embed -w <world>` against the
-// WIT files in cmd/lang/wit/. They are world-specific and
+// WIT files in cmd/fern/wit/. They are world-specific and
 // module-independent: the same payload is emitted regardless
 // of the core module it is being attached to.
 //
@@ -14,9 +14,9 @@
 //	wasm-tools parse /tmp/empty.wat -o /tmp/empty.wasm
 //
 //	# 2. Embed each world into the empty module
-//	wasm-tools component embed cmd/lang/wit -w lang \
+//	wasm-tools component embed cmd/fern/wit -w lang \
 //	    /tmp/empty.wasm -o /tmp/lang.wasm
-//	wasm-tools component embed cmd/lang/wit -w http \
+//	wasm-tools component embed cmd/fern/wit -w http \
 //	    /tmp/empty.wasm -o /tmp/http.wasm
 //
 //	# 3. Strip everything before the custom-section payload:

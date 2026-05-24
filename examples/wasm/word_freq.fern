@@ -1,0 +1,126 @@
+// word_freq.fern — read text from stdin, print the top-N
+// most-frequent words as `count<TAB>word`, ordered.
+//
+// Showcases: the auto-injected Map[K, V] for the count
+// table (string keys, i32 values), MapIter via
+// `m.keys()` / `m.values()` for parallel-array snapshots,
+// `s.to_lower` for the case-fold pass, manual whitespace
+// tokenisation via byte-class matching, `defer` for the
+// stdin close, and the array-mutation idiom (`arr[i] = v`)
+// — arrays are pointer-typed at the wasm layer, so
+// mutations in `swap_pairs` are visible to the caller.
+//
+//   $ printf 'a b a c b a' | wasmtime word_freq.wasm
+//   3\ta
+//   2\tb
+//   1\tc
+import "core/no_prelude";
+// Map runtime for the count table; std/string for
+// (string).to_lower and the tokenisation byte-class methods;
+// std/i32 for the f-string interpolation of counts.
+import "core/map";
+import "std/string";
+import "std/i32";
+
+function read_all(r: Reader): string {
+  var out: string = "";
+  while (true) {
+    match (r.read_line()) {
+      Some(line) => {
+        out = out + line + "\n";
+      },
+      None => {
+        return out;
+      }
+    }
+  }
+  return out;  // unreachable
+}
+
+// Tokenize on whitespace. Simplification: ASCII punctuation
+// stays attached to words. A real version would walk bytes
+// and split on the wider whitespace + punctuation classes.
+function tokenize(s: string): string[] {
+  var lower: string = s.to_lower();
+  var out: string[] = [];
+  var i: i32 = 0;
+  var sLen: i32 = lower.len();
+  var start: i32 = 0;
+  while (i <= sLen) {
+    var b: i32 = 0;
+    if (i < sLen) {
+      b = lower[i];
+    }
+    var is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
+    if (is_break) {
+      if (i > start) {
+        out = out.push(lower[start:i]);
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Sort by count descending via insertion sort. Operates on
+// parallel keys / counts arrays so the i32-keyed swap is a
+// straight memory shuffle. With heap-capture closures, swap
+// lives inline as a local function that captures both arrays
+// from the enclosing scope — no parameter threading needed.
+function sort_pairs(keys: string[], counts: i32[]): void {
+  function swap(i: i32, j: i32): void {
+    var tk: string = keys[i];
+    var tc: i32 = counts[i];
+    keys[i] = keys[j];
+    counts[i] = counts[j];
+    keys[j] = tk;
+    counts[j] = tc;
+  }
+  var i: i32 = 1;
+  while (i < counts.len()) {
+    var j: i32 = i;
+    while (j > 0 && counts[j] > counts[j - 1]) {
+      swap(j, j - 1);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+}
+
+function main(): i32 {
+  var r: Reader = stdin();
+  defer r.close();
+  var text: string = read_all(r);
+  var words: string[] = tokenize(text);
+  var counts: Map[string, i32] = map_new(64);
+  var i: i32 = 0;
+  while (i < words.len()) {
+    var w: string = words[i];
+    match (counts.get(w)) {
+      Some(n) => {
+        counts.set(w, n + 1);
+      },
+      None => {
+        counts.set(w, 1);
+      }
+    }
+    i = i + 1;
+  }
+  // Snapshot keys + values into parallel arrays for sort.
+  // Insertion-order Map.iter() doesn't guarantee count
+  // order — that's what sort_pairs is for.
+  var keys_arr: string[] = counts.keys();
+  var vals_arr: i32[] = counts.values();
+  sort_pairs(keys_arr, vals_arr);
+  var topN: i32 = 5;
+  if (keys_arr.len() < topN) {
+    topN = keys_arr.len();
+  }
+  var k: i32 = 0;
+  while (k < topN) {
+    print(vals_arr[k].to_string() + "\t" + keys_arr[k]);
+    k = k + 1;
+  }
+  return 0;
+}

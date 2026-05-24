@@ -1,5 +1,5 @@
 // Package inst is the Go-side mirror of
-// internal/stdlib/std/wasm/inst.lang — control-flow, constant,
+// internal/stdlib/std/wasm/inst.fern — control-flow, constant,
 // and variable instruction encoders for the WebAssembly Core 1.0
 // binary format.
 //

@@ -38,7 +38,7 @@ import (
 func writeSelfHostPipelineProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	files := []string{"lexer.lang", "parser.lang", "constfold.lang", "checker.lang", "vm.lang", "pipeline.lang"}
+	files := []string{"lexer.fern", "parser.fern", "constfold.fern", "checker.fern", "vm.fern", "pipeline.fern"}
 	for _, name := range files {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -54,7 +54,7 @@ func writeSelfHostPipelineProject(t *testing.T) string {
 func TestSelfHostPipelineX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostPipelineProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "pipeline.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "pipeline.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestSelfHostPipelineX86_64(t *testing.T) {
 func TestSelfHostPipelineArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostPipelineProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "pipeline.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "pipeline.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

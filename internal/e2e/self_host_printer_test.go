@@ -15,7 +15,7 @@ import (
 )
 
 // Fifth self-host milestone after the lexer (#609), parser (#611 /
-// #617), checker (#619), and interp (#623). `printer.lang` is a
+// #617), checker (#619), and interp (#623). `printer.fern` is a
 // tree-to-source emitter: walks a parser.Module and emits a
 // re-parseable string. Validates the round-trip property —
 // parse → print → parse → same AST shape — so printer bugs
@@ -30,7 +30,7 @@ import (
 func writeSelfHostPrinterProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "printer.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "printer.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -45,7 +45,7 @@ func writeSelfHostPrinterProject(t *testing.T) string {
 func TestSelfHostPrinterX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostPrinterProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "printer.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "printer.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestSelfHostPrinterX86_64(t *testing.T) {
 func TestSelfHostPrinterArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostPrinterProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "printer.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "printer.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

@@ -29,7 +29,7 @@ will silently misbehave on a native target.* Highest leverage.
 Landed: `map_new` / `__method_Map_*` / `__method_MapIter_*` dispatch
 table mirroring arm64, plus the supporting runtimes (`__store_i32` /
 `__load_i32` / `__store_ptr` / `__load_ptr` / `__ptr_width` /
-`__memset`). The lang Map runtime in `prelude.lang` compiles
+`__memset`). The lang Map runtime in `prelude.fern` compiles
 unchanged. `TestX86_64Map` covers set/get, grow-past-capacity,
 string keys, and iter-after-delete.
 

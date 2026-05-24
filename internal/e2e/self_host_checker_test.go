@@ -14,7 +14,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// Third step of the self-host port: `examples/self_host/checker.lang`
+// Third step of the self-host port: `examples/self_host/checker.fern`
 // is a minimal type-checker written in lang. It imports both
 // `./lexer` and `./parser` and walks the Stmt[] / Expr tree
 // produced by `parser.parse_program(toks)`, assigning a Type
@@ -28,7 +28,7 @@ import (
 // unions/enums, structs/methods, function-call typing, control
 // flow — the parser stub doesn't emit those yet either.
 //
-// The .lang file's main() runs four checks: a fully well-typed
+// The .fern file's main() runs four checks: a fully well-typed
 // program (i32 + string + bool + bool + i32), a type-mismatch
 // (`1 + "x"` → Unknown), forward/backward ident lookup (forward
 // → Unknown, backward → i32), and logical/comparison ops. Exit
@@ -38,7 +38,7 @@ import (
 func writeSelfHostCheckerProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "checker.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "checker.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -53,7 +53,7 @@ func writeSelfHostCheckerProject(t *testing.T) string {
 func TestSelfHostCheckerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostCheckerProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "checker.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "checker.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSelfHostCheckerX86_64(t *testing.T) {
 func TestSelfHostCheckerArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostCheckerProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "checker.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "checker.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

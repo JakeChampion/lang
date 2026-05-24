@@ -1,7 +1,7 @@
 {
-  "name": "lang-vscode",
-  "displayName": "lang",
-  "description": "Language Server + syntax highlighting for the lang language.",
+  "name": "fern-vscode",
+  "displayName": "Fern",
+  "description": "Language Server + syntax highlighting for the Fern language.",
   "version": "0.1.0",
   "publisher": "jakechampion",
   "engines": {
@@ -18,37 +18,37 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:lang"
+    "onLanguage:fern"
   ],
   "contributes": {
     "languages": [
       {
-        "id": "lang",
+        "id": "fern",
         "aliases": [
-          "lang"
+          "Fern"
         ],
         "extensions": [
-          ".lang"
+          ".fern"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "lang",
-        "scopeName": "source.lang",
-        "path": "./syntaxes/lang.tmLanguage.json"
+        "language": "fern",
+        "scopeName": "source.fern",
+        "path": "./syntaxes/fern.tmLanguage.json"
       }
     ],
     "configuration": {
-      "title": "lang",
+      "title": "Fern",
       "properties": {
-        "lang.serverPath": {
+        "fern.serverPath": {
           "type": "string",
-          "default": "lang-lsp",
-          "description": "Path to the lang-lsp binary. Resolved against $PATH when unqualified."
+          "default": "fern-lsp",
+          "description": "Path to the fern-lsp binary. Resolved against $PATH when unqualified."
         },
-        "lang.trace.server": {
+        "fern.trace.server": {
           "type": "string",
           "enum": [
             "off",
@@ -56,7 +56,7 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Trace LSP traffic between the extension and lang-lsp."
+          "description": "Trace LSP traffic between the extension and fern-lsp."
         }
       }
     }

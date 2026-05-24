@@ -1,0 +1,42 @@
+// examples/tests/bench_test.fern — exercises the bench
+// harness added to std/test.
+//
+// `r.bench(name, iter, fn)` runs `fn` repeatedly, emits a
+// TAP comment with min/median/mean/max in microseconds.
+// Always passes. `r.bench_max_us(name, iter, fn, budget)`
+// adds a median-vs-budget regression check.
+//
+// Median (not mean) is the right regression signal — a
+// single GC pause inflates the mean but leaves the median
+// honest.
+
+function workload_tiny() {
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < 100) { sum = sum + i; i = i + 1; }
+}
+
+function workload_string_build() {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 50) { s = s + "x"; i = i + 1; }
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("bench harness");
+
+    // No-regression bench — reports timing, always passes.
+    r = r.bench("tiny arithmetic loop", 20, workload_tiny);
+    r = r.bench("string build (50 chars)", 10, workload_string_build);
+
+    // Budgeted bench — must finish under 1s median or the
+    // case fails. `tiny_loop` is sub-millisecond on any modern
+    // host; the very generous bound is a deliberate hedge for
+    // virtualised / loaded CI runners where a 100-element
+    // tree-walker loop occasionally takes longer than the
+    // raw arithmetic would suggest. Tightening this bound is
+    // tempting but consistently flaky — leave the slack.
+    r = r.bench_max_us("tiny loop under 1s budget", 20, workload_tiny, 1000000 as i64);
+
+    return r.finish();
+}

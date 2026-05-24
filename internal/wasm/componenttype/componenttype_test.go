@@ -106,7 +106,7 @@ func firstDiff(a, b []byte) int {
 }
 
 func findWITDir() (string, error) {
-	// Walk up from the package directory until we find cmd/lang/wit.
+	// Walk up from the package directory until we find cmd/fern/wit.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err

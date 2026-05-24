@@ -1,0 +1,84 @@
+// examples/tests/sort_wider_test.fern — exercises the new
+// wider-int sort helpers in std/sort: `sort_i64_asc`,
+// `sort_i64_desc`, `sort_u32_asc`, `sort_u64_asc`.
+//
+// Before this, only `sort_i32_asc` / `sort_i32_desc` /
+// `sort_strings_asc` / etc. existed; tests that wanted to
+// median-aggregate wider-int sample arrays (eg bench timings
+// kept as `i64[]` microseconds) had to roll their own sort
+// inline.
+
+function test_i64_asc(): Option[string] {
+    var arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64, 9 as i64, 2 as i64, 6 as i64];
+    var sorted: i64[] = sort_i64_asc(arr);
+    var i: i32 = 1;
+    while (i < sorted.len()) {
+        if (sorted[i] < sorted[i - 1]) {
+            return fail("not sorted at " + i.to_string() +
+                        ": " + sorted[i - 1].to_string() +
+                        " > " + sorted[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+function test_i64_desc(): Option[string] {
+    var arr: i64[] = [1 as i64, 5 as i64, 2 as i64, 9 as i64, 3 as i64];
+    var sorted: i64[] = sort_i64_desc(arr);
+    var i: i32 = 1;
+    while (i < sorted.len()) {
+        if (sorted[i] > sorted[i - 1]) {
+            return fail("not descending at " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+function test_u32_asc(): Option[string] {
+    var arr: u32[] = [3u32, 1u32, 4u32, 1u32, 5u32];
+    var sorted: u32[] = sort_u32_asc(arr);
+    var i: i32 = 1;
+    while (i < sorted.len()) {
+        if (sorted[i] < sorted[i - 1]) {
+            return fail("u32 sort wrong at " + i.to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+function test_u64_asc_with_large_values(): Option[string] {
+    // Use values near u64-max to make sure unsigned compare
+    // (not sign-extended i64) is what drives the order.
+    var arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
+    var sorted: u64[] = sort_u64_asc(arr);
+    return assert_eq_u64(sorted[0], 0u64);
+}
+
+function test_i64_empty(): Option[string] {
+    var arr: i64[] = [];
+    var sorted: i64[] = sort_i64_asc(arr);
+    if (sorted.len() != 0) {
+        return fail("empty sort grew: " + sorted.len().to_string());
+    }
+    return None;
+}
+
+function test_i64_single(): Option[string] {
+    var arr: i64[] = [42 as i64];
+    var sorted: i64[] = sort_i64_asc(arr);
+    return assert_eq_i64(sorted[0], 42 as i64);
+}
+
+function main(): i32 {
+    var r: TestRunner = test_new("wider sorts");
+    r = r.it("sort_i64_asc",                test_i64_asc());
+    r = r.it("sort_i64_desc",               test_i64_desc());
+    r = r.it("sort_u32_asc",                test_u32_asc());
+    r = r.it("sort_u64_asc near u64-max",   test_u64_asc_with_large_values());
+    r = r.it("sort_i64_asc empty input",    test_i64_empty());
+    r = r.it("sort_i64_asc singleton",      test_i64_single());
+    return r.finish();
+}

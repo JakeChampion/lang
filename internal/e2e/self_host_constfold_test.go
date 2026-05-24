@@ -15,7 +15,7 @@ import (
 )
 
 // Sixth self-host milestone, and the first AST→AST transformation
-// pass in the port. `constfold.lang` walks a parser.Module and
+// pass in the port. `constfold.fern` walks a parser.Module and
 // rewrites every constant sub-expression to its folded form:
 //
 //   var a = 1 + 2 * 3;        →  var a = 7;
@@ -37,7 +37,7 @@ import (
 func writeSelfHostConstfoldProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang", "constfold.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "constfold.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -52,7 +52,7 @@ func writeSelfHostConstfoldProject(t *testing.T) string {
 func TestSelfHostConstfoldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostConstfoldProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "constfold.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "constfold.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSelfHostConstfoldX86_64(t *testing.T) {
 func TestSelfHostConstfoldArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostConstfoldProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "constfold.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "constfold.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

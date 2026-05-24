@@ -55,7 +55,7 @@ the solution.
 ## What we already do well — call out so we don't drift
 
 - **`HttpRequest` / `HttpResponse` as plain struct types**
-  (`internal/stdlib/std/http.lang`). Not a class with
+  (`internal/stdlib/std/http.fern`). Not a class with
   methods, not a stream-of-events. Plain fields:
   `method`, `path`, `body`, `headers`. Right shape for the
   90% case; the streaming case wraps it.
@@ -784,7 +784,7 @@ populates `u.name` and `u.age` by field name, returns
 `Err(InvalidJson { expected: "string", got: "number",
 at_offset: 42 })` on type mismatch.
 
-Lives at `internal/stdlib/std/json.lang` with the
+Lives at `internal/stdlib/std/json.fern` with the
 generator as a small IR pass (similar to
 `internal/monomorph/`).
 
@@ -844,7 +844,7 @@ Build `BufReader` / `BufWriter` / `LineReader` /
 **Cost: 1 week + cascading test fixes.** **Impact: medium;
 consistency win.**
 
-Audit `internal/stdlib/std/io.lang`. Every public function
+Audit `internal/stdlib/std/io.fern`. Every public function
 returns `Result[T, IoError]`. `IoError` is the canonical
 sum type. Aligns with the rest of the language.
 
@@ -924,12 +924,12 @@ is a literal).
 
 **Cost: 1 week.** **Impact: low; one-off for data tooling.**
 
-Already in the tree (`std/csv.lang`). Audit + flesh out
+Already in the tree (`std/csv.fern`). Audit + flesh out
 along with §5 (use `Reader` / `Writer` interfaces).
 
 ### 13. URL parsing — separate from query parsing
 
-**Cost: already mostly done (`std/url.lang`).** **Impact:
+**Cost: already mostly done (`std/url.fern`).** **Impact:
 low; verify it composes with §1.**
 
 `url_parse(s) → Url` exists. Verify the shape works for

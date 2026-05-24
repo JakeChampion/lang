@@ -14,9 +14,9 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// Second step of the self-host port: `examples/self_host/parser.lang`
+// Second step of the self-host port: `examples/self_host/parser.fern`
 // is a recursive-descent parser written in lang, layered on top of
-// `examples/self_host/lexer.lang` via `import "./lexer"` — the
+// `examples/self_host/lexer.fern` via `import "./lexer"` — the
 // cross-module qualified variant patterns from #615 are what let the
 // parser pattern-match `lexer.TokIdent(x) => …` against the lexer's
 // Token union. Together they exercise: union types over Token *and*
@@ -25,7 +25,7 @@ import (
 // parser state via value semantics, nested `match` over union variants
 // across module boundaries inside the validation harness.
 //
-// The .lang file's `main()` parses the source
+// The .fern file's `main()` parses the source
 //
 //   var x = 1 + 2 * 3; var y = (1 + 2) * 3; return x + y;
 //
@@ -34,14 +34,14 @@ import (
 // is a binary `+` of two idents. Exit code 0 means every assertion
 // passed; non-zero codes identify which arm failed.
 //
-// The test copies both lexer.lang and parser.lang into a temp dir so
+// The test copies both lexer.fern and parser.fern into a temp dir so
 // the `import "./lexer"` resolves through modload's normal import
-// machinery — same pipeline cmd/lang uses end-to-end.
+// machinery — same pipeline cmd/fern uses end-to-end.
 
 func writeSelfHostParserProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.lang", "parser.lang"} {
+	for _, name := range []string{"lexer.fern", "parser.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -56,7 +56,7 @@ func writeSelfHostParserProject(t *testing.T) string {
 func TestSelfHostParserX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostParserProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "parser.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "parser.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestSelfHostParserX86_64(t *testing.T) {
 func TestSelfHostParserArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	dir := writeSelfHostParserProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "parser.lang"))
+	prog, _, err := modload.Load(filepath.Join(dir, "parser.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
