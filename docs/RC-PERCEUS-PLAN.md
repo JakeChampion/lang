@@ -951,6 +951,23 @@ Phase 3 CANNOT start with the freelist — it must start by
    free can find the right list. `__fern_alloc` checks the class
    list before bumping. Flag-gated so the no-free arena stays the
    default until the detector is green end-to-end.
+
+   **Allocator mechanism — STARTED (x86_64).** Behind the
+   `ast.RcFreeEnabled` codegen flag (default false → pure bump,
+   byte-identical to every prior phase), x86_64 now carries a
+   segregated freelist: `__fern_freelist_heads` is 128 BSS heads,
+   one per 16-byte size class (16…2048; allocations are already
+   16-byte-rounded, so classes are exact-fit, no waste). `__fern_free
+   (base, size)` pushes a block onto its class's intrusive list
+   (successor pointer in the block's first 8 bytes); `__fern_alloc`
+   pops the matching class before bumping. Exposed to Fern as the
+   `__free(ptr, size)` shim (companion to `__alloc`) so the path is
+   testable in isolation. `TestX86_64FreelistReuse` pins same-size
+   reuse, different-class non-aliasing, and LIFO order — flag-on.
+   NOT yet wired into the rc dec sites (rc_dec / the drop helpers
+   still don't free); that wiring + wasm/arm64 parity are the next
+   slices. The flip itself stays gated on a corpus-wide-green
+   detector on all backends + explicit owner sign-off.
 5. **Enable + verify.** Flip the flag on, run the entire e2e suite
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).

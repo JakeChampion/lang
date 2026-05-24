@@ -206,6 +206,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// FuncType locals.
 		g.emitAllocRc1Runtime()
 	}
+	if g.usesFree {
+		g.emitFreeRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -457,6 +460,9 @@ type generator struct {
 	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
 	// "last reference?" check used by the Phase 3 struct drop.
 	usesRcIsUnique bool
+	// usesFree gates `__fern_free` — the Phase 3 step-4 freelist
+	// return path. Pulls in __fern_alloc (shares the freelist BSS).
+	usesFree bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -499,6 +505,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_rc_is_unique":
 		g.usesRcIsUnique = true
 	case "__alloc":
+		g.usesAlloc = true
+	case "__free":
+		g.usesFree = true
 		g.usesAlloc = true
 	case "__slice_make":
 		g.usesSliceMake = true
@@ -1592,6 +1601,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		switch target {
 		case "__alloc":
 			target = "__fern_alloc"
+		case "__free":
+			target = "__fern_free"
 		case "__memcpy":
 			target = "__fern_memcpy"
 		case "__slice_make":
@@ -2564,6 +2575,16 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_rc_underflow")
 			g.line("\t.quad 0")
 		}
+		if ast.RcFreeEnabled && g.usesAlloc {
+			// Phase 3 step-4 segregated freelist. 128 heads, one per
+			// 16-byte size class (16, 32, …, 2048); head i is the
+			// freelist for blocks of size (i+1)*16. Each free block
+			// stores its successor's pointer in its first 8 bytes.
+			// Zero = empty class.
+			g.line(".align 8")
+			g.label("__fern_freelist_heads")
+			g.line("\t.space 1024")
+		}
 	}
 }
 
@@ -2601,6 +2622,31 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
+	if ast.RcFreeEnabled {
+		// Phase 3 step-4: reuse a freed block of the same size class
+		// before bumping. rdi is the 16-byte-rounded request; classes
+		// cover 16..2048. idx = (rdi>>4)-1; if heads[idx] != 0, pop it.
+		g.emit("cmp rdi, 16")
+		g.emit("jb .Lalloc_bump")
+		g.emit("cmp rdi, 2048")
+		g.emit("ja .Lalloc_bump")
+		g.emit("mov rax, rdi")
+		g.emit("shr rax, 4")
+		g.emit("sub rax, 1") // class index
+		g.emit("lea rcx, [rip + __fern_freelist_heads]")
+		g.emit("mov rdx, [rcx + rax*8]") // head
+		g.emit("test rdx, rdx")
+		g.emit("jz .Lalloc_bump")
+		g.emit("mov r8, [rdx]")          // head.next
+		g.emit("mov [rcx + rax*8], r8")  // heads[idx] = next
+		g.emit("mov rax, rdx")           // return reused block
+		g.emit("pop r13")
+		g.emit("pop r12")
+		g.emit("pop rbx")
+		g.emit("pop rbp")
+		g.emit("ret")
+		g.label(".Lalloc_bump")
+	}
 	g.emit("movzx eax, byte ptr [rip + __fern_alloc_mode]")
 	g.emit("test eax, eax")
 	g.emit("jnz .Lalloc_pick_persistent")
@@ -2650,6 +2696,42 @@ func (g *generator) emitAllocRuntime() {
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.line(".size __fern_alloc, .-__fern_alloc")
+}
+
+// emitFreeRuntime emits `__fern_free(base: i64, size: i64)` — the
+// Phase 3 step-4 freelist return path. When the freelist is enabled
+// it pushes the `size`-byte block at `base` onto its size class's
+// intrusive freelist (the successor pointer lives in the block's
+// first 8 bytes). Blocks outside the 16..2048 class range are
+// dropped (the bump region keeps them — they're reclaimed only by
+// the eventual large-alloc unmap path, not yet built). When the
+// freelist is disabled the helper is a no-op so a stray `__free`
+// call in a non-step-4 build is harmless.
+//
+// System V: rdi = base, rsi = size. Leaf; no frame.
+func (g *generator) emitFreeRuntime() {
+	g.line("")
+	g.line(".globl __fern_free")
+	g.line(".type __fern_free, @function")
+	g.label("__fern_free")
+	if ast.RcFreeEnabled {
+		g.emit("add rsi, 15")
+		g.emit("and rsi, -16") // round size to the class granularity
+		g.emit("cmp rsi, 16")
+		g.emit("jb .Lfree_ret")
+		g.emit("cmp rsi, 2048")
+		g.emit("ja .Lfree_ret")
+		g.emit("mov rax, rsi")
+		g.emit("shr rax, 4")
+		g.emit("sub rax, 1") // class index
+		g.emit("lea rcx, [rip + __fern_freelist_heads]")
+		g.emit("mov rdx, [rcx + rax*8]") // old head
+		g.emit("mov [rdi], rdx")         // base.next = old head
+		g.emit("mov [rcx + rax*8], rdi") // heads[idx] = base
+		g.label(".Lfree_ret")
+	}
+	g.emit("ret")
+	g.line(".size __fern_free, .-__fern_free")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:

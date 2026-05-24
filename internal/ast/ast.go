@@ -384,6 +384,18 @@ func UseTwoWordStrings(ptrW int) bool {
 // which `CodegenMu` enforces.
 var TwoWordOverride bool
 
+// RcFreeEnabled gates the Phase 3 step-4 freelist allocator. When
+// false (the default) `__fern_alloc` is a pure bump cursor and
+// `__fern_free` is a no-op — identical to every phase before step
+// 4. When true, codegen emits a segregated freelist: `__fern_free`
+// returns a block to its size class and `__fern_alloc` reuses a
+// class's freelist before bumping. Flipping it on is the
+// "dangerous step" the plan gates on a corpus-wide-green rc detector
+// + explicit owner sign-off; it's set (and reset) per-Emit by the
+// flag-on tests, mirroring TwoWordOverride, and so is guarded by
+// CodegenMu for the native backends.
+var RcFreeEnabled bool
+
 // CodegenMu serialises native codegen calls that read or
 // write `TwoWordOverride`. arm64.Emit toggles the flag during
 // its Emit body; x86_64.Emit reads it via `ir.LowerWith`.
