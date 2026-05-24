@@ -9937,7 +9937,7 @@ func TestCmdLangComponentWrapCliWithStdinReadLine(t *testing.T) {
 // detects the args-only preview-2 import
 // (wasi:cli/environment::get-arguments), rebuilds with cabi_realloc
 // exported (the get-arguments canon-lower allocates the returned
-// list<string> through it), and routes via WrapWasiArgsAsCliRun.
+// list<string> through it), and routes via ComposePreview2CliRun.
 //
 // Observed via exit code: the program returns 0 when argv has the
 // expected count (program name + 2 extra = 3), 1 otherwise.
@@ -9994,7 +9994,7 @@ func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
 // reads an env var via env() through `-component-wrap-cli`. The
 // driver detects the env-only preview-2 import
 // (wasi:cli/environment::get-environment), rebuilds with
-// cabi_realloc exported, and routes via WrapWasiEnvAsCliRun.
+// cabi_realloc exported, and routes via ComposePreview2CliRun.
 //
 // Observed via exit code: the program returns 0 when env("FOO")
 // resolves (Some), 1 when unset (None).

@@ -541,51 +541,6 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// export. wasmbin's SynthCliRun has already emitted
 				// `_lang_run` as the normalised entry — main with
 				// any signature (void / i32) flows through it.
-				if usesPreview2WallClockOnly(bin) {
-					comp := component.WrapWasiWallClockAsCliRun(bin, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if usesPreview2ArgsOnly(bin) {
-					// get-arguments returns list<string>; its canon-lower
-					// needs realloc to allocate the list + string bytes,
-					// so rebuild with ForceMemorySection (cabi_realloc
-					// export). Scoped to args-only programs.
-					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-						ForceMemorySection: true,
-						Preview2WASI:       true,
-						SynthCliRun:        true,
-					})
-					if err != nil {
-						return 1, err
-					}
-					comp := component.WrapWasiArgsAsCliRun(rb, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if usesPreview2EnvOnly(bin) {
-					// get-environment returns list<tuple<string,string>>;
-					// its canon-lower needs realloc, so rebuild with
-					// ForceMemorySection (cabi_realloc export). Scoped to
-					// env-only programs.
-					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-						ForceMemorySection: true,
-						Preview2WASI:       true,
-						SynthCliRun:        true,
-					})
-					if err != nil {
-						return 1, err
-					}
-					comp := component.WrapWasiEnvAsCliRun(rb, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
 				if opts, ok := classifyComposeCliStream(bin); ok {
 					// General CLI-stream + structured composition: any mix of
 					// stdout/stderr write, stdin read, file open-chains,
@@ -1011,62 +966,6 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 	},
 }
 
-// classifyPreview2Imports walks the core module's import section
-// and bucketises each import:
-//
-//   - wasi: returned as a `component.WasiImport` ready to feed
-//     `WrapWasiImportedWithExport`.
-//   - unknown: the "module.name" string returned so the driver
-//     can surface a useful error pointing at -wasi-adapter.
-// usesPreview2WallClockOnly reports whether the core module's
-// imports are exactly the single preview-2 wall-clock pair —
-// `wasi:clocks/wall-clock@0.2.0::now`. The realtime-clock
-// helpers (now_ns / now_unix_ms) lower now() via the
-// indirect-datetime out-pointer ABI, so the wrap uses the
-// 1-i32 trampoline (WrapWasiWallClockAsCliRun) rather than the
-// structured WasiImport flow.
-func usesPreview2WallClockOnly(bin []byte) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 1 {
-		return false
-	}
-	p := pairs[0]
-	return p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now"
-}
-
-// usesPreview2ArgsOnly reports whether the core module's imports
-// are exactly the single preview-2 args pair —
-// `wasi:cli/environment@0.2.0::get-arguments` — and nothing else.
-// get-arguments returns list<string>, so its wrap
-// (WrapWasiArgsAsCliRun) uses the 1-i32 trampoline with a
-// realloc-bearing canon-lower, distinct from the structured
-// WasiImport flow; the driver routes the args-only case through
-// the dedicated wrap helper. Mixed cases aren't supported yet.
-func usesPreview2ArgsOnly(bin []byte) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 1 {
-		return false
-	}
-	p := pairs[0]
-	return p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments"
-}
-
-// usesPreview2EnvOnly reports whether the core module's imports are
-// exactly the single preview-2 env pair —
-// `wasi:cli/environment@0.2.0::get-environment` — and nothing else.
-// get-environment returns list<tuple<string,string>>, so its wrap
-// (WrapWasiEnvAsCliRun) uses the 1-i32 trampoline with a
-// realloc-bearing canon-lower; the driver routes the env-only case
-// through the dedicated wrap helper. Mixed cases aren't supported
-// yet.
-func usesPreview2EnvOnly(bin []byte) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 1 {
-		return false
-	}
-	p := pairs[0]
-	return p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment"
-}
 // classifyComposeCliStream inspects a core module's imports and, if
 // they all fall within the CLI-stream + structured family that
 // component.ComposePreview2CliRun handles, returns the ComposeOpts to
@@ -1197,6 +1096,10 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	return opts, true
 }
 
+// classifyPreview2Imports walks the core module's import section and
+// bucketises each: known structured imports become component.WasiImport
+// entries (for WrapWasiImportedAsCliRun); anything else is returned as
+// an "module.name" string so the driver can surface a clear error.
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 	pairs := coreModuleImportPairs(bin)
 	var wasi []component.WasiImport
