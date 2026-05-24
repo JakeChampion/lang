@@ -797,6 +797,79 @@ func printCliRunCoreModule() []byte {
 	}
 }
 
+// readCliRunCoreModule is readCoreModule extended with a
+// `_lang_run() -> i32` export that just returns 0. Used to
+// exercise WrapWasiReadAsCliRun end-to-end: the produced component
+// has the read imports + a wasi:cli/run export, runs under plain
+// `wasmtime run`. Same shape as printCliRunCoreModule, with the
+// read-side imports (type 1 is (i32 i64 i32) -> ()). The body
+// doesn't call the WASI funcs; this test's scope is "wrap is
+// structurally correct + runnable".
+func readCliRunCoreModule() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: vec(4)
+		0x01, 0x17, 0x04,
+		0x60, 0x00, 0x01, 0x7f, // type 0: () -> i32 (get-stdin)
+		0x60, 0x03, 0x7f, 0x7e, 0x7f, 0x00, // type 1: (i32 i64 i32) -> () (blocking-read)
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f, // type 2: (i32 i32 i32 i32) -> i32 (cabi_realloc)
+		0x60, 0x00, 0x01, 0x7f, // type 3: () -> i32 (_lang_run)
+		// import section: vec(2) — same as readCoreModule
+		0x02, 0x5d, 0x02,
+		0x14, 'w', 'a', 's', 'i', ':', 'c', 'l', 'i', '/', 's', 't', 'd', 'i', 'n', '@', '0', '.', '2', '.', '0',
+		0x09, 'g', 'e', 't', '-', 's', 't', 'd', 'i', 'n',
+		0x00, 0x00,
+		0x15, 'w', 'a', 's', 'i', ':', 'i', 'o', '/', 's', 't', 'r', 'e', 'a', 'm', 's', '@', '0', '.', '2', '.', '0',
+		0x22,
+		'[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'i', 'n', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', '.', 'b', 'l', 'o', 'c', 'k', 'i', 'n', 'g', '-', 'r', 'e', 'a', 'd',
+		0x00, 0x01,
+		// function section: vec(2) — typeidx [2, 3] for cabi_realloc + _lang_run
+		0x03, 0x03, 0x02, 0x02, 0x03,
+		// memory section
+		0x05, 0x03, 0x01, 0x00, 0x01,
+		// export section: vec(3) — memory, cabi_realloc, _lang_run
+		0x07, 0x25, 0x03,
+		0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00,
+		0x0c, 'c', 'a', 'b', 'i', '_', 'r', 'e', 'a', 'l', 'l', 'o', 'c', 0x00, 0x02,
+		0x09, '_', 'l', 'a', 'n', 'g', '_', 'r', 'u', 'n', 0x00, 0x03,
+		// code section: vec(2) bodies, each `vec(0) locals; i32.const 0; end`.
+		0x0a, 0x0b, 0x02,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+	}
+}
+
+// TestWrapWasiReadAsCliRun_RunsUnderWasmtime end-to-end-tests the
+// cli-run-extended read component. The user core's `_lang_run`
+// returns 0, which lifts to result::ok and makes wasmtime exit 0.
+// The read imports (get-stdin + blocking-read) are present but
+// unused at runtime; the test verifies the linkage — including the
+// extra cabi_realloc alias / core-func-4 lift offset — works.
+func TestWrapWasiReadAsCliRun_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	comp := component.WrapWasiReadAsCliRun(readCliRunCoreModule(), "_lang_run")
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "read_cli.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
 // TestWrapWasiPrintAsCliRun_RunsUnderWasmtime end-to-end-tests
 // the cli-run-extended print component. The user core's
 // `_lang_run` returns 0, which lifts to result::ok and makes
