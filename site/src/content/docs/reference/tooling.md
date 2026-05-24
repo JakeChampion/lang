@@ -29,8 +29,8 @@ fern -repl
 ## Formatter
 
 `fern -fmt` rewrites a file to the canonical style: two-space
-indent, one statement per line, trailing newline at EOF.
-Comments survive the round trip in their original position.
+indent, one statement per line, trailing newline at EOF. Comments
+survive the round trip in their original position.
 
 ```bash
 fern -fmt -w foo.fern   # rewrite in place
@@ -43,9 +43,7 @@ identical output.
 ## Language server — `fern-lsp`
 
 Speaks LSP over stdin/stdout. Spawn it from any editor with a
-generic LSP client.
-
-Features:
+generic LSP client. Features:
 
 - **Diagnostics** — parser + type-check errors, routed per-file in
   multi-module programs.
@@ -88,8 +86,8 @@ fern -repl
 ```
 
 State persists across lines. Multi-line forms (an `if` block,
-function decl, etc.) are entered as one logical input — the REPL
-reads until braces balance.
+function decl, etc.) are one logical input — the REPL reads until
+braces balance.
 
 ## Running tests
 
@@ -103,9 +101,8 @@ fern my_test.fern -o my_test --run   # compile + run
 ```
 
 Output is [TAP-13](https://testanything.org/). Exit code is `0`
-when every case passes and `1` on any failure, so any TAP-aware
-CI runner (`prove`, `tape`, `tap-junit`) works without further
-configuration.
+when every case passes and `1` on any failure, so any TAP-aware CI
+runner (`prove`, `tape`, `tap-junit`) works without further config.
 
 See the [Testing tutorial](../../tutorial/testing/) for the
 authoring shape and assertion catalogue.

@@ -5,8 +5,8 @@ sidebar:
   order: 1
 ---
 
-This is an informal reference, not a normative grammar. When in
-doubt, the parser is the source of truth ([`internal/parser`][1]).
+An informal reference, not a normative grammar. When in doubt, the
+parser is the source of truth ([`internal/parser`][1]).
 
 ## Keywords
 
@@ -26,8 +26,8 @@ defer arena
 
 ## Comments
 
-Only line comments, introduced by `//`. The formatter preserves
-them in their original position.
+Line comments only, introduced by `//`. The formatter preserves
+their original position.
 
 ```fern
 // Header comment.
@@ -61,8 +61,8 @@ except where noted.
 
 ## Block forms
 
-Statements end with `;` and group in `{ ... }` blocks. There's no
-significant whitespace.
+Statements end with `;` and group in `{ ... }` blocks. Whitespace
+isn't significant.
 
 - **`if (cond) { ... } else { ... }`** — statement or expression.
 - **`while (cond) { ... }`** — pre-test loop.
@@ -75,7 +75,7 @@ significant whitespace.
 
 ## String literals
 
-Double-quoted, escape with `\\`. The prefix `f` introduces an
+Double-quoted, escape with `\\`. An `f` prefix introduces an
 f-string with `{expr}` interpolation:
 
 ```fern

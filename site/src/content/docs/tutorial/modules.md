@@ -6,7 +6,7 @@ sidebar:
 ---
 
 A multi-file Fern program is one entry file that `import`s
-siblings. The entry file is whichever `.fern` you pass to the
+siblings. The entry file is whichever `.fern` you pass the
 compiler.
 
 ## Imports
@@ -27,8 +27,8 @@ pub function run(): i32 {
 }
 ```
 
-The local name (`util.run`) comes from the path's basename without
-the `.fern` extension. Re-aliasing isn't supported yet.
+The local name (`util.run`) is the path's basename without the
+`.fern` extension. Re-aliasing isn't supported yet.
 
 ## Visibility
 
@@ -50,7 +50,7 @@ load time with a diagnostic naming the offending qualifier.
 ## Stdlib imports
 
 The standard library lives at `std/*` — `std/io`, `std/string`,
-`std/json`, etc. Import them the same way:
+`std/json`, etc. Import the same way:
 
 ```fern
 import "std/io";
@@ -65,8 +65,8 @@ The full list is under [Standard library →](../../stdlib/).
 
 ## Working with the language server
 
-`fern-lsp` resolves imports across the whole workspace. With
-the VS Code extension installed:
+`fern-lsp` resolves imports across the workspace. With the VS Code
+extension installed:
 
 - Hover over `util.run()` to see the imported function's signature.
 - Cmd/Ctrl-click jumps from the call site to `util.fern`.

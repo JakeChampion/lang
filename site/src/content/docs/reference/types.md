@@ -15,8 +15,8 @@ sidebar:
 | Composite  | `T[]` (owned array), `[T]` (slice), `(T, U, ...)` (tuple) |
 | Function   | `(T1, T2) => R`                                      |
 
-`usize` is target-aware: 4 bytes on wasm32, 8 bytes on arm64 and
-x86-64. Use it for "size of a thing in memory" semantics.
+`usize` is target-aware: 4 bytes on wasm32, 8 on arm64 and x86-64.
+Use it for "size of a thing in memory" semantics.
 
 ## Implicit conversions
 
@@ -27,8 +27,8 @@ var a: i32 = 7;
 var b: i64 = a as i64;
 ```
 
-The single exception is the polymorphic numeric literal: `1` types
-as whatever integer the context demands.
+The one exception is the polymorphic numeric literal: `1` types as
+whatever integer the context demands.
 
 ## Generics
 
@@ -43,9 +43,9 @@ struct Pair[A, B] { first: A, second: B }
 enum Option[T] { Some(T), None }
 ```
 
-Generic calls infer `T` from the argument types when possible.
-The compiler monomorphises every distinct instantiation into a
-separate copy before codegen, so there's no runtime cost.
+Generic calls infer `T` from the argument types when possible. The
+compiler monomorphises every distinct instantiation before codegen,
+so there's no runtime cost.
 
 ## Union types
 
@@ -65,8 +65,8 @@ function eval(e: Expr): i32 {
 ```
 
 The checker desugars unions to synthetic enums with one variant per
-member, then everything else (IR / codegen) treats them as ordinary
-enums.
+member; everything downstream (IR / codegen) treats them as
+ordinary enums.
 
 ## Built-in `Option` and `Result`
 
@@ -75,8 +75,8 @@ enum Option[T] { Some(T), None }
 enum Result[T, E] { Ok(T), Err(E) }
 ```
 
-Both are injected by the prelude — declare them yourself only if
-you want to shadow them.
+Both are injected by the prelude — declare them yourself only to
+shadow them.
 
 The postfix `?` operator unwraps the success variant and early-
 returns the failure variant:

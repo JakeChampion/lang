@@ -8,21 +8,21 @@ sidebar:
 import FernPlayground from "../../../components/FernPlayground.astro";
 
 Fern ships with a pure-Fern unit-test runner under
-[`std/test`](../../stdlib/test/). Tests are ordinary `.fern`
-files: write functions that return `Option[string]`, list them
-in `main`, and the runner prints
-[TAP-13](https://testanything.org/) to stdout.
+[`std/test`](../../stdlib/test/). Tests are ordinary `.fern` files:
+write functions that return `Option[string]`, list them in `main`,
+and the runner prints [TAP-13](https://testanything.org/) to
+stdout.
 
-The runner does **not** depend on the Go toolchain, so the same
-program runs under `fern -interp`, compiles to a native binary,
-and (once the compiler is self-hosted) keeps working unchanged.
+The runner doesn't depend on the Go toolchain, so the same program
+runs under `fern -interp`, compiles to a native binary, and (once
+the compiler is self-hosted) keeps working unchanged.
 
 ## Hello, test
 
 A test function returns `None` when the assertion holds and
-`Some(message)` when it fails. The auto-prelude makes
-`TestRunner`, `test_new`, and every `assert_*` helper available
-by bare name — no imports needed.
+`Some(message)` when it fails. The auto-prelude makes `TestRunner`,
+`test_new`, and every `assert_*` helper available by bare name — no
+imports needed.
 
 <FernPlayground
   code={`function test_addition(): Option[string] {
@@ -61,13 +61,13 @@ ok 2 - strings
 ```
 
 Exit code is `0`. A failing assertion flips it to `1`, prints a
-`not ok` line, and embeds both the actual and expected values
-in the diagnostic block.
+`not ok` line, and embeds the actual and expected values in the
+diagnostic block.
 
 ## Assertions
 
 Each helper returns `Option[string]`. The failure message names
-the predicate so a grep across CI logs finds the regression.
+the predicate, so a grep across CI logs finds the regression.
 
 | Family       | Helpers                                                                                                              |
 | ------------ | -------------------------------------------------------------------------------------------------------------------- |
@@ -94,10 +94,9 @@ the predicate so a grep across CI logs finds the regression.
 ## Skipping cases
 
 Toolchain-conditional cases (`wasmtime` missing, OS-specific
-behaviour, CI-only checks) skip with `(r).skip(name, reason)`.
-The TAP output emits `# SKIP` so consumers can distinguish a
-skip from a real pass; skipped cases don't influence the exit
-code.
+behaviour, CI-only checks) skip with `(r).skip(name, reason)`. The
+TAP output emits `# SKIP` so consumers can tell a skip from a pass;
+skipped cases don't affect the exit code.
 
 ```fern
 function main(): i32 {
@@ -112,9 +111,9 @@ function main(): i32 {
 ## Nested suites
 
 Group related cases with `r.subsuite(name)` + `r.merge(child)`.
-TAP stays flat (one stream, monotonically numbered) but case
-names print with `parent / child / case` so the hierarchy is
-visible in the log.
+TAP stays flat (one stream, monotonically numbered) but case names
+print as `parent / child / case`, so the hierarchy is visible in
+the log.
 
 ```fern
 var arm: TestRunner = r.subsuite("arm64");
@@ -139,13 +138,13 @@ function test_fern_hello(): Option[string] {
 ```
 
 Spawn failures (binary missing, permission denied) surface as
-`exit_code = 127` with the OS error in `stderr` so callers can
-write linear assertions without an extra `Result` unwrap.
+`exit_code = 127` with the OS error in `stderr`, so callers can
+assert linearly without an extra `Result` unwrap.
 
 ## Tempdirs + cleanup hooks
 
-Tests that need a scratch directory call `temp_dir(prefix)`
-and register cleanup at the runner level:
+Tests needing a scratch directory call `temp_dir(prefix)` and
+register cleanup at the runner level:
 
 ```fern
 match (temp_dir("my-fixture")) {
@@ -157,22 +156,21 @@ match (temp_dir("my-fixture")) {
 }
 ```
 
-`finish()` runs `remove_dir_all(dir)` on every registered
-path regardless of test outcome. Cleanup errors print as TAP
-comments and shift the exit code to `2` (a "tests passed but
-cleanup leaked" sentinel) so CI can distinguish from a real
-test failure.
+`finish()` runs `remove_dir_all(dir)` on every registered path
+regardless of test outcome. Cleanup errors print as TAP comments
+and shift the exit code to `2` (a "tests passed but cleanup leaked"
+sentinel) so CI can tell it apart from a real test failure.
 
 Companion filesystem builtins:
 `read_dir(path) -> Result[string[], IoError]` lists immediate
-children; `remove_file(path)` and `remove_dir_all(path)`
-return `Option[IoError]` (`None` on success).
+children; `remove_file(path)` and `remove_dir_all(path)` return
+`Option[IoError]` (`None` on success).
 
 ## Fuzzing
 
-A fuzz target is a `(string) => Option[string]` — same shape
-as a regular test, but called repeatedly with mutated inputs
-from a seed corpus.
+A fuzz target is a `(string) => Option[string]` — the same shape
+as a regular test, called repeatedly with mutated inputs from a
+seed corpus.
 
 ```fern
 function check_to_upper_idempotent(input: string): Option[string] {
@@ -192,12 +190,12 @@ function main(): i32 {
 
 The harness mutates with byte flip / drop / insert / unchanged.
 Failures stop the loop and report the input with non-printable
-bytes escaped to `\xNN` so the log doubles as a reproducer.
+bytes escaped to `\xNN`, so the log doubles as a reproducer.
 
 ## Filtering test cases
 
-For dev-loop iteration, run a single case (or a substring
-match) via the runner's built-in `--filter` flag:
+For dev-loop iteration, run a single case (or a substring match)
+via the runner's `--filter` flag:
 
 ```bash
 fern -interp my_test.fern -- --filter addition
@@ -215,14 +213,13 @@ function main(): i32 {
 }
 ```
 
-Non-matching cases convert to skips with reason
-`"filtered out"` so the TAP stream stays a faithful record
-of the test list.
+Non-matching cases convert to skips with reason `"filtered out"`,
+so the TAP stream stays a faithful record of the test list.
 
 ## Golden-file testing
 
-For tests whose expected output is too verbose to inline,
-compare against a saved file on disk:
+For tests whose expected output is too verbose to inline, compare
+against a saved file on disk:
 
 ```fern
 r = r.it("renderer matches golden",
@@ -230,20 +227,19 @@ r = r.it("renderer matches golden",
                                render(input)));
 ```
 
-`assert_matches_golden` bootstraps the file when it doesn't
-exist (writes `actual` to `path`, passes, prints a comment
-naming the bootstrap) — convenient for the developer
-"approve by running" loop. Run `assert_matches_golden_strict`
-in CI to catch missing-golden cases that would silently
-self-approve.
+`assert_matches_golden` bootstraps the file when it doesn't exist
+(writes `actual` to `path`, passes, prints a comment naming the
+bootstrap) — the "approve by running" loop. Use
+`assert_matches_golden_strict` in CI to catch missing-golden cases
+that would silently self-approve.
 
 ### Shrinking
 
-`r.fuzz_shrink` runs the same loop but, on a failure,
-minimises the offending input via halving + single-byte drops
-before reporting. The failure message embeds both the raw
-input (what the mutator produced) and the shrunk form (the
-smallest still-failing variant the shrinker could find):
+`r.fuzz_shrink` runs the same loop but, on a failure, minimises the
+offending input via halving + single-byte drops before reporting.
+The failure message embeds both the raw input (what the mutator
+produced) and the shrunk form (the smallest still-failing variant
+found):
 
 ```
 not ok 1 - detect
@@ -254,15 +250,14 @@ not ok 1 - detect
   ---
 ```
 
-Use the shrink variant when the property's actual trigger is
-much smaller than the input the corpus + mutator produces —
-typical for parser fuzz targets where any single malformed
-byte breaks the property.
+Use the shrink variant when the property's trigger is much smaller
+than the input the corpus + mutator produces — typical for parser
+fuzz targets where any single malformed byte breaks the property.
 
 ## Writing your own assertion
 
-A test function can run any logic that returns `Option[string]`
-— the assertions above are conveniences. For a hand-rolled diff,
+A test function can run any logic that returns `Option[string]` —
+the assertions above are conveniences. For a hand-rolled check,
 return `fail(...)` directly:
 
 ```fern
@@ -283,26 +278,25 @@ function test_modulo_table(): Option[string] {
 ## Why explicit registration?
 
 Fern has no reflection, so `main` lists the cases it runs. That
-mirrors Zig's `test` blocks (which compile down to the same
-shape) and keeps the runner a plain library — no build-system
-magic, no framework runtime. If a `discover_tests()` macro lands
-later, it'll lower to the same `r.it("name", func())` chain.
+mirrors Zig's `test` blocks and keeps the runner a plain library —
+no build-system magic, no framework runtime. A future
+`discover_tests()` macro would lower to the same
+`r.it("name", func())` chain.
 
 ## Failing tests in CI
 
 The process exit code is `0` on a clean run and `1` on any
 failure. Drop it into any CI runner — GitHub Actions, GitLab CI,
 Buildkite — without further configuration. TAP consumers
-(`prove`, `tape`, `tap-junit`) parse the output stream directly.
+(`prove`, `tape`, `tap-junit`) parse the stream directly.
 
 ## Migrating from Go-side tests
 
 Today the compiler's own tests live in Go (`internal/e2e/*.go`).
 The plan ([`docs/ROADMAP-AND-SELF-HOSTING.md`](https://github.com/JakeChampion/lang/blob/main/docs/ROADMAP-AND-SELF-HOSTING.md))
-is to retire them once the compiler is self-hosted; new tests
-for stdlib helpers and Fern code should be written against
-`std/test` so they're already in the right shape for the
-migration.
+is to retire them once the compiler is self-hosted; write new
+tests for stdlib helpers and Fern code against `std/test` so
+they're already in the right shape for the migration.
 
 See the working examples under
 [`examples/tests/`](https://github.com/JakeChampion/lang/tree/main/examples/tests)

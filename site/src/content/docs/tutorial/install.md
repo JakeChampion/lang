@@ -6,15 +6,15 @@ sidebar:
 ---
 
 Fern is a Go-built compiler. Until prebuilt binaries land, build
-from source — it's a one-command compile.
+from source — one command.
 
 ## Prerequisites
 
 - **Go 1.24+** ([download](https://go.dev/dl/)). The compiler is a
   single Go module with no external dependencies.
-- **A C linker** for native targets (`cc` is fine; `clang` and
-  `gcc` both work). Optional — only needed if you want to produce
-  ELF / Mach-O executables. The WASM target needs no linker.
+- **A C linker** for native targets (`clang` or `gcc`; `cc` is
+  fine). Only needed to produce ELF / Mach-O executables; the WASM
+  target needs no linker.
 
 ## Build the toolchain
 
@@ -24,7 +24,7 @@ cd lang
 go build -o ~/.local/bin/fern ./cmd/fern
 ```
 
-That's it. `fern` is now on your `PATH`. Verify:
+`fern` is now on your `PATH`. Verify:
 
 ```bash
 fern -help
@@ -56,7 +56,7 @@ Run it under the interpreter:
 fern -interp hello.fern
 ```
 
-Or compile to wasm and execute under wasmtime:
+Or compile to wasm and run under wasmtime:
 
 ```bash
 fern -target wasm -o hello.wasm hello.fern
