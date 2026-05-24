@@ -15812,6 +15812,53 @@ function main(): i32 {
 	}
 }
 
+// Phase 3 step 3: enum drop handlers (uniform case). Mirrors
+// TestX86_64RcDropEnumPayload / TestArm64RcDropEnumPayload. A
+// heap-boxed enum whose payload-carrying variants share an
+// identical droppable signature (e.g. a union of structs) drops
+// the payloads on its last reference before dec'ing the box.
+func TestWASMRcDropEnumPayload(t *testing.T) {
+	fresh := `struct W { a: i32[] }
+struct V2 { b: i32 }
+type U = W | V2;
+function mk(): U { return W { a: [1, 2, 3] }; }
+function build(): i32 {
+    var u: U = mk();
+    match (u) { W(w) => { return w.a[1] + __rc_underflow_count(); }, V2(x) => { return x.b; } }
+    return 0 - 1;
+}
+function main(): i32 { return build() - 2; }`
+	if got := runWasm(t, fresh); got != 0 {
+		t.Errorf("got %d, want 0 (union payload drop: value 2, 0 underflow)", got)
+	}
+
+	aliased := `struct W { a: i32 }
+struct V2 { b: i32 }
+type U = W | V2;
+function main(): i32 {
+    var w: W = W { a: 7 };
+    var u: U = w;
+    return w.a + __rc_underflow_count() - 7;
+}`
+	if got := runWasm(t, aliased); got != 0 {
+		t.Errorf("got %d, want 0 (aliased struct widened to union: 0 underflow)", got)
+	}
+
+	nonUniform := `enum E { Arr(i32[]), Num(i32) }
+function main(): i32 {
+    var e: E = Arr([1, 2, 3]);
+    var f: E = Num(9);
+    match (e) {
+        Arr(a) => { return a.len() + __rc_underflow_count() - 3; },
+        Num(_) => { return 0 - 1; }
+    }
+    return 0 - 2;
+}`
+	if got := runWasm(t, nonUniform); got != 0 {
+		t.Errorf("got %d, want 0 (non-uniform enum: correct value, 0 underflow)", got)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestWASMRcDecOnOverwrite(t *testing.T) {
