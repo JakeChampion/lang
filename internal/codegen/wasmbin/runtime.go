@@ -2693,6 +2693,24 @@ func buildStdinBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildStdinBodyP2 is the preview-2 variant: a Reader holds an
+// input-stream handle (not an fd), so stdin's Reader stores the
+// wasi:cli/stdin::get-stdin() handle. The preview-2 Reader methods
+// (buildReaderReadLineFdBodyP2 etc.) blocking-read on it.
+func buildStdinBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	getStdin := idxs["wasi_get_stdin_p2"]
+	var body []byte
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 0)
+	body = inst.InstCall(body, getStdin) // handle = get-stdin()
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildReaderReadLineBody — (r) → i32. Delegates to
 // __fern_read_line, ignoring the receiver. Lives in the
 // helper registry so __method_Reader_read_line's IR call

@@ -1690,6 +1690,151 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildReaderReadLineFdBodyP2 is the preview-2 variant of
+// buildReaderReadLineFdBody. The Reader holds an input-stream
+// handle (stored by __fern_stdin's get-stdin or open_reader's
+// read-via-stream) at +0 instead of an fd; each byte comes from
+// wasi:io/streams::blocking-read(handle, 1) rather than fd_read.
+// disc != 0 (stream-error / closed = EOF) or an empty ok-list ends
+// the line. Same growable accumulator + Option[string] box as the
+// fd version.
+//
+// Locals (after 1 param r): 1=retbuf(12), 2=handle, 3=buf,
+// 4=buf_size, 5=cur, 6=byte, 7=newbuf, 8=newsize, 9=strbuf, 10=box.
+func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	blockingRead := idxs["wasi_io_blocking_read"]
+
+	var body []byte
+	// retbuf = alloc(12) — result<list<u8>, stream-error>.
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	// handle = mem[r]
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	// accumulator: 64 bytes, doubling.
+	body = inst.InstI32Const(body, 64)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstI32Const(body, 64)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 5)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// blocking-read(handle, 1, retbuf)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI64Const(body, 1)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, blockingRead)
+		// disc != 0 → EOF/error → break out of block.
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstBr(body, 2)
+		body = inst.InstEnd(body)
+		// list len == 0 → break (no byte).
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, 8)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+		// byte = mem8[ mem[retbuf+4] ]  (first byte of the list).
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, 4)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalSet(body, 6)
+		// Grow if cur+1 > buf_size.
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32GtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Shl(body)
+			body = inst.InstLocalTee(body, 8)
+			body = inst.InstCall(body, alloc)
+			body = inst.InstLocalTee(body, 7)
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 5)
+			body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstLocalSet(body, 3)
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstLocalSet(body, 4)
+		}
+		body = inst.InstEnd(body)
+		// mem[buf+cur] = byte; cur++.
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 5)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 6)
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 5)
+		// byte == '\n' → break.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, '\n')
+		body = numeric.InstI32Eq(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstBr(body, 0)
+	}
+	// end read loop, end outer block
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+
+	// cur == 0 → None.
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 10)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Some(string): strbuf = alloc(cur); copy; box(16) tag0 data@8 len@12.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 5)
+	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 10)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 9)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+
+	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildReaderReadChunkBody — `__method_Reader_read_chunk(r, n)`.
 // Single fd_read into an n-byte heap buffer. Returns Some(string)
 // for the bytes actually read (possibly < n), None on EOF.

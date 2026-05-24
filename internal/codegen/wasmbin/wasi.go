@@ -790,8 +790,18 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		helpers.set["__fern_open_appender"] {
 		in.add("wasi_path_open")
 	}
-	if helpers.set["__fern_reader_read_line_fd"] ||
-		helpers.set["__fern_reader_read_chunk"] {
+	if helpers.set["__fern_stdin"] && opts.Preview2WASI {
+		// Preview-2 stdin Reader holds the get-stdin input-stream handle.
+		in.add("wasi_get_stdin_p2")
+	}
+	if helpers.set["__fern_reader_read_line_fd"] {
+		if opts.Preview2WASI {
+			in.add("wasi_io_blocking_read")
+		} else {
+			in.add("wasi_fd_read")
+		}
+	}
+	if helpers.set["__fern_reader_read_chunk"] {
 		in.add("wasi_fd_read")
 	}
 	if helpers.set["__fern_writer_write"] {
@@ -1135,22 +1145,24 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 // body. Each override has the same (params, results) signature as
 // the helper's runtimeHelperSpec — only the bytecode differs.
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
-	"__fern_random_i32":   buildRandomI32BodyP2,
-	"__fern_monotonic_ns": buildMonotonicNsBodyP2,
-	"__fern_random_bytes": buildRandomBytesBodyP2,
-	"__fern_print":        buildPrintBodyP2,
-	"__fern_write":        buildWriteBodyP2,
-	"__fern_eprint":       buildEprintBodyP2,
-	"__fern_putchar":      buildPutcharBodyP2,
-	"__fern_now_ns":       buildNowNsBodyP2,
-	"__fern_now_unix_ms":  buildNowUnixMsBodyP2,
-	"__fern_read_byte":    buildReadByteBodyP2,
-	"__fern_arg_count":    buildArgCountBodyP2,
-	"__fern_arg_at":       buildArgAtBodyP2,
-	"__fern_args":         buildArgsBodyP2,
-	"__fern_env":          buildEnvBodyP2,
-	"__fern_read_file":    buildReadFileBodyP2,
-	"__fern_write_file":   buildWriteFileBodyP2,
+	"__fern_random_i32":          buildRandomI32BodyP2,
+	"__fern_monotonic_ns":        buildMonotonicNsBodyP2,
+	"__fern_random_bytes":        buildRandomBytesBodyP2,
+	"__fern_print":               buildPrintBodyP2,
+	"__fern_write":               buildWriteBodyP2,
+	"__fern_eprint":              buildEprintBodyP2,
+	"__fern_putchar":             buildPutcharBodyP2,
+	"__fern_now_ns":              buildNowNsBodyP2,
+	"__fern_now_unix_ms":         buildNowUnixMsBodyP2,
+	"__fern_read_byte":           buildReadByteBodyP2,
+	"__fern_arg_count":           buildArgCountBodyP2,
+	"__fern_arg_at":              buildArgAtBodyP2,
+	"__fern_args":                buildArgsBodyP2,
+	"__fern_env":                 buildEnvBodyP2,
+	"__fern_read_file":           buildReadFileBodyP2,
+	"__fern_write_file":          buildWriteFileBodyP2,
+	"__fern_stdin":               buildStdinBodyP2,
+	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
