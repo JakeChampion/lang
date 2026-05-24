@@ -198,64 +198,6 @@ func BuildWasiCliRunComponent(coreBytes []byte, coreExportName string) []byte {
 	return buf
 }
 
-// WrapWasiImportedAsCliRun is the wasi:cli/run-exporting sibling
-// of WrapWasiImportedWithExport: same import-wiring pipeline, but
-// the core export gets packaged into a `wasi:cli/run@0.2.0`
-// instance (matching BuildWasiCliRunComponent's shape) instead of
-// being lifted as a top-level component-level function. The
-// produced component runs under plain `wasmtime run prog.wasm`
-// (no `--invoke`) and still has its WASI imports satisfied by
-// the host.
-//
-// The core function `coreExportName` must have signature `() ->
-// i32` for the canon lift to wasi:cli/run::run's `() -> result`
-// to succeed.
-//
-// Index assignment after N imports:
-//
-//   - Component types: 0..N-1 are per-import instance types, N is
-//     the result type, N+1 is the run functype.
-//   - Component funcs: 0..N-1 are per-import aliased funcs, N is
-//     the lifted core export.
-//   - Component instances: 0..N-1 are the imported WASI instances,
-//     N is the packaged instance carrying "run".
-//   - Core funcs: 0..N-1 are per-import canon-lowers, N is the
-//     aliased core export.
-//   - Core instances: 0..N-1 are per-import single-export packaging
-//     instances, N is the instantiation of the embedded core module.
-func WrapWasiImportedAsCliRun(coreBytes []byte, imports []WasiImport, coreExportName string) []byte {
-	buf := PutComponentHeader(nil)
-
-	n := uint32(len(imports))
-	for i, imp := range imports {
-		if imp.RawInstanceTypeBody != nil {
-			buf = PutTypeSectionRawBody(buf, imp.RawInstanceTypeBody)
-		} else {
-			buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
-		}
-		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(i))
-		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imp.FuncName)
-		buf = PutCanonSectionLowerNoOpts(buf, uint32(i))
-		buf = PutCoreInstanceSectionFromOneFuncExport(buf, imp.FuncName, uint32(i))
-	}
-
-	buf = PutCoreModuleSection(buf, coreBytes)
-	argNames := make([]string, len(imports))
-	instanceIdxs := make([]uint32, len(imports))
-	for i, imp := range imports {
-		argNames[i] = imp.CoreImportModule
-		instanceIdxs[i] = uint32(i)
-	}
-	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, argNames, instanceIdxs)
-
-	buf = PutAliasSectionCoreExportFunc(buf, n, coreExportName)
-	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, n)
-	buf = PutCanonSectionLiftNoOpts(buf, n, n+1)
-	buf = PutInstanceSectionOnePackagedFunc(buf, "run", n)
-	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", n)
-	return buf
-}
-
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
