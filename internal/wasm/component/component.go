@@ -130,22 +130,47 @@ func wrapSection(buf []byte, id byte, body []byte) []byte {
 // Output bytes match what wasm-tools emits for this method
 // (verified by hex-dumping a canonical print-component).
 func FixupModuleFor4I32NoResult() []byte {
-	return []byte{
-		// core wasm preamble
-		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-		// type section: vec(1) functype, (i32 i32 i32 i32) -> ()
-		0x01, 0x08, 0x01, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,
-		// import section: vec(2)
-		//   ("" "0")        func 0 (the lowered host func)
-		//   ("" "$imports") table  (the trampoline's table)
-		0x02, 0x15, 0x02,
+	return FixupModuleForNI32NoResult(4)
+}
+
+// FixupModuleForNI32NoResult is the param-count-generalised
+// FixupModuleFor4I32NoResult. The imported func type is
+// `(i32 × nparams) -> ()`; everything else (the func + table
+// imports and the elem segment that installs the lowered func
+// into table[0]) is independent of the param count.
+func FixupModuleForNI32NoResult(nparams int) []byte {
+	// core wasm preamble
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	// type section: vec(1) functype (i32 × nparams) -> ()
+	typeBody := []byte{0x01, 0x60}
+	typeBody = leb128.UlebU64(typeBody, uint64(nparams))
+	for i := 0; i < nparams; i++ {
+		typeBody = append(typeBody, 0x7f)
+	}
+	typeBody = append(typeBody, 0x00) // vec(0) results
+	out = appendCoreSection(out, 0x01, typeBody)
+	// import section: vec(2) — ("" "0") func 0, ("" "$imports") table
+	importBody := []byte{
+		0x02,
 		0x00, 0x01, '0', 0x00, 0x00,
 		0x00, 0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x70, 0x01, 0x01, 0x01,
-		// element section: vec(1) — active segment, table 0, offset
-		// i32.const 0, vec(1) funcidx [0]. Active-segment form 0 takes
-		// no explicit table-index (defaults to 0).
-		0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00,
 	}
+	out = appendCoreSection(out, 0x02, importBody)
+	// element section: active segment, table 0, offset i32.const 0,
+	// vec(1) funcidx [0].
+	elemBody := []byte{0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00}
+	out = appendCoreSection(out, 0x09, elemBody)
+	return out
+}
+
+// appendCoreSection appends a core-wasm section (id byte + uleb
+// size + body) to a core module being assembled. Distinct from
+// wrapSection, which targets the component-level section space
+// (same wire shape, kept separate for readability at call sites).
+func appendCoreSection(buf []byte, id byte, body []byte) []byte {
+	buf = append(buf, id)
+	buf = leb128.UlebU64(buf, uint64(len(body)))
+	return append(buf, body...)
 }
 
 // TrampolineModuleFor4I32NoResult returns the bytes of a tiny
@@ -171,26 +196,48 @@ func FixupModuleFor4I32NoResult() []byte {
 // what wasm-tools emits for this method (verified by hex-
 // dumping a canonical print-component).
 func TrampolineModuleFor4I32NoResult() []byte {
-	return []byte{
-		// core wasm preamble
-		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-		// type section: vec(1) functype, (i32 i32 i32 i32) -> ()
-		0x01, 0x08, 0x01, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,
-		// function section: vec(1) typeidx 0
-		0x03, 0x02, 0x01, 0x00,
-		// table section: vec(1) funcref table, min=1, max=1
-		0x04, 0x05, 0x01, 0x70, 0x01, 0x01, 0x01,
-		// export section: vec(2) — "0" func 0, "$imports" table 0
-		0x07, 0x10, 0x02,
+	return TrampolineModuleForNI32NoResult(4)
+}
+
+// TrampolineModuleForNI32NoResult is the param-count-generalised
+// TrampolineModuleFor4I32NoResult. The exported func type is
+// `(i32 × nparams) -> ()`; the body forwards all nparams to a
+// 1-entry funcref-table call_indirect.
+func TrampolineModuleForNI32NoResult(nparams int) []byte {
+	// core wasm preamble
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	// type section: vec(1) functype (i32 × nparams) -> ()
+	typeBody := []byte{0x01, 0x60}
+	typeBody = leb128.UlebU64(typeBody, uint64(nparams))
+	for i := 0; i < nparams; i++ {
+		typeBody = append(typeBody, 0x7f)
+	}
+	typeBody = append(typeBody, 0x00)
+	out = appendCoreSection(out, 0x01, typeBody)
+	// function section: vec(1) typeidx 0
+	out = appendCoreSection(out, 0x03, []byte{0x01, 0x00})
+	// table section: vec(1) funcref table, min=1, max=1
+	out = appendCoreSection(out, 0x04, []byte{0x01, 0x70, 0x01, 0x01, 0x01})
+	// export section: vec(2) — "0" func 0, "$imports" table 0
+	exportBody := []byte{
+		0x02,
 		0x01, '0', 0x00, 0x00,
 		0x08, '$', 'i', 'm', 'p', 'o', 'r', 't', 's', 0x01, 0x00,
-		// code section: vec(1) body, body length 15: vec(0) locals,
-		//   local.get 0..3, i32.const 0, call_indirect type 0
-		//   table 0, end
-		0x0a, 0x11, 0x01, 0x0f, 0x00,
-		0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03,
-		0x41, 0x00, 0x11, 0x00, 0x00, 0x0b,
 	}
+	out = appendCoreSection(out, 0x07, exportBody)
+	// code section: vec(1) body — vec(0) locals, local.get 0..n-1,
+	// i32.const 0, call_indirect type 0 table 0, end.
+	funcBody := []byte{0x00}
+	for i := 0; i < nparams; i++ {
+		funcBody = append(funcBody, 0x20)
+		funcBody = leb128.UlebU64(funcBody, uint64(i))
+	}
+	funcBody = append(funcBody, 0x41, 0x00, 0x11, 0x00, 0x00, 0x0b)
+	codeBody := []byte{0x01}
+	codeBody = leb128.UlebU64(codeBody, uint64(len(funcBody)))
+	codeBody = append(codeBody, funcBody...)
+	out = appendCoreSection(out, 0x0a, codeBody)
+	return out
 }
 
 // PutTypeSectionOneInstanceOneFuncNoResultExport emits a type

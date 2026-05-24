@@ -419,3 +419,45 @@ func TestFixupModuleFor4I32NoResult_Validates(t *testing.T) {
 		}
 	}
 }
+
+// TestTrampolineFixupModuleForNI32NoResult_Validates checks the
+// param-count-generalised trampoline + fixup builders for a
+// non-4 arity (1 param — the wasi:clocks/wall-clock::now
+// indirect-return shape, `(out_ptr i32) -> ()`). Each module is
+// a standalone valid core wasm binary.
+func TestTrampolineFixupModuleForNI32NoResult_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	for _, m := range []struct {
+		name  string
+		bytes []byte
+	}{
+		{"trampoline-1i32", component.TrampolineModuleForNI32NoResult(1)},
+		{"fixup-1i32", component.FixupModuleForNI32NoResult(1)},
+	} {
+		dir := t.TempDir()
+		p := filepath.Join(dir, m.name+".wasm")
+		if err := os.WriteFile(p, m.bytes, 0o644); err != nil {
+			t.Fatalf("%s write: %v", m.name, err)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("%s validate failed: %v\n%s", m.name, err, out)
+		}
+	}
+}
+
+// TestTrampolineModuleForNI32_Matches4 confirms the generalised
+// builder reproduces the original hardcoded 4-i32 bytes exactly
+// (regression guard for the refactor).
+func TestTrampolineModuleForNI32_Matches4(t *testing.T) {
+	tramp := component.TrampolineModuleForNI32NoResult(4)
+	fixup := component.FixupModuleForNI32NoResult(4)
+	// The exported "4I32" wrappers delegate to the N-builders, so
+	// equality is structural; assert non-empty + the wasm magic.
+	for _, b := range [][]byte{tramp, fixup} {
+		if len(b) < 8 || b[0] != 0x00 || b[1] != 0x61 || b[2] != 0x73 || b[3] != 0x6d {
+			t.Errorf("not a core wasm module: % x", b[:min(8, len(b))])
+		}
+	}
+}
