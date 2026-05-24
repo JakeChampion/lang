@@ -627,14 +627,20 @@ End-to-end exit code 42 demo (covered by
     between the file and stdout), etc. Finally the standalone
     read_file / write_file / open_reader / open_writer shapes were
     routed through the composer and their bespoke wraps deleted
-    (#1334) — together with #1328, ~1500 lines of hand-rolled wraps
-    retired. The composer is now the sole component-builder for the
-    CLI-stream + filesystem-open + structured space.
-  - **Still to do:**
-    - Fold the remaining single-capability wraps (wall-clock / args /
-      env, each a 1-i32 list-returning trampoline) into the composer
-      for full coverage; then `WrapWasiImported*` (pure-structured /
-      non-cli) and TCP are the only bespoke component-builders left.
+    (#1334). The single-capability wall-clock / args / env imports
+    then folded in as a `MemTramp` dimension (#1338) — standalone
+    1-i32 trampolines with no shared resource types — and their
+    standalone routes + wraps were deleted too (#1339). Across #1328
+    + #1334 + #1339, ~2000 lines of hand-rolled per-shape wraps were
+    retired. The composer is now the **sole** component-builder for
+    the entire single-capability preview-2 cli space (streams +
+    filesystem-open + wall-clock/args/env + structured); only
+    `WrapWasiImported*` (pure-structured / non-cli) and TCP remain
+    bespoke.
+  - **Still to do (low-value tail):**
+    - Fold the pure-structured (`WrapWasiImported*`) and TCP shapes
+      into the composer for total unification — modest cleanup, no new
+      capability.
     - The bare `open_reader` / `open_writer`-with-no-read/write gap
       (the 3-call open chain, no blocking-read/-write) still needs the
       adapter — the composer requires the via-stream method to pair
