@@ -3272,15 +3272,34 @@ func (b *builder) expr(e ast.Expr) error {
 				if err := b.expr(n.Operand); err != nil {
 					return err
 				}
-				b.emit(Op{Kind: OpFNeg})
+				// Width-tag the negate so the backend flips the
+				// correct sign bit: f64 (bit 63) vs f32 (bit 31).
+				// Without this, OpFNeg defaulted to the f32 form
+				// and corrupted f64 values (`-5.0` came out
+				// non-negative).
+				w := 0
+				if ft, ok := b.exprType(n.Operand).(ast.FloatType); ok && ft.NormalWidth() == 64 {
+					w = 64
+				}
+				b.emit(Op{Kind: OpFNeg, Width: w})
 				return nil
 			}
-			// WASM has no i32.neg; emit `0 - operand`.
-			b.emit(Op{Kind: OpConstI32, I32: 0})
+			// No i32.neg on wasm; emit `0 - operand`. Width-tag
+			// the zero + subtract so a wide (i64) operand uses the
+			// 64-bit subtract rather than truncating to 32 bits.
+			w := 0
+			if nt, ok := b.exprType(n.Operand).(ast.NumberType); ok && nt.NormalWidth() == 64 {
+				w = 64
+			}
+			if w == 64 {
+				b.emit(Op{Kind: OpConstI64})
+			} else {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+			}
 			if err := b.expr(n.Operand); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpSub, Width: w})
 		case "!":
 			if err := b.expr(n.Operand); err != nil {
 				return err

@@ -13494,6 +13494,40 @@ func TestArm64UnsignedComparison(t *testing.T) {
 	}
 }
 
+// Unary minus on non-i32 numeric types. Two bugs: (1) the checker
+// rejected `-x` for any integer wider/narrower than i32 (requireNumber
+// only matched the bare i32 NumberType); (2) OpFNeg was emitted with
+// no width, so the backends took the f32 sign-flip path and corrupted
+// f64 values (`-5.0` came out non-negative). The integer path also
+// truncated i64 to a 32-bit `0 - x`. Fix: requireInteger in the
+// checker, width-tagged OpFNeg / OpSub in the IR.
+func TestArm64UnaryMinusWideTypes(t *testing.T) {
+	src := `function main(): i32 {
+    var a: i64 = -5i64;
+    if (a != 0i64 - 5i64) { return 1; }
+    var b: f64 = -5.0;
+    if (!(b < 0.0)) { return 2; }
+    var c: f64 = -b;            // negate an f64 value
+    if (c != 5.0) { return 3; }
+    var d: i8 = -5i8;
+    if ((d as i32) != -5) { return 4; }
+    var e: i16 = -1000i16;
+    if ((e as i32) != -1000) { return 5; }
+    var f: f32 = -2.5f32;
+    if (!(f < 0.0f32)) { return 6; }
+    // -0.0 keeps its sign bit (IEEE-754); f64_bits != 0
+    var z: f64 = -0.0;
+    if (f64_bits(z) == 0i64) { return 7; }
+    // unary minus inside an arithmetic expression
+    var g: i64 = 10i64 + -3i64;
+    if (g != 7i64) { return 8; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (unary minus on wide / non-i32 types)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"
