@@ -461,3 +461,26 @@ func TestTrampolineModuleForNI32_Matches4(t *testing.T) {
 		}
 	}
 }
+
+// TestWasiClocksWallClockInstanceTypeBody_Bytes pins the bytes
+// of the wasi:clocks/wall-clock instance type — the datetime
+// record + now() function. Matches what wasm-tools emits.
+func TestWasiClocksWallClockInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiClocksWallClockInstanceTypeBody()
+	want := []byte{
+		0x01, 0x42, 0x04,
+		// type record { seconds: u64; nanoseconds: u32 }
+		0x01, 0x72, 0x02,
+		0x07, 's', 'e', 'c', 'o', 'n', 'd', 's', 0x77,
+		0x0b, 'n', 'a', 'n', 'o', 's', 'e', 'c', 'o', 'n', 'd', 's', 0x79,
+		// export "datetime" (type (eq 0))
+		0x04, 0x00, 0x08, 'd', 'a', 't', 'e', 't', 'i', 'm', 'e', 0x03, 0x00, 0x00,
+		// type func() -> typeidx 1
+		0x01, 0x40, 0x00, 0x00, 0x01,
+		// export "now" (func 2)
+		0x04, 0x00, 0x03, 'n', 'o', 'w', 0x01, 0x02,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiClocksWallClockInstanceTypeBody() mismatch\ngot  % x\nwant % x", got, want)
+	}
+}
