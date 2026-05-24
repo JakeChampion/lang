@@ -447,6 +447,34 @@ func TestTrampolineFixupModuleForNI32NoResult_Validates(t *testing.T) {
 	}
 }
 
+// TestTrampolineFixupModuleForParamsNoResult_ReadShape validates
+// the mixed-valtype trampoline + fixup for the canon-lowered
+// blocking-read ABI `(self: i32, len: i64, ret_ptr: i32) -> ()`
+// — the i64 in the middle is what the N-i32 builders can't
+// express. Each module is a standalone valid core wasm binary.
+func TestTrampolineFixupModuleForParamsNoResult_ReadShape(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	readParams := []byte{0x7f, 0x7e, 0x7f} // i32 i64 i32
+	for _, m := range []struct {
+		name  string
+		bytes []byte
+	}{
+		{"trampoline-read", component.TrampolineModuleForParamsNoResult(readParams)},
+		{"fixup-read", component.FixupModuleForParamsNoResult(readParams)},
+	} {
+		dir := t.TempDir()
+		p := filepath.Join(dir, m.name+".wasm")
+		if err := os.WriteFile(p, m.bytes, 0o644); err != nil {
+			t.Fatalf("%s write: %v", m.name, err)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("%s validate failed: %v\n%s", m.name, err, out)
+		}
+	}
+}
+
 // TestTrampolineModuleForNI32_Matches4 confirms the generalised
 // builder reproduces the original hardcoded 4-i32 bytes exactly
 // (regression guard for the refactor).
