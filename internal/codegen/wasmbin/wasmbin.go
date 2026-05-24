@@ -2091,9 +2091,9 @@ func fnNeedsClosureMakeScratch(fn *ir.Func) bool {
 // closureMakeSites). siteIdx is its sequential index in the
 // function (0, 1, 2, …) — used to step through ctx.closureSites.
 func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]byte, uint32, uint32, error) {
-	allocIdx, ok := ctx.funcIdx["__lang_alloc"]
+	allocIdx, ok := ctx.funcIdx["__lang_alloc_rc1"]
 	if !ok {
-		return nil, 0, 0, fmt.Errorf("__lang_alloc helper not registered")
+		return nil, 0, 0, fmt.Errorf("__lang_alloc_rc1 helper not registered")
 	}
 	caps := site.captures
 	n := len(caps)
@@ -2174,9 +2174,9 @@ func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // emitMakeClosure is OpMakeEnv plus an 8-byte closure pair cell
 // {fn_idx, env_ptr}. Returns the pair pointer.
 func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
-	allocIdx, ok := ctx.funcIdx["__lang_alloc"]
+	allocIdx, ok := ctx.funcIdx["__lang_alloc_rc1"]
 	if !ok {
-		return nil, fmt.Errorf("OpMakeClosure: __lang_alloc helper not registered")
+		return nil, fmt.Errorf("OpMakeClosure: __lang_alloc_rc1 helper not registered")
 	}
 	if op.Str == "" {
 		return nil, fmt.Errorf("OpMakeClosure: missing target name")

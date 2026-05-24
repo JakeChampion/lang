@@ -292,6 +292,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// enum-box runtime helpers call it for the
 		// static-sentinel rc header.
 		g.emitAllocBoxRuntime()
+		// Live-rc variant for closure env blocks / pairs.
+		g.emitAllocRc1Runtime()
 	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
@@ -428,7 +430,14 @@ func (g *generator) emitDataSections() {
 		}
 		sort.Strings(names)
 		for _, name := range names {
+			// 8-byte immortal rc header (0x80000000 at cell-8) so
+			// the rc_inc/dec helpers short-circuit on these static
+			// function-value cells once FuncType locals are
+			// rc-tracked. The label still points at the fn_ptr, so
+			// OpCallIndirect's [+0]/[+8] reads are unchanged.
 			g.line(".align 3")
+			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
+			g.line("\t.4byte 0")          // pad
 			g.label(fmt.Sprintf("__closure_cell_%s", name))
 			g.line(fmt.Sprintf("\t.quad %s", name))
 			g.line("\t.quad 0")
@@ -834,6 +843,30 @@ func (g *generator) emitAllocBoxRuntime() {
 	g.emit("add x0, x0, #8")  // return base + 8 (= data)
 	g.emit("ret")
 	g.sizeDirective("__lang_alloc_box")
+}
+
+// emitAllocRc1Runtime emits `__lang_alloc_rc1(size) -> data` —
+// identical to __lang_alloc_box but writes a live rc=1 at
+// `[base+0]` instead of the immortal 0x80000000 sentinel. Closure
+// env blocks / pairs use it so they are real refcounted objects
+// (droppable at rc=0 in Phase 3). The caller passes the payload
+// size; the helper adds the 8-byte header and returns base+8, so
+// the caller's `[x0, #off]` stores stay at their offsets.
+func (g *generator) emitAllocRc1Runtime() {
+	g.line("")
+	g.line(".global __lang_alloc_rc1")
+	g.typeDirective("__lang_alloc_rc1")
+	g.label("__lang_alloc_rc1")
+	g.emit("add w0, w0, #8") // size + rc header
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("bl __lang_alloc")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")   // live rc = 1 at base + 0
+	g.emit("add x0, x0, #8") // return base + 8 (= data)
+	g.emit("ret")
+	g.sizeDirective("__lang_alloc_rc1")
 }
 
 // emitArrPushGrowRuntime emits `__lang_arr_push_grow(arr,
@@ -4133,7 +4166,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		// MakeClosure pair {fn_ptr, 0}. Still allocate the
 		// 16-byte pair because callers may load both halves.
 		g.emit("mov w0, #16")
-		g.emit("bl __lang_alloc")
+		g.emit("bl __lang_alloc_rc1")
 		g.adrpAdd("x1", op.Str)
 		g.emit("str x1, [x0]")
 		g.emit("str xzr, [x0, #8]")
@@ -4161,8 +4194,8 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// but the pre-decrement-of-16 maintains SP alignment.
 	g.emit("mov w0, #%d", envSize)
 	g.emit("stp x19, x20, [sp, #-16]!")
-	g.emit("bl __lang_alloc")
-	g.emit("mov x19, x0") // x19 = env_ptr
+	g.emit("bl __lang_alloc_rc1")
+	g.emit("mov x19, x0") // x19 = env_ptr (= base + 8 header)
 	// Captures sit on the operand stack just above the
 	// pushed callee-saves. SP shifted down by 16 (the stp).
 	// The Nth (last) capture is at [sp, #16]; the (N-1)th
@@ -4236,11 +4269,11 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	}
 	// OpMakeClosure: also allocate the 16-byte closure pair.
 	// env_ptr is in x0 (and x19); we need to keep it alive
-	// across the second __lang_alloc. x19 already preserved
+	// across the second alloc. x19 already preserved
 	// (callee-save in the called function); x0 will be
 	// clobbered. Reload from x19 after.
 	g.emit("mov w0, #16")
-	g.emit("bl __lang_alloc")
+	g.emit("bl __lang_alloc_rc1")
 	g.adrpAdd("x1", op.Str)
 	g.emit("str x1, [x0]")
 	g.emit("str x19, [x0, #8]")

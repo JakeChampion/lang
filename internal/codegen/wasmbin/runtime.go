@@ -74,10 +74,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 			case ir.OpAlloc:
 				needs.add("__lang_alloc")
 			case ir.OpMakeClosure, ir.OpMakeEnv:
-				// Both ops call __lang_alloc to materialise
-				// the env block; OpMakeClosure also allocs
-				// a second 8-byte pair cell.
+				// Both ops allocate the env block via
+				// __lang_alloc_rc1 (rc=1 header so the closure
+				// is droppable once FuncType locals are rc-
+				// tracked); OpMakeClosure also allocs a second
+				// pair cell the same way. alloc_rc1 calls
+				// __lang_alloc internally.
 				needs.add("__lang_alloc")
+				needs.add("__lang_alloc_rc1")
 			case ir.OpCallDirect:
 				// Source-language built-ins lower to OpCallDirect
 				// with the source name; the call-site lookup
@@ -485,6 +489,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32}, // payload size
 		results: []byte{encode.ValtypeI32}, // data pointer (base + 8)
 		body:    buildAllocBoxBody,
+	},
+	"__lang_alloc_rc1": {
+		params:  []byte{encode.ValtypeI32}, // payload size
+		results: []byte{encode.ValtypeI32}, // data pointer (base + 8)
+		body:    buildAllocRc1Body,
 	},
 	"__lang_str_byte": {
 		// (data, len, i) → i32 byte; inline-or-heap aware.
@@ -1265,6 +1274,36 @@ func buildAllocBoxBody(idxs map[string]uint32) []byte {
 	// mem[base] = 0x80000000 (static sentinel)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = memory.InstI32Store(body, 2, 0)
+	// return base + 8
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildAllocRc1Body assembles wasm bytes for
+// __lang_alloc_rc1(size) -> data — identical to
+// __lang_alloc_box but writes a live rc=1 at `[base+0]` instead
+// of the immortal 0x80000000 sentinel. Closure env blocks /
+// pairs use it so they are real refcounted objects (droppable at
+// rc=0 in Phase 3) rather than immortal ones. Returns base+8.
+//
+// Signature: (param $size i32) (result i32). One i32 local
+// ($base) after the param.
+func buildAllocRc1Body(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	var body []byte
+	// base = __lang_alloc(size + 8)
+	body = inst.InstLocalGet(body, 0) // $size
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1) // $base
+	// mem[base] = 1 (live rc)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	// return base + 8
 	body = inst.InstLocalGet(body, 1)
