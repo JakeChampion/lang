@@ -557,6 +557,22 @@ func WasiIoErrorInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiFilesystemTypesDescriptorInstanceTypeBody returns the
+// type-section body for a minimal `wasi:filesystem/types@0.2.0`
+// instance type that declares just the `descriptor` resource —
+// the handle returned by `wasi:filesystem/preopens::get-directories`
+// and the receiver for the file open / read / write methods. Same
+// shape as WasiIoErrorInstanceTypeBody (one exported sub-resource);
+// it's the foundational brick of the path_* migration, with the
+// descriptor methods and the preopens getter layered on in
+// subsequent bricks (which reference this resource via an outer
+// alias, the wasi:io/error → wasi:io/streams pattern).
+func WasiFilesystemTypesDescriptorInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x01}
+	body = append(body, ExportSubResourceDecl("descriptor")...)
+	return body
+}
+
 // WasiCliStdoutInstanceTypeBody returns the type-section body
 // bytes for the `wasi:cli/stdout@0.2.0` instance type. The
 // interface declares `get-stdout: func() -> output-stream` where
