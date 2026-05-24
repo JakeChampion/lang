@@ -1,0 +1,12 @@
+// Built-in Result[T, E] with an Ok payload recovered by match.
+function parse(s: string): Result[i32, string] {
+    if (s == "42") { return Ok(42); }
+    return Err("bad input");
+}
+
+function main(): i32 {
+    match (parse("42")) {
+        Ok(n) => { return n; },
+        Err(_) => { return 1; }
+    }
+}

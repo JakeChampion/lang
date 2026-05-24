@@ -1,0 +1,10 @@
+// i32 two's-complement wraparound: INT_MAX + 1 = INT_MIN. The value
+// flows through a function call so it isn't constant-folded away.
+function inc(n: i32): i32 {
+    return n + 1;
+}
+
+function main(): i32 {
+    print(inc(2147483647).to_string());
+    return 0;
+}

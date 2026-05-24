@@ -1,0 +1,18 @@
+// Reads lines until EOF, summing the parsed integers.
+// stdin "10\n15\n17\n" -> 42.
+function main(): i32 {
+    var total: i32 = 0;
+    var done: boolean = false;
+    while (!done) {
+        match (read_line()) {
+            Some(line) => {
+                match (line.trim().parse_int()) {
+                    Some(n) => { total = total + n; },
+                    None => { }
+                }
+            },
+            None => { done = true; }
+        }
+    }
+    return total;
+}

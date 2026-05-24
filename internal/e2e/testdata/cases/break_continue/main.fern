@@ -1,0 +1,13 @@
+// `continue` skips even numbers, `break` stops past 13.
+// Sum of odd 1..13 = 1+3+5+7+9+11+13 = 49.
+function main(): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }
+        if (i > 13) { break; }
+        s = s + i;
+    }
+    return s;
+}

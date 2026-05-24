@@ -1,0 +1,5 @@
+// Integer division truncates; modulo is the remainder. 17/5 = 3,
+// 17 % 5 = 2, so 3*10 + 2 = 32.
+function main(): i32 {
+    return (17 / 5) * 10 + (17 % 5);
+}

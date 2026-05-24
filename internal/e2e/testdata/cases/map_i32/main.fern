@@ -1,0 +1,13 @@
+// Map[i32, i32]: set, overwrite, has, len, and Option-returning get.
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m.set(7, 40);
+    m.set(11, 99);
+    m.set(7, 42);
+    if (m.len() != 2) { return 1; }
+    if (!m.has(11)) { return 2; }
+    match (m.get(7)) {
+        Some(v) => { return v; },
+        None => { return 3; }
+    }
+}

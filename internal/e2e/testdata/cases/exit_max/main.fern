@@ -1,0 +1,4 @@
+// Upper boundary of the 0..255 process exit-code range.
+function main(): i32 {
+    return 255;
+}

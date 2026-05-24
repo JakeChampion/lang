@@ -1,0 +1,11 @@
+// f64 arithmetic: 3^2 + 4^2 = 25.0. Float formatting is implemented
+// in pure Fern (std/float), so it is identical on every backend, but
+// we match on a substring to stay robust to trailing fractional
+// digits.
+function main(): i32 {
+    var a: f64 = 3.0;
+    var b: f64 = 4.0;
+    var c: f64 = a * a + b * b;
+    print(c.to_string());
+    return 0;
+}

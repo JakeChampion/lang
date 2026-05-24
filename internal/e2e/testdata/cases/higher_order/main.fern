@@ -1,0 +1,10 @@
+// A function passed as a parameter and invoked by the callee.
+function apply(f: (i32) => i32, x: i32): i32 {
+    return f(x);
+}
+
+function dbl(x: i32): i32 { return x * 2; }
+
+function main(): i32 {
+    return apply(dbl, 21);
+}

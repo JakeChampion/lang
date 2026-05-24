@@ -1,0 +1,8 @@
+// Nested struct literals and chained field access.
+struct Address { city: string, zip: i32 }
+struct Person { name: string, addr: Address }
+
+function main(): i32 {
+    var p: Person = Person { name: "A", addr: Address { city: "NYC", zip: 10001 } };
+    return p.addr.zip - 9959;
+}

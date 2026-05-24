@@ -1,0 +1,4 @@
+// Operator precedence: * and / bind tighter than + and -.
+function main(): i32 {
+    return 2 + 3 * 4 - 10 / 2;
+}

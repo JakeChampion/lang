@@ -1,0 +1,11 @@
+// Map with string keys and i32 values (a portable K/V combo).
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m.set("answer", 42);
+    m.set("other", 7);
+    if (!m.has("answer")) { return 1; }
+    match (m.get("answer")) {
+        Some(v) => { return v; },
+        None => { return 2; }
+    }
+}

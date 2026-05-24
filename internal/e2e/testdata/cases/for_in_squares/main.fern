@@ -1,0 +1,9 @@
+// `for x in array` iteration; 2*2 + 3*3 + 4*4 = 29.
+function main(): i32 {
+    var a = [2, 3, 4];
+    var s = 0;
+    for x in a {
+        s = s + x * x;
+    }
+    return s;
+}

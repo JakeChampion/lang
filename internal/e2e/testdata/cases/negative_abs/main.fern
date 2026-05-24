@@ -1,0 +1,6 @@
+// Negative literals, unary minus, and abs(). 50 - 8 = 42.
+function main(): i32 {
+    var x: i32 = 0 - 50;
+    var y: i32 = -8;
+    return x.abs() - y.abs();
+}

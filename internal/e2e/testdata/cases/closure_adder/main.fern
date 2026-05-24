@@ -1,0 +1,11 @@
+// A closure that captures `n` from its enclosing scope and is
+// returned as a first-class value.
+function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+
+function main(): i32 {
+    var add5 = makeAdder(5);
+    return add5(37);
+}

@@ -1,0 +1,6 @@
+// i32 prelude methods: abs, pow, min. (-5).abs()=5, 2^5=32,
+// min(10,5)=5 -> 42.
+function main(): i32 {
+    var a: i32 = 0 - 5;
+    return a.abs() + (2).pow(5) + (10).min(5);
+}
