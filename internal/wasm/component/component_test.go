@@ -951,6 +951,38 @@ func TestWasiFilesystemErrorCodeEnum_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiIoStreamsReadWriteInstanceTypeBody_Validates composes the
+// combined read+write io/streams instance type (both stream
+// resources + both methods) and confirms wasm-tools accepts it.
+func TestWasiIoStreamsReadWriteInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rwstreams.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"input-stream", "output-stream", "blocking-read", "blocking-write-and-flush"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
 func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
 	got := component.InnerTypeResultOkErr(7, 5)

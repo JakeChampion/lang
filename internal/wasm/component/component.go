@@ -1253,6 +1253,70 @@ func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	return body
 }
 
+// WasiIoStreamsReadWriteInstanceTypeBody declares BOTH stream
+// directions in one wasi:io/streams instance type — output-stream +
+// input-stream resources, the shared error / stream-error types,
+// and both methods (blocking-write-and-flush, blocking-read). It's
+// the io/streams import a mixed read+write program (e.g. read_line +
+// print) needs. Combines WasiIoStreamsInstanceTypeBody (write) and
+// WasiIoStreamsReadInstanceTypeBody (read); the extra input-stream
+// resource shifts the shared types up by one slot.
+//
+// Decl list (16 decls): 0 output-stream, 1 input-stream, 2 alias
+// error, 3 export error, 4 own<error>, 5 variant stream-error,
+// 6 export stream-error, 7 borrow<output-stream>, 8
+// borrow<input-stream>, 9 list<u8>, 10 result<_, stream-error>,
+// 11 result<list<u8>, stream-error>, 12 func blocking-write-and-flush,
+// 13 export it, 14 func blocking-read, 15 export it. (func exports
+// don't consume a typeidx, so the methods are typeidx 12 and 13.)
+func WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x10} // 16 decls
+	body = append(body, ExportSubResourceDecl("output-stream")...)         // 0
+	body = append(body, ExportSubResourceDecl("input-stream")...)          // 1
+	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...)        // 2
+	body = append(body, ExportTypeEqDecl("error", 2)...)                   // 3
+	body = append(body, 0x01, 0x69, 0x03)                                  // 4: own<error=3>
+	body = append(body, 0x01)                                              // 5: variant
+	body = append(body, InnerTypeVariant([]VariantCase{
+		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x04},
+		{Name: "closed"},
+	})...)
+	body = append(body, ExportTypeEqDecl("stream-error", 5)...)            // 6
+	body = append(body, 0x01)                                              // 7: borrow<output=0>
+	body = append(body, InnerTypeBorrow(0)...)
+	body = append(body, 0x01)                                              // 8: borrow<input=1>
+	body = append(body, InnerTypeBorrow(1)...)
+	body = append(body, 0x01)                                              // 9: list<u8>
+	body = append(body, InnerTypeListU8...)
+	body = append(body, 0x01)                                              // 10: result<_, err=6>
+	body = append(body, InnerTypeResultErr(6)...)
+	body = append(body, 0x01)                                              // 11: result<list=9, err=6>
+	body = append(body, InnerTypeResultOkErr(9, 6)...)
+	// 12: func blocking-write-and-flush(self: borrow-out=7, contents: list=9) -> 10
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x07,
+		0x08, 'c', 'o', 'n', 't', 'e', 'n', 't', 's', 0x09,
+		0x00, 0x0a,
+	)
+	// 13: export "[method]output-stream.blocking-write-and-flush" (func 12)
+	body = append(body, 0x04, 0x00, byte(len("[method]output-stream.blocking-write-and-flush")))
+	body = append(body, "[method]output-stream.blocking-write-and-flush"...)
+	body = append(body, 0x01, 0x0c)
+	// 14: func blocking-read(self: borrow-in=8, len: u64) -> 11
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x08,
+		0x03, 'l', 'e', 'n', CValtypeU64,
+		0x00, 0x0b,
+	)
+	// 15: export "[method]input-stream.blocking-read" (func 13)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.blocking-read")))
+	body = append(body, "[method]input-stream.blocking-read"...)
+	body = append(body, 0x01, 0x0d)
+	return body
+}
+
 // WasiIoStreamsReadInstanceTypeBody is the read-side counterpart
 // of WasiIoStreamsInstanceTypeBody: declares the input-stream
 // resource + the `blocking-read` method
