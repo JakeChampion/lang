@@ -228,6 +228,44 @@ func findFunc(p *Program, name string) *Func {
 	return nil
 }
 
+func countCallDirect(ops []Op, name string) int {
+	n := 0
+	for _, op := range ops {
+		if op.Kind == OpCallDirect && op.Str == name {
+			n++
+		}
+	}
+	return n
+}
+
+// Phase 1e-closures-ii: a FuncType (closure) value is rc-tracked
+// like any other heap value — aliasing one inc's its rc=1 header,
+// and closure locals are dec'd at function exit. The closure
+// captures `n` so it lowers to a heap pair/env (not a static
+// cell), giving a real rc to bump. Checked at the IR level (post
+// LowerWith, before the backend's defunctionalise / elide passes)
+// so the assertion is deterministic.
+func TestLowerClosureValueRcTracked(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i32 = 5;
+    function f(): i32 { return n; }
+    var a = f;
+    var b = a;
+    return 0;
+}`
+	prog := lowerSourceWith(t, src, 8)
+	fn := findFunc(prog, "main")
+	if fn == nil {
+		t.Fatal("main not found")
+	}
+	if got := countCallDirect(fn.Ops, "__lang_rc_inc"); got < 1 {
+		t.Errorf("closure alias `b = a` must emit __lang_rc_inc, got %d:\n%s", got, prog)
+	}
+	if got := countCallDirect(fn.Ops, "__lang_rc_dec"); got < 1 {
+		t.Errorf("closure locals must be dec'd at exit, got %d __lang_rc_dec:\n%s", got, prog)
+	}
+}
+
 func TestLowerSwitch(t *testing.T) {
 	prog := lowerSource(t, `function f(n: i32): i32 {
 		switch (n) {
