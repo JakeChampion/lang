@@ -615,6 +615,81 @@ func WasiIoPollInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiSocketsNetworkErrorCodeNames is the ordered case list of the
+// `wasi:sockets/network@0.2.0` error-code enum (21 cases). Order
+// fixes the discriminant values, so it must match the WIT exactly
+// for the produced component to link against wasmtime's host sockets.
+var WasiSocketsNetworkErrorCodeNames = []string{
+	"unknown", "access-denied", "not-supported", "invalid-argument",
+	"out-of-memory", "timeout", "concurrency-conflict", "not-in-progress",
+	"would-block", "invalid-state", "new-socket-limit",
+	"address-not-bindable", "address-in-use", "remote-unreachable",
+	"connection-refused", "connection-reset", "connection-aborted",
+	"datagram-too-large", "name-unresolvable", "temporary-resolver-failure",
+	"permanent-resolver-failure",
+}
+
+// WasiSocketsNetworkInstanceTypeBody returns the type-section body
+// for the `wasi:sockets/network@0.2.0` instance type — the
+// type-heavy core every socket interface references: the `network`
+// resource, the `error-code` enum, `ip-address-family`, and the full
+// `ip-socket-address` variant (ipv4 / ipv6 socket-address records
+// over ipv4-address tuple<u8×4> / ipv6-address tuple<u16×8>). Exports
+// network / error-code / ip-address-family / ip-socket-address for
+// tcp-create-socket and tcp to outer-alias.
+//
+// Every named type is exported, and exported types reference only
+// other exported types — wasm-tools rejects an imported instance
+// whose exported type reaches a non-exported one. This matches the
+// real WIT (ipv4-address / ipv6-address / the socket-address records
+// are all named exports).
+//
+// Type indices: 0 network, 1 error-code enum / 2 export, 3
+// ip-address-family enum / 4 export, 5 ipv4-address tuple / 6 export,
+// 7 ipv4-socket-address record / 8 export, 9 ipv6-address tuple / 10
+// export, 11 ipv6-socket-address record / 12 export, 13
+// ip-socket-address variant / 14 export. (15 decls.)
+func WasiSocketsNetworkInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x0f} // 15 decls
+	body = append(body, ExportSubResourceDecl("network")...) // 0
+	body = append(body, 0x01)                                // 1: error-code enum
+	body = append(body, InnerTypeEnum(WasiSocketsNetworkErrorCodeNames)...)
+	body = append(body, ExportTypeEqDecl("error-code", 1)...) // 2
+	body = append(body, 0x01)                                 // 3: ip-address-family enum
+	body = append(body, InnerTypeEnum([]string{"ipv4", "ipv6"})...)
+	body = append(body, ExportTypeEqDecl("ip-address-family", 3)...) // 4
+	body = append(body, 0x01)                                        // 5: ipv4-address tuple<u8×4>
+	body = append(body, InnerTypeTuple([]byte{CValtypeU8, CValtypeU8, CValtypeU8, CValtypeU8})...)
+	body = append(body, ExportTypeEqDecl("ipv4-address", 5)...) // 6
+	body = append(body, 0x01)                                   // 7: ipv4-socket-address record (address → exported 6)
+	body = append(body, InnerTypeRecord([]RecordField{
+		{Name: "port", Valtype: CValtypeU16},
+		{Name: "address", Valtype: 0x06},
+	})...)
+	body = append(body, ExportTypeEqDecl("ipv4-socket-address", 7)...) // 8
+	body = append(body, 0x01)                                          // 9: ipv6-address tuple<u16×8>
+	body = append(body, InnerTypeTuple([]byte{
+		CValtypeU16, CValtypeU16, CValtypeU16, CValtypeU16,
+		CValtypeU16, CValtypeU16, CValtypeU16, CValtypeU16,
+	})...)
+	body = append(body, ExportTypeEqDecl("ipv6-address", 9)...) // 10
+	body = append(body, 0x01)                                   // 11: ipv6-socket-address record (address → exported 10)
+	body = append(body, InnerTypeRecord([]RecordField{
+		{Name: "port", Valtype: CValtypeU16},
+		{Name: "flow-info", Valtype: CValtypeU32},
+		{Name: "address", Valtype: 0x0a},
+		{Name: "scope-id", Valtype: CValtypeU32},
+	})...)
+	body = append(body, ExportTypeEqDecl("ipv6-socket-address", 11)...) // 12
+	body = append(body, 0x01)                                           // 13: ip-socket-address variant (cases → exported 8, 12)
+	body = append(body, InnerTypeVariant([]VariantCase{
+		{Name: "ipv4", HasPayload: true, PayloadValtype: 0x08},
+		{Name: "ipv6", HasPayload: true, PayloadValtype: 0x0c},
+	})...)
+	body = append(body, ExportTypeEqDecl("ip-socket-address", 13)...) // 14
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
