@@ -632,15 +632,20 @@ End-to-end exit code 42 demo (covered by
     1-i32 trampolines with no shared resource types — and their
     standalone routes + wraps were deleted too (#1339). Across #1328
     + #1334 + #1339, ~2000 lines of hand-rolled per-shape wraps were
-    retired. The composer is now the **sole** component-builder for
-    the entire single-capability preview-2 cli space (streams +
-    filesystem-open + wall-clock/args/env + structured); only
-    `WrapWasiImported*` (pure-structured / non-cli) and TCP remain
-    bespoke.
+    retired. Finally pure-structured (exit/random/monotonic alone or
+    combined) folded in too: the composer now claims any program with
+    ≥1 recognised import, so `WrapWasiImportedAsCliRun` was deleted
+    and both `-component-wrap-cli` and the `-target wasm` no-adapter
+    default route through one shared `buildPreview2CliRunComponent`
+    (#1342) — which also fixed `-target wasm` erroring on
+    print/read_file/etc. despite the docs claiming equivalence.
+    `ComposePreview2CliRun` is now the **sole** adapter-free cli/run
+    component-builder; only `WrapWasiImportedWithExport` (the non-cli
+    `-component-wrap` export shape) and TCP remain bespoke.
   - **Still to do (low-value tail):**
-    - Fold the pure-structured (`WrapWasiImported*`) and TCP shapes
-      into the composer for total unification — modest cleanup, no new
-      capability.
+    - Fold the non-cli `WrapWasiImportedWithExport` export shape and
+      TCP into the composer for total unification — modest cleanup, no
+      new capability.
     - The bare `open_reader` / `open_writer`-with-no-read/write gap
       (the 3-call open chain, no blocking-read/-write) still needs the
       adapter — the composer requires the via-stream method to pair
