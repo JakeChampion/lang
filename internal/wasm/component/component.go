@@ -1444,6 +1444,23 @@ func PutCanonSectionLowerNoOpts(buf []byte, funcIdx uint32) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonResourceDrop appends a canon section with a single
+// `canon resource.drop <typeidx>` entry, producing a core func that
+// drops a handle of the given imported resource type. resourceTypeidx
+// is the component-level type index of the resource (e.g. an
+// outer-aliased `pollable` / `tcp-socket`). Core modules import the
+// `[resource-drop]<name>` builtin as a `(param i32) -> ()` func; this
+// supplies the matching core func to instantiate them with.
+//
+// Wire shape: 08 <size> | 01 (vec) | 03 (resource.drop) | <typeidx>.
+func PutCanonResourceDrop(buf []byte, resourceTypeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x03)      // canon resource.drop
+	body = leb128.UlebU64(body, uint64(resourceTypeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemory emits a canon section with one
 // canon-lower entry that carries a single `memory` canonical-ABI
 // option. The memory option is needed when the lowered function

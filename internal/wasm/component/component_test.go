@@ -105,6 +105,46 @@ func TestPutCanonSectionLowerWithMemory_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonResourceDrop_Bytes pins the canon resource.drop entry:
+// section 8, body = vec(1) | 0x03 (resource.drop) | typeidx.
+func TestPutCanonResourceDrop_Bytes(t *testing.T) {
+	got := component.PutCanonResourceDrop(nil, 1)
+	want := []byte{0x08, 0x03, 0x01, 0x03, 0x01}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonResourceDrop(1) = % x, want % x", got, want)
+	}
+}
+
+// TestPutCanonResourceDrop_Validates composes a component that
+// imports wasi:io/error (whose `error` resource it aliases) and
+// lowers a resource.drop for it — confirming wasm-tools accepts the
+// canon resource.drop encoding against a real imported resource type.
+func TestPutCanonResourceDrop_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error") // error → type 1
+	buf = component.PutCanonResourceDrop(buf, 1)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rdrop.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("resource.drop")) {
+		t.Errorf("expected resource.drop in printed component, got:\n%s", out)
+	}
+}
+
 // TestPutCanonSectionLowerWithMemoryRealloc_Bytes pins the bytes
 // of a canon-lower entry carrying both memory + realloc opts.
 // Expected shape:
