@@ -604,20 +604,31 @@ End-to-end exit code 42 demo (covered by
     write-file routes — the import sets already match), so no new
     component wrap was needed. End-to-end tests:
     `TestCmdLangComponentWrapCliWith{StdinReadLine,OpenReader,OpenWriter}`.
+  - **General composition engine. Shipped.**
+    `component.ComposePreview2CliRun` (#1326) replaced the bespoke
+    per-shape CLI-stream wraps with a data-driven composer: given an
+    optional stdout/stderr write side, optional stdin read side, and
+    N no-memory structured imports, it walks a fixed canonical
+    instance order and lowers each function by kind (no-memory
+    simple lower, memory-only trampoline, memory+realloc trampoline),
+    with a stateful `p2composer` tracking every component/core index
+    space. The driver routes the whole family through it via
+    `classifyComposeCliStream` (#1327), and the ~1000 lines of
+    superseded wraps + tests were deleted (#1328). This unlocked new
+    combinations the per-shape wraps never covered — `read_line+exit`,
+    `read_line+print+exit`, `read_line+random`, … (e2e:
+    `TestCmdLangComponentWrapCliComposedCombos`).
   - **Still to do:**
-    - `open_reader` / `open_writer` with no subsequent read / write
-      method: the bare open chain imports only 3 host calls (no
-      blocking-read/-write) and so doesn't match the 4-import
-      read-file / write-file routes; such open-and-never-use
-      programs still need the adapter. A 3-import wrap variant (or
-      the general composition engine below) would close this.
+    - Fold the filesystem open-chain (read_file / write_file /
+      open_reader / open_writer) into the composer too, so
+      combinations like `read_file + print` or `write_file + exit`
+      compose without a bespoke wrap. This also subsumes the bare
+      `open_reader` / `open_writer`-with-no-read/write gap (the
+      3-call open chain) once the composer drives the lowering.
     - `open_appender` (CREATE without TRUNCATE + append semantics)
       is still preview-1 only — preview-2 has no fd-append flag, so
-      it needs an explicit seek-to-end before write-via-stream.
-    - Further mixed combinations (e.g. read_file + print, or
-      args + write_file) — each currently needs its own wrap +
-      detector; a general N-interface composition engine would
-      subsume the bespoke wraps.
+      it needs `append-via-stream` (or an explicit seek-to-end
+      before write-via-stream).
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
