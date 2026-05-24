@@ -139,14 +139,24 @@ func FixupModuleFor4I32NoResult() []byte {
 // imports and the elem segment that installs the lowered func
 // into table[0]) is independent of the param count.
 func FixupModuleForNI32NoResult(nparams int) []byte {
+	return FixupModuleForParamsNoResult(repeatByte(0x7f, nparams))
+}
+
+// FixupModuleForParamsNoResult is the valtype-generalised
+// FixupModuleForNI32NoResult: the imported func type is
+// `(paramValtypes...) -> ()`, letting callers express mixed
+// signatures (e.g. the `(i32, i64, i32) -> ()` shape of the
+// canon-lowered blocking-read method). Everything past the type
+// section — the func + table imports and the elem segment that
+// installs the lowered func into table[0] — is independent of the
+// param valtypes.
+func FixupModuleForParamsNoResult(paramValtypes []byte) []byte {
 	// core wasm preamble
 	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
-	// type section: vec(1) functype (i32 × nparams) -> ()
+	// type section: vec(1) functype (paramValtypes...) -> ()
 	typeBody := []byte{0x01, 0x60}
-	typeBody = leb128.UlebU64(typeBody, uint64(nparams))
-	for i := 0; i < nparams; i++ {
-		typeBody = append(typeBody, 0x7f)
-	}
+	typeBody = leb128.UlebU64(typeBody, uint64(len(paramValtypes)))
+	typeBody = append(typeBody, paramValtypes...)
 	typeBody = append(typeBody, 0x00) // vec(0) results
 	out = appendCoreSection(out, 0x01, typeBody)
 	// import section: vec(2) — ("" "0") func 0, ("" "$imports") table
@@ -204,14 +214,22 @@ func TrampolineModuleFor4I32NoResult() []byte {
 // `(i32 × nparams) -> ()`; the body forwards all nparams to a
 // 1-entry funcref-table call_indirect.
 func TrampolineModuleForNI32NoResult(nparams int) []byte {
+	return TrampolineModuleForParamsNoResult(repeatByte(0x7f, nparams))
+}
+
+// TrampolineModuleForParamsNoResult is the valtype-generalised
+// TrampolineModuleForNI32NoResult: the exported func type is
+// `(paramValtypes...) -> ()` and the body forwards every param to
+// a 1-entry funcref-table call_indirect. Lets callers express
+// mixed signatures — e.g. the canon-lowered blocking-read ABI
+// `(self: i32, len: i64, ret_ptr: i32) -> ()`.
+func TrampolineModuleForParamsNoResult(paramValtypes []byte) []byte {
 	// core wasm preamble
 	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
-	// type section: vec(1) functype (i32 × nparams) -> ()
+	// type section: vec(1) functype (paramValtypes...) -> ()
 	typeBody := []byte{0x01, 0x60}
-	typeBody = leb128.UlebU64(typeBody, uint64(nparams))
-	for i := 0; i < nparams; i++ {
-		typeBody = append(typeBody, 0x7f)
-	}
+	typeBody = leb128.UlebU64(typeBody, uint64(len(paramValtypes)))
+	typeBody = append(typeBody, paramValtypes...)
 	typeBody = append(typeBody, 0x00)
 	out = appendCoreSection(out, 0x01, typeBody)
 	// function section: vec(1) typeidx 0
@@ -228,7 +246,7 @@ func TrampolineModuleForNI32NoResult(nparams int) []byte {
 	// code section: vec(1) body — vec(0) locals, local.get 0..n-1,
 	// i32.const 0, call_indirect type 0 table 0, end.
 	funcBody := []byte{0x00}
-	for i := 0; i < nparams; i++ {
+	for i := range paramValtypes {
 		funcBody = append(funcBody, 0x20)
 		funcBody = leb128.UlebU64(funcBody, uint64(i))
 	}
@@ -237,6 +255,15 @@ func TrampolineModuleForNI32NoResult(nparams int) []byte {
 	codeBody = leb128.UlebU64(codeBody, uint64(len(funcBody)))
 	codeBody = append(codeBody, funcBody...)
 	out = appendCoreSection(out, 0x0a, codeBody)
+	return out
+}
+
+// repeatByte returns a slice of n copies of b.
+func repeatByte(b byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b
+	}
 	return out
 }
 
