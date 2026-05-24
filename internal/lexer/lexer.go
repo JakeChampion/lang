@@ -333,6 +333,29 @@ func (l *lexer) next() (Token, error) {
 				l.advance()
 			}
 		}
+		// Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on
+		// both an integer base (`1e3`) and a fractional one
+		// (`1.5e-2`). Only consumed when at least one exponent digit
+		// follows the optional sign — a bare `1e` / `1efoo` leaves
+		// the `e` for the next token. Suppressed right after a `.`
+		// so a chained tuple index like `t.1e3` keeps `1` as the
+		// selector (same rationale as the fractional-dot guard).
+		if !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
+			j := l.i + 1
+			if j < len(l.src) && (l.src[j] == '+' || l.src[j] == '-') {
+				j++
+			}
+			if j < len(l.src) && unicode.IsDigit(rune(l.src[j])) {
+				isFloat = true
+				l.advance() // 'e' / 'E'
+				if l.src[l.i] == '+' || l.src[l.i] == '-' {
+					l.advance()
+				}
+				for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+					l.advance()
+				}
+			}
+		}
 		text := l.src[begin:l.i]
 		// Optional typed suffix: i8/i16/i32/i64/u8/u16/u32/u64/f32/f64.
 		// Recognised greedily — the suffix character set is a
