@@ -501,21 +501,33 @@ End-to-end exit code 42 demo (covered by
     -component-wrap-cli` → `wasmtime run` → stdout `"hello
     world\n"`. No wasm-tools shell-out, no preview-1 adapter,
     no `--invoke` flag.
+  - **`write` / `eprint` / `putchar` migrations.** SHIPPED.
+    `write` shares the print body (newline-omitting variant,
+    #1250); `eprint` writes to stderr via a separate
+    `wasi:cli/stderr::get-stderr` cached handle (#1252);
+    `putchar` reuses the stdout handle for a single-byte write
+    (#1256). The stdout/stderr-write family is fully migrated.
+  - **`clock_time_get` realtime migration.** SHIPPED.
+    `now_ns` / `now_unix_ms` route through
+    `wasi:clocks/wall-clock::now -> datetime` under
+    `Preview2WASI`. datetime returns via the canonical-ABI
+    indirect out-pointer, so the wrap uses the 1-i32 trampoline
+    (generalised in #1257). The wasi:clocks/wall-clock instance
+    type (#1258), the wrap helper (#1260), and the wasmbin
+    bodies + driver routing + `now_ns` checker built-in (#1261)
+    complete it. End-to-end test:
+    `TestCmdLangComponentWrapCliWithNowNs`.
   - **Still to do (smaller migrations):**
-    - `clock_time_get` realtime (`wasi:clocks/wall-clock::now
-      -> datetime` — needs canonical-ABI memory opts + the
-      canon-lower trampoline pattern because datetime uses
-      indirect-return for the record).
-    - `eprint` / `write` helpers — share the print-side
-      infrastructure but need a separate cached handle (stderr
-      for eprint) and a newline-omitting body (write).
     - `fd_read` (`wasi:cli/stdin::get-stdin` +
       `wasi:io/streams::[method]input-stream.blocking-read`).
     - `environ_*` / `args_*` need lists / records.
     - `path_*` needs filesystem resources.
-    - Mixed-import cases (e.g. print + exit) — currently
-      routed only when the imports are exactly one supported
-      pattern; combining them is a future slice.
+    - Mixed-import cases (e.g. print + exit, or random + print)
+      — currently routed only when the imports are exactly one
+      supported pattern; combining the trampoline-pattern
+      imports (print / eprint / wall-clock) with the structured
+      WasiImport flow (exit / random / monotonic) in one
+      component is a future slice.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
