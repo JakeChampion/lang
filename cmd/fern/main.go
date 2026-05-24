@@ -938,7 +938,7 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 // ForceMemorySection when any is present.
 func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []byte) ([]byte, error) {
 	if opts, ok := classifyComposeCliStream(bin); ok {
-		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite
+		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend
 		for _, mt := range opts.MemTramp {
 			if mt.NeedsRealloc {
 				needsRealloc = true
@@ -970,7 +970,7 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	var opts component.ComposeOpts
 	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
-	var getDirs, openAt, readVia, writeVia bool
+	var getDirs, openAt, readVia, writeVia, appendVia bool
 	var wallNow, getArgs, getEnv bool
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
@@ -992,6 +992,8 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 			readVia = true
 		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.write-via-stream":
 			writeVia = true
+		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.append-via-stream":
+			appendVia = true
 		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
 			wallNow = true
 		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments":
@@ -1018,23 +1020,24 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 		return component.ComposeOpts{}, false // single write stream only
 	}
 	// The filesystem open-chain (shared get-directories + open-at, plus
-	// exactly one descriptor stream method) must be complete and
-	// single-direction. read_file + write_file in one program (both
-	// via methods) isn't supported — the filesystem/types instance
-	// type carries one direction.
-	fsAny := getDirs || openAt || readVia || writeVia
-	fileRead := getDirs && openAt && readVia && !writeVia
-	fileWrite := getDirs && openAt && writeVia && !readVia
-	if fsAny && !(fileRead || fileWrite) {
+	// exactly one descriptor stream method: read-, write-, or
+	// append-via-stream) must be complete and single-direction. Two
+	// directions in one program isn't supported — the filesystem/types
+	// instance type carries one method.
+	fsAny := getDirs || openAt || readVia || writeVia || appendVia
+	fileRead := getDirs && openAt && readVia && !writeVia && !appendVia
+	fileWrite := getDirs && openAt && writeVia && !readVia && !appendVia
+	fileAppend := getDirs && openAt && appendVia && !readVia && !writeVia
+	if fsAny && !(fileRead || fileWrite || fileAppend) {
 		return component.ComposeOpts{}, false
 	}
-	// blocking-write backs print/eprint and the file write-chain;
+	// blocking-write backs print/eprint and the file write/append-chain;
 	// blocking-read backs stdin reads and the file read-chain. The
 	// method can't appear without a producer that yields a stream to
 	// it, but a producer *without* the method is fine — a bare
 	// open_reader/open_writer opens a handle and never reads/writes.
 	writeGetter := getStdout || getStderr
-	if blockWrite && !(writeGetter || fileWrite) {
+	if blockWrite && !(writeGetter || fileWrite || fileAppend) {
 		return component.ComposeOpts{}, false
 	}
 	if blockRead && !(getStdin || fileRead) {
@@ -1048,6 +1051,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	opts.ReadStdin = getStdin
 	opts.FileRead = fileRead
 	opts.FileWrite = fileWrite
+	opts.FileAppend = fileAppend
 	opts.ReadStream = blockRead
 	opts.WriteStream = blockWrite
 	// Mem-trampoline imports (wall-clock now / args / env). args and
@@ -1082,7 +1086,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	// Claim any shape with at least one import (stream / file /
 	// mem-trampoline / structured). Only a truly import-free program
 	// falls through — to BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
+	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && !opts.FileAppend && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
 		return component.ComposeOpts{}, false
 	}
 	return opts, true
