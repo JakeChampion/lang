@@ -554,6 +554,31 @@ func WasiIoErrorInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiIoPollInstanceTypeBody returns the type-section body for a
+// minimal `wasi:io/poll@0.2.0` instance type: the `pollable` resource
+// plus its `block: func()` method. TCP's tcp-socket.subscribe returns
+// an own<pollable>, and a socket server blocks on it; the resource is
+// also dropped via canon resource.drop.
+//
+// Decls: 0 pollable (sub-resource), 1 borrow<pollable>, 2 func(self)
+// -> (), 3 export "[method]pollable.block" (func 0).
+func WasiIoPollInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x04} // 4 decls
+	body = append(body, ExportSubResourceDecl("pollable")...) // 0
+	body = append(body, 0x01, 0x68, 0x00)                     // 1: borrow<pollable=0>
+	// 2: func(self: borrow 1) -> () (no result)
+	body = append(body,
+		0x01, 0x40, 0x01,
+		0x04, 's', 'e', 'l', 'f', 0x01,
+		0x01, 0x00,
+	)
+	// 3: export "[method]pollable.block" (functype is decl/type 2)
+	body = append(body, 0x04, 0x00, byte(len("[method]pollable.block")))
+	body = append(body, "[method]pollable.block"...)
+	body = append(body, 0x01, 0x02)
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
