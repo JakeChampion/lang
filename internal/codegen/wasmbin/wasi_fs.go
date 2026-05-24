@@ -484,8 +484,6 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
-	const enoent = 44 // preview-1 ENOENT → IoError NotFound
-
 	var body []byte
 	// rb = alloc(16) — reused retbuf for the sequential host calls.
 	body = inst.InstI32Const(body, 16)
@@ -519,7 +517,8 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, enoent)
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4]
@@ -536,7 +535,8 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, enoent)
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4]
@@ -649,7 +649,9 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 13)
 
-	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	// 15 i32 locals (2..16): the 14 originals plus local 16 (errno
+	// from the mapped error-code).
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -658,8 +660,37 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 // Uses local 15 for the IoError ptr and local 13 for the Result
 // box. Mirrors buildReadFileBody's Err shape (8-byte box, tag=1 @0,
 // IoError ptr @+4).
-func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox uint32, errno int32) []byte {
-	body = inst.InstI32Const(body, errno)
+// appendErrnoFromErrorCode maps the wasi:filesystem error-code
+// discriminant at mem8[rbLocal+4] (the err arm of
+// result<_, error-code>) to the preview-1 errno __build_io_error
+// understands, writing it into errnoLocal. Default ENOENT
+// (NotFound); the recognised cases line up with __build_io_error's
+// errno→IoError-variant map (access → PermissionDenied, exist →
+// AlreadyExists, interrupted → Interrupted, unsupported →
+// Unsupported). error-code disc indices follow
+// WasiFilesystemErrorCodeNames order.
+func appendErrnoFromErrorCode(body []byte, rbLocal, errnoLocal uint32) []byte {
+	// errno = ENOENT (default / no-entry).
+	body = inst.InstI32Const(body, errnoNoEnt)
+	body = inst.InstLocalSet(body, errnoLocal)
+	for _, m := range []struct{ discVal, errnoVal int32 }{
+		{0, errnoAccess}, {7, errnoExist}, {11, errnoIntr}, {27, errnoNoTsup},
+	} {
+		// if mem8[rb+4] == discVal { errno = errnoVal }
+		body = inst.InstLocalGet(body, rbLocal)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = inst.InstI32Const(body, m.discVal)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, m.errnoVal)
+		body = inst.InstLocalSet(body, errnoLocal)
+		body = inst.InstEnd(body)
+	}
+	return body
+}
+
+func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox, errnoLocal uint32) []byte {
+	body = inst.InstLocalGet(body, errnoLocal)
 	// __build_io_error(errno, path_data, path_len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
@@ -951,7 +982,6 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
-	const enoent = 44
 	// open-flags: create(bit0) | truncate(bit3) = 1 | 8 = 9.
 	const openFlagsCreateTrunc = 9
 	// descriptor-flags: write = bit1 = 2.
@@ -985,7 +1015,8 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+		body = appendErrnoFromErrorCode(body, 4, 17)
+		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 	}
 	body = inst.InstEnd(body)
 	// fd = mem[rb+4]
@@ -1002,7 +1033,8 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+		body = appendErrnoFromErrorCode(body, 4, 17)
+		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 	}
 	body = inst.InstEnd(body)
 	// stream = mem[rb+4]
@@ -1044,12 +1076,17 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 13)
 		body = inst.InstLocalGet(body, 4)
 		body = inst.InstCall(body, blockingWrite)
-		// disc != 0 → Some(IoError)
+		// disc != 0 → Some(IoError). This err arm carries a
+		// stream-error (not an error-code), so don't run the
+		// error-code mapper; use a generic errno (0 → __build_io_error
+		// default variant).
 		body = inst.InstLocalGet(body, 4)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = buildWriteFileErr(body, buildIoErr, allocBox, enoent)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstLocalSet(body, 17)
+			body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 		}
 		body = inst.InstEnd(body)
 		// cur += chunk_len
@@ -1071,7 +1108,9 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 15)
 
-	locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32)
+	// 14 i32 locals (4..17): the 13 originals plus local 17 (errno
+	// from the mapped error-code).
+	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -1079,8 +1118,8 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 // return" tail for buildWriteFileBodyP2's failure paths. Uses local
 // 16 for the IoError ptr, local 15 for the Option box (Some: tag=0
 // @0, IoError ptr @+4 — the heap-form Option[IoError] layout).
-func buildWriteFileErr(body []byte, buildIoErr, allocBox uint32, errno int32) []byte {
-	body = inst.InstI32Const(body, errno)
+func buildWriteFileErr(body []byte, buildIoErr, allocBox, errnoLocal uint32) []byte {
+	body = inst.InstLocalGet(body, errnoLocal)
 	// __build_io_error(errno, path_data, path_len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
