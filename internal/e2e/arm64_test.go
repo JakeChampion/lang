@@ -13295,6 +13295,52 @@ function main(): i32 {
 	}
 }
 
+// Map with a pointer-shaped value type (tuple / struct / array).
+// `__map_get_impl` returns `Option[usize]`; the payload functions
+// previously sized usize as 4 bytes, so on natives the 8-byte V
+// pointer got truncated and mis-offset when wrapped in Some. The
+// consumer read `Option[V]` at the pointer offset (8) → garbage →
+// segfault. Fix: usize is pointer-width in payloadSlotSize /
+// payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
+// helper's Option[usize] into a consumer-shaped Option[V].
+func TestArm64MapPointerShapedValues(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+function main(): i32 {
+    // tuple value
+    var mt: Map[string, (i32, i32)] = Map {};
+    mt = mt.set("a", (3, 4));
+    match (mt.get("a")) {
+        Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
+        None => { return 2; }
+    }
+    // struct value
+    var ms: Map[string, P] = Map {};
+    ms = ms.set("a", P { x: 3, y: 4 });
+    match (ms.get("a")) {
+        Some(s) => { if (s.x + s.y != 7) { return 3; } },
+        None => { return 4; }
+    }
+    // array value
+    var ma: Map[i32, i32[]] = Map {};
+    ma = ma.set(1, [10, 20, 30]);
+    match (ma.get(1)) {
+        Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
+        None => { return 6; }
+    }
+    // i32 value (regression guard — must still work after usize fix)
+    var mi: Map[string, i32] = Map {};
+    mi = mi.set("a", 42);
+    match (mi.get("a")) {
+        Some(v) => { if (v != 42) { return 7; } },
+        None => { return 8; }
+    }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (Map pointer-shaped values)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

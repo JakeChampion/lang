@@ -5702,15 +5702,20 @@ func (b *builder) callBody(n *ast.Call) error {
 	// emitStringKMapCall when only K needs boxing.
 	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
 	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
+	// into a consumer-shaped `Option[V]`. The helper's payload sits
+	// at the usize slot offset (8 on natives), which only lines up
+	// with a direct `Option[V]` read when V's layout equals usize's
+	// (pointer-shaped V on natives). For i32 V — the common case —
+	// the consumer reads offset 4, so a passthrough would read the
+	// wrong bytes. Reboxing makes every V correct on every target.
+	if id.Name == "__method_Map_get" && len(n.TypeArgs) >= 2 {
+		return b.emitMapGetRebox(n, n.TypeArgs[0], n.TypeArgs[1], needBoxV)
+	}
 	if needBoxK || needBoxV {
 		switch id.Name {
 		case "__method_Map_set":
 			return b.emitWideMapSet(n, n.TypeArgs[0], n.TypeArgs[1])
-		case "__method_Map_get":
-			if needBoxV {
-				return b.emitWideMapGet(n, n.TypeArgs[0], n.TypeArgs[1])
-			}
-			return b.emitStringKMapCall(n, n.TypeArgs[0], id.Name, 2)
 		case "__method_Map_get_or":
 			if needBoxV {
 				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
@@ -6346,6 +6351,16 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return 8
 	}
+	// usize (WidthPtr) is pointer-width — 8 bytes on natives,
+	// 4 on wasm32. Without this branch the `ast.IsPointerType`
+	// check below misses it (usize is a NumberType, not in the
+	// pointer-type list) and it falls through to the 4-byte
+	// default — truncating the 8-byte payload of `Option[usize]`
+	// (built by `__map_get_impl`) on natives. Mirrors
+	// `pairPayloadWidth`, which already treats usize as WidthPtr.
+	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
+		return int32(ptrW)
+	}
 	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
 		return 8
 	}
@@ -6522,6 +6537,10 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpStore, Width: 64}
 	}
+	// usize → pointer-width store (matches payloadSlotSize).
+	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
+		return Op{Kind: OpStore, Width: WidthPtr}
+	}
 	if _, isString := t.(ast.StringType); isString {
 		if useTwoWordStrings(ptrW) {
 			return Op{Kind: OpStore, Width: WidthString}
@@ -6603,6 +6622,10 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpLoad, Width: 64}
+	}
+	// usize → pointer-width load (matches payloadSlotSize).
+	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
+		return Op{Kind: OpLoad, Width: WidthPtr}
 	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpLoad, Width: WidthPtr}
@@ -7376,6 +7399,27 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 // (the auto-injected order in checker.builtinEnumDecls). K is
 // also boxed when it's a string on wasm32.
 func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
+	boxV := isWideScalar(vType) || isStringForBoxing(vType, b.ptrW)
+	return b.emitMapGetRebox(n, kType, vType, boxV)
+}
+
+// emitMapGetRebox lowers `m.get(k)` by reboxing the helper's
+// uniform `Option[usize]` return into a consumer-shaped
+// `Option[V]`. The helper (`__map_get_impl`) always returns
+// `Option[usize]` whose payload (at the usize slot offset — 8 on
+// natives, 4 on wasm32) is EITHER the V value directly (when V
+// isn't boxed) OR a cell pointer (when V is boxed: wide scalar
+// i64/u64/f64, or string on wasm32). The rebox translates that to
+// an `Option[V]` heap box laid out the way the surrounding match /
+// let-binding expects.
+//
+// Reboxing is necessary even for the non-boxed case: the helper's
+// `Option[usize]` payload sits at the usize offset (8 on natives),
+// but a consumer reading `Option[i32]` expects its payload at
+// offset 4. A direct passthrough only lines up when V's payload
+// layout happens to equal usize's — true for pointer-shaped V on
+// natives, false for i32 V. The rebox makes every V correct.
+func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV bool) error {
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
@@ -7404,7 +7448,7 @@ func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
 	b.emit(Op{Kind: OpConstI32, I32: 1}) // tag = None
 	b.emit(Op{Kind: OpStore})
 	b.emit(Op{Kind: OpElse})
-	// --- tag == 0 (Some): build a wide-payload Option<V>.
+	// --- tag == 0 (Some): build the user-shaped Option<V>.
 	offsets, size := payloadLayout([]ast.Type{vType}, 1, b.ptrW)
 	b.emit(Op{Kind: OpConstI32, I32: size})
 	b.emit(Op{Kind: OpAlloc})
@@ -7415,17 +7459,36 @@ func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	b.emit(Op{Kind: OpConstI32, I32: offsets[0]})
 	b.emit(Op{Kind: OpAdd})
-	// load cell pointer from helper's Option<i32> payload, then
-	// load wide V out of the cell.
+	// Read the helper's Option[usize] payload at the usize slot
+	// offset with a pointer-width load so the full value (cell
+	// pointer or pointer-shaped V) survives on natives.
 	b.emit(Op{Kind: OpLoadLocal, I32: optPtrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpConstI32, I32: usizeOptionPayloadOffset(b.ptrW)})
 	b.emit(Op{Kind: OpAdd})
-	b.emit(Op{Kind: OpLoad}) // cell pointer
-	b.emit(payloadLoadOpFor(vType, b.ptrW))
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+	if boxedV {
+		// Payload is a cell pointer — dereference to load the
+		// real V (wide scalar / two-word string) out of the cell.
+		b.emit(payloadLoadOpFor(vType, b.ptrW))
+	}
+	// Non-boxed: the payload IS the V value (an i32 in the low
+	// bits, or a pointer-shaped V address). payloadStoreOpFor
+	// narrows / widens to the V slot correctly.
 	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	return nil
+}
+
+// usizeOptionPayloadOffset returns the byte offset of the payload
+// slot in an `Option[usize]` heap box — the shape `__map_get_impl`
+// returns. The tag occupies offset 0; the pointer-width usize
+// payload follows, 8-aligned on natives (→ offset 8) and at
+// offset 4 on wasm32. Centralised so the wide-map get / get_or
+// readers stay in sync with payloadLayout's usize sizing.
+func usizeOptionPayloadOffset(ptrW int) int32 {
+	offs, _ := payloadLayout([]ast.Type{ast.NumberType{Width: ast.WidthPtr}}, 1, ptrW)
+	return offs[0]
 }
 
 // emitStringKMapCall boxes a string K argument and emits a

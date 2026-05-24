@@ -15185,3 +15185,38 @@ function main(): i32 {
 		t.Errorf("got exit %d, want 0 (enum variant in tuple slot)", got)
 	}
 }
+
+// Mirror of TestArm64MapPointerShapedValues.
+func TestWASMMapPointerShapedValues(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+function main(): i32 {
+    var mt: Map[string, (i32, i32)] = Map {};
+    mt = mt.set("a", (3, 4));
+    match (mt.get("a")) {
+        Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
+        None => { return 2; }
+    }
+    var ms: Map[string, P] = Map {};
+    ms = ms.set("a", P { x: 3, y: 4 });
+    match (ms.get("a")) {
+        Some(s) => { if (s.x + s.y != 7) { return 3; } },
+        None => { return 4; }
+    }
+    var ma: Map[i32, i32[]] = Map {};
+    ma = ma.set(1, [10, 20, 30]);
+    match (ma.get(1)) {
+        Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
+        None => { return 6; }
+    }
+    var mi: Map[string, i32] = Map {};
+    mi = mi.set("a", 42);
+    match (mi.get("a")) {
+        Some(v) => { if (v != 42) { return 7; } },
+        None => { return 8; }
+    }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (Map pointer-shaped values)", got)
+	}
+}
