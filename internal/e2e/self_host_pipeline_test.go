@@ -15,7 +15,7 @@ import (
 )
 
 // Pipeline orchestrator — the "everything composes" demo. Imports
-// every layer in the lang-port (lexer + parser + constfold +
+// every layer in the fern-port (lexer + parser + constfold +
 // checker + vm) and drives a non-trivial source through them
 // end-to-end:
 //
@@ -85,7 +85,7 @@ func TestSelfHostPipelineX86_64(t *testing.T) {
 	}
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port pipeline assertion %d failed", code)
+		t.Errorf("fern-port pipeline assertion %d failed", code)
 	}
 }
 
@@ -121,6 +121,6 @@ func TestSelfHostPipelineArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port pipeline assertion %d failed", code)
+		t.Errorf("fern-port pipeline assertion %d failed", code)
 	}
 }

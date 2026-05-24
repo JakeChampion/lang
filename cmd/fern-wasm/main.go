@@ -8,31 +8,31 @@
 //
 // The companion `web/index.html` loads the produced `fern.wasm`
 // alongside Go's `wasm_exec.js` runtime and wires a textarea +
-// Run button to the `langInterpret` global this program exports.
+// Run button to the `fernInterpret` global this program exports.
 //
 // API surface (set as globals on `globalThis` so the page can
 // call them without an explicit binding step):
 //
-//   langInterpret(src) -> {
+//   fernInterpret(src) -> {
 //       stdout: string,
 //       stderr: string,
 //       exit:   number,        // process exit code 0..255
 //       error:  string | null, // parse / check / runtime failure
 //   }
 //
-//   langLsp(jsonRpcRequestString) -> jsonRpcResponseString
+//   fernLsp(jsonRpcRequestString) -> jsonRpcResponseString
 //     Routes a single LSP message into the in-process server in
 //     internal/lsp and returns the JSON-encoded response. Empty
 //     string for notifications (which have no response). The
 //     same Server instance persists across calls so document
 //     state carries between requests.
 //
-//   langLspOnNotify(callback)
+//   fernLspOnNotify(callback)
 //     Installs a JS function the server invokes on every push
 //     notification (publishDiagnostics, etc). The callback gets
 //     (method: string, params: object).
 //
-//   langCompile(src, target) -> {
+//   fernCompile(src, target) -> {
 //       asm:    string,        // emitted assembly
 //       error:  string | null, // parse / check / codegen failure
 //   }
@@ -45,9 +45,9 @@
 //     target retired with the WAT backend — the wasmbin path
 //     emits binary bytes, not human-readable text.)
 //
-// State is fresh per call for langInterpret. Imports aren't
+// State is fresh per call for fernInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
-// none). TCP / file I/O builtins on the lang side would error at
+// none). TCP / file I/O builtins on the Fern side would error at
 // runtime — that's fine for the playground use case (showcase,
 // REPL-style demo).
 package main
@@ -70,7 +70,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// interpret runs src through the same pipeline `lang -interp -`
+// interpret runs src through the same pipeline `fern -interp -`
 // uses CLI-side: constfold, checker, monomorph, AST interp.
 // Returns a JS-shaped result object (see the API surface comment
 // at the top of the file).
@@ -184,7 +184,7 @@ func safeCall(ip *interp.Interp) (v interp.Value, err error) {
 // compile runs src through parse → constfold → check → monomorph
 // → backend.Emit for the requested target and returns the textual
 // output (assembly for native targets, .wat for wasm). Mirrors the
-// `lang -target X` CLI path so what the playground shows matches
+// `fern -target X` CLI path so what the playground shows matches
 // what a build on the user's machine would produce.
 func compile(src, target string) map[string]any {
 	result := map[string]any{
@@ -237,13 +237,13 @@ func compile(src, target string) map[string]any {
 	return result
 }
 
-// lspServer is the persistent LSP server backing langLsp /
-// langLspOnNotify. A single instance owns the open-document cache
+// lspServer is the persistent LSP server backing fernLsp /
+// fernLspOnNotify. A single instance owns the open-document cache
 // so request-response pairs make sense across calls.
 var lspServer = lsp.NewServer()
 
 // lspNotify is the JS callback the server invokes on every push
-// notification. nil until langLspOnNotify(...) installs one;
+// notification. nil until fernLspOnNotify(...) installs one;
 // notifications fired before then are dropped.
 var lspNotify js.Value
 
@@ -268,19 +268,19 @@ func main() {
 		lspNotify.Invoke(method, jsValueOf(asAny))
 	})
 
-	js.Global().Set("langInterpret", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("fernInterpret", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return map[string]any{
 				"stdout": "",
 				"stderr": "",
 				"exit":   2,
-				"error":  "langInterpret(src) requires one string argument",
+				"error":  "fernInterpret(src) requires one string argument",
 			}
 		}
 		return interpret(args[0].String())
 	}))
 
-	js.Global().Set("langLsp", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("fernLsp", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return ""
 		}
@@ -291,7 +291,7 @@ func main() {
 		return string(resp)
 	}))
 
-	js.Global().Set("langLspOnNotify", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("fernLspOnNotify", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			lspNotify = js.Undefined()
 			return nil
@@ -300,11 +300,11 @@ func main() {
 		return nil
 	}))
 
-	js.Global().Set("langCompile", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("fernCompile", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return map[string]any{
 				"asm":   "",
-				"error": "langCompile(src, target) requires two string arguments",
+				"error": "fernCompile(src, target) requires two string arguments",
 			}
 		}
 		return compile(args[0].String(), args[1].String())

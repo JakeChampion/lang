@@ -43,7 +43,7 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
 				URI:        mainURI,
-				LanguageID: "lang",
+				LanguageID: "fern",
 				Text:       mainSrc,
 			},
 		}),
@@ -113,7 +113,7 @@ func TestWorkspace_CrossModuleCallJump(t *testing.T) {
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
-			URI: mainURI, LanguageID: "lang", Text: mainSrc,
+			URI: mainURI, LanguageID: "fern", Text: mainSrc,
 		}}),
 	})
 	s.HandleMessage(open)
@@ -179,7 +179,7 @@ func TestWorkspace_UnsavedBufferOverridesDisk(t *testing.T) {
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
 				URI:        pathToURI(stale),
-				LanguageID: "lang",
+				LanguageID: "fern",
 				Text:       freshSrc,
 			},
 		}),
@@ -240,7 +240,7 @@ func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
-			URI: utilURI, LanguageID: "lang",
+			URI: utilURI, LanguageID: "fern",
 			Text: "pub function thing(): i32 { return undeclared_in_util; }\n",
 		}}),
 	})
@@ -254,7 +254,7 @@ func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
 		Jsonrpc: "2.0",
 		Method:  "textDocument/didOpen",
 		Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
-			URI: mainURI, LanguageID: "lang",
+			URI: mainURI, LanguageID: "fern",
 			Text: "import \"./util\";\nfunction main(): i32 { return util.thing(); }\n",
 		}}),
 	})

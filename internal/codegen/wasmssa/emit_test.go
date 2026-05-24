@@ -51,7 +51,7 @@ func TestEmitAddTwoParams(t *testing.T) {
 
 	// Verify the module passes wasm-tools validation (if
 	// available). Skip when the tool isn't on PATH —
-	// matches the LANG_WASI_ADAPTER / wasmtime pattern in
+	// matches the FERN_WASI_ADAPTER / wasmtime pattern in
 	// the e2e suite.
 	validateModule(t, mod)
 }

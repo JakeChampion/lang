@@ -50,13 +50,13 @@ after every merge so the prelude / examples don't break.
 
 No code change. Validates the plan + reviewer alignment.
 
-### Step 2 — `langstring` Go-side runtime helper
+### Step 2 — `fernstring` Go-side runtime helper
 
 Add a `runtime.LangString` Go struct mirroring the new layout.
 Used by code-generators to compute layout constants + check
 inline-fit at compile time. No backend wired to it yet.
 
-Files: `internal/runtime/langstring.go` (new), unit tests.
+Files: `internal/runtime/fernstring.go` (new), unit tests.
 
 ### Step 3 — string-literal lowering on wasm
 
@@ -84,7 +84,7 @@ form. Sets up downstream PRs to swap operations in-place.
 ### Step 4 — `__str_len` runtime helper switch
 
 Replace `__str_len(ptr)` (which reads `*(ptr - 4)`) with
-`langstring_len(data_ptr, len)` (returns `len & ~inline_flag`).
+`fernstring_len(data_ptr, len)` (returns `len & ~inline_flag`).
 Every backend's `len(s)` codegen rewrites to consume the two-
 word form.
 
@@ -224,7 +224,7 @@ re-discover the surface.
 
 - `OpConstStr` at `wasm_ir.go:747` — `g.linef("i32.const
   %d", g.internString(op.Str))`. For literals ≤7 bytes,
-  pack inline via `langstring.PackInlineWasm` → emit two
+  pack inline via `fernstring.PackInlineWasm` → emit two
   `i32.const`s. For >7 bytes, push `(heap_ptr,
   len_with_flag=0)`.
 
@@ -270,7 +270,7 @@ branches on `IsInlineWasm(len)`:
   via bit-shift; heap reads via `i32.load8_u` at
   `data_ptr + i`.
 
-- `$__lang_str_len` is removed entirely — replaced by the
+- `$__fern_str_len` is removed entirely — replaced by the
   inline `len(s)` ⇒ `LengthWasm(len)` IR rewrite above.
 
 ### Lang prelude
@@ -288,7 +288,7 @@ Out of scope for the wasm-first slice. After wasm lands,
 analogous work on x86_64 (SysV: 2-register pair-return
 already wired via PR #336; same shape for strings) and
 arm64 (AAPCS64 `(x0, x1)`). Native inline cap is 15 bytes
-(`langstring.InlineCap(8)`).
+(`fernstring.InlineCap(8)`).
 
 ### Test surface
 
@@ -322,7 +322,7 @@ chain. No carrier shims.
 
 The wasm-first slice landed as the single-i32 tiny SSO form
 (3-byte inline cap, top-bit flag + 3-bit length + up-to-3
-inline bytes — `langstring.PackTinyWasm`) without widening
+inline bytes — `fernstring.PackTinyWasm`) without widening
 the operand-stack ABI. This is a stepping stone toward the
 target two-word ABI from the section above; the runtime
 machinery + producer flips are in place, so the future flip
@@ -331,13 +331,13 @@ by rewriting the seams.
 
 ### Runtime helpers (in `internal/codegen/wasm/wasm.go`)
 
-- `$__lang_str_len(p)` — inline / heap length read (top-bit
+- `$__fern_str_len(p)` — inline / heap length read (top-bit
   branch).
-- `$__lang_str_byte(p, i)` — inline / heap byte fetch (shift /
+- `$__fern_str_byte(p, i)` — inline / heap byte fetch (shift /
   mask vs `i32.load8_u`).
-- `$__lang_str_to_heap(p)` — inline → heap promotion (alloc +
+- `$__fern_str_to_heap(p)` — inline → heap promotion (alloc +
   copy + length prefix). For address-arithmetic consumers.
-- `$__lang_str_data_ptr(p)` — inline → shared scratch slot
+- `$__fern_str_data_ptr(p)` — inline → shared scratch slot
   spill (no alloc). For stream-write consumers that just need
   a synchronously-read pointer.
 
@@ -358,17 +358,17 @@ by rewriting the seams.
 
 ### Consumer flips
 
-- `OpStrLen` IR-handler + `emitStrLenFromLocal` seam → `$__lang_str_len`.
-- `$__str_eq` byte fetches → `$__lang_str_byte` (handles inline-vs-heap).
-- `$__str_concat` byte fetches → `$__lang_str_byte`.
+- `OpStrLen` IR-handler + `emitStrLenFromLocal` seam → `$__fern_str_len`.
+- `$__str_eq` byte fetches → `$__fern_str_byte` (handles inline-vs-heap).
+- `$__str_concat` byte fetches → `$__fern_str_byte`.
 - Stream-write paths (`$print` / `$write` / `$eprint` /
   `$__method_Writer_write` / `$tcp_send` / HTTP body write
-  / `emitFdWriteString`) route through `$__lang_str_data_ptr`
+  / `emitFdWriteString`) route through `$__fern_str_data_ptr`
   — PR #357. Zero per-call alloc on inline-form strings.
 - Address-arithmetic paths (`$__str_idx`, `$__str_slice`,
   `emitOpenHelper`, `emitOpenViaStreamHelper`, `$env`,
   `$__method_string_as_bytes`) promote-to-heap at entry via
-  `$__lang_str_to_heap`.
+  `$__fern_str_to_heap`.
 
 ### Latent-bug fixes surfaced by the flips
 
@@ -398,7 +398,7 @@ In rough order of payoff:
    the inline/heap branch so most consumer-side code stays
    untouched.
 2. **Native backend SSO** (x86_64 + arm64). Each backend needs
-   its own `$__lang_str_*` siblings in raw assembly. PR
+   its own `$__fern_str_*` siblings in raw assembly. PR
    sequence likely mirrors the wasm shape (#351–#362) per
    backend.
 3. **`Map[string, V]` runtime in the prelude**. The hash

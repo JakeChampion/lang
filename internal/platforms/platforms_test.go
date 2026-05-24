@@ -46,7 +46,7 @@ func TestForTargetUnknownReturnsNil(t *testing.T) {
 }
 
 // TestTargetsIsStable — sort order is part of the contract:
-// `lang -targets` and any LSP-side completion of -target needs
+// `fern -targets` and any LSP-side completion of -target needs
 // reproducible output across runs.
 func TestTargetsIsStable(t *testing.T) {
 	a := Targets()
@@ -96,7 +96,7 @@ func TestHasCapabilityHonoursDescriptor(t *testing.T) {
 	}
 }
 
-// TestDescriptorStringIsHumanReadable — `lang -targets`
+// TestDescriptorStringIsHumanReadable — `fern -targets`
 // surfaces this; pin the shape so accidental reformatting
 // surfaces here rather than as a UX change.
 func TestDescriptorStringIsHumanReadable(t *testing.T) {

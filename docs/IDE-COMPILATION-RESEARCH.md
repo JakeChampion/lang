@@ -4,7 +4,7 @@
 diagnostics, completion, all backed by a small `compileCache` that
 content-hashes whole files and re-runs `parser.Parse` →
 `checker.Check` on every edit. That's the right MVP — it works,
-it's small, and `cmd/lang-wasm` already builds it for the
+it's small, and `cmd/fern-wasm` already builds it for the
 playground.
 
 This doc is about what comes *after* the MVP, when sub-100ms-on-

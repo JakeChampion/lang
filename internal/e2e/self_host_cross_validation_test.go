@@ -14,14 +14,14 @@ import (
 )
 
 // Cross-validation across the three execution engines in the
-// lang-port: the tree-walking interpreter (interp.fern), the
+// fern-port: the tree-walking interpreter (interp.fern), the
 // bytecode VM (vm.fern), and the native asm emitter (asm.fern).
 // Every test source is piped through ALL THREE drivers
 // (interp_run.fern, vm_run.fern, asm_run.fern) and the test
 // asserts they all return the same exit code.
 //
 // This is the "every layer agrees" demo — a regression suite
-// for the consistency of the lang-port's semantics across
+// for the consistency of the fern-port's semantics across
 // completely different execution strategies.
 //
 // Source programs use the common subset all three engines

@@ -3,7 +3,7 @@
 Goal: eliminate every external compiler / assembler / linker / wasm
 helper the driver currently shells out to, replacing each with a
 Lang-native implementation. After all phases land, building a Lang
-program with `lang -o out src.fern` requires **no binary on `$PATH`
+program with `fern -o out src.fern` requires **no binary on `$PATH`
 other than the Lang compiler itself**.
 
 This is a deliberate alternative to the position taken in
@@ -21,10 +21,10 @@ Linux + Darwin rows are unchanged.
 
 | Target          | Driver fn                | External tool(s)                  | What it does                                  |
 |-----------------|--------------------------|-----------------------------------|-----------------------------------------------|
-| `arm64-linux`   | `link` @ `cmd/lang/main.go:528`        | `aarch64-linux-gnu-gcc` (→ `as` + `ld`) | Assemble `.s`, link static ELF                |
-| `x86_64-linux`  | `link` @ `cmd/lang/main.go:528`        | `x86_64-linux-gnu-gcc` (→ `as` + `ld`)  | Same, for x86-64                              |
-| `arm64-darwin`  | `linkDarwin` @ `cmd/lang/main.go:460`  | `clang` (+ `lld` on Linux hosts)        | Assemble `.s`, link Mach-O, ad-hoc codesign   |
-| `wasm`          | `emitPreview2ComponentFromCoreBytes` @ `cmd/lang/main.go:651` | `wasm-tools component new --adapt` | Splice preview-1 → preview-2 adapter into a Component-Model envelope around the (already-binary) core module |
+| `arm64-linux`   | `link` @ `cmd/fern/main.go:528`        | `aarch64-linux-gnu-gcc` (→ `as` + `ld`) | Assemble `.s`, link static ELF                |
+| `x86_64-linux`  | `link` @ `cmd/fern/main.go:528`        | `x86_64-linux-gnu-gcc` (→ `as` + `ld`)  | Same, for x86-64                              |
+| `arm64-darwin`  | `linkDarwin` @ `cmd/fern/main.go:460`  | `clang` (+ `lld` on Linux hosts)        | Assemble `.s`, link Mach-O, ad-hoc codesign   |
+| `wasm`          | `emitPreview2ComponentFromCoreBytes` @ `cmd/fern/main.go:651` | `wasm-tools component new --adapt` | Splice preview-1 → preview-2 adapter into a Component-Model envelope around the (already-binary) core module |
 
 So the "replace clang / lld / wasm-tools" framing in the prior chat
 undersold the work: the Linux backends also depend on an external
@@ -125,7 +125,7 @@ intermediate) but the production driver stops feeding it to
 ### Driver wiring
 
 Replace the `wasm-tools parse prog.wat -o prog.wasm` call at
-`cmd/lang/main.go:604` with a direct call to the new encoder.
+`cmd/fern/main.go:604` with a direct call to the new encoder.
 Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 
 ### Exit criteria
@@ -266,7 +266,7 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
 - Remaining Phase 1 work: the IR-walking entry point that turns
   a codegen IR program into a populated Module, and the driver-
   wiring step that deletes the `wasm-tools parse` call at
-  `cmd/lang/main.go:604`. Saturating-truncate ops and bulk-memory
+  `cmd/fern/main.go:604`. Saturating-truncate ops and bulk-memory
   ops (both 0xFC-prefixed) are deliberately out of scope — the
   production backend doesn't lean on them. Element section is
   also deliberately deferred — the existing wasm backend doesn't
@@ -285,7 +285,7 @@ binary format defines has a composer, and the canonical
 "core module + WASI imports → component" pipeline has a one-call
 high-level helper. What's left for Phase 2's stated goal —
 retiring `wasm-tools component new --adapt` from
-`cmd/lang/main.go` — is **driver wiring**, not new encoder work.
+`cmd/fern/main.go` — is **driver wiring**, not new encoder work.
 
 #### What's shipped
 
@@ -331,7 +331,7 @@ import composers, `BuildLiftedExportComponent`, and
 `WrapWasiImported`. The two implementations are pinned
 byte-equivalent by `TestWASMComponentGoLangByteEquivalence`.
 
-`cmd/lang` accepts a new `-component-wrap` flag (with
+`cmd/fern` accepts a new `-component-wrap` flag (with
 `-target wasm-bin`, no `-wasi-adapter`) that wraps the core wasm
 output as a self-contained preview-2 component via the Go encoder
 — no `wasm-tools component new --adapt` shell-out. Lifts `main`
@@ -340,7 +340,7 @@ as a component-level u32-returning function.
 End-to-end exit code 42 demo (covered by
 `TestCmdLangComponentWrap`):
 
-    $ lang -target wasm-bin -component-wrap -o min.wasm min.fern
+    $ fern -target wasm-bin -component-wrap -o min.wasm min.fern
     $ wasmtime run --invoke 'main()' min.wasm
     42
 
@@ -365,7 +365,7 @@ End-to-end exit code 42 demo (covered by
   - `proc_exit` → `wasi:cli/exit@0.2.0.exit` under
     `BuildOptions.Preview2WASI` (opt-in; default still emits
     preview-1). The core-wasm signature is unchanged ((i32) → ())
-    so `__lang_exit`'s call site stays untouched.
+    so `__fern_exit`'s call site stays untouched.
   - `component.WrapWasiImportedWithExport` composes the
     import-wiring with a lifted-export pipeline so a core module
     that both imports WASI AND exports `main` gets wrapped in a
@@ -409,7 +409,7 @@ End-to-end exit code 42 demo (covered by
     `wasi:random/random@0.2.0::get-random-u64() -> u64` under
     `EmitOptions.Preview2WASI`. The preview-2 import returns a
     scalar instead of filling a host-side buffer, so the
-    `__lang_random_i32` body becomes just `call get-random-u64;
+    `__fern_random_i32` body becomes just `call get-random-u64;
     i32.wrap_i64`. Selected via the new
     `preview2HelperBodyOverrides` map in wasi.go — a clean way
     to register per-helper body overrides without disturbing the
@@ -425,13 +425,13 @@ End-to-end exit code 42 demo (covered by
     `wasi:clocks/monotonic-clock@0.2.0::now() -> u64` under
     `EmitOptions.Preview2WASI`. Cleanest migration yet — the
     preview-2 import returns the scalar directly, so
-    `__lang_monotonic_ns` is just `call now`. The realtime
-    variant (`__lang_now_ns` / `now_unix_ms`) stays on
+    `__fern_monotonic_ns` is just `call now`. The realtime
+    variant (`__fern_now_ns` / `now_unix_ms`) stays on
     preview-1 for now — `wasi:clocks/wall-clock::now` returns a
     `datetime` record whose canonical-ABI lowering needs
     multi-value return support. End-to-end test:
     `TestCmdLangComponentWrapCliWithMonotonic`.
-  - **`random_bytes` migration.** `__lang_random_bytes` rounds
+  - **`random_bytes` migration.** `__fern_random_bytes` rounds
     out the random story: under `EmitOptions.Preview2WASI` it
     rounds the requested length up to a multiple of 8 and fills
     the (padded) buffer by calling
@@ -491,13 +491,13 @@ End-to-end exit code 42 demo (covered by
     - Canon-lower with `memory` opt (#1209).
     - High-level helpers `WrapWasiPrintComponent` (#1240) and
       `WrapWasiPrintAsCliRun` (#1243).
-    - Wasmbin's `__lang_print` body migrated to call the
+    - Wasmbin's `__fern_print` body migrated to call the
       preview-2 funcs with stdout-handle caching (#1245).
     - Driver routes the print-only pattern through
       `WrapWasiPrintAsCliRun` (#1248).
 
     **End-to-end test** `TestCmdLangComponentWrapCliWithPrint`:
-    Lang `print("hello world")` → `lang -target wasm-bin
+    Lang `print("hello world")` → `fern -target wasm-bin
     -component-wrap-cli` → `wasmtime run` → stdout `"hello
     world\n"`. No wasm-tools shell-out, no preview-1 adapter,
     no `--invoke` flag.
@@ -518,7 +518,7 @@ End-to-end exit code 42 demo (covered by
     complete it. End-to-end test:
     `TestCmdLangComponentWrapCliWithNowNs`.
   - **`read_line` / `fd_read` migration. Shipped.**
-    `__lang_read_byte` (the stdin byte reader `read_line` is
+    `__fern_read_byte` (the stdin byte reader `read_line` is
     built on) reads via `wasi:cli/stdin::get-stdin` +
     `wasi:io/streams::[method]input-stream.blocking-read` under
     `EmitOptions.Preview2WASI`. The read-side `wasi:io/streams`
@@ -566,11 +566,11 @@ End-to-end exit code 42 demo (covered by
 
 
 Scope: replace `wasm-tools component embed` and `wasm-tools component
-new --adapt …` (lines 608 and 613 of `cmd/lang/main.go`) with a Lang
+new --adapt …` (lines 608 and 613 of `cmd/fern/main.go`) with a Lang
 implementation. As of 2026-05-20, `component embed` is *already*
 replaced on the Go side (`internal/wasm/componenttype.Embed`); the
 last remaining external call is `component new --adapt` at
-`cmd/lang/main.go:651` inside `emitPreview2ComponentFromCoreBytes`.
+`cmd/fern/main.go:651` inside `emitPreview2ComponentFromCoreBytes`.
 Phase 2's job is to take that last call out.
 
 ### Direction: skip the adapter entirely (preview-2 native)
@@ -636,7 +636,7 @@ bundle. The Lang-stdlib component-section work already in flight
 
 ### Shortcut: skip WIT parsing
 
-The WIT files in `cmd/lang/wit/` are **fixed** — there's a `lang`
+The WIT files in `cmd/fern/wit/` are **fixed** — there's a `lang`
 world and an `http` world, both known at compile time. We do not
 need a general WIT parser. We can hand-write the encoded
 `component-type` payloads for each world as static byte arrays in
@@ -655,7 +655,7 @@ revisit then.
 
 ### Driver wiring
 
-Replace lines 581–619 of `cmd/lang/main.go` with a single call:
+Replace lines 581–619 of `cmd/fern/main.go` with a single call:
 
 ```
 let core = wasm.encode(ir);
@@ -741,7 +741,7 @@ PLT, no GOT. This is much less code than a real linker.
 
 ### Driver wiring
 
-In `cmd/lang/main.go`, branch on target before calling `link`:
+In `cmd/fern/main.go`, branch on target before calling `link`:
 
 - If `arm64-linux` and `--native` (or once we trust it, always):
   call the new binary path. Drop the `gcc` invocation entirely.

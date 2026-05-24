@@ -19,7 +19,7 @@ import (
 //     `not ok` per-case lines and a `1..N` plan line
 //
 // They drive the example test files under `examples/tests/`
-// through `lang -interp` rather than reimplementing the
+// through `fern -interp` rather than reimplementing the
 // assertions on the Go side — that way the same examples that
 // users see in the repo are also the regression gate, and any
 // breakage in the runner shows up here.
@@ -41,7 +41,7 @@ func langSrcAbs(t *testing.T, rel string) string {
 	return abs
 }
 
-// runLangInterp runs `lang -interp <src>` and returns the
+// runLangInterp runs `fern -interp <src>` and returns the
 // exit code + stdout + stderr. Shared by every runner-
 // example gate in this file.
 //
@@ -53,7 +53,7 @@ func langSrcAbs(t *testing.T, rel string) string {
 //   - Each gate uses its own `*_test.fern` source file
 //     under `examples/tests/`; no shared writable state.
 //   - The lang binary is read-only at this point; the
-//     `lang -interp src` subprocess gets its own stdio
+//     `fern -interp src` subprocess gets its own stdio
 //     buffers per `exec.Command`.
 //
 // On an 8-core host this drops the runner-suite wall
@@ -394,7 +394,7 @@ func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 function main(): i32 {
     var r: TestRunner = test_new("cleanup");
-    match (temp_dir("lang-cleanup-probe")) {
+    match (temp_dir("fern-cleanup-probe")) {
         Ok(dir) => {
             print("# tempdir: " + dir);
             r = r.defer_cleanup(dir);
@@ -568,7 +568,7 @@ func TestRunnerHelpersExample(t *testing.T) {
 // assertion family + the underlying interp Float support.
 // Before this work the interp errored out on `*ast.FloatLit`,
 // which made float-touching code impossible to unit-test
-// without compiling to a backend. Now `lang -interp` handles
+// without compiling to a backend. Now `fern -interp` handles
 // float arithmetic, comparison, casts, and the f32_bits /
 // f32_from_bits reinterpret pair.
 //
@@ -1672,7 +1672,7 @@ func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 // proof-of-concept Lang port of `TestInterpScriptStringPrelude`
 // in `interp_script_test.go`. Same 8-property surface, but
 // instead of piping an inline Lang program through
-// `lang -interp` and grepping the exit code + stdout, the
+// `fern -interp` and grepping the exit code + stdout, the
 // new test is the program — every property becomes its own
 // TAP case via `TestRunner.it`. Demonstrates the migration
 // pattern for tests that exercise user-language behaviour
@@ -1681,7 +1681,7 @@ func TestRunnerStringCountAndDirListingExample(t *testing.T) {
 // Both versions stay live during the wider runner-adoption
 // effort: the Go test guards the subprocess + stdout
 // shape, the Lang test guards the in-process semantics
-// once `lang -interp` itself stops being a Go target.
+// once `fern -interp` itself stops being a Go target.
 func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern")

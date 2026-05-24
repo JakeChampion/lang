@@ -56,7 +56,7 @@ the PoC campaign:
 
 - `TestInterpScriptFile` / `TestInterpScriptStdin` /
   `TestInterpScriptReadAllStdin` — test the
-  `lang -interp` binary's source-loading mechanics
+  `fern -interp` binary's source-loading mechanics
   (file path vs stdin vs piped stdin). **NOT
   migratable**: the Lang version would still need to
   drive the binary as a subprocess to test how it
@@ -67,7 +67,7 @@ the PoC campaign:
   mangling bug. **NOT migratable**: collapsing into one
   Lang file would defeat the per-subcase isolation.
 - `TestInterpScriptMissingMain` — tests the error path
-  of `lang -interp` itself. **NOT migratable** for the
+  of `fern -interp` itself. **NOT migratable** for the
   same reason as the file/stdin tests.
 
 That essentially **exhausts the easy-migration pool**
@@ -76,7 +76,7 @@ cleanly — inline Lang source + check exit/stdout —
 appears nowhere else in the repo as of writing.
 
 The `check_test.go` family (6 functions exercising
-`lang -check` exit codes + diagnostic text) **technically
+`fern -check` exit codes + diagnostic text) **technically
 could** flip to Lang via `subprocess(...)`, but the
 migrated version stays subprocess-shaped — there's no
 ergonomic win.
@@ -195,10 +195,10 @@ Interp + codegen + printers:
 
 Stdlib + utility:
 
-- `internal/langsmith/langsmith_test.go`
-- `internal/langsmith/fuzz_test.go`
-- `internal/langsmith/gtype_internal_test.go`
-- `internal/langstring/langstring_test.go`
+- `internal/fernsmith/fernsmith_test.go`
+- `internal/fernsmith/fuzz_test.go`
+- `internal/fernsmith/gtype_internal_test.go`
+- `internal/fernstring/fernstring_test.go`
 - `internal/stdlib/stdlib_test.go`
 
 **Unblock:** **the compiler being self-hosted.** Once

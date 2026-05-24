@@ -396,8 +396,8 @@ contents = { canary_pct = "10", new_router = "false" }
 
 ### wasi:http/proxy — the canonical interface
 
-Source: `cmd/lang/wit/deps/http/incoming-handler.wit`,
-`cmd/lang/wit/deps/http/types.wit`, the wasi-http
+Source: `cmd/fern/wit/deps/http/incoming-handler.wit`,
+`cmd/fern/wit/deps/http/types.wit`, the wasi-http
 WIT documents at https://github.com/WebAssembly/wasi-http.
 
 The codebase already imports these WIT files. The interface

@@ -27,7 +27,7 @@ func TestSelfHostLexerX86_64(t *testing.T) {
 	}
 	_, code := compileAndRunX86_64(t, string(src))
 	if code != 0 {
-		t.Errorf("lang-port lexer assertion %d failed", code)
+		t.Errorf("fern-port lexer assertion %d failed", code)
 	}
 }
 
@@ -38,6 +38,6 @@ func TestSelfHostLexerArm64(t *testing.T) {
 	}
 	_, code := compileAndRunArm64(t, string(src))
 	if code != 0 {
-		t.Errorf("lang-port lexer assertion %d failed", code)
+		t.Errorf("fern-port lexer assertion %d failed", code)
 	}
 }

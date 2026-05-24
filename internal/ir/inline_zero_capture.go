@@ -4,8 +4,8 @@
 // pointer. OpConstFunc materialises that pair as a static cell
 // (`.rodata` cell on natives, `closuresBase + 8*tableIdx`
 // offset on wasm) without any runtime allocation; OpMakeClosure
-// with zero captures still calls `__lang_alloc(8)` on wasm and
-// `__lang_alloc(16)` on natives to build the same pair on the
+// with zero captures still calls `__fern_alloc(8)` on wasm and
+// `__fern_alloc(16)` on natives to build the same pair on the
 // heap. Rewriting collapses the runtime alloc to a static
 // pointer load.
 //

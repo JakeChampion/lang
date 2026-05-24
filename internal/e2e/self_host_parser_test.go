@@ -87,7 +87,7 @@ func TestSelfHostParserX86_64(t *testing.T) {
 	}
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port parser assertion %d failed", code)
+		t.Errorf("fern-port parser assertion %d failed", code)
 	}
 }
 
@@ -123,6 +123,6 @@ func TestSelfHostParserArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port parser assertion %d failed", code)
+		t.Errorf("fern-port parser assertion %d failed", code)
 	}
 }

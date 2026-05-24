@@ -25,7 +25,7 @@ flip two-word shape (renamed where their meaning changed:
 byte length prefix dropped from heap-form data segments;
 obsolete `PackTinyWasm` / `TinyInlineCapWasm` /
 `UnpackTinyWasm` / `IsTinyInlineWasm` / `LengthTinyWasm`
-helpers (plus their tests) removed from `langstring/`.
+helpers (plus their tests) removed from `fernstring/`.
 
 ## What's done in this branch
 
@@ -34,13 +34,13 @@ helpers (plus their tests) removed from `langstring/`.
 Every wat-side helper with a string param or string return is
 flipped to the two-word `(data, len)` ABI:
 
-  - `$__lang_str_len(data, len) → i32` — flag-aware length read.
-  - `$__lang_str_byte(data, len, i) → i32` — inline-aware byte
+  - `$__fern_str_len(data, len) → i32` — flag-aware length read.
+  - `$__fern_str_byte(data, len, i) → i32` — inline-aware byte
     fetch; splits the index range so bytes 0..3 come from
     `$data` and bytes 4..6 from `$len`.
-  - `$__lang_str_to_heap(data, len) → (i32, i32)` — multi-value
+  - `$__fern_str_to_heap(data, len) → (i32, i32)` — multi-value
     return; inline → fresh heap alloc + copy.
-  - `$__lang_str_data_ptr(data, len) → i32` — spills inline at
+  - `$__fern_str_data_ptr(data, len) → i32` — spills inline at
     mem[0..7] (the scratch collision warning in the previous
     status doc turned out to be benign — preview-2 putchar
     uses constants for its `(ptr=0, len=1)` args, not the
@@ -66,10 +66,10 @@ flipped to the two-word `(data, len)` ABI:
 ### Wat emit-side helpers (§5)
 
   - `emitStrLenFromLocal(local)` pushes `$<local>_data` +
-    `$<local>_len` then calls `$__lang_str_len`.
+    `$<local>_len` then calls `$__fern_str_len`.
   - `emitStreamsWriteString(handle, local)` pushes the pair
-    twice (once each for `$__lang_str_data_ptr` and
-    `$__lang_str_len`).
+    twice (once each for `$__fern_str_data_ptr` and
+    `$__fern_str_len`).
   - `emitPromoteStrParam(local)` reads + writes back the
     `_data` / `_len` pair.
   - `emitInlineOutputBuild` / `emitHeapStrAlloc` /

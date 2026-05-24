@@ -807,7 +807,7 @@ to smallest. Status pending unless marked.
   Init runtime: wasm wires `(start $__state_init)` so it
   runs at instantiation, before any host-callable export.
   arm64 calls `__state_init` from `_start` after
-  `__lang_heap_init` and before `main`. State init runs
+  `__fern_heap_init` and before `main`. State init runs
   while the bump cursor is still at its initial position, so
   any allocations the init expression performs (e.g. string
   concat) end up below the per-request `arena_save` point
@@ -1132,7 +1132,7 @@ tests.
 
 Two flavours of stdlib helper coexist:
 
-1. **Runtime core (hand-written wat).** `__lang_alloc`,
+1. **Runtime core (hand-written wat).** `__fern_alloc`,
    `__str_eq`, `__str_slice`, `__slice_idx_*`, the Map's hash
    mix + open-addressing core, `arena_save` / `arena_restore`,
    the int formatter, and the wasi imports. Hand-written wat
@@ -1210,7 +1210,7 @@ the lang's abstraction layers.
    `__memcpy(dst, src, n)`, `__memset(dst, b, n)`, and
    `__alloc_u8(n): u8[]` are thin wat-shim wrappers around
    wasm's bulk-memory `memory.copy` / `memory.fill` plus a
-   tiny `__lang_alloc` + length-prefix sealer. Signatures
+   tiny `__fern_alloc` + length-prefix sealer. Signatures
    registered in the checker so the prelude can call them
    like any builtin. Drives buffer-management code that
    doesn't yet have a clean lang-level shape — the
@@ -1338,7 +1338,7 @@ guessing.
 - *Limits on everything.* `http_parse_request` caps at 8 KiB
   headers + 1 MiB body and returns `None` past either;
   `__map_pow2_ceil` saturates at 2^30 instead of looping
-  forever; `__lang_read_line` is gated on a 4 KiB .bss
+  forever; `__fern_read_line` is gated on a 4 KiB .bss
   buffer. All bounded loops are bounded explicitly.
 - *Zero dependencies.* The compiler runs on Go stdlib only;
   no third-party deps in `go.mod`. Wasm helpers ship in the

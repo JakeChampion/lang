@@ -194,8 +194,8 @@ func TestArm64StringLiteralLen(t *testing.T) {
 	}
 }
 
-// arm64 string concat. Pulls in __lang_alloc + __lang_memcpy
-// + __lang_strcat — the entire string-runtime stack on the
+// arm64 string concat. Pulls in __fern_alloc + __fern_memcpy
+// + __fern_strcat — the entire string-runtime stack on the
 // arm64 target.
 func TestArm64StringConcat(t *testing.T) {
 	for _, c := range []struct {
@@ -8339,7 +8339,7 @@ func TestArm64StringLines(t *testing.T) {
 }
 
 // arm64 empty-string sentinel: the string-constructing runtime
-// helpers (__lang_strcat, __str_slice, string_from_bytes) skip
+// helpers (__fern_strcat, __str_slice, string_from_bytes) skip
 // the alloc + memcpy and return the shared .LStr_Empty sentinel
 // when the result length is 0. Verified behaviourally: len()
 // returns 0, equality with "" holds, and downstream concat with
@@ -8505,7 +8505,7 @@ function main(): i32 {
 }
 
 // arm64 small-string-optimisation (tagged-pointer inline).
-// Strings of length 1..7 produced by __lang_strcat / __str_slice /
+// Strings of length 1..7 produced by __fern_strcat / __str_slice /
 // string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
 // 1..3 = length, bytes 1..7 = data) rather than being allocated
 // on the heap. Verified behaviourally — mirrors the x86_64 suite
@@ -8607,7 +8607,7 @@ function main(): i32 {
 	}
 }
 
-// arm64 array literals + indexing. Pulls in __lang_alloc and
+// arm64 array literals + indexing. Pulls in __fern_alloc and
 // the inline __arr_idx helper. Verifies the alloc + store
 // + indexed read pipeline composes correctly under qemu.
 func TestArm64ArrayLiteral(t *testing.T) {
@@ -10624,7 +10624,7 @@ func TestArm64HttpHandler(t *testing.T) {
 // arm64 executable.
 //
 // All three syscall surfaces the runtime needs are now
-// Darwin-aware: SYS_exit (1), SYS_mmap (197) in __lang_alloc,
+// Darwin-aware: SYS_exit (1), SYS_mmap (197) in __fern_alloc,
 // and the TCP/IO family (socket=97, bind=104, listen=106,
 // accept=30, read=3, write=4, close=6). Each emits via
 // `svc #0x80` with x16=number, and TCP/IO normalises Darwin's
@@ -10652,7 +10652,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 	}{
 		// Plain return — exercises only SYS_exit.
 		{"exit_42", `function main(): i32 { return 42; }`, 42},
-		// String concat — exercises SYS_mmap via __lang_alloc.
+		// String concat — exercises SYS_mmap via __fern_alloc.
 		{"strconcat", `function main(): i32 {
     var s: string = "hello, " + "world!";
     return s.len();
@@ -10702,7 +10702,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 }`, 1},
 		// arena_save / arena_restore — snapshot + rewind the
 		// bump cursor. Both leaf helpers (one ldr / one str
-		// against __lang_heap_ptr).
+		// against __fern_heap_ptr).
 		{"arena", `function main(): i32 {
     var s1: string = "hello, " + "world!";
     var saved: i32 = arena_save();
@@ -10998,7 +10998,7 @@ function main(): i32 {
 }
 
 // `read_file` on arm64-darwin should surface a clean compile
-// error (not a codegen-time panic) because `__lang_read_file`
+// error (not a codegen-time panic) because `__fern_read_file`
 // uses fstat — which lives in `linuxOnlySysno` and has no
 // portable Darwin form yet. The error mentions the helper name
 // + points the user at the parity doc. Verifies the pre-scan
@@ -12293,8 +12293,8 @@ func TestArm64UnsignedFloatConv(t *testing.T) {
 
 // `stdin().read_line()` — exercises the .bss buffer + byte
 // loop + Some/None Option wrap. arm64's runtime used to be
-// stdin-only via __lang_read_line; this test now goes through
-// the receiver-aware __lang_reader_read_line (stdin() returns
+// stdin-only via __fern_read_line; this test now goes through
+// the receiver-aware __fern_reader_read_line (stdin() returns
 // a real Reader{fd:0} struct). Closes the parity-doc gap.
 func TestArm64ReadLine(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
@@ -12352,8 +12352,8 @@ func TestArm64ReadLine(t *testing.T) {
 }
 
 // Bare `read_line()` builtin — the stdin-only path through
-// __lang_read_line (distinct from stdin().read_line()'s
-// receiver-aware __lang_reader_read_line). Exercises the same
+// __fern_read_line (distinct from stdin().read_line()'s
+// receiver-aware __fern_reader_read_line). Exercises the same
 // .bss buffer + byte loop + Some/None wrap.
 func TestArm64ReadLineBuiltin(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
@@ -12685,7 +12685,7 @@ function main(): i32 {
 }
 
 // Phase 1d: `var y = x;` where x is an array variable load
-// bumps the refcount via __lang_rc_inc, so both x and y own
+// bumps the refcount via __fern_rc_inc, so both x and y own
 // references. With the inc, the rc goes 1 → 2 across the
 // aliasing. Without it (the pre-Phase-1d behavior), rc would
 // stay at 1, which is the bug Phase 2 will rely on NOT being
@@ -12740,7 +12740,7 @@ function main(): i32 {
 // TestArm64HeapAddressFits32Bits is a diagnostic probe that
 // exits non-zero iff the bump heap's first allocation lands
 // at an address that doesn't fit in i32. The runtime's
-// __lang_alloc currently uses a 0x10000000 hint without
+// __fern_alloc currently uses a 0x10000000 hint without
 // MAP_FIXED — qemu-aarch64 honors the hint exactly, but the
 // native-arm64 kernel may relocate the mmap into the standard
 // high mmap region (above 4 GiB). When that happens, any
@@ -12751,7 +12751,7 @@ function main(): i32 {
 // stdlib doesn't truncate pointers anymore), but the test
 // stays as a regression watch — if a future change lands a
 // new `as i32` on a pointer path, the probe surfaces it
-// before the langsmith corpus does.
+// before the fernsmith corpus does.
 func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	src := `function main(): i32 {
     var p: usize = __alloc(8);
@@ -12767,7 +12767,7 @@ func TestArm64HeapAddressFits32Bits(t *testing.T) {
 }
 
 // Phase 1d-iii: `y = x;` reassignment also bumps the rc on x.
-// The motivating parser.lang shape is `nfuncs = into.funcs;`
+// The motivating parser.fern shape is `nfuncs = into.funcs;`
 // followed by an in-loop `nfuncs = nfuncs.push(...);` — the
 // first assignment is an alias (FieldAccess RHS), the second
 // rebinds with a fresh push result. Here we test the explicit
@@ -12788,7 +12788,7 @@ function main(): i32 {
 // Phase 1d-vii: a closure that captures an array bumps the
 // rc on the captured value. The local function `f` captures
 // `arr` from main's scope; OpMakeClosure pushes each capture
-// value and the IR's emit inserts a __lang_rc_inc on each
+// value and the IR's emit inserts a __fern_rc_inc on each
 // alias-shaped array capture. The resulting closure's env
 // co-owns the array reference.
 func TestArm64RcClosureCaptureInc(t *testing.T) {
@@ -12912,7 +12912,7 @@ func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 }
 
 // Phase 2b: `arr[i] = v` on a writable local-ident array
-// routes through __lang_arr_cow_inplace. On rc==1 the helper
+// routes through __fern_arr_cow_inplace. On rc==1 the helper
 // returns arr unchanged (in-place mutation); the buffer
 // pointer is unchanged after the assignment.
 func TestArm64ArrayIndexSetInPlaceFastPath(t *testing.T) {
@@ -12954,7 +12954,7 @@ func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 
 // Phase 2b on a u8-stride array — mirrors the int_to_string
 // pattern (scratch[i] = digit) that hit the wasm raw-_start
-// path's __lang_rc_dec low-address guard before the helper
+// path's __fern_rc_dec low-address guard before the helper
 // internalised rc bookkeeping.
 func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {

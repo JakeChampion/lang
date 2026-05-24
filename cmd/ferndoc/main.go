@@ -37,7 +37,7 @@ func main() {
 	out := flag.String("out", "", "output directory for generated Markdown pages")
 	flag.Parse()
 	if *out == "" {
-		fmt.Fprintln(os.Stderr, "usage: langdoc -out DIR")
+		fmt.Fprintln(os.Stderr, "usage: ferndoc -out DIR")
 		os.Exit(2)
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
@@ -101,10 +101,10 @@ func collectModules() ([]module, error) {
 		src := string(b)
 		prog, perr := parser.Parse(src)
 		if perr != nil {
-			// Parser errors at langdoc time are non-fatal; skip
+			// Parser errors at ferndoc time are non-fatal; skip
 			// the offending file so the rest of the suite still
 			// emits. The CI test pass would catch the real error.
-			fmt.Fprintf(os.Stderr, "langdoc: skipping %s (parse: %v)\n", path, perr)
+			fmt.Fprintf(os.Stderr, "ferndoc: skipping %s (parse: %v)\n", path, perr)
 			return nil
 		}
 		modName := strings.TrimSuffix(base, ".fern")
@@ -136,7 +136,7 @@ func renderModule(m module) (string, error) {
 
 	cw := newCommentWalker(m.prog.Comments)
 
-	// Collect every public decl in source order. lang doesn't
+	// Collect every public decl in source order. Fern doesn't
 	// have a unified Decl interface, so we union the four lists
 	// and re-sort by position.
 	type decl struct {
@@ -346,7 +346,7 @@ func renderFunc(b *strings.Builder, fd *ast.FuncDecl, cw *commentWalker) {
 	b.WriteString("`")
 	b.WriteString(fd.Name)
 	b.WriteString("`\n\n")
-	b.WriteString("```lang\n")
+	b.WriteString("```fern\n")
 	b.WriteString("pub function ")
 	if fd.Receiver != nil {
 		b.WriteString("(")
@@ -384,7 +384,7 @@ func renderStruct(b *strings.Builder, sd *ast.StructDecl, cw *commentWalker) {
 	b.WriteString("## `struct ")
 	b.WriteString(sd.Name)
 	b.WriteString("`\n\n")
-	b.WriteString("```lang\n")
+	b.WriteString("```fern\n")
 	b.WriteString("pub struct ")
 	b.WriteString(sd.Name)
 	if len(sd.TypeParams) > 0 {
@@ -413,7 +413,7 @@ func renderEnum(b *strings.Builder, ed *ast.EnumDecl, cw *commentWalker) {
 	b.WriteString("## `enum ")
 	b.WriteString(ed.Name)
 	b.WriteString("`\n\n")
-	b.WriteString("```lang\n")
+	b.WriteString("```fern\n")
 	b.WriteString("pub enum ")
 	b.WriteString(ed.Name)
 	if len(ed.TypeParams) > 0 {
@@ -449,7 +449,7 @@ func renderConst(b *strings.Builder, cd *ast.ConstDecl, cw *commentWalker) {
 	b.WriteString("## `const ")
 	b.WriteString(cd.Name)
 	b.WriteString("`\n\n")
-	b.WriteString("```lang\n")
+	b.WriteString("```fern\n")
 	b.WriteString("pub const ")
 	b.WriteString(cd.Name)
 	if cd.Type != nil {
@@ -471,6 +471,6 @@ func typeStr(t ast.Type) string {
 }
 
 func die(err error) {
-	fmt.Fprintln(os.Stderr, "langdoc:", err)
+	fmt.Fprintln(os.Stderr, "ferndoc:", err)
 	os.Exit(1)
 }

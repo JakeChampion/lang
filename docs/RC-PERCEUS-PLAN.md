@@ -111,13 +111,13 @@ Two runtime helpers do almost all the work. Both are deliberately
 tiny so the codegen can inline them when wanted.
 
 ```
-__lang_rc_inc(ptr):
+__fern_rc_inc(ptr):
     if ptr == NULL: return
     rc = *(ptr - rcOffset)
     if rc == SENTINEL_STATIC: return        ; static const, never touch
     *(ptr - rcOffset) = rc + 1
 
-__lang_rc_dec(ptr, drop_handler):
+__fern_rc_dec(ptr, drop_handler):
     if ptr == NULL: return
     rc = *(ptr - rcOffset)
     if rc == SENTINEL_STATIC: return
@@ -137,8 +137,8 @@ typed fields the value contains. For a `string[]` array, the
 drop handler walks the elements and decrements each string before
 freeing the array's buffer. For a primitive `i32[]` array, the
 drop handler is a no-op (just free). The codegen emits one
-drop handler per concrete type, named like `__lang_drop_array_string`,
-`__lang_drop_struct_Foo`, etc.
+drop handler per concrete type, named like `__fern_drop_array_string`,
+`__fern_drop_struct_Foo`, etc.
 
 Specialised inc/dec variants (no nil check, no sentinel check,
 when the codegen can prove them unnecessary) are emitted inline
@@ -246,7 +246,7 @@ After codegen:
       it.
 
 2. `nfuncs = nfuncs.push(...)` →
-    - Call `__lang_arr_push(nfuncs, fd)`.
+    - Call `__fern_arr_push(nfuncs, fd)`.
     - Inside: check rc. rc == 2 (still aliased by `into.funcs`).
     - Allocate fresh buffer with cap = 2*oldCap. Copy old data.
       Set rc = 1 on the new buffer. Append fd. Dec old buffer
@@ -279,7 +279,7 @@ runtime check.
 ### `arr.push(x)`
 
 ```
-__lang_arr_push(arr, x):
+__fern_arr_push(arr, x):
     rc = *(arr - 8 - rcOffset)
     if rc == 1 AND len < cap:
         // fast path: unique + spare capacity
@@ -310,7 +310,7 @@ Without it: copy-on-push would create N references to each
 pointer-typed element but only one had been counted.
 
 For primitive (non-pointer) element arrays, skip the per-element
-inc loop. Generate two versions of `__lang_arr_push`: one for
+inc loop. Generate two versions of `__fern_arr_push`: one for
 pointer-typed elements, one for primitive — picked at the
 call site based on the element type.
 
@@ -518,7 +518,7 @@ Two safety-net helpers landed alongside the alias machinery:
     (e.g. inside a never-taken `if` branch) hit a NULL the
     helper short-circuits on.
   - Low-address guard (< 0x10000 = `mmap_min_addr`) inside
-    `__lang_rc_dec` on every backend, so a slot that holds a
+    `__fern_rc_dec` on every backend, so a slot that holds a
     non-pointer value (enum tag, small i32 literal, stack
     garbage that doesn't look pointer-shaped) is treated as
     "not a heap object, don't touch" instead of dereferencing
@@ -560,7 +560,7 @@ emit can consume that side-table.
 
 #### Phase 2a: arr.push fast path (SHIPPED)
 
-`__lang_arr_push_grow(arr, oldLen, stride) → new_data` —
+`__fern_arr_push_grow(arr, oldLen, stride) → new_data` —
 runtime helper called from IR-level `emitArrayPush`. Reads
 rc at `[arr-8]` and cap at `[arr-12]`:
 
@@ -588,7 +588,7 @@ walkthrough. Tests on every backend cover both paths plus the
 
 #### Phase 2b: arr[i] = v copy-on-write (SHIPPED)
 
-`__lang_arr_cow_inplace(arr, stride) → buf` — runtime helper
+`__fern_arr_cow_inplace(arr, stride) → buf` — runtime helper
 called from the IR's Index-assign lowering for writable local-
 ident array targets. Semantics:
 
@@ -604,7 +604,7 @@ helper (`__arr_idx_<n>`), and store buf back into the ident's
 slot. The helper internalises ALL rc bookkeeping — keeping the
 Phase 1d-vi dec-on-overwrite would mis-coordinate on raw wasm
 where heap addresses sit below 0x10000 and the
-`__lang_rc_dec` low-address guard short-circuits (so the
+`__fern_rc_dec` low-address guard short-circuits (so the
 bump-then-dec design from Phase 2a's first attempt didn't
 work for the Index-assign site). Limitation: only simple
 `arr[i] = v` ident targets route through CoW today. Complex
@@ -614,7 +614,7 @@ the legacy in-place emit — follow-up PRs widen coverage.
 Tests on every backend cover both paths plus the
 "aliased rc>1 must copy" semantics + a u8-stride regression
 guard for the int_to_string scratch[i] pattern that surfaced
-the wasm raw-_start `__lang_rc_dec` guard issue.
+the wasm raw-_start `__fern_rc_dec` guard issue.
 
 #### Phase 2c: Map delete / clear value-returning — **API SHIPPED**
 
@@ -649,13 +649,13 @@ Closes the gap left by Phase 2c. Requires Phase 1e prereqs:
     no header; either grow that to `__alloc(8 + headerBytes)`
     with rc at `[m - 8]`, or move rc onto the buffer (which
     today also lacks an rc word).
-  - `__lang_map_cow_inplace(m) → m` runtime helper, modelled
-    on `__lang_arr_cow_inplace`: rc==1 fast path returns `m`
+  - `__fern_map_cow_inplace(m) → m` runtime helper, modelled
+    on `__fern_arr_cow_inplace`: rc==1 fast path returns `m`
     unchanged; rc>1 allocates fresh handle + buf, memcpy's the
     buf contents, dec's the source's rc, returns new handle.
   - Update `__map_set_impl`, `__map_delete_impl`, and
     `__map_clear_impl` (plus their IR-side wrappers) to thread
-    through `__lang_map_cow_inplace` before mutating.
+    through `__fern_map_cow_inplace` before mutating.
 
 Test coverage to add: aliasing tests mirroring
 `TestArm64ArraySetAliasedCopies` / `TestArm64ArrayPushAliasedCopies`
@@ -713,7 +713,7 @@ Three layers:
 
 ### Unit tests for rc helpers
 
-Direct calls to `__lang_rc_inc` / `__lang_rc_dec` from a Go test
+Direct calls to `__fern_rc_inc` / `__fern_rc_dec` from a Go test
 that pre-builds a heap layout, exercises the helper, and asserts
 on the rc word + freelist state.
 
@@ -758,7 +758,7 @@ roughly-decreasing order of how blocking they are.
 
 3. **Drop handler dispatch: per-type generated, or runtime
    table?**
-   - Generated: codegen emits `__lang_drop_<type_id>` for each
+   - Generated: codegen emits `__fern_drop_<type_id>` for each
      concrete type. Calls are direct.
    - Table-based: each heap value has a "type tag" or "shape
      pointer" that points to a vtable including the drop fn.

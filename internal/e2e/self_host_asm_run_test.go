@@ -25,7 +25,7 @@ import (
 //      into a standalone Linux ELF, run it, assert the inner
 //      exit code matches the entry's expected value.
 //
-// End-to-end: lang source → lang-port asm emitter → real
+// End-to-end: lang source → fern-port asm emitter → real
 // native binary → expected exit code. Proves the asm.fern
 // lowering produces working executables across the full
 // feature matrix it covers.

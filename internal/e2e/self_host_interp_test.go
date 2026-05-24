@@ -84,7 +84,7 @@ func TestSelfHostInterpX86_64(t *testing.T) {
 	}
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port interp assertion %d failed", code)
+		t.Errorf("fern-port interp assertion %d failed", code)
 	}
 }
 
@@ -120,6 +120,6 @@ func TestSelfHostInterpArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port interp assertion %d failed", code)
+		t.Errorf("fern-port interp assertion %d failed", code)
 	}
 }

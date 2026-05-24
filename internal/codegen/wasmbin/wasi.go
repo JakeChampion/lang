@@ -1,7 +1,7 @@
 // Imports + WASI-facing helpers for the wasmbin backend.
 //
 // The lang `print(s)` lowering eventually calls a synthetic
-// __lang_print helper. The helper takes a (data, len) string,
+// __fern_print helper. The helper takes a (data, len) string,
 // normalises it to a heap buffer (so inline-form strings work
 // via the SSO seam), writes a single iovec to a fixed scratch
 // region of linear memory, and invokes the imported WASI
@@ -60,7 +60,7 @@ var importSpecs = map[string]importSpec{
 		// the core wasm level. Returns a single cryptographically-
 		// strong random u64 instead of filling a host-side
 		// buffer. Replaces wasi_random_get for the
-		// __lang_random_i32 helper under EmitOptions.Preview2WASI.
+		// __fern_random_i32 helper under EmitOptions.Preview2WASI.
 		module:  "wasi:random/random@0.2.0",
 		name:    "get-random-u64",
 		params:  nil,
@@ -80,7 +80,7 @@ var importSpecs = map[string]importSpec{
 		// → instant (u64, lowers to i64 at core wasm). Returns
 		// nanoseconds since some fixed reference, monotonically
 		// non-decreasing. Replaces wasi_clock_time_get for the
-		// __lang_monotonic_ns helper under EmitOptions.Preview2WASI.
+		// __fern_monotonic_ns helper under EmitOptions.Preview2WASI.
 		module:  "wasi:clocks/monotonic-clock@0.2.0",
 		name:    "now",
 		params:  nil,
@@ -94,7 +94,7 @@ var importSpecs = map[string]importSpec{
 		// `(out_ptr i32) -> ()` — the host writes the 16-byte
 		// datetime at out_ptr (u64 seconds at +0, u32
 		// nanoseconds at +8). Replaces wasi_clock_time_get for
-		// the realtime helpers (__lang_now_ns / __lang_now_unix_ms)
+		// the realtime helpers (__fern_now_ns / __fern_now_unix_ms)
 		// under EmitOptions.Preview2WASI.
 		module:  "wasi:clocks/wall-clock@0.2.0",
 		name:    "now",
@@ -569,7 +569,7 @@ func (in *importNeeds) add(name string) {
 // here.
 func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) importNeeds {
 	var in importNeeds
-	if helpers.set["__lang_print"] {
+	if helpers.set["__fern_print"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stdout_p2")
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -577,7 +577,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
-	if helpers.set["__lang_eprint"] {
+	if helpers.set["__fern_eprint"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stderr_p2")
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -585,7 +585,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
-	if helpers.set["__lang_write"] {
+	if helpers.set["__fern_write"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stdout_p2")
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -593,7 +593,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
-	if helpers.set["__lang_putchar"] {
+	if helpers.set["__fern_putchar"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stdout_p2")
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -601,67 +601,67 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
-	if helpers.set["__lang_exit"] {
+	if helpers.set["__fern_exit"] {
 		in.add("wasi_proc_exit")
 	}
-	if helpers.set["__lang_random_i32"] {
+	if helpers.set["__fern_random_i32"] {
 		if opts.Preview2WASI {
 			in.add("wasi_random_get_u64_p2")
 		} else {
 			in.add("wasi_random_get")
 		}
 	}
-	if helpers.set["__lang_random_bytes"] {
+	if helpers.set["__fern_random_bytes"] {
 		if opts.Preview2WASI {
 			in.add("wasi_random_get_u64_p2")
 		} else {
 			in.add("wasi_random_get")
 		}
 	}
-	if helpers.set["__lang_now_ns"] {
+	if helpers.set["__fern_now_ns"] {
 		if opts.Preview2WASI {
 			in.add("wasi_wall_clock_now_p2")
 		} else {
 			in.add("wasi_clock_time_get")
 		}
 	}
-	if helpers.set["__lang_now_unix_ms"] {
+	if helpers.set["__fern_now_unix_ms"] {
 		if opts.Preview2WASI {
 			in.add("wasi_wall_clock_now_p2")
 		} else {
 			in.add("wasi_clock_time_get")
 		}
 	}
-	if helpers.set["__lang_monotonic_ns"] {
+	if helpers.set["__fern_monotonic_ns"] {
 		if opts.Preview2WASI {
 			in.add("wasi_monotonic_now_p2")
 		} else {
 			in.add("wasi_clock_time_get")
 		}
 	}
-	if helpers.set["__lang_env_count"] {
+	if helpers.set["__fern_env_count"] {
 		in.add("wasi_environ_sizes_get")
 	}
-	if helpers.set["__lang_arg_count"] {
+	if helpers.set["__fern_arg_count"] {
 		in.add("wasi_args_sizes_get")
 	}
-	if helpers.set["__lang_arg_at"] {
-		in.add("wasi_args_sizes_get")
-		in.add("wasi_args_get")
-	}
-	if helpers.set["__lang_args"] {
+	if helpers.set["__fern_arg_at"] {
 		in.add("wasi_args_sizes_get")
 		in.add("wasi_args_get")
 	}
-	if helpers.set["__lang_env_at"] {
+	if helpers.set["__fern_args"] {
+		in.add("wasi_args_sizes_get")
+		in.add("wasi_args_get")
+	}
+	if helpers.set["__fern_env_at"] {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")
 	}
-	if helpers.set["__lang_env"] {
+	if helpers.set["__fern_env"] {
 		in.add("wasi_environ_sizes_get")
 		in.add("wasi_environ_get")
 	}
-	if helpers.set["__lang_read_byte"] {
+	if helpers.set["__fern_read_byte"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_stdin_p2")
 			in.add("wasi_io_blocking_read")
@@ -669,30 +669,30 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_read")
 		}
 	}
-	if helpers.set["__lang_read_file"] {
+	if helpers.set["__fern_read_file"] {
 		in.add("wasi_path_open")
 		in.add("wasi_fd_read")
 		in.add("wasi_fd_close")
 	}
-	if helpers.set["__lang_write_file"] {
+	if helpers.set["__fern_write_file"] {
 		in.add("wasi_path_open")
 		in.add("wasi_fd_write")
 		in.add("wasi_fd_close")
 	}
-	if helpers.set["__lang_open_reader"] ||
-		helpers.set["__lang_open_writer"] ||
-		helpers.set["__lang_open_appender"] {
+	if helpers.set["__fern_open_reader"] ||
+		helpers.set["__fern_open_writer"] ||
+		helpers.set["__fern_open_appender"] {
 		in.add("wasi_path_open")
 	}
-	if helpers.set["__lang_reader_read_line_fd"] ||
-		helpers.set["__lang_reader_read_chunk"] {
+	if helpers.set["__fern_reader_read_line_fd"] ||
+		helpers.set["__fern_reader_read_chunk"] {
 		in.add("wasi_fd_read")
 	}
-	if helpers.set["__lang_writer_write"] {
+	if helpers.set["__fern_writer_write"] {
 		in.add("wasi_fd_write")
 	}
-	if helpers.set["__lang_reader_close_fd"] ||
-		helpers.set["__lang_writer_close"] {
+	if helpers.set["__fern_reader_close_fd"] ||
+		helpers.set["__fern_writer_close"] {
 		in.add("wasi_fd_close")
 	}
 
@@ -705,7 +705,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	// pulled in by tcp_listen since that's the only call site that
 	// needs the network borrow. The others reach for the cached
 	// handle slot directly through the accessor.
-	if helpers.set["__lang_tcp_listen"] {
+	if helpers.set["__fern_tcp_listen"] {
 		in.add("wasi_sockets_instance_network")
 		in.add("wasi_sockets_create_tcp_socket")
 		in.add("wasi_sockets_tcp_start_bind")
@@ -713,19 +713,19 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_tcp_start_listen")
 		in.add("wasi_sockets_tcp_finish_listen")
 	}
-	if helpers.set["__lang_tcp_accept"] {
+	if helpers.set["__fern_tcp_accept"] {
 		in.add("wasi_sockets_tcp_accept")
 		in.add("wasi_sockets_tcp_subscribe")
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
-	if helpers.set["__lang_tcp_recv"] {
+	if helpers.set["__fern_tcp_recv"] {
 		in.add("wasi_io_blocking_read")
 	}
-	if helpers.set["__lang_tcp_send"] {
+	if helpers.set["__fern_tcp_send"] {
 		in.add("wasi_io_blocking_write_and_flush")
 	}
-	if helpers.set["__lang_tcp_close"] {
+	if helpers.set["__fern_tcp_close"] {
 		in.add("wasi_sockets_tcp_socket_drop")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
@@ -764,7 +764,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 }
 
 // printIovecAddr is the fixed scratch location in linear memory
-// where __lang_print writes the iovec (iov_base, iov_len) pair
+// where __fern_print writes the iovec (iov_base, iov_len) pair
 // before calling fd_write. 8 bytes total; lives outside the
 // allocator's region (which starts at 64 by default, here we
 // pick 48..56 in the reserved low-memory window before the
@@ -776,7 +776,7 @@ const printIovecAddr = 48
 const printRetAddr = 56
 
 // randomBufAddr is the 4-byte scratch where wasi_random_get
-// writes the random bytes consumed by __lang_random_i32. Lives
+// writes the random bytes consumed by __fern_random_i32. Lives
 // in the reserved low-memory window past printRetAddr.
 const randomBufAddr = 60
 
@@ -799,7 +799,7 @@ const (
 	stderrHandleAddr = 92
 )
 
-// Cache for __lang_arg_at / __lang_env_at. Both helpers lazily
+// Cache for __fern_arg_at / __fern_env_at. Both helpers lazily
 // initialise on first call: ask the host for sizes, alloc the
 // pointer table + string buffer, call args_get / environ_get,
 // store the (count, table_ptr) in the cache. Subsequent calls
@@ -830,7 +830,7 @@ const (
 	envSizesBufAddr   = 36
 )
 
-// readByteScratchAddr holds the heap-pointer to __lang_read_byte's
+// readByteScratchAddr holds the heap-pointer to __fern_read_byte's
 // per-call scratch region (iovec + 1-byte buffer + nread out). 0
 // means uninitialised; the helper allocs 16 bytes on first call
 // and writes the addr here so subsequent calls reuse the same
@@ -861,15 +861,15 @@ const (
 	networkHandleAddr     = 76
 )
 
-// buildPrintBody assembles the wasm bytes for __lang_print.
+// buildPrintBody assembles the wasm bytes for __fern_print.
 //
 // Signature: (param $data i32) (param $len i32) (result)
 //
 // Logical:
 //
-//	L   = __lang_str_len(data, len)
-//	dst = __lang_alloc(L)
-//	for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i)
+//	L   = __fern_str_len(data, len)
+//	dst = __fern_alloc(L)
+//	for i in 0..L: mem[dst+i] = __fern_str_byte(data, len, i)
 //	mem[48..52] = dst   ; iov_base
 //	mem[52..56] = L     ; iov_len
 //	wasi_fd_write(1, 48, 1, 56)
@@ -899,21 +899,21 @@ func buildWriteBody(idxs map[string]uint32) []byte {
 }
 
 // buildPrintBodyFd is the fd-parametrised shared implementation
-// of __lang_print / __lang_eprint / __lang_write. Same
+// of __fern_print / __fern_eprint / __fern_write. Same
 // str-to-heap copy + fd_write path; the fd and the optional
 // trailing-newline are the only deltas.
 func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte {
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
-	alloc := idxs["__lang_alloc"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	alloc := idxs["__fern_alloc"]
 	fdWrite := idxs["wasi_fd_write"]
 	var body []byte
-	// L = __lang_str_len(data, len)
+	// L = __fern_str_len(data, len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 2) // $L
-	// dst = __lang_alloc(L + (1 if withNewline else 0)). The
+	// dst = __fern_alloc(L + (1 if withNewline else 0)). The
 	// trailing newline byte for print / eprint lives one byte
 	// past the copied string content; write() skips it.
 	body = inst.InstLocalGet(body, 2)
@@ -923,7 +923,7 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 	}
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 3) // $dst
-	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
+	// Copy loop: for i in 0..L: mem[dst+i] = __fern_str_byte(data, len, i).
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 4) // $i = 0
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -933,7 +933,7 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 		body = inst.InstLocalGet(body, 2)
 		body = numeric.InstI32GeS(body)
 		body = inst.InstBrIf(body, 1) // exit on $i >= $L
-		// mem[dst + i] = __lang_str_byte(data, len, i)
+		// mem[dst + i] = __fern_str_byte(data, len, i)
 		body = inst.InstLocalGet(body, 3)
 		body = inst.InstLocalGet(body, 4)
 		body = numeric.InstI32Add(body)
@@ -985,7 +985,7 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildExitBody assembles the wasm bytes for __lang_exit.
+// buildExitBody assembles the wasm bytes for __fern_exit.
 //
 // Signature: (param $code i32) (result)
 //
@@ -1002,7 +1002,7 @@ func buildExitBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildRandomI32Body assembles the wasm bytes for __lang_random_i32.
+// buildRandomI32Body assembles the wasm bytes for __fern_random_i32.
 //
 // Signature: () → i32
 //
@@ -1029,16 +1029,16 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 // body. Each override has the same (params, results) signature as
 // the helper's runtimeHelperSpec — only the bytecode differs.
 var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
-	"__lang_random_i32":   buildRandomI32BodyP2,
-	"__lang_monotonic_ns": buildMonotonicNsBodyP2,
-	"__lang_random_bytes": buildRandomBytesBodyP2,
-	"__lang_print":        buildPrintBodyP2,
-	"__lang_write":        buildWriteBodyP2,
-	"__lang_eprint":       buildEprintBodyP2,
-	"__lang_putchar":      buildPutcharBodyP2,
-	"__lang_now_ns":       buildNowNsBodyP2,
-	"__lang_now_unix_ms":  buildNowUnixMsBodyP2,
-	"__lang_read_byte":    buildReadByteBodyP2,
+	"__fern_random_i32":   buildRandomI32BodyP2,
+	"__fern_monotonic_ns": buildMonotonicNsBodyP2,
+	"__fern_random_bytes": buildRandomBytesBodyP2,
+	"__fern_print":        buildPrintBodyP2,
+	"__fern_write":        buildWriteBodyP2,
+	"__fern_eprint":       buildEprintBodyP2,
+	"__fern_putchar":      buildPutcharBodyP2,
+	"__fern_now_ns":       buildNowNsBodyP2,
+	"__fern_now_unix_ms":  buildNowUnixMsBodyP2,
+	"__fern_read_byte":    buildReadByteBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -1050,11 +1050,11 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 //	if !mem[stdoutInitAddr]:
 //	    mem[stdoutHandleAddr] = wasi:cli/stdout::get-stdout()
 //	    mem[stdoutInitAddr]  = 1
-//	L   = __lang_str_len(data, len)
-//	dst = __lang_alloc(L + 1)
-//	for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i)
+//	L   = __fern_str_len(data, len)
+//	dst = __fern_alloc(L + 1)
+//	for i in 0..L: mem[dst+i] = __fern_str_byte(data, len, i)
 //	mem[dst + L] = '\n'
-//	retBuf = __lang_alloc(16)
+//	retBuf = __fern_alloc(16)
 //	wasi:io/streams::blocking-write-and-flush(
 //	    mem[stdoutHandleAddr], dst, L+1, retBuf)
 //	;; ignore the result<_, stream-error> (no error handling)
@@ -1090,9 +1090,9 @@ func buildEprintBodyP2(idxs map[string]uint32) []byte {
 // selects between get-stdout and get-stderr; `initAddr` /
 // `handleAddr` point at the cache slots for the chosen handle.
 func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym string, initAddr, handleAddr int32) []byte {
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
-	alloc := idxs["__lang_alloc"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	alloc := idxs["__fern_alloc"]
 	getHandle := idxs[getHandleSym]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	var body []byte
@@ -1108,12 +1108,12 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
-	// L = __lang_str_len(data, len)
+	// L = __fern_str_len(data, len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 2) // $L
-	// dst = __lang_alloc($L + (1 if withNewline else 0)). The
+	// dst = __fern_alloc($L + (1 if withNewline else 0)). The
 	// trailing newline byte for print lives one byte past the
 	// copied string content; write() skips it.
 	body = inst.InstLocalGet(body, 2)
@@ -1123,7 +1123,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	}
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 3) // $dst
-	// Copy loop: for i in 0..L: mem[dst+i] = __lang_str_byte(data, len, i).
+	// Copy loop: for i in 0..L: mem[dst+i] = __fern_str_byte(data, len, i).
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 4)
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -1161,7 +1161,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 		body = inst.InstLocalSet(body, 2)
 	}
 	// blocking-write-and-flush(handle, dst, $L, retBuf).
-	// handle = mem[handleAddr]; retBuf = __lang_alloc(16).
+	// handle = mem[handleAddr]; retBuf = __fern_alloc(16).
 	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 3)
@@ -1183,7 +1183,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 //
 //	if n == 0: return inline empty (0, 0x80000000)
 //	padded = (n + 7) & ~7    -- round up to a multiple of 8
-//	buf    = __lang_alloc(padded)
+//	buf    = __fern_alloc(padded)
 //	i      = 0
 //	loop:
 //	  if i >= padded: break
@@ -1201,7 +1201,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 //	2: $padded
 //	3: $i
 func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	randomU64 := idxs["wasi_random_get_u64_p2"]
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
@@ -1274,7 +1274,7 @@ func buildMonotonicNsBodyP2(idxs map[string]uint32) []byte {
 //
 //	0: $buf
 func buildNowNsBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	wallNow := idxs["wasi_wall_clock_now_p2"]
 	var body []byte
 	body = inst.InstI32Const(body, 16)
@@ -1307,7 +1307,7 @@ func buildNowNsBodyP2(idxs map[string]uint32) []byte {
 //
 //	0: $buf
 func buildNowUnixMsBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	wallNow := idxs["wasi_wall_clock_now_p2"]
 	var body []byte
 	body = inst.InstI32Const(body, 16)
@@ -1348,13 +1348,13 @@ func buildRandomI32BodyP2(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildNowNsBody assembles the wasm bytes for __lang_now_ns.
+// buildNowNsBody assembles the wasm bytes for __fern_now_ns.
 //
 // Signature: () → i64
 //
 // Body:
 //
-//	buf = __lang_alloc(8)
+//	buf = __fern_alloc(8)
 //	wasi_clock_time_get(0 /* realtime */, 0 /* precision */, buf)
 //	drop errno
 //	return i64.load(buf)
@@ -1365,7 +1365,7 @@ func buildNowNsBody(idxs map[string]uint32) []byte {
 	return buildClockBody(idxs, 0, false)
 }
 
-// buildMonotonicNsBody — () → i64. Same as __lang_now_ns but
+// buildMonotonicNsBody — () → i64. Same as __fern_now_ns but
 // uses CLOCK_MONOTONIC (clock_id=1) so the reading is
 // monotonically non-decreasing across NTP adjustments.
 func buildMonotonicNsBody(idxs map[string]uint32) []byte {
@@ -1382,7 +1382,7 @@ func buildNowUnixMsBody(idxs map[string]uint32) []byte {
 // wasi_clock_time_get(clockID, 0, buf), load i64, optionally
 // divide by 1_000_000 for the ms variant.
 func buildClockBody(idxs map[string]uint32, clockID int32, divideMs bool) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	clockTime := idxs["wasi_clock_time_get"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
@@ -1403,18 +1403,18 @@ func buildClockBody(idxs map[string]uint32, clockID int32, divideMs bool) []byte
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildEnvCountBody assembles the wasm bytes for __lang_env_count.
+// buildEnvCountBody assembles the wasm bytes for __fern_env_count.
 //
 // Signature: () → i32 (envc)
 //
 // Body:
 //
-//	buf = __lang_alloc(8)               ; two i32 output slots
+//	buf = __fern_alloc(8)               ; two i32 output slots
 //	wasi_environ_sizes_get(buf, buf + 4)
 //	drop errno
 //	return i32.load(buf)                ; envc lives at +0
 func buildEnvCountBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	envSizes := idxs["wasi_environ_sizes_get"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
@@ -1432,18 +1432,18 @@ func buildEnvCountBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildArgCountBody assembles the wasm bytes for __lang_arg_count.
+// buildArgCountBody assembles the wasm bytes for __fern_arg_count.
 //
 // Signature: () → i32 (argc)
 //
 // Body:
 //
-//	buf = __lang_alloc(8)               ; two i32 output slots
+//	buf = __fern_alloc(8)               ; two i32 output slots
 //	wasi_args_sizes_get(buf, buf + 4)
 //	drop errno
 //	return i32.load(buf)                ; argc lives at +0
 func buildArgCountBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	argsSizes := idxs["wasi_args_sizes_get"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
@@ -1461,7 +1461,7 @@ func buildArgCountBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildArgAtBody assembles __lang_arg_at.
+// buildArgAtBody assembles __fern_arg_at.
 //
 // Signature: (param $i i32) (result i32 i32) — (data, len) pair.
 //
@@ -1481,7 +1481,7 @@ func buildArgCountBody(idxs map[string]uint32) []byte {
 //	5: $cstr
 //	6: $len
 func buildArgAtBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	argsSizes := idxs["wasi_args_sizes_get"]
 	argsGet := idxs["wasi_args_get"]
 	var body []byte
@@ -1572,7 +1572,7 @@ func buildArgAtBody(idxs map[string]uint32) []byte {
 // (data, len) covers a full "KEY=VALUE" entry; user code splits
 // on '=' if needed.
 func buildEnvAtBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	envSizes := idxs["wasi_environ_sizes_get"]
 	envGet := idxs["wasi_environ_get"]
 	var body []byte
@@ -1656,7 +1656,7 @@ func buildEnvAtBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildReadByteBody assembles __lang_read_byte.
+// buildReadByteBody assembles __fern_read_byte.
 //
 // Signature: () → i32 — returns 0..255 for a byte read from
 // stdin, or -1 for EOF / error.
@@ -1680,7 +1680,7 @@ func buildEnvAtBody(idxs map[string]uint32) []byte {
 //	0: $scratch
 //	1: $errno
 func buildReadByteBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	fdRead := idxs["wasi_fd_read"]
 	var body []byte
 	// $scratch = mem[readByteScratchAddr]
@@ -1774,7 +1774,7 @@ func buildReadByteBody(idxs map[string]uint32) []byte {
 //	0: $handle
 //	1: $retbuf
 func buildReadByteBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 	var body []byte
@@ -1803,7 +1803,7 @@ func buildReadByteBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstLocalSet(body, 0)
 	}
 	body = inst.InstEnd(body)
-	// $retbuf = __lang_alloc(12)
+	// $retbuf = __fern_alloc(12)
 	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 1)
@@ -1901,7 +1901,7 @@ func buildPutcharBody(idxs map[string]uint32) []byte {
 //
 //	1: $buf  (1-byte content buffer)
 func buildPutcharBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	getStdout := idxs["wasi_get_stdout_p2"]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	var body []byte
@@ -1917,7 +1917,7 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
-	// $buf = __lang_alloc(1); mem[$buf] = $b (low byte).
+	// $buf = __fern_alloc(1); mem[$buf] = $b (low byte).
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 1)
@@ -1945,7 +1945,7 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 //
 //	1: $buf
 func buildRandomBytesBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	randomGet := idxs["wasi_random_get"]
 	var body []byte
 	// if n == 0: return inline empty (0, 0x80000000)
@@ -1956,7 +1956,7 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// $buf = __lang_alloc(n)
+	// $buf = __fern_alloc(n)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 1)
@@ -1976,12 +1976,12 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 // box). Looks up an env variable by name in the cached
 // environ_ptrs. Returns Some(value) on match, None otherwise.
 //
-// Layout matches __lang_read_line's Option[string] box:
+// Layout matches __fern_read_line's Option[string] box:
 //   Some(line): 16-byte alloc, tag=0 at +0, data at +8, len at +12.
 //   None:       4-byte alloc, tag=1 at +0.
 //
 // Algorithm:
-//   - Lazily init the env cache (shared with __lang_env_at).
+//   - Lazily init the env cache (shared with __fern_env_at).
 //   - For each i in 0..envc:
 //     - entry = environ_ptrs[i]  (NUL-terminated "KEY=VALUE")
 //     - Walk j from 0:
@@ -1999,20 +1999,20 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 //	3: $entry    — current environ_ptrs[i]
 //	4: $j        — byte offset within entry
 //	5: $entry_b  — byte at entry+j
-//	6: $name_b   — byte at name_data+j (looked up via __lang_str_byte)
+//	6: $name_b   — byte at name_data+j (looked up via __fern_str_byte)
 //	7: $value    — value-start pointer (entry + j + 1) on match
 //	8: $vlen     — value length (strlen)
 //	9: $box      — Option box pointer for return
-//	10: $name_real_len — strlen of name (via __lang_str_len)
+//	10: $name_real_len — strlen of name (via __fern_str_len)
 func buildEnvBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
 	envSizes := idxs["wasi_environ_sizes_get"]
 	envGet := idxs["wasi_environ_get"]
 	var body []byte
-	// Lazy init env cache (same shape as __lang_env_at).
+	// Lazy init env cache (same shape as __fern_env_at).
 	body = inst.InstI32Const(body, envInitAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Eqz(body)
@@ -2051,7 +2051,7 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 		body = memory.InstI32Store(body, 2, 0)
 	}
 	body = inst.InstEnd(body)
-	// $name_real_len = __lang_str_len(name_data, name_len)
+	// $name_real_len = __fern_str_len(name_data, name_len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
@@ -2163,7 +2163,7 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = numeric.InstI32Eqz(body)
 			body = inst.InstBrIf(body, 1) // break cmp loop
-			// $name_b = __lang_str_byte(name_data, name_len, j)
+			// $name_b = __fern_str_byte(name_data, name_len, j)
 			body = inst.InstLocalGet(body, 0)
 			body = inst.InstLocalGet(body, 1)
 			body = inst.InstLocalGet(body, 4)

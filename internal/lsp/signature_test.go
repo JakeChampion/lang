@@ -105,7 +105,7 @@ func TestHandleMessage_SignatureHelp(t *testing.T) {
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
 			URI:        "file:///s.fern",
-			LanguageID: "lang",
+			LanguageID: "fern",
 			Text:       "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n",
 		},
 	})

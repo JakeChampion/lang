@@ -79,7 +79,7 @@ func TestSelfHostDisasmX86_64(t *testing.T) {
 	}
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port disasm assertion %d failed", code)
+		t.Errorf("fern-port disasm assertion %d failed", code)
 	}
 }
 
@@ -115,6 +115,6 @@ func TestSelfHostDisasmArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port disasm assertion %d failed", code)
+		t.Errorf("fern-port disasm assertion %d failed", code)
 	}
 }

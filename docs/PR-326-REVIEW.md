@@ -221,7 +221,7 @@ The PR is **structural**, not perf-positive on its own.
 ### 5.1 Codegen still heap-allocates on all three backends **[deferred — step 4 of the arc]**
 
 `OpMakeOkI32` / `OpMakeErrI32` / `OpMakeSomeI32` still call
-`__lang_alloc(8)` and store `{tag, payload}`:
+`__fern_alloc(8)` and store `{tag, payload}`:
 
 - x86_64: `internal/codegen/x86_64/x86_64.go:689-714` ("Native
   fallback — same heap-box shape")
@@ -243,7 +243,7 @@ The only saved work today is the `suppressPairRebox` path at
 `[ptr+0]` (tag) and `[ptr+4]` (payload) inline
 (`x86_64.go:1614-1618`, `arm64.go:4591-4595`,
 `wasm_ir.go:944-950`) instead of the heap-rebox-then-reload
-dance. Net saving: avoids `__lang_alloc(8) + 2 stores + 2 loads`
+dance. Net saving: avoids `__fern_alloc(8) + 2 stores + 2 loads`
 per pair-form call where the consumer is the scrutinee.
 Measurable on hot `match parse(req) { ... }` loops.
 

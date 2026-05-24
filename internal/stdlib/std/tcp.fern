@@ -23,7 +23,7 @@
 //   4. http_serialize_response → tcp_send → tcp_close.
 //
 // arm64 wires this through real Linux sockets via the
-// existing __lang_tcp_* syscall helpers. The wasm side gates
+// existing __fern_tcp_* syscall helpers. The wasm side gates
 // tcp_* on wasi:sockets at module instantiation; CLI-mode
 // programs that call tcp_serve need a host-pre-opened socket
 // (`wasmtime run -S tcp=y`).

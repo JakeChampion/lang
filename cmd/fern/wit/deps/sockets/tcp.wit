@@ -4,7 +4,7 @@ package wasi:sockets@0.2.0;
 // the wasm backend actually emits: start/finish-bind,
 // start/finish-listen, accept, subscribe, plus the
 // `[resource-drop]tcp-socket` import. The full API includes
-// connect/shutdown/keep-alive/etc.; we lower lang's narrower
+// connect/shutdown/keep-alive/etc.; we lower Fern's narrower
 // listen+accept+stream pattern.
 interface tcp {
     use wasi:io/streams@0.2.0.{input-stream, output-stream};

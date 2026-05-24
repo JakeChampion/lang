@@ -103,7 +103,7 @@ const (
 //	2: $path_len
 //	3: $result
 func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__lang_alloc_box"]
+	allocBox := idxs["__fern_alloc_box"]
 	var body []byte
 
 	// Each errno case: compare, if-then-allocate-and-return the
@@ -206,7 +206,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildReadFileBody assembles __lang_read_file.
+// buildReadFileBody assembles __fern_read_file.
 //
 // Signature: (path_data, path_len) → i32 (heap-form
 // Result[string, IoError] pointer).
@@ -245,8 +245,8 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	14: $path_byte_len      decoded byte length of the path
 //	15: $i_path             str-normalize loop counter
 func buildReadFileBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdRead := idxs["wasi_fd_read"]
@@ -466,11 +466,11 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 // in linear memory, so inline-form strings (high bit on len)
 // can't be passed straight through.
 func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, bufLocal, byteLenLocal, iLocal uint32) []byte {
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
-	alloc := idxs["__lang_alloc"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	alloc := idxs["__fern_alloc"]
 
-	// byteLen = __lang_str_len(data, len)
+	// byteLen = __fern_str_len(data, len)
 	body = inst.InstLocalGet(body, dataLocal)
 	body = inst.InstLocalGet(body, lenLocal)
 	body = inst.InstCall(body, strLen)
@@ -480,7 +480,7 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, bufLocal)
 
-	// for i in 0..byteLen: mem[buf+i] = __lang_str_byte(data, len, i)
+	// for i in 0..byteLen: mem[buf+i] = __fern_str_byte(data, len, i)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, iLocal)
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -511,7 +511,7 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 	return body
 }
 
-// buildWriteFileBody assembles __lang_write_file.
+// buildWriteFileBody assembles __fern_write_file.
 //
 // Signature: (path_data, path_len, content_data, content_len) →
 // i32 (heap-form Option[IoError] pointer; None on success,
@@ -544,8 +544,8 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 //	15: $err_ptr        (IoError pointer for Some wrapping)
 //	16: $result         (heap-form Option pointer)
 func buildWriteFileBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdWrite := idxs["wasi_fd_write"]
@@ -726,8 +726,8 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 //	9: $path_byte_len     decoded byte length of the path
 //	10: $i_path           str-normalize loop counter
 func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags int32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 
@@ -787,7 +787,7 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 
 	// Build Reader/Writer struct: 12 bytes total — 8-byte rc
 	// header (static-sentinel 0x80000000 at base+0 so
-	// __lang_rc_inc/dec short-circuit per Phase 1e-runtime) +
+	// __fern_rc_inc/dec short-circuit per Phase 1e-runtime) +
 	// 4-byte `{fd: i32}` payload at base+8. The slot stores
 	// the user-visible data pointer = base + 8.
 	body = inst.InstI32Const(body, 12)
@@ -878,7 +878,7 @@ func buildWriterCloseBody(idxs map[string]uint32) []byte {
 // both Reader.close and Writer.close — the struct layout is
 // identical.
 func buildCloseBody(idxs map[string]uint32) []byte {
-	allocBox := idxs["__lang_alloc_box"]
+	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	fdClose := idxs["wasi_fd_close"]
 
@@ -951,8 +951,8 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 //	11: $cur
 //	12: $nwritten
 func buildWriterWriteBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	fdWrite := idxs["wasi_fd_write"]
 
@@ -1088,8 +1088,8 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 //	9: $strbuf
 //	10: $result
 func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
 	var body []byte
@@ -1265,8 +1265,8 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 //	5: $nread
 //	6: $result
 func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	allocBox := idxs["__lang_alloc_box"]
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
 	var body []byte

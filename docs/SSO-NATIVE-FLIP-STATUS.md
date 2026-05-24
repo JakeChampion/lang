@@ -20,7 +20,7 @@ slots** (vs one 8-byte LSB-tagged slot today):
 - `len` (upper slot): bit 63 = inline flag, bits 56..59 = length
   (0..15), bits 0..55 = inline-form bytes 8..14.
 
-Matches `langstring.PackInlineNative` exactly — the package is
+Matches `fernstring.PackInlineNative` exactly — the package is
 already authoritative.
 
 ### Heap form
@@ -36,7 +36,7 @@ bytes 8..14 in `len`'s low 56 bits, length in bits 56..59
 
 The native flip is BOTH an ABI shape change AND an inline-
 encoding change (LSB-tagged → top-bit-tagged). Per the
-user's call, we flip to top-bit-tagged so `langstring.
+user's call, we flip to top-bit-tagged so `fernstring.
 PackInlineNative` becomes the shared inline-encoding source
 of truth.
 
@@ -52,7 +52,7 @@ Per the previous session's decisions:
   branch during the flip; the final commit lands everything
   green.
 - **Flip to top-bit-tagged inline encoding** to share
-  `langstring.PackInlineNative` with the IR layer.
+  `fernstring.PackInlineNative` with the IR layer.
 
 ## What's done (this session)
 
@@ -184,8 +184,8 @@ unsuffixed names.
    bytes (since arm64's inline slot is 8 bytes for `data`
    plus 7 in `len`'s low bytes; with top-bit-tagged, the
    length-nibble + flag move out of `data` and into `len`).
-3. **§3 Runtime helpers** — `__lang_strcat`,
-   `__lang_strcmp`, `__str_slice`, `string_from_bytes`,
+3. **§3 Runtime helpers** — `__fern_strcat`,
+   `__fern_strcmp`, `__str_slice`, `string_from_bytes`,
    `__str_idx`, etc. Migrate signatures to `(data, len)`.
 4. **§4 IR ops** — `OpStrConcat` / `OpStrEq` / `OpStrLen` /
    `OpStrSlice` / `OpStrIdx` consume / produce two stack

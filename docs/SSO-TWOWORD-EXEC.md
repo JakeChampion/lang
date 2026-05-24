@@ -24,7 +24,7 @@ A string on the operand stack is **two consecutive i32 slots**:
   24..30 = length (0..7), bits 0..23 = inline-form bytes 4..6
   packed little-endian.
 
-This matches `langstring.PackInlineWasm` exactly — the package
+This matches `fernstring.PackInlineWasm` exactly — the package
 is authoritative.
 
 ### Inline cap
@@ -73,13 +73,13 @@ throughout — `WidthString` routing fires only on `ptrW == 4`.
 Every wat-side helper with a string param or string return
 flipped to the two-word `(data, len)` ABI:
 
-  - `$__lang_str_len(data, len) → i32` — flag-aware length read.
-  - `$__lang_str_byte(data, len, i) → i32` — inline-aware byte
+  - `$__fern_str_len(data, len) → i32` — flag-aware length read.
+  - `$__fern_str_byte(data, len, i) → i32` — inline-aware byte
     fetch; splits the index range so bytes 0..3 come from
     `$data` and bytes 4..6 from `$len`.
-  - `$__lang_str_to_heap(data, len) → (i32, i32)` — multi-value
+  - `$__fern_str_to_heap(data, len) → (i32, i32)` — multi-value
     return; inline → fresh heap alloc + copy.
-  - `$__lang_str_data_ptr(data, len) → i32` — spills inline at
+  - `$__fern_str_data_ptr(data, len) → i32` — spills inline at
     mem[0..7].
   - `$__str_concat`, `$__str_eq`, `$__str_slice`, `$__str_idx`,
     `$string_from_bytes`, `$__bytes_to_lang_string`,
@@ -100,10 +100,10 @@ flipped to the two-word `(data, len)` ABI:
 ### §5: Wat emit-side helpers
 
   - `emitStrLenFromLocal(local)` pushes the pair, calls
-    `$__lang_str_len`.
+    `$__fern_str_len`.
   - `emitStreamsWriteString(handle, local)` pushes the pair
-    twice (once each for `$__lang_str_data_ptr` and
-    `$__lang_str_len`).
+    twice (once each for `$__fern_str_data_ptr` and
+    `$__fern_str_len`).
   - `emitPromoteStrParam(local)` round-trips `_data` / `_len`.
 
 ### §6: Function signatures + locals
@@ -193,7 +193,7 @@ flipped to the two-word `(data, len)` ABI:
     `TestOpConstStrLongLiteralStaysHeap`,
     `TestStringsLowerToLinearMemory`,
     `TestHttpWrapperShortMethodPacksInline`.
-  - `langstring.PackTinyWasm` / `TinyInlineCapWasm` /
+  - `fernstring.PackTinyWasm` / `TinyInlineCapWasm` /
     `UnpackTinyWasm` / `IsTinyInlineWasm` / `LengthTinyWasm`
     removed (single-i32 transitional inline form is gone).
 
@@ -231,12 +231,12 @@ two-word ABI on natives would touch:
 
 - `internal/codegen/arm64/arm64.go` — every string runtime
   helper + `emitInlineIdxHelper` + the SSO scratch slot at
-  `__lang_str_idx_scratch`.
+  `__fern_str_idx_scratch`.
 - `internal/codegen/x86_64/x86_64.go` — same shape.
 
 Native already uses 8-byte slots, so the two-word form would
 fit naturally. But the LSB-tagged inline encoding would need
-to flip to top-bit-tagged to share `langstring.PackInlineNative`
+to flip to top-bit-tagged to share `fernstring.PackInlineNative`
 with the IR layer.
 
 Once natives flip, the target-aware splits in the IR collapse

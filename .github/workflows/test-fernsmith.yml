@@ -1,6 +1,6 @@
-name: Test langsmith
+name: Test fernsmith
 
-# `internal/langsmith` carries the wasm-smith-style generator + its
+# `internal/fernsmith` carries the wasm-smith-style generator + its
 # scratch tests. Locally it's a ~56s run — long enough that
 # folding it into test-units would dominate that workflow's wall
 # clock. Its own workflow keeps the fan-out balanced.
@@ -21,11 +21,11 @@ jobs:
         include:
           - { runner: ubuntu-latest,    host: x86_64  }
           - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-langsmith-${{ matrix.host }}
+    name: test-fernsmith-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - run: gotestsum --format pkgname-and-test-fails -- ./internal/langsmith/...
+      - run: gotestsum --format pkgname-and-test-fails -- ./internal/fernsmith/...

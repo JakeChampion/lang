@@ -1,6 +1,6 @@
 // Synthetic runtime-helper functions appended to the module after
 // the user functions. These exist to implement IR ops (OpAlloc,
-// OpStrLen, OpStrEq, OpStrConcat, OpStrLen-byte, the __lang_print
+// OpStrLen, OpStrEq, OpStrConcat, OpStrLen-byte, the __fern_print
 // WASI wrapper, etc.) without forcing every caller to inline the
 // same code sequence.
 //
@@ -33,8 +33,8 @@ func memInstMemoryGrow(buf []byte) []byte { return memory.InstMemoryGrow(buf) }
 // so the heavy hand-crafted byte sequences only run when the
 // helper is actually used.
 //
-// Bodies that call sibling helpers (e.g. __str_eq → __lang_str_len
-// + __lang_str_byte) receive a name → funcidx map so the call
+// Bodies that call sibling helpers (e.g. __str_eq → __fern_str_len
+// + __fern_str_byte) receive a name → funcidx map so the call
 // targets are resolved at module-assembly time without any
 // post-emission patching.
 type runtimeHelperSpec struct {
@@ -70,18 +70,18 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 		for _, op := range fn.Ops {
 			switch op.Kind {
 			case ir.OpStrLen:
-				needs.add("__lang_str_len")
+				needs.add("__fern_str_len")
 			case ir.OpAlloc:
-				needs.add("__lang_alloc")
+				needs.add("__fern_alloc")
 			case ir.OpMakeClosure, ir.OpMakeEnv:
 				// Both ops allocate the env block via
-				// __lang_alloc_rc1 (rc=1 header so the closure
+				// __fern_alloc_rc1 (rc=1 header so the closure
 				// is droppable once FuncType locals are rc-
 				// tracked); OpMakeClosure also allocs a second
 				// pair cell the same way. alloc_rc1 calls
-				// __lang_alloc internally.
-				needs.add("__lang_alloc")
-				needs.add("__lang_alloc_rc1")
+				// __fern_alloc internally.
+				needs.add("__fern_alloc")
+				needs.add("__fern_alloc_rc1")
 			case ir.OpCallDirect:
 				// Source-language built-ins lower to OpCallDirect
 				// with the source name; the call-site lookup
@@ -89,254 +89,254 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// the synthetic helper. The trigger here uses
 				// the same alias so the helper actually exists.
 				switch callDirectAlias(op.Str) {
-				case "__lang_print":
+				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_alloc")
-					needs.add("__lang_print")
-				case "__lang_eprint":
-					// Same shape as __lang_print but fd=2 (stderr).
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_alloc")
-					needs.add("__lang_eprint")
-				case "__lang_write":
-					// Same shape as __lang_print but no trailing
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_print")
+				case "__fern_eprint":
+					// Same shape as __fern_print but fd=2 (stderr).
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_eprint")
+				case "__fern_write":
+					// Same shape as __fern_print but no trailing
 					// newline (fd=1).
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_alloc")
-					needs.add("__lang_write")
-				case "__lang_putchar":
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_write")
+				case "__fern_putchar":
 					// (b) → () — single-byte write to stdout. The
 					// preview-2 body heap-allocates a 1-byte buffer
 					// (the preview-1 body uses fixed scratch), so it
-					// pulls in __lang_alloc under Preview2WASI.
+					// pulls in __fern_alloc under Preview2WASI.
 					if opts.Preview2WASI {
-						needs.add("__lang_alloc")
+						needs.add("__fern_alloc")
 					}
-					needs.add("__lang_putchar")
-				case "__lang_exit":
+					needs.add("__fern_putchar")
+				case "__fern_exit":
 					// wasi_proc_exit under the hood; nothing
 					// else needed.
-					needs.add("__lang_exit")
-				case "__lang_random_i32":
+					needs.add("__fern_exit")
+				case "__fern_random_i32":
 					// wasi_random_get under the hood; writes
 					// 4 random bytes to the fixed scratch slot
 					// and returns them as an i32.
-					needs.add("__lang_random_i32")
-				case "__lang_random_bytes":
+					needs.add("__fern_random_i32")
+				case "__fern_random_bytes":
 					// (n) → (data, len) — wasi_random_get into
 					// a fresh n-byte heap allocation. Returns
 					// the (data, len) pair of the heap string.
-					needs.add("__lang_alloc")
-					needs.add("__lang_random_bytes")
-				case "__lang_now_ns":
+					needs.add("__fern_alloc")
+					needs.add("__fern_random_bytes")
+				case "__fern_now_ns":
 					// wasi_clock_time_get + alloc-per-call for
 					// the 8-byte output buffer.
-					needs.add("__lang_alloc")
-					needs.add("__lang_now_ns")
-				case "__lang_now_unix_ms":
-					// Same as __lang_now_ns / 1_000_000.
-					needs.add("__lang_alloc")
-					needs.add("__lang_now_unix_ms")
-				case "__lang_monotonic_ns":
-					// CLOCK_MONOTONIC (1) variant of __lang_now_ns.
-					needs.add("__lang_alloc")
-					needs.add("__lang_monotonic_ns")
-				case "__lang_arena_save":
+					needs.add("__fern_alloc")
+					needs.add("__fern_now_ns")
+				case "__fern_now_unix_ms":
+					// Same as __fern_now_ns / 1_000_000.
+					needs.add("__fern_alloc")
+					needs.add("__fern_now_unix_ms")
+				case "__fern_monotonic_ns":
+					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
+					needs.add("__fern_alloc")
+					needs.add("__fern_monotonic_ns")
+				case "__fern_arena_save":
 					// Reads the bump-allocator cursor at mem[40].
 					// No alloc dependency; the cursor lives in
 					// reserved low memory regardless.
-					needs.add("__lang_arena_save")
-				case "__lang_arena_restore":
+					needs.add("__fern_arena_save")
+				case "__fern_arena_restore":
 					// Writes mem[40] = handle.
-					needs.add("__lang_arena_restore")
-				case "__lang_sqrt_f64":
-					needs.add("__lang_sqrt_f64")
-				case "__lang_abs_f64":
-					needs.add("__lang_abs_f64")
-				case "__lang_floor_f64":
-					needs.add("__lang_floor_f64")
-				case "__lang_ceil_f64":
-					needs.add("__lang_ceil_f64")
-				case "__lang_trunc_f64":
-					needs.add("__lang_trunc_f64")
-				case "__lang_env_count":
+					needs.add("__fern_arena_restore")
+				case "__fern_sqrt_f64":
+					needs.add("__fern_sqrt_f64")
+				case "__fern_abs_f64":
+					needs.add("__fern_abs_f64")
+				case "__fern_floor_f64":
+					needs.add("__fern_floor_f64")
+				case "__fern_ceil_f64":
+					needs.add("__fern_ceil_f64")
+				case "__fern_trunc_f64":
+					needs.add("__fern_trunc_f64")
+				case "__fern_env_count":
 					// wasi_environ_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
-					needs.add("__lang_alloc")
-					needs.add("__lang_env_count")
-				case "__lang_arg_count":
+					needs.add("__fern_alloc")
+					needs.add("__fern_env_count")
+				case "__fern_arg_count":
 					// wasi_args_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
-					needs.add("__lang_alloc")
-					needs.add("__lang_arg_count")
-				case "__lang_arg_at":
+					needs.add("__fern_alloc")
+					needs.add("__fern_arg_count")
+				case "__fern_arg_at":
 					// wasi_args_sizes_get + wasi_args_get +
 					// alloc for the argv_ptrs table + argv buf.
 					// One-shot init cached in low memory.
-					needs.add("__lang_alloc")
-					needs.add("__lang_arg_at")
-				case "__lang_args":
+					needs.add("__fern_alloc")
+					needs.add("__fern_arg_at")
+				case "__fern_args":
 					// Builds a string[] of all argv entries.
 					// Shares the wasi_args_* init path with
-					// __lang_arg_at via the low-memory cache.
-					needs.add("__lang_alloc")
-					needs.add("__lang_args")
-				case "__lang_env_at":
+					// __fern_arg_at via the low-memory cache.
+					needs.add("__fern_alloc")
+					needs.add("__fern_args")
+				case "__fern_env_at":
 					// wasi_environ_sizes_get + wasi_environ_get
 					// + alloc for the environ_ptrs table + buf.
-					needs.add("__lang_alloc")
-					needs.add("__lang_env_at")
-				case "__lang_env":
+					needs.add("__fern_alloc")
+					needs.add("__fern_env_at")
+				case "__fern_env":
 					// (name) → Option[string]. Walks the cached
 					// environ_ptrs comparing each entry's prefix
 					// up to '=' against name.
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_env")
-				case "__lang_read_byte":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_env")
+				case "__fern_read_byte":
 					// wasi_fd_read on stdin (fd=0) + alloc for
 					// the per-process scratch region.
-					needs.add("__lang_alloc")
-					needs.add("__lang_read_byte")
-				case "__lang_read_line":
-					// Reads bytes via __lang_read_byte until '\n'
+					needs.add("__fern_alloc")
+					needs.add("__fern_read_byte")
+				case "__fern_read_line":
+					// Reads bytes via __fern_read_byte until '\n'
 					// or EOF, accumulates into a growable buffer,
 					// then builds an Option[string] heap box.
-					needs.add("__lang_alloc")
-					needs.add("__lang_read_byte")
-					needs.add("__lang_read_line")
-				case "__lang_stdin":
+					needs.add("__fern_alloc")
+					needs.add("__fern_read_byte")
+					needs.add("__fern_read_line")
+				case "__fern_stdin":
 					// () → i32 — Reader struct with fd=0 (stdin).
 					// Backs `stdin()`; the `__method_Reader_*`
 					// helpers dispatch on r.fd so the same code
 					// path covers stdin and file Readers.
-					needs.add("__lang_alloc")
-					needs.add("__lang_stdin")
-				case "__lang_reader_read_line_fd":
+					needs.add("__fern_alloc")
+					needs.add("__fern_stdin")
+				case "__fern_reader_read_line_fd":
 					// (r) → i32 — heap-form Option[string]. Reads
 					// from r.fd byte-by-byte until '\n' / EOF.
-					needs.add("__lang_alloc")
-					needs.add("__lang_reader_read_line_fd")
-				case "__lang_reader_read_chunk":
+					needs.add("__fern_alloc")
+					needs.add("__fern_reader_read_line_fd")
+				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
 					// bytes into a fresh n-byte heap buffer.
-					needs.add("__lang_alloc")
-					needs.add("__lang_reader_read_chunk")
-				case "__lang_reader_close_fd":
+					needs.add("__fern_alloc")
+					needs.add("__fern_reader_read_chunk")
+				case "__fern_reader_close_fd":
 					// (r) → i32 — fd_close on r.fd; returns
 					// Option[IoError].
-					needs.add("__lang_alloc")
+					needs.add("__fern_alloc")
 					needs.add("__build_io_error")
-					needs.add("__lang_reader_close_fd")
-				case "__lang_writer_close":
+					needs.add("__fern_reader_close_fd")
+				case "__fern_writer_close":
 					// Same shape as reader_close — Writer struct
 					// has identical { fd: i32 } layout.
-					needs.add("__lang_alloc")
+					needs.add("__fern_alloc")
 					needs.add("__build_io_error")
-					needs.add("__lang_writer_close")
-				case "__lang_writer_write":
+					needs.add("__fern_writer_close")
+				case "__fern_writer_write":
 					// (w, s_data, s_len) → i32 — fd_write loop
 					// over the SSO-normalized content bytes.
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_writer_write")
-				case "__lang_open_reader":
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_writer_write")
+				case "__fern_open_reader":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_open_reader")
-				case "__lang_open_writer":
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_open_reader")
+				case "__fern_open_writer":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_open_writer")
-				case "__lang_open_appender":
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_open_writer")
+				case "__fern_open_appender":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_open_appender")
-				case "__lang_string_from_bytes":
+					needs.add("__fern_open_appender")
+				case "__fern_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
 					// fast-path for len ≤ 7, heap copy otherwise.
-					needs.add("__lang_alloc")
-					needs.add("__lang_string_from_bytes")
-				case "__lang_read_file":
+					needs.add("__fern_alloc")
+					needs.add("__fern_string_from_bytes")
+				case "__fern_read_file":
 					// (path) → Result[string, IoError]. Pulls in
 					// __build_io_error for the error-path variant
-					// construction; __lang_str_len / __lang_str_byte
+					// construction; __fern_str_len / __fern_str_byte
 					// are needed to SSO-normalize the path argument
 					// before it reaches path_open. WASI imports
 					// (path_open / fd_read / fd_close) get added by
 					// scanImports below once this helper is in the
 					// needs set.
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_read_file")
-				case "__lang_write_file":
+					needs.add("__fern_read_file")
+				case "__fern_write_file":
 					// (path, content) → Option[IoError]. Same
-					// __build_io_error / __lang_str_len /
-					// __lang_str_byte chain as read_file plus
+					// __build_io_error / __fern_str_len /
+					// __fern_str_byte chain as read_file plus
 					// the str-normalize loop reusing them; the
 					// scanRuntimeHelpers transitive close still
 					// pulls them in via `needs.add` here.
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__lang_write_file")
-				case "__lang_tcp_listen":
+					needs.add("__fern_write_file")
+				case "__fern_tcp_listen":
 					// (port) → i32 — heap pointer to a 12-byte
 					// listener struct (sock, 0, 0), or -errno
 					// on failure. Pulls in the __network_handle
 					// accessor that caches wasi:sockets/instance-
 					// network. WASI imports get added by
 					// scanImports below.
-					needs.add("__lang_alloc")
+					needs.add("__fern_alloc")
 					needs.add("__network_handle")
-					needs.add("__lang_tcp_listen")
-				case "__lang_tcp_accept":
+					needs.add("__fern_tcp_listen")
+				case "__fern_tcp_accept":
 					// (listener) → i32 — heap pointer to a
 					// 12-byte connection struct (sock, instream,
 					// outstream), or -errno on failure.
-					needs.add("__lang_alloc")
-					needs.add("__lang_tcp_accept")
-				case "__lang_tcp_recv":
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_accept")
+				case "__fern_tcp_recv":
 					// (conn, max) → (data, len) — heap-form
 					// string with the bytes read. Empty on
 					// stream-error / EOF.
-					needs.add("__lang_alloc")
-					needs.add("__lang_tcp_recv")
-				case "__lang_tcp_send":
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_recv")
+				case "__fern_tcp_send":
 					// (conn, data) → i32 — bytes sent, -1 on
 					// failure. SSO-normalizes the input string
 					// so inline-form data flows through the
 					// host's read of (ptr, len).
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_tcp_send")
-				case "__lang_tcp_close":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_tcp_send")
+				case "__fern_tcp_close":
 					// (conn) → i32 (always 0). Drops the
 					// streams (if non-zero) before the parent
 					// tcp-socket to satisfy the canonical-ABI
 					// resource-has-children rule.
-					needs.add("__lang_tcp_close")
+					needs.add("__fern_tcp_close")
 				case "__slice_make":
-					needs.add("__lang_alloc")
+					needs.add("__fern_alloc")
 					needs.add("__slice_make")
 				case "__slice_idx":
 					needs.add("__slice_idx")
@@ -349,15 +349,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__slice_idx_8":
 					needs.add("__slice_idx_8")
 				case "__method_string_as_bytes":
-					needs.add("__lang_alloc")
-					needs.add("__lang_str_len")
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
 					needs.add("__method_string_as_bytes")
-				case "__lang_stdout":
-					needs.add("__lang_alloc")
-					needs.add("__lang_stdout")
-				case "__lang_stderr":
-					needs.add("__lang_alloc")
-					needs.add("__lang_stderr")
+				case "__fern_stdout":
+					needs.add("__fern_alloc")
+					needs.add("__fern_stdout")
+				case "__fern_stderr":
+					needs.add("__fern_alloc")
+					needs.add("__fern_stderr")
 				}
 				// Low-level memory shims the stdlib calls directly
 				// (raw OpCallDirect, no callDirectAlias rewrite).
@@ -381,31 +381,31 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__ptr_width":
 					needs.add("__ptr_width")
 				case "__alloc", "__alloc_u8":
-					needs.add("__lang_alloc")
+					needs.add("__fern_alloc")
 					needs.add(op.Str)
 				case "__memcpy":
 					needs.add("__memcpy")
 				case "__memset":
 					needs.add("__memset")
-				case "__lang_rc_inc":
-					needs.add("__lang_rc_inc")
-				case "__lang_rc_dec":
-					needs.add("__lang_rc_dec")
-				case "__lang_arr_push_grow":
-					needs.add("__lang_arr_push_grow")
-					needs.add("__lang_alloc")
+				case "__fern_rc_inc":
+					needs.add("__fern_rc_inc")
+				case "__fern_rc_dec":
+					needs.add("__fern_rc_dec")
+				case "__fern_arr_push_grow":
+					needs.add("__fern_arr_push_grow")
+					needs.add("__fern_alloc")
 					needs.add("__memcpy")
-				case "__lang_arr_cow_inplace":
-					needs.add("__lang_arr_cow_inplace")
-					needs.add("__lang_alloc")
+				case "__fern_arr_cow_inplace":
+					needs.add("__fern_arr_cow_inplace")
+					needs.add("__fern_alloc")
 					needs.add("__memcpy")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
-					// __lang_str_byte but returns a byte
+					// __fern_str_byte but returns a byte
 					// address that the caller's OpLoadByte
 					// dereferences. Used in __map_hash's
 					// string-key path.
-					needs.add("__lang_str_len")
+					needs.add("__fern_str_len")
 					needs.add("__str_idx")
 				case "__arr_idx":
 					// (base, i) → byte address of element i
@@ -424,17 +424,17 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__str_slice":
 					// (base_data, base_len, low, high) → (data, len)
 					// — copy bytes [low..high] into a fresh string.
-					needs.add("__lang_str_len")
-					needs.add("__lang_str_byte")
-					needs.add("__lang_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
 					needs.add("__str_slice")
 				}
 			case ir.OpStrEq:
 				// __str_eq's inline-side byte reads route
-				// through __lang_str_byte, and the length
-				// dispatch uses __lang_str_len.
-				needs.add("__lang_str_len")
-				needs.add("__lang_str_byte")
+				// through __fern_str_byte, and the length
+				// dispatch uses __fern_str_len.
+				needs.add("__fern_str_len")
+				needs.add("__fern_str_byte")
 				needs.add("__str_eq")
 			case ir.OpStrConcat:
 				// __str_concat allocates a buffer sized by
@@ -442,30 +442,30 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// copies bytes one-at-a-time via the SSO-
 				// aware byte fetch. Returns the new (data,
 				// len) pair as a heap-form string.
-				needs.add("__lang_str_len")
-				needs.add("__lang_str_byte")
-				needs.add("__lang_alloc")
+				needs.add("__fern_str_len")
+				needs.add("__fern_str_byte")
+				needs.add("__fern_alloc")
 				needs.add("__str_concat")
 			}
 		}
 	}
 	// Phase 1e-enums-runtime: these runtime helpers build Option /
-	// Result / IoError boxes through __lang_alloc_box, which
+	// Result / IoError boxes through __fern_alloc_box, which
 	// prepends the 8-byte static-sentinel rc header so a future
-	// enum-ii predicate widening can run __lang_rc_inc/dec on the
+	// enum-ii predicate widening can run __fern_rc_inc/dec on the
 	// boxes safely (they short-circuit on the high bit).
-	// __lang_alloc_box calls __lang_alloc internally — already in
+	// __fern_alloc_box calls __fern_alloc internally — already in
 	// the set, since every one of these also allocates directly.
 	for _, h := range []string{
-		"__lang_env", "__lang_read_line", "__build_io_error",
-		"__lang_read_file", "__lang_write_file",
-		"__lang_open_reader", "__lang_open_writer", "__lang_open_appender",
-		"__lang_reader_close_fd", "__lang_writer_close",
-		"__lang_writer_write", "__lang_reader_read_line_fd",
-		"__lang_reader_read_chunk",
+		"__fern_env", "__fern_read_line", "__build_io_error",
+		"__fern_read_file", "__fern_write_file",
+		"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
+		"__fern_reader_close_fd", "__fern_writer_close",
+		"__fern_writer_write", "__fern_reader_read_line_fd",
+		"__fern_reader_read_chunk",
 	} {
 		if needs.set[h] {
-			needs.add("__lang_alloc_box")
+			needs.add("__fern_alloc_box")
 			break
 		}
 	}
@@ -475,74 +475,74 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // runtimeHelperSpecs is the registry. Keyed by the canonical
 // helper name; the entry's body() builds the wasm bytes lazily.
 var runtimeHelperSpecs = map[string]runtimeHelperSpec{
-	"__lang_str_len": {
+	"__fern_str_len": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32}, // (data, len)
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrLenBody,
 	},
-	"__lang_alloc": {
+	"__fern_alloc": {
 		params:  []byte{encode.ValtypeI32}, // size
 		results: []byte{encode.ValtypeI32}, // pointer
 		body:    buildAllocBody,
 	},
-	"__lang_alloc_box": {
+	"__fern_alloc_box": {
 		params:  []byte{encode.ValtypeI32}, // payload size
 		results: []byte{encode.ValtypeI32}, // data pointer (base + 8)
 		body:    buildAllocBoxBody,
 	},
-	"__lang_alloc_rc1": {
+	"__fern_alloc_rc1": {
 		params:  []byte{encode.ValtypeI32}, // payload size
 		results: []byte{encode.ValtypeI32}, // data pointer (base + 8)
 		body:    buildAllocRc1Body,
 	},
-	"__lang_str_byte": {
+	"__fern_str_byte": {
 		// (data, len, i) → i32 byte; inline-or-heap aware.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrByteBody,
 	},
-	"__lang_print": {
+	"__fern_print": {
 		// (data, len) → ()
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildPrintBody,
 	},
-	"__lang_eprint": {
-		// (data, len) → () — same shape as __lang_print but
+	"__fern_eprint": {
+		// (data, len) → () — same shape as __fern_print but
 		// writes to fd=2 (stderr) instead of fd=1.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildEprintBody,
 	},
-	"__lang_write": {
-		// (data, len) → () — like __lang_print but without
+	"__fern_write": {
+		// (data, len) → () — like __fern_print but without
 		// the trailing newline. The pair `print` / `write`
 		// mirrors Go's fmt.Println / fmt.Print.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildWriteBody,
 	},
-	"__lang_putchar": {
+	"__fern_putchar": {
 		// (b) → () — fd_write a single byte to stdout. Uses
 		// the print iovec scratch region as a 1-byte buffer.
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 		body:    buildPutcharBody,
 	},
-	"__lang_exit": {
+	"__fern_exit": {
 		// (code) → () — never returns, but the wasm signature
 		// still has a void result.
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 		body:    buildExitBody,
 	},
-	"__lang_random_i32": {
+	"__fern_random_i32": {
 		// () → i32 — host-supplied random word via wasi_random_get.
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildRandomI32Body,
 	},
-	"__lang_random_bytes": {
+	"__fern_random_bytes": {
 		// (n) → (data, len) — heap-form string of n random
 		// bytes via wasi_random_get. Empty (n=0) → inline empty
 		// (0, 0x80000000).
@@ -550,14 +550,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildRandomBytesBody,
 	},
-	"__lang_now_ns": {
+	"__fern_now_ns": {
 		// () → i64 — nanoseconds since unix epoch from the
 		// realtime clock via wasi_clock_time_get.
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildNowNsBody,
 	},
-	"__lang_now_unix_ms": {
+	"__fern_now_unix_ms": {
 		// () → i64 — milliseconds since unix epoch. Calls
 		// wasi_clock_time_get (CLOCK_REALTIME) and divides by
 		// 1_000_000.
@@ -565,22 +565,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI64},
 		body:    buildNowUnixMsBody,
 	},
-	"__lang_monotonic_ns": {
+	"__fern_monotonic_ns": {
 		// () → i64 — monotonic nanoseconds via
 		// wasi_clock_time_get (CLOCK_MONOTONIC = 1).
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildMonotonicNsBody,
 	},
-	"__lang_arena_save": {
+	"__fern_arena_save": {
 		// () → i32 — snapshot of the bump-allocator cursor.
-		// Pair with __lang_arena_restore to free everything
+		// Pair with __fern_arena_restore to free everything
 		// allocated since the save in one pointer-store.
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildArenaSaveBody,
 	},
-	"__lang_arena_restore": {
+	"__fern_arena_restore": {
 		// (handle) → () — rewinds the bump cursor to handle.
 		// Pointers into the freed region are no longer valid;
 		// caller discipline enforces non-use.
@@ -588,49 +588,49 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildArenaRestoreBody,
 	},
-	"__lang_sqrt_f64": {
+	"__fern_sqrt_f64": {
 		// (f64) → f64 — wasm-native f64.sqrt.
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildSqrtF64Body,
 	},
-	"__lang_abs_f64": {
+	"__fern_abs_f64": {
 		// (f64) → f64 — wasm-native f64.abs.
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildAbsF64Body,
 	},
-	"__lang_floor_f64": {
+	"__fern_floor_f64": {
 		// (f64) → f64 — wasm-native f64.floor.
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildFloorF64Body,
 	},
-	"__lang_ceil_f64": {
+	"__fern_ceil_f64": {
 		// (f64) → f64 — wasm-native f64.ceil.
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildCeilF64Body,
 	},
-	"__lang_trunc_f64": {
+	"__fern_trunc_f64": {
 		// (f64) → f64 — wasm-native f64.trunc.
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildTruncF64Body,
 	},
-	"__lang_env_count": {
+	"__fern_env_count": {
 		// () → i32 — count of environment variables (envc).
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildEnvCountBody,
 	},
-	"__lang_arg_count": {
+	"__fern_arg_count": {
 		// () → i32 — count of command-line args (argc).
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildArgCountBody,
 	},
-	"__lang_arg_at": {
+	"__fern_arg_at": {
 		// (i) → (data, len) — the i-th argv string. (0, 0)
 		// for i out of [0..argc). Lazily inits + caches argv
 		// in low memory on first call.
@@ -638,7 +638,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildArgAtBody,
 	},
-	"__lang_args": {
+	"__fern_args": {
 		// () → i32 — length-prefixed string[] of all argv
 		// entries. Returns the data pointer (length lives at
 		// data - 4). Each entry is a 2-word (data, len) pair
@@ -648,14 +648,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildArgsBody,
 	},
-	"__lang_env_at": {
+	"__fern_env_at": {
 		// (i) → (data, len) — the i-th environ entry as a
 		// "KEY=VALUE" string. (0, 0) for i out of range.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildEnvAtBody,
 	},
-	"__lang_env": {
+	"__fern_env": {
 		// (name_data, name_len) → Option[string] heap box.
 		// Walks the cached environ_ptrs comparing each
 		// entry's prefix up to '=' with name. Returns
@@ -664,7 +664,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildEnvBody,
 	},
-	"__lang_read_byte": {
+	"__fern_read_byte": {
 		// () → i32 — one byte from stdin (0..255), or -1 on
 		// EOF/error. Lazily alloc()s a 16-byte scratch region
 		// for the iovec + nread out + the 1-byte read buffer.
@@ -672,7 +672,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadByteBody,
 	},
-	"__lang_read_line": {
+	"__fern_read_line": {
 		// () → i32 — heap pointer to an Option[string] box.
 		// Some(line) box layout (16 bytes): tag=0 at +0,
 		// data ptr at +8, len at +12 (Option[string] payload
@@ -683,7 +683,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadLineBody,
 	},
-	"__lang_stdin": {
+	"__fern_stdin": {
 		// () → i32 — constant sentinel Reader. wasmbin doesn't
 		// yet model TCP / file Readers (no `tcp_listen` / file
 		// preopens), so the value is opaque and only the
@@ -692,15 +692,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildStdinBody,
 	},
-	"__lang_reader_read_line": {
+	"__fern_reader_read_line": {
 		// (r) → i32 — Reader.read_line(). For wasmbin's stdin-
 		// only Reader model, ignores the receiver and delegates
-		// to __lang_read_line.
+		// to __fern_read_line.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderReadLineBody,
 	},
-	"__lang_reader_close": {
+	"__fern_reader_close": {
 		// (r) → () — no-op. Drops the receiver. Real Reader.close
 		// (file fds, TCP sockets) will need a discriminator-
 		// aware path once those Readers exist.
@@ -708,7 +708,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildReaderCloseBody,
 	},
-	"__lang_string_from_bytes": {
+	"__fern_string_from_bytes": {
 		// (bs) → (data, len) — copies bs's payload into a
 		// fresh string. Empty array → inline empty; ≤7 bytes →
 		// inline-packed; >7 bytes → heap copy via memory.copy.
@@ -765,13 +765,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildPtrWidthBody,
 	},
 	"__alloc": {
-		// (size) → i32 — same as __lang_alloc. Lives in the
+		// (size) → i32 — same as __fern_alloc. Lives in the
 		// registry for stdlib parity.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildAliasAllocBody,
 	},
-	"__lang_rc_inc": {
+	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
 		// pointer so IR codegen can splice an inc into an
 		// expression evaluation chain. NULL-safe and
@@ -782,7 +782,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildRcIncBody,
 	},
-	"__lang_rc_dec": {
+	"__fern_rc_dec": {
 		// (ptr) → ptr — refcount dec helper. NULL-safe and
 		// sentinel-aware. Returns the input ptr so the
 		// calling convention matches arm64 / x86_64 (both
@@ -796,7 +796,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildRcDecBody,
 	},
-	"__lang_arr_push_grow": {
+	"__fern_arr_push_grow": {
 		// (arr, oldLen, stride) → new_data. Phase 2 mutate-or-
 		// copy helper for `arr.push(v)`. Same contract as the
 		// arm64 / x86_64 helpers: on rc==1 and oldLen<cap,
@@ -808,11 +808,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrPushGrowBody,
 	},
-	"__lang_arr_cow_inplace": {
+	"__fern_arr_cow_inplace": {
 		// (arr, stride) → new_data. Phase 2b mutate-or-copy
 		// helper for `arr[i] = v`. Internalises the rc
 		// bookkeeping so the IR-side emit doesn't have to
-		// coordinate with __lang_rc_dec's low-address guard
+		// coordinate with __fern_rc_dec's low-address guard
 		// (which short-circuits on raw wasm where heap
 		// addresses sit below 0x10000):
 		//   - rc == 1 → return arr unchanged.
@@ -857,7 +857,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildBuildIoErrorBody,
 	},
-	"__lang_read_file": {
+	"__fern_read_file": {
 		// (path_data, path_len) → i32 — heap-form
 		// Result[string, IoError] pointer. path is interpreted
 		// relative to the preopen at fd 3 (the standard
@@ -867,12 +867,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadFileBody,
 	},
-	"__lang_write_file": {
+	"__fern_write_file": {
 		// (path_data, path_len, content_data, content_len) →
 		// i32 — heap-form Option[IoError] pointer (None on
 		// success, Some(IoError) on error). Truncates the
 		// target via O_CREAT|O_TRUNC; same preopen-fd-3
-		// convention as __lang_read_file.
+		// convention as __fern_read_file.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
@@ -886,7 +886,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildNetworkHandleBody,
 	},
-	"__lang_tcp_listen": {
+	"__fern_tcp_listen": {
 		// (port: i32) → i32 — heap pointer to a 12-byte
 		// listener struct (tcp-socket, 0, 0) on success;
 		// -errno on failure. See wasi_tcp.go.
@@ -894,7 +894,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpListenBody,
 	},
-	"__lang_tcp_accept": {
+	"__fern_tcp_accept": {
 		// (listener: i32) → i32 — heap pointer to a 12-byte
 		// connection struct (tcp-socket, input-stream,
 		// output-stream); -errno on failure.
@@ -902,14 +902,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpAcceptBody,
 	},
-	"__lang_tcp_recv": {
+	"__fern_tcp_recv": {
 		// (conn: i32, max: i32) → (data, len) heap-form
 		// string. Empty pair (0, 0) on stream-error / EOF.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildTcpRecvBody,
 	},
-	"__lang_tcp_send": {
+	"__fern_tcp_send": {
 		// (conn, data_data, data_len) → i32 — bytes sent on
 		// success, -1 on stream-error. Chunked at 4 KiB to
 		// match wasmtime's blocking-write-and-flush cap.
@@ -917,14 +917,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpSendBody,
 	},
-	"__lang_tcp_close": {
+	"__fern_tcp_close": {
 		// (conn: i32) → i32 (always 0). Drops streams +
 		// tcp-socket in canonical child-before-parent order.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpCloseBody,
 	},
-	"__lang_open_reader": {
+	"__fern_open_reader": {
 		// (path_data, path_len) → i32 — heap-form
 		// Result[Reader, IoError]. The Reader struct holds a
 		// preview-1 fd.
@@ -932,30 +932,30 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildOpenReaderBody,
 	},
-	"__lang_open_writer": {
+	"__fern_open_writer": {
 		// (path_data, path_len) → i32 — heap-form
 		// Result[Writer, IoError]. Opens with CREATE|TRUNCATE.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildOpenWriterBody,
 	},
-	"__lang_open_appender": {
+	"__fern_open_appender": {
 		// (path_data, path_len) → i32 — heap-form
 		// Result[Writer, IoError]. Opens with CREATE + APPEND.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildOpenAppenderBody,
 	},
-	"__lang_reader_close_fd": {
+	"__fern_reader_close_fd": {
 		// (r: i32) → i32 — heap-form Option[IoError]. Calls
 		// fd_close on the Reader's fd; returns None on success.
 		// Named `_fd` to distinguish from the existing
-		// `__lang_reader_close` which is the stdin-only stub.
+		// `__fern_reader_close` which is the stdin-only stub.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderCloseFdBody,
 	},
-	"__lang_writer_close": {
+	"__fern_writer_close": {
 		// (w: i32) → i32 — same shape as the Reader close, with
 		// a dedicated name so the IR alias map can route
 		// `__method_Writer_close` here.
@@ -963,7 +963,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterCloseBody,
 	},
-	"__lang_writer_write": {
+	"__fern_writer_write": {
 		// (w, s_data, s_len) → i32 — heap-form
 		// Option[IoError]. Writes string bytes to w.fd via
 		// fd_write in a loop; returns None on success.
@@ -971,18 +971,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterWriteBody,
 	},
-	"__lang_reader_read_line_fd": {
+	"__fern_reader_read_line_fd": {
 		// (r: i32) → i32 — heap-form Option[string]. Reads
 		// bytes one at a time until '\n' or EOF; returns None
 		// if EOF hit before any byte. Named `_fd` to distinguish
-		// from the legacy stdin-only `__lang_reader_read_line`
+		// from the legacy stdin-only `__fern_reader_read_line`
 		// (kept around so existing call sites compile while the
 		// alias map flips).
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderReadLineFdBody,
 	},
-	"__lang_reader_read_chunk": {
+	"__fern_reader_read_chunk": {
 		// (r, n: i32) → i32 — heap-form Option[string].
 		// Single fd_read into an n-byte buffer.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
@@ -1072,7 +1072,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// canonical-ABI allocator the host invokes to materialise
 		// dynamically-sized return values (e.g. list<u8> for
 		// header names / values) in our linear memory. Aligns
-		// the bump cursor before forwarding to __lang_alloc.
+		// the bump cursor before forwarding to __fern_alloc.
 		// Exported by name (the host looks it up); see wasmbin.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
@@ -1118,13 +1118,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildStringAsBytesBody,
 	},
-	"__lang_stdout": {
+	"__fern_stdout": {
 		// () → i32 — Writer struct with fd=1 (stdout).
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildStdoutBody,
 	},
-	"__lang_stderr": {
+	"__fern_stderr": {
 		// () → i32 — Writer struct with fd=2 (stderr).
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
@@ -1142,7 +1142,7 @@ const allocCursorAddr = 40
 // memory state. 64 matches the WAT path's floor.
 const allocMinStart = 64
 
-// buildStrLenBody assembles the wasm bytes for __lang_str_len.
+// buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
 // Signature: (param $data i32) (param $len i32) (result i32)
 //
@@ -1173,7 +1173,7 @@ const allocMinStart = 64
 //	else
 //	    local.get 1
 //	end
-// buildAllocBody assembles the wasm bytes for __lang_alloc.
+// buildAllocBody assembles the wasm bytes for __fern_alloc.
 //
 // Signature: (param $size i32) (result i32)
 //
@@ -1251,21 +1251,21 @@ func buildAllocBody(_ map[string]uint32) []byte {
 }
 
 // buildAllocBoxBody assembles wasm bytes for
-// __lang_alloc_box(size) -> data — the wasmbin counterpart of
+// __fern_alloc_box(size) -> data — the wasmbin counterpart of
 // the native backends' helper. Allocates `size + 8` via
-// __lang_alloc, writes the static-sentinel 0x80000000 at
+// __fern_alloc, writes the static-sentinel 0x80000000 at
 // `[base + 0]`, and returns the data pointer `base + 8`. Used
 // by the runtime helpers that build Option / Result / IoError
 // boxes so a future Phase 1e-enums-ii predicate widening can
-// call __lang_rc_inc/dec on enum values safely (they
+// call __fern_rc_inc/dec on enum values safely (they
 // short-circuit on the high bit).
 //
 // Signature: (param $size i32) (result i32). One i32 local
 // ($base) after the param.
 func buildAllocBoxBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
-	// base = __lang_alloc(size + 8)
+	// base = __fern_alloc(size + 8)
 	body = inst.InstLocalGet(body, 0) // $size
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
@@ -1284,8 +1284,8 @@ func buildAllocBoxBody(idxs map[string]uint32) []byte {
 }
 
 // buildAllocRc1Body assembles wasm bytes for
-// __lang_alloc_rc1(size) -> data — identical to
-// __lang_alloc_box but writes a live rc=1 at `[base+0]` instead
+// __fern_alloc_rc1(size) -> data — identical to
+// __fern_alloc_box but writes a live rc=1 at `[base+0]` instead
 // of the immortal 0x80000000 sentinel. Closure env blocks /
 // pairs use it so they are real refcounted objects (droppable at
 // rc=0 in Phase 3) rather than immortal ones. Returns base+8.
@@ -1293,9 +1293,9 @@ func buildAllocBoxBody(idxs map[string]uint32) []byte {
 // Signature: (param $size i32) (result i32). One i32 local
 // ($base) after the param.
 func buildAllocRc1Body(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
-	// base = __lang_alloc(size + 8)
+	// base = __fern_alloc(size + 8)
 	body = inst.InstLocalGet(body, 0) // $size
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
@@ -1313,7 +1313,7 @@ func buildAllocRc1Body(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildStrByteBody assembles wasm bytes for __lang_str_byte.
+// buildStrByteBody assembles wasm bytes for __fern_str_byte.
 //
 // Signature: (param $data i32) (param $len i32) (param $i i32) (result i32)
 //
@@ -1386,13 +1386,13 @@ func buildStrByteBody(_ map[string]uint32) []byte {
 //     and inline (same bit-pattern) coincidences.
 //  2. If pair-eq failed and BOTH operands have the inline flag
 //     set, they must differ (inline encoding is deterministic).
-//  3. Otherwise compare lengths via __lang_str_len. Different
+//  3. Otherwise compare lengths via __fern_str_len. Different
 //     lengths → not equal.
-//  4. Byte loop via __lang_str_byte (handles inline + heap on
+//  4. Byte loop via __fern_str_byte (handles inline + heap on
 //     both sides transparently).
 func buildStrEqBody(idxs map[string]uint32) []byte {
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
 	var body []byte
 	// Step 1: pair-eq fast path.
 	body = inst.InstLocalGet(body, 0) // a_data
@@ -1418,7 +1418,7 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
-	// Step 3: la = __lang_str_len(a); lb = __lang_str_len(b); if differ return 0.
+	// Step 3: la = __fern_str_len(a); lb = __fern_str_len(b); if differ return 0.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
@@ -1488,31 +1488,31 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 //
 // Logical:
 //
-//	la  = __lang_str_len(a)
-//	lb  = __lang_str_len(b)
-//	dst = __lang_alloc(la + lb)
-//	for i in 0..la: mem[dst+i]     = __lang_str_byte(a, i)
-//	for i in 0..lb: mem[dst+la+i]  = __lang_str_byte(b, i)
+//	la  = __fern_str_len(a)
+//	lb  = __fern_str_len(b)
+//	dst = __fern_alloc(la + lb)
+//	for i in 0..la: mem[dst+i]     = __fern_str_byte(a, i)
+//	for i in 0..lb: mem[dst+la+i]  = __fern_str_byte(b, i)
 //	return (dst, la + lb)
 //
 // Result is heap-form (top bit of len clear) regardless of input
 // forms; the bytes always land in memory at `dst`.
 func buildStrConcatBody(idxs map[string]uint32) []byte {
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
-	alloc := idxs["__lang_alloc"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
-	// la = __lang_str_len(a)
+	// la = __fern_str_len(a)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 4) // $la
-	// lb = __lang_str_len(b)
+	// lb = __fern_str_len(b)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 5) // $lb
-	// dst = __lang_alloc(la + lb)
+	// dst = __fern_alloc(la + lb)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
 	body = numeric.InstI32Add(body)
@@ -1529,7 +1529,7 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 4)
 		body = numeric.InstI32GeS(body)
 		body = inst.InstBrIf(body, 1)
-		// mem[dst + i] = __lang_str_byte(a, i)
+		// mem[dst + i] = __fern_str_byte(a, i)
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstLocalGet(body, 7)
 		body = numeric.InstI32Add(body)
@@ -1563,7 +1563,7 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, 7)
 		body = numeric.InstI32Add(body)
-		// byte = __lang_str_byte(b, i)
+		// byte = __fern_str_byte(b, i)
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstLocalGet(body, 3)
 		body = inst.InstLocalGet(body, 7)
@@ -1649,14 +1649,14 @@ func buildPtrWidthBody(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildAliasAllocBody — (size) → i32. Calls __lang_alloc; lets
+// buildAliasAllocBody — (size) → i32. Calls __fern_alloc; lets
 // stdlib reference `__alloc` by name. Raw allocator: no length
 // prefix, caller owns the layout (e.g. the Map runtime's mixed
 // bucket + entries buffer).
 func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstCall(body, helperIdxs["__lang_alloc"])
+	body = inst.InstCall(body, helperIdxs["__fern_alloc"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -1795,7 +1795,7 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 // Locals: 0=arr, 1=oldLen, 2=stride (params); 3=newLen,
 // 4=newCap, 5=headerBytes, 6=base.
 func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
+	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	var body []byte
 	// Fast path: rc == 1 AND oldLen < cap. Both must hold.
@@ -1858,7 +1858,7 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstSelect(body)
 	body = inst.InstLocalSet(body, 5) // $headerBytes
 	// allocSize = headerBytes + newCap * stride.
-	// base = __lang_alloc(allocSize) + headerBytes.
+	// base = __fern_alloc(allocSize) + headerBytes.
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 2)
@@ -1902,13 +1902,13 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 // buildArrCowInPlaceBody — (arr, stride) → new_data. Wasm32
 // counterpart of arm64.go's emitArrCowInPlaceRuntime + x86_64's.
 // Internalises rc bookkeeping so the IR-side emit avoids the
-// __lang_rc_dec low-address guard pitfall (heap addresses sit
+// __fern_rc_dec low-address guard pitfall (heap addresses sit
 // below 0x10000 on raw wasm so the guard would skip every dec).
 //
 // Locals: 0=arr, 1=stride (params); 2=len, 3=cap,
 // 4=headerBytes, 5=base.
 func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
+	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	var body []byte
 	// Fast path: rc == 1 → return arr.
@@ -1965,7 +1965,7 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstSelect(body)
 	body = inst.InstLocalSet(body, 4)
 	// allocSize = headerBytes + cap * stride
-	// base = __lang_alloc(allocSize) + headerBytes
+	// base = __fern_alloc(allocSize) + headerBytes
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 1)
@@ -2010,7 +2010,7 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 // pad at data-16, capacity at data-12, refcount at data-8,
 // length at data-4, n bytes of payload at data.
 //
-//	base = __lang_alloc(n + 16) + 16
+//	base = __fern_alloc(n + 16) + 16
 //	mem[base - 12] = n   // cap (Phase 2-prep)
 //	mem[base - 8] = 1    // rc
 //	mem[base - 4] = n
@@ -2020,9 +2020,9 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 // length prefix being present at -4 for bounds checks.
 // See docs/RC-PERCEUS-PLAN.md for the phased rollout.
 func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
+	alloc := helperIdxs["__fern_alloc"]
 	var body []byte
-	// base = __lang_alloc(n + 16) + 16
+	// base = __fern_alloc(n + 16) + 16
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 16)
 	body = numeric.InstI32Add(body)
@@ -2097,7 +2097,7 @@ func buildMemsetBody(_ map[string]uint32) []byte {
 // returned address — the inline content layout puts byte i at
 // scratch+i for i in 0..6 (low 4 in data, next 3 in len).
 func buildStrIdxBody(helperIdxs map[string]uint32) []byte {
-	strLen := helperIdxs["__lang_str_len"]
+	strLen := helperIdxs["__fern_str_len"]
 	var body []byte
 	// if i < 0: trap
 	body = inst.InstLocalGet(body, 2) // $i
@@ -2233,7 +2233,7 @@ func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(
 //	         read values pushed outside their local scope, so
 //	         we save the byte to a local before the if-dispatch)
 func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
+	alloc := helperIdxs["__fern_alloc"]
 	var body []byte
 	// $bLen = mem[bs - 4]
 	body = inst.InstLocalGet(body, 0)
@@ -2366,11 +2366,11 @@ func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
 //	9: $len  (inline pack)
 //	10: $byte
 func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
-	strLen := helperIdxs["__lang_str_len"]
-	strByte := helperIdxs["__lang_str_byte"]
-	alloc := helperIdxs["__lang_alloc"]
+	strLen := helperIdxs["__fern_str_len"]
+	strByte := helperIdxs["__fern_str_byte"]
+	alloc := helperIdxs["__fern_alloc"]
 	var body []byte
-	// $src_len = __lang_str_len(base_data, base_len)
+	// $src_len = __fern_str_len(base_data, base_len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
@@ -2428,7 +2428,7 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = numeric.InstI32GeU(body)
 			body = inst.InstBrIf(body, 1)
-			// $byte = __lang_str_byte(base_data, base_len, low + i)
+			// $byte = __fern_str_byte(base_data, base_len, low + i)
 			body = inst.InstLocalGet(body, 0)
 			body = inst.InstLocalGet(body, 1)
 			body = inst.InstLocalGet(body, 2)
@@ -2505,7 +2505,7 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 }
 
 // buildReadLineBody — () → i32. Reads bytes from stdin via
-// __lang_read_byte, accumulating into a growable u8 buffer
+// __fern_read_byte, accumulating into a growable u8 buffer
 // until '\n' (included) or EOF. Returns a heap pointer to an
 // Option[string] box.
 //
@@ -2533,9 +2533,9 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	5: $box    — Option box pointer for return
 //	6: $copy_i — byte-copy loop counter
 func buildReadLineBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
-	allocBox := helperIdxs["__lang_alloc_box"]
-	readByte := helperIdxs["__lang_read_byte"]
+	alloc := helperIdxs["__fern_alloc"]
+	allocBox := helperIdxs["__fern_alloc_box"]
+	readByte := helperIdxs["__fern_read_byte"]
 	var body []byte
 	// Initial buf: alloc(64), cap=64, n=0
 	body = inst.InstI32Const(body, 64)
@@ -2549,7 +2549,7 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
 	{
-		// $byte = __lang_read_byte()
+		// $byte = __fern_read_byte()
 		body = inst.InstCall(body, readByte)
 		body = inst.InstLocalSet(body, 3)
 		// if $byte == -1: break (EOF)
@@ -2650,7 +2650,7 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 // identically to file Readers — `fd_read(0, …)` is the kernel-
 // level read from stdin regardless of who's calling.
 func buildStdinBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
 	body = inst.InstI32Const(body, 4)
 	body = inst.InstCall(body, alloc)
@@ -2663,13 +2663,13 @@ func buildStdinBody(idxs map[string]uint32) []byte {
 }
 
 // buildReaderReadLineBody — (r) → i32. Delegates to
-// __lang_read_line, ignoring the receiver. Lives in the
+// __fern_read_line, ignoring the receiver. Lives in the
 // helper registry so __method_Reader_read_line's IR call
 // site finds a real funcidx; once wasmbin grows TCP / file
 // Readers, this dispatches on the receiver's discriminator.
 func buildReaderReadLineBody(helperIdxs map[string]uint32) []byte {
 	var body []byte
-	body = inst.InstCall(body, helperIdxs["__lang_read_line"])
+	body = inst.InstCall(body, helperIdxs["__fern_read_line"])
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -2686,7 +2686,7 @@ func buildReaderCloseBody(_ map[string]uint32) []byte {
 // heap form: data points into argv_buf, len is the strlen
 // (top bit clear).
 //
-// Shares the wasi_args_* init path with __lang_arg_at via the
+// Shares the wasi_args_* init path with __fern_arg_at via the
 // low-memory cache (argsInitAddr / argsCountAddr / argsPtrsAddr).
 // After init, the wasi-output scratch slots (argsSizesArgcAddr,
 // argsSizesBufAddr) are dead — repurposed here as a cache for
@@ -2704,11 +2704,11 @@ func buildReaderCloseBody(_ map[string]uint32) []byte {
 //	7: $cstr
 //	8: $len
 func buildArgsBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__lang_alloc"]
+	alloc := helperIdxs["__fern_alloc"]
 	argsSizes := helperIdxs["wasi_args_sizes_get"]
 	argsGet := helperIdxs["wasi_args_get"]
 	var body []byte
-	// Lazy init: same shape as __lang_arg_at.
+	// Lazy init: same shape as __fern_arg_at.
 	body = inst.InstI32Const(body, argsInitAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Eqz(body)
@@ -2761,7 +2761,7 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// Build: result_raw = __lang_alloc(argc * 8 + 4)
+	// Build: result_raw = __fern_alloc(argc * 8 + 4)
 	body = inst.InstI32Const(body, argsCountAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 0) // $argc

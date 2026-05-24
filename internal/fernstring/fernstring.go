@@ -1,4 +1,4 @@
-// Package langstring captures the two-word string
+// Package fernstring captures the two-word string
 // representation the language is migrating to under the SSO
 // arc (see docs/SSO-PLAN.md). A LangString is the Go-side
 // view of the same `(data, len)` pair an operand-stack slot
@@ -18,7 +18,7 @@
 // constants — backends and the IR layer ALL import from here
 // rather than re-deriving the inline cap / flag-bit shape.
 // Step 2 of the SSO plan; no IR / codegen wired through yet.
-package langstring
+package fernstring
 
 // InlineFlagNative is the top bit of `len` on native targets
 // (8-byte words). When set, `data` holds the first 8 bytes of
@@ -115,7 +115,7 @@ func FitsInlineWasm(n int) bool {
 // `FitsInlineNative` first.
 func PackInlineNative(b []byte) (data uint64, length uint64) {
 	if len(b) > InlineCap(8) {
-		panic("langstring: PackInlineNative called with >15 bytes")
+		panic("fernstring: PackInlineNative called with >15 bytes")
 	}
 	for i := 0; i < len(b) && i < 8; i++ {
 		data |= uint64(b[i]) << (8 * i)
@@ -139,7 +139,7 @@ func PackInlineNative(b []byte) (data uint64, length uint64) {
 // Panics if len(b) > 7.
 func PackInlineWasm(b []byte) (data uint32, length uint32) {
 	if len(b) > InlineCap(4) {
-		panic("langstring: PackInlineWasm called with >7 bytes")
+		panic("fernstring: PackInlineWasm called with >7 bytes")
 	}
 	for i := 0; i < len(b) && i < 4; i++ {
 		data |= uint32(b[i]) << (8 * i)
@@ -158,7 +158,7 @@ func PackInlineWasm(b []byte) (data uint32, length uint32) {
 // checked `IsInlineNative` first.
 func UnpackInlineNative(data, length uint64) []byte {
 	if !IsInlineNative(length) {
-		panic("langstring: UnpackInlineNative called on non-inline (data, len)")
+		panic("fernstring: UnpackInlineNative called on non-inline (data, len)")
 	}
 	n := int((length >> 56) & 0xF) // 4 bits of length, 0..15
 	out := make([]byte, n)
@@ -174,7 +174,7 @@ func UnpackInlineNative(data, length uint64) []byte {
 // UnpackInlineWasm reverses PackInlineWasm.
 func UnpackInlineWasm(data, length uint32) []byte {
 	if !IsInlineWasm(length) {
-		panic("langstring: UnpackInlineWasm called on non-inline (data, len)")
+		panic("fernstring: UnpackInlineWasm called on non-inline (data, len)")
 	}
 	n := int((length >> 24) & 0x7) // 3 bits of length, 0..7
 	out := make([]byte, n)

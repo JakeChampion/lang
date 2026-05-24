@@ -440,7 +440,7 @@ return 0;
 // structs / enums / unions / consts / funcs. As the
 // prelude-to-modules migration moves test programs and
 // examples to `import "core/no_prelude";`-style explicit
-// declarations, `lang -fmt -w` would have stripped every
+// declarations, `fern -fmt -w` would have stripped every
 // import line and the fmt-check CI gate would fail.
 func TestFormatImportsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `import "core/no_prelude";
@@ -463,7 +463,7 @@ function main(): i32 { return 0; }`)
 // Qualified-variant references (`Color.Red`) round-trip through
 // the multi-line formatter in both expression and match-arm
 // positions. Was IMPROVEMENTS.md #15 — without the printer change
-// `lang -fmt -w` would silently drop the `Color.` prefix users
+// `fern -fmt -w` would silently drop the `Color.` prefix users
 // wrote to disambiguate two enums that share a variant name.
 func TestFormatQualifiedVariantsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `enum A { Foo(i32), Bar }
@@ -495,7 +495,7 @@ function main(): i32 {
 // formatter — previously dropped silently because no
 // `formatUnionDecl` path existed. Members preserved in source
 // order so the checker desugar's variant-tag assignment stays
-// stable across `lang -fmt -w` edits.
+// stable across `fern -fmt -w` edits.
 func TestFormatUnionDeclRoundTrip(t *testing.T) {
 	got := formatSrc(t, `struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }

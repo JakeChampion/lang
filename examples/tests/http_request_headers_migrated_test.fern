@@ -9,7 +9,7 @@ import "std/http";
 // wire header block; the handler reads values back via
 // the case-insensitive `HeaderMap.get` surface.
 //
-// The Go original spawned three `lang -interp`
+// The Go original spawned three `fern -interp`
 // subprocesses, each running an inline parse-and-print
 // program. The migrated form folds them into one Lang
 // file with assertions on the parsed shape directly —

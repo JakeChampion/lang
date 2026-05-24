@@ -1,8 +1,8 @@
-# Improvements drawn from langsmith work
+# Improvements drawn from fernsmith work
 
 This list collects the compiler-correctness gaps, design rough edges,
 and test-infrastructure improvements surfaced while building the
-langsmith generator + differential oracle (PRs #583..#620). Each
+fernsmith generator + differential oracle (PRs #583..#620). Each
 entry has a one-line claim, a brief justification, and a sketch of
 the fix. Ordered by what's most worth chasing first.
 
@@ -71,7 +71,7 @@ helper name accidentally trips the branch.
 Found three times in this thread: `*ast.FString` (PR #597),
 `*ast.MapLit` + Map methods (PR #610), `*ast.FuncDecl` /
 `*ast.Lambda` (PR #618). Each was a `"unsupported expression %T"`
-panic the langsmith generator hit at random.
+panic the fernsmith generator hit at random.
 
 **Fix**: `internal/interp/coverage_test.go` that walks every
 AST node type and asserts the interpreter accepts a minimal
@@ -130,7 +130,7 @@ would catch regressions faster and document the expected shape.
 The codegen backends are largest; closureconv / shadowrename /
 treeshake are small enough to fully cover.
 
-## 6. 🧪 CI runs the langsmith fuzzer
+## 6. 🧪 CI runs the fernsmith fuzzer
 
 `FuzzGenerate_ParseRoundTrips` and `FuzzGenerate_ExecutionAgrees`
 exist but no CI job runs them. The default `go test ./...` only
@@ -167,7 +167,7 @@ parser-only) can call `interp.New` + register manually.
 
 ## 9. 🛠 `noFloats` flag overloaded
 
-The langsmith generator's `Generator.noFloats bool` started life
+The fernsmith generator's `Generator.noFloats bool` started life
 as "skip f32 productions" and accumulated three meanings:
 
 - skip f32 (float NaN/Inf edges differ across backends)
@@ -189,7 +189,7 @@ near-duplicates.
 type. Halves the duplication; one place to fix when a new generic
 form lands.
 
-## 11. 🛠 `gtype` dual representation in langsmith
+## 11. 🛠 `gtype` dual representation in fernsmith
 
 The generator ended up with closed `iota` constants for builtins
 and a sidecar `structShapes` / `enumShapes` map for dynamics.
@@ -200,7 +200,7 @@ generator state.
 **Fix**: `gtype` becomes a struct with a kind + nominal name +
 optional element. All lookups go through one helper. The
 compiler's own `ast.Type` interface has the same shape — keeping
-langsmith's data model close to the compiler's would reduce
+fernsmith's data model close to the compiler's would reduce
 impedance.
 
 ## 12. 🧪 `go test ./...` runs ≥60s

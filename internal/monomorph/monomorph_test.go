@@ -121,7 +121,7 @@ function main(): i32 {
 //
 // This test locks in the fix: each program type-checks and
 // monomorphs cleanly. Langsmith's `skipGeneric` workaround in
-// internal/langsmith/langsmith.go can come back to a simple
+// internal/fernsmith/fernsmith.go can come back to a simple
 // flip once this is solid.
 func TestRunHandlesPartiallyInferredGenericCalls(t *testing.T) {
 	cases := []struct {

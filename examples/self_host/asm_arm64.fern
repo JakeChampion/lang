@@ -1383,7 +1383,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // capture / call machinery is unaffected; this is
             // purely for the type-aware dispatch on the result
             // (e.g. `print(f())` needs to know the result is a
-            // string to route through `__lang_print_str`).
+            // string to route through `__fern_print_str`).
             return "fn_" + ret_tag_of(lm.ret_type);
         },
         parser.ExprIdent(id) => { return s.local_type_of(id.name); },
@@ -2121,7 +2121,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __lang_str_concat\n");
+                    s = s.write("    bl __fern_str_concat\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.mark_str_concat();
                     return s;
@@ -2135,7 +2135,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __lang_str_eq\n");
+                    s = s.write("    bl __fern_str_eq\n");
                     if (b.op == "!=") {
                         s = s.write("    eor x0, x0, #1\n");
                     }
@@ -2144,7 +2144,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     return s;
                 }
             }
-            // String ordering: < / <= / > / >= → __lang_str_cmp
+            // String ordering: < / <= / > / >= → __fern_str_cmp
             // and compare its signed result against zero.
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
                 var olt: string = infer_expr_type(b.left, s);
@@ -2154,7 +2154,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __lang_str_cmp\n");
+                    s = s.write("    bl __fern_str_cmp\n");
                     s = s.write("    cmp x0, #0\n");
                     if (b.op == "<") { s = s.write("    cset x0, lt\n"); }
                     else if (b.op == "<=") { s = s.write("    cset x0, le\n"); }
@@ -2286,7 +2286,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var lo: StringLitOut = add_string_lit(s, sv.value);
             s = lo.state;
             s = s.write("    mov x0, #16\n");
-            s = s.write("    bl __lang_alloc\n");
+            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    adrp x1, .S" + i32_to_string(lo.idx) + "\n");
             s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(lo.idx) + "\n");
@@ -2315,7 +2315,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(fa.obj, s);
                         if (prim_recv == "i32") {
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_i32_to_string\n");
+                            s = s.write("    bl __fern_i32_to_string\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_i32_to_string();
                         }
@@ -2410,7 +2410,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_i32_pow\n");
+                            s = s.write("    bl __fern_i32_pow\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_i32_pow();
                             return s;
@@ -2477,7 +2477,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_push\n");
+                        s = s.write("    bl __fern_arr_push\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_push();
                         return s;
@@ -2491,7 +2491,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_reverse\n");
+                        s = s.write("    bl __fern_arr_reverse\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_reverse();
                         return s;
@@ -2508,7 +2508,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_concat\n");
+                        s = s.write("    bl __fern_arr_concat\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_concat();
                         return s;
@@ -2542,13 +2542,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_str_join\n");
+                        s = s.write("    bl __fern_arr_str_join\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_str_join();
                         return s;
                     }
                     // Built-in `.index_of(s)` / `.contains(s)` on
-                    // string arrays — uses `__lang_str_eq` per
+                    // string arrays — uses `__fern_str_eq` per
                     // element so content equality matches even
                     // when the .rodata slots differ.
                     if ((fa.field == "index_of" || fa.field == "contains")
@@ -2557,7 +2557,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_str_index_of\n");
+                        s = s.write("    bl __fern_arr_str_index_of\n");
                         if (fa.field == "contains") {
                             s = s.write("    cmp x0, #0\n");
                             s = s.write("    cset x0, ge\n");
@@ -2572,7 +2572,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_i32_sum\n");
+                        s = s.write("    bl __fern_arr_i32_sum\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_i32_sum();
                         return s;
@@ -2584,7 +2584,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_i32_product\n");
+                        s = s.write("    bl __fern_arr_i32_product\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_i32_product();
                         return s;
@@ -2596,9 +2596,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    ldr x0, [sp], #16\n");
                         if (fa.field == "min") {
-                            s = s.write("    bl __lang_arr_i32_min\n");
+                            s = s.write("    bl __fern_arr_i32_min\n");
                         } else {
-                            s = s.write("    bl __lang_arr_i32_max\n");
+                            s = s.write("    bl __fern_arr_i32_max\n");
                         }
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_arr_i32_min_max();
@@ -2608,7 +2608,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // i32 arrays — linear search for `x`. Returns
                     // the index for `index_of`, the >= 0 test for
                     // `contains`. Strings use a separate path
-                    // (above) that calls `__lang_str_eq`; i32
+                    // (above) that calls `__fern_str_eq`; i32
                     // just uses register compare.
                     if ((fa.field == "index_of" || fa.field == "contains")
                             && c.args.len() == 1 && prim_recv == "array_i32") {
@@ -2616,7 +2616,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    ldr x1, [sp], #16\n");
                         s = s.write("    ldr x0, [sp], #16\n");
-                        s = s.write("    bl __lang_arr_i32_index_of\n");
+                        s = s.write("    bl __fern_arr_i32_index_of\n");
                         if (fa.field == "contains") {
                             s = s.write("    cmp x0, #0\n");
                             s = s.write("    cset x0, ge\n");
@@ -2635,7 +2635,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "chars" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_chars\n");
+                            s = s.write("    bl __fern_str_chars\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_chars();
                             return s;
@@ -2643,7 +2643,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "bytes" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_bytes\n");
+                            s = s.write("    bl __fern_str_bytes\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_bytes();
                             return s;
@@ -2651,7 +2651,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "reverse" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_reverse\n");
+                            s = s.write("    bl __fern_str_reverse\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_reverse();
                             return s;
@@ -2677,12 +2677,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "lines" && c.args.len() == 0) {
                             // Sugar for `s.split("\n")`. Materialise
                             // a `"\n"` string box, then route through
-                            // the existing __lang_str_split runtime.
+                            // the existing __fern_str_split runtime.
                             s = emit_expr(fa.obj, s);
                             var lo_ln: StringLitOut = add_string_lit(s, "\n");
                             s = lo_ln.state;
                             s = s.write("    mov x0, #16\n");
-                            s = s.write("    bl __lang_alloc\n");
+                            s = s.write("    bl __fern_alloc\n");
                             s = s.write("    adrp x1, .S" + i32_to_string(lo_ln.idx) + "\n");
                             s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(lo_ln.idx) + "\n");
                             s = s.write("    str x1, [x0]\n");
@@ -2691,7 +2691,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_split\n");
+                            s = s.write("    bl __fern_str_split\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2702,7 +2702,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_split\n");
+                            s = s.write("    bl __fern_str_split\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2713,7 +2713,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_index_of\n");
+                            s = s.write("    bl __fern_str_index_of\n");
                             s = s.write("    cmp x0, #0\n");
                             s = s.write("    cset x0, ge\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
@@ -2725,7 +2725,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_starts_with\n");
+                            s = s.write("    bl __fern_str_starts_with\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             return s;
@@ -2735,7 +2735,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_ends_with\n");
+                            s = s.write("    bl __fern_str_ends_with\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             return s;
@@ -2745,7 +2745,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_index_of\n");
+                            s = s.write("    bl __fern_str_index_of\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             return s;
@@ -2753,7 +2753,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "trim" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_trim\n");
+                            s = s.write("    bl __fern_str_trim\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2762,7 +2762,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "to_upper" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_to_upper\n");
+                            s = s.write("    bl __fern_str_to_upper\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2771,7 +2771,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "to_lower" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_to_lower\n");
+                            s = s.write("    bl __fern_str_to_lower\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2782,7 +2782,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_repeat\n");
+                            s = s.write("    bl __fern_str_repeat\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2795,7 +2795,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    ldr x2, [sp], #16\n");
                             s = s.write("    ldr x1, [sp], #16\n");
                             s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __lang_str_replace\n");
+                            s = s.write("    bl __fern_str_replace\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2941,12 +2941,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     },
                     _ => { }
                 }
-                // Non-literal string argument → __lang_print_str.
+                // Non-literal string argument → __fern_print_str.
                 var at: string = infer_expr_type(arg, s);
                 if (at == "string") {
                     s = emit_expr(arg, s);
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __lang_print_str\n");
+                    s = s.write("    bl __fern_print_str\n");
                     s = s.write("    mov x0, #0\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.mark_str_print();
@@ -2977,7 +2977,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 if (eat == "string") {
                     s = emit_expr(earg, s);
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __lang_eprint_str\n");
+                    s = s.write("    bl __fern_eprint_str\n");
                     s = s.write("    mov x0, #0\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.mark_eprint();
@@ -2990,7 +2990,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "print_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_print_int\n");
+                s = s.write("    bl __fern_print_int\n");
                 s = s.write("    mov x0, #0\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_print_int();
@@ -2999,8 +2999,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "eprint_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_i32_to_string\n");
-                s = s.write("    bl __lang_eprint_str\n");
+                s = s.write("    bl __fern_i32_to_string\n");
+                s = s.write("    bl __fern_eprint_str\n");
                 s = s.write("    mov x0, #0\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_i32_to_string();
@@ -3018,8 +3018,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 return s;
             }
             if (name == "args_count" && c.args.len() == 0) {
-                s = s.write("    adrp x0, __lang_argc\n");
-                s = s.write("    add x0, x0, :lo12:__lang_argc\n");
+                s = s.write("    adrp x0, __fern_argc\n");
+                s = s.write("    add x0, x0, :lo12:__fern_argc\n");
                 s = s.write("    ldr x0, [x0]\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_args();
@@ -3028,7 +3028,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "arg_at" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_arg_at\n");
+                s = s.write("    bl __fern_arg_at\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_args();
                 return s;
@@ -3038,7 +3038,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_split\n");
+                s = s.write("    bl __fern_str_split\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3047,14 +3047,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // read_int() — builtin no-arg call to the read_int
             // helper. Returns the value in x0; push to rt-stack.
             if (name == "read_int" && c.args.len() == 0) {
-                s = s.write("    bl __lang_read_int\n");
+                s = s.write("    bl __fern_read_int\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_read_int();
                 return s;
             }
             // read_line() — no-arg builtin. Returns string box.
             if (name == "read_line" && c.args.len() == 0) {
-                s = s.write("    bl __lang_read_line\n");
+                s = s.write("    bl __fern_read_line\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_read_line();
                 return s;
@@ -3063,7 +3063,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "i32_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_i32_to_string\n");
+                s = s.write("    bl __fern_i32_to_string\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_i32_to_string();
                 return s;
@@ -3072,20 +3072,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_i32" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_to_i32\n");
+                s = s.write("    bl __fern_str_to_i32\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_to_i32();
                 return s;
             }
             // str_starts_with / str_contains / str_index_of —
-            // shared __lang_str_starts_with + __lang_str_index_of
+            // shared __fern_str_starts_with + __fern_str_index_of
             // runtime helpers.
             if (name == "str_starts_with" && c.args.len() == 2) {
                 s = emit_expr(c.args[0], s);
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_starts_with\n");
+                s = s.write("    bl __fern_str_starts_with\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 return s;
@@ -3095,7 +3095,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_ends_with\n");
+                s = s.write("    bl __fern_str_ends_with\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 return s;
@@ -3105,7 +3105,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_index_of\n");
+                s = s.write("    bl __fern_str_index_of\n");
                 s = s.write("    cmp x0, #0\n");
                 s = s.write("    cset x0, ge\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
@@ -3117,7 +3117,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_index_of\n");
+                s = s.write("    bl __fern_str_index_of\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 return s;
@@ -3125,7 +3125,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_trim" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_trim\n");
+                s = s.write("    bl __fern_str_trim\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3134,7 +3134,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_upper" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_to_upper\n");
+                s = s.write("    bl __fern_str_to_upper\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3143,7 +3143,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_lower" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_to_lower\n");
+                s = s.write("    bl __fern_str_to_lower\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3154,7 +3154,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_repeat\n");
+                s = s.write("    bl __fern_str_repeat\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3167,7 +3167,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x2, [sp], #16\n");
                 s = s.write("    ldr x1, [sp], #16\n");
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_str_replace\n");
+                s = s.write("    bl __fern_str_replace\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3176,7 +3176,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "chr" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    bl __lang_chr\n");
+                s = s.write("    bl __fern_chr\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3231,7 +3231,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var t_bytes: i32 = n_elems * 8;
             if (n_elems == 0) { t_bytes = 8; }
             s = s.write("    mov x0, #" + i32_to_string(t_bytes) + "\n");
-            s = s.write("    bl __lang_alloc\n");
+            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             var tj: i32 = n_elems - 1;
             while (tj >= 0) {
@@ -3254,7 +3254,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             var a_bytes: i32 = (n_elems + 1) * 8;
             s = s.write("    mov x0, #" + i32_to_string(a_bytes) + "\n");
-            s = s.write("    bl __lang_alloc\n");
+            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    mov x1, #" + i32_to_string(n_elems) + "\n");
             s = s.write("    str x1, [x0]\n");
@@ -3296,7 +3296,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x3, [sp], #16\n");   // end
                 s = s.write("    ldr x4, [sp], #16\n");   // start
                 s = s.write("    ldr x5, [sp], #16\n");   // src box
-                // Save end/start/src across __lang_alloc call.
+                // Save end/start/src across __fern_alloc call.
                 // x19, x20, x21 are callee-saved AAPCS regs.
                 s = s.write("    stp x19, x20, [sp, #-16]!\n");
                 s = s.write("    str x21, [sp, #-16]!\n");
@@ -3304,7 +3304,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    mov x20, x4\n");
                 s = s.write("    mov x21, x5\n");
                 s = s.write("    mov x0, #16\n");
-                s = s.write("    bl __lang_alloc\n");
+                s = s.write("    bl __fern_alloc\n");
                 s = s.mark_heap();
                 // box.data_ptr = src.data_ptr + start.
                 s = s.write("    ldr x1, [x21]\n");
@@ -3325,7 +3325,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x2, [sp], #16\n");   // end
                 s = s.write("    ldr x1, [sp], #16\n");   // start
                 s = s.write("    ldr x0, [sp], #16\n");   // src arr
-                s = s.write("    bl __lang_arr_slice\n");
+                s = s.write("    bl __fern_arr_slice\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_arr_slice();
                 return s;
@@ -3347,7 +3347,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             var slot_bytes: i32 = (n_fields + 1) * 8;
             s = s.write("    mov x0, #" + i32_to_string(slot_bytes) + "\n");
-            s = s.write("    bl __lang_alloc\n");
+            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             // x0 now holds the struct pointer.
             var nameLit: StringLitOut = add_string_lit(s, sl.type_name);
@@ -3563,7 +3563,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
             // `len(s)` resolving to the string-len helper, or
-            // `a + b` routing through `__lang_str_concat`)
+            // `a + b` routing through `__fern_str_concat`)
             // sees the right thing — without this the captured
             // local lands here as `"unknown"` and falls through
             // to the i32 path.
@@ -3649,7 +3649,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Allocate box: (1 + n_caps) * 8 bytes.
             var box_bytes: i32 = (1 + n_caps) * 8;
             s = s.write("    mov x0, #" + i32_to_string(box_bytes) + "\n");
-            s = s.write("    bl __lang_alloc\n");
+            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             // Store fn_addr at box[0].
             s = s.write("    adrp x1, " + body_lbl + "\n");
@@ -4152,12 +4152,12 @@ pub function emit_module(mod: parser.Module): string {
     // Save argc + argv from initial stack BEFORE the frame push.
     if (s.needs_args) {
         s = s.write("    ldr x0, [sp]\n");
-        s = s.write("    adrp x1, __lang_argc\n");
-        s = s.write("    add x1, x1, :lo12:__lang_argc\n");
+        s = s.write("    adrp x1, __fern_argc\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argc\n");
         s = s.write("    str x0, [x1]\n");
         s = s.write("    add x0, sp, #8\n");
-        s = s.write("    adrp x1, __lang_argv\n");
-        s = s.write("    add x1, x1, :lo12:__lang_argv\n");
+        s = s.write("    adrp x1, __fern_argv\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
         s = s.write("    str x0, [x1]\n");
     }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -4183,10 +4183,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x8, #93\n");
         s = s.write("    svc #0\n");
     }
-    // __lang_print_int helper: converts the i64 in x0 to
+    // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
     if (s.needs_print_int) {
-        s = s.write("__lang_print_int:\n");
+        s = s.write("__fern_print_int:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    sub sp, sp, #32\n");
@@ -4234,11 +4234,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_read_int helper: reads up to 16 bytes from stdin
+    // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.
     if (s.needs_read_int) {
-        s = s.write("__lang_read_int:\n");
+        s = s.write("__fern_read_int:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    sub sp, sp, #32\n");
@@ -4283,9 +4283,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_print_str: x0 = box ptr. write(1, box.data, box.len).
+    // __fern_print_str: x0 = box ptr. write(1, box.data, box.len).
     if (s.needs_str_print) {
-        s = s.write("__lang_print_str:\n");
+        s = s.write("__fern_print_str:\n");
         s = s.write("    ldr x1, [x0]\n");      // data ptr
         s = s.write("    ldr x2, [x0, #8]\n");  // len
         s = s.write("    mov x0, #1\n");        // fd
@@ -4293,9 +4293,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    svc #0\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_concat: x0 = box A, x1 = box B → x0 = new box.
+    // __fern_str_concat: x0 = box A, x1 = box B → x0 = new box.
     if (s.needs_str_concat) {
-        s = s.write("__lang_str_concat:\n");
+        s = s.write("__fern_str_concat:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4307,7 +4307,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldr x22, [x20, #8]\n");    // lenB
         // alloc lenA + lenB bytes.
         s = s.write("    add x0, x21, x22\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x23, x0\n");           // data ptr
         // Copy A bytes.
         s = s.write("    ldr x1, [x19]\n");
@@ -4332,7 +4332,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lstrconcat_box:\n");
         // Allocate 16-byte box.
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x23, [x0]\n");
         s = s.write("    add x1, x21, x22\n");
         s = s.write("    str x1, [x0, #8]\n");
@@ -4342,9 +4342,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_eq: x0 = box A, x1 = box B → x0 = 1 / 0.
+    // __fern_str_eq: x0 = box A, x1 = box B → x0 = 1 / 0.
     if (s.needs_str_eq) {
-        s = s.write("__lang_str_eq:\n");
+        s = s.write("__fern_str_eq:\n");
         s = s.write("    ldr x2, [x0, #8]\n");
         s = s.write("    ldr x3, [x1, #8]\n");
         s = s.write("    cmp x2, x3\n");
@@ -4366,10 +4366,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_cmp: x0 = box A, x1 = box B → x0 = signed
+    // __fern_str_cmp: x0 = box A, x1 = box B → x0 = signed
     // lexicographic compare (<0 / 0 / >0).
     if (s.needs_str_cmp) {
-        s = s.write("__lang_str_cmp:\n");
+        s = s.write("__fern_str_cmp:\n");
         s = s.write("    ldr x2, [x0, #8]\n");   // lenA
         s = s.write("    ldr x3, [x1, #8]\n");   // lenB
         // min(lenA, lenB) → x4
@@ -4396,18 +4396,18 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    sxtw x0, w0\n");
         s = s.write("    ret\n");
     }
-    // __lang_read_line: no args. Reads up to 256 bytes from
+    // __fern_read_line: no args. Reads up to 256 bytes from
     // stdin, scans for '\n', returns a 16-byte box ptr. Linux
     // syscall sys_read (#63 on aarch64).
     if (s.needs_str_read_line) {
-        s = s.write("__lang_read_line:\n");
+        s = s.write("__fern_read_line:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    str x21, [sp, #-16]!\n");
         // Allocate 256-byte buffer.
         s = s.write("    mov x0, #256\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x19, x0\n");      // buf ptr
         // syscall sys_read(0, buf, 256).
         s = s.write("    mov x0, #0\n");       // fd 0
@@ -4435,7 +4435,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lrl_box:\n");
         // Allocate 16-byte box.
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x21, [x0, #8]\n");
         s = s.write("    ldr x21, [sp], #16\n");
@@ -4443,12 +4443,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_i32_to_string: x0 = i32 → x0 = string box ptr.
+    // __fern_i32_to_string: x0 = i32 → x0 = string box ptr.
     // Convert decimal digits MSB-first into a 32-byte scratch
     // buffer, then allocate a 16-byte box pointing at the
     // first char.
     if (s.needs_i32_to_string) {
-        s = s.write("__lang_i32_to_string:\n");
+        s = s.write("__fern_i32_to_string:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4456,7 +4456,7 @@ pub function emit_module(mod: parser.Module): string {
         // Save value, allocate 32-byte buf.
         s = s.write("    mov x19, x0\n");           // value
         s = s.write("    mov x0, #32\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x20, x0\n");           // buf ptr
         s = s.write("    mov x0, x19\n");
         s = s.write("    mov x21, #0\n");           // neg flag
@@ -4495,7 +4495,7 @@ pub function emit_module(mod: parser.Module): string {
         // Allocate 16-byte box.
         s = s.write("    mov x19, x1\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x22, [x0, #8]\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -4503,11 +4503,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_to_i32: x0 = string box → x0 = parsed i32.
+    // __fern_str_to_i32: x0 = string box → x0 = parsed i32.
     // Optional leading '-', decimal digits, stops at first
     // non-digit (incl. newline). Empty box → 0.
     if (s.needs_str_to_i32) {
-        s = s.write("__lang_str_to_i32:\n");
+        s = s.write("__fern_str_to_i32:\n");
         s = s.write("    ldr x1, [x0]\n");           // data ptr
         s = s.write("    ldr x2, [x0, #8]\n");       // len
         s = s.write("    add x3, x1, x2\n");         // end ptr
@@ -4540,9 +4540,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Ls2i_no_neg:\n");
         s = s.write("    ret\n");
     }
-    // __lang_eprint_str: x0 = string box. write(2, data, len).
+    // __fern_eprint_str: x0 = string box. write(2, data, len).
     if (s.needs_eprint) {
-        s = s.write("__lang_eprint_str:\n");
+        s = s.write("__fern_eprint_str:\n");
         s = s.write("    ldr x1, [x0]\n");
         s = s.write("    ldr x2, [x0, #8]\n");
         s = s.write("    mov x0, #2\n");
@@ -4552,7 +4552,7 @@ pub function emit_module(mod: parser.Module): string {
     }
     // String search helpers. See asm.fern.
     if (s.needs_str_search) {
-        s = s.write("__lang_str_starts_with:\n");
+        s = s.write("__fern_str_starts_with:\n");
         s = s.write("    ldr x2, [x1, #8]\n");        // lenP
         s = s.write("    ldr x3, [x0, #8]\n");        // lenS
         s = s.write("    cmp x3, x2\n");
@@ -4573,7 +4573,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lsw_no:\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_str_ends_with:\n");
+        s = s.write("__fern_str_ends_with:\n");
         s = s.write("    ldr x2, [x1, #8]\n");        // lenP
         s = s.write("    ldr x3, [x0, #8]\n");        // lenS
         s = s.write("    cmp x3, x2\n");
@@ -4596,7 +4596,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lew_no:\n");
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_str_index_of:\n");
+        s = s.write("__fern_str_index_of:\n");
         s = s.write("    ldr x2, [x0, #8]\n");        // lenS
         s = s.write("    ldr x3, [x1, #8]\n");        // lenN
         s = s.write("    cbz x3, .Lidx_zero\n");
@@ -4634,9 +4634,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lidx_no:\n");
         s = s.write("    mov x0, #-1\n");
         s = s.write("    ret\n");
-        // __lang_str_trim: x0 = string box. Strip leading and
+        // __fern_str_trim: x0 = string box. Strip leading and
         // trailing ASCII whitespace. See asm.fern.
-        s = s.write("__lang_str_trim:\n");
+        s = s.write("__fern_str_trim:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4677,15 +4677,15 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Ltrim_back\n");
         s = s.write(".Ltrim_box:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __lang_str_to_upper / __lang_str_to_lower: ASCII
+        // __fern_str_to_upper / __fern_str_to_lower: ASCII
         // case conversion. See asm.fern for the layout.
-        s = s.write("__lang_str_to_upper:\n");
+        s = s.write("__fern_str_to_upper:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4697,7 +4697,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Lupper_alloc\n");
         s = s.write("    mov x0, #1\n");
         s = s.write(".Lupper_alloc:\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");            // dst
         s = s.write("    mov x1, x19\n");
         s = s.write("    mov x2, x21\n");
@@ -4718,14 +4718,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Lupper_loop\n");
         s = s.write(".Lupper_box:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x21, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_str_to_lower:\n");
+        s = s.write("__fern_str_to_lower:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4737,7 +4737,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Llower_alloc\n");
         s = s.write("    mov x0, #1\n");
         s = s.write(".Llower_alloc:\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");
         s = s.write("    mov x1, x19\n");
         s = s.write("    mov x2, x21\n");
@@ -4758,16 +4758,16 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Llower_loop\n");
         s = s.write(".Llower_box:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x21, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __lang_str_repeat: x0 = string box, x1 = n. See
+        // __fern_str_repeat: x0 = string box, x1 = n. See
         // asm.fern for rationale.
-        s = s.write("__lang_str_repeat:\n");
+        s = s.write("__fern_str_repeat:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4787,7 +4787,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Lrep_alloc\n");
         s = s.write("    mov x0, #1\n");
         s = s.write(".Lrep_alloc:\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x23, x0\n");            // dst buf
         s = s.write("    mov x2, x0\n");             // dst cursor
         s = s.write("    cbz x21, .Lrep_box\n");
@@ -4805,7 +4805,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Lrep_outer\n");
         s = s.write(".Lrep_box:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x23, [x0]\n");
         s = s.write("    str x22, [x0, #8]\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
@@ -4813,11 +4813,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __lang_str_replace: x0 = haystack box, x1 = old box,
+        // __fern_str_replace: x0 = haystack box, x1 = old box,
         // x2 = new box. Mirror of asm.fern's two-pass logic.
         // x19/x20/x21 hold the three box ptrs; x22 = count;
         // x23 = total_len; x24 = dst buf.
-        s = s.write("__lang_str_replace:\n");
+        s = s.write("__fern_str_replace:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -4871,7 +4871,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ne .Lrepl_alloc\n");
         s = s.write("    mov x0, #1\n");
         s = s.write(".Lrepl_alloc:\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x24, x0\n");            // dst buf
         // Second pass.
         s = s.write("    ldr x4, [x19]\n");
@@ -4925,7 +4925,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Lrepl_tail\n");
         s = s.write(".Lrepl_box:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x24, [x0]\n");
         s = s.write("    str x23, [x0, #8]\n");
         s = s.write("    b .Lrepl_exit\n");
@@ -4937,28 +4937,28 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __lang_chr: x0 = i32 byte value → 1-char string box.
-        s = s.write("__lang_chr:\n");
+        // __fern_chr: x0 = i32 byte value → 1-char string box.
+        s = s.write("__fern_chr:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");            // save value
         s = s.write("    mov x0, #1\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x20, x0\n");            // buf ptr
         s = s.write("    strb w19, [x20]\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x20, [x0]\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x0, #8]\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        // __lang_str_split: x0 = haystack box, x1 = sep box.
+        // __fern_str_split: x0 = haystack box, x1 = sep box.
         // Returns string[] of segments. Empty sep → [haystack].
         //
-        // Callee-saved regs (preserved across __lang_alloc):
+        // Callee-saved regs (preserved across __fern_alloc):
         //   x19 = haystack box ptr
         //   x20 = sep box ptr
         //   x21 = count
@@ -4971,7 +4971,7 @@ pub function emit_module(mod: parser.Module): string {
         //   x4 = haystack data, x5 = haystack len
         //   x6 = sep data, x7 = sep len
         //   x9-x12 = inner loop scratch
-        s = s.write("__lang_str_split:\n");
+        s = s.write("__fern_str_split:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5018,7 +5018,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    add x0, x21, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    add x0, x0, #8\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x22, x0\n");
         s = s.write("    add x1, x21, #1\n");
         s = s.write("    str x1, [x22]\n");
@@ -5049,7 +5049,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lsplit_segend:\n");
         // Emit segment [seg_start, i).
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    ldr x1, [x19]\n");
         s = s.write("    add x1, x1, x24\n");
         s = s.write("    str x1, [x0]\n");
@@ -5073,7 +5073,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Lsplit_walk\n");
         s = s.write(".Lsplit_tail:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    ldr x1, [x19]\n");
         s = s.write("    add x1, x1, x24\n");
         s = s.write("    str x1, [x0]\n");
@@ -5086,12 +5086,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Lsplit_exit\n");
         s = s.write(".Lsplit_single:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x22, x0\n");
         s = s.write("    mov x1, #1\n");
         s = s.write("    str x1, [x22]\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    ldr x1, [x19]\n");
         s = s.write("    str x1, [x0]\n");
         s = s.write("    ldr x1, [x19, #8]\n");
@@ -5126,21 +5126,21 @@ pub function emit_module(mod: parser.Module): string {
     if (s.needs_heap) {
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
-        s = s.write("__lang_heap_ptr: .quad 0\n");
+        s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 3\n");
-        s = s.write("__lang_heap: .skip 1048576\n");
+        s = s.write("__fern_heap: .skip 1048576\n");
         s = s.write("    .text\n");
-        s = s.write(".globl __lang_alloc\n");
-        s = s.write(".type __lang_alloc, %function\n");
-        s = s.write("__lang_alloc:\n");
+        s = s.write(".globl __fern_alloc\n");
+        s = s.write(".type __fern_alloc, %function\n");
+        s = s.write("__fern_alloc:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    adrp x1, __lang_heap_ptr\n");
-        s = s.write("    add x1, x1, :lo12:__lang_heap_ptr\n");
+        s = s.write("    adrp x1, __fern_heap_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write("    ldr x2, [x1]\n");
         s = s.write("    cbnz x2, .Lalloc_inited\n");
-        s = s.write("    adrp x2, __lang_heap\n");
-        s = s.write("    add x2, x2, :lo12:__lang_heap\n");
+        s = s.write("    adrp x2, __fern_heap\n");
+        s = s.write("    add x2, x2, :lo12:__fern_heap\n");
         s = s.write("    str x2, [x1]\n");
         s = s.write(".Lalloc_inited:\n");
         s = s.write("    ldr x2, [x1]\n");
@@ -5149,22 +5149,22 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x2\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
-        s = s.write(".size __lang_alloc, .-__lang_alloc\n");
+        s = s.write(".size __fern_alloc, .-__fern_alloc\n");
     }
     // Command-line args. Mirror of asm.fern.
     if (s.needs_args) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_argc: .quad 0\n");
+        s = s.write("__fern_argc: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_argv: .quad 0\n");
+        s = s.write("__fern_argv: .quad 0\n");
         s = s.write("    .section .text\n");
-        s = s.write("__lang_arg_at:\n");
+        s = s.write("__fern_arg_at:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    adrp x1, __lang_argv\n");
-        s = s.write("    add x1, x1, :lo12:__lang_argv\n");
+        s = s.write("    adrp x1, __fern_argv\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
         s = s.write("    ldr x1, [x1]\n");
         s = s.write("    ldr x19, [x1, x0, lsl #3]\n");   // argv[i]
         s = s.write("    mov x2, x19\n");
@@ -5177,19 +5177,19 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b .Larg_strlen\n");
         s = s.write(".Larg_done:\n");
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x19, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_push: append an 8-byte payload to an array.
+    // __fern_arr_push: append an 8-byte payload to an array.
     // x0 = source array ptr ([len: 8, e0: 8, e1: 8, …]),
     // x1 = value to append (i32 or string-box ptr).
     // Returns a fresh array — never mutates the input.
     if (s.needs_arr_push) {
-        s = s.write("__lang_arr_push:\n");
+        s = s.write("__fern_arr_push:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5200,7 +5200,7 @@ pub function emit_module(mod: parser.Module): string {
         // alloc bytes = (old_len + 2) * 8
         s = s.write("    add x0, x21, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x22, x0\n");           // dst arr ptr
         // new length = old + 1, stored at offset 0
         s = s.write("    add x1, x21, #1\n");
@@ -5225,13 +5225,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_slice: return a fresh array containing
+    // __fern_arr_slice: return a fresh array containing
     // arr[start..end] (end exclusive). x0 = src arr ptr,
     // x1 = start, x2 = end. Source array layout matches the
     // ExprArray emit: [len: 8, e0: 8, …]. Each element is an
     // 8-byte payload — i32 zero-extended or string-box ptr.
     if (s.needs_arr_slice) {
-        s = s.write("__lang_arr_slice:\n");
+        s = s.write("__fern_arr_slice:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5243,7 +5243,7 @@ pub function emit_module(mod: parser.Module): string {
         // alloc (new_len + 1) * 8 bytes
         s = s.write("    add x0, x22, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         // x0 = dst arr; write new len at offset 0
         s = s.write("    str x22, [x0]\n");
         // copy elements: i from 0 to new_len, dst[i+1] = src[start + i + 1]
@@ -5264,11 +5264,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_concat: x0 = arr A, x1 = arr B. Returns a fresh
+    // __fern_arr_concat: x0 = arr A, x1 = arr B. Returns a fresh
     // array containing A's elements followed by B's. Works on
     // any 8-byte-payload array.
     if (s.needs_arr_concat) {
-        s = s.write("__lang_arr_concat:\n");
+        s = s.write("__fern_arr_concat:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5281,7 +5281,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    add x0, x21, x22\n");
         s = s.write("    add x0, x0, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         // write new len = a_len + b_len at offset 0
         s = s.write("    add x1, x21, x22\n");
         s = s.write("    str x1, [x0]\n");
@@ -5313,11 +5313,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_reverse: x0 = src arr ptr. Returns a fresh
+    // __fern_arr_reverse: x0 = src arr ptr. Returns a fresh
     // array with elements in opposite order. Works on any
     // 8-byte-payload array (i32[] or string[]).
     if (s.needs_arr_reverse) {
-        s = s.write("__lang_arr_reverse:\n");
+        s = s.write("__fern_arr_reverse:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5326,7 +5326,7 @@ pub function emit_module(mod: parser.Module): string {
         // alloc (len + 1) * 8 bytes
         s = s.write("    add x0, x20, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x20, [x0]\n");
         // for i in 0..len: dst[i+1] = src[len - i]
         s = s.write("    mov x1, #0\n");            // i
@@ -5344,13 +5344,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_str_join: x0 = string-array ptr,
+    // __fern_arr_str_join: x0 = string-array ptr,
     // x1 = sep string-box ptr. Returns x0 = result string box
     // = arr[0] + sep + arr[1] + sep + … + arr[n-1]. Empty
-    // array → empty string box. Uses repeated __lang_str_concat
+    // array → empty string box. Uses repeated __fern_str_concat
     // — O(n * total_len) but small + correct.
     if (s.needs_arr_str_join) {
-        s = s.write("__lang_arr_str_join:\n");
+        s = s.write("__fern_arr_str_join:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5370,20 +5370,20 @@ pub function emit_module(mod: parser.Module): string {
         // result = result + sep
         s = s.write("    mov x0, x22\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __lang_str_concat\n");
+        s = s.write("    bl __fern_str_concat\n");
         s = s.write("    mov x22, x0\n");
         // result = result + arr[i]
         s = s.write("    add x24, x23, #1\n");
         s = s.write("    ldr x1, [x19, x24, lsl #3]\n");
         s = s.write("    mov x0, x22\n");
-        s = s.write("    bl __lang_str_concat\n");
+        s = s.write("    bl __fern_str_concat\n");
         s = s.write("    mov x22, x0\n");
         s = s.write("    add x23, x23, #1\n");
         s = s.write("    b .Lasj_loop\n");
         s = s.write(".Lasj_empty:\n");
         // Return empty string box [data=0, len=0]
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str xzr, [x0]\n");
         s = s.write("    str xzr, [x0, #8]\n");
         s = s.write("    b .Lasj_exit\n");
@@ -5396,12 +5396,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_min: x0 = i32-array ptr (len >= 1).
+    // __fern_arr_i32_min: x0 = i32-array ptr (len >= 1).
     // Returns x0 = smallest element.
-    // __lang_arr_i32_max: same but largest. Both are leaf
+    // __fern_arr_i32_max: same but largest. Both are leaf
     // helpers — no frame. UB if arr is empty.
     if (s.needs_arr_i32_min_max) {
-        s = s.write("__lang_arr_i32_min:\n");
+        s = s.write("__fern_arr_i32_min:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    ldr x2, [x0, #8]\n");      // best = arr[0]
         s = s.write("    mov x3, #1\n");            // i
@@ -5417,7 +5417,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lai32_min_done:\n");
         s = s.write("    mov x0, x2\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_arr_i32_max:\n");
+        s = s.write("__fern_arr_i32_max:\n");
         s = s.write("    ldr x1, [x0]\n");
         s = s.write("    ldr x2, [x0, #8]\n");
         s = s.write("    mov x3, #1\n");
@@ -5434,12 +5434,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x2\n");
         s = s.write("    ret\n");
     }
-    // __lang_i32_pow: x0 = base, x1 = exp. Returns
+    // __fern_i32_pow: x0 = base, x1 = exp. Returns
     // x0 = base^exp. Negative exp returns 1 (UB-ish, but
     // matches the language's no-runtime-check stance —
     // integer pow with negative exp is undefined for i32).
     if (s.needs_i32_pow) {
-        s = s.write("__lang_i32_pow:\n");
+        s = s.write("__fern_i32_pow:\n");
         s = s.write("    mov x2, #1\n");          // result
         s = s.write(".Lpow_loop:\n");
         s = s.write("    cmp x1, #0\n");
@@ -5451,10 +5451,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x2\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_reverse: x0 = src box. Returns x0 = new
+    // __fern_str_reverse: x0 = src box. Returns x0 = new
     // string box with bytes in reverse order.
     if (s.needs_str_reverse) {
-        s = s.write("__lang_str_reverse:\n");
+        s = s.write("__fern_str_reverse:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5463,7 +5463,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldr x20, [x0, #8]\n");     // src len
         // Alloc len bytes for new data buffer.
         s = s.write("    mov x0, x20\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");           // dst data
         // Reverse copy.
         s = s.write("    mov x3, #0\n");            // i
@@ -5479,7 +5479,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lstr_rev_done:\n");
         // Alloc box.
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    str x21, [x0]\n");
         s = s.write("    str x20, [x0, #8]\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -5487,11 +5487,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_bytes: x0 = source string box. Returns
+    // __fern_str_bytes: x0 = source string box. Returns
     // x0 = i32[] of byte values (each zero-extended to 8
     // bytes in the array's uniform 8-byte slot).
     if (s.needs_str_bytes) {
-        s = s.write("__lang_str_bytes:\n");
+        s = s.write("__fern_str_bytes:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5501,7 +5501,7 @@ pub function emit_module(mod: parser.Module): string {
         // alloc (len + 1) * 8
         s = s.write("    add x0, x20, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");           // arr
         s = s.write("    str x20, [x21]\n");        // arr.len
         s = s.write("    mov x22, #0\n");           // i
@@ -5521,12 +5521,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_chars: x0 = source string box. Returns
+    // __fern_str_chars: x0 = source string box. Returns
     // x0 = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset
     // (no per-char byte alloc) and length 1.
     if (s.needs_str_chars) {
-        s = s.write("__lang_str_chars:\n");
+        s = s.write("__fern_str_chars:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5538,7 +5538,7 @@ pub function emit_module(mod: parser.Module): string {
         // alloc array (len + 1) * 8 bytes
         s = s.write("    add x0, x21, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x22, x0\n");           // arr
         s = s.write("    str x21, [x22]\n");        // arr.len
         s = s.write("    mov x23, #0\n");           // i
@@ -5547,7 +5547,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    b.ge .Lchars_done\n");
         // alloc 16-byte box for char i
         s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __lang_alloc\n");
+        s = s.write("    bl __fern_alloc\n");
         // box[0] = src_data + i
         s = s.write("    add x1, x20, x23\n");
         s = s.write("    str x1, [x0]\n");
@@ -5567,11 +5567,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_product: x0 = i32-array ptr. Returns
+    // __fern_arr_i32_product: x0 = i32-array ptr. Returns
     // x0 = product of all elements (1 if empty — matches the
     // empty-product mathematical identity). Leaf — no frame.
     if (s.needs_arr_i32_product) {
-        s = s.write("__lang_arr_i32_product:\n");
+        s = s.write("__fern_arr_i32_product:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    mov x2, #1\n");            // product
         s = s.write("    mov x3, #0\n");            // i
@@ -5587,10 +5587,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x2\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_sum: x0 = i32-array ptr. Returns x0 =
+    // __fern_arr_i32_sum: x0 = i32-array ptr. Returns x0 =
     // sum of all elements (0 if empty). Leaf — no frame needed.
     if (s.needs_arr_i32_sum) {
-        s = s.write("__lang_arr_i32_sum:\n");
+        s = s.write("__fern_arr_i32_sum:\n");
         s = s.write("    ldr x1, [x0]\n");          // len
         s = s.write("    mov x2, #0\n");            // sum
         s = s.write("    mov x3, #0\n");            // i
@@ -5606,13 +5606,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, x2\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_str_index_of: x0 = string-array ptr,
+    // __fern_arr_str_index_of: x0 = string-array ptr,
     // x1 = target string-box ptr. Returns x0 = first index
-    // where __lang_str_eq(arr[i], target) is true, or -1 if
+    // where __fern_str_eq(arr[i], target) is true, or -1 if
     // none. Uses content equality so two strings with the
     // same bytes but different .rodata slots still match.
     if (s.needs_arr_str_index_of) {
-        s = s.write("__lang_arr_str_index_of:\n");
+        s = s.write("__fern_arr_str_index_of:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
@@ -5627,7 +5627,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    add x0, x22, #1\n");
         s = s.write("    ldr x0, [x19, x0, lsl #3]\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __lang_str_eq\n");
+        s = s.write("    bl __fern_str_eq\n");
         s = s.write("    cbnz x0, .Las_idx_found\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Las_idx_loop\n");
@@ -5644,10 +5644,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_index_of: x0 = i32-array ptr, x1 = target val.
+    // __fern_arr_i32_index_of: x0 = i32-array ptr, x1 = target val.
     // Returns x0 = first index where arr[i] == val, or -1 if none.
     if (s.needs_arr_i32_index_of) {
-        s = s.write("__lang_arr_i32_index_of:\n");
+        s = s.write("__fern_arr_i32_index_of:\n");
         s = s.write("    ldr x2, [x0]\n");          // len
         s = s.write("    mov x3, #0\n");            // i
         s = s.write(".Lai32_idx_loop:\n");
@@ -5808,17 +5808,17 @@ function main(): i32 {
     if (!contains(a22, ".S0: .ascii")) { return 224; }
     if (!contains(a22, "hi")) { return 225; }
 
-    // print_int(N) emits a call to __lang_print_int + the
+    // print_int(N) emits a call to __fern_print_int + the
     // helper appended once at end of .text.
     var a23: string = emit_source("print_int(42); return 0;");
-    if (!contains(a23, "bl __lang_print_int")) { return 230; }
-    if (!contains(a23, "__lang_print_int:")) { return 231; }
+    if (!contains(a23, "bl __fern_print_int")) { return 230; }
+    if (!contains(a23, "__fern_print_int:")) { return 231; }
     if (!contains(a23, ".Lpi_div:")) { return 232; }
 
-    // read_int() emits a call to __lang_read_int + the helper.
+    // read_int() emits a call to __fern_read_int + the helper.
     var a24: string = emit_source("return read_int();");
-    if (!contains(a24, "bl __lang_read_int")) { return 240; }
-    if (!contains(a24, "__lang_read_int:")) { return 241; }
+    if (!contains(a24, "bl __fern_read_int")) { return 240; }
+    if (!contains(a24, "__fern_read_int:")) { return 241; }
     if (!contains(a24, ".Lri_loop:")) { return 242; }
 
     return 0;

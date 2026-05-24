@@ -28,7 +28,7 @@ import (
 //	1: $len  (param)
 //	2: $hdr  heap-allocated slice header
 func buildSliceMakeBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, alloc)
@@ -117,17 +117,17 @@ func buildSliceIdxBody(stride int32) func(map[string]uint32) []byte {
 //	              strings, freshly-allocated copy for inline)
 //	5: $i         per-byte copy loop counter
 func buildStringAsBytesBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	strLen := idxs["__lang_str_len"]
-	strByte := idxs["__lang_str_byte"]
+	alloc := idxs["__fern_alloc"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
 	var body []byte
-	// byteLen = __lang_str_len(s_data, s_len)
+	// byteLen = __fern_str_len(s_data, s_len)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, 3)
 	// If inline (high bit of $s_len set), promote: alloc(byteLen)
-	// + copy via __lang_str_byte. Otherwise reuse s_data directly.
+	// + copy via __fern_str_byte. Otherwise reuse s_data directly.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = numeric.InstI32And(body)
@@ -137,7 +137,7 @@ func buildStringAsBytesBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 3)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, 4)
-		// for i in 0..byteLen: mem[$dataPtr + i] = __lang_str_byte($s_data, $s_len, i)
+		// for i in 0..byteLen: mem[$dataPtr + i] = __fern_str_byte($s_data, $s_len, i)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 5)
 		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -205,7 +205,7 @@ func buildStderrBody(idxs map[string]uint32) []byte {
 }
 
 func buildFixedFdWriterBody(idxs map[string]uint32, fd int32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
 	body = inst.InstI32Const(body, 4)
 	body = inst.InstCall(body, alloc)

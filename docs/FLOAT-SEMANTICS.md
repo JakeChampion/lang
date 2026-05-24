@@ -114,8 +114,8 @@ not yet through the differential oracle.
 
 ## Generator + oracle implications
 
-`internal/langsmith` has two generation profiles (see
-`Profile` in `langsmith.go`):
+`internal/fernsmith` has two generation profiles (see
+`Profile` in `fernsmith.go`):
 
 - `ProfileFree` — free-form generation; f32 is in the type pool.
   Used by the parser-roundtrip fuzzer and the deterministic

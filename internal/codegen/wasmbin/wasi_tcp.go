@@ -32,7 +32,7 @@
 //	blocking-write-
 //	  and-flush       → 4 bytes  (1 disc; payload is unit on both arms)
 //
-// Each helper allocates a fresh retptr via __lang_alloc. The
+// Each helper allocates a fresh retptr via __fern_alloc. The
 // bump allocator can't free, so the buffers leak — bounded by
 // the per-process call count, and acceptable for the edge-handler
 // workload the language targets.
@@ -125,7 +125,7 @@ func emitErrnoNegReturn(body []byte, retptrLocal uint32) []byte {
 	return body
 }
 
-// buildTcpListenBody assembles __lang_tcp_listen.
+// buildTcpListenBody assembles __fern_tcp_listen.
 //
 // Signature: (port: i32) → i32 — heap pointer to a 12-byte
 // listener struct on success, or -errno (negative int) on
@@ -153,7 +153,7 @@ func emitErrnoNegReturn(body []byte, retptrLocal uint32) []byte {
 //	                 for symmetry with the rest of the file.)
 //	3: $struct     — heap-allocated 12-byte listener struct
 func buildTcpListenBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	netHandle := idxs["__network_handle"]
 	createSock := idxs["wasi_sockets_create_tcp_socket"]
 	startBind := idxs["wasi_sockets_tcp_start_bind"]
@@ -266,7 +266,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildTcpAcceptBody assembles __lang_tcp_accept.
+// buildTcpAcceptBody assembles __fern_tcp_accept.
 //
 // Signature: (listener: i32) → i32 — heap pointer to a fresh
 // 12-byte connection struct on success, -errno on failure.
@@ -290,7 +290,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 //	6: $outstream — output-stream handle (Ok payload slot 2)
 //	7: $struct    — 12-byte connection struct
 func buildTcpAcceptBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	subscribe := idxs["wasi_sockets_tcp_subscribe"]
 	pollBlock := idxs["wasi_io_pollable_block"]
 	pollDrop := idxs["wasi_io_pollable_drop"]
@@ -365,7 +365,7 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildTcpRecvBody assembles __lang_tcp_recv.
+// buildTcpRecvBody assembles __fern_tcp_recv.
 //
 // Signature: (conn: i32, max: i32) → (data: i32, len: i32) — a
 // two-word heap-form string. On stream-error or EOF returns the
@@ -384,7 +384,7 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 //	5: $n        — list<u8> length (Ok payload slot 1)
 //	6: $strbuf   — fresh heap buffer holding the read bytes
 func buildTcpRecvBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
 	var body []byte
@@ -448,7 +448,7 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildTcpSendBody assembles __lang_tcp_send.
+// buildTcpSendBody assembles __fern_tcp_send.
 //
 // Signature: (conn: i32, data_data: i32, data_len: i32) → i32 —
 // the byte count on success, -1 on stream-error. The preview-1
@@ -477,7 +477,7 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 //	8: $off       — bytes-written-so-far cursor
 //	9: $chunk     — bytes to write this iteration (≤ 4096)
 func buildTcpSendBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	blockingWrite := idxs["wasi_io_blocking_write_and_flush"]
 
 	var body []byte
@@ -567,7 +567,7 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildTcpCloseBody assembles __lang_tcp_close.
+// buildTcpCloseBody assembles __fern_tcp_close.
 //
 // Signature: (conn: i32) → i32 — always 0. Resource drops are
 // infallible at the canonical-ABI layer, so the return value

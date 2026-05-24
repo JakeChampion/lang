@@ -1,6 +1,6 @@
-name: Setup lang toolchain
+name: Setup Fern toolchain
 description: >
-  Shared setup for the lang CI workflows. Sets up Go (no module
+  Shared setup for the Fern CI workflows. Sets up Go (no module
   cache — the repo has no external deps), caches the Go build
   cache so per-job `go test` / `go build` reuse compiled stdlib +
   per-package object files across runs, and, on demand, the
@@ -12,7 +12,7 @@ inputs:
   wasmtime:
     description: >
       Install wasmtime + wasm-tools + the WASI preview1 adapter and
-      wire LANG_WASI_ADAPTER. Set to 'true' for any workflow that
+      wire FERN_WASI_ADAPTER. Set to 'true' for any workflow that
       runs the wasm e2e suite.
     required: false
     default: "false"
@@ -96,7 +96,7 @@ runs:
       run: |
         echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
         echo "$HOME/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
-        echo "LANG_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
+        echo "FERN_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
     - name: Cache gotestsum binary
       if: inputs.gotestsum == 'true'

@@ -41,7 +41,7 @@ runtimes wrap `openat(2)` / `read(2)` / `write(2)` / `close(2)`
 `Option[IoError]` boxes to match the IR enum layout (16-byte
 heap obj with `tag:i32 @0` + pointer payload `@8` on native;
 24-byte for `Other(string, string)`; 8-byte for payload-less
-variants). Shared `__lang_io_error(errno, path)` runtime does
+variants). Shared `__fern_io_error(errno, path)` runtime does
 the errno → variant mapping (ENOENT → NotFound, EACCES →
 PermissionDenied, EEXIST → AlreadyExists, EINTR → Interrupted,
 default → Other(path, "")).
@@ -57,9 +57,9 @@ natives. Same handle layout (4-byte i32 `fd` at +0; the
 allocator rounds up to 16). `stdin()` / `stdout()` /
 `stderr()` now return real `Reader` / `Writer` struct
 pointers (fd = 0 / 1 / 2) so `stdin().read_line()` flows
-through the same `__lang_reader_read_line` runtime as
+through the same `__fern_reader_read_line` runtime as
 `open_reader("f").read_line()`. Shared
-`__lang_close_fd_box` backs both `Reader.close` and
+`__fern_close_fd_box` backs both `Reader.close` and
 `Writer.close`. Coverage: `TestArm64ReadLine` plus
 `Test{Arm64,X86_64}ReaderWriter` (open + append + read
 round-trip, `read_chunk` partial reads, line-by-line
@@ -91,8 +91,8 @@ Landed alongside the State[T] follow-up. Each native backend
 now has two bump-allocator cursors — an arena cursor (mode 0,
 the per-request region `arena_save` / `arena_restore`
 manipulate) and a persistent cursor (mode 1, never reclaimed).
-A 1-byte `__lang_alloc_mode` flag selects which region
-`__lang_alloc` bumps; `OpPersistentSet` / `OpPersistentRestore`
+A 1-byte `__fern_alloc_mode` flag selects which region
+`__fern_alloc` bumps; `OpPersistentSet` / `OpPersistentRestore`
 real-toggle the flag (no longer no-ops). The IR already wraps
 state-rooted method calls in `OpPersistentSet(1)` /
 `OpPersistentRestore`, so e.g. `Map.set`'s grow path inside
@@ -277,7 +277,7 @@ var buf: i32 = __load_ptr(m);   // truncates a 64-bit heap pointer
 On wasm32 this is correct (pointers are 32-bit). On native (Linux +
 Darwin) the runtime stores 8 bytes via `__store_ptr`, but the lang
 variable's `i32` declaration sheds the high 32 bits. Linux's
-`__lang_alloc` hints `0x10000000` so heap pointers happen to fit in
+`__fern_alloc` hints `0x10000000` so heap pointers happen to fit in
 32 bits; macOS ignores the hint and returns high addresses, exposing
 the truncation.
 
@@ -454,12 +454,12 @@ built short string allocates ≥ 16 bytes (alloc round-up).
 **Shipped (wasm, single-i32 form, 3-byte cap)**:
 PRs #351–#364 landed the single-i32 tiny SSO encoding (top-bit
 flag + 3-bit length + up-to-3 inline bytes, see
-`langstring.PackTinyWasm`) without widening the operand-stack
+`fernstring.PackTinyWasm`) without widening the operand-stack
 ABI. Producer flips on `$__str_concat` / `$__str_slice` /
 `$string_from_bytes` / `$__bytes_to_lang_string` / `$args` /
 `$__stream_read_line` / `Reader.read_chunk` / `$tcp_recv` /
 `OpConstStr` literals + HTTP wrapper method preinterns. Stream-
-write seam (`$__lang_str_data_ptr`) skips the promote-to-heap
+write seam (`$__fern_str_data_ptr`) skips the promote-to-heap
 alloc on inline-form values written to `$__streams_write`. See
 `docs/SSO-PLAN.md` for the full architecture + remaining-work
 list.
@@ -474,7 +474,7 @@ list.
     Pair with the `usize` work — `usize` is the slot type for
     the length field.
   - **Native backend mirror** — x86_64 + arm64 need their own
-    `$__lang_str_*` runtime-helper siblings + producer flips.
+    `$__fern_str_*` runtime-helper siblings + producer flips.
     Likely 8–10 PRs per backend, paralleling #351–#362.
   - **`Map[string, V]` hash optimisation** — the prelude's
     `__map_hash` does `s[i]` byte-by-byte; under SSO inline

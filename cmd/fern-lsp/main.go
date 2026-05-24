@@ -28,7 +28,7 @@ func main() {
 		// Write to stderr so we don't corrupt the LSP wire format
 		// on stdout. The editor will see a non-zero exit and most
 		// surface the stderr text in its language-server log.
-		fmt.Fprintln(os.Stderr, "lang-lsp:", err)
+		fmt.Fprintln(os.Stderr, "fern-lsp:", err)
 		os.Exit(2)
 	}
 	os.Exit(s.ExitCode())

@@ -1,21 +1,21 @@
-// Command lang compiles a single .fern source file.
+// Command fern compiles a single .fern source file.
 //
 // Usage:
 //
-//	lang FILE.fern                       # write arm64 Linux assembly to stdout
-//	lang -o OUTPUT FILE.fern             # link with the aarch64 cross-
+//	fern FILE.fern                       # write arm64 Linux assembly to stdout
+//	fern -o OUTPUT FILE.fern             # link with the aarch64 cross-
 //	                                     # compiler and write a static ELF
 //	                                     # binary
-//	lang --run FILE.fern [-- ARGS...]    # link to a temporary binary and
+//	fern --run FILE.fern [-- ARGS...]    # link to a temporary binary and
 //	                                     # execute it under qemu-aarch64
 //	                                     # (forwarding stdio)
-//	lang -fmt FILE.fern                  # write idiomatic, indented source
+//	fern -fmt FILE.fern                  # write idiomatic, indented source
 //	                                     # to stdout (use -w to overwrite
 //	                                     # the input file in place; use -d
 //	                                     # to print a unified diff against
 //	                                     # the on-disk version and exit
 //	                                     # non-zero when they differ)
-//	lang -check FILE.fern                # type-check the codebase rooted
+//	fern -check FILE.fern                # type-check the codebase rooted
 //	                                     # at FILE.fern (follows imports);
 //	                                     # silent on success, prints
 //	                                     # diagnostics + exits 1 on error.
@@ -122,12 +122,12 @@ func main() {
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lang [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
-		fmt.Fprintln(os.Stderr, "       lang -fmt [-w | -d] FILE.fern")
-		fmt.Fprintln(os.Stderr, "       lang -check FILE.fern | lang -check -      (type-check only; stdin form)")
-		fmt.Fprintln(os.Stderr, "       lang -repl")
-		fmt.Fprintln(os.Stderr, "       lang -interp FILE.fern | lang -interp -    (read from stdin)")
-		fmt.Fprintln(os.Stderr, "       lang -targets                                (list supported targets + capabilities)")
+		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
+		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
+		fmt.Fprintln(os.Stderr, "       fern -repl")
+		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       fern -targets                                (list supported targets + capabilities)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -171,7 +171,7 @@ func main() {
 			// Anything after the source path is forwarded to the
 			// program through `args()`. Mirrors the compile-and-
 			// run path's flag.Args()[1:] behaviour so test runners
-			// can do `lang -interp test.fern -- --filter foo`
+			// can do `fern -interp test.fern -- --filter foo`
 			// without going through env vars. Strip a literal `--`
 			// separator if present — Go's `flag` package doesn't
 			// consume it, but conventional `program -- args`
@@ -317,7 +317,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	ip := interp.New()
 	// argv[0] is conventionally the program path so `args()`
 	// matches the C / Go shape. Subsequent entries are the
-	// user's own arguments, passed after `--` on the lang
+	// user's own arguments, passed after `--` on the fern
 	// command line.
 	ip.Args = append([]string{srcPath}, argv...)
 	for _, ed := range prog.Enums {
@@ -398,7 +398,7 @@ func runCheck(srcPath string) error {
 }
 
 // run drives the full pipeline. The returned int is the exit code that
-// the lang process itself should exit with: 0 in compile-only mode, or
+// the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
 func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
@@ -464,7 +464,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		//   - no `-wasi-adapter`: write the raw core module to
 		//     outPath. Runnable via `wasmtime run --invoke <fn>`.
 		//   - `-wasi-adapter PATH`: wrap in a preview-2 component
-		//     matching the `lang` world, composing with the
+		//     matching the `fern` world, composing with the
 		//     adapter. Runnable via `wasmtime run` and deployable
 		//     to any preview-2 host.
 		if outPath == "" {
@@ -604,7 +604,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			}
 			return 0, nil
 		}
-		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "lang"); err != nil {
+		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "fern"); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -658,7 +658,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			ForceMemorySection: true,
 			SynthStart:         true,
 		}
-		world := "lang"
+		world := "fern"
 		if target == "wasi-http" {
 			opts.HttpHandler = true
 			opts.SynthStart = false // empty `_start` stub emitted by the HttpHandler branch
@@ -708,7 +708,7 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	binPath := outPath
 	var cleanupBin string
 	if binPath == "" {
-		f, err := os.CreateTemp("", "lang-bin-*")
+		f, err := os.CreateTemp("", "fern-bin-*")
 		if err != nil {
 			return 1, err
 		}
@@ -788,7 +788,7 @@ func linkDarwin(asm, outPath, cc string) error {
 	if _, err := exec.LookPath(cc); err != nil {
 		return fmt.Errorf("compiler %q not found on PATH (override with -cc): %w", cc, err)
 	}
-	tmpDir, err := os.MkdirTemp("", "lang-build-*")
+	tmpDir, err := os.MkdirTemp("", "fern-build-*")
 	if err != nil {
 		return err
 	}
@@ -849,7 +849,7 @@ func link(asm, outPath, cc string) error {
 	if _, err := exec.LookPath(cc); err != nil {
 		return fmt.Errorf("cross-compiler %q not found on PATH (override with -cc): %w", cc, err)
 	}
-	tmpDir, err := os.MkdirTemp("", "lang-build-*")
+	tmpDir, err := os.MkdirTemp("", "fern-build-*")
 	if err != nil {
 		return err
 	}
@@ -885,7 +885,7 @@ func emitPreview2ComponentFromCoreBytes(coreBytes []byte, outPath, adapterPath, 
 	if _, err := os.Stat(adapterPath); err != nil {
 		return fmt.Errorf("wasi-preview1-component-adapter not readable at %q: %w", adapterPath, err)
 	}
-	tmpDir, err := os.MkdirTemp("", "lang-component-*")
+	tmpDir, err := os.MkdirTemp("", "fern-component-*")
 	if err != nil {
 		return err
 	}
@@ -909,7 +909,7 @@ func emitPreview2ComponentFromCoreBytes(coreBytes []byte, outPath, adapterPath, 
 
 // execUnderQemu runs binPath through the supplied user-mode emulator
 // with stdio passed through. The first return is the program's exit
-// code (so the caller can mirror it as the lang process exit code).
+// code (so the caller can mirror it as the fern process exit code).
 func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 	if _, err := exec.LookPath(qemu); err != nil {
 		return 1, fmt.Errorf("emulator %q not found on PATH (override with -qemu): %w", qemu, err)

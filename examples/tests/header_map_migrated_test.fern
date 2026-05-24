@@ -5,7 +5,7 @@ import "std/headers";
 // `internal/e2e/interp_script_test.go`.
 //
 // The Go original was a 5-case table-driven test where
-// each subcase spawned a `lang -interp` subprocess, ran
+// each subcase spawned a `fern -interp` subprocess, ran
 // a different inline program, and grep-asserted exit
 // code + stdout. The migrated form folds all 5 cases
 // into one Lang file: each `r.it(...)` exercises the

@@ -17,7 +17,7 @@ import (
 func buildLangBinForCheck(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -25,7 +25,7 @@ func buildLangBinForCheck(t *testing.T) string {
 	return bin
 }
 
-// `lang -check FILE.fern` — happy path. A well-typed program
+// `fern -check FILE.fern` — happy path. A well-typed program
 // produces no output and exits 0. Mirrors `tsc --noEmit` /
 // `go vet` semantics: silent success is the success signal.
 func TestCheckCleanProgram(t *testing.T) {
@@ -57,7 +57,7 @@ function main(): i32 {
 	}
 }
 
-// `lang -check FILE.fern` against a program with a type error.
+// `fern -check FILE.fern` against a program with a type error.
 // Exit code is 1, stderr carries a formatted diagnostic that
 // mentions the source file and the offending construct.
 func TestCheckTypeError(t *testing.T) {
@@ -87,7 +87,7 @@ func TestCheckTypeError(t *testing.T) {
 	}
 }
 
-// `lang -check` succeeds on a library file with no `main`.
+// `fern -check` succeeds on a library file with no `main`.
 // `-interp` requires a `main` (there's nothing to run), but
 // type-checking should work on library packages — that's the
 // whole point of having a check-only mode.
@@ -111,8 +111,8 @@ func TestCheckLibraryNoMain(t *testing.T) {
 	}
 }
 
-// `lang -check -` — read a program from stdin, type-check it.
-// Same shape as `lang -interp -`. No import resolution (modload
+// `fern -check -` — read a program from stdin, type-check it.
+// Same shape as `fern -interp -`. No import resolution (modload
 // reads from disk), but single-file programs check cleanly.
 func TestCheckStdin(t *testing.T) {
 	bin := buildLangBinForCheck(t)
@@ -127,7 +127,7 @@ func TestCheckStdin(t *testing.T) {
 	}
 }
 
-// `lang -check -` with a broken program: exit 1 + diagnostic
+// `fern -check -` with a broken program: exit 1 + diagnostic
 // labelled `<stdin>` (no filesystem path to point at).
 func TestCheckStdinTypeError(t *testing.T) {
 	bin := buildLangBinForCheck(t)
@@ -145,7 +145,7 @@ func TestCheckStdinTypeError(t *testing.T) {
 	}
 }
 
-// `lang -check ENTRY.fern` follows imports — a type error in a
+// `fern -check ENTRY.fern` follows imports — a type error in a
 // transitive dep is surfaced with the dep's own filename, not
 // the entry file's. This is the payoff of the check command:
 // running it on a project root finds errors everywhere modload

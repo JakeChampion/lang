@@ -1,4 +1,4 @@
-package langsmith_test
+package fernsmith_test
 
 import (
 	"encoding/binary"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/langsmith"
+	"github.com/jakechampion/lang/internal/fernsmith"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -18,7 +18,7 @@ import (
 
 // sweepN returns the number of seeds / iterations a generator
 // sweep should run. Drops to 1/8th the full size under
-// `testing.Short()` so dev-loop `go test ./internal/langsmith`
+// `testing.Short()` so dev-loop `go test ./internal/fernsmith`
 // returns in ~3s instead of ~25s. Coverage-landmark sweeps
 // (TestGenFeatureCoverage) should stay at their full size —
 // dropping seeds risks missing a rarely-fired landmark and
@@ -58,7 +58,7 @@ func randBytes(r *rand.Rand, n int) []byte {
 func TestGenProducesValidPrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
-		src := langsmith.Gen(seed)
+		src := fernsmith.Gen(seed)
 		prog, err := parser.Parse(src)
 		if err != nil {
 			t.Fatalf("seed=%d failed to parse:\nsrc:\n%s\nerr: %v", seed, src, err)
@@ -74,8 +74,8 @@ func TestGenProducesValidPrograms(t *testing.T) {
 // reproducibly and a reported crash can't be replayed.
 func TestGenIsDeterministic(t *testing.T) {
 	for _, seed := range []uint64{0, 1, 42, 1234567} {
-		a := langsmith.Gen(seed)
-		b := langsmith.Gen(seed)
+		a := fernsmith.Gen(seed)
+		b := fernsmith.Gen(seed)
 		if a != b {
 			t.Errorf("seed=%d: output diverges across calls\nfirst:\n%s\nsecond:\n%s", seed, a, b)
 		}
@@ -86,7 +86,7 @@ func TestGenIsDeterministic(t *testing.T) {
 // "non-empty, well-typed program". Tighten the guarantee here.
 func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 	for seed := uint64(0); seed < 16; seed++ {
-		src := langsmith.Gen(seed)
+		src := fernsmith.Gen(seed)
 		if !strings.Contains(src, "function gen_f0(") {
 			t.Errorf("seed=%d: missing gen_f0 in output\nsrc:\n%s", seed, src)
 		}
@@ -105,7 +105,7 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
-		src := langsmith.GenMain(seed)
+		src := fernsmith.GenMain(seed)
 		if !strings.Contains(src, "function main(): i32") {
 			t.Errorf("seed=%d: missing main\nsrc:\n%s", seed, src)
 			continue
@@ -143,7 +143,7 @@ func TestGenBytesProducesValidPrograms(t *testing.T) {
 	for i := 0; uint64(i) < n; i++ {
 		n := r.IntN(512) // 0..511 bytes; covers exhaustion path too
 		data := randBytes(r, n)
-		src := langsmith.GenBytes(data)
+		src := fernsmith.GenBytes(data)
 		prog, err := parser.Parse(src)
 		if err != nil {
 			t.Fatalf("i=%d len=%d failed to parse:\nsrc:\n%s\nerr: %v", i, n, src, err)
@@ -162,7 +162,7 @@ func TestGenMainBytesProducesRunnablePrograms(t *testing.T) {
 	for i := 0; uint64(i) < iters; i++ {
 		n := r.IntN(512)
 		data := randBytes(r, n)
-		src := langsmith.GenMainBytes(data)
+		src := fernsmith.GenMainBytes(data)
 		if !strings.Contains(src, "function main(): i32") {
 			t.Errorf("i=%d: missing main\nsrc:\n%s", i, src)
 			continue
@@ -184,8 +184,8 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 	for _, n := range []int{0, 1, 8, 64, 256} {
 		r := rand.New(rand.NewPCG(uint64(n), 31415))
 		data := randBytes(r, n)
-		a := langsmith.GenBytes(data)
-		b := langsmith.GenBytes(data)
+		a := fernsmith.GenBytes(data)
+		b := fernsmith.GenBytes(data)
 		if a != b {
 			t.Errorf("len=%d: output diverges across calls\nfirst:\n%s\nsecond:\n%s", n, a, b)
 		}
@@ -249,7 +249,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Result try (?)":             false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
-		src := langsmith.GenMain(seed)
+		src := fernsmith.GenMain(seed)
 		// "gen_f0(" appears either in the helper decl OR a call.
 		// Both forms are useful evidence; the nested-call check
 		// distinguishes a call-from-main shape.
@@ -466,9 +466,9 @@ func TestGenFeatureCoverage(t *testing.T) {
 func TestGenBytesExhaustionShrinksProgram(t *testing.T) {
 	r := rand.New(rand.NewPCG(1, 2))
 	full := randBytes(r, 256)
-	long := langsmith.GenBytes(full)
-	short := langsmith.GenBytes(full[:8]) // one decision's worth
-	empty := langsmith.GenBytes(nil)
+	long := fernsmith.GenBytes(full)
+	short := fernsmith.GenBytes(full[:8]) // one decision's worth
+	empty := fernsmith.GenBytes(nil)
 	if len(short) > len(long) {
 		t.Errorf("short corpus produced longer program: %d > %d", len(short), len(long))
 	}

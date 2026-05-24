@@ -15,7 +15,7 @@ import (
 // with the input + section id 0.
 func TestEmbedSimple(t *testing.T) {
 	core := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00} // bare module header
-	out, err := componenttype.Embed(core, "lang")
+	out, err := componenttype.Embed(core, "fern")
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestEmbedMatchesWasmTools(t *testing.T) {
 		t.Fatalf("read core: %v", err)
 	}
 
-	for _, world := range []string{"lang", "http"} {
+	for _, world := range []string{"fern", "http"} {
 		t.Run(world, func(t *testing.T) {
 			expectedPath := filepath.Join(dir, world+".embedded.wasm")
 			if out, err := exec.Command("wasm-tools", "component", "embed",
@@ -112,7 +112,7 @@ func findWITDir() (string, error) {
 		return "", err
 	}
 	for dir := cwd; ; {
-		candidate := filepath.Join(dir, "cmd", "lang", "wit")
+		candidate := filepath.Join(dir, "cmd", "fern", "wit")
 		if st, err := os.Stat(candidate); err == nil && st.IsDir() {
 			return candidate, nil
 		}

@@ -1110,7 +1110,7 @@ func TestEmitConstStrHeapForm(t *testing.T) {
 }
 
 // TestEmitConstStrInlineForm — short ASCII string (≤7 bytes) takes
-// the inline-form path via langstring.PackInlineWasm: no data
+// the inline-form path via fernstring.PackInlineWasm: no data
 // section, no memory section. The function drops both pushed
 // words and returns 0, which is enough to prove the inline path
 // produces a runnable module.
@@ -1461,7 +1461,7 @@ func TestSlotIdxMixed(t *testing.T) {
 }
 
 // TestEmitStrLenHeap — heap-form literal (>7 bytes) goes through
-// the else arm of __lang_str_len: top bit of $len is 0, so the
+// the else arm of __fern_str_len: top bit of $len is 0, so the
 // returned length is $len directly. Asserts the helper-call path
 // finds the canonical len without rounding through the data ptr.
 func TestEmitStrLenHeap(t *testing.T) {
@@ -1485,7 +1485,7 @@ func TestEmitStrLenHeap(t *testing.T) {
 // TestEmitStrLenInline — short ASCII literal (≤7 bytes) uses the
 // inline-form packing where the length lives in bits 24..26 of
 // the len word AND the top bit is set. Goes through the if-arm
-// of __lang_str_len: extract bits 24..26.
+// of __fern_str_len: extract bits 24..26.
 func TestEmitStrLenInline(t *testing.T) {
 	cases := []struct {
 		s    string
@@ -1520,7 +1520,7 @@ func TestEmitStrLenInline(t *testing.T) {
 
 // TestEmitStrLenAcrossInlineHeapBoundary — eight-byte literal is
 // the first one that forces heap-form (≤7 is inline). Confirms
-// the transition point: both branches of __lang_str_len give the
+// the transition point: both branches of __fern_str_len give the
 // right answer for adjacent lengths.
 func TestEmitStrLenAcrossInlineHeapBoundary(t *testing.T) {
 	// 7 → inline, 8 → heap.
@@ -1586,7 +1586,7 @@ func TestStrLenHelperOnlyEmittedWhenNeeded(t *testing.T) {
 	}
 	count2 := functionSectionCount(t, bin2)
 	if count2 != 2 {
-		t.Fatalf("function-section count = %d, want 2 (main + __lang_str_len)", count2)
+		t.Fatalf("function-section count = %d, want 2 (main + __fern_str_len)", count2)
 	}
 }
 
@@ -1640,7 +1640,7 @@ func functionSectionCount(t *testing.T, bin []byte) int {
 
 // TestEmitAllocStoreLoadRoundtrip — alloc 4 bytes, store a value,
 // load it back. Proves the bump cursor at memory[40] is seeded
-// correctly and __lang_alloc returns a usable pointer.
+// correctly and __fern_alloc returns a usable pointer.
 func TestEmitAllocStoreLoadRoundtrip(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:         "main",
@@ -1734,7 +1734,7 @@ func TestEmitAllocSeedRespectsStringPool(t *testing.T) {
 	}
 }
 
-// TestEmitAllocHelperGated — confirm __lang_alloc + the cursor
+// TestEmitAllocHelperGated — confirm __fern_alloc + the cursor
 // seed segment are only emitted when OpAlloc appears.
 func TestEmitAllocHelperGated(t *testing.T) {
 	progNoAlloc := &ir.Program{Funcs: []*ir.Func{{
@@ -1790,7 +1790,7 @@ func TestEmitStoreLoadStringRoundtrip(t *testing.T) {
 			//   load p; OpLoad WidthString → (data, len)
 			{Kind: ir.OpLoadLocal, I32: 0},
 			{Kind: ir.OpLoad, Width: ir.WidthString},
-			// Call __lang_str_len to extract the canonical len.
+			// Call __fern_str_len to extract the canonical len.
 			{Kind: ir.OpStrLen},
 		},
 	}}}
@@ -1915,7 +1915,7 @@ func TestEmitStrEq(t *testing.T) {
 }
 
 // TestEmitStrEqMixedHeapInline — one heap-form, one inline-form,
-// same content. The byte-loop path runs __lang_str_byte on both
+// same content. The byte-loop path runs __fern_str_byte on both
 // sides; inline pulls bytes out of the (data, len) bits, heap
 // reads from memory. Catches drift between the two halves of the
 // SSO seam.
@@ -1931,7 +1931,7 @@ func TestEmitStrEqMixedHeapInline(t *testing.T) {
 	// instead we cross-check inline-inline of identical content
 	// (taking pair-eq path) and inline-inline of distinct content
 	// (taking both-inline-distinct path) here; the both-heap byte
-	// loop and the inline-aware __lang_str_byte are covered in
+	// loop and the inline-aware __fern_str_byte are covered in
 	// TestEmitStrEq above.
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
@@ -1952,7 +1952,7 @@ func TestEmitStrEqMixedHeapInline(t *testing.T) {
 }
 
 // TestStrEqHelperPulledIn — using OpStrEq must drag in __str_eq,
-// __lang_str_len, and __lang_str_byte (chain of helper deps).
+// __fern_str_len, and __fern_str_byte (chain of helper deps).
 // Confirms scanRuntimeHelpers walks the transitive dependency.
 func TestStrEqHelperPulledIn(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
@@ -1968,14 +1968,14 @@ func TestStrEqHelperPulledIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
-	// main + __lang_str_len + __lang_str_byte + __str_eq = 4 funcs.
+	// main + __fern_str_len + __fern_str_byte + __str_eq = 4 funcs.
 	if got := functionSectionCount(t, bin); got != 4 {
 		t.Fatalf("function-section count = %d, want 4 (main + 3 helpers)", got)
 	}
 }
 
 // TestEmitStrConcatLen — concatenate two literals and verify the
-// resulting length via __lang_str_len. Spans the inline-heap
+// resulting length via __fern_str_len. Spans the inline-heap
 // combinations: inline+inline, heap+heap, mixed.
 func TestEmitStrConcatLen(t *testing.T) {
 	cases := []struct {
@@ -2468,7 +2468,7 @@ func TestEmitMakeOkErrPair(t *testing.T) {
 	}
 }
 
-// TestEmitPrintHeapLiteral — call __lang_print with a heap-form
+// TestEmitPrintHeapLiteral — call __fern_print with a heap-form
 // literal. The helper allocates, copies bytes, writes an iovec
 // to the fixed scratch slot, and invokes wasi_snapshot_preview1
 // fd_write. Run under wasmtime with WASI command-mode entry and
@@ -2479,7 +2479,7 @@ func TestEmitPrintHeapLiteral(t *testing.T) {
 		ReturnType: void(),
 		Ops: []ir.Op{
 			{Kind: ir.OpConstStr, Str: "hello, world\n"},
-			{Kind: ir.OpCallDirect, Str: "__lang_print", I32: 1},
+			{Kind: ir.OpCallDirect, Str: "__fern_print", I32: 1},
 			{Kind: ir.OpReturnVoid},
 		},
 	}}}
@@ -2509,7 +2509,7 @@ func TestEmitPrintHeapLiteral(t *testing.T) {
 
 // TestEmitPrintViaSourceNameAlias — calling OpCallDirect "print"
 // (the source-language built-in name) must alias to the synthetic
-// __lang_print helper. This is the path real lang programs take
+// __fern_print helper. This is the path real lang programs take
 // since the IR lowering emits OpCallDirect with the source name.
 func TestEmitPrintViaSourceNameAlias(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
@@ -3092,7 +3092,7 @@ func TestEmitArgsEntries(t *testing.T) {
 // wasmtime, return the string length of the result. argv[1] is
 // "alpha" (5 bytes) since wasmtime puts the module path at
 // argv[0]. Exercises wasi_args_sizes_get + wasi_args_get + the
-// strlen loop in __lang_arg_at.
+// strlen loop in __fern_arg_at.
 func TestEmitArgAt(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "main",
@@ -3864,7 +3864,7 @@ func TestEmitReadByteSum(t *testing.T) {
 
 // TestEmitExit — call OpCallDirect "exit" with a specific code
 // and verify wasmtime's exit code matches. The alias routes to
-// __lang_exit which invokes wasi_proc_exit.
+// __fern_exit which invokes wasi_proc_exit.
 func TestEmitExit(t *testing.T) {
 	for _, code := range []int{0, 7, 42} {
 		code := code
@@ -3944,14 +3944,14 @@ func TestEmitRandomI32(t *testing.T) {
 
 // TestEmitPrintInlineLiteral — same as above but with a short
 // (inline-form) literal. The byte-by-byte copy through
-// __lang_str_byte handles the inline (data, len) packing.
+// __fern_str_byte handles the inline (data, len) packing.
 func TestEmitPrintInlineLiteral(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "_start",
 		ReturnType: void(),
 		Ops: []ir.Op{
 			{Kind: ir.OpConstStr, Str: "hi\n"},
-			{Kind: ir.OpCallDirect, Str: "__lang_print", I32: 1},
+			{Kind: ir.OpCallDirect, Str: "__fern_print", I32: 1},
 			{Kind: ir.OpReturnVoid},
 		},
 	}}}
@@ -4173,7 +4173,7 @@ func TestEmitMakeClosureZeroCaptures(t *testing.T) {
 
 // TestEmitMakeClosureRcHeader — Phase 1e-closures layout: the
 // closure pair AND its env block are allocated via
-// __lang_alloc_rc1, so each carries an 8-byte rc header with a
+// __fern_alloc_rc1, so each carries an 8-byte rc header with a
 // live rc=1 at [data-8]. The data pointers (pair / env) are
 // base+8, so the call-site +0 (fn_idx) / +4 (env_ptr) reads are
 // unchanged. Read the rc words back to pin the header presence.

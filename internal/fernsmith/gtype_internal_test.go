@@ -1,4 +1,4 @@
-package langsmith
+package fernsmith
 
 import "testing"
 

@@ -129,7 +129,7 @@ func TestPublishDiagnostics_FirstPublishAlwaysFiresEvenWhenEmpty(t *testing.T) {
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
 				URI:        "file:///clean.fern",
-				LanguageID: "lang",
+				LanguageID: "fern",
 				Text:       src,
 			},
 		}),
@@ -157,7 +157,7 @@ func TestPublishDiagnostics_DedupsIdentical(t *testing.T) {
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
 				URI:        "file:///d.fern",
-				LanguageID: "lang",
+				LanguageID: "fern",
 				Text:       src,
 			},
 		}),
