@@ -6014,7 +6014,23 @@ func (b *builder) assign(n *ast.Assign) error {
 		// (`needsRcIncOnAlias`). Phase 1e widens to strings
 		// / structs / enums / closures together with their
 		// matching inc sites.
-		if isArrayTypeOfLocal(t.Name, b) {
+		//
+		// Phase 3 step 2: skip this dec for a self-mutating map
+		// reassignment `m = m.set(...)` / `m = m.clear()`. The
+		// map mutators copy-on-write through __map_cow_inplace,
+		// which (unlike array push) does NOT bump rc on the
+		// in-place path — so on a uniquely-held map the call
+		// returns the SAME handle and dec'ing it here would drop
+		// a live rc to 0 (and a second self-assign to -1: the
+		// over-release the Phase 3 underflow detector flagged).
+		// The map keeps its single owner across the reassignment,
+		// so no dec is owed. (Limitation: when the map is ALSO
+		// aliased — `var m2 = m1; m2 = m2.set(...)` — cow copies
+		// and the source's rc is then over-counted by 1; that is
+		// a leak, not an over-release, so it is safe under the
+		// no-free arena and detector-clean. A cow-aware
+		// conditional dec is a follow-up.)
+		if isArrayTypeOfLocal(t.Name, b) && !isSelfMapMutation(n.Value, t.Name) {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -6271,6 +6287,35 @@ func (b *builder) assign(n *ast.Assign) error {
 // structs in addition to arrays. The matching inc widening
 // (Phase 1e-struct-ii) ensures every aliasing event that
 // bumped the rc gets a balancing dec when `y` is overwritten.
+// isSelfMapMutation reports whether `value` is a value-returning
+// map mutator called on the ident `targetName` — i.e. the RHS of
+// a `m = m.set(...)` / `m = m.clear()` reassignment. The checker
+// has already rewritten the source `m.set(k, v)` into a Call whose
+// Callee is the `__method_Map_set` ident and whose Args[0] is the
+// receiver. Used by `b.assign` to suppress the dec-on-overwrite:
+// the map mutators cow in place without bumping rc, so the call
+// returns the same handle the slot already holds and no reference
+// was released. (delete is excluded — it returns a tuple and is
+// bound via destructuring, not a bare `m = ...` reassignment.)
+func isSelfMapMutation(value ast.Expr, targetName string) bool {
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
+		return false
+	}
+	if len(call.Args) == 0 {
+		return false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	return ok && recv.Name == targetName
+}
+
 func isArrayTypeOfLocal(name string, b *builder) bool {
 	isRcTracked := func(t ast.Type) bool {
 		if _, isArr := t.(ast.ArrayType); isArr {

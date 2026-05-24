@@ -15142,6 +15142,34 @@ func TestWASMRcUnderflowDetector(t *testing.T) {
 	}
 }
 
+// Phase 3 step 2: the idiomatic value-returning map mutation
+// `m = m.set(...)` / `m = m.clear()` must NOT over-release. The
+// mutators cow in place without bumping rc, so the call returns
+// the same handle and b.assign suppresses the dec-on-overwrite
+// (isSelfMapMutation) — otherwise the first reassign would drop
+// rc 1->0 and the second 0->-1. This pins underflow == 0 across a
+// run of self-assignments, while a parallel check confirms the
+// map still holds the right entries (the suppression must not
+// leak the mutation).
+func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
+	src := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("c", 3);
+    m = m.set("a", 10);   // overwrite existing key
+    m = m.clear();
+    m = m.set("d", 4);
+    // underflow must be 0; map must read back correctly.
+    return __rc_underflow_count() * 1000
+         + (m.len() - 1)        // clear left only "d"
+         + (m.get_or("d", 0) - 4);
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got %d, want 0 (self-assign map mutation: 0 underflow, correct contents)", got)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestWASMRcDecOnOverwrite(t *testing.T) {

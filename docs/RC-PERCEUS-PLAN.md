@@ -806,12 +806,28 @@ Phase 3 CANNOT start with the freelist — it must start by
    rather than the unconditional dec used today. Natives get their
    own counter slot once the SSO flip frees up the string work
    around the same `rc_dec` helper.
-2. **Drift audit + fixes.** Drive the detector to zero across the
-   suite. Expected hot spots: the self-assign mutation paths above.
-   Likely fix shape: route `x = x.<mutator>()` through a
-   dec-on-overwrite that is *cow-aware* (skip the dec when the cow
-   helper kept the value in place), rather than the unconditional
-   dec used today.
+2. **Drift audit + fixes — map self-assign DONE.** The dominant
+   source the detector found, `m = m.set(...)` / `m = m.clear()`,
+   is fixed: `b.assign` now suppresses the dec-on-overwrite for a
+   self-mutating map reassignment (`isSelfMapMutation`). Map
+   mutators cow in place WITHOUT bumping rc (unlike array push, so
+   that statement-position `m.set(...)` sequences and MapLit's
+   repeated per-entry sets don't spuriously copy), which means the
+   call returns the same handle the slot holds and no reference is
+   released — dec'ing it would drop a live rc to 0. With the skip,
+   `TestWASMRcMapSelfAssignNoUnderflow` shows 0 over-releases
+   across a run of self-assignments (overwrite + clear + re-add)
+   with correct contents.
+   - **Known residual (follow-up):** when the map is ALSO aliased
+     (`var m2 = m1; m2 = m2.set(...)`), cow copies and the skip
+     leaves the source's rc over-counted by 1 — a leak, not an
+     over-release, so it stays detector-clean and UAF-free under
+     the no-free arena. A cow-aware *conditional* dec (release the
+     old handle only when the mutator returned a different one)
+     closes it; deferred so it can land with the drop-handler work.
+   - Arrays / structs / enums / closures were already drift-free
+     (arrays via the push/set in-place rc bump; struct/enum/closure
+     reassignment genuinely releases the old value).
 3. **Drop handlers (generated, no free yet).** Per concrete type,
    codegen emits `__fern_drop_<type>` that decrements each
    pointer-shaped field/element, then (for now) does nothing else.
