@@ -286,16 +286,68 @@ func mangle(base string, args []ast.Type) string {
 	b.WriteString(base)
 	for _, a := range args {
 		b.WriteString("__")
-		b.WriteString(sanitize(a.String()))
+		b.WriteString(mangleArg(a))
 	}
 	return b.String()
 }
 
+// mangleArg renders one type argument into a symbol token.
+//
+// The subtlety it solves: a nested generic instantiation like
+// `Box[Box[i32]]` reaches `mangle` from two directions. The
+// type-slot rewriter (rewriteType) recurses inner-first, so the
+// outer call sees its arg ALREADY rewritten to a flat
+// `StructType{Name:"Box__i32"}` (no Args). The struct-literal path
+// instead passes the arg RAW as `StructType{Name:"Box", Args:[i32]}`.
+// If we mangled via `sanitize(a.String())` those two render
+// differently ("Box__i32" vs "Box_i32_"), the clone names diverge,
+// and the trailing re-check fails with "cannot assign Box__Box_i32_
+// to Box__Box__i32".
+//
+// Recursing through generic nominal types (and the composite shapes
+// that can contain them) makes both directions converge: a raw
+// `Box[i32]` arg mangles via `mangle("Box", [i32])` → "Box__i32",
+// matching the pre-flattened form's `sanitize("Box__i32")`.
+func mangleArg(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) > 0 {
+			return mangle(x.Name, x.Args)
+		}
+	case ast.EnumType:
+		if len(x.Args) > 0 {
+			return mangle(x.Name, x.Args)
+		}
+	case ast.ArrayType:
+		return mangleArg(x.Elem) + "_arr"
+	case ast.SliceType:
+		return mangleArg(x.Elem) + "_slice"
+	case ast.TupleType:
+		var b strings.Builder
+		b.WriteString("tup")
+		for _, e := range x.Elems {
+			b.WriteString("_")
+			b.WriteString(mangleArg(e))
+		}
+		return b.String()
+	}
+	return sanitize(t.String())
+}
+
+// sanitize maps a type's String() form into a token safe to embed
+// in a backend symbol name. Any character outside [A-Za-z0-9_] is
+// replaced with '_' — this covers the bracket/comma/space of
+// generic + slice forms (`Foo[Bar]`, `i32[]`) AND the parentheses
+// of a tuple type (`(i32, i32)`), whose literal `(`/`)` would
+// otherwise survive into the assembler symbol and fail to
+// assemble on the native backends (wasm tolerated them).
 func sanitize(s string) string {
 	out := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c == '[' || c == ']' || c == ',' || c == ' ' {
+		isAlnum := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			(c >= '0' && c <= '9') || c == '_'
+		if !isAlnum {
 			out = append(out, '_')
 			continue
 		}
