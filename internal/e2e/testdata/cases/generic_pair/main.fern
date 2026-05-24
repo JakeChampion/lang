@@ -1,0 +1,11 @@
+// A struct generic over two type parameters, instantiated at
+// (i32, string).
+struct Pair[A, B] { first: A, second: B }
+
+function main(): i32 {
+    var p: Pair[i32, string] = Pair { first: 42, second: "x" };
+    if (p.second == "x") {
+        return p.first;
+    }
+    return 0;
+}

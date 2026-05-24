@@ -1,0 +1,13 @@
+// split_once returns Option[(string, string)]; destructure via tuple
+// field access on the bound value.
+function main(): i32 {
+    match ("key=value".split_once("=")) {
+        Some(kv) => {
+            if (kv.0 == "key" && kv.1 == "value") {
+                return 42;
+            }
+            return 1;
+        },
+        None => { return 2; }
+    }
+}
