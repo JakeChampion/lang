@@ -1025,6 +1025,30 @@ func TestWasiIoPollInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestInnerTypeTuple_Bytes pins tuple<u8,u8,u8,u8> (ipv4-address).
+func TestInnerTypeTuple_Bytes(t *testing.T) {
+	got := component.InnerTypeTuple([]byte{component.CValtypeU8, component.CValtypeU8, component.CValtypeU8, component.CValtypeU8})
+	want := []byte{0x6f, 0x04, component.CValtypeU8, component.CValtypeU8, component.CValtypeU8, component.CValtypeU8}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeTuple = % x, want % x", got, want)
+	}
+}
+
+// TestInnerTypeRecord_Bytes pins record{port:u16, address:<typeidx 5>}.
+func TestInnerTypeRecord_Bytes(t *testing.T) {
+	got := component.InnerTypeRecord([]component.RecordField{
+		{Name: "port", Valtype: component.CValtypeU16},
+		{Name: "address", Valtype: 0x05},
+	})
+	want := []byte{0x72, 0x02,
+		0x04, 'p', 'o', 'r', 't', component.CValtypeU16,
+		0x07, 'a', 'd', 'd', 'r', 'e', 's', 's', 0x05,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeRecord = % x, want % x", got, want)
+	}
+}
+
 // TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
 func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
 	got := component.InnerTypeResultOkErr(7, 5)
