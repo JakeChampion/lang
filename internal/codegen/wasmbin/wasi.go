@@ -567,7 +567,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__lang_putchar"] {
-		in.add("wasi_fd_write")
+		if opts.Preview2WASI {
+			in.add("wasi_get_stdout_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_fd_write")
+		}
 	}
 	if helpers.set["__lang_exit"] {
 		in.add("wasi_proc_exit")
@@ -990,6 +995,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__lang_print":        buildPrintBodyP2,
 	"__lang_write":        buildWriteBodyP2,
 	"__lang_eprint":       buildEprintBodyP2,
+	"__lang_putchar":      buildPutcharBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -1675,8 +1681,54 @@ func buildPutcharBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildRandomBytesBody — (n) → (data, len). Allocates an
-// n-byte heap buffer and fills it with cryptographic-quality
+// buildPutcharBodyP2 is the preview-2 variant of buildPutcharBody.
+//
+// Signature: (param $b i32) (result)
+//
+// Writes the low byte of $b to stdout via
+// wasi:io/streams::blocking-write-and-flush, reusing the cached
+// stdout handle (shared with print / write). The 1-byte buffer
+// is heap-allocated per call (alloc(1)); a 16-byte result-return
+// area is allocated alongside.
+//
+// Wasm locals (after the param):
+//
+//	1: $buf  (1-byte content buffer)
+func buildPutcharBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__lang_alloc"]
+	getStdout := idxs["wasi_get_stdout_p2"]
+	write := idxs["wasi_blocking_write_and_flush_p2"]
+	var body []byte
+	// If !init: cache the stdout handle.
+	body = inst.InstI32Const(body, stdoutInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, stdoutHandleAddr)
+	body = inst.InstCall(body, getStdout)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, stdoutInitAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	// $buf = __lang_alloc(1); mem[$buf] = $b (low byte).
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store8(body, 0, 0)
+	// blocking-write-and-flush(stdout, $buf, 1, retBuf).
+	body = inst.InstI32Const(body, stdoutHandleAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, write)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
 // random bytes via wasi_random_get. Returns the (data, len)
 // pair in heap form (top bit of len clear).
 //

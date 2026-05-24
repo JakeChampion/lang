@@ -9436,6 +9436,51 @@ func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithPutchar drives a Lang program
+// that calls putchar() through `-component-wrap-cli`. putchar
+// shares print's preview-2 imports (wasi:cli/stdout +
+// blocking-write-and-flush), so the existing print-only driver
+// routing handles it without a separate code path. Writes the
+// three bytes 'h','i','!' to stdout.
+func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "putc.lang")
+	src := []byte(`function main(): i32 {
+    putchar(104);
+    putchar(105);
+    putchar(33);
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "putc.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (putchar) failed: %v\n%s", err, out)
+	}
+	runCmd := exec.Command("wasmtime", "run", compPath)
+	var stdout, stderr bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stderr
+	if err := runCmd.Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if got := stdout.String(); got != "hi!" {
+		t.Errorf("wasmtime stdout = %q, want %q", got, "hi!")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandomInt drives a Lang program
 // that calls the stdlib `random_int(lo, hi)` helper (from
 // std/math) through `-component-wrap-cli`. random_int internally
