@@ -1,0 +1,6 @@
+// Half-open string slicing: s[2:5] of "abcdefghij" is "cde".
+function main(): i32 {
+    var s = "abcdefghij";
+    print(s[2:5]);
+    return 0;
+}

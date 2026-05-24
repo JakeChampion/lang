@@ -1,0 +1,9 @@
+// std/float sqrt(16.0) = 4.0. sqrt lowers to a libm call that the
+// `-nostdlib` native backends can't link, so this fixture opts out
+// of arm64/x86_64 via its `backends` file and runs on interp + wasm.
+// Substring match stays robust to trailing fractional digits.
+function main(): i32 {
+    var x: f64 = 16.0;
+    print(x.sqrt().to_string());
+    return 0;
+}

@@ -1,0 +1,10 @@
+// Empty-collection edge case: sum() of an empty i32[] is 0 and
+// max() returns None.
+function main(): i32 {
+    var a: i32[] = [];
+    var s = a.sum();
+    match (a.max()) {
+        Some(_) => { return 1; },
+        None => { return s + 42; }
+    }
+}

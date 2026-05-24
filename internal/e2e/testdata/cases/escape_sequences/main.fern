@@ -1,0 +1,7 @@
+// Escape sequences inside string literals: \t and \" survive to the
+// output verbatim (print adds the trailing newline).
+function main(): i32 {
+    print("tab\there");
+    print("quote\"end");
+    return 0;
+}

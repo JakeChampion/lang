@@ -1,0 +1,8 @@
+// 64-bit arithmetic beyond the i32 range: 1e9 * 3 = 3e9, printed
+// via i64.to_string().
+function main(): i32 {
+    var a: i64 = 1000000000 as i64;
+    var b: i64 = a * (3 as i64);
+    print(b.to_string());
+    return 0;
+}

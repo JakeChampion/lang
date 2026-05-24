@@ -1,0 +1,16 @@
+// An array of enum values iterated with for-in and dispatched by
+// match; only Num carries a payload. 40 + 2 = 42.
+enum Token { Num(i32), Plus, Times }
+
+function main(): i32 {
+    var toks = [Num(40), Plus, Num(2)];
+    var sum: i32 = 0;
+    for t in toks {
+        match (t) {
+            Num(n) => { sum = sum + n; },
+            Plus => { },
+            Times => { }
+        }
+    }
+    return sum;
+}

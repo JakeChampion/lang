@@ -1,0 +1,5 @@
+// csv_parse_line splits one CSV record into fields.
+function main(): i32 {
+    var fields = csv_parse_line("a,b,c,d,e");
+    return fields.len();
+}
