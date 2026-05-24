@@ -517,9 +517,24 @@ End-to-end exit code 42 demo (covered by
     bodies + driver routing + `now_ns` checker built-in (#1261)
     complete it. End-to-end test:
     `TestCmdLangComponentWrapCliWithNowNs`.
+  - **`read_line` / `fd_read` migration. Shipped.**
+    `__lang_read_byte` (the stdin byte reader `read_line` is
+    built on) reads via `wasi:cli/stdin::get-stdin` +
+    `wasi:io/streams::[method]input-stream.blocking-read` under
+    `EmitOptions.Preview2WASI`. The read-side `wasi:io/streams`
+    instance type (#1263), the valtype-generalised
+    trampoline/fixup for the mixed `(i32, i64, i32)` blocking-read
+    ABI (#1265), the `WrapWasiReadComponent` wrap with a
+    realloc-bearing canon-lower for the returned
+    `result<list<u8>, stream-error>` (#1266), the wasmbin
+    `buildReadByteBodyP2` (#1267), the `WrapWasiReadAsCliRun`
+    cli-run tail (#1269), and the `read_line()` checker built-in +
+    driver routing + cabi_realloc-export rebuild (#1273) complete
+    it. The read wrap is the first to alias the user module's
+    `cabi_realloc` (gated behind `ForceMemorySection`, rebuilt
+    only for detected read-only programs). End-to-end test:
+    `TestCmdLangComponentWrapCliWithReadLine`.
   - **Still to do (smaller migrations):**
-    - `fd_read` (`wasi:cli/stdin::get-stdin` +
-      `wasi:io/streams::[method]input-stream.blocking-read`).
     - `environ_*` / `args_*` need lists / records.
     - `path_*` needs filesystem resources.
     - Mixed-import cases (e.g. print + exit, or random + print)
