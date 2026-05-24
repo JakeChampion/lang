@@ -660,6 +660,25 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if usesPreview2ReadLinePrintOnly(bin) {
+					// Filter shape: read_line (get-stdin + blocking-read)
+					// + print (get-stdout + blocking-write-and-flush) in one
+					// component. blocking-read returns a list, so rebuild
+					// with ForceMemorySection (cabi_realloc).
+					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+						ForceMemorySection: true,
+						Preview2WASI:       true,
+						SynthCliRun:        true,
+					})
+					if err != nil {
+						return 1, err
+					}
+					comp := component.WrapWasiReadLinePrintAsCliRun(rb, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				if getFuncName, structured, ok := classifyPrintPlusStructured(bin); ok {
 					// Mixed case: a stream-write (print/eprint) plus K
 					// no-memory structured imports (exit/random/monotonic)
@@ -1243,6 +1262,38 @@ func usesPreview2WriteFileOnly(bin []byte) bool {
 		{"wasi:filesystem/preopens@0.2.0", "get-directories"}:                       false,
 		{"wasi:filesystem/types@0.2.0", "[method]descriptor.open-at"}:               false,
 		{"wasi:filesystem/types@0.2.0", "[method]descriptor.write-via-stream"}:      false,
+		{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: false,
+	}
+	for _, p := range pairs {
+		k := [2]string{p.module, p.name}
+		if _, ok := want[k]; !ok {
+			return false
+		}
+		want[k] = true
+	}
+	for _, seen := range want {
+		if !seen {
+			return false
+		}
+	}
+	return true
+}
+
+// usesPreview2ReadLinePrintOnly reports whether the core module's
+// imports are exactly the read_line + print filter shape:
+// wasi:cli/stdin::get-stdin, wasi:cli/stdout::get-stdout, and
+// wasi:io/streams::{input-stream.blocking-read,
+// output-stream.blocking-write-and-flush}. Routes through
+// WrapWasiReadLinePrintAsCliRun.
+func usesPreview2ReadLinePrintOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 4 {
+		return false
+	}
+	want := map[[2]string]bool{
+		{"wasi:cli/stdin@0.2.0", "get-stdin"}:                                       false,
+		{"wasi:cli/stdout@0.2.0", "get-stdout"}:                                     false,
+		{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             false,
 		{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: false,
 	}
 	for _, p := range pairs {

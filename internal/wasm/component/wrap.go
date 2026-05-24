@@ -1201,6 +1201,129 @@ func WrapWasiWriteFileAsCliRun(coreBytes []byte, coreExportName string) []byte {
 	return buf
 }
 
+// WrapWasiReadLinePrintComponent wraps a core module that both
+// reads stdin (read_line → get-stdin + input-stream.blocking-read)
+// AND writes stdout (print → get-stdout +
+// output-stream.blocking-write-and-flush) into one component — the
+// canonical filter shape. Imports wasi:io/error, the combined
+// read+write wasi:io/streams, wasi:cli/stdin, wasi:cli/stdout. The
+// getters lower with no opts (no memory → no trampoline); the two
+// stream methods need memory (blocking-read also realloc) so each
+// gets a trampoline/fixup pair.
+//
+// Index plan:
+//   - Component types: 0 io/error, 1 error, 2 io/streams(rw),
+//     3 output-stream, 4 input-stream, 5 cli/stdout, 6 cli/stdin.
+//   - Component instances: 0 io/error, 1 io/streams, 2 cli/stdout,
+//     3 cli/stdin.
+//   - Core modules: user 0, tramp-write 1 / fixup 2, tramp-read 3 /
+//     fixup 4.
+//   - Core funcs: 0 get-stdout lower, 1 get-stdin lower, 2 tramp-write
+//     alias, 3 tramp-read alias, 4 cabi_realloc, 5 blocking-write
+//     lower (mem), 6 blocking-read lower (mem+realloc).
+//   - Core instances: 0 tramp-write, 1 tramp-read, 2 get-stdout
+//     wrapper, 3 get-stdin wrapper, 4 io/streams arg {both methods},
+//     5 user, 6/7 fixup-write arg+inst, 8/9 fixup-read arg+inst.
+func WrapWasiReadLinePrintComponent(coreBytes []byte) []byte {
+	i32 := byte(0x7f)
+	i64 := byte(0x7e)
+	blockWriteParams := []byte{i32, i32, i32, i32}
+	blockReadParams := []byte{i32, i64, i32}
+
+	buf := PutComponentHeader(nil)
+
+	// io/error (inst 0) → error type 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+	// io/streams (rw) (inst 1) → output-stream type 3, input-stream type 4.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsReadWriteInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	buf = PutAliasSectionInstanceExportType(buf, 1, "output-stream")
+	buf = PutAliasSectionInstanceExportType(buf, 1, "input-stream")
+	// cli/stdout (inst 2, refs output-stream type 3).
+	buf = PutTypeSectionRawBody(buf, WasiCliStdoutInstanceTypeBody(3))
+	buf = PutImportSectionOneInstance(buf, "wasi:cli/stdout@0.2.0", 5)
+	// cli/stdin (inst 3, refs input-stream type 4).
+	buf = PutTypeSectionRawBody(buf, WasiCliStdinInstanceTypeBody(4))
+	buf = PutImportSectionOneInstance(buf, "wasi:cli/stdin@0.2.0", 6)
+
+	// Core modules: user + 2 (trampoline, fixup) pairs.
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(blockWriteParams)) // 1
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(blockWriteParams))      // 2
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(blockReadParams))  // 3
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(blockReadParams))       // 4
+
+	// Trampolines → core instances 0 (write), 1 (read).
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+	buf = PutCoreInstanceSectionInstantiate(buf, 3)
+
+	// get-stdout: alias (cli/stdout inst 2) → cfunc 0; lower noopts → core func 0; wrap → core inst 2.
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "get-stdout")
+	buf = PutCanonSectionLowerNoOpts(buf, 0)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-stdout", 0)
+	// get-stdin: alias (cli/stdin inst 3) → cfunc 1; lower noopts → core func 1; wrap → core inst 3.
+	buf = PutAliasSectionInstanceExportFunc(buf, 3, "get-stdin")
+	buf = PutCanonSectionLowerNoOpts(buf, 1)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-stdin", 1)
+	// tramp-write "0" → core func 2; tramp-read "0" → core func 3.
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutAliasSectionCoreExportFunc(buf, 1, "0")
+	// io/streams arg packaging BOTH method trampolines → core inst 4.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "[method]output-stream.blocking-write-and-flush", Sort: CoreSortFunc, Idx: 2},
+		{Name: "[method]input-stream.blocking-read", Sort: CoreSortFunc, Idx: 3},
+	})
+
+	// Instantiate user (module 0) with cli/stdout=2, cli/stdin=3, io/streams=4 → core inst 5.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{"wasi:cli/stdout@0.2.0", "wasi:cli/stdin@0.2.0", "wasi:io/streams@0.2.0"},
+		[]uint32{2, 3, 4})
+
+	// Alias memory + cabi_realloc (core func 4) + both trampoline tables.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 5, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 5, "cabi_realloc") // core func 4
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")    // table 0 (write)
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 1, "$imports")    // table 1 (read)
+
+	// Lower the two stream methods. blocking-write needs memory;
+	// blocking-read needs memory + realloc (list return).
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]output-stream.blocking-write-and-flush")
+	buf = PutCanonSectionLowerWithMemory(buf, 2, 0) // core func 5
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]input-stream.blocking-read")
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 3, 0, 4) // core func 6
+
+	// Fixups: write (table 0 + func 5) → arg inst 6, fixup → inst 7.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 5},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{6})
+	// read (table 1 + func 6) → arg inst 8, fixup → inst 9.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 1},
+		{Name: "0", Sort: CoreSortFunc, Idx: 6},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 4, []string{""}, []uint32{8})
+	return buf
+}
+
+// WrapWasiReadLinePrintAsCliRun adds the wasi:cli/run tail to
+// WrapWasiReadLinePrintComponent. Index state after the wrap:
+// component types 7, component funcs 4, component instances 4, core
+// funcs 7 (run will be core func 7), core instances 10 (user is
+// core instance 5).
+func WrapWasiReadLinePrintAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiReadLinePrintComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 5, coreExportName) // run = core func 7
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 7)
+	buf = PutCanonSectionLiftNoOpts(buf, 7, 8)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 4)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 4)
+	return buf
+}
+
 // WrapWasiReadFileAsCliRun extends WrapWasiReadFileComponent with a
 // wasi:cli/run@0.2.0 export. After the read-file wrap the index
 // spaces are: component types 7, component funcs 4, component
