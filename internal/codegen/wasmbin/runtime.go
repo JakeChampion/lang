@@ -64,7 +64,7 @@ func (r *runtimeNeeds) add(name string) {
 // scanRuntimeHelpers walks the IR program and records every
 // helper its ops will need. Each entry here corresponds to one
 // helper in runtimeHelperSpecs.
-func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
+func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 	var needs runtimeNeeds
 	for _, fn := range prog.Funcs {
 		for _, op := range fn.Ops {
@@ -106,7 +106,13 @@ func scanRuntimeHelpers(prog *ir.Program) runtimeNeeds {
 					needs.add("__lang_alloc")
 					needs.add("__lang_write")
 				case "__lang_putchar":
-					// (b) → () — single-byte fd_write to stdout.
+					// (b) → () — single-byte write to stdout. The
+					// preview-2 body heap-allocates a 1-byte buffer
+					// (the preview-1 body uses fixed scratch), so it
+					// pulls in __lang_alloc under Preview2WASI.
+					if opts.Preview2WASI {
+						needs.add("__lang_alloc")
+					}
 					needs.add("__lang_putchar")
 				case "__lang_exit":
 					// wasi_proc_exit under the hood; nothing

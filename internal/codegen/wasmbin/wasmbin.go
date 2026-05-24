@@ -150,7 +150,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// in the module's funcidx namespace; user functions and
 	// synthetic helpers shift up by N. Today the only imports
 	// come from runtime needs (e.g. WASI fd_write for print).
-	helpers := scanRuntimeHelpers(prog)
+	helpers := scanRuntimeHelpers(prog, opts)
 	if opts.PrintMainResult {
 		// The synthesised `_start` calls __lang_print to flush
 		// `int_to_string(main())` to stdout. If no user-emitted
