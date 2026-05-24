@@ -406,6 +406,38 @@ func InnerTypeResultErr(errTypeidx uint32) []byte {
 	return out
 }
 
+// InnerTypeEnum returns the defvaltype body for an `enum` — a
+// variant whose cases all lack payloads (just named discriminants).
+//
+// Encoding:
+//
+//	6d            -- enum form
+//	<count>       -- uleb: number of cases
+//	(<name>)*     -- each: uleb len + UTF-8 bytes
+func InnerTypeEnum(names []string) []byte {
+	out := []byte{0x6d}
+	out = leb128.UlebU64(out, uint64(len(names)))
+	for _, n := range names {
+		out = putName(out, n)
+	}
+	return out
+}
+
+// WasiFilesystemErrorCodeNames is the ordered case list of the
+// `wasi:filesystem/types@0.2.0` `error-code` enum (37 cases). Order
+// fixes the discriminant values, so it must match the WIT exactly
+// (cmd/fern/wit/deps/filesystem/types.wit).
+var WasiFilesystemErrorCodeNames = []string{
+	"access", "would-block", "already", "bad-descriptor", "busy",
+	"deadlock", "quota", "exist", "file-too-large", "illegal-byte-sequence",
+	"in-progress", "interrupted", "invalid", "io", "is-directory", "loop",
+	"too-many-links", "message-size", "name-too-long", "no-device",
+	"no-entry", "no-lock", "insufficient-memory", "insufficient-space",
+	"not-directory", "not-empty", "not-recoverable", "unsupported",
+	"no-tty", "no-such-device", "overflow", "not-permitted", "pipe",
+	"read-only", "invalid-seek", "text-file-busy", "cross-device",
+}
+
 // InnerTypeResultOkErr returns the defvaltype body for a
 // `result<ok=<okTypeidx>, err=<errTypeidx>>` — both arms typed.
 // Used by wasi:io/streams::blocking-read, whose result is
