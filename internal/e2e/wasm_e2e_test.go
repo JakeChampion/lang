@@ -15537,3 +15537,27 @@ func TestWASMUnaryMinusWideTypes(t *testing.T) {
 		t.Errorf("got exit %d, want 0 (unary minus on wide / non-i32 types)", got)
 	}
 }
+
+// Mirror of TestArm64ScientificNotation.
+func TestWASMScientificNotation(t *testing.T) {
+	src := `function main(): i32 {
+    var a: f64 = 1e3;
+    if (a != 1000.0) { return 1; }
+    var b: f64 = 1.5e3;
+    if (b != 1500.0) { return 2; }
+    var c: f64 = 1500.0e-3;
+    if (c != 1.5) { return 3; }
+    var d: f64 = 1.5e+3;
+    if (d != 1500.0) { return 4; }
+    var e: f64 = 2.5E2;
+    if (e != 250.0) { return 5; }
+    var f: f32 = 1.5e2f32;
+    if (f != 150.0f32) { return 6; }
+    var big: f64 = 1.8e19;
+    if (!(big > 1.7e19)) { return 7; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("got exit %d, want 0 (scientific-notation float literals)", got)
+	}
+}

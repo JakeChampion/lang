@@ -195,6 +195,64 @@ func TestFloatLiteral(t *testing.T) {
 	}
 }
 
+// Scientific-notation float literals: `[eE][+-]?[0-9]+` on either an
+// integer base (`1e3`) or a fractional one (`1.5e-2`). The whole
+// thing must come back as a single Float token whose text is
+// ParseFloat-ready.
+func TestFloatScientificNotation(t *testing.T) {
+	toks, _, err := Tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		k Kind
+		s string
+	}{
+		{Float, "1e3"},
+		{Float, "1.5e10"},
+		{Float, "1.5E3"},
+		{Float, "2.0e-2"},
+		{Float, "6.022e+23"},
+		{EOF, ""},
+	}
+	if len(toks) != len(want) {
+		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want), toks)
+	}
+	for i, w := range want {
+		if toks[i].Kind != w.k || toks[i].Text != w.s {
+			t.Errorf("tok[%d] = (%v %q), want (%v %q)", i, toks[i].Kind, toks[i].Text, w.k, w.s)
+		}
+	}
+}
+
+// A dangling `e` with no exponent digits is NOT an exponent — the
+// number stops before it and the `e...` lexes as a separate
+// identifier. Guards against eating the `e` of `1einvalid`.
+func TestFloatBareEIsNotExponent(t *testing.T) {
+	toks, _, err := Tokenize("1e foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// `1` (Number) `e` (Ident) `foo` (Ident) EOF
+	want := []struct {
+		k Kind
+		s string
+	}{
+		{Number, "1"},
+		{Ident, "e"},
+		{Ident, "foo"},
+		{EOF, ""},
+	}
+	if len(toks) != len(want) {
+		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want), toks)
+	}
+	for i, w := range want {
+		if toks[i].Kind != w.k || toks[i].Text != w.s {
+			t.Errorf("tok[%d] = (%v %q), want (%v %q)", i, toks[i].Kind, toks[i].Text, w.k, w.s)
+		}
+	}
+}
+
 // Chained numeric field access (`t.1.0`) must lex as three numbers
 // joined by two dots — not as `t . 1.0` with `1.0` eaten as a float
 // literal. The lexer tracks the previous token kind and suppresses
