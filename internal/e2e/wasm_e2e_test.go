@@ -14821,8 +14821,9 @@ func TestWASMRcAliasIncReassign(t *testing.T) {
 	}
 }
 
-// Phase 1d-iv (+ Phase 1d-v): inc on call-arg, dec on
-// callee exit — round-trip leaves the caller's rc at 1.
+// Phase 2d-borrow: passing an array to a function is a borrow —
+// no caller-side inc, no callee-side exit dec. The rc is
+// untouched across the call and stays at 1.
 func TestWASMRcAliasIncCallArg(t *testing.T) {
 	src := `function f(arr: u8[]): i32 { return 0; }
 function main(): i32 {
@@ -14831,7 +14832,7 @@ function main(): i32 {
     return __rc_get(arr) - 1;
 }`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got exit %d, want 0 (call-arg inc+dec should leave rc at 1)", got)
+		t.Errorf("got exit %d, want 0 (borrowed arg: rc stays 1)", got)
 	}
 }
 
