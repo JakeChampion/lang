@@ -1645,6 +1645,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: usizeT,
 	}
+	// `__free(ptr, size)` returns the `size`-byte block at `ptr` to
+	// the allocator's freelist (Phase 3 step 4). A no-op unless the
+	// freelist is enabled (ast.RcFreeEnabled). `size` must be the
+	// same value passed to the matching `__alloc`.
+	c.info.FuncSigs["__free"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["__load_i32"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},
