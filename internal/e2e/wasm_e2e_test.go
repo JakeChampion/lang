@@ -9471,6 +9471,64 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithArgs drives a Fern program that
+// reads argv via args() through `-component-wrap-cli`. The driver
+// detects the args-only preview-2 import
+// (wasi:cli/environment::get-arguments), rebuilds with cabi_realloc
+// exported (the get-arguments canon-lower allocates the returned
+// list<string> through it), and routes via WrapWasiArgsAsCliRun.
+//
+// Observed via exit code: the program returns 0 when argv has the
+// expected count (program name + 2 extra = 3), 1 otherwise.
+func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "a.fern")
+	src := []byte(`function main(): i32 {
+    if (args().len() == 3) { return 0; }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "a.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (args) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/environment@0.2.0", "wasi:cli/run@0.2.0", "get-arguments"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// 2 extra args → argv len 3 → exit 0.
+	three := exec.Command("wasmtime", "run", compPath, "x", "y")
+	if err := three.Run(); err != nil {
+		t.Errorf("args with 2 extra: wasmtime run failed (want exit 0): %v", err)
+	}
+	// No extra args → argv len 1 → exit 1.
+	one := exec.Command("wasmtime", "run", compPath)
+	if err := one.Run(); err == nil {
+		t.Errorf("args with none: wasmtime run exited 0, want non-zero")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the
