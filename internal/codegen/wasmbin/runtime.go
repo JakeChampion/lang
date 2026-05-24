@@ -399,6 +399,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_arr_cow_inplace")
 					needs.add("__fern_alloc")
 					needs.add("__memcpy")
+				case "__fern_drop_arr_ptr":
+					needs.add("__fern_drop_arr_ptr")
+					needs.add("__fern_rc_dec")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __fern_str_byte but returns a byte
@@ -823,6 +826,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrCowInPlaceBody,
+	},
+	"__fern_drop_arr_ptr": {
+		// (ptr, stride) → ptr. Phase 3 step 3 drop handler for
+		// arrays of pointer-shaped rc-tracked elements. On the
+		// last reference (rc==1) dec's each element, then dec's
+		// the array. See buildDropArrPtrBody +
+		// docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildDropArrPtrBody,
 	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
@@ -2033,6 +2046,96 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstCall(body, memcpy)
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildDropArrPtrBody — (ptr, stride) → ptr. Phase 3 step 3 drop
+// handler for an array whose elements are pointer-shaped
+// rc-tracked values (array / struct / enum / closure — NOT string,
+// which isn't rc-tracked yet). When this is the LAST reference to
+// the array (rc == 1, i.e. about to be released) it walks the
+// `len` elements and dec's each — balancing the per-element inc
+// the IR emitted at array-literal construction (Phase 1d-viii) —
+// then dec's the array itself. All decrements route through
+// __fern_rc_dec so its rc arithmetic, sentinel / low-address
+// guards, and the underflow counter stay the single chokepoint.
+// Returns the input ptr (passthrough) to match __fern_rc_dec's
+// stack shape so the caller's OpDrop balances either way.
+//
+// Locals: 0=ptr, 1=stride (params); 2=len, 3=i.
+func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
+	rcdec := helperIdxs["__fern_rc_dec"]
+	var body []byte
+	// NULL guard (mem[ptr-8] would trap on a 0 ptr).
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Static-sentinel guard: a .rodata / empty-array sentinel has
+	// the high bit set in its rc word — never recurse into it.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Only the last reference recurses: if rc == 1, dec each elem.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// len = mem[ptr-4]
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 2)
+		// i = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// if i >= len: break
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 2)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstBrIf(body, 1)
+			// __fern_rc_dec(mem[ptr + i*stride]); drop result
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstCall(body, rcdec)
+			body = inst.InstDrop(body)
+			// i = i + 1; continue
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 3)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+	}
+	body = inst.InstEnd(body) // if rc==1
+	// Dec the array itself; __fern_rc_dec returns the ptr, which
+	// becomes this helper's return value.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcdec)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -829,12 +829,36 @@ Phase 3 CANNOT start with the freelist — it must start by
    - Arrays / structs / enums / closures were already drift-free
      (arrays via the push/set in-place rc bump; struct/enum/closure
      reassignment genuinely releases the old value).
-3. **Drop handlers (generated, no free yet).** Per concrete type,
-   codegen emits `__fern_drop_<type>` that decrements each
-   pointer-shaped field/element, then (for now) does nothing else.
-   Wire `rc_dec`'s rc==0 branch to call it. Still no reclamation,
-   so still safe; validates the recursive-dec walk under the
-   detector.
+3. **Drop handlers (recursive dec, no free yet) — arrays STARTED
+   (wasm).** Dispatch is IR-side, NOT in `rc_dec`: every dec site
+   already holds the static `ast.Type`, so the dec emitter routes
+   to a type-specific drop helper while `rc_dec` stays the generic
+   rc-arithmetic / sentinel / underflow chokepoint (Open-Question
+   #3 resolved in favour of generated direct calls, no header
+   type-id). First slice shipped:
+   - `__fern_drop_arr_ptr(ptr, stride)` (wasm runtime): on the
+     LAST reference (rc==1) walks the `len` elements, dec's each
+     via `__fern_rc_dec`, then dec's the array. Returns the ptr to
+     match `rc_dec`'s stack shape. Guards null + the static
+     sentinel before recursing.
+   - `emitRcDecLocalsAtExit` routes an `ArrayType` whose element
+     is pointer-shaped rc-tracked (`arrElemIsRcTracked`: array /
+     struct / Map / enum / closure — **string excluded**, it's not
+     rc-tracked until the SSO flip) through the drop helper instead
+     of the plain dec. This balances the per-element inc from
+     Phase 1d-viii that previously leaked.
+   - Scope: wasm only (ptrW==4) and the scope-exit sweep only;
+     dec-on-overwrite and the native backends keep the plain dec
+     (no regression — their nested elements still leak as before).
+     Since free isn't enabled, the only effect is correct element
+     counting. `TestWASMRcDropArrayElements` proves the drop fires
+     (a nested element's rc returns to its pre-construction value)
+     with 0 over-releases.
+   - **Remaining:** struct / enum / closure / map drop handlers;
+     the dec-on-overwrite site; native (arm64/x86_64) parity; and
+     deep (nested-of-nested) recursion via per-element `drop_<T>`
+     rather than the flat `rc_dec` used now (sufficient while free
+     is off).
 4. **Freelist allocator, behind a build flag.** Per-size-class
    free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
    1024/2048; larger → bump+unmap). The free path needs the
