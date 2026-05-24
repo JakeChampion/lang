@@ -499,3 +499,73 @@ func trimPkg(s string) string {
 	}
 	return s
 }
+
+// TestMonomorphTupleArgProducesAssemblerSafeName locks in that a
+// generic function/struct instantiated with a TUPLE type argument
+// mangles to a symbol containing no parentheses. A tuple type's
+// String() is `(i32, i32)`; sanitize() previously left the `(`/`)`
+// intact, so the clone name `id__(i32__i32)` reached the native
+// assemblers and failed to assemble (wasm tolerated it). The
+// emitted clone names must be `[A-Za-z0-9_]`-only.
+func TestMonomorphTupleArgProducesAssemblerSafeName(t *testing.T) {
+	src := `function id[T](x: T): T { return x; }
+function main(): i32 {
+    var t = id((3, 4));
+    return t.0 + t.1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	sawClone := false
+	for _, fn := range prog.Funcs {
+		if !strings.HasPrefix(fn.Name, "id__") {
+			continue
+		}
+		sawClone = true
+		for i := 0; i < len(fn.Name); i++ {
+			c := fn.Name[i]
+			ok := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+				(c >= '0' && c <= '9') || c == '_'
+			if !ok {
+				t.Errorf("clone name %q contains assembler-unsafe byte %q", fn.Name, string(c))
+			}
+		}
+	}
+	if !sawClone {
+		t.Fatalf("no `id__*` clone produced for id((3,4))")
+	}
+}
+
+// TestMonomorphNestedGenericNameIsConsistent locks in that a
+// nested generic instantiation like `Box[Box[i32]]` mangles to the
+// SAME name whether the outer struct's type arg arrives raw
+// (StructType{Name:"Box", Args:[i32]}) or pre-rewritten
+// (StructType{Name:"Box__i32"}). A mismatch previously surfaced as
+// a monomorph re-check failure: "cannot assign Box__Box_i32_ to
+// variable of type Box__Box__i32".
+func TestMonomorphNestedGenericNameIsConsistent(t *testing.T) {
+	src := `struct Box[T] { v: T }
+function main(): i32 {
+    var b: Box[Box[i32]] = Box { v: Box { v: 42 } };
+    return b.v.v;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph (nested generic name mismatch): %v", err)
+	}
+}
