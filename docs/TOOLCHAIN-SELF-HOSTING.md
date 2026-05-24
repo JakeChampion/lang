@@ -554,8 +554,33 @@ End-to-end exit code 42 demo (covered by
     pre-split `(key, value)` pairs, so the lookup is a plain
     length + byte compare (no `'='` scan). End-to-end test:
     `TestCmdLangComponentWrapCliWithEnv`.
+  - **`read_file` / `write_file` (path_*) migration. Shipped.**
+    The whole `wasi:filesystem` read + write path is preview-2
+    under `EmitOptions.Preview2WASI`. The type layer — the
+    `descriptor` resource (#1290), `wasi:filesystem/preopens`
+    `get-directories` (#1293), the `error-code` enum +
+    `InnerTypeEnum` (#1295), `read-via-stream` (#1296),
+    `write-via-stream` (#1299), `open-at` + `InnerTypeFlags`
+    (#1300), and the consolidated read/write-path instance types
+    (#1301) — feeds the 4-import wraps
+    `WrapWasiReadFile{,AsCliRun}` (#1304) /
+    `WrapWasiWriteFile{,AsCliRun}` (#1307), each composing
+    wasi:io/error + wasi:io/streams + wasi:filesystem/types +
+    wasi:filesystem/preopens with four 1-func trampoline/fixup
+    pairs. The wasmbin bodies `buildReadFileBodyP2` (#1306) /
+    `buildWriteFileBodyP2` (#1307) chain
+    `get-directories → open-at → {read,write}-via-stream →
+    blocking-{read,write-and-flush}` (a doubling accumulator on
+    read, ≤4096-byte chunks on write), and the
+    `usesPreview2{Read,Write}FileOnly` driver routes rebuild with
+    cabi_realloc. `error-code` is mapped to the right `IoError`
+    variant (#1308). End-to-end tests:
+    `TestCmdLangComponentWrapCliWith{Read,Write}File` (run under
+    `wasmtime run --dir`, byte-exact).
   - **Still to do (smaller migrations):**
-    - `path_*` needs filesystem resources.
+    - `open_reader` / `open_writer` (fd-based Reader/Writer over
+      preview-2 descriptors — the fd model needs a descriptor /
+      stream handle table).
     - Mixed-import cases (e.g. print + exit, or random + print)
       — currently routed only when the imports are exactly one
       supported pattern; combining the trampoline-pattern
