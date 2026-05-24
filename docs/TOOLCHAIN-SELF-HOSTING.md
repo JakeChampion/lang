@@ -577,16 +577,28 @@ End-to-end exit code 42 demo (covered by
     variant (#1308). End-to-end tests:
     `TestCmdLangComponentWrapCliWith{Read,Write}File` (run under
     `wasmtime run --dir`, byte-exact).
-  - **Still to do (smaller migrations):**
+  - **Mixed-import components. Shipped (common shapes).** Two
+    mixed patterns now compose in one component:
+    (1) stream-write + structured — print / eprint plus the
+    no-memory structured funcs (exit / random / monotonic), via
+    `wrapWasiStreamWriteWithStructured` +
+    `classifyPrintPlusStructured` (#1312); fixes the common
+    `print(err); exit(1)` path. (2) read_line + print — the
+    canonical filter (read stdin, write stdout), via the combined
+    read+write io/streams instance type (#1313) +
+    `WrapWasiReadLinePrint{,AsCliRun}` +
+    `usesPreview2ReadLinePrintOnly` (#1314), mixing no-trampoline
+    getter lowers with trampoline blocking-read/-write lowers.
+    End-to-end tests:
+    `TestCmdLangComponentWrapCliWith{PrintExit,ReadLinePrint}`.
+  - **Still to do:**
     - `open_reader` / `open_writer` (fd-based Reader/Writer over
       preview-2 descriptors — the fd model needs a descriptor /
       stream handle table).
-    - Mixed-import cases (e.g. print + exit, or random + print)
-      — currently routed only when the imports are exactly one
-      supported pattern; combining the trampoline-pattern
-      imports (print / eprint / wall-clock) with the structured
-      WasiImport flow (exit / random / monotonic) in one
-      component is a future slice.
+    - Further mixed combinations (e.g. read_file + print, or
+      args + write_file) — each currently needs its own wrap +
+      detector; a general N-interface composition engine would
+      subsume the bespoke wraps.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
