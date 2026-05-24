@@ -524,17 +524,16 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if componentWrapCli {
 				// Wrap as a wasi:cli/run-exporting component so the
 				// produced binary runs under plain `wasmtime run` (no
-				// --invoke). Four branches:
+				// --invoke). Routing, in order:
 				//
-				//   - Print-only imports (preview-2 get-stdout +
-				//     blocking-write-and-flush) → WrapWasiPrintAsCliRun
-				//     (uses the trampoline / fixup pattern).
-				//   - Read-only imports (preview-2 get-stdin +
-				//     blocking-read) → WrapWasiReadAsCliRun (same
-				//     pattern, realloc-bearing canon-lower).
+				//   - Single-capability list-returning shapes
+				//     (wall-clock / args / env / filesystem) → their
+				//     dedicated wraps.
+				//   - Any CLI-stream + structured mix (stdout/stderr
+				//     write, stdin read, exit/random/monotonic) →
+				//     classifyComposeCliStream + ComposePreview2CliRun.
+				//   - Pure structured imports → WrapWasiImportedAsCliRun.
 				//   - No imports → BuildWasiCliRunComponent.
-				//   - Only other known preview-2 imports →
-				//     WrapWasiImportedAsCliRun.
 				//   - Anything else → error pointing at
 				//     -component-wrap / -wasi-adapter.
 				//
@@ -542,43 +541,8 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				// export. wasmbin's SynthCliRun has already emitted
 				// `_lang_run` as the normalised entry — main with
 				// any signature (void / i32) flows through it.
-				if usesPreview2PrintOnly(bin) {
-					comp := component.WrapWasiPrintAsCliRun(bin, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if usesPreview2EprintOnly(bin) {
-					comp := component.WrapWasiEprintAsCliRun(bin, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
 				if usesPreview2WallClockOnly(bin) {
 					comp := component.WrapWasiWallClockAsCliRun(bin, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if usesPreview2ReadOnly(bin) {
-					// The read wrap's blocking-read canon-lower needs a
-					// realloc to allocate the returned list<u8>; rebuild
-					// with ForceMemorySection so the core module exports
-					// cabi_realloc. Scoped to read-only programs so the
-					// other wrap paths (which don't alias cabi_realloc)
-					// are unaffected.
-					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-						ForceMemorySection: true,
-						Preview2WASI:       true,
-						SynthCliRun:        true,
-					})
-					if err != nil {
-						return 1, err
-					}
-					comp := component.WrapWasiReadAsCliRun(rb, "_lang_run")
 					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 						return 1, err
 					}
@@ -655,42 +619,6 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 						return 1, err
 					}
 					comp := component.WrapWasiWriteFileAsCliRun(rb, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if usesPreview2ReadLinePrintOnly(bin) {
-					// Filter shape: read_line (get-stdin + blocking-read)
-					// + print (get-stdout + blocking-write-and-flush) in one
-					// component. blocking-read returns a list, so rebuild
-					// with ForceMemorySection (cabi_realloc).
-					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-						ForceMemorySection: true,
-						Preview2WASI:       true,
-						SynthCliRun:        true,
-					})
-					if err != nil {
-						return 1, err
-					}
-					comp := component.WrapWasiReadLinePrintAsCliRun(rb, "_lang_run")
-					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-						return 1, err
-					}
-					return 0, nil
-				}
-				if getFuncName, structured, ok := classifyPrintPlusStructured(bin); ok {
-					// Mixed case: a stream-write (print/eprint) plus K
-					// no-memory structured imports (exit/random/monotonic)
-					// in one component. Rebuild with ForceMemorySection is
-					// NOT needed (the stream-write lower is memory-only, no
-					// realloc), but the print path already runs without it.
-					var comp []byte
-					if getFuncName == "get-stderr" {
-						comp = component.WrapWasiEprintWithStructuredAsCliRun(bin, structured, "_lang_run")
-					} else {
-						comp = component.WrapWasiPrintWithStructuredAsCliRun(bin, structured, "_lang_run")
-					}
 					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 						return 1, err
 					}
@@ -1119,52 +1047,6 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 //     `WrapWasiImportedWithExport`.
 //   - unknown: the "module.name" string returned so the driver
 //     can surface a useful error pointing at -wasi-adapter.
-// usesPreview2PrintOnly reports whether the core module's
-// imports are exactly the preview-2 print pair —
-// `wasi:cli/stdout::get-stdout` plus
-// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`
-// — and nothing else. The print imports use the trampoline /
-// fixup core-module pattern (see WrapWasiPrintComponent /
-// WrapWasiPrintAsCliRun) which is fundamentally different from
-// the structured WasiImport flow used for other preview-2
-// migrations; the driver routes the print-only case through
-// the dedicated wrap helper.
-//
-// Mixed cases (print + something else) aren't supported yet.
-func usesPreview2PrintOnly(bin []byte) bool {
-	return usesPreview2StreamWriteOnly(bin, "wasi:cli/stdout@0.2.0", "get-stdout")
-}
-
-// usesPreview2EprintOnly is the wasi:cli/stderr sibling — reports
-// whether the imports are exactly get-stderr +
-// blocking-write-and-flush (the eprint-only shape).
-func usesPreview2EprintOnly(bin []byte) bool {
-	return usesPreview2StreamWriteOnly(bin, "wasi:cli/stderr@0.2.0", "get-stderr")
-}
-
-// usesPreview2StreamWriteOnly reports whether the core module's
-// imports are exactly the preview-2 stream-write pair —
-// `<cliInterface>::<getFuncName>` plus
-// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`
-// — and nothing else. Used to route print-only / eprint-only
-// programs through the dedicated trampoline-pattern wrap
-// helper (WrapWasiPrintAsCliRun / WrapWasiEprintAsCliRun).
-func usesPreview2StreamWriteOnly(bin []byte, cliInterface, getFuncName string) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 2 {
-		return false
-	}
-	hasGetter, hasWrite := false, false
-	for _, p := range pairs {
-		if p.module == cliInterface && p.name == getFuncName {
-			hasGetter = true
-		} else if p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush" {
-			hasWrite = true
-		}
-	}
-	return hasGetter && hasWrite
-}
-
 // usesPreview2WallClockOnly reports whether the core module's
 // imports are exactly the single preview-2 wall-clock pair —
 // `wasi:clocks/wall-clock@0.2.0::now`. The realtime-clock
@@ -1179,32 +1061,6 @@ func usesPreview2WallClockOnly(bin []byte) bool {
 	}
 	p := pairs[0]
 	return p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now"
-}
-
-// usesPreview2ReadOnly reports whether the core module's imports
-// are exactly the preview-2 stdin-read pair —
-// `wasi:cli/stdin::get-stdin` plus
-// `wasi:io/streams::[method]input-stream.blocking-read` — and
-// nothing else. The read imports use the trampoline / fixup
-// core-module pattern with a realloc-bearing canon-lower (see
-// WrapWasiReadComponent / WrapWasiReadAsCliRun), distinct from the
-// structured WasiImport flow; the driver routes the read-only case
-// through the dedicated wrap helper. Mixed cases aren't supported
-// yet.
-func usesPreview2ReadOnly(bin []byte) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 2 {
-		return false
-	}
-	hasGetter, hasRead := false, false
-	for _, p := range pairs {
-		if p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin" {
-			hasGetter = true
-		} else if p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read" {
-			hasRead = true
-		}
-	}
-	return hasGetter && hasRead
 }
 
 // usesPreview2ArgsOnly reports whether the core module's imports
@@ -1304,38 +1160,6 @@ func usesPreview2WriteFileOnly(bin []byte) bool {
 	return true
 }
 
-// usesPreview2ReadLinePrintOnly reports whether the core module's
-// imports are exactly the read_line + print filter shape:
-// wasi:cli/stdin::get-stdin, wasi:cli/stdout::get-stdout, and
-// wasi:io/streams::{input-stream.blocking-read,
-// output-stream.blocking-write-and-flush}. Routes through
-// WrapWasiReadLinePrintAsCliRun.
-func usesPreview2ReadLinePrintOnly(bin []byte) bool {
-	pairs := coreModuleImportPairs(bin)
-	if len(pairs) != 4 {
-		return false
-	}
-	want := map[[2]string]bool{
-		{"wasi:cli/stdin@0.2.0", "get-stdin"}:                                       false,
-		{"wasi:cli/stdout@0.2.0", "get-stdout"}:                                     false,
-		{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             false,
-		{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: false,
-	}
-	for _, p := range pairs {
-		k := [2]string{p.module, p.name}
-		if _, ok := want[k]; !ok {
-			return false
-		}
-		want[k] = true
-	}
-	for _, seen := range want {
-		if !seen {
-			return false
-		}
-	}
-	return true
-}
-
 // classifyComposeCliStream inspects a core module's imports and, if
 // they all fall within the CLI-stream + structured family that
 // component.ComposePreview2CliRun handles, returns the ComposeOpts to
@@ -1395,53 +1219,14 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 		opts.WriteGetter = "get-stderr"
 	}
 	opts.ReadStdin = getStdin
+	// Only claim shapes with a stream side. Pure-structured
+	// (exit/random/monotonic with no stream) stays on
+	// WrapWasiImportedAsCliRun; no imports falls to
+	// BuildWasiCliRunComponent.
+	if opts.WriteGetter == "" && !opts.ReadStdin {
+		return component.ComposeOpts{}, false
+	}
 	return opts, true
-}
-
-// classifyPrintPlusStructured detects the mixed case: a stream-write
-// (print → get-stdout, or eprint → get-stderr, plus
-// output-stream.blocking-write-and-flush) combined with one or more
-// no-memory structured imports (exit / random / monotonic, all in
-// knownPreview2Imports). Returns the getter name ("get-stdout" /
-// "get-stderr"), the classified structured imports, and ok=true when
-// the import set is exactly {stream-write pair} ∪ {≥1 known
-// structured} and nothing else. The pure stream-write case (no
-// structured) is handled earlier by usesPreview2{Print,Eprint}Only,
-// so this requires at least one structured import.
-func classifyPrintPlusStructured(bin []byte) (string, []component.WasiImport, bool) {
-	pairs := coreModuleImportPairs(bin)
-	const blockingWrite = "[method]output-stream.blocking-write-and-flush"
-	hasWrite := false
-	getFuncName := ""
-	var structured []component.WasiImport
-	for _, p := range pairs {
-		switch {
-		case p.module == "wasi:io/streams@0.2.0" && p.name == blockingWrite:
-			hasWrite = true
-		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
-			getFuncName = "get-stdout"
-		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
-			getFuncName = "get-stderr"
-		default:
-			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
-			if !ok {
-				return "", nil, false // an import we can't place
-			}
-			structured = append(structured, component.WasiImport{
-				InterfaceName:    spec.interfaceName,
-				FuncName:         p.name,
-				ParamNames:       spec.paramNames,
-				ParamValtypes:    spec.paramValtypes,
-				CoreImportModule: spec.coreImportModule,
-				InnerTypes:       spec.innerTypes,
-				ResultValtypes:   spec.resultValtypes,
-			})
-		}
-	}
-	if !hasWrite || getFuncName == "" || len(structured) == 0 {
-		return "", nil, false
-	}
-	return getFuncName, structured, true
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
