@@ -484,3 +484,27 @@ func TestWasiClocksWallClockInstanceTypeBody_Bytes(t *testing.T) {
 		t.Errorf("WasiClocksWallClockInstanceTypeBody() mismatch\ngot  % x\nwant % x", got, want)
 	}
 }
+
+// TestWasiCliStdinInstanceTypeBody_Bytes pins the bytes of the
+// wasi:cli/stdin instance type — get-stdin() -> input-stream.
+// Same shape as the stdout body but referencing input-stream
+// (re-exported from outer typeidx) and the get-stdin name.
+func TestWasiCliStdinInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiCliStdinInstanceTypeBody(3)
+	want := []byte{
+		0x01, 0x42, 0x05,
+		// alias outer 1 3
+		0x02, 0x03, 0x02, 0x01, 0x03,
+		// export "input-stream" (type (eq 0))
+		0x04, 0x00, 0x0c, 'i', 'n', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', 0x03, 0x00, 0x00,
+		// type (own 1)
+		0x01, 0x69, 0x01,
+		// type func() -> 2
+		0x01, 0x40, 0x00, 0x00, 0x02,
+		// export "get-stdin" (func 3)
+		0x04, 0x00, 0x09, 'g', 'e', 't', '-', 's', 't', 'd', 'i', 'n', 0x01, 0x03,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiCliStdinInstanceTypeBody(3) mismatch\ngot  % x\nwant % x", got, want)
+	}
+}

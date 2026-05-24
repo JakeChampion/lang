@@ -536,7 +536,7 @@ func WasiIoErrorInstanceTypeBody() []byte {
 //     get-stdout functype at inner typeidx 3.
 //  4. export "get-stdout" (func 3)
 func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
-	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stdout")
+	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stdout", "output-stream")
 }
 
 // WasiCliStderrInstanceTypeBody is the wasi:cli/stderr@0.2.0
@@ -544,7 +544,7 @@ func WasiCliStdoutInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
 // shape — `get-stderr: func() -> output-stream` — only the
 // exported function name differs.
 func WasiCliStderrInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
-	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stderr")
+	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stderr", "output-stream")
 }
 
 // WasiClocksWallClockInstanceTypeBody returns the type-section
@@ -577,15 +577,23 @@ func WasiClocksWallClockInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiCliStdinInstanceTypeBody is the wasi:cli/stdin@0.2.0
+// counterpart — `get-stdin: func() -> input-stream`. Same shape
+// as the stdout/stderr getters, only the stream resource type
+// (input-stream) and the getter name differ.
+func WasiCliStdinInstanceTypeBody(outerInputStreamTypeidx uint32) []byte {
+	return wasiCliStreamGetterInstanceTypeBody(outerInputStreamTypeidx, "get-stdin", "input-stream")
+}
+
 // wasiCliStreamGetterInstanceTypeBody builds the shared
-// instance-type body for wasi:cli/stdout / wasi:cli/stderr —
-// both declare a single `<getFuncName>: func() -> output-stream`
-// referencing the wasi:io/streams output-stream resource at
-// `outerOutputStreamTypeidx`.
-func wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx uint32, getFuncName string) []byte {
+// instance-type body for the wasi:cli stdio getters
+// (stdout / stderr → output-stream, stdin → input-stream). Each
+// declares a single `<getFuncName>: func() -> <streamType>`
+// referencing the wasi:io/streams resource at `outerStreamTypeidx`.
+func wasiCliStreamGetterInstanceTypeBody(outerStreamTypeidx uint32, getFuncName, streamType string) []byte {
 	body := []byte{0x01, 0x42, 0x05}
-	body = append(body, OuterAliasTypeDecl(1, outerOutputStreamTypeidx)...)
-	body = append(body, ExportTypeEqDecl("output-stream", 0)...)
+	body = append(body, OuterAliasTypeDecl(1, outerStreamTypeidx)...)
+	body = append(body, ExportTypeEqDecl(streamType, 0)...)
 	body = append(body, 0x01, 0x69, 0x01) // type decl: own<typeidx 1>
 	body = append(body,
 		0x01,       // type decl
