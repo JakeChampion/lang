@@ -13341,6 +13341,31 @@ function main(): i32 {
 	}
 }
 
+// Chained field access where a struct field is tuple-typed:
+// `r.pos.0`. targetTupleType only walked tuple-of-tuple; a
+// struct-field-of-tuple target fell through to the struct path,
+// fieldOwner returned "", and codegen errored with "field access
+// on unresolved struct". Fix resolves the field's declared tuple
+// type via exprType.
+func TestArm64StructTupleFieldAccess(t *testing.T) {
+	src := `struct Rec { pos: (i32, i32), name: string }
+struct Nested { t: (i32, (i32, i32)) }
+function main(): i32 {
+    var r: Rec = Rec { pos: (3, 4), name: "p" };
+    if (r.pos.0 != 3) { return 1; }
+    if (r.pos.1 != 4) { return 2; }
+    // deeper: struct field tuple containing a tuple
+    var n: Nested = Nested { t: (1, (2, 3)) };
+    if (n.t.0 != 1) { return 3; }
+    if (n.t.1.0 != 2) { return 4; }
+    if (n.t.1.1 != 3) { return 5; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (struct tuple-field chained access)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

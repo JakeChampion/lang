@@ -4566,6 +4566,17 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 				}
 			}
 		}
+		// Struct field of tuple type — `r.pos.0` where `pos: (i32,
+		// i32)` is a field of struct `r`. The tuple-of-tuple walk
+		// above doesn't apply (the target is a struct, not a
+		// tuple); resolve the field's declared type via exprType,
+		// which handles the struct-field lookup. Without this the
+		// FieldAccess lowering falls through to the struct path,
+		// fieldOwner returns "", and codegen errors with "field
+		// access on unresolved struct \"\"".
+		if t, ok := b.exprType(x).(ast.TupleType); ok {
+			return t, true
+		}
 	case *ast.Index:
 		// `arr[i].N` where arr is an array of tuples — the
 		// Index result's static type is the element type of
