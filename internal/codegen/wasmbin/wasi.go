@@ -124,6 +124,20 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_get_environment_p2": {
+		// Preview-2: wasi:cli/environment@0.2.0::get-environment() ->
+		// list<tuple<string, string>>. Canonical-ABI lowered to
+		// `(retptr: i32) -> ()`: retptr holds the list header (data
+		// ptr @ +0, count @ +4). Each element is a 16-byte tuple —
+		// key (ptr @ +0, len @ +4), value (ptr @ +8, len @ +12) —
+		// already allocated in the user's memory through
+		// cabi_realloc. Unlike preview-1's combined "KEY=VALUE"
+		// NUL strings, the key/value are pre-split.
+		module:  "wasi:cli/environment@0.2.0",
+		name:    "get-environment",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_stderr_p2": {
 		// Preview-2: wasi:cli/stderr@0.2.0::get-stderr() →
 		// own<output-stream>. Mirror of get-stdout; the result
@@ -683,8 +697,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_environ_get")
 	}
 	if helpers.set["__fern_env"] {
-		in.add("wasi_environ_sizes_get")
-		in.add("wasi_environ_get")
+		if opts.Preview2WASI {
+			in.add("wasi_get_environment_p2")
+		} else {
+			in.add("wasi_environ_sizes_get")
+			in.add("wasi_environ_get")
+		}
 	}
 	if helpers.set["__fern_read_byte"] {
 		if opts.Preview2WASI {
@@ -1067,6 +1085,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_arg_count":    buildArgCountBodyP2,
 	"__fern_arg_at":       buildArgAtBodyP2,
 	"__fern_args":         buildArgsBodyP2,
+	"__fern_env":          buildEnvBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
@@ -2323,5 +2342,179 @@ func buildEnvBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 9)
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildEnvBodyP2 is the preview-2 variant of buildEnvBody. Looks up
+// an env var by name in the wasi:cli/environment::get-environment
+// list<tuple<string, string>>. Unlike preview-1's combined
+// "KEY=VALUE" NUL strings, get-environment returns pre-split
+// (key, value) pairs with explicit lengths, so the match is a plain
+// length + byte compare (no '=' scan, no strlen).
+//
+// Each list element is a 16-byte tuple: key (ptr @ +0, len @ +4),
+// value (ptr @ +8, len @ +12). The list base + count are cached in
+// the env slots on first call (envCountAddr, envPtrsAddr).
+//
+// Returns the same Option[string] box as buildEnvBody:
+// Some(value) → alloc_box(16) {tag=0, data@+8, len@+12};
+// None → alloc_box(4) {tag=1}.
+//
+// Locals (after 2 params): 2=$i, 3=$tuple, 4=$key_ptr, 5=$key_len,
+// 6=$j, 7=$matched, 8=$name_len, 9=$rb/$box.
+func buildEnvBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	getEnv := idxs["wasi_get_environment_p2"]
+	var body []byte
+	// Lazy init: get-environment into an 8-byte retbuf ($rb=local 9).
+	body = inst.InstI32Const(body, envInitAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, 9)
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstCall(body, getEnv)
+		// mem[envCountAddr] = mem[$rb + 4]
+		body = inst.InstI32Const(body, envCountAddr)
+		body = inst.InstLocalGet(body, 9)
+		body = memory.InstI32Load(body, 2, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		// mem[envPtrsAddr] = mem[$rb + 0]
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = inst.InstLocalGet(body, 9)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, envInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// $name_len = __fern_str_len(name_data, name_len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 8)
+	// for i in 0..count:
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // outer
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, envCountAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1) // i >= count → break (no match)
+		// $tuple = mem[envPtrsAddr] + i*16
+		body = inst.InstI32Const(body, envPtrsAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 3)
+		// $key_ptr = mem[tuple+0], $key_len = mem[tuple+4]
+		body = inst.InstLocalGet(body, 3)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstLocalGet(body, 3)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, 5)
+		// if $key_len == $name_len: byte-compare
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 8)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// $matched = 1; $j = 0
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalSet(body, 7)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstLocalSet(body, 6)
+			body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // cmp block
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstLocalGet(body, 8)
+				body = numeric.InstI32GeU(body)
+				body = inst.InstBrIf(body, 1) // j >= name_len → all matched
+				// mem[key_ptr + j] != str_byte(name, j) → mismatch
+				body = inst.InstLocalGet(body, 4)
+				body = inst.InstLocalGet(body, 6)
+				body = numeric.InstI32Add(body)
+				body = memory.InstI32Load8U(body, 0, 0)
+				body = inst.InstLocalGet(body, 0)
+				body = inst.InstLocalGet(body, 1)
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstCall(body, strByte)
+				body = numeric.InstI32Ne(body)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				{
+					body = inst.InstI32Const(body, 0)
+					body = inst.InstLocalSet(body, 7) // $matched = 0
+					body = inst.InstBr(body, 2)        // break cmp loop
+				}
+				body = inst.InstEnd(body)
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstI32Const(body, 1)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalSet(body, 6)
+				body = inst.InstBr(body, 0)
+			}
+			body = inst.InstEnd(body) // cmp loop
+			body = inst.InstEnd(body) // cmp block
+			// if $matched: build Some(value) and return.
+			body = inst.InstLocalGet(body, 7)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstI32Const(body, 16)
+				body = inst.InstCall(body, allocBox)
+				body = inst.InstLocalSet(body, 9)
+				body = inst.InstLocalGet(body, 9)
+				body = inst.InstI32Const(body, 0)
+				body = memory.InstI32Store(body, 2, 0) // tag = 0 (Some)
+				// data = mem[tuple+8] (value ptr)
+				body = inst.InstLocalGet(body, 9)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalGet(body, 3)
+				body = memory.InstI32Load(body, 2, 8)
+				body = memory.InstI32Store(body, 2, 0)
+				// len = mem[tuple+12] (value len)
+				body = inst.InstLocalGet(body, 9)
+				body = inst.InstI32Const(body, 12)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalGet(body, 3)
+				body = memory.InstI32Load(body, 2, 12)
+				body = memory.InstI32Store(body, 2, 0)
+				body = inst.InstLocalGet(body, 9)
+				body = inst.InstReturn(body)
+			}
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+		// next entry
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // outer loop
+	body = inst.InstEnd(body) // outer block
+	// No match: None box. alloc_box(4), tag=1.
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
