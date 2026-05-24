@@ -3224,6 +3224,27 @@ func TestX86_64MapClearReturnsMap(t *testing.T) {
 	}
 }
 
+// Phase 2d: Map.set copy-on-write. A local alias of a map
+// (var m2 = m1) bumps the handle rc to 2, so m2.set(...) must
+// COPY rather than mutate the shared buffer — m1 stays intact.
+// Mirrors TestX86_64ArraySetAliasedCopies. The seed entry is a
+// statement-form set (no reassign) so m1's rc stays 1 before the
+// alias; under the borrowed-parameter model that set is in-place.
+func TestX86_64MapSetAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var m1: Map[string, i32] = map_new(8);
+    m1.set("a", 1);                 // in-place (rc==1)
+    var m2 = m1;                    // alias → rc=2
+    m2 = m2.set("a", 999);          // rc>1 → copy; m1 unchanged
+    if (m1.get_or("a", 0) != 1)   { return 1; }
+    if (m2.get_or("a", 0) != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased Map.set must copy)", code)
+	}
+}
+
 // Mirror of TestArm64TupleStructElem.
 func TestX86_64TupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
