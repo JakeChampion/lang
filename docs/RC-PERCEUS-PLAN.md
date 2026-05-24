@@ -929,6 +929,20 @@ Phase 3 CANNOT start with the freelist — it must start by
      deep (nested-of-nested) recursion via per-type `drop_<T>` rather
      than the flat `rc_dec` used for non-array fields/elements/
      payloads now (sufficient while free is off).
+   - **rc-correctness corpus — LANDED (the step-4 go/no-go net).**
+     `Test{X86_64,Arm64,WASM}RcCorrectnessCorpus` (`rc_correctness_test.go`)
+     run a shared table of ~12 nested-value programs — array of
+     structs, struct of arrays (aliased), nested arrays, unions,
+     non-uniform enums, closures (array + scalar capture), string-kv
+     maps, a push loop of structs, reassignment chains, borrowed
+     params, and a deep mixed grid — each returning a folded
+     value-correctness + `__rc_underflow_count()` check that must be
+     0 on all three backends. Leak-only gaps (closures / maps /
+     generic enums / deep nesting) still read 0 here (a leak doesn't
+     bump the underflow counter), while any accidental over-release
+     surfaces immediately. This is the corpus the step-4 flip is
+     gated on; grow it as new shapes land. No existing drift was
+     found when it was added.
 4. **Freelist allocator, behind a build flag.** Per-size-class
    free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
    1024/2048; larger → bump+unmap). The free path needs the
