@@ -1,0 +1,8 @@
+import "core/no_prelude";
+
+function main(): i32 {
+    print("alpha");
+    print("beta");
+    print("gamma");
+    return 0;
+}
