@@ -111,6 +111,44 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_get_directories_p2": {
+		// Preview-2: wasi:filesystem/preopens@0.2.0::get-directories()
+		// -> list<tuple<own<descriptor>, string>>. Lowered to
+		// `(retptr: i32) -> ()`: retptr holds the list header (data
+		// ptr @ +0, count @ +4). Each element is a 12-byte tuple —
+		// descriptor handle @ +0, mount-path (ptr @ +4, len @ +8).
+		module:  "wasi:filesystem/preopens@0.2.0",
+		name:    "get-directories",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_descriptor_open_at_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.open-at lowered to 7×i32 ->():
+		//   (self, path-flags, path_ptr, path_len, open-flags,
+		//    descriptor-flags, retptr). retptr holds
+		//   result<own<descriptor>, error-code>: disc @ +0 (0=ok),
+		//   descriptor handle (ok) / error-code disc (err) @ +4.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.open-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_descriptor_read_via_stream_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.read-via-stream lowered to
+		//   (self: i32, offset: i64, retptr: i32) -> (). retptr holds
+		//   result<own<input-stream>, error-code>: disc @ +0,
+		//   stream handle (ok) / error-code disc (err) @ +4.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.read-via-stream",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -713,9 +751,16 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_read_file"] {
-		in.add("wasi_path_open")
-		in.add("wasi_fd_read")
-		in.add("wasi_fd_close")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_read_via_stream_p2")
+			in.add("wasi_io_blocking_read")
+		} else {
+			in.add("wasi_path_open")
+			in.add("wasi_fd_read")
+			in.add("wasi_fd_close")
+		}
 	}
 	if helpers.set["__fern_write_file"] {
 		in.add("wasi_path_open")
@@ -1086,6 +1131,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_arg_at":       buildArgAtBodyP2,
 	"__fern_args":         buildArgsBodyP2,
 	"__fern_env":          buildEnvBodyP2,
+	"__fern_read_file":    buildReadFileBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.

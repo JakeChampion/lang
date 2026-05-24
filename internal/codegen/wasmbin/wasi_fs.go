@@ -453,6 +453,233 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildReadFileBodyP2 is the preview-2 variant of buildReadFileBody.
+// Reads a whole file through the wasi:filesystem chain instead of
+// preview-1 path_open/fd_read:
+//
+//	base   = get-directories() -> first preopen descriptor handle
+//	fd     = base.open-at(symlink-follow, path, 0, read) -> descriptor
+//	stream = fd.read-via-stream(0) -> input-stream
+//	loop: stream.blocking-read(4096) -> list<u8> until closed (EOF)
+//
+// Returns Result[string, IoError]: Ok(contents) on success, Err on
+// open/read failure. The blocking-read chunks are host-allocated
+// (cabi_realloc) and copied into a doubling accumulator.
+//
+// Known simplification: open/read errors map to ENOENT (NotFound)
+// via __build_io_error rather than translating each error-code
+// case; blocking-read errors are treated as end-of-stream. Refining
+// the error-code → IoError mapping is a follow-up.
+//
+// Locals (after 2 params): 2=rb, 3=path_buf, 4=path_byte_len,
+// 5=preopen, 6=fd, 7=stream, 8=acc_buf, 9=acc_size, 10=acc_cur,
+// 11=chunk_ptr, 12=chunk_len, 13=box/tmp, 14=strnorm scratch,
+// 15=ioerr.
+func buildReadFileBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
+	blockingRead := idxs["wasi_io_blocking_read"]
+
+	const enoent = 44 // preview-1 ENOENT → IoError NotFound
+
+	var body []byte
+	// rb = alloc(16) — reused retbuf for the sequential host calls.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+
+	// Normalize path → path_buf(3), path_byte_len(4).
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
+
+	// get-directories(rb): list header (base @ rb+0, count @ rb+4).
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, getDirs)
+	// preopen = mem[mem[rb+0] + 0]  (first tuple's descriptor handle)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5)
+
+	// open-at(preopen, path-flags=1 symlink-follow, path_buf,
+	//   path_byte_len, open-flags=0, descriptor-flags=1 read, rb)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, openAt)
+	// if mem8[rb+0] != 0 → Err(NotFound)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, enoent)
+	}
+	body = inst.InstEnd(body)
+	// fd = mem[rb+4]
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 6)
+
+	// read-via-stream(fd, offset=0, rb)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, readVia)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, enoent)
+	}
+	body = inst.InstEnd(body)
+	// stream = mem[rb+4]
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 7)
+
+	// acc_buf = alloc(4096); acc_size = 4096; acc_cur = 0
+	body = inst.InstI32Const(body, 4096)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstI32Const(body, 4096)
+	body = inst.InstLocalSet(body, 9)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 10)
+
+	// block $end { loop $read { ... } }
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// blocking-read(stream, 4096, rb)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstI64Const(body, 4096)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstCall(body, blockingRead)
+		// disc != 0 → end of stream (closed / EOF) → break.
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstBrIf(body, 1) // depth 1 = $end
+		// chunk_ptr = mem[rb+4]; chunk_len = mem[rb+8]
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, 11)
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstLocalTee(body, 12)
+		// if chunk_len == 0 → break
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+		// Grow accumulator while acc_cur + chunk_len > acc_size.
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// if acc_cur + chunk_len <= acc_size: break grow loop
+			body = inst.InstLocalGet(body, 10)
+			body = inst.InstLocalGet(body, 12)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, 9)
+			body = numeric.InstI32LeU(body)
+			body = inst.InstBrIf(body, 1)
+			// acc_size <<= 1; new = alloc(acc_size); copy(new, acc_buf, acc_cur)
+			body = inst.InstLocalGet(body, 9)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Shl(body)
+			body = inst.InstLocalSet(body, 9)
+			body = inst.InstLocalGet(body, 9)
+			body = inst.InstCall(body, alloc)
+			body = inst.InstLocalSet(body, 13)
+			// memory.copy(new=13, acc_buf=8, acc_cur=10); then acc_buf = new.
+			body = inst.InstLocalGet(body, 13)
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstLocalGet(body, 10)
+			body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+			body = inst.InstLocalGet(body, 13)
+			body = inst.InstLocalSet(body, 8)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstEnd(body)
+		// memory.copy(acc_buf + acc_cur, chunk_ptr, chunk_len)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 10)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstLocalGet(body, 12)
+		body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+		// acc_cur += chunk_len
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstLocalGet(body, 12)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 10)
+		body = inst.InstBr(body, 0) // $read
+	}
+	// end $read loop, end $end block
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+
+	// strbuf = alloc(acc_cur); memory.copy(strbuf, acc_buf, acc_cur)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 11) // reuse $chunk_ptr as $strbuf
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 10)
+	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	// Build Ok(string): box(16) tag=0 @0, data @+8, len @+12.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 13)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 13)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 11)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 13)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 10)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 13)
+
+	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReadFileErr appends the "build IoError(errno) and return
+// Err" tail used by buildReadFileBodyP2's open/read error paths.
+// Uses local 15 for the IoError ptr and local 13 for the Result
+// box. Mirrors buildReadFileBody's Err shape (8-byte box, tag=1 @0,
+// IoError ptr @+4).
+func buildReadFileErr(body []byte, idxs map[string]uint32, buildIoErr, allocBox uint32, errno int32) []byte {
+	body = inst.InstI32Const(body, errno)
+	// __build_io_error(errno, path_data, path_len)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, buildIoErr)
+	body = inst.InstLocalSet(body, 15)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 13)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 13)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 15)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 13)
+	body = inst.InstReturn(body)
+	return body
+}
+
 // emitStrNormalize copies an SSO-encoded `(data, len)` string
 // into a fresh heap buffer of its byte length, returning the
 // heap buffer pointer + byte length as two consecutive op
