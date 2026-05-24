@@ -10,7 +10,7 @@ import { test, expect } from "@playwright/test";
 
 test("home page renders the hero + landing card grid", async ({ page }) => {
   await page.goto("./");
-  await expect(page.locator("h1")).toContainText("lang");
+  await expect(page.locator("h1")).toContainText("Fern");
   // The card grid uses Starlight's Card component — asserting on
   // the "Get started" CTA is more robust than poking at the card
   // wrapper class which changes between Starlight versions.
@@ -27,9 +27,9 @@ test("tutorial sidebar group lists the install page", async ({ page }) => {
   await expect(sidebar.getByText("First steps", { exact: true })).toBeVisible();
 });
 
-test("reference > tooling page describes lang-lsp", async ({ page }) => {
+test("reference > tooling page describes fern-lsp", async ({ page }) => {
   await page.goto("reference/tooling/");
-  await expect(page.locator("main")).toContainText("lang-lsp");
+  await expect(page.locator("main")).toContainText("fern-lsp");
   await expect(page.locator("main")).toContainText("textDocument/formatting");
 });
 

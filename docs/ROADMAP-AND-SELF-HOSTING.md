@@ -125,7 +125,7 @@ the audit history is preserved.
 
 ## Part 2 — Self-hosting readiness
 
-The compiler is written in Go (`cmd/lang/main.go` +
+The compiler is written in Go (`cmd/fern/main.go` +
 `internal/{lexer,parser,ast,checker,monomorph,closureconv,ir,codegen,interp,treeshake,diag,modload,prelude}`).
 Self-hosting means rewriting it in lang itself and
 bootstrapping from a previous version. Rough estimate:
@@ -178,7 +178,7 @@ Type-system extension; ~1-2 weeks design + implementation.
    `lld` / `wasm-tools` (see Part 3). Lang has no `exec`
    and WASI's `wasi:system/process` proposal isn't
    finalised. **Path forward**: keep a thin Go bootstrap
-   that handles linking only, and let the lang-port emit
+   that handles linking only, and let the fern-port emit
    asm / WAT. Standard self-hosting pattern (TinyCC and
    others do this).
 
@@ -238,7 +238,7 @@ runnable binary from that text requires external tools.
 
 ### clang (or `aarch64-linux-gnu-gcc` / `x86_64-linux-gnu-gcc`)
 
-**Used at**: `cmd/lang/main.go:311,347` via `exec.Command`.
+**Used at**: `cmd/fern/main.go:311,347` via `exec.Command`.
 
 The lang compiler does **not** include an assembler. After
 emitting `.s` it shells out to a C toolchain driver, passing
@@ -263,7 +263,7 @@ arm64-darwin specifically because of point 2 below.
 
 ### lld (LLVM linker, Mach-O backend)
 
-**Used at**: `cmd/lang/main.go:304` via `-fuse-ld=lld`.
+**Used at**: `cmd/fern/main.go:304` via `-fuse-ld=lld`.
 
 Only relevant for **cross-compiling to arm64-darwin from
 Linux**. On a native macOS host, clang's default linker is
@@ -278,14 +278,14 @@ clang --target=arm64-apple-darwin -fuse-ld=lld -nostdlib \
       -Wl,-arch,arm64 prog.s -o binary
 ```
 
-On the native macOS path (`cmd/lang/main.go:300`) the
+On the native macOS path (`cmd/fern/main.go:300`) the
 arguments are different — `-nostdlib -lSystem` — because
 Apple's ld64 requires the libSystem.dylib stub for dynamic
 linkage, even when we link nothing FROM libSystem.
 
 ### wasm-tools
 
-**Used at**: `cmd/lang/main.go:381-415` (three subprocess
+**Used at**: `cmd/fern/main.go:381-415` (three subprocess
 calls in sequence).
 
 The wasm backend's job is to emit a **Component Model**
@@ -299,7 +299,7 @@ workerd, etc.) consume. The pipeline:
 2. **`wasm-tools component embed`** — annotates the binary
    module with a Component Type section, derived from the
    `.wit` interface description (embedded in the lang binary
-   via Go's `embed` — see `cmd/lang/main.go:355-362`). This
+   via Go's `embed` — see `cmd/fern/main.go:355-362`). This
    tells downstream tooling "this module implements the
    `lang` world / the `http` world".
 3. **`wasm-tools component new --adapt

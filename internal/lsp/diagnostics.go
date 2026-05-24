@@ -25,7 +25,7 @@ func toDiagnostics(err error) []Diagnostic {
 func toDiagnostic(err error) Diagnostic {
 	d := Diagnostic{
 		Severity: severityError,
-		Source:   "lang",
+		Source:   "fern",
 		Message:  err.Error(),
 	}
 	if p, ok := err.(diag.Positioned); ok {

@@ -43,8 +43,8 @@ Two reasons specific to this codebase:
    teaches the user about their own language. Every minute
    spent on diagnostic UX saves minutes of bafflement later.
 
-2. **langsmith fuzzer produces weird programs**
-   (`IMPROVEMENTS.md ▸ langsmith`). The error-rendering path
+2. **fernsmith fuzzer produces weird programs**
+   (`IMPROVEMENTS.md ▸ fernsmith`). The error-rendering path
    sees every shape the type system can reject. Improving
    diagnostic clarity directly improves the differential-
    oracle workflow (compare *what the diagnostics say*, not
@@ -321,7 +321,7 @@ messages by hand.
   but the pattern does for other paren / brace mismatches).
 
 - **Treat the top-N errors as product copy.** Catalogue
-  them; iterate the messages by hand. The langsmith
+  them; iterate the messages by hand. The fernsmith
   fuzzer surfaces the *shapes* of errors users will hit;
   the top occurrences by frequency are where to invest.
 
@@ -404,8 +404,8 @@ wants positions + messages.
 
 **What translates:**
 
-- *Terse mode for batch / scripting use.* `lang -q` or
-  `LANG_DIAG_FORMAT=terse` emits the Hare-shape (one line
+- *Terse mode for batch / scripting use.* `fern -q` or
+  `FERN_DIAG_FORMAT=terse` emits the Hare-shape (one line
   per error, no source context, no colour). Useful for
   `grep`-driven workflows.
 
@@ -659,7 +659,7 @@ and prints it. Markdown files contain:
 - A "see also" pointing at related codes.
 
 Initial catalogue: pick the 30 most common errors (per
-checker source + langsmith fuzzer corpus). Iterate the
+checker source + fernsmith fuzzer corpus). Iterate the
 copy as users (well, *user*) hits each error.
 
 ### 5. Targeted phrasing for the top-30 error shapes
@@ -676,7 +676,7 @@ sites. For each, ask:
 - Does it suggest *what to do* (when applicable)?
 
 Iterate the phrasing of the top 30 by hit-frequency. The
-langsmith corpus gives an objective frequency count.
+fernsmith corpus gives an objective frequency count.
 
 This is *editorial work*, not engineering. A single pass
 yields disproportionate UX wins.
@@ -738,7 +738,7 @@ Three small mappings, big visible-in-editor payoff.
 
 **Cost: 1 day.** **Impact: low; nice-to-have.**
 
-`lang -q` / `LANG_DIAG_FORMAT=terse` outputs one line per
+`fern -q` / `FERN_DIAG_FORMAT=terse` outputs one line per
 error, no source context, no colour:
 
 ```
@@ -765,7 +765,7 @@ Add a `internal/diag/golden_test.go` that:
 - Compares against a checked-in `*.golden` file.
 - On `-update`, refreshes the golden file.
 
-The langsmith corpus is a natural input source — top-N
+The fernsmith corpus is a natural input source — top-N
 errors from a fuzz run, frozen as golden fixtures.
 
 ## Anti-patterns — explicit "do not adopt"
@@ -811,7 +811,7 @@ errors from a fuzz run, frozen as golden fixtures.
 
 ## When to revisit
 
-- **When langsmith catches its first diagnostic
+- **When fernsmith catches its first diagnostic
   regression** (different error text for the same shape
   across a refactor). That's the signal Rec §10 (golden
   fixtures) is overdue.

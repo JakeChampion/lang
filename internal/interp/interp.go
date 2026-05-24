@@ -429,7 +429,7 @@ func New() *Interp {
 	// "Process spawning"), so these are interp-only — native /
 	// wasm backends would fail at codegen for now. That's the
 	// right trade for the migration: tests run under
-	// `lang -interp` regardless of which backend they exercise.
+	// `fern -interp` regardless of which backend they exercise.
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
@@ -1017,7 +1017,7 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// `__alloc_u8(n: i32): u8[]` — codegen lowers to `__lang_alloc(n)
+// `__alloc_u8(n: i32): u8[]` — codegen lowers to `__fern_alloc(n)
 // + length-prefix poke`; the interp returns a fresh Array of n
 // Number(0) values. The prelude uses this as the staging buffer
 // for `__string_case_fold`, `string_from_bytes`'s round-trip
@@ -1138,7 +1138,7 @@ func optionNone() *Enum {
 }
 
 // builtinReadFile is the interpreter analogue of the
-// $read_file / __lang_read_file runtime helpers. Reads the
+// $read_file / __fern_read_file runtime helpers. Reads the
 // file in one shot, builds a Result[string, IoError] enum
 // value, and returns it. Errors come from os.ReadFile and get
 // classified via classifyIoError.
@@ -1157,7 +1157,7 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 	return resultOk(String(string(data))), nil
 }
 
-// builtinWriteFile mirrors $write_file / __lang_write_file:
+// builtinWriteFile mirrors $write_file / __fern_write_file:
 // truncate-write the content, return Option[IoError]
 // (None = success).
 func builtinWriteFile(_ *Interp, args []Value) (Value, error) {

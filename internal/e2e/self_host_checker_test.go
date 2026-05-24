@@ -84,7 +84,7 @@ func TestSelfHostCheckerX86_64(t *testing.T) {
 	}
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port checker assertion %d failed", code)
+		t.Errorf("fern-port checker assertion %d failed", code)
 	}
 }
 
@@ -120,6 +120,6 @@ func TestSelfHostCheckerArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, binPath)
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("lang-port checker assertion %d failed", code)
+		t.Errorf("fern-port checker assertion %d failed", code)
 	}
 }

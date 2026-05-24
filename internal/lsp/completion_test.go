@@ -121,7 +121,7 @@ func TestHandleMessage_Completion(t *testing.T) {
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
 			URI:        "file:///c.fern",
-			LanguageID: "lang",
+			LanguageID: "fern",
 			Text:       "function add(a: i32, b: i32): i32 {\n  return a + b;\n}\n",
 		},
 	})

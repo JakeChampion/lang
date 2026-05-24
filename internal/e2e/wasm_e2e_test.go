@@ -4,7 +4,7 @@
 // wasm-tools parse + component embed + component new (with the
 // wasi-preview1-component-adapter for the legacy entry-point
 // trampoline only) → `wasmtime run`. Tests skip when any of
-// wasm-tools / wasmtime / `LANG_WASI_ADAPTER` is missing so
+// wasm-tools / wasmtime / `FERN_WASI_ADAPTER` is missing so
 // `go test ./...` stays green on machines without the toolchain.
 package e2e
 
@@ -67,9 +67,9 @@ func skipIfPreview2Missing(t *testing.T) {
 			preview2Err = errors.New("wasmtime not on PATH")
 			return
 		}
-		adapter := os.Getenv("LANG_WASI_ADAPTER")
+		adapter := os.Getenv("FERN_WASI_ADAPTER")
 		if adapter == "" {
-			preview2Err = errors.New("LANG_WASI_ADAPTER not set (CI sets this)")
+			preview2Err = errors.New("FERN_WASI_ADAPTER not set (CI sets this)")
 			return
 		}
 		if _, err := os.Stat(adapter); err != nil {
@@ -95,8 +95,8 @@ func witRoot(t *testing.T) string {
 			return
 		}
 		for d := cwd; d != "/" && d != "."; d = filepath.Dir(d) {
-			cand := filepath.Join(d, "cmd", "lang", "wit")
-			if _, err := os.Stat(filepath.Join(cand, "lang.wit")); err == nil {
+			cand := filepath.Join(d, "cmd", "fern", "wit")
+			if _, err := os.Stat(filepath.Join(cand, "fern.wit")); err == nil {
 				witDir = cand
 				return
 			}
@@ -207,7 +207,7 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 func finishComponentFromCoreBytes(t *testing.T, core []byte) string {
 	t.Helper()
 	dir := t.TempDir()
-	embeddedBytes, err := componenttype.Embed(core, "lang")
+	embeddedBytes, err := componenttype.Embed(core, "fern")
 	if err != nil {
 		t.Fatalf("componenttype.Embed: %v", err)
 	}
@@ -217,7 +217,7 @@ func finishComponentFromCoreBytes(t *testing.T, core []byte) string {
 	}
 	componentPath := filepath.Join(dir, "prog.component.wasm")
 	if out, err := exec.Command("wasm-tools", "component", "new",
-		"--adapt", "wasi_snapshot_preview1="+os.Getenv("LANG_WASI_ADAPTER"),
+		"--adapt", "wasi_snapshot_preview1="+os.Getenv("FERN_WASI_ADAPTER"),
 		embeddedPath, "-o", componentPath,
 	).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
@@ -500,7 +500,7 @@ func TestWASMReadLineBuiltin(t *testing.T) {
 	}
 }
 
-// Bare `read_line()` builtin (the stdin-only __lang_read_line
+// Bare `read_line()` builtin (the stdin-only __fern_read_line
 // path) on the default wasm target — distinct from
 // stdin().read_line()'s receiver-aware path above. Reads a line
 // and echoes it + its length.
@@ -8973,11 +8973,11 @@ function main(): i32 {
 //
 // (Earlier this test used `print()`, but `print()`'s underlying
 // imports moved into the preview-2 migrated set when
-// `__lang_print` was ported in #1245; the test source switched to
+// `__fern_print` was ported in #1245; the test source switched to
 // a still-unmigrated builtin.)
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "needs_adapter.lang")
+	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	src := []byte(`function main(): i32 {
     var a: string[] = args();
     return a.len();
@@ -8986,14 +8986,14 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "needs_adapter.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected `lang -component-wrap` to fail on a program with unrecognised imports, but it succeeded.\noutput:\n%s", out)
+		t.Fatalf("expected `fern -component-wrap` to fail on a program with unrecognised imports, but it succeeded.\noutput:\n%s", out)
 	}
 	if !strings.Contains(string(out), "unrecognised imports") {
 		t.Errorf("expected unrecognised-imports error message in output, got:\n%s", out)
@@ -9019,7 +9019,7 @@ func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 		t.Skip("wasmtime not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "exits.lang")
+	srcPath := filepath.Join(dir, "exits.fern")
 	src := []byte(`function main(): i32 {
     exit(0);
     return 0;
@@ -9028,13 +9028,13 @@ func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "exits.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap (exit) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap (exit) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9082,19 +9082,19 @@ func TestCmdLangComponentWrapCli(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			srcPath := filepath.Join(dir, "cli.lang")
+			srcPath := filepath.Join(dir, "cli.fern")
 			src := []byte("function main(): i32 { return " + tc.retval + "; }")
 			if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
 			compPath := filepath.Join(dir, "cli.wasm")
-			cmd := exec.Command("go", "run", "./cmd/lang",
+			cmd := exec.Command("go", "run", "./cmd/fern",
 				"-target", "wasm-bin",
 				"-component-wrap-cli",
 				"-o", compPath, srcPath)
 			cmd.Dir = projectRoot(t)
 			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("lang -component-wrap-cli failed: %v\n%s", err, out)
+				t.Fatalf("fern -component-wrap-cli failed: %v\n%s", err, out)
 			}
 			if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 				t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9137,7 +9137,7 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "exits.lang")
+	srcPath := filepath.Join(dir, "exits.fern")
 	src := []byte(`function main(): i32 {
     exit(0);
     return 0;
@@ -9146,13 +9146,13 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "exits.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (exit) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (exit) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9185,7 +9185,7 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "rand.lang")
+	srcPath := filepath.Join(dir, "rand.fern")
 	src := []byte(`function main(): i32 {
     var r: i32 = random_i32();
     if (r == r) { return 0; }
@@ -9195,13 +9195,13 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "rand.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (random) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (random) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9234,7 +9234,7 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "mono.lang")
+	srcPath := filepath.Join(dir, "mono.fern")
 	src := []byte(`function main(): i32 {
     var t: i64 = monotonic_ns();
     if (t == t) { return 0; }
@@ -9244,13 +9244,13 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "mono.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (monotonic) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (monotonic) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9272,7 +9272,7 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 // TestCmdLangComponentWrapCliWithNowNs drives a Lang program
 // that calls now_ns() (the realtime wall-clock helper) through
 // `-component-wrap-cli`. With the preview-2 migration of
-// __lang_now_ns to wasi:clocks/wall-clock@0.2.0::now (the
+// __fern_now_ns to wasi:clocks/wall-clock@0.2.0::now (the
 // datetime-record indirect-return shape) + the 1-i32 trampoline
 // wrap, the produced component imports wasi:clocks/wall-clock +
 // exports wasi:cli/run and runs cleanly under `wasmtime run`.
@@ -9284,7 +9284,7 @@ func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "now.lang")
+	srcPath := filepath.Join(dir, "now.fern")
 	src := []byte(`function main(): i32 {
     var t: i64 = now_ns();
     if (t >= 0i64) { return 0; }
@@ -9294,13 +9294,13 @@ func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "now.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (now_ns) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (now_ns) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9333,7 +9333,7 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "void.lang")
+	srcPath := filepath.Join(dir, "void.fern")
 	src := []byte(`function main() {
     var t: i64 = monotonic_ns();
 }`)
@@ -9341,13 +9341,13 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "void.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (void main) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (void main) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9359,7 +9359,7 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 
 // TestCmdLangComponentWrapCliWithPrint drives a Lang program that
 // calls print("hello world") through `-component-wrap-cli`
-// end-to-end. With the preview-2 migration of __lang_print
+// end-to-end. With the preview-2 migration of __fern_print
 // (#1245) and the driver routing (this slice), the program
 // builds to a component that runs under `wasmtime run` and
 // writes "hello world\n" to stdout.
@@ -9375,7 +9375,7 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "hello.lang")
+	srcPath := filepath.Join(dir, "hello.fern")
 	src := []byte(`function main(): i32 {
     print("hello world");
     return 0;
@@ -9384,13 +9384,13 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "hello.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (print) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (print) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9425,7 +9425,7 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "rd.lang")
+	srcPath := filepath.Join(dir, "rd.fern")
 	src := []byte(`function main(): i32 {
     match (read_line()) {
         Some(line) => { return 0; },
@@ -9437,13 +9437,13 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "rd.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (read_line) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (read_line) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9473,7 +9473,7 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
-// __lang_write migrated to preview-2 in the same slice, the
+// __fern_write migrated to preview-2 in the same slice, the
 // program produces a component that writes "hello" (no trailing
 // newline) to stdout under `wasmtime run`.
 //
@@ -9487,7 +9487,7 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "hello.lang")
+	srcPath := filepath.Join(dir, "hello.fern")
 	src := []byte(`function main(): i32 {
     write("hello");
     return 0;
@@ -9496,13 +9496,13 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "hello.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (write) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (write) failed: %v\n%s", err, out)
 	}
 	runCmd := exec.Command("wasmtime", "run", compPath)
 	var stdout, stderr bytes.Buffer
@@ -9518,7 +9518,7 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 
 // TestCmdLangComponentWrapCliWithEprint drives a Lang program
 // that calls eprint("oops") through `-component-wrap-cli`. With
-// __lang_eprint migrated to preview-2 (wasi:cli/stderr +
+// __fern_eprint migrated to preview-2 (wasi:cli/stderr +
 // wasi:io/streams), the program produces a component that writes
 // "oops\n" to STDERR under `wasmtime run` — stdout stays empty.
 func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
@@ -9529,7 +9529,7 @@ func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "oops.lang")
+	srcPath := filepath.Join(dir, "oops.fern")
 	src := []byte(`function main(): i32 {
     eprint("oops");
     return 0;
@@ -9538,13 +9538,13 @@ func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "oops.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (eprint) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (eprint) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9585,7 +9585,7 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "putc.lang")
+	srcPath := filepath.Join(dir, "putc.fern")
 	src := []byte(`function main(): i32 {
     putchar(104);
     putchar(105);
@@ -9596,13 +9596,13 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "putc.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (putchar) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (putchar) failed: %v\n%s", err, out)
 	}
 	runCmd := exec.Command("wasmtime", "run", compPath)
 	var stdout, stderr bytes.Buffer
@@ -9635,7 +9635,7 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "randint.lang")
+	srcPath := filepath.Join(dir, "randint.fern")
 	src := []byte(`function main(): i32 {
     var r: i32 = random_int(0, 100);
     if (r >= 0 && r < 100) { return 0; }
@@ -9645,13 +9645,13 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "randint.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (random_int) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (random_int) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9687,7 +9687,7 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "multi.lang")
+	srcPath := filepath.Join(dir, "multi.fern")
 	src := []byte(`function main(): i32 {
     var r: i32 = random_i32();
     if (r == r) {
@@ -9699,13 +9699,13 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "multi.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (multi) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (multi) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9730,7 +9730,7 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 
 // TestCmdLangComponentWrapCliWithRandomBytes drives a Lang
 // program that calls random_bytes(n) through `-component-wrap-cli`.
-// With the preview-2 migration of __lang_random_bytes (loop of
+// With the preview-2 migration of __fern_random_bytes (loop of
 // get-random-u64() into a padded buffer), the produced component
 // imports only wasi:random/random@0.2.0 + exports wasi:cli/run@0.2.0
 // and runs cleanly under `wasmtime run`.
@@ -9746,7 +9746,7 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "randbytes.lang")
+	srcPath := filepath.Join(dir, "randbytes.fern")
 	src := []byte(`function main(): i32 {
     var b: string = random_bytes(3);
     if (b.len() == 3) { return 0; }
@@ -9756,13 +9756,13 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "randbytes.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap-cli (random_bytes) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (random_bytes) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9797,7 +9797,7 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "ok.lang")
+	srcPath := filepath.Join(dir, "ok.fern")
 	src := []byte(`function main(): i32 {
     exit(0);
     return 0;
@@ -9806,12 +9806,12 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "ok.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -target wasm (no adapter) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm (no adapter) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -9837,7 +9837,7 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 // the workaround.
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "needs_adapter.lang")
+	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	src := []byte(`function main(): i32 {
     print("hi");
     return 0;
@@ -9846,7 +9846,7 @@ func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "needs_adapter.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -9873,7 +9873,7 @@ func TestCmdLangComponentWrapVoidMain(t *testing.T) {
 		t.Skip("wasmtime not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "void.lang")
+	srcPath := filepath.Join(dir, "void.fern")
 	src := []byte(`function main() {
     var t: i64 = monotonic_ns();
 }`)
@@ -9881,13 +9881,13 @@ func TestCmdLangComponentWrapVoidMain(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "void.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap (void main) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap (void main) failed: %v\n%s", err, out)
 	}
 	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
 	if err != nil {
@@ -9916,18 +9916,18 @@ func TestCmdLangComponentWrap(t *testing.T) {
 		t.Skip("wasmtime not on PATH")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "min.lang")
+	srcPath := filepath.Join(dir, "min.fern")
 	if err := os.WriteFile(srcPath, []byte(`function main(): i32 { return 42; }`), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "min.wasm")
-	cmd := exec.Command("go", "run", "./cmd/lang",
+	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm-bin",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lang -component-wrap failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap failed: %v\n%s", err, out)
 	}
 	out, err := exec.Command("wasmtime", "run", "--invoke", "main()", compPath).CombinedOutput()
 	if err != nil {
@@ -9940,7 +9940,7 @@ func TestCmdLangComponentWrap(t *testing.T) {
 }
 
 // projectRoot returns the lang repo root for use as the working
-// directory when invoking `go run ./cmd/lang` from a test under
+// directory when invoking `go run ./cmd/fern` from a test under
 // internal/e2e/. Walks up from the test file's directory until a
 // go.mod is found.
 func projectRoot(t *testing.T) string {
@@ -10115,7 +10115,7 @@ function main(): i32 {
 	// (When the two encoders ever drift in non-structural ways
 	// the wasm-tools-print comparison below catches it.)
 	dir := t.TempDir()
-	langPath := filepath.Join(dir, "lang.wasm")
+	langPath := filepath.Join(dir, "fern.wasm")
 	if err := os.WriteFile(langPath, langBytes, 0o644); err != nil {
 		t.Fatalf("write lang: %v", err)
 	}
@@ -14764,7 +14764,7 @@ func TestWASMRcBuiltins(t *testing.T) {
 }
 
 // Phase 1d: `var y = x;` where x is an array variable load
-// bumps the refcount via __lang_rc_inc, so both x and y own
+// bumps the refcount via __fern_rc_inc, so both x and y own
 // references. Returns 0 iff the post-alias rc is exactly 2.
 func TestWASMRcAliasInc(t *testing.T) {
 	src := `function main(): i32 {
@@ -14931,7 +14931,7 @@ func TestWASMArrayIndexSetAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64ArrayIndexSetU8Stride. Specifically
 // regression-tests the wasm raw-_start path where the
-// __lang_rc_dec low-address guard would otherwise short-
+// __fern_rc_dec low-address guard would otherwise short-
 // circuit and break the pre-helper bump-then-dec design.
 func TestWASMArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {

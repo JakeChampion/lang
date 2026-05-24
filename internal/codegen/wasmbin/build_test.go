@@ -14,7 +14,7 @@ import (
 )
 
 // buildFromSource is a test helper that mirrors what the
-// `lang -target wasm-bin` CLI path does: parse + check the
+// `fern -target wasm-bin` CLI path does: parse + check the
 // source, then call Build to produce module bytes. Returns
 // an error string instead of *bytes for tests that expect
 // failure ("unsupported op X").
@@ -179,7 +179,7 @@ function main(): i32 { return fact(10); }
 // `wasmtime run --dir=. --invoke main`, and verifies the
 // returned len matches the file's byte count. Exercises the
 // path_open + fd_read loop + the heap-form Ok(string) result
-// construction — the success path of __lang_read_file. The
+// construction — the success path of __fern_read_file. The
 // missing-file (NotFound) path lives in a separate test below.
 func TestBuildReadFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -292,7 +292,7 @@ func TestBuildReadFileNotFound(t *testing.T) {
 // program writes a known string to a sandbox-relative path and
 // returns 0 on success. The harness reads the file back from
 // the host side and asserts the bytes match. Exercises the
-// success path of __lang_write_file (None return).
+// success path of __fern_write_file (None return).
 func TestBuildWriteFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -345,7 +345,7 @@ func TestBuildWriteFile(t *testing.T) {
 
 // TestBuildWriteFileRoundtrip — write then read the same file
 // from inside one program. Confirms write_file's bytes show up
-// on disk in a form __lang_read_file is happy to consume; both
+// on disk in a form __fern_read_file is happy to consume; both
 // helpers share the same WASI rights / preopen / scratch
 // conventions, so a regression in either surfaces here.
 func TestBuildWriteFileRoundtrip(t *testing.T) {
@@ -398,7 +398,7 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
 // TestBuildPrintMainResult — BuildWithOptions(SynthStart +
 // PrintMainResult) wires `_start` to format main's i32 return
 // through `int_to_string` and flush it to stdout via
-// `__lang_print`. The WAT path's PrintMainResult mode is what
+// `__fern_print`. The WAT path's PrintMainResult mode is what
 // drives the wasm e2e suite's stdout-based result checks; this
 // is the wasmbin parity. Invokes _start under wasmtime (which
 // provides wasi_snapshot_preview1) and asserts the printed
@@ -448,11 +448,11 @@ func TestBuildPrintMainResult(t *testing.T) {
 // component when fed through the WASI adapter. The synthesised
 // `_start` makes `wasm-tools component new` happy; the forced
 // memory section satisfies the adapter's env::memory import.
-// Test gates on the adapter being present at LANG_WASI_ADAPTER.
+// Test gates on the adapter being present at FERN_WASI_ADAPTER.
 func TestBuildPreview2Wrap(t *testing.T) {
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set")
+		t.Skip("FERN_WASI_ADAPTER not set")
 	}
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -683,7 +683,7 @@ func TestBuildHttpHandlerCompiles(t *testing.T) {
 }
 
 // TestBuildPrintReal — compile + run a real lang source program
-// that calls `print()`. With name aliasing (print → __lang_print)
+// that calls `print()`. With name aliasing (print → __fern_print)
 // + WASI fd_write import + the helper chain, end-to-end output
 // flows from `.fern` source to stdout.
 func TestBuildPrintReal(t *testing.T) {
@@ -833,7 +833,7 @@ func importExists(t *testing.T, bin []byte, wantModule, wantName string) bool {
 // a Lang program that calls exit() emits its termination import
 // as `wasi:cli/exit@0.2.0::exit` (preview-2) instead of
 // `wasi_snapshot_preview1::proc_exit`. Core-wasm signature is
-// unchanged ((i32) -> ()), so __lang_exit's call site needs no
+// unchanged ((i32) -> ()), so __fern_exit's call site needs no
 // adjustment. Foundation for wiring the wrap.go preview-2
 // pipeline into the default driver path.
 func TestBuildPreview2WASIRenamesProcExit(t *testing.T) {

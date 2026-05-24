@@ -1,4 +1,4 @@
-// Regeneration notes for lang.bin / http.bin.
+// Regeneration notes for fern.bin / http.bin.
 //
 // The two .bin files hold the inner *payload* of the
 // `component-type` custom section that wasm-tools writes when
@@ -14,8 +14,8 @@
 //	wasm-tools parse /tmp/empty.wat -o /tmp/empty.wasm
 //
 //	# 2. Embed each world into the empty module
-//	wasm-tools component embed cmd/fern/wit -w lang \
-//	    /tmp/empty.wasm -o /tmp/lang.wasm
+//	wasm-tools component embed cmd/fern/wit -w fern \
+//	    /tmp/empty.wasm -o /tmp/fern.wasm
 //	wasm-tools component embed cmd/fern/wit -w http \
 //	    /tmp/empty.wasm -o /tmp/http.wasm
 //
@@ -24,7 +24,7 @@
 //	#    + 1 (name length uleb) + 14 (name "component-type") = 26 bytes.
 //	#    (If a section size needs 3+ uleb bytes for a future world,
 //	#    re-derive this offset from `wasm-tools dump`.)
-//	dd if=/tmp/lang.wasm of=internal/wasm/componenttype/lang.bin bs=1 skip=26
+//	dd if=/tmp/fern.wasm of=internal/wasm/componenttype/fern.bin bs=1 skip=26
 //	dd if=/tmp/http.wasm of=internal/wasm/componenttype/http.bin bs=1 skip=26
 //
 // Anything that changes the WIT (adding/removing imports,

@@ -6,16 +6,19 @@ The language is named **Fern**. Source files use the `.fern`
 extension; the CLI is `fern` (built from `cmd/fern`), the LSP is
 `fern-lsp` (`cmd/fern-lsp`), the wasm playground bundle is
 `cmd/fern-wasm`, and the stdlib doc generator is `cmd/ferndoc`.
-Deliberately left on the old `lang` name for now (not part of the
-rename): the Go module path `github.com/jakechampion/lang`, the
-GitHub repo + Pages URLs (`jakechampion.github.io/lang`), the
-internal packages `internal/langsmith` / `internal/langstring`,
-the emitted runtime symbols `__lang_*`, the `LANG_WASI_ADAPTER`
-build/test env var, and the wasm JS-interop globals
-(`langCompile` / `langInterpret` / `langLsp`) with their
-`"lang:theme"` postMessage protocol. Renaming those is tracked
-separately because they cross the GitHub-repo boundary or are
-tightly coupled across the wasm bundle.
+The rename also covers: internal packages `internal/fernsmith` /
+`internal/fernstring`, the emitted runtime symbols `__fern_*`,
+the `FERN_WASI_ADAPTER` build/test env var, the wasm JS-interop
+globals (`fernCompile` / `fernInterpret` / `fernLsp`) and their
+`"fern:theme"` postMessage protocol, and the WIT `fern` world
+(`cmd/fern/wit/fern.wit`, `componenttype` `fern.bin`).
+
+The **only** things still on the old `lang` name — deferred
+because they cross the GitHub-repo boundary — are the Go module
+path `github.com/jakechampion/lang` and the GitHub repo + Pages
+URLs (`jakechampion.github.io/lang`). Both should follow a rename
+of the GitHub repo itself, otherwise `go install` and the Pages
+site break.
 
 ## Language direction
 
@@ -107,7 +110,7 @@ flow rather than driving manual CI checks after the fact.
   `/tmp/wt/wasmtime-v34.0.1-x86_64-linux/`, `wasm-tools` at
   `/tmp/wt/wasm-tools-1.225.0-x86_64-linux/`, adapter at
   `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
-  `LANG_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
+  `FERN_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
   treat that as a missing dependency to fix, not a green light.
 - **Every new feature ships with tests.** Parser-time desugar →
   parser test. Checker rule → checker test. Runtime behaviour →
@@ -122,7 +125,7 @@ flow rather than driving manual CI checks after the fact.
 
 ## Test runner
 
-`internal/stdlib/std/test.fern` is the pure-Lang test runner —
+`internal/stdlib/std/test.fern` is the pure-Fern test runner —
 the shape the project plans to migrate to once the compiler is
 self-hosted and Go-side `*_test.go` files retire. It's part of
 the auto-prelude, so test programs reach for `TestRunner`,

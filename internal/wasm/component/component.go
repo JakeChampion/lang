@@ -5,7 +5,7 @@
 // Spec: https://github.com/WebAssembly/component-model/blob/main/design/mvp/Binary.md
 //
 // This package owns the encoder primitives used by the production
-// driver (cmd/lang) when it composes a preview-2-native component
+// driver (cmd/fern) when it composes a preview-2-native component
 // without shelling out to `wasm-tools component new`. The Lang
 // stdlib version is the long-term self-hosting target; this Go
 // version is the bridge that lets us retire the wasm-tools shell-
@@ -22,7 +22,7 @@ import (
 )
 
 // Component-Model binary section IDs (matches the constants in
-// std/wasm/component.lang's section_*).
+// std/wasm/component.fern's section_*).
 const (
 	SectionCustom       = 0
 	SectionCoreModule   = 1

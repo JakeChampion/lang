@@ -451,14 +451,14 @@ function main(): i32 {
   pattern)` + `parse_filter_from_args(args())` — cases whose
   (prefix + name) don't contain the filter substring
   convert to skips with reason "filtered out". Pair with
-  `lang -interp test.fern -- --filter foo` on the CLI.
+  `fern -interp test.fern -- --filter foo` on the CLI.
 - **`--fail-fast` short-circuit:** `test_new_fail_fast(suite)`
   / `(r).with_fail_fast()` + `parse_fail_fast_from_args(args())`
   — once any case fails, subsequent `it()` calls auto-skip
   with reason "fail-fast: prior case failed". Each skipped
   case still emits a TAP line so the plan stays faithful.
   Off by default (the full TAP stream is usually more useful
-  in CI). Pair with `lang -interp test.fern -- --fail-fast`.
+  in CI). Pair with `fern -interp test.fern -- --fail-fast`.
 - **`--quiet` output mode:** `test_new_quiet(suite)` /
   `(r).with_quiet()` + `parse_quiet_from_args(args())` —
   suppresses the per-case `ok N - name` line for passes

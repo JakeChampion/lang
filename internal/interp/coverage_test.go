@@ -12,7 +12,7 @@ import (
 
 // TestInterpHandlesEveryASTNode is the load-bearing "no silent
 // gaps" guarantee for the tree-walking interpreter. Three times
-// during the langsmith / differential-oracle work the interp
+// during the fernsmith / differential-oracle work the interp
 // errored on an AST node every other backend supports — FString
 // (PR #597), MapLit + Map methods (PR #610), and FuncDecl /
 // Lambda (PR #618). Each was a `"unsupported expression %T"`

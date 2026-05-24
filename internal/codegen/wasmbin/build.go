@@ -27,7 +27,7 @@ import (
 )
 
 // BuildOptions tweaks the module-level structure produced by
-// Build. Defaults match what the raw `lang -target wasm-bin`
+// Build. Defaults match what the raw `fern -target wasm-bin`
 // CLI flow emits.
 type BuildOptions struct {
 	// ForceMemorySection makes Emit unconditionally include a
@@ -43,7 +43,7 @@ type BuildOptions struct {
 	// as the command entry point.
 	SynthStart bool
 	// PrintMainResult routes main's i32 return through
-	// `int_to_string` + `__lang_print` inside the synthesised
+	// `int_to_string` + `__fern_print` inside the synthesised
 	// `_start` wrapper instead of dropping it. Used by e2e
 	// tests that observe main's value over the component's
 	// stdout — preview-2 hosts only surface 0/1 through

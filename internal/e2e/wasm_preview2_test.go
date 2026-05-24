@@ -3,7 +3,7 @@
 // wrapped via wasm-tools + the wasi-preview1-component-adapter), and
 // runs it with `wasmtime run`.
 //
-// Skips when either wasm-tools, the adapter (LANG_WASI_ADAPTER env), or
+// Skips when either wasm-tools, the adapter (FERN_WASI_ADAPTER env), or
 // wasmtime is missing so `go test ./...` stays green on developer
 // machines without the full preview-2 toolchain.
 package e2e
@@ -32,9 +32,9 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -64,7 +64,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	// Build the lang CLI from this checkout so the test exercises
 	// the in-tree post-process pipeline rather than whatever happens
 	// to be on PATH.
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -81,7 +81,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// The output should be a Component Model component, recognised
@@ -127,9 +127,9 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -153,7 +153,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -170,7 +170,7 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	input := "alpha\nbeta\ngamma\n"
@@ -207,9 +207,9 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -241,7 +241,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -258,7 +258,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// `wasmtime run --dir DIR` preopens DIR as the working
@@ -301,9 +301,9 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -338,7 +338,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -355,7 +355,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
@@ -400,9 +400,9 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -445,7 +445,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -462,7 +462,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// Spawn the server. `-S inherit-network` lets the guest
@@ -547,7 +547,7 @@ func itoa(n int) string {
 }
 
 // TestWasmPreview2HttpHandler exercises step 5: the
-// `lang -target wasi-http` build mode emits a component that
+// `fern -target wasi-http` build mode emits a component that
 // implements `wasi:http/incoming-handler.handle`. We compile a
 // tiny router (path == /hello → 200 "world"; POST any path
 // echoes the body), spawn `wasmtime serve`, drive it with curl
@@ -567,9 +567,9 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("LANG_WASI_ADAPTER")
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
 	if adapter == "" {
-		t.Skip("LANG_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
+		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
 	}
 	if _, err := os.Stat(adapter); err != nil {
 		t.Skipf("adapter %q not readable: %v", adapter, err)
@@ -602,7 +602,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
+	bin := filepath.Join(dir, "fern")
 	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
@@ -619,7 +619,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))

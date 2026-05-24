@@ -79,7 +79,7 @@ qemu-aarch64 factorial
 ./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
 
 # WASM (preview-2 component)
-./fern -target wasm -wasi-adapter $LANG_WASI_ADAPTER \
+./fern -target wasm -wasi-adapter $FERN_WASI_ADAPTER \
     -o factorial.wasm examples/factorial.fern
 wasmtime run factorial.wasm
 
@@ -298,13 +298,13 @@ Args 0..7 in x0..x7; extras from the caller's stack at
 physical sp via paired `str x0, [sp, #-16]!` / `ldr x0, [sp],
 #16` push/pop; binary operators pop right into x0 and left into
 x1. Heap-backed values (arrays, strings, structs) come from
-`__lang_alloc`, a bump arena over a 64 MiB anonymous mmap region
+`__fern_alloc`, a bump arena over a 64 MiB anonymous mmap region
 reserved at startup; the arena's fast path is six instructions
 plus a branch — pure in-process pointer bump, no syscall, no
 per-allocation header, no individual `free`. Strings carry a
 4-byte little-endian length prefix at `ptr - 4` (with a trailing
-NUL preserved so our own `__lang_strcmp` / `__lang_memcpy` /
-`__lang_strlen` keep working on the same data pointer). Integer
+NUL preserved so our own `__fern_strcmp` / `__fern_memcpy` /
+`__fern_strlen` keep working on the same data pointer). Integer
 division / modulo lower to inline `sdiv` / `msub`. Float
 operations use the AAPCS64 FP registers — the emitter keeps f32
 bit patterns flowing through the integer operand stack and

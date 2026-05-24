@@ -1,6 +1,6 @@
 // examples/tests/batch8_test.fern — exercises the additions
 // from the eighth test-runner-migration tranche:
-//   - argv passthrough (`args()` populated from `lang -interp
+//   - argv passthrough (`args()` populated from `fern -interp
 //     FILE.fern -- ARGS...`)
 //   - `--filter PATTERN` test-case selection via the runner's
 //     built-in `parse_filter_from_args` + `test_new_filtered`
@@ -13,7 +13,7 @@ function test_argv_basic(): Option[string] {
     // args()[0] is conventionally the program path; subsequent
     // entries come from `-- ...` on the lang command line. We
     // can't pin a specific argv shape here (this file is
-    // invoked from CI via `lang -interp FILE`), so just check
+    // invoked from CI via `fern -interp FILE`), so just check
     // the call doesn't crash and returns a string array.
     var a: string[] = args();
     if (a.len() < 1) {

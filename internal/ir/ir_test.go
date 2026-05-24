@@ -258,11 +258,11 @@ func TestLowerClosureValueRcTracked(t *testing.T) {
 	if fn == nil {
 		t.Fatal("main not found")
 	}
-	if got := countCallDirect(fn.Ops, "__lang_rc_inc"); got < 1 {
-		t.Errorf("closure alias `b = a` must emit __lang_rc_inc, got %d:\n%s", got, prog)
+	if got := countCallDirect(fn.Ops, "__fern_rc_inc"); got < 1 {
+		t.Errorf("closure alias `b = a` must emit __fern_rc_inc, got %d:\n%s", got, prog)
 	}
-	if got := countCallDirect(fn.Ops, "__lang_rc_dec"); got < 1 {
-		t.Errorf("closure locals must be dec'd at exit, got %d __lang_rc_dec:\n%s", got, prog)
+	if got := countCallDirect(fn.Ops, "__fern_rc_dec"); got < 1 {
+		t.Errorf("closure locals must be dec'd at exit, got %d __fern_rc_dec:\n%s", got, prog)
 	}
 }
 
@@ -356,7 +356,7 @@ func TestLowerFieldAccessOnCallReturn(t *testing.T) {
 }
 
 // `literal + literal` folds at compile time to a single
-// OpConstStr; the runtime OpStrConcat (and the `__lang_strcat`
+// OpConstStr; the runtime OpStrConcat (and the `__fern_strcat`
 // it bottoms out in) only fires on at least one non-literal arg.
 func TestLowerStringConcatFoldsLiterals(t *testing.T) {
 	prog := lowerSource(t, `function f(): string { return "a" + "b"; }`)
@@ -377,7 +377,7 @@ func TestLowerStringConcatNonLiteralKeepsRuntime(t *testing.T) {
 // every open-coded `[ptr - 4]` load across backend codegen.
 // Payloadless variants lower to OpEnumSentinel (a static-sentinel
 // push parameterised by tag value) rather than the standard
-// alloc + tag-store sequence. Saves one __lang_alloc per
+// alloc + tag-store sequence. Saves one __fern_alloc per
 // construction; the produced address still has `[ptr + 0] = tag`
 // so existing match / try codegen reads it correctly without
 // consumer changes. Covers Option.None (tag 1), IoError

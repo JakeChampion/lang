@@ -1,4 +1,4 @@
-package langstring
+package fernstring
 
 import (
 	"bytes"

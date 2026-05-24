@@ -1,7 +1,7 @@
 name: VS Code Extension
 
 # Validates editors/vscode/ — the language-client extension that
-# spawns lang-lsp. Two tiers, both cheap:
+# spawns fern-lsp. Two tiers, both cheap:
 #
 #   1. type-check + compile (tsc) — catches API breakages against
 #      the vscode-languageclient + @types/vscode surfaces within
@@ -55,7 +55,7 @@ jobs:
         # checks. Failures here are usually one-line manifest
         # tweaks. The VSIX bundles node_modules so the runtime
         # dependency on vscode-languageclient ships intact.
-        run: npx --yes @vscode/vsce@^3.2.0 package --out lang-vscode.vsix
+        run: npx --yes @vscode/vsce@^3.2.0 package --out fern-vscode.vsix
 
       - name: Upload VSIX artefact
         # Maintainers iterating on the extension can grab the
@@ -63,6 +63,6 @@ jobs:
         # locally without rebuilding from source.
         uses: actions/upload-artifact@v4
         with:
-          name: lang-vscode-vsix
-          path: editors/vscode/lang-vscode.vsix
+          name: fern-vscode-vsix
+          path: editors/vscode/fern-vscode.vsix
           if-no-files-found: error

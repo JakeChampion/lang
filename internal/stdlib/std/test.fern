@@ -121,7 +121,7 @@ pub struct TestRunner {
     // `filter` substrings the runner against. Empty string means
     // "run every case". Set via `test_new_filtered(...)` or
     // `parse_filter_from_args(args())` so a test program can
-    // accept `lang -interp test.fern -- --filter PATTERN`
+    // accept `fern -interp test.fern -- --filter PATTERN`
     // without hand-rolling the argv plumbing. Cases whose
     // (prefix + name) don't contain the filter substring get
     // converted to skips with reason "filtered out".
@@ -133,7 +133,7 @@ pub struct TestRunner {
     // is usually more useful in CI). Set via
     // `test_new_fail_fast(suite)` or
     // `parse_fail_fast_from_args(args())` so a test program
-    // can accept `lang -interp test.fern -- --fail-fast`.
+    // can accept `fern -interp test.fern -- --fail-fast`.
     fail_fast: boolean,
     // `quiet` suppresses the per-case `ok N - name` line for
     // passes + skips so the user sees only the failures (and
@@ -2134,7 +2134,7 @@ pub function assert_unique_string(arr: string[]): Option[string] {
 // File-state assertions for tests that build a fixture tree
 // then verify a subprocess produced the expected output files.
 // Layered on `read_file` / `read_dir` so they work under
-// `lang -interp`. Names are deliberately verbose
+// `fern -interp`. Names are deliberately verbose
 // (`assert_file_exists` rather than `file_exists`) to keep them
 // clearly distinguishable from `read_file` itself in user code.
 

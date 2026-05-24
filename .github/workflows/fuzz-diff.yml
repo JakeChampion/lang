@@ -1,6 +1,6 @@
 name: Fuzz differential execution
 
-# Pairs the langsmith generator with the diff oracle. Each emitted
+# Pairs the fernsmith generator with the diff oracle. Each emitted
 # program is run through the interp + every backend available on
 # the runner; we assert byte-for-byte output agreement. Caught a
 # checker bug in #601 and the monomorph walker gaps that landed in
@@ -26,7 +26,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
       - run: go test -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e

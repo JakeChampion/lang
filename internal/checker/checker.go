@@ -125,7 +125,7 @@ type Info struct {
 // `shadowedStructs` in `Check`).
 //
 // Single source of truth for the reserved-name set: external
-// callers (langsmith's generator, IDE rename refactors,
+// callers (fernsmith's generator, IDE rename refactors,
 // documentation tooling) consult this rather than maintaining
 // their own copy.
 func IsReservedName(name string) bool {
@@ -238,7 +238,7 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
 		// HttpRequest / HttpResponse back the
-		// `lang -target wasi-http` mode (step 5 of
+		// `fern -target wasi-http` mode (step 5 of
 		// docs/WASI-PREVIEW2.md). They're always available so
 		// CLI-target programs can construct one for tests, but
 		// the wasm backend only emits the
@@ -471,7 +471,7 @@ func builtinStructDecls() []*ast.StructDecl {
 		// stdout / stderr / exit_code; the wasm + native backends
 		// don't lower exec today, so the type registration is
 		// here-only for the test-runner migration path that runs
-		// the migrated suites under `lang -interp`. Spawn failures
+		// the migrated suites under `fern -interp`. Spawn failures
 		// (executable missing, permission denied) surface as
 		// `exit_code = 127` (POSIX `command not found` convention)
 		// with the OS error message in `stderr`, so callers can
@@ -1077,7 +1077,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// which dispatch to these primitives. Native / wasm
 	// codegen support follows the same path as `f32_bits` —
 	// for now interp-only is the right scope (the test-runner
-	// migration uses these via `lang -interp`).
+	// migration uses these via `fern -interp`).
 	f64ToF64Builtin := &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
 		Result: ast.FloatType{Width: 64},
@@ -1460,7 +1460,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `arr.set(i, v)` — Phase 2b's value-returning sister to
 	// `arr[i] = v`. The IR intercepts the rewritten
 	// `__method_Array_set(arr, i, v)` call and emits the
-	// `__lang_arr_cow_inplace` shape inline (see emitArraySet).
+	// `__fern_arr_cow_inplace` shape inline (see emitArraySet).
 	// Useful when callers want explicit value semantics in
 	// shapes the `arr[i] = v` desugar doesn't yet cover
 	// (parameter targets, slice writes, expression-position

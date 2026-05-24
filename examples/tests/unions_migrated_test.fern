@@ -4,7 +4,7 @@
 //
 // The original Go test pinned the union-desugar +
 // match shape by piping a single-case program through
-// `lang -interp` and exit-coding 42. Migrated form
+// `fern -interp` and exit-coding 42. Migrated form
 // expands that single data point into a small table of
 // match arms — Add (binary), Lit (nullary), plus the
 // asymmetric Add(0, x) / Add(x, 0) identity cases —

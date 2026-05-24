@@ -17,7 +17,7 @@ type hoverParams struct {
 }
 
 // hoverResult is the LSP response for hover. Contents is markdown so
-// editors syntax-highlight the `lang`-fenced code block.
+// editors syntax-highlight the `fern`-fenced code block.
 type hoverResult struct {
 	Contents markupContent `json:"contents"`
 	Range    *Range        `json:"range,omitempty"`
@@ -49,7 +49,7 @@ func runHover(state *docState, pos Position) *hoverResult {
 	return &hoverResult{
 		Contents: markupContent{
 			Kind:  "markdown",
-			Value: "```lang\n" + value + "\n```",
+			Value: "```fern\n" + value + "\n```",
 		},
 		Range: &r,
 	}

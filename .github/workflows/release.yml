@@ -1,6 +1,6 @@
 name: Build & release
 
-# Builds the `lang` compiler for every supported host platform on
+# Builds the `fern` compiler for every supported host platform on
 # every push to `main`, uploads each archive as a workflow artifact
 # (so the binaries are downloadable from the Actions run page), and
 # publishes a rolling `nightly` GitHub release pointing at the
@@ -52,7 +52,7 @@ jobs:
           # attempt complains. Mirror the existing CI workflows.
           cache: false
 
-      - name: Build lang
+      - name: Build fern
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -64,17 +64,17 @@ jobs:
       - name: Package archive
         run: |
           cd dist
-          tar -czf "../lang-${{ matrix.name }}.tar.gz" lang
+          tar -czf "../fern-${{ matrix.name }}.tar.gz" fern
           cd ..
-          shasum -a 256 "lang-${{ matrix.name }}.tar.gz" > "lang-${{ matrix.name }}.tar.gz.sha256"
+          shasum -a 256 "fern-${{ matrix.name }}.tar.gz" > "fern-${{ matrix.name }}.tar.gz.sha256"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lang-${{ matrix.name }}
+          name: fern-${{ matrix.name }}
           path: |
-            lang-${{ matrix.name }}.tar.gz
-            lang-${{ matrix.name }}.tar.gz.sha256
+            fern-${{ matrix.name }}.tar.gz
+            fern-${{ matrix.name }}.tar.gz.sha256
 
   release:
     # Only publish a release on real pushes to main; workflow_dispatch
@@ -113,7 +113,7 @@ jobs:
           prerelease: true
           target_commitish: ${{ github.sha }}
           body: |
-            Prebuilt `lang` binaries from `main` at commit
+            Prebuilt `fern` binaries from `main` at commit
             [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}).
 
             This release is **rolling** — it's overwritten on every
@@ -126,11 +126,11 @@ jobs:
 
             | Platform           | Archive                          |
             |--------------------|----------------------------------|
-            | Linux x86_64       | `lang-linux-x86_64.tar.gz`       |
-            | Linux arm64        | `lang-linux-arm64.tar.gz`        |
-            | macOS Apple Silicon| `lang-darwin-arm64.tar.gz`       |
+            | Linux x86_64       | `fern-linux-x86_64.tar.gz`       |
+            | Linux arm64        | `fern-linux-arm64.tar.gz`        |
+            | macOS Apple Silicon| `fern-darwin-arm64.tar.gz`       |
 
-            Each archive ships a single self-contained `lang`
+            Each archive ships a single self-contained `fern`
             binary; the prelude and WASI WIT files are embedded.
             SHA-256 sums live alongside each archive
             (`*.tar.gz.sha256`).

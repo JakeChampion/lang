@@ -871,7 +871,7 @@ if (embedMode) {
 // Precedence (highest first):
 //   1. `?theme=dark|light` URL param — used by the docs site's
 //      LangPlayground component to match the parent page's theme.
-//   2. localStorage key `langPlaygroundTheme` — persisted choice
+//   2. localStorage key `fernPlaygroundTheme` — persisted choice
 //      from a previous visit when the user clicked the toggle.
 //   3. `prefers-color-scheme` media query — system default.
 //
@@ -887,7 +887,7 @@ if (embedMode) {
 // editor — Bombadil's no-uncaught-exceptions property caught
 // this on the first run after the theme work landed.
 let editorView = null;
-const THEME_STORAGE_KEY = "langPlaygroundTheme";
+const THEME_STORAGE_KEY = "fernPlaygroundTheme";
 function preferredTheme() {
   const fromParam = (urlParams.get("theme") ?? "").toLowerCase();
   if (fromParam === "dark" || fromParam === "light") return fromParam;
@@ -926,10 +926,10 @@ if (themeBtn) {
   });
 }
 // Listen to the host page's theme changes via postMessage. The
-// docs site's <LangPlayground> component posts `{type: "lang:theme",
+// docs site's <FernPlayground> component posts `{type: "fern:theme",
 // theme: "dark"|"light"}` whenever Starlight's theme flips.
 window.addEventListener("message", (e) => {
-  if (!e.data || e.data.type !== "lang:theme") return;
+  if (!e.data || e.data.type !== "fern:theme") return;
   if (e.data.theme === "dark" || e.data.theme === "light") {
     applyTheme(e.data.theme);
   }
@@ -1012,7 +1012,7 @@ shareBtn.addEventListener("click", async () => {
 });
 
 function runOnce() {
-  if (typeof globalThis.langInterpret !== "function") {
+  if (typeof globalThis.fernInterpret !== "function") {
     outEl.textContent = "(runtime not ready)";
     return;
   }
@@ -1022,7 +1022,7 @@ function runOnce() {
   // the wasm call blocks.
   setTimeout(() => {
     try {
-      const result = globalThis.langInterpret(getSrc());
+      const result = globalThis.fernInterpret(getSrc());
       let body = result.stdout || "";
       if (result.stderr) {
         body += (body ? "\n" : "") + "[stderr]\n" + result.stderr;
@@ -1055,7 +1055,7 @@ runBtn.addEventListener("click", runOnce);
 
 // ---- Assembly view ----
 //
-// Wraps `langCompile(src, target)` from the wasm bundle. Reveals
+// Wraps `fernCompile(src, target)` from the wasm bundle. Reveals
 // the .asm-panel below the source / output grid the first time
 // the user clicks "View assembly"; subsequent compiles refresh in
 // place. The target dropdown re-compiles whenever it changes.
@@ -1066,14 +1066,14 @@ runBtn.addEventListener("click", runOnce);
 let asmPanelOpen = false;
 let asmAutoRebuild = false; // turned on after first explicit open
 function refreshAsm() {
-  if (typeof globalThis.langCompile !== "function") return;
+  if (typeof globalThis.fernCompile !== "function") return;
   const target = targetSelectEl.value || "arm64";
   asmStatusEl.textContent = `compiling for ${target}…`;
   asmPanel.classList.remove("errored");
   // Defer to the event loop so the "compiling…" label paints
   // before the synchronous wasm call freezes the UI.
   setTimeout(() => {
-    const result = globalThis.langCompile(getSrc(), target);
+    const result = globalThis.fernCompile(getSrc(), target);
     if (result.error) {
       asmPanel.classList.add("errored");
       asmOutEl.textContent = result.error;
@@ -1158,8 +1158,8 @@ if (embedTargetEl) {
 // `cmd/fern-lsp` runs over stdio. We talk to it through two
 // globals:
 //
-//   langLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
-//   langLspOnNotify(cb)                           (push channel)
+//   fernLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
+//   fernLspOnNotify(cb)                           (push channel)
 //
 // Synchronous from JS's point of view (the wasm call returns
 // before yielding), but we still tag requests with ids so the
@@ -1177,10 +1177,10 @@ let docSyncTimer = null;
 let currentDiagnostics = [];
 
 function lspRequest(method, params, withId) {
-  if (typeof globalThis.langLsp !== "function") return null;
+  if (typeof globalThis.fernLsp !== "function") return null;
   const msg = { jsonrpc: "2.0", method, params };
   if (withId) msg.id = ++rpcId;
-  const respStr = globalThis.langLsp(JSON.stringify(msg));
+  const respStr = globalThis.fernLsp(JSON.stringify(msg));
   if (!respStr) return null;
   try { return JSON.parse(respStr); }
   catch (e) { return null; }
@@ -1191,7 +1191,7 @@ function lspNotify(method, params) { return lspRequest(method, params, false); }
 function initLsp() {
   // Install the notification sink BEFORE any didOpen so the
   // first publishDiagnostics frame has somewhere to land.
-  globalThis.langLspOnNotify((method, params) => {
+  globalThis.fernLspOnNotify((method, params) => {
     if (method === "textDocument/publishDiagnostics") {
       currentDiagnostics = params.diagnostics || [];
       renderProblemList(currentDiagnostics);
@@ -1214,7 +1214,7 @@ function syncDoc(text) {
     lspNotify("textDocument/didOpen", {
       textDocument: {
         uri: LSP_URI,
-        languageId: "lang",
+        languageId: "fern",
         version: ++docVersion,
         text,
       },
@@ -1334,7 +1334,7 @@ function severityName(n) {
 // CodeMirror linter source. Reads currentDiagnostics (mutated
 // asynchronously by publishDiagnostics) and translates each one
 // into CM's flat {from, to, severity, message} shape.
-function langLinter(view) {
+function fernLinter(view) {
   const out = [];
   for (const d of currentDiagnostics) {
     const from = offsetFromLspPos(view.state, d.range.start);
@@ -1343,7 +1343,7 @@ function langLinter(view) {
       from,
       to: Math.max(from + 1, to), // make sure CM has a non-empty range
       severity: severityName(d.severity),
-      source: d.source || "lang",
+      source: d.source || "fern",
       message: d.message,
     });
   }
@@ -1351,7 +1351,7 @@ function langLinter(view) {
 }
 
 // Hover tooltip. Returns null when the LSP says nothing.
-const langHover = hoverTooltip((view, pos) => {
+const fernHover = hoverTooltip((view, pos) => {
   if (!lspReady) return null;
   const lspPos = lspPosFromOffset(view.state, pos);
   const resp = lspRequest("textDocument/hover", {
@@ -1360,7 +1360,7 @@ const langHover = hoverTooltip((view, pos) => {
   }, true);
   if (!resp || !resp.result || !resp.result.contents) return null;
   const value = resp.result.contents.value
-    .replace(/^```lang\n/, "")
+    .replace(/^```fern\n/, "")
     .replace(/\n```$/, "");
   // Range narrows the tooltip's hover-region; the LSP gives us
   // a start/end pair we map back into CM offsets.
@@ -1375,7 +1375,7 @@ const langHover = hoverTooltip((view, pos) => {
     above: true,
     create() {
       const dom = document.createElement("div");
-      dom.className = "lang-hover";
+      dom.className = "fern-hover";
       // textContent (not innerHTML) — server output isn't
       // sanitised so we keep it as inert text.
       dom.textContent = value;
@@ -1396,7 +1396,7 @@ const langHover = hoverTooltip((view, pos) => {
 // (CodeMirror's default keybinding) and after `.` per the LSP's
 // declared trigger character. We send the LSP request and map
 // each item into CM's option shape.
-function langCompletionSource(context) {
+function fernCompletionSource(context) {
   if (!lspReady) return null;
   // Find the identifier-shaped prefix the user has typed so far
   // so CM can offer a `from` to replace on selection.
@@ -1475,10 +1475,10 @@ function makeEditorState(initial) {
         indentWithTab,
       ]),
       lspCompartment.of([
-        linter(langLinter, { delay: 0 }), // we drive forceLinting ourselves
-        langHover,
+        linter(fernLinter, { delay: 0 }), // we drive forceLinting ourselves
+        fernHover,
         autocompletion({
-          override: [langCompletionSource],
+          override: [fernCompletionSource],
           activateOnTyping: true,
           // Trigger an extra completion request after `.` so
           // method-access completion fires without Ctrl+Space.

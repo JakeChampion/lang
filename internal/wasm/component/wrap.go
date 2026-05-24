@@ -88,7 +88,7 @@ type WasiImport struct {
 //     instance under its CoreImportModule name.
 //
 // This is the Go-side counterpart of
-// `build_wasi_multi_imported_component` in std/wasm/component.lang.
+// `build_wasi_multi_imported_component` in std/wasm/component.fern.
 // The two are kept byte-for-byte equivalent (modulo Go's vs Lang's
 // uleb encoding edge cases — both should round-trip identical bytes
 // through `wasm-tools print`).
@@ -349,7 +349,7 @@ func wrapWasiStreamWriteComponent(coreBytes []byte, cliInterface, getFuncName st
 	// Alias memory from the user core instance + the trampoline's
 	// table. We don't alias cabi_realloc — our canon-lower uses
 	// memory-only opts and the result-return area lives in the
-	// bump heap (allocated via __lang_alloc), not via realloc.
+	// bump heap (allocated via __fern_alloc), not via realloc.
 	// Skipping the cabi_realloc alias also means wasmbin doesn't
 	// need to export it on the print-only-imports path.
 	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3, "memory")

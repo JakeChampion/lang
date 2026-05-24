@@ -6,8 +6,8 @@ name: Lint
 #   vet        — `go vet ./...` against the whole module.
 #   build      — `go build ./...` so a compile-only failure
 #                surfaces here, not buried under a test failure.
-#   fmt-check  — `make fmt-check` (== `lang -fmt -d` on every
-#                examples/*.lang).
+#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every
+#                examples/*.fern).
 #
 # All three are cheap (sub-30s on warm cache) so they run on x86
 # only — covering both arches would double minutes for ~0 extra
@@ -22,19 +22,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
       - run: go vet ./...
 
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
       - run: go build ./...
 
   fmt-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
       - run: make fmt-check

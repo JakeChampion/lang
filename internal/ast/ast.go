@@ -52,7 +52,7 @@ type Type interface {
 //
 // Spelling carries the source-level keyword the parser saw
 // (`"number"`, `"i32"`, ...). It's purely for the formatter so
-// `lang -fmt` round-trips the user's chosen spelling instead of
+// `fern -fmt` round-trips the user's chosen spelling instead of
 // always converging on the canonical name. Equality and codegen
 // ignore it; the zero value means "no source spelling captured,
 // use the canonical name on output".

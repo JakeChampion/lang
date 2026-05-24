@@ -714,7 +714,7 @@ build references the cache.
 ### 5. Workspace support
 
 **Cost: 1 week.** **Impact: medium-high; needed once the
-codebase has multiple lang-implemented packages.**
+codebase has multiple fern-implemented packages.**
 
 Top-level `lang.toml` declares:
 
@@ -903,7 +903,7 @@ Hex.pm's signed-by-default posture is the model.
 
 ## When to revisit
 
-- **When the lang-port reaches feature parity** (per
+- **When the fern-port reaches feature parity** (per
   `BOOTSTRAP-RESEARCH.md`'s "Full compiler self-host
   on wasm" milestone). At that point the compiler
   itself becomes a multi-package workspace and §5

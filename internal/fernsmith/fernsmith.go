@@ -1,4 +1,4 @@
-// Package langsmith generates syntactically- and type-correct Lang
+// Package fernsmith generates syntactically- and type-correct Lang
 // programs from a seeded random source.
 //
 // The shape is deliberately small for this first slice — five
@@ -15,7 +15,7 @@
 // grammar top-down, in contrast to the byte-mutation fuzzers in
 // internal/parser and internal/checker that exercise mostly junk
 // inputs the parser rejects before any later stage sees them.
-package langsmith
+package fernsmith
 
 import (
 	"fmt"
@@ -204,7 +204,7 @@ func (c *byteChooser) flip(p float64) bool {
 }
 
 
-// Profile names the langsmith generator's operating mode. The
+// Profile names the fernsmith generator's operating mode. The
 // two values trade coverage for cross-backend determinism:
 //
 //   - ProfileFree: free-form generation. Every type (including

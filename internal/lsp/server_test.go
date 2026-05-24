@@ -41,7 +41,7 @@ func TestRunDiagnostics_ParserError(t *testing.T) {
 		if d.Severity != severityError {
 			t.Errorf("diagnostic severity = %d, want %d", d.Severity, severityError)
 		}
-		if d.Source != "lang" {
+		if d.Source != "fern" {
 			t.Errorf("diagnostic source = %q, want %q", d.Source, "lang")
 		}
 		if d.Message == "" {
@@ -222,7 +222,7 @@ func TestHandleMessage_DidOpenPublishesDiagnostics(t *testing.T) {
 	openParams := didOpenParams{
 		TextDocument: textDocumentItem{
 			URI:        "file:///tmp/main.fern",
-			LanguageID: "lang",
+			LanguageID: "fern",
 			Version:    1,
 			Text:       "function main(): i32 { return 0;",
 		},
@@ -272,7 +272,7 @@ func TestHandleMessage_DidChangeRepublishes(t *testing.T) {
 		Params: jsonRaw(didOpenParams{
 			TextDocument: textDocumentItem{
 				URI:        "file:///live.fern",
-				LanguageID: "lang",
+				LanguageID: "fern",
 				Version:    1,
 				Text:       "function main(): i32 { return undeclared; }",
 			},

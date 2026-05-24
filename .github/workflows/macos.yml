@@ -54,9 +54,9 @@ on:
       # hoisted top-level fns; capture-block layout decisions
       # have bitten Darwin before.
       - "internal/closureconv/**"
-      # langstring carries the inline-encoding bit patterns
+      # fernstring carries the inline-encoding bit patterns
       # both backends use.
-      - "internal/langstring/**"
+      - "internal/fernstring/**"
       # Driver wiring + example surface.
       - "cmd/fern/**"
       - "examples/**"

@@ -34,7 +34,7 @@ declared in `internal/checker/checker.go:builtinStructDecls`
 or its equivalents and allocated by hand-rolled assembly in
 `internal/codegen/{arm64,x86_64,wasmbin}`.
 
-Widening the predicates blindly causes `__lang_rc_inc/dec`
+Widening the predicates blindly causes `__fern_rc_inc/dec`
 to read `[data - 8]` on a runtime-allocated struct whose
 allocation slot has no rc word. The dec helper writes garbage
 to whatever happens to live there, corrupting heap state and
@@ -44,12 +44,12 @@ The fix is to give every struct-shaped heap value an rc word
 at `data - 8`, regardless of who allocated it. Runtime
 helpers that don't want rc semantics (i.e. don't want
 `mutate-in-place` to ever fire) write the static-sentinel
-high bit `0x80000000` — `__lang_rc_inc/dec` short-circuit on
+high bit `0x80000000` — `__fern_rc_inc/dec` short-circuit on
 that bit, so the struct behaves exactly as it does today.
 
 ## The sentinel approach
 
-`__lang_rc_inc/dec(ptr)` already short-circuit when the high
+`__fern_rc_inc/dec(ptr)` already short-circuit when the high
 bit of `[ptr - 8]` is set:
 
 ```
@@ -94,9 +94,9 @@ runtime emitter.
 Helpers to migrate (grouped roughly; exact list per backend
 to be confirmed during execution):
 
-  - ✅ **Reader / Writer** (PR #1237): `__lang_make_handle`,
-    `__lang_open_reader`, `__lang_open_writer`,
-    `__lang_open_appender` (and the `wasmbin/wasi_fs.go`
+  - ✅ **Reader / Writer** (PR #1237): `__fern_make_handle`,
+    `__fern_open_reader`, `__fern_open_writer`,
+    `__fern_open_appender` (and the `wasmbin/wasi_fs.go`
     Reader/Writer struct construction).
   - ✅ **Map / MapIter** (PR #1238): `map_new_impl`'s
     handle allocation + `__map_iter_impl`.
@@ -193,7 +193,7 @@ data = `base+8`). Same layout migration as struct-i.
 
 ### Phase 1e-enums-runtime: sentinel runtime enum boxes (SHIPPED, arm64 + x86_64 + PR #1259 wasmbin)
 
-`__lang_alloc_box(size)→data` on every backend; every
+`__fern_alloc_box(size)→data` on every backend; every
 runtime-built Option / Result / IoError box routes through it
 so the static sentinel `0x80000000` sits at `[data-8]`.
 
@@ -201,7 +201,7 @@ so the static sentinel `0x80000000` sits at `[data-8]`.
 
 Not a one-line widening — three coordinated changes, because an
 enum-typed local can hold *three* pointer shapes and all of them
-must survive `__lang_rc_inc/dec`:
+must survive `__fern_rc_inc/dec`:
 
   1. **Headered heap box** from `emitEnumNew` — already safe
      (enums-i).
@@ -236,9 +236,9 @@ without corruption.
 A `FuncType` local holds one of: a heap closure pair
 `{fn, env}` (`OpMakeClosure`), a heap env block (`OpMakeEnv`),
 a static `{fn, env=0}` cell (`OpConstFunc`), or null. The heap
-allocations move from raw `__lang_alloc` to a new
-`__lang_alloc_rc1(size)→base+8` helper (mirrors
-`__lang_alloc_box` but writes a live `rc=1` instead of the
+allocations move from raw `__fern_alloc` to a new
+`__fern_alloc_rc1(size)→base+8` helper (mirrors
+`__fern_alloc_box` but writes a live `rc=1` instead of the
 immortal sentinel, so closures are droppable in Phase 3). The
 static `OpConstFunc` cells gain the immortal `0x80000000`
 header on the natives (`.rodata`); the wasm cells live in the
@@ -256,9 +256,9 @@ enums: it fought two closure optimization passes that run in the
 backend after rc insertion. Both `Defunctionalise` /
 `returnTargetFor` and `ElideClosurePair` were made rc-aware:
 they ignore the zero-init (`const 0`) writer, treat
-`OpCallDirect __lang_rc_inc` as a value-preserving pass-through
+`OpCallDirect __fern_rc_inc` as a value-preserving pass-through
 when chasing alias chains, skip the benign exit
-`OpLoadLocal; __lang_rc_dec` reader, and skip the exit dec-sweep
+`OpLoadLocal; __fern_rc_dec` reader, and skip the exit dec-sweep
 triples when locating a function's returned value. wasm gained
 the `rc_inc` low-address guard. Original interaction notes:
   - **Zero-init poisons defunctionalisation.** The zero-init
@@ -270,8 +270,8 @@ the `rc_inc` low-address guard. Original interaction notes:
     stop eliding their alloc. Fix: teach the passes to ignore a
     `const-0` writer when classifying closure slots.
   - **`rc_inc` breaks alias chains.** An alias `b = a` lowers to
-    `OpLoadLocal a; OpCallDirect __lang_rc_inc; OpStoreLocal b`;
-    the mono-slot chaser must see `__lang_rc_inc` as a
+    `OpLoadLocal a; OpCallDirect __fern_rc_inc; OpStoreLocal b`;
+    the mono-slot chaser must see `__fern_rc_inc` as a
     value-preserving pass-through (it returns its argument) to
     keep propagating the target through the hop.
   - wasm needs the `rc_inc` low-address guard (mirror `rc_dec`)

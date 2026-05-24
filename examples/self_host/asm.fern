@@ -375,7 +375,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // capture / call machinery is unaffected; this is
             // purely for the type-aware dispatch on the result
             // (e.g. `print(f())` needs to know the result is a
-            // string to route through `__lang_print_str`).
+            // string to route through `__fern_print_str`).
             return "fn_" + ret_tag_of(lm.ret_type);
         },
         parser.ExprIdent(id) => { return s.local_type_of(id.name); },
@@ -1030,7 +1030,7 @@ function (s: EmitState) leave_function(): EmitState {
 
 // mark_print_int flips the "this module needs the print_int
 // helper" flag. emit_module checks it after the body emit and
-// appends the __lang_print_int label + body if true.
+// appends the __fern_print_int label + body if true.
 function (s: EmitState) mark_print_int(): EmitState {
     return EmitState {
         out: s.out,
@@ -1075,7 +1075,7 @@ function (s: EmitState) mark_print_int(): EmitState {
 
 // mark_heap flips the "this module needs the heap allocator"
 // flag. emit_module checks it after the body emit and appends
-// the `__lang_heap_ptr` bump-pointer + `__lang_alloc` helper
+// the `__fern_heap_ptr` bump-pointer + `__fern_alloc` helper
 // when true. Used by struct literals + array literals once the
 // asm backend grows real heap-backed value codegen.
 function (s: EmitState) mark_heap(): EmitState {
@@ -1461,7 +1461,7 @@ function (s: EmitState) mark_args(): EmitState {
 }
 
 // mark_arr_push: signals that the module needs the
-// __lang_arr_push runtime helper.
+// __fern_arr_push runtime helper.
 function (s: EmitState) mark_arr_push(): EmitState {
     return EmitState {
         out: s.out, label_n: s.label_n, local_names: s.local_names,
@@ -2182,8 +2182,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         },
         parser.ExprBinary(b) => {
             // String-aware dispatch: `s + t` where either side
-            // is a string lowers to __lang_str_concat; `s == t`
-            // / `s != t` for strings lowers to __lang_str_eq.
+            // is a string lowers to __fern_str_concat; `s == t`
+            // / `s != t` for strings lowers to __fern_str_eq.
             // Type info comes from infer_expr_type on the
             // operands — that walks the AST + local_types.
             if (b.op == "+") {
@@ -2194,7 +2194,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    popq %rsi\n");      // rhs
                     s = s.write("    popq %rdi\n");      // lhs
-                    s = s.write("    call __lang_str_concat\n");
+                    s = s.write("    call __fern_str_concat\n");
                     s = s.write("    pushq %rax\n");
                     s = s.mark_str_concat();
                     return s;
@@ -2208,7 +2208,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    popq %rsi\n");
                     s = s.write("    popq %rdi\n");
-                    s = s.write("    call __lang_str_eq\n");
+                    s = s.write("    call __fern_str_eq\n");
                     if (b.op == "!=") {
                         s = s.write("    xorq $1, %rax\n");
                     }
@@ -2218,7 +2218,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
             }
             // String ordering: route < / <= / > / >= for
-            // string operands through __lang_str_cmp, then
+            // string operands through __fern_str_cmp, then
             // compare its signed result against zero to derive
             // the bool.
             if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
@@ -2229,7 +2229,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    popq %rsi\n");
                     s = s.write("    popq %rdi\n");
-                    s = s.write("    call __lang_str_cmp\n");
+                    s = s.write("    call __fern_str_cmp\n");
                     s = s.write("    cmpq $0, %rax\n");
                     s = s.write("    movq $0, %rax\n");
                     if (b.op == "<") { s = s.write("    setl %al\n"); }
@@ -2363,12 +2363,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // String literal lowering: intern the bytes in
             // .rodata, then allocate a 16-byte box on the heap
             // `[data_ptr: 8, len: 8]` and push the box pointer.
-            // The box layout is shared with __lang_str_concat
+            // The box layout is shared with __fern_str_concat
             // / _eq / _slice / _print runtime helpers.
             var lo: StringLitOut = add_string_lit(s, sv.value);
             s = lo.state;
             s = s.write("    movq $16, %rdi\n");
-            s = s.write("    call __lang_alloc\n");
+            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
@@ -2420,7 +2420,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(fa.obj, s);
                         if (prim_recv == "i32") {
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_i32_to_string\n");
+                            s = s.write("    call __fern_i32_to_string\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_i32_to_string();
                         }
@@ -2523,7 +2523,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_i32_pow\n");
+                            s = s.write("    call __fern_i32_pow\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_i32_pow();
                             return s;
@@ -2599,7 +2599,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_push\n");
+                        s = s.write("    call __fern_arr_push\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_push();
                         return s;
@@ -2610,7 +2610,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_reverse\n");
+                        s = s.write("    call __fern_arr_reverse\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_reverse();
                         return s;
@@ -2623,7 +2623,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_concat\n");
+                        s = s.write("    call __fern_arr_concat\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_concat();
                         return s;
@@ -2656,13 +2656,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_str_join\n");
+                        s = s.write("    call __fern_arr_str_join\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_str_join();
                         return s;
                     }
                     // Built-in `.index_of(s)` / `.contains(s)` on
-                    // string arrays — uses `__lang_str_eq` per
+                    // string arrays — uses `__fern_str_eq` per
                     // element so content equality matches even
                     // when the .rodata slots differ.
                     if ((fa.field == "index_of" || fa.field == "contains")
@@ -2671,7 +2671,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_str_index_of\n");
+                        s = s.write("    call __fern_arr_str_index_of\n");
                         if (fa.field == "contains") {
                             s = s.write("    cmpq $0, %rax\n");
                             s = s.write("    movq $0, %rax\n");
@@ -2688,7 +2688,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_i32_sum\n");
+                        s = s.write("    call __fern_arr_i32_sum\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_i32_sum();
                         return s;
@@ -2700,7 +2700,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             && prim_recv == "array_i32") {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_i32_product\n");
+                        s = s.write("    call __fern_arr_i32_product\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_i32_product();
                         return s;
@@ -2712,9 +2712,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
                         if (fa.field == "min") {
-                            s = s.write("    call __lang_arr_i32_min\n");
+                            s = s.write("    call __fern_arr_i32_min\n");
                         } else {
-                            s = s.write("    call __lang_arr_i32_max\n");
+                            s = s.write("    call __fern_arr_i32_max\n");
                         }
                         s = s.write("    pushq %rax\n");
                         s = s.mark_arr_i32_min_max();
@@ -2730,7 +2730,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
                         s = s.write("    popq %rdi\n");
-                        s = s.write("    call __lang_arr_i32_index_of\n");
+                        s = s.write("    call __fern_arr_i32_index_of\n");
                         if (fa.field == "contains") {
                             s = s.write("    cmpq $0, %rax\n");
                             s = s.write("    movq $0, %rax\n");
@@ -2751,7 +2751,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "chars" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_chars\n");
+                            s = s.write("    call __fern_str_chars\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_chars();
                             return s;
@@ -2759,7 +2759,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "bytes" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_bytes\n");
+                            s = s.write("    call __fern_str_bytes\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_bytes();
                             return s;
@@ -2767,7 +2767,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "reverse" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_reverse\n");
+                            s = s.write("    call __fern_str_reverse\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_reverse();
                             return s;
@@ -2793,19 +2793,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "lines" && c.args.len() == 0) {
                             // Sugar for `s.split("\n")`. Materialise
                             // a `"\n"` string box, then route through
-                            // the existing __lang_str_split runtime.
+                            // the existing __fern_str_split runtime.
                             s = emit_expr(fa.obj, s);
                             var lo_ln: StringLitOut = add_string_lit(s, "\n");
                             s = lo_ln.state;
                             s = s.write("    movq $16, %rdi\n");
-                            s = s.write("    call __lang_alloc\n");
+                            s = s.write("    call __fern_alloc\n");
                             s = s.write("    leaq .S" + i32_to_string(lo_ln.idx) + "(%rip), %rcx\n");
                             s = s.write("    movq %rcx, (%rax)\n");
                             s = s.write("    movq $1, 8(%rax)\n");
                             s = s.write("    pushq %rax\n");
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_split\n");
+                            s = s.write("    call __fern_str_split\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2816,7 +2816,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_split\n");
+                            s = s.write("    call __fern_str_split\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2827,7 +2827,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_index_of\n");
+                            s = s.write("    call __fern_str_index_of\n");
                             s = s.write("    cmpq $0, %rax\n");
                             s = s.write("    movq $0, %rax\n");
                             s = s.write("    setge %al\n");
@@ -2841,7 +2841,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_starts_with\n");
+                            s = s.write("    call __fern_str_starts_with\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             return s;
@@ -2851,7 +2851,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_ends_with\n");
+                            s = s.write("    call __fern_str_ends_with\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             return s;
@@ -2861,7 +2861,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_index_of\n");
+                            s = s.write("    call __fern_str_index_of\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             return s;
@@ -2869,7 +2869,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "trim" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_trim\n");
+                            s = s.write("    call __fern_str_trim\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2878,7 +2878,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "to_upper" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_to_upper\n");
+                            s = s.write("    call __fern_str_to_upper\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2887,7 +2887,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         if (fa.field == "to_lower" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_to_lower\n");
+                            s = s.write("    call __fern_str_to_lower\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2898,7 +2898,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = emit_expr(c.args[0], s);
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_repeat\n");
+                            s = s.write("    call __fern_str_repeat\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -2911,7 +2911,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    popq %rdx\n");
                             s = s.write("    popq %rsi\n");
                             s = s.write("    popq %rdi\n");
-                            s = s.write("    call __lang_str_replace\n");
+                            s = s.write("    call __fern_str_replace\n");
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
@@ -3034,7 +3034,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // of the array box. Today this assumes the arg is
             // an array (a string arg would read random bytes);
             // a future slice with type info can route string
-            // arguments through __lang_str_len.
+            // arguments through __fern_str_len.
             if (name == "len" && c.args.len() == 1) {
                 // Dispatch on operand type: string → load
                 // box.len at offset 8; array → load len prefix
@@ -3069,12 +3069,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     _ => { }
                 }
                 // Non-literal string argument: eval as box ptr,
-                // route through __lang_print_str.
+                // route through __fern_print_str.
                 var at: string = infer_expr_type(arg, s);
                 if (at == "string") {
                     s = emit_expr(arg, s);
                     s = s.write("    popq %rdi\n");
-                    s = s.write("    call __lang_print_str\n");
+                    s = s.write("    call __fern_print_str\n");
                     s = s.write("    pushq $0\n");
                     s = s.mark_str_print();
                     return s;
@@ -3103,7 +3103,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 if (eat == "string") {
                     s = emit_expr(earg, s);
                     s = s.write("    popq %rdi\n");
-                    s = s.write("    call __lang_eprint_str\n");
+                    s = s.write("    call __fern_eprint_str\n");
                     s = s.write("    pushq $0\n");
                     s = s.mark_eprint();
                     return s;
@@ -3117,20 +3117,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "print_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_print_int\n");
+                s = s.write("    call __fern_print_int\n");
                 s = s.write("    pushq $0\n");
                 s = s.mark_print_int();
                 return s;
             }
             // eprint_int(n) — stderr companion to print_int.
-            // Composed from __lang_i32_to_string + __lang_eprint_str
+            // Composed from __fern_i32_to_string + __fern_eprint_str
             // so we don't need a third runtime helper.
             if (name == "eprint_int" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_i32_to_string\n");
+                s = s.write("    call __fern_i32_to_string\n");
                 s = s.write("    movq %rax, %rdi\n");
-                s = s.write("    call __lang_eprint_str\n");
+                s = s.write("    call __fern_eprint_str\n");
                 s = s.write("    pushq $0\n");
                 s = s.mark_i32_to_string();
                 s = s.mark_eprint();
@@ -3152,7 +3152,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // args_count() — returns argc (the number of command-
             // line arguments, including argv[0]).
             if (name == "args_count" && c.args.len() == 0) {
-                s = s.write("    movq __lang_argc(%rip), %rax\n");
+                s = s.write("    movq __fern_argc(%rip), %rax\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_args();
                 return s;
@@ -3163,7 +3163,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "arg_at" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_arg_at\n");
+                s = s.write("    call __fern_arg_at\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_args();
                 return s;
@@ -3175,7 +3175,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_split\n");
+                s = s.write("    call __fern_str_split\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3187,7 +3187,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // result in %rax. Push it so the surrounding expression
             // sees it on the rt-stack.
             if (name == "read_int" && c.args.len() == 0) {
-                s = s.write("    call __lang_read_int\n");
+                s = s.write("    call __fern_read_int\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_read_int();
                 return s;
@@ -3198,7 +3198,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // points at the read bytes and whose len is the
             // byte count up to (but not including) the newline.
             if (name == "read_line" && c.args.len() == 0) {
-                s = s.write("    call __lang_read_line\n");
+                s = s.write("    call __fern_read_line\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_read_line();
                 return s;
@@ -3209,7 +3209,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "i32_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_i32_to_string\n");
+                s = s.write("    call __fern_i32_to_string\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_i32_to_string();
                 return s;
@@ -3220,7 +3220,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_i32" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_to_i32\n");
+                s = s.write("    call __fern_str_to_i32\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_to_i32();
                 return s;
@@ -3232,7 +3232,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_starts_with\n");
+                s = s.write("    call __fern_str_starts_with\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 return s;
@@ -3242,7 +3242,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_ends_with\n");
+                s = s.write("    call __fern_str_ends_with\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 return s;
@@ -3253,7 +3253,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_index_of\n");
+                s = s.write("    call __fern_str_index_of\n");
                 // Convert -1 (not found) / >=0 to bool.
                 s = s.write("    cmpq $0, %rax\n");
                 s = s.write("    setge %al\n");
@@ -3269,7 +3269,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_index_of\n");
+                s = s.write("    call __fern_str_index_of\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 return s;
@@ -3281,7 +3281,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_trim" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_trim\n");
+                s = s.write("    call __fern_str_trim\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3294,7 +3294,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_upper" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_to_upper\n");
+                s = s.write("    call __fern_str_to_upper\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3303,7 +3303,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "str_to_lower" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_to_lower\n");
+                s = s.write("    call __fern_str_to_lower\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3316,7 +3316,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[1], s);
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_repeat\n");
+                s = s.write("    call __fern_str_repeat\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3331,7 +3331,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    popq %rdx\n");
                 s = s.write("    popq %rsi\n");
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_str_replace\n");
+                s = s.write("    call __fern_str_replace\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3343,7 +3343,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (name == "chr" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
-                s = s.write("    call __lang_chr\n");
+                s = s.write("    call __fern_chr\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_str_search();
                 s = s.mark_heap();
@@ -3425,7 +3425,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var t_bytes: i32 = n_elems * 8;
             if (n_elems == 0) { t_bytes = 8; }
             s = s.write("    movq $" + i32_to_string(t_bytes) + ", %rdi\n");
-            s = s.write("    call __lang_alloc\n");
+            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             var tj: i32 = n_elems - 1;
             while (tj >= 0) {
@@ -3460,7 +3460,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             var a_bytes: i32 = (n_elems + 1) * 8;
             s = s.write("    movq $" + i32_to_string(a_bytes) + ", %rdi\n");
-            s = s.write("    call __lang_alloc\n");
+            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    movq $" + i32_to_string(n_elems) + ", %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
@@ -3509,7 +3509,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    popq %r8\n");          // end
                 s = s.write("    popq %rcx\n");         // start
                 s = s.write("    popq %rdx\n");         // src box
-                // Save end/start/src across __lang_alloc call.
+                // Save end/start/src across __fern_alloc call.
                 // SysV: %rdi/rsi/rdx/rcx/r8/r9 are arg regs +
                 // caller-saved. Use callee-saved %r12 for end,
                 // %r13 for start, %r14 for src.
@@ -3520,7 +3520,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    movq %rcx, %r13\n");
                 s = s.write("    movq %rdx, %r14\n");
                 s = s.write("    movq $16, %rdi\n");
-                s = s.write("    call __lang_alloc\n");
+                s = s.write("    call __fern_alloc\n");
                 s = s.mark_heap();
                 // box.data_ptr = src.data_ptr + start.
                 s = s.write("    movq (%r14), %rcx\n");
@@ -3543,7 +3543,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    popq %rdx\n");        // end
                 s = s.write("    popq %rsi\n");        // start
                 s = s.write("    popq %rdi\n");        // src arr
-                s = s.write("    call __lang_arr_slice\n");
+                s = s.write("    call __fern_arr_slice\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_arr_slice();
                 return s;
@@ -3575,7 +3575,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             var slot_bytes: i32 = (n_fields + 1) * 8;
             s = s.write("    movq $" + i32_to_string(slot_bytes) + ", %rdi\n");
-            s = s.write("    call __lang_alloc\n");
+            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             // Intern the struct name string in .rodata.
             var nameLit: StringLitOut = add_string_lit(s, sl.type_name);
@@ -3737,7 +3737,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             //        implicit return 0>
             //   .Lskip_lambda_N:
             //   # allocate (1 + N_caps) * 8 bytes on heap
-            //   movq $<bytes>, %rdi; call __lang_alloc
+            //   movq $<bytes>, %rdi; call __fern_alloc
             //   leaq .Llambda_N(%rip), %rcx
             //   movq %rcx, (%rax)              # fn_addr at box[0]
             //   # eval each capture in OUTER scope and store
@@ -3826,7 +3826,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
             // `len(s)` resolving to the string-len helper, or
-            // `a + b` routing through `__lang_str_concat`)
+            // `a + b` routing through `__fern_str_concat`)
             // sees the right thing — without this the captured
             // local lands here as `"unknown"` and falls through
             // to the i32 path.
@@ -3914,7 +3914,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Allocate box: (1 + n_caps) * 8 bytes.
             var box_bytes: i32 = (1 + n_caps) * 8;
             s = s.write("    movq $" + i32_to_string(box_bytes) + ", %rdi\n");
-            s = s.write("    call __lang_alloc\n");
+            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             // Store fn_addr at box[0].
             s = s.write("    leaq " + body_lbl + "(%rip), %rcx\n");
@@ -4494,9 +4494,9 @@ pub function emit_module(mod: parser.Module): string {
     // places argc at the top of the stack on entry).
     if (s.needs_args) {
         s = s.write("    movq (%rsp), %rax\n");
-        s = s.write("    movq %rax, __lang_argc(%rip)\n");
+        s = s.write("    movq %rax, __fern_argc(%rip)\n");
         s = s.write("    leaq 8(%rsp), %rax\n");
-        s = s.write("    movq %rax, __lang_argv(%rip)\n");
+        s = s.write("    movq %rax, __fern_argv(%rip)\n");
     }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
@@ -4523,13 +4523,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $60, %rax\n");
         s = s.write("    syscall\n");
     }
-    // __lang_print_int helper: appended once at the end of the
+    // __fern_print_int helper: appended once at the end of the
     // .text section if any print_int call surfaced needs_print_int.
     // Converts the i64 in %rdi to decimal text in a stack buffer
     // and writes it to stdout. Handles zero, positive, and
     // negative values (prepending `-`).
     if (s.needs_print_int) {
-        s = s.write("__lang_print_int:\n");
+        s = s.write("__fern_print_int:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    subq $32, %rsp\n");
@@ -4574,14 +4574,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_read_int helper: reads up to 16 bytes from stdin
+    // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, then parses an optional leading `-`
     // followed by decimal digits. Returns the parsed value in
     // %rax. Stops at the first non-digit (including newline /
     // EOF). Skips leading whitespace not implemented — input
     // is expected to start with the digits / minus.
     if (s.needs_read_int) {
-        s = s.write("__lang_read_int:\n");
+        s = s.write("__fern_read_int:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    subq $32, %rsp\n");
@@ -4624,10 +4624,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_print_str: %rdi = string box ptr. Loads box.data
+    // __fern_print_str: %rdi = string box ptr. Loads box.data
     // and box.len, issues a write(1, ptr, len).
     if (s.needs_str_print) {
-        s = s.write("__lang_print_str:\n");
+        s = s.write("__fern_print_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
         s = s.write("    movq 8(%rdi), %rdx\n");
         s = s.write("    movq $1, %rdi\n");
@@ -4635,13 +4635,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    syscall\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_concat: %rdi = box A, %rsi = box B. Allocates
+    // __fern_str_concat: %rdi = box A, %rsi = box B. Allocates
     // (lenA+lenB) bytes for new char data, copies A then B,
     // then allocates a 16-byte box pointing at it. Returns
     // box ptr in %rax. Uses callee-saved registers to survive
     // the alloc calls.
     if (s.needs_str_concat) {
-        s = s.write("__lang_str_concat:\n");
+        s = s.write("__fern_str_concat:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -4655,7 +4655,7 @@ pub function emit_module(mod: parser.Module): string {
         // Alloc lenA + lenB bytes for char data.
         s = s.write("    movq %r14, %rdi\n");
         s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %rbx\n");
         // Copy A bytes into [%rbx ..].
         s = s.write("    movq (%r12), %rsi\n");
@@ -4686,7 +4686,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lstrconcat_box:\n");
         // Allocate 16-byte box.
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rbx, (%rax)\n");
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    addq %r15, %rcx\n");
@@ -4698,10 +4698,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_eq: %rdi = box A, %rsi = box B. Returns 1 in
+    // __fern_str_eq: %rdi = box A, %rsi = box B. Returns 1 in
     // %rax if both have the same length and bytes, else 0.
     if (s.needs_str_eq) {
-        s = s.write("__lang_str_eq:\n");
+        s = s.write("__fern_str_eq:\n");
         s = s.write("    movq 8(%rdi), %rcx\n");
         s = s.write("    cmpq 8(%rsi), %rcx\n");
         s = s.write("    jne .Lstreq_no\n");
@@ -4725,11 +4725,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_cmp: %rdi = box A, %rsi = box B. Returns
+    // __fern_str_cmp: %rdi = box A, %rsi = box B. Returns
     // signed i64 in %rax: <0 if A < B, 0 if equal, >0 if A > B.
     // Lexicographic byte compare with length tiebreak.
     if (s.needs_str_cmp) {
-        s = s.write("__lang_str_cmp:\n");
+        s = s.write("__fern_str_cmp:\n");
         s = s.write("    movq 8(%rdi), %rcx\n");    // lenA
         s = s.write("    movq 8(%rsi), %rdx\n");    // lenB
         // min(lenA, lenB) → %r8
@@ -4760,21 +4760,21 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    subq %r9, %rax\n");
         s = s.write("    ret\n");
     }
-    // __lang_read_line: no args. Allocates a 256-byte heap
+    // __fern_read_line: no args. Allocates a 256-byte heap
     // read buffer, syscalls sys_read(fd=0, buf, 256), scans
     // for '\n', allocates a 16-byte box `[data_ptr, len]` and
     // returns the box ptr in %rax. The data_ptr points at the
     // same heap region (the buf bytes up to the newline). On
     // EOF the box has len = bytes_read with no '\n' adjustment.
     if (s.needs_str_read_line) {
-        s = s.write("__lang_read_line:\n");
+        s = s.write("__fern_read_line:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    pushq %r13\n");
         // Allocate 256-byte buffer.
         s = s.write("    movq $256, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r12\n");    // buf ptr
         // syscall sys_read(0, buf, 256).
         s = s.write("    movq $0, %rax\n");
@@ -4806,7 +4806,7 @@ pub function emit_module(mod: parser.Module): string {
         // Allocate 16-byte box.
         s = s.write("    pushq %rdx\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    popq %rdx\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq %rdx, 8(%rax)\n");
@@ -4815,14 +4815,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_i32_to_string: %rdi = i32 value. Converts to
+    // __fern_i32_to_string: %rdi = i32 value. Converts to
     // decimal text on the heap and returns a 16-byte string
     // box ptr in %rax. Handles 0, positive, and negative
-    // (with a leading `-`). Mirrors __lang_print_int's digit
+    // (with a leading `-`). Mirrors __fern_print_int's digit
     // emission but writes into a heap buffer instead of
     // syscalling write.
     if (s.needs_i32_to_string) {
-        s = s.write("__lang_i32_to_string:\n");
+        s = s.write("__fern_i32_to_string:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -4830,7 +4830,7 @@ pub function emit_module(mod: parser.Module): string {
         // Allocate 32-byte scratch buffer.
         s = s.write("    movq %rdi, %r13\n");        // save value
         s = s.write("    movq $32, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r12\n");        // buf ptr
         s = s.write("    movq %r13, %rax\n");
         s = s.write("    movq $0, %r10\n");          // sign flag
@@ -4870,7 +4870,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    pushq %rsi\n");
         s = s.write("    pushq %r8\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    popq %r8\n");
         s = s.write("    popq %rsi\n");
         s = s.write("    movq %rsi, (%rax)\n");
@@ -4880,12 +4880,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_to_i32: %rdi = string box. Returns parsed i32
+    // __fern_str_to_i32: %rdi = string box. Returns parsed i32
     // in %rax. Handles optional leading '-', then decimal
     // digits; stops at first non-digit (including newline).
     // Empty box → 0.
     if (s.needs_str_to_i32) {
-        s = s.write("__lang_str_to_i32:\n");
+        s = s.write("__fern_str_to_i32:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // data ptr
         s = s.write("    movq 8(%rdi), %r8\n");      // len
         s = s.write("    movq %rcx, %r9\n");
@@ -4919,10 +4919,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Ls2i_no_neg:\n");
         s = s.write("    ret\n");
     }
-    // __lang_eprint_str: %rdi = string box ptr. Loads box.data
+    // __fern_eprint_str: %rdi = string box ptr. Loads box.data
     // + box.len, issues a write(2, ptr, len) — stderr.
     if (s.needs_eprint) {
-        s = s.write("__lang_eprint_str:\n");
+        s = s.write("__fern_eprint_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
         s = s.write("    movq 8(%rdi), %rdx\n");
         s = s.write("    movq $2, %rdi\n");
@@ -4930,14 +4930,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    syscall\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_starts_with: %rdi = box A, %rsi = box B
+    // __fern_str_starts_with: %rdi = box A, %rsi = box B
     // (prefix). Returns 1 in %rax if A starts with B (or B is
     // empty), else 0.
-    // __lang_str_index_of: %rdi = haystack box, %rsi = needle.
+    // __fern_str_index_of: %rdi = haystack box, %rsi = needle.
     // Returns the first byte offset where needle matches, or
     // -1 if not found. Empty needle returns 0.
     if (s.needs_str_search) {
-        s = s.write("__lang_str_starts_with:\n");
+        s = s.write("__fern_str_starts_with:\n");
         s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
         s = s.write("    movq 8(%rdi), %rax\n");      // lenS
         s = s.write("    cmpq %rcx, %rax\n");
@@ -4961,10 +4961,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lsw_no:\n");
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
-        // __lang_str_ends_with: %rdi = s, %rsi = suffix.
+        // __fern_str_ends_with: %rdi = s, %rsi = suffix.
         // Compares the last len(suffix) bytes of s against
         // suffix. Empty suffix → 1. Suffix longer than s → 0.
-        s = s.write("__lang_str_ends_with:\n");
+        s = s.write("__fern_str_ends_with:\n");
         s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
         s = s.write("    movq 8(%rdi), %rax\n");      // lenS
         s = s.write("    cmpq %rcx, %rax\n");
@@ -4990,8 +4990,8 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lew_no:\n");
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
-        // __lang_str_index_of.
-        s = s.write("__lang_str_index_of:\n");
+        // __fern_str_index_of.
+        s = s.write("__fern_str_index_of:\n");
         s = s.write("    movq 8(%rdi), %r8\n");       // lenS
         s = s.write("    movq 8(%rsi), %r9\n");       // lenN
         s = s.write("    cmpq $0, %r9\n");
@@ -5040,11 +5040,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lidx_no:\n");
         s = s.write("    movq $-1, %rax\n");
         s = s.write("    ret\n");
-        // __lang_str_trim: %rdi = string box. Scans from the
+        // __fern_str_trim: %rdi = string box. Scans from the
         // start past whitespace bytes (space/tab/'\n'/'\r'),
         // then from the end backward past the same. Allocates
         // a 16-byte box pointing into the original data.
-        s = s.write("__lang_str_trim:\n");
+        s = s.write("__fern_str_trim:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5091,18 +5091,18 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jmp .Ltrim_back\n");
         s = s.write(".Ltrim_box:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __lang_str_to_upper / __lang_str_to_lower: %rdi =
+        // __fern_str_to_upper / __fern_str_to_lower: %rdi =
         // string box. Allocates len bytes for new char data,
         // copies each byte (case-flipped if alpha), then
         // allocates a 16-byte box pointing at the new data.
-        s = s.write("__lang_str_to_upper:\n");
+        s = s.write("__fern_str_to_upper:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5115,7 +5115,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jne .Lupper_alloc\n");
         s = s.write("    movq $1, %rdi\n");          // alloc 1 byte for empty
         s = s.write(".Lupper_alloc:\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r14\n");        // dst data
         s = s.write("    movq %r12, %rsi\n");
         s = s.write("    movq %r14, %rdi\n");
@@ -5137,7 +5137,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jne .Lupper_loop\n");
         s = s.write(".Lupper_box:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r14, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    popq %r14\n");
@@ -5145,7 +5145,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_str_to_lower:\n");
+        s = s.write("__fern_str_to_lower:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5158,7 +5158,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jne .Llower_alloc\n");
         s = s.write("    movq $1, %rdi\n");
         s = s.write(".Llower_alloc:\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r14\n");
         s = s.write("    movq %r12, %rsi\n");
         s = s.write("    movq %r14, %rdi\n");
@@ -5180,7 +5180,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jne .Llower_loop\n");
         s = s.write(".Llower_box:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r14, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    popq %r14\n");
@@ -5188,10 +5188,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __lang_str_repeat: %rdi = string box, %rsi = i32 n.
+        // __fern_str_repeat: %rdi = string box, %rsi = i32 n.
         // Allocates n * len(s) bytes, copies s n times, then
         // boxes. n <= 0 → empty string box.
-        s = s.write("__lang_str_repeat:\n");
+        s = s.write("__fern_str_repeat:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5216,7 +5216,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jne .Lrep_alloc\n");
         s = s.write("    movq $1, %rdi\n");          // alloc 1 if zero
         s = s.write(".Lrep_alloc:\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         // %rax = dst buf. Copy src into dst n times.
         s = s.write("    movq %rax, %rdi\n");        // dst cursor
         s = s.write("    movq %rax, %r8\n");         // saved dst
@@ -5241,7 +5241,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lrep_box:\n");
         s = s.write("    movq %r8, %r12\n");         // dst buf
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq %r15, 8(%rax)\n");
         s = s.write("    popq %r15\n");
@@ -5250,12 +5250,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __lang_str_replace: %rdi = haystack box, %rsi = old
+        // __fern_str_replace: %rdi = haystack box, %rsi = old
         // box, %rdx = new box. Empty old → returns haystack
         // unchanged (no allocation). Otherwise two-pass:
         // count occurrences, allocate exact target size, walk
         // and copy.
-        s = s.write("__lang_str_replace:\n");
+        s = s.write("__fern_str_replace:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    subq $32, %rsp\n");
@@ -5326,7 +5326,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq $1, %rax\n");
         s = s.write(".Lrepl_alloc:\n");
         s = s.write("    movq %rax, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %rbx\n");        // dst buf
         // Walk haystack copying to dst.
         s = s.write("    movq -8(%rbp), %rax\n");
@@ -5392,7 +5392,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jmp .Lrepl_tail\n");
         s = s.write(".Lrepl_box:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rbx, (%rax)\n");
         s = s.write("    movq %r15, 8(%rax)\n");
         s = s.write(".Lrepl_exit:\n");
@@ -5403,29 +5403,29 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbx\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __lang_chr: %rdi = i32 byte value. Allocates 1 byte
+        // __fern_chr: %rdi = i32 byte value. Allocates 1 byte
         // for the char data + 16 bytes for the box. Stores the
         // low byte of %rdi into the data and the length 1 into
         // the box.
-        s = s.write("__lang_chr:\n");
+        s = s.write("__fern_chr:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    pushq %r13\n");
         s = s.write("    movq %rdi, %r13\n");        // save value
         s = s.write("    movq $1, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r12\n");        // buf ptr
         s = s.write("    movb %r13b, (%r12)\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq $1, 8(%rax)\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __lang_str_split: %rdi = haystack box, %rsi = sep box.
+        // __fern_str_split: %rdi = haystack box, %rsi = sep box.
         // Returns string[] (array of string boxes) of segments
         // split by sep. Empty sep → [haystack]. Two-pass:
         // count separators, then walk + slice.
@@ -5437,7 +5437,7 @@ pub function emit_module(mod: parser.Module): string {
         //   -32: array ptr (built)
         //   -40: write_idx
         //   -48: seg_start offset
-        s = s.write("__lang_str_split:\n");
+        s = s.write("__fern_str_split:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    subq $48, %rsp\n");
@@ -5493,7 +5493,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    shlq $3, %rax\n");
         s = s.write("    addq $8, %rax\n");
         s = s.write("    movq %rax, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, -32(%rbp)\n");
         // Store length at offset 0.
         s = s.write("    movq -24(%rbp), %rcx\n");
@@ -5532,7 +5532,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lsplit_segend:\n");
         // Emit segment [seg_start, i).
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq -8(%rbp), %rcx\n");
         s = s.write("    movq (%rcx), %rcx\n");
         s = s.write("    addq -48(%rbp), %rcx\n");
@@ -5555,7 +5555,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lsplit_tail:\n");
         // Final segment [seg_start, hl).
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq -8(%rbp), %rcx\n");
         s = s.write("    movq (%rcx), %rcx\n");
         s = s.write("    addq -48(%rbp), %rcx\n");
@@ -5572,12 +5572,12 @@ pub function emit_module(mod: parser.Module): string {
         // Empty sep: single-element array [haystack].
         s = s.write(".Lsplit_single:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, -32(%rbp)\n");
         s = s.write("    movq $1, (%rax)\n");
         // Need a box copy: alloc 16 + copy haystack's data/len.
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq -8(%rbp), %rcx\n");
         s = s.write("    movq (%rcx), %rdx\n");
         s = s.write("    movq %rdx, (%rax)\n");
@@ -5609,52 +5609,52 @@ pub function emit_module(mod: parser.Module): string {
         }
     }
     // Heap allocator: a 1 MiB .bss buffer + bump pointer. The
-    // pointer starts at `__lang_heap` and advances by `size`
-    // each `__lang_alloc(size)` call. No deallocation — fine
+    // pointer starts at `__fern_heap` and advances by `size`
+    // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.needs_heap) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_heap_ptr: .quad 0\n");
+        s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_heap: .skip 1048576\n");
+        s = s.write("__fern_heap: .skip 1048576\n");
         s = s.write("    .section .text\n");
-        s = s.write(".globl __lang_alloc\n");
-        s = s.write(".type __lang_alloc, @function\n");
-        s = s.write("__lang_alloc:\n");
+        s = s.write(".globl __fern_alloc\n");
+        s = s.write(".type __fern_alloc, @function\n");
+        s = s.write("__fern_alloc:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
-        // Initialise __lang_heap_ptr on first call (lazy).
-        s = s.write("    movq __lang_heap_ptr(%rip), %rax\n");
+        // Initialise __fern_heap_ptr on first call (lazy).
+        s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jne .Lalloc_inited\n");
-        s = s.write("    leaq __lang_heap(%rip), %rax\n");
-        s = s.write("    movq %rax, __lang_heap_ptr(%rip)\n");
+        s = s.write("    leaq __fern_heap(%rip), %rax\n");
+        s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
         s = s.write(".Lalloc_inited:\n");
         // Result = current ptr; advance ptr by %rdi (the size).
-        s = s.write("    movq __lang_heap_ptr(%rip), %rax\n");
+        s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    addq %rax, %rdi\n");
-        s = s.write("    movq %rdi, __lang_heap_ptr(%rip)\n");
+        s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
-        s = s.write(".size __lang_alloc, .-__lang_alloc\n");
+        s = s.write(".size __fern_alloc, .-__fern_alloc\n");
     }
     // Command-line args. Saved by _start before %rbp push.
-    // __lang_arg_at: %rdi = i32 index → string box of argv[i].
+    // __fern_arg_at: %rdi = i32 index → string box of argv[i].
     // Strlen-walks the C-style null-terminated argv entry.
     if (s.needs_args) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_argc: .quad 0\n");
+        s = s.write("__fern_argc: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__lang_argv: .quad 0\n");
+        s = s.write("__fern_argv: .quad 0\n");
         s = s.write("    .section .text\n");
-        s = s.write("__lang_arg_at:\n");
+        s = s.write("__fern_arg_at:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
         s = s.write("    pushq %r13\n");
-        s = s.write("    movq __lang_argv(%rip), %rax\n");
+        s = s.write("    movq __fern_argv(%rip), %rax\n");
         s = s.write("    movq (%rax,%rdi,8), %r12\n");  // argv[i]
         s = s.write("    movq %r12, %rcx\n");
         s = s.write("    movq $0, %r13\n");
@@ -5667,7 +5667,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jmp .Larg_strlen\n");
         s = s.write(".Larg_done:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r12, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    popq %r13\n");
@@ -5675,12 +5675,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_push: append an 8-byte payload to an array.
+    // __fern_arr_push: append an 8-byte payload to an array.
     // %rdi = src arr ptr ([len: 8, e0: 8, e1: 8, …]),
     // %rsi = value to append (i32 or string-box ptr).
     // Returns a fresh array in %rax — never mutates input.
     if (s.needs_arr_push) {
-        s = s.write("__lang_arr_push:\n");
+        s = s.write("__fern_arr_push:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5694,7 +5694,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %r14, %rdi\n");
         s = s.write("    addq $2, %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r15\n");        // dst arr ptr
         // new length = old + 1
         s = s.write("    movq %r14, %rcx\n");
@@ -5724,14 +5724,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_slice: return a fresh array containing
+    // __fern_arr_slice: return a fresh array containing
     // arr[start..end] (end exclusive). %rdi = src arr ptr,
     // %rsi = start, %rdx = end. Source array layout matches
     // the ExprArray emit: [len: 8, e0: 8, …]. Each element
     // is an 8-byte payload — i32 zero-extended or string-
     // box ptr.
     if (s.needs_arr_slice) {
-        s = s.write("__lang_arr_slice:\n");
+        s = s.write("__fern_arr_slice:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5747,7 +5747,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %r15, %rdi\n");
         s = s.write("    incq %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         // write new len at offset 0
         s = s.write("    movq %r15, (%rax)\n");
         // copy: for i in 0..new_len, dst[i+1] = src[start + i + 1]
@@ -5772,11 +5772,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_concat: %rdi = arr A, %rsi = arr B. Returns a
+    // __fern_arr_concat: %rdi = arr A, %rsi = arr B. Returns a
     // fresh array containing A's elements followed by B's. Works
     // on any 8-byte-payload array.
     if (s.needs_arr_concat) {
-        s = s.write("__lang_arr_concat:\n");
+        s = s.write("__fern_arr_concat:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5792,7 +5792,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    addq %r15, %rdi\n");
         s = s.write("    incq %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         // new len at offset 0
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    addq %r15, %rcx\n");
@@ -5830,11 +5830,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_reverse: %rdi = src arr ptr. Returns fresh
+    // __fern_arr_reverse: %rdi = src arr ptr. Returns fresh
     // array with elements in opposite order. Works on any
     // 8-byte-payload array (i32[] or string[]).
     if (s.needs_arr_reverse) {
-        s = s.write("__lang_arr_reverse:\n");
+        s = s.write("__fern_arr_reverse:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5844,7 +5844,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %r13, %rdi\n");
         s = s.write("    incq %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r13, (%rax)\n");
         s = s.write("    movq $0, %rcx\n");        // i
         s = s.write(".Larr_rev_loop:\n");
@@ -5864,17 +5864,17 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_str_join: %rdi = string-array ptr,
+    // __fern_arr_str_join: %rdi = string-array ptr,
     // %rsi = sep box. Returns %rax = result box. Empty array
     // → empty string. Single element → that element. Uses
-    // repeated __lang_str_concat.
+    // repeated __fern_str_concat.
     //
-    // Note: __lang_str_concat clobbers %rbx (uses it as a
+    // Note: __fern_str_concat clobbers %rbx (uses it as a
     // scratch without saving), so the loop counter `i` lives
     // in a stack slot at -8(%rbp) and gets reloaded around
     // each concat call.
     if (s.needs_arr_str_join) {
-        s = s.write("__lang_arr_str_join:\n");
+        s = s.write("__fern_arr_str_join:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5897,20 +5897,20 @@ pub function emit_module(mod: parser.Module): string {
         // result = result + sep
         s = s.write("    movq %r15, %rdi\n");
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __lang_str_concat\n");
+        s = s.write("    call __fern_str_concat\n");
         s = s.write("    movq %rax, %r15\n");
         // result = result + arr[i]
         s = s.write("    movq %r15, %rdi\n");
         s = s.write("    movq -40(%rbp), %rax\n");
         s = s.write("    incq %rax\n");
         s = s.write("    movq (%r12,%rax,8), %rsi\n");
-        s = s.write("    call __lang_str_concat\n");
+        s = s.write("    call __fern_str_concat\n");
         s = s.write("    movq %rax, %r15\n");
         s = s.write("    incq -40(%rbp)\n");
         s = s.write("    jmp .Lasj_loop\n");
         s = s.write(".Lasj_empty:\n");
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq $0, (%rax)\n");
         s = s.write("    movq $0, 8(%rax)\n");
         s = s.write("    jmp .Lasj_exit\n");
@@ -5925,12 +5925,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_min: %rdi = i32-array ptr (len >= 1).
+    // __fern_arr_i32_min: %rdi = i32-array ptr (len >= 1).
     // Returns %rax = smallest element.
-    // __lang_arr_i32_max: same but largest. Both leaf helpers.
+    // __fern_arr_i32_max: same but largest. Both leaf helpers.
     // UB if arr is empty.
     if (s.needs_arr_i32_min_max) {
-        s = s.write("__lang_arr_i32_min:\n");
+        s = s.write("__fern_arr_i32_min:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq 8(%rdi), %rax\n");     // best = arr[0]
         s = s.write("    movq $1, %rdx\n");          // i
@@ -5946,7 +5946,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jmp .Lai32_min_loop\n");
         s = s.write(".Lai32_min_done:\n");
         s = s.write("    ret\n");
-        s = s.write("__lang_arr_i32_max:\n");
+        s = s.write("__fern_arr_i32_max:\n");
         s = s.write("    movq (%rdi), %rcx\n");
         s = s.write("    movq 8(%rdi), %rax\n");
         s = s.write("    movq $1, %rdx\n");
@@ -5963,12 +5963,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lai32_max_done:\n");
         s = s.write("    ret\n");
     }
-    // __lang_i32_pow: %rdi = base, %rsi = exp. Returns
+    // __fern_i32_pow: %rdi = base, %rsi = exp. Returns
     // %rax = base^exp. Negative exp returns 1 (UB-ish, but
     // matches the language's no-runtime-check stance —
     // integer pow with negative exp is undefined for i32).
     if (s.needs_i32_pow) {
-        s = s.write("__lang_i32_pow:\n");
+        s = s.write("__fern_i32_pow:\n");
         s = s.write("    movq $1, %rax\n");        // result
         s = s.write(".Lpow_loop:\n");
         s = s.write("    cmpq $0, %rsi\n");
@@ -5979,10 +5979,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lpow_done:\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_reverse: %rdi = src box. Returns %rax =
+    // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.
     if (s.needs_str_reverse) {
-        s = s.write("__lang_str_reverse:\n");
+        s = s.write("__fern_str_reverse:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -5993,7 +5993,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq 8(%rdi), %r13\n");     // src len
         // alloc new data buffer
         s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r14\n");        // dst data
         // reverse copy
         s = s.write("    movq $0, %r15\n");          // i
@@ -6010,7 +6010,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lstr_rev_done:\n");
         // alloc box
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %r14, (%rax)\n");
         s = s.write("    movq %r13, 8(%rax)\n");
         s = s.write("    popq %r15\n");
@@ -6020,11 +6020,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_bytes: %rdi = source string box. Returns
+    // __fern_str_bytes: %rdi = source string box. Returns
     // %rax = i32[] of byte values (each zero-extended to 8
     // bytes in the array's uniform 8-byte slot).
     if (s.needs_str_bytes) {
-        s = s.write("__lang_str_bytes:\n");
+        s = s.write("__fern_str_bytes:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -6037,7 +6037,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %r13, %rdi\n");
         s = s.write("    incq %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r14\n");        // arr
         s = s.write("    movq %r13, (%r14)\n");
         s = s.write("    movq $0, %r15\n");          // i
@@ -6059,12 +6059,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_str_chars: %rdi = source string box. Returns
+    // __fern_str_chars: %rdi = source string box. Returns
     // %rax = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset
     // (no per-char byte alloc) and length 1.
     if (s.needs_str_chars) {
-        s = s.write("__lang_str_chars:\n");
+        s = s.write("__fern_str_chars:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -6079,7 +6079,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %r14, %rdi\n");
         s = s.write("    incq %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r15\n");       // arr
         s = s.write("    movq %r14, (%r15)\n");     // arr.len
         s = s.write("    movq $0, -40(%rbp)\n");    // i
@@ -6089,7 +6089,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jge .Lchars_done\n");
         // alloc 16-byte box
         s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __lang_alloc\n");
+        s = s.write("    call __fern_alloc\n");
         // box[0] = src_data + i
         s = s.write("    movq -40(%rbp), %rcx\n");
         s = s.write("    movq %r13, %rdx\n");
@@ -6113,11 +6113,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_product: %rdi = i32-array ptr. Returns
+    // __fern_arr_i32_product: %rdi = i32-array ptr. Returns
     // %rax = product of all elements (1 if empty — matches
     // the mathematical empty-product identity). Leaf.
     if (s.needs_arr_i32_product) {
-        s = s.write("__lang_arr_i32_product:\n");
+        s = s.write("__fern_arr_i32_product:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq $1, %rax\n");          // product
         s = s.write("    movq $0, %rdx\n");          // i
@@ -6132,10 +6132,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lai32_prod_done:\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_sum: %rdi = i32-array ptr. Returns %rax
+    // __fern_arr_i32_sum: %rdi = i32-array ptr. Returns %rax
     // = sum of all elements (0 if empty). Leaf — no frame.
     if (s.needs_arr_i32_sum) {
-        s = s.write("__lang_arr_i32_sum:\n");
+        s = s.write("__fern_arr_i32_sum:\n");
         s = s.write("    movq (%rdi), %rcx\n");      // len
         s = s.write("    movq $0, %rax\n");          // sum
         s = s.write("    movq $0, %rdx\n");          // i
@@ -6150,11 +6150,11 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lai32_sum_done:\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_str_index_of: %rdi = string-array ptr,
+    // __fern_arr_str_index_of: %rdi = string-array ptr,
     // %rsi = target string-box ptr. Returns %rax = first index
-    // where __lang_str_eq(arr[i], target) is true, or -1.
+    // where __fern_str_eq(arr[i], target) is true, or -1.
     if (s.needs_arr_str_index_of) {
-        s = s.write("__lang_arr_str_index_of:\n");
+        s = s.write("__fern_arr_str_index_of:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %r12\n");
@@ -6172,7 +6172,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    incq %rcx\n");
         s = s.write("    movq (%r12,%rcx,8), %rdi\n");
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __lang_str_eq\n");
+        s = s.write("    call __fern_str_eq\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Las_idx_found\n");
         s = s.write("    incq %r15\n");
@@ -6194,10 +6194,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __lang_arr_i32_index_of: %rdi = arr ptr, %rsi = target val.
+    // __fern_arr_i32_index_of: %rdi = arr ptr, %rsi = target val.
     // Returns %rax = first index where arr[i] == val, or -1.
     if (s.needs_arr_i32_index_of) {
-        s = s.write("__lang_arr_i32_index_of:\n");
+        s = s.write("__fern_arr_i32_index_of:\n");
         s = s.write("    movq (%rdi), %rdx\n");      // len
         s = s.write("    movq $0, %rcx\n");          // i
         s = s.write(".Lai32_idx_loop:\n");
@@ -6395,18 +6395,18 @@ function main(): i32 {
     if (!contains(a24, ".S0: .ascii")) { return 244; }
     if (!contains(a24, "hi")) { return 245; }
 
-    // print_int(N) emits a call to the __lang_print_int helper,
+    // print_int(N) emits a call to the __fern_print_int helper,
     // which the module appends once at the end of .text.
     var a25: string = emit_source("print_int(42); return 0;");
-    if (!contains(a25, "call __lang_print_int")) { return 250; }
-    if (!contains(a25, "__lang_print_int:")) { return 251; }
+    if (!contains(a25, "call __fern_print_int")) { return 250; }
+    if (!contains(a25, "__fern_print_int:")) { return 251; }
     if (!contains(a25, ".Lpi_div:")) { return 252; }
 
-    // read_int() emits a call to the __lang_read_int helper,
+    // read_int() emits a call to the __fern_read_int helper,
     // which the module appends once at the end of .text.
     var a26: string = emit_source("return read_int();");
-    if (!contains(a26, "call __lang_read_int")) { return 260; }
-    if (!contains(a26, "__lang_read_int:")) { return 261; }
+    if (!contains(a26, "call __fern_read_int")) { return 260; }
+    if (!contains(a26, "__fern_read_int:")) { return 261; }
     if (!contains(a26, ".Lri_loop:")) { return 262; }
 
     return 0;

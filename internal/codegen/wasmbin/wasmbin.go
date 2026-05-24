@@ -8,7 +8,7 @@
 // The aim is for this package to fully replace the WAT emitter and
 // the `wasm-tools parse` shell-out it depends on. Each PR lands
 // another slice of op coverage; the package is exercised via
-// `lang -target wasm-bin -o prog.wasm prog.fern` end-to-end.
+// `fern -target wasm-bin -o prog.wasm prog.fern` end-to-end.
 //
 // Current op coverage:
 //
@@ -28,12 +28,12 @@
 //   - Function calls: direct, indirect (via funcref table),
 //     closure-direct (env_ptr already on stack). Static
 //     closure-pair pointers via OpConstFunc.
-//   - String runtime: __lang_str_len, __lang_str_byte (SSO
+//   - String runtime: __fern_str_len, __fern_str_byte (SSO
 //     seam), __str_eq, __str_concat.
-//   - Bump allocator: __lang_alloc, cursor at memory[40], pages
+//   - Bump allocator: __fern_alloc, cursor at memory[40], pages
 //     grow on demand.
 //   - WASI: wasi_snapshot_preview1.fd_write import + a
-//     __lang_print helper that copies the string into a fresh
+//     __fern_print helper that copies the string into a fresh
 //     buffer (inline-form aware) and writes one iovec.
 //   - Enum dispatch: OpEnumSentinel + OpMatchTag.
 //   - Pair-return ABI: OpReturnPair, OpMakeSomeI32 /
@@ -54,7 +54,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
-	"github.com/jakechampion/lang/internal/langstring"
+	"github.com/jakechampion/lang/internal/fernstring"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/imports"
@@ -82,7 +82,7 @@ type EmitOptions struct {
 	// preview-2 wrapping needs this on.
 	SynthStart bool
 	// PrintMainResult tunes the SynthStart wrapper to route
-	// main's i32 return through `int_to_string` + `__lang_print`
+	// main's i32 return through `int_to_string` + `__fern_print`
 	// instead of dropping it. Mirrors the WAT path's
 	// `EmitOptions.PrintMainResult` so e2e tests can observe
 	// main's value over stdout (preview-2 hosts only surface 0/1
@@ -111,7 +111,7 @@ type EmitOptions struct {
 	// `proc_exit` — the only import whose core-wasm signature is
 	// identical across the two preview generations (i32 → ()). The
 	// canonical-ABI `result<_, _>` that lifts to wasi:cli/exit::exit
-	// also lowers to a single i32, so __lang_exit's call site is
+	// also lowers to a single i32, so __fern_exit's call site is
 	// untouched. Off by default; opt-in for the WrapWasiImported
 	// pipeline that produces preview-2-native components without
 	// the wasm-tools adapter shell-out.
@@ -141,7 +141,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// shift this offset; the binary path doesn't emit imports
 	// yet (the WASI / preview-2 wiring lives in a later slice).
 	//
-	// Synthetic runtime-helper functions (e.g. __lang_str_len)
+	// Synthetic runtime-helper functions (e.g. __fern_str_len)
 	// get appended after the user functions in the same
 	// numbering space; their entries land in this map once
 	// the runtime-needs scan below has decided which helpers
@@ -152,31 +152,31 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// come from runtime needs (e.g. WASI fd_write for print).
 	helpers := scanRuntimeHelpers(prog, opts)
 	if opts.PrintMainResult {
-		// The synthesised `_start` calls __lang_print to flush
+		// The synthesised `_start` calls __fern_print to flush
 		// `int_to_string(main())` to stdout. If no user-emitted
-		// op already required __lang_print, the scan above would
+		// op already required __fern_print, the scan above would
 		// have left it out. Force-include it now (with its
 		// transitive deps) so the funcIdx table covers the
 		// SynthStart call site.
-		helpers.add("__lang_str_len")
-		helpers.add("__lang_str_byte")
-		helpers.add("__lang_alloc")
-		helpers.add("__lang_print")
+		helpers.add("__fern_str_len")
+		helpers.add("__fern_str_byte")
+		helpers.add("__fern_alloc")
+		helpers.add("__fern_print")
 	}
 	if opts.HttpHandler {
 		// __http_entry's body alloc()s the request struct, the
 		// HeaderMap parallel arrays, the body accumulator, the
 		// canonical-ABI retptr scratch, the Platform capability
 		// bag, and the response outgoing-body. It also calls
-		// __lang_arena_save / restore for per-request arena
+		// __fern_arena_save / restore for per-request arena
 		// cleanup, __bytes_to_lang_string for the host-bytes →
 		// lang-string round-trip, and emitStrNormalize for the
 		// outgoing body SSO normalize.
-		helpers.add("__lang_alloc")
-		helpers.add("__lang_str_len")
-		helpers.add("__lang_str_byte")
-		helpers.add("__lang_arena_save")
-		helpers.add("__lang_arena_restore")
+		helpers.add("__fern_alloc")
+		helpers.add("__fern_str_len")
+		helpers.add("__fern_str_byte")
+		helpers.add("__fern_arena_save")
+		helpers.add("__fern_arena_restore")
 		helpers.add("__bytes_to_lang_string")
 		helpers.add("__http_entry")
 	}
@@ -292,7 +292,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	}
 
 	// String interning state for OpConstStr's heap-form path.
-	// Inline-form strings (≤7 bytes via langstring.FitsInlineWasm)
+	// Inline-form strings (≤7 bytes via fernstring.FitsInlineWasm)
 	// pack into the two i32.consts directly and don't visit the
 	// data section. Heap-form strings get a unique offset; the
 	// data section's bytes are accumulated here in declaration
@@ -328,7 +328,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 		// Phase 1e-enums-ii: an 8-byte rc header precedes the tag
 		// cell (rc=0x80000000 at [data-8], pad at [data-4]) so the
-		// __lang_rc_inc/dec helpers short-circuit on the high bit
+		// __fern_rc_inc/dec helpers short-circuit on the high bit
 		// once the enum-ii predicate widening starts dec'ing enum
 		// locals that hold a payloadless variant. The returned
 		// offset still points at the tag, so OpMatchTag's
@@ -439,12 +439,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// Memory section is emitted iff any function in the program
 	// touches memory (load / store / sub-width variants / fN load
 	// or store) OR if any runtime helper that touches memory is
-	// pulled in (__lang_alloc grows memory; __lang_str_byte and
+	// pulled in (__fern_alloc grows memory; __fern_str_byte and
 	// transitively __str_eq emit i32.load8_u even in branches
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist). Memory layout matches the
 	// WAT path: 1 page (64 KiB) with no upper bound.
-	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__lang_alloc"] || helpers.set["__lang_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || helpers.set["__lang_arena_save"] || helpers.set["__lang_arena_restore"] || len(importNeeds.order) > 0 {
+	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__fern_alloc"] || helpers.set["__fern_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || helpers.set["__fern_arena_save"] || helpers.set["__fern_arena_restore"] || len(importNeeds.order) > 0 {
 		m.MemoryPresent = true
 		m.MemoryMin = 1
 		m.MemoryMax = -1
@@ -508,14 +508,14 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// / code-section assembly as user functions.
 	//
 	// Bodies receive a name → funcidx map for cross-helper calls
-	// (e.g. __str_eq → __lang_str_len + __lang_str_byte) so the
+	// (e.g. __str_eq → __fern_str_len + __fern_str_byte) so the
 	// call targets are resolved at module-assembly time. funcIdx
 	// already has every helper's index installed up-front by the
 	// pre-scan loop above.
 	// helperIdxs carries every name visible from a helper body —
 	// both imports and other helpers. Past versions only seeded
 	// helpers here, so any helper that referenced multiple imports
-	// (e.g. __lang_arg_at calling both wasi_args_sizes_get and
+	// (e.g. __fern_arg_at calling both wasi_args_sizes_get and
 	// wasi_args_get) silently fell back to funcidx 0 for missing
 	// keys, calling whatever import happened to land first. Always
 	// include both.
@@ -612,7 +612,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// use. Cursor value = max(allocMinStart, end-of-string-pool)
 	// rounded up to 8 bytes — matches the WAT path's choice so
 	// canonical-ABI alignment expectations stay satisfied.
-	if helpers.set["__lang_alloc"] {
+	if helpers.set["__fern_alloc"] {
 		if !m.MemoryPresent {
 			m.MemoryPresent = true
 			m.MemoryMin = 1
@@ -639,7 +639,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// typeidx + export.
 	//
 	// PrintMainResult turns the trailing drop into a
-	// `call $int_to_string` + `call $__lang_print` pair so
+	// `call $int_to_string` + `call $__fern_print` pair so
 	// main's i32 value lands on stdout. Mirrors the WAT path's
 	// PrintMainResult mode; same fallback shape (drop) when the
 	// program doesn't include an int_to_string variant.
@@ -678,9 +678,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			}
 			if intToStrName != "" {
 				body = inst.InstCall(body, funcIdx[intToStrName])
-				printIdx, ok := funcIdx["__lang_print"]
+				printIdx, ok := funcIdx["__fern_print"]
 				if !ok {
-					return nil, fmt.Errorf("wasmbin: PrintMainResult: __lang_print helper not registered (scanRuntimeHelpers gap)")
+					return nil, fmt.Errorf("wasmbin: PrintMainResult: __fern_print helper not registered (scanRuntimeHelpers gap)")
 				}
 				body = inst.InstCall(body, printIdx)
 				printed = true
@@ -1192,8 +1192,8 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		// packs into the two i32.consts directly and doesn't touch
 		// the data section. Heap-form interns into the data segment
 		// and emits (data_offset, length).
-		if langstring.FitsInlineWasm(len(op.Str)) {
-			data, length := langstring.PackInlineWasm([]byte(op.Str))
+		if fernstring.FitsInlineWasm(len(op.Str)) {
+			data, length := fernstring.PackInlineWasm([]byte(op.Str))
 			body = inst.InstI32Const(body, int32(data))
 			body = inst.InstI32Const(body, int32(length))
 			return body, nil
@@ -1657,11 +1657,11 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 
 	// ---- String runtime helpers ----
 	case ir.OpStrLen:
-		// Stack: (data, len). The synthetic __lang_str_len helper
+		// Stack: (data, len). The synthetic __fern_str_len helper
 		// consumes both and returns the SSO-aware byte length.
-		idx, ok := ctx.funcIdx["__lang_str_len"]
+		idx, ok := ctx.funcIdx["__fern_str_len"]
 		if !ok {
-			return nil, fmt.Errorf("OpStrLen: __lang_str_len helper not registered (scanRuntimeHelpers gap)")
+			return nil, fmt.Errorf("OpStrLen: __fern_str_len helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
 
@@ -1731,11 +1731,11 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 
 	// ---- Heap allocator ----
 	case ir.OpAlloc:
-		// Stack: (size). __lang_alloc bumps memory[40] and returns
+		// Stack: (size). __fern_alloc bumps memory[40] and returns
 		// the OLD value as the i32 pointer.
-		idx, ok := ctx.funcIdx["__lang_alloc"]
+		idx, ok := ctx.funcIdx["__fern_alloc"]
 		if !ok {
-			return nil, fmt.Errorf("OpAlloc: __lang_alloc helper not registered (scanRuntimeHelpers gap)")
+			return nil, fmt.Errorf("OpAlloc: __fern_alloc helper not registered (scanRuntimeHelpers gap)")
 		}
 		return inst.InstCall(body, idx), nil
 
@@ -1753,7 +1753,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // helpers or stdlib impls that actually implement them in wasmbin.
 //
 // Two flavours of entry:
-//   - Synthetic helper aliases (e.g. `print` → `__lang_print`)
+//   - Synthetic helper aliases (e.g. `print` → `__fern_print`)
 //     route to runtime-emitted wasm helpers in runtime.go / wasi.go.
 //   - Codegen aliases (e.g. `map_new` → `map_new_impl`) route to
 //     stdlib `.fern` functions that exist as regular IR functions
@@ -1766,75 +1766,75 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // Names not in the map pass through unchanged.
 var CallDirectAliases = map[string]string{
 	// Synthetic runtime helpers.
-	"exit":       "__lang_exit",
-	"print":      "__lang_print",
-	"eprint":     "__lang_eprint",
-	"write":      "__lang_write",
-	"putchar":    "__lang_putchar",
-	"random_i32":   "__lang_random_i32",
-	"random_bytes": "__lang_random_bytes",
-	"now_ns":       "__lang_now_ns",
-	"now_unix_ms":  "__lang_now_unix_ms",
-	"monotonic_ns": "__lang_monotonic_ns",
+	"exit":       "__fern_exit",
+	"print":      "__fern_print",
+	"eprint":     "__fern_eprint",
+	"write":      "__fern_write",
+	"putchar":    "__fern_putchar",
+	"random_i32":   "__fern_random_i32",
+	"random_bytes": "__fern_random_bytes",
+	"now_ns":       "__fern_now_ns",
+	"now_unix_ms":  "__fern_now_unix_ms",
+	"monotonic_ns": "__fern_monotonic_ns",
 
 	// Arena (bump-allocator) save / restore.
-	"arena_save":    "__lang_arena_save",
-	"arena_restore": "__lang_arena_restore",
+	"arena_save":    "__fern_arena_save",
+	"arena_restore": "__fern_arena_restore",
 
 	// f64 math primitives that map to native wasm ops. sin /
 	// cos / log / exp / pow / round have no wasm-native shape
 	// and stay unimplemented in wasmbin for now (the WAT path
 	// is in the same state).
-	"__sqrt_f64":  "__lang_sqrt_f64",
-	"__abs_f64":   "__lang_abs_f64",
-	"__floor_f64": "__lang_floor_f64",
-	"__ceil_f64":  "__lang_ceil_f64",
-	"__trunc_f64": "__lang_trunc_f64",
-	"env_count":  "__lang_env_count",
-	"arg_count":  "__lang_arg_count",
-	"arg_at":     "__lang_arg_at",
-	"env_at":     "__lang_env_at",
-	"args":       "__lang_args",
-	"env":        "__lang_env",
-	"read_byte":  "__lang_read_byte",
-	"read_line":  "__lang_read_line",
+	"__sqrt_f64":  "__fern_sqrt_f64",
+	"__abs_f64":   "__fern_abs_f64",
+	"__floor_f64": "__fern_floor_f64",
+	"__ceil_f64":  "__fern_ceil_f64",
+	"__trunc_f64": "__fern_trunc_f64",
+	"env_count":  "__fern_env_count",
+	"arg_count":  "__fern_arg_count",
+	"arg_at":     "__fern_arg_at",
+	"env_at":     "__fern_env_at",
+	"args":       "__fern_args",
+	"env":        "__fern_env",
+	"read_byte":  "__fern_read_byte",
+	"read_line":  "__fern_read_line",
 
 	// Reader / Writer API. `stdin()` returns a real Reader
 	// struct (`{ fd: 0 }`); the `__method_Reader_*` helpers
 	// dispatch on `r.fd` so the same lowering covers stdin
 	// and file Readers identically. `open_writer` /
 	// `open_appender` produce Writers similarly.
-	"stdin":                      "__lang_stdin",
-	"__method_Reader_read_line":  "__lang_reader_read_line_fd",
-	"__method_Reader_read_chunk": "__lang_reader_read_chunk",
-	"__method_Reader_close":      "__lang_reader_close_fd",
-	"__method_Writer_write":      "__lang_writer_write",
-	"__method_Writer_close":      "__lang_writer_close",
+	"stdin":                      "__fern_stdin",
+	"__method_Reader_read_line":  "__fern_reader_read_line_fd",
+	"__method_Reader_read_chunk": "__fern_reader_read_chunk",
+	"__method_Reader_close":      "__fern_reader_close_fd",
+	"__method_Writer_write":      "__fern_writer_write",
+	"__method_Writer_close":      "__fern_writer_close",
 
 	// String / bytes round-trip.
-	"string_from_bytes": "__lang_string_from_bytes",
+	"string_from_bytes": "__fern_string_from_bytes",
 
 	// File I/O. `read_file` / `write_file` read or truncate-write
 	// in one shot; `open_reader` / `open_writer` / `open_appender`
 	// return Reader / Writer values backed by a preview-1 fd.
-	"read_file":     "__lang_read_file",
-	"write_file":    "__lang_write_file",
-	"open_reader":   "__lang_open_reader",
-	"open_writer":   "__lang_open_writer",
-	"open_appender": "__lang_open_appender",
+	"read_file":     "__fern_read_file",
+	"write_file":    "__fern_write_file",
+	"open_reader":   "__fern_open_reader",
+	"open_writer":   "__fern_open_writer",
+	"open_appender": "__fern_open_appender",
 
 	// stdio Writers, mirrors of stdin for consistency. fd=1 / 2.
-	"stdout": "__lang_stdout",
-	"stderr": "__lang_stderr",
+	"stdout": "__fern_stdout",
+	"stderr": "__fern_stderr",
 
 	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
 	// the helpers wrap wasi:sockets + wasi:io directly. See
 	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
-	"tcp_listen": "__lang_tcp_listen",
-	"tcp_accept": "__lang_tcp_accept",
-	"tcp_recv":   "__lang_tcp_recv",
-	"tcp_send":   "__lang_tcp_send",
-	"tcp_close":  "__lang_tcp_close",
+	"tcp_listen": "__fern_tcp_listen",
+	"tcp_accept": "__fern_tcp_accept",
+	"tcp_recv":   "__fern_tcp_recv",
+	"tcp_send":   "__fern_tcp_send",
+	"tcp_close":  "__fern_tcp_close",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude
@@ -2091,9 +2091,9 @@ func fnNeedsClosureMakeScratch(fn *ir.Func) bool {
 // closureMakeSites). siteIdx is its sequential index in the
 // function (0, 1, 2, …) — used to step through ctx.closureSites.
 func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]byte, uint32, uint32, error) {
-	allocIdx, ok := ctx.funcIdx["__lang_alloc_rc1"]
+	allocIdx, ok := ctx.funcIdx["__fern_alloc_rc1"]
 	if !ok {
-		return nil, 0, 0, fmt.Errorf("__lang_alloc_rc1 helper not registered")
+		return nil, 0, 0, fmt.Errorf("__fern_alloc_rc1 helper not registered")
 	}
 	caps := site.captures
 	n := len(caps)
@@ -2174,9 +2174,9 @@ func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // emitMakeClosure is OpMakeEnv plus an 8-byte closure pair cell
 // {fn_idx, env_ptr}. Returns the pair pointer.
 func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
-	allocIdx, ok := ctx.funcIdx["__lang_alloc_rc1"]
+	allocIdx, ok := ctx.funcIdx["__fern_alloc_rc1"]
 	if !ok {
-		return nil, fmt.Errorf("OpMakeClosure: __lang_alloc_rc1 helper not registered")
+		return nil, fmt.Errorf("OpMakeClosure: __fern_alloc_rc1 helper not registered")
 	}
 	if op.Str == "" {
 		return nil, fmt.Errorf("OpMakeClosure: missing target name")

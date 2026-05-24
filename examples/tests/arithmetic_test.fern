@@ -4,7 +4,7 @@
 // `*_test.go` harness retires.
 //
 // Run:
-//   lang -interp examples/tests/arithmetic_test.fern
+//   fern -interp examples/tests/arithmetic_test.fern
 //
 // Output is TAP-13. Exit code is 0 if every case passes, 1
 // if any case fails.

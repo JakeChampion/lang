@@ -1442,7 +1442,7 @@ func (b *builder) emitDeferCleanup() error {
 	return nil
 }
 
-// emitRcDecLocalsAtExit emits __lang_rc_dec for every
+// emitRcDecLocalsAtExit emits __fern_rc_dec for every
 // array-typed parameter and local in the current function.
 // Phase 1d-v balances the inc emissions from Phase 1d-i
 // through 1d-iv: each alias-bind / call-arg / reassignment
@@ -1466,8 +1466,8 @@ func (b *builder) emitDeferCleanup() error {
 func (b *builder) emitRcDecLocalsAtExit() {
 	emitDec := func(slot int32) {
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_dec", I32: 1})
-		// __lang_rc_dec is a void-returning runtime helper but
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		// __fern_rc_dec is a void-returning runtime helper but
 		// OpCallDirect's codegen always pushes the call's
 		// return-value register (x0/rax) onto the operand
 		// stack. Drop the bogus push to keep the stack
@@ -1477,7 +1477,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	// Use b.locals[name] so we only dec slots that user code
 	// actually writes to. Two scope-separated Var declarations
 	// sharing a name (e.g. `var ns` declared 9 times across
-	// different branches of vm.lang) all map to the SAME
+	// different branches of vm.fern) all map to the SAME
 	// physical slot via b.locals[name] — only the last entry
 	// wins in the slot map, and every Var-decl Store reaches
 	// that last slot. The "earlier" slot indices that
@@ -1493,7 +1493,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	// typed slots. The rc-tracked set matches the predicate
 	// used by needsRcIncOnAlias / zeroRcTracked so inc and dec
 	// agree on which slots get touched. The runtime guard
-	// inside __lang_rc_dec (high-bit sentinel + low-address
+	// inside __fern_rc_dec (high-bit sentinel + low-address
 	// short-circuit) keeps this safe for runtime-allocated
 	// struct values (Reader/Writer/Map/MapIter) whose header
 	// holds 0x80000000 instead of a real rc.
@@ -1516,7 +1516,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		}
 		// Phase 1e-closures-ii: a FuncType local holds a heap
 		// closure pair / env block (rc=1 header via
-		// __lang_alloc_rc1) or a static function-value cell
+		// __fern_alloc_rc1) or a static function-value cell
 		// (immortal sentinel on natives, low-address short-circuit
 		// on wasm). All pointer-shaped; rc_inc/dec are safe.
 		if _, isFunc := t.(*ast.FuncType); isFunc {
@@ -2689,11 +2689,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// its own reference. Fresh allocations (array literals,
 		// function returns, push results) come with rc = 1
 		// already, so no inc needed there — only true aliases.
-		// __lang_rc_inc returns the input pointer so it splices
+		// __fern_rc_inc returns the input pointer so it splices
 		// into the expression chain without a temp local.
 		// See docs/RC-PERCEUS-PLAN.md "Reference-creation sites".
 		if needsRcIncOnAlias(n.Init, b) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
@@ -3904,7 +3904,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// the Var / Assign / call-arg / struct-field /
 			// closure-capture sites.
 			if needsRcIncOnAlias(el, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
 			b.emit(storeOpAndWidth)
 		}
@@ -3987,7 +3987,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// alias site. See the StructLit case below for the
 			// gating rationale.
 			if needsRcIncOnAlias(elem, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
@@ -4005,7 +4005,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Phase 1e-struct-i: user-allocated struct values carry
 		// an 8-byte rc header before `data`, mirroring the
 		// array layout's rc-at-`data-8` convention so
-		// `__lang_rc_inc/dec` work uniformly. The alloc bumps
+		// `__fern_rc_inc/dec` work uniformly. The alloc bumps
 		// by `rcHeaderBytes`; rc=1 lives at `[base + 0]`; the
 		// returned user-visible pointer is `base + 8`. Field
 		// offsets shift by `rcHeaderBytes` so we keep using
@@ -4041,7 +4041,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// structs / enums / closures join in Phase 1e along
 			// with their matching drop handlers.
 			if needsRcIncOnAlias(f.Value, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
@@ -4094,7 +4094,7 @@ func (b *builder) expr(e ast.Expr) error {
 				return err
 			}
 			if needsRcIncOnAlias(capExpr, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
@@ -4235,7 +4235,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// `len(a + b)` with a / b both strings must route through
 		// OpStrLen rather than the array-shape `const 4; sub;
 		// load` fallback — otherwise small-string-optimisation
-		// inline-tagged returns from `__lang_strcat` go through
+		// inline-tagged returns from `__fern_strcat` go through
 		// the wrong length-read path and the load tries to read
 		// memory at `inline_value - 4`. Latent bug since the
 		// OpStrLen seam landed; surfaced once strcat started
@@ -4831,7 +4831,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	if n.IsStringConcat {
 		// Compile-time fold: `"foo" + "bar"` collapses to the
 		// concatenated literal `"foobar"` as a single OpConstStr.
-		// Skips the runtime `__lang_strcat` allocation + 2x
+		// Skips the runtime `__fern_strcat` allocation + 2x
 		// memcpy entirely; the literal lands in .rodata once
 		// (deduped via internString on either backend). Chains
 		// fold left-associatively because the AST is built
@@ -4913,7 +4913,7 @@ func (b *builder) binary(n *ast.Binary) error {
 //     : 0
 //     The length-mismatch path skips the strcmp call entirely;
 //     the length-match path falls through to the existing
-//     `__lang_strcmp` runtime. For the common HTTP-routing
+//     `__fern_strcmp` runtime. For the common HTTP-routing
 //     pattern `path == "/health"` (where most paths have
 //     different lengths from the literal) this saves the
 //     function call + the strcmp's internal length compare.
@@ -5540,7 +5540,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// targets, but `arr.set` is the explicit API users can
 	// call from anywhere (params, expression position, method
 	// chains) and get value semantics. Internally calls
-	// `__lang_arr_cow_inplace`, writes the element, returns
+	// `__fern_arr_cow_inplace`, writes the element, returns
 	// the (possibly new) buffer pointer.
 	if id.Name == "__method_Array_set" && len(n.Args) == 3 && len(n.TypeArgs) == 1 {
 		return b.emitArraySet(n)
@@ -5574,9 +5574,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			if err := b.expr(n.Args[0]); err != nil {
 				return err
 			}
-			target := "__lang_rc_inc"
+			target := "__fern_rc_inc"
 			if id.Name == "__rc_dec" {
-				target = "__lang_rc_dec"
+				target = "__fern_rc_dec"
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: target, I32: 1})
 			return nil
@@ -5787,15 +5787,15 @@ func (b *builder) callBody(n *ast.Call) error {
 		// site. The caller still owns its reference after the
 		// call returns (value semantics — the callee gets a
 		// fresh alias of the same buffer). Splice in
-		// __lang_rc_inc so the rc reflects the new co-owner.
-		// __lang_rc_inc returns the input pointer, so it
+		// __fern_rc_inc so the rc reflects the new co-owner.
+		// __fern_rc_inc returns the input pointer, so it
 		// passes through the operand stack without a temp.
 		// Same gating as the Var / Assign sites: only fires
 		// for alias-shaped expressions of array type. The
 		// matching dec on the callee's parameter at function
 		// exit lands in a later slice (Phase 1d-v).
 		if needsRcIncOnAlias(a, b) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 	}
 	argCount := int32(len(n.Args))
@@ -5941,7 +5941,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// `y = x;` shares an existing array reference, so the
 		// new binding needs its own rc.
 		if needsRcIncOnAlias(n.Value, b) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 		// Phase 1d-vi: dec the old value of `y` before
 		// overwriting it. `y` previously held some array
@@ -5959,7 +5959,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// matching inc sites.
 		if isArrayTypeOfLocal(t.Name, b) {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Str: "__lang_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 		// Tee semantics: leave a copy on the stack for callers that
@@ -6040,7 +6040,7 @@ func (b *builder) assign(n *ast.Assign) error {
 			}
 		}
 		// Phase 2b: `arr[i] = v` for a writable local-ident
-		// array routes through `__lang_arr_cow_inplace(arr,
+		// array routes through `__fern_arr_cow_inplace(arr,
 		// stride) → buf`. The helper returns the same arr on
 		// rc==1 (mutate in place) and a memcpy'd copy on rc>1
 		// (decrementing arr's rc as it takes over the
@@ -6185,7 +6185,7 @@ func (b *builder) assign(n *ast.Assign) error {
 // needsRcIncOnAlias returns true iff `e` is an alias expression
 // (a load of an existing reference) whose result is an array
 // type. Used by Phase 1d to decide when to splice in
-// __lang_rc_inc: array literals, function-call returns, and
+// __fern_rc_inc: array literals, function-call returns, and
 // push results all yield rc=1 ownership; only loads of existing
 // references share an existing reference and need the bump.
 // Other pointer-shaped types (string / struct / enum / closure)
@@ -6312,8 +6312,8 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// Phase 1e-struct-ii: user-declared struct values now carry
 	// rc headers (either real rc=1 from StructLit lowering or
 	// the static-sentinel 0x80000000 from runtime helpers like
-	// __lang_make_handle / map_new_impl / __map_iter_impl).
-	// Either way, calling __lang_rc_inc/dec on a struct pointer
+	// __fern_make_handle / map_new_impl / __map_iter_impl).
+	// Either way, calling __fern_rc_inc/dec on a struct pointer
 	// is safe — the inc/dec helpers short-circuit on the high
 	// bit so runtime-owned values stay shareable, and user-
 	// allocated values pick up real rc tracking.
@@ -6323,7 +6323,7 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// Phase 1e-enums-ii: aliasing an enum-typed ident / field /
 	// index inc's the box. The value is always a heap pointer
 	// (headered box) or a header-carrying static sentinel, so
-	// __lang_rc_inc short-circuits on the sentinel and bumps a
+	// __fern_rc_inc short-circuits on the sentinel and bumps a
 	// real rc on a user box.
 	if _, isEnum := t.(ast.EnumType); isEnum {
 		return true
@@ -6993,7 +6993,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // only does what's stride-aware: the width-correct tail store
 // for the new element.
 //
-//	buf = __lang_arr_push_grow(arr, oldLen, stride)  ;; helper
+//	buf = __fern_arr_push_grow(arr, oldLen, stride)  ;; helper
 //	*(buf + oldLen * stride) = v                     ;; tail store
 //	return buf                                       ;; array value
 //
@@ -7011,7 +7011,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // array.push dispatch — used by `arrayElemStoreOpFor` to pick
 // the right store width.
 // emitArrayIndexAssignCoW lowers `arr[i] = v` for a writable
-// local-ident array. The helper `__lang_arr_cow_inplace`
+// local-ident array. The helper `__fern_arr_cow_inplace`
 // internalises all rc bookkeeping for this site:
 //
 //   - rc == 1 → return arr unchanged; caller writes into the
@@ -7023,16 +7023,16 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // The IR emit therefore does NOT need a separate dec-on-
 // overwrite step — keeping that step would either double-dec,
 // or skip-dec on raw wasm where heap addresses sit below
-// 0x10000 (the `__lang_rc_dec` low-address guard short-
+// 0x10000 (the `__fern_rc_dec` low-address guard short-
 // circuits there). The helper is the sole rc-management point
 // for this site.
 func (b *builder) emitArrayIndexAssignCoW(arrIdent *ast.Ident, arrSlot int32, t *ast.Index, n *ast.Assign, stride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
-	// buf = __lang_arr_cow_inplace(arr, stride)
+	// buf = __fern_arr_cow_inplace(arr, stride)
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 	// Element address via the per-stride bounds-check helper.
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
@@ -7078,9 +7078,9 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 	// arr = *fieldAddr (load the array pointer from the field).
 	b.emit(Op{Kind: OpLoadLocal, I32: fieldAddrSlot})
 	b.emit(payloadLoadOpFor(fieldType, b.ptrW))
-	// buf = __lang_arr_cow_inplace(arr, stride)
+	// buf = __fern_arr_cow_inplace(arr, stride)
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -7109,7 +7109,7 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 // address `&mat[i]` — flows through the per-stride bounds-
 // check helper just like a regular `arr[i] = v` write. The
 // inner-array pointer at that slot is fed through
-// `__lang_arr_cow_inplace`, which mutates it in place on rc==1
+// `__fern_arr_cow_inplace`, which mutates it in place on rc==1
 // or returns a fresh copy on rc>1. The new buffer pointer is
 // stored back into `&mat[i]`.
 //
@@ -7117,7 +7117,7 @@ func (b *builder) emitArrayIndexAssignCoWField(fa *ast.FieldAccess, fieldOffset 
 // some other local also aliases `mat`, the alias's view of
 // `mat[i]` follows along (since they share the outer buffer).
 // Phase 2c will gate the outer slot's write through
-// `__lang_arr_cow_inplace` too, so aliases of mat see the
+// `__fern_arr_cow_inplace` too, so aliases of mat see the
 // pre-write inner-array pointer.
 func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, n *ast.Assign, innerStride int32, storeOp OpKind, storeWidth int, idxHelper string) error {
 	// Outer stride + outer __arr_idx_<N> helper for resolving
@@ -7140,9 +7140,9 @@ func (b *builder) emitArrayIndexAssignCoWNested(outer *ast.Index, t *ast.Index, 
 	// inner = *outerSlotAddr (pointer-width load).
 	b.emit(Op{Kind: OpLoadLocal, I32: outerSlotSlot})
 	b.emit(payloadLoadOpFor(outer.ElemType, b.ptrW))
-	// buf = __lang_arr_cow_inplace(inner, innerStride)
+	// buf = __fern_arr_cow_inplace(inner, innerStride)
 	b.emit(Op{Kind: OpConstI32, I32: innerStride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__arr_set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -7229,12 +7229,12 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		return err
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
-	// buf = __lang_arr_cow_inplace(arr, stride)
+	// buf = __fern_arr_cow_inplace(arr, stride)
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_cow_inplace", I32: 2})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -7322,11 +7322,11 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoad})
 	b.emit(Op{Kind: OpStoreLocal, I32: oldLenSlot})
 
-	// buf = __lang_arr_push_grow(arr, oldLen, stride)
+	// buf = __fern_arr_push_grow(arr, oldLen, stride)
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: oldLenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__lang_arr_push_grow", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_push_grow", I32: 3})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__push_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})

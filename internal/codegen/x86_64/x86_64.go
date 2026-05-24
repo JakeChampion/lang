@@ -69,7 +69,7 @@ const (
 	sysExitGroup    = 231
 	sysGetrandom    = 318
 	// clock_gettime(2): x86-64 syscall 228.
-	// Used by `__lang_now_unix_ms` for the wall-clock-now
+	// Used by `__fern_now_unix_ms` for the wall-clock-now
 	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
 	sysClockGettime = 228
 )
@@ -166,7 +166,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			}
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
 				// Closure env block + (optional) pair both
-				// come from __lang_alloc.
+				// come from __fern_alloc.
 				g.usesAlloc = true
 			}
 		}
@@ -193,13 +193,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
 		g.emitAllocRuntime()
-		// __lang_alloc_box piggybacks on __lang_alloc: the
+		// __fern_alloc_box piggybacks on __fern_alloc: the
 		// enum-box runtime helpers (Option / Result / IoError
 		// builders) call it to get the static-sentinel rc
 		// header. Emit it whenever alloc is present so those
 		// helpers can reach it.
 		g.emitAllocBoxRuntime()
-		// __lang_alloc_rc1 — same header shape as __lang_alloc_box
+		// __fern_alloc_rc1 — same header shape as __fern_alloc_box
 		// but stores a live rc=1 instead of the immortal sentinel.
 		// Closure env blocks / pairs use it so they can be dropped
 		// at rc=0 once enum-ii-style predicate widening tracks
@@ -304,8 +304,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
 		// read_chunk / close + Writer.write / close +
-		// __lang_make_handle + __lang_close_fd_box. Shares
-		// __lang_read_line_buf with the stdin-only read_line
+		// __fern_make_handle + __fern_close_fd_box. Shares
+		// __fern_read_line_buf with the stdin-only read_line
 		// helper (4 KiB scratch).
 		g.emitReaderWriterRuntime()
 	}
@@ -365,7 +365,7 @@ type generator struct {
 	// region + 8-byte len counter. Single-threaded; one builder
 	// at a time. See checker.go for the user-facing spec.
 	usesStrBuf bool
-	// usesNowUnixMs pulls in `__lang_now_unix_ms()` — wall-
+	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
 	// clock-ms via the x86_64 `clock_gettime(CLOCK_REALTIME,
 	// &ts)` syscall (#228). Returns
 	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
@@ -383,7 +383,7 @@ type generator struct {
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
-	// strings to the .bss `__lang_str_idx_scratch` slot before
+	// strings to the .bss `__fern_str_idx_scratch` slot before
 	// computing the byte address. Set lazily on first emit
 	// from emitInlineIdxHelper; gates the slot's .bss
 	// reservation so map-only programs (which use str_idx via
@@ -418,7 +418,7 @@ type generator struct {
 	usesMemset bool
 	// usesRcInc / usesRcDec gate the refcount inc/dec runtime
 	// helpers. Set when an OpCallDirect with target
-	// "__lang_rc_inc" / "__lang_rc_dec" is reached. The IR
+	// "__fern_rc_inc" / "__fern_rc_dec" is reached. The IR
 	// hasn't started emitting them yet (Phase 1c) but the
 	// helpers + sentinel value (`.LArr_Empty`'s rc word =
 	// 0x80000000) are in place so subsequent phases can wire
@@ -426,19 +426,19 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
-	// usesArrPushGrow gates `__lang_arr_push_grow` — the Phase 2
+	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
 	// buffer (rc>1 OR cap exhausted). See
 	// docs/RC-PERCEUS-PLAN.md "Phase 2".
 	usesArrPushGrow bool
-	// usesArrCowInPlace gates `__lang_arr_cow_inplace` — the
+	// usesArrCowInPlace gates `__fern_arr_cow_inplace` — the
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. See arm64's mirror.
 	usesArrCowInPlace bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
-	// `__lang_io_error(errno, path) → IoError box` helper.
+	// `__fern_io_error(errno, path) → IoError box` helper.
 	usesReadFile  bool
 	usesWriteFile bool
 	usesIoError   bool
@@ -458,15 +458,15 @@ func (g *generator) recordUse(target string) {
 	switch target {
 	case "__memcpy":
 		g.usesMemcpy = true
-	case "__lang_rc_inc":
+	case "__fern_rc_inc":
 		g.usesRcInc = true
-	case "__lang_rc_dec":
+	case "__fern_rc_dec":
 		g.usesRcDec = true
-	case "__lang_arr_push_grow":
+	case "__fern_arr_push_grow":
 		g.usesArrPushGrow = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
-	case "__lang_arr_cow_inplace":
+	case "__fern_arr_cow_inplace":
 		g.usesArrCowInPlace = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -475,7 +475,7 @@ func (g *generator) recordUse(target string) {
 	case "__slice_make":
 		g.usesSliceMake = true
 		g.usesAlloc = true
-	case "__lang_strcat":
+	case "__fern_strcat":
 		g.usesStrcat = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -516,7 +516,7 @@ func (g *generator) recordUse(target string) {
 		g.usesMemcpy = true
 	case "arena_save", "arena_restore":
 		g.usesArena = true
-		// arena helpers read/write __lang_heap_ptr; pull
+		// arena helpers read/write __fern_heap_ptr; pull
 		// in the allocator's .bss reservations.
 		g.usesAlloc = true
 	case "__alloc_u8":
@@ -611,15 +611,15 @@ func (g *generator) emitStartRuntime() {
 	// for the extra mov chain.
 	if g.usesArgs {
 		g.emit("mov rax, [rsp]")
-		g.emit("mov [rip + __lang_argc], rax")
+		g.emit("mov [rip + __fern_argc], rax")
 		g.emit("lea rcx, [rsp + 8]")
-		g.emit("mov [rip + __lang_argv], rcx")
+		g.emit("mov [rip + __fern_argv], rcx")
 	}
 	if g.usesEnv {
 		g.emit("mov rax, [rsp]")             // argc
 		g.emit("lea rdi, [rsp + 8]")          // rdi = &argv[0]
 		g.emit("lea rdi, [rdi + rax*8 + 8]")  // skip argv + NULL terminator
-		g.emit("mov [rip + __lang_envp], rdi")
+		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit("call main")
 	g.emit("mov edi, eax")            // exit code = main's return value
@@ -1441,32 +1441,32 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpAlloc:
 		// Single i32 arg (byte count) — translate to a call
 		// to the bump allocator. Recorded use-flag at scan
-		// time so __lang_alloc actually gets emitted.
+		// time so __fern_alloc actually gets emitted.
 		g.pop()
 		g.emit("mov rdi, rax")
-		g.emit("call __lang_alloc")
+		g.emit("call __fern_alloc")
 		g.push()
 
 	case ir.OpStrConcat:
 		// The IR's `+` between strings lowers directly to
 		// OpStrConcat (rather than going through
-		// OpCallDirect __lang_strcat) so codegen owns the
+		// OpCallDirect __fern_strcat) so codegen owns the
 		// dispatch. Stack: [a, b], top = b. Pop into rsi /
-		// rdi to match the System V `__lang_strcat(a, b)`
+		// rdi to match the System V `__fern_strcat(a, b)`
 		// signature, call, push result.
 		g.binPop() // rcx = b, rax = a
 		g.emit("mov rdi, rax")
 		g.emit("mov rsi, rcx")
-		g.emit("call __lang_strcat")
+		g.emit("call __fern_strcat")
 		g.push()
 
 	case ir.OpStrEq:
-		// String equality reduces to `__lang_strcmp(a, b) == 0`.
+		// String equality reduces to `__fern_strcmp(a, b) == 0`.
 		// Pop both, call, test result for zero, push 0 / 1.
 		g.binPop()
 		g.emit("mov rdi, rax")
 		g.emit("mov rsi, rcx")
-		g.emit("call __lang_strcmp")
+		g.emit("call __fern_strcmp")
 		g.emit("test eax, eax")
 		g.emit("setz al")
 		g.emit("movzx eax, al")
@@ -1502,7 +1502,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	// register assignment.
 	//
 	// A small alias table rewrites lang-level builtins to
-	// their runtime symbols (`print → __lang_puts`, etc.),
+	// their runtime symbols (`print → __fern_puts`, etc.),
 	// matching arm64's shape. The use-flag pre-scan already
 	// fired when these names appeared in the IR, so the
 	// runtime emitters above included them.
@@ -1532,7 +1532,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// indirect call:
 		//   1. Loads fn_ptr from [pair + 0] into r11.
 		//   2. Loads env_ptr from [pair + 8] into a scratch
-		//      slot (since __lang_alloc clobbers caller-save
+		//      slot (since __fern_alloc clobbers caller-save
 		//      registers, we stage env on the operand stack).
 		//   3. Pops user args into rdi / rsi / ... in the
 		//      System-V order, then pops env into the next
@@ -1563,76 +1563,76 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		target := op.Str
 		switch target {
 		case "__alloc":
-			target = "__lang_alloc"
+			target = "__fern_alloc"
 		case "__memcpy":
-			target = "__lang_memcpy"
+			target = "__fern_memcpy"
 		case "__slice_make":
-			target = "__lang_slice_make"
+			target = "__fern_slice_make"
 		case "print":
-			target = "__lang_puts"
+			target = "__fern_puts"
 		case "write":
-			target = "__lang_write"
+			target = "__fern_write"
 		case "putchar":
-			target = "__lang_putchar"
+			target = "__fern_putchar"
 		case "eprint":
-			target = "__lang_eprint"
+			target = "__fern_eprint"
 		case "exit":
-			target = "__lang_exit"
+			target = "__fern_exit"
 		case "strbuf_reset":
-			target = "__lang_strbuf_reset"
+			target = "__fern_strbuf_reset"
 		case "strbuf_append":
-			target = "__lang_strbuf_append"
+			target = "__fern_strbuf_append"
 		case "strbuf_take":
-			target = "__lang_strbuf_take"
+			target = "__fern_strbuf_take"
 		case "now_unix_ms":
-			target = "__lang_now_unix_ms"
+			target = "__fern_now_unix_ms"
 		case "tcp_listen":
-			target = "__lang_tcp_listen"
+			target = "__fern_tcp_listen"
 		case "tcp_accept":
-			target = "__lang_tcp_accept"
+			target = "__fern_tcp_accept"
 		case "tcp_recv":
-			target = "__lang_tcp_recv"
+			target = "__fern_tcp_recv"
 		case "tcp_send":
-			target = "__lang_tcp_send"
+			target = "__fern_tcp_send"
 		case "tcp_close":
-			target = "__lang_tcp_close"
+			target = "__fern_tcp_close"
 		case "env":
-			target = "__lang_env"
+			target = "__fern_env"
 		case "args":
-			target = "__lang_args"
+			target = "__fern_args"
 		case "arena_save":
-			target = "__lang_arena_save"
+			target = "__fern_arena_save"
 		case "arena_restore":
-			target = "__lang_arena_restore"
+			target = "__fern_arena_restore"
 		case "read_file":
-			target = "__lang_read_file"
+			target = "__fern_read_file"
 		case "write_file":
-			target = "__lang_write_file"
+			target = "__fern_write_file"
 		case "random_bytes":
-			target = "__lang_random_bytes"
+			target = "__fern_random_bytes"
 		case "read_line":
-			target = "__lang_read_line"
+			target = "__fern_read_line"
 		case "__method_Reader_read_line":
-			target = "__lang_reader_read_line"
+			target = "__fern_reader_read_line"
 		case "__method_Reader_read_chunk":
-			target = "__lang_reader_read_chunk"
+			target = "__fern_reader_read_chunk"
 		case "__method_Reader_close",
 			"__method_Writer_close":
-			target = "__lang_close_fd_box"
+			target = "__fern_close_fd_box"
 		case "__method_Writer_write":
-			target = "__lang_writer_write"
+			target = "__fern_writer_write"
 		case "open_reader":
-			target = "__lang_open_reader"
+			target = "__fern_open_reader"
 		case "open_writer":
-			target = "__lang_open_writer"
+			target = "__fern_open_writer"
 		case "open_appender":
-			target = "__lang_open_appender"
+			target = "__fern_open_appender"
 		case "stdin":
-			target = "__lang_stdin"
+			target = "__fern_stdin"
 		case "stdout":
-			target = "__lang_stdout"
+			target = "__fern_stdout"
 		case "stderr":
-			target = "__lang_stderr"
+			target = "__fern_stderr"
 		case "__str_idx", "__arr_idx", "__arr_idx_1", "__arr_idx_2", "__arr_idx_8",
 			"__slice_idx", "__slice_idx_1", "__slice_idx_2", "__slice_idx_8":
 			// IR-side bounds-check stubs the lang runtime
@@ -1818,8 +1818,8 @@ func (g *generator) pop() {
 // pointer lives in srcReg into dstReg. Today this is a 4-byte
 // little-endian load from `[srcReg - 4]`. Centralised so every
 // string-length read in the runtime helpers (strcat / strcmp /
-// __lang_write / __lang_puts / __lang_eprint / __lang_env /
-// __lang_tcp_send / __str_slice / __lang_write_file / WASI
+// __fern_write / __fern_puts / __fern_eprint / __fern_env /
+// __fern_tcp_send / __str_slice / __fern_write_file / WASI
 // stream-write boundary) flows through one site — when small-
 // string-optimisation work changes the string encoding, only
 // this function (and its peers in the arm64 + wasm backends)
@@ -1857,7 +1857,7 @@ func reg32(r64 string) string {
 }
 
 // ssoTagBit is bit 0 of the LSB byte of an inline-tagged string
-// value: 1 means inline, 0 means heap pointer. __lang_alloc returns
+// value: 1 means inline, 0 means heap pointer. __fern_alloc returns
 // 8-aligned pointers so heap-form values always have LSB clear.
 const ssoTagBit = 0x01
 
@@ -1973,7 +1973,7 @@ func (g *generator) emitStrInlinePack(dstReg, srcReg, lenReg32, tempReg string) 
 // all flow through this one site so future encoding changes that
 // affect string construction (e.g. tagged-pointer inline-when-
 // short) have a single function to update per backend. Array-
-// length stores (`__alloc_u8`, `__lang_args` outer array) stay
+// length stores (`__alloc_u8`, `__fern_args` outer array) stay
 // open-coded since arrays may diverge.
 func (g *generator) emitStrLenStore(srcReg, dstReg string) {
 	g.emit(fmt.Sprintf("mov [%s - 4], %s", dstReg, srcReg))
@@ -2008,7 +2008,7 @@ func (g *generator) emitArrayLen(dstReg, srcReg string) {
 // emitArrayLenStore writes the i32 length in srcReg to the 4-byte
 // little-endian length prefix at `[dstReg - 4]`, where dstReg is
 // the new array's *data pointer* (one past the prefix). Inverse
-// of emitArrayLen. Used by __alloc_u8 and __lang_args (outer
+// of emitArrayLen. Used by __alloc_u8 and __fern_args (outer
 // string[] container). String length stores stay on
 // emitStrLenStore.
 func (g *generator) emitArrayLenStore(srcReg, dstReg string) {
@@ -2143,7 +2143,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		// {fn_ptr, 0}. Still need the pair allocation
 		// because the call site may load both halves.
 		g.emit("mov edi, 16")
-		g.emit("call __lang_alloc_rc1")
+		g.emit("call __fern_alloc_rc1")
 		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 		g.emit("mov [rax], rcx")
 		g.emit("mov qword ptr [rax + 8], 0")
@@ -2175,7 +2175,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// directly. We pop in REVERSE (last capture is top of
 	// stack) and store at the corresponding offset.
 	//
-	// But __lang_alloc clobbers caller-save regs and we need
+	// But __fern_alloc clobbers caller-save regs and we need
 	// the captures alive across the call. Fix: stash the
 	// captures in pushed stack temps, alloc, then store from
 	// the stack into the env in declaration order.
@@ -2186,10 +2186,10 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// slots (rsp + 16*offset).
 	g.emit(fmt.Sprintf("mov edi, %d", envSize))
 	// Save caller's r12 (env_ptr) + r13 (loop scratch) — we
-	// need them across __lang_alloc.
+	// need them across __fern_alloc.
 	g.emit("push r12")
 	g.emit("push r13")
-	g.emit("call __lang_alloc_rc1")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("mov r12, rax") // r12 = env_ptr (= base + 8 header)
 	// Captures sit on the operand stack just above the
 	// pushed callee-saves: we pushed `r12` and `r13` above
@@ -2227,12 +2227,12 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// OpMakeClosure: also allocate the closure pair. Stash
 	// env_ptr on the operand stack via g.push() so the slot
 	// layout is uniform with everything else (slotBytes-aware).
-	// __lang_alloc preserves callee-saves + rsp per SysV, so
+	// __fern_alloc preserves callee-saves + rsp per SysV, so
 	// the saved value still sits at [rsp] when the call
 	// returns.
 	g.push() // env_ptr → operand stack
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_rc1")
+	g.emit("call __fern_alloc_rc1")
 	// rax = pair ptr (= base + 8 header). Load fn / env, store.
 	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 	g.emit("mov [rax], rcx")
@@ -2283,8 +2283,8 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("lea rax, [rax + rcx]")
 		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
 		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
-		g.emit("mov [rip + __lang_str_idx_scratch], rax")
-		g.emit("lea rax, [rip + __lang_str_idx_scratch]")
+		g.emit("mov [rip + __fern_str_idx_scratch], rax")
+		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
 		g.emit("add rax, rcx")
 		g.emit("add rax, 1")
 		g.label(fmt.Sprintf(".Lstridx_done_%d", id))
@@ -2366,7 +2366,7 @@ func (g *generator) emitDataSections() {
 		sort.Strings(names)
 		for _, name := range names {
 			// 8-byte immortal rc header (0x80000000 at cell-8) so
-			// __lang_rc_inc/dec short-circuit on these static
+			// __fern_rc_inc/dec short-circuit on these static
 			// function-value cells once FuncType locals are
 			// rc-tracked. The label still points at the fn_ptr
 			// (data view), so OpCallIndirect's [+0]/[+8] reads are
@@ -2396,15 +2396,15 @@ func (g *generator) emitDataSections() {
 			g.line("\t.asciz " + escapeForGAS(s))
 		}
 		if g.usesPuts || g.usesEprint {
-			// Trailing newline byte shared by __lang_puts and
-			// __lang_eprint. Stored in the same section as the
+			// Trailing newline byte shared by __fern_puts and
+			// __fern_eprint. Stored in the same section as the
 			// string literals so the loader maps it read-only.
 			g.label(".LLangNewline")
 			g.line(`	.asciz "\n"`)
 		}
 		if needsEmpty {
 			// Empty-string sentinel. String-constructing runtime
-			// helpers (__lang_strcat, __str_slice,
+			// helpers (__fern_strcat, __str_slice,
 			// string_from_bytes) skip the alloc + memcpy when the
 			// result is zero bytes and return this static data
 			// pointer instead. Layout matches a length-prefixed
@@ -2424,7 +2424,7 @@ func (g *generator) emitDataSections() {
 			//   [data - 12] = capacity (= 0)
 			//   [data - 8] = rc slot, set to 0x80000000 — the
 			//                "static, never touch" sentinel that
-			//                __lang_rc_inc / __lang_rc_dec branch
+			//                __fern_rc_inc / __fern_rc_dec branch
 			//                on (high bit set ⇒ no-op).
 			//   [data - 4] = length (= 0)
 			//   [.LArr_Empty] = data (a single byte for safety)
@@ -2452,7 +2452,7 @@ func (g *generator) emitDataSections() {
 			for _, t := range tags {
 				// Phase 1e-enums-ii: each sentinel carries the same
 				// 8-byte rc header as a heap box (rc=0x80000000 at
-				// [ptr-8], pad at [ptr-4]) so __lang_rc_inc/dec
+				// [ptr-8], pad at [ptr-4]) so __fern_rc_inc/dec
 				// short-circuit on the high bit when the enum-ii
 				// predicate widening starts dec'ing enum locals that
 				// hold a payloadless variant. Without it the dec
@@ -2483,55 +2483,55 @@ func (g *generator) emitDataSections() {
 			// Two-cursor bump allocator. See arm64 + the x86-64
 			// emitAllocRuntime comment.
 			g.line(".align 8")
-			g.label("__lang_heap_ptr")
+			g.label("__fern_heap_ptr")
 			g.line("\t.quad 0")
 			g.line(".align 8")
-			g.label("__lang_heap_end")
+			g.label("__fern_heap_end")
 			g.line("\t.quad 0")
 			g.line(".align 8")
-			g.label("__lang_persistent_ptr")
+			g.label("__fern_persistent_ptr")
 			g.line("\t.quad 0")
 			g.line(".align 8")
-			g.label("__lang_persistent_end")
+			g.label("__fern_persistent_end")
 			g.line("\t.quad 0")
 			g.line(".align 4")
-			g.label("__lang_alloc_mode")
+			g.label("__fern_alloc_mode")
 			g.line("\t.byte 0")
 		}
 		if g.usesEnv {
 			g.line(".align 8")
-			g.label("__lang_envp")
+			g.label("__fern_envp")
 			g.line("\t.quad 0")
 		}
 		if g.usesStrIdx {
 			g.line(".align 8")
-			g.label("__lang_str_idx_scratch")
+			g.label("__fern_str_idx_scratch")
 			g.line("\t.quad 0")
 		}
 		if g.usesArgs {
 			g.line(".align 8")
-			g.label("__lang_argc")
+			g.label("__fern_argc")
 			g.line("\t.quad 0")
 			g.line(".align 8")
-			g.label("__lang_argv")
+			g.label("__fern_argv")
 			g.line("\t.quad 0")
 			g.line(".align 8")
-			g.label("__lang_args_cache")
+			g.label("__fern_args_cache")
 			g.line("\t.quad 0")
 		}
 		if g.usesReadLine || g.usesReaderWriter {
 			// 4 KiB scratch buffer for the byte-by-byte
 			// read loop. Shared by stdin-only
-			// __lang_read_line and the Reader-receiving
-			// __lang_reader_read_line.
+			// __fern_read_line and the Reader-receiving
+			// __fern_reader_read_line.
 			g.line(".align 8")
-			g.label("__lang_read_line_buf")
+			g.label("__fern_read_line_buf")
 			g.line("\t.space 4096")
 		}
 	}
 }
 
-// emitAllocRuntime emits `__lang_alloc(size: i64) -> i64`,
+// emitAllocRuntime emits `__fern_alloc(size: i64) -> i64`,
 // the mmap-backed bump allocator. Same shape as arm64's:
 // lazy mmap reservation on first call, then a cursor bump
 // per allocation. 64 MiB virtual reservation is plenty for
@@ -2542,7 +2542,7 @@ func (g *generator) emitDataSections() {
 // subsequent allocs stay 16-aligned for any pointer-pair
 // operations the caller might issue.
 //
-// Two-cursor allocator: a 1-byte `__lang_alloc_mode` selects
+// Two-cursor allocator: a 1-byte `__fern_alloc_mode` selects
 // which region to bump. mode 0 → arena (per-request, scoped by
 // arena_save / arena_restore). mode 1 → persistent (lives for
 // the program lifetime). See the arm64 generator's
@@ -2550,9 +2550,9 @@ func (g *generator) emitDataSections() {
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.fern through itself (its O(N²) string-builder allocates ~290 MB for that)
 	g.line("")
-	g.line(".globl __lang_alloc")
-	g.line(".type __lang_alloc, @function")
-	g.label("__lang_alloc")
+	g.line(".globl __fern_alloc")
+	g.line(".type __fern_alloc, @function")
+	g.label("__fern_alloc")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	// rbx, r12, r13 are callee-save in System V — save all
@@ -2565,16 +2565,16 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
-	g.emit("movzx eax, byte ptr [rip + __lang_alloc_mode]")
+	g.emit("movzx eax, byte ptr [rip + __fern_alloc_mode]")
 	g.emit("test eax, eax")
 	g.emit("jnz .Lalloc_pick_persistent")
-	g.emit("lea rbx, [rip + __lang_heap_ptr]")
-	g.emit("lea r12, [rip + __lang_heap_end]")
+	g.emit("lea rbx, [rip + __fern_heap_ptr]")
+	g.emit("lea r12, [rip + __fern_heap_end]")
 	g.emit("mov r13d, 0x10000000") // arena hint (256 MiB)
 	g.emit("jmp .Lalloc_have_labels")
 	g.label(".Lalloc_pick_persistent")
-	g.emit("lea rbx, [rip + __lang_persistent_ptr]")
-	g.emit("lea r12, [rip + __lang_persistent_end]")
+	g.emit("lea rbx, [rip + __fern_persistent_ptr]")
+	g.emit("lea r12, [rip + __fern_persistent_end]")
 	g.emit("mov r13d, 0x20000000") // persistent hint (512 MiB)
 	g.label(".Lalloc_have_labels")
 	g.emit("mov rax, [rbx]")
@@ -2613,10 +2613,10 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov edi, 137")
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
-	g.line(".size __lang_alloc, .-__lang_alloc")
+	g.line(".size __fern_alloc, .-__fern_alloc")
 }
 
-// emitSliceMakeRuntime emits `__lang_slice_make(data, len)`:
+// emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
 // allocate an 8-byte slice header [data_ptr, len] on the bump
 // heap and return its address. The IR's slice-construction path
 // (per `*ast.SliceExpr` and `*ast.IndexExpr` write side) calls
@@ -2634,29 +2634,29 @@ func (g *generator) emitAllocRuntime() {
 //
 // Calling convention: rdi = data_ptr (post-stride-offset),
 // rsi = len. Returns slice header address in rax. Calls
-// __lang_alloc which clobbers rcx / rdx / rsi / rdi (caller-
+// __fern_alloc which clobbers rcx / rdx / rsi / rdi (caller-
 // save), so we stash both inputs in r12 / r13 around the alloc
 // — same trick the strcat / env / args helpers use.
 func (g *generator) emitSliceMakeRuntime() {
 	g.line("")
-	g.line(".globl __lang_slice_make")
-	g.line(".type __lang_slice_make, @function")
-	g.label("__lang_slice_make")
+	g.line(".globl __fern_slice_make")
+	g.line(".type __fern_slice_make, @function")
+	g.label("__fern_slice_make")
 	g.emit("push r12")
 	g.emit("push r13")
 	g.emit("mov r12, rdi") // save data_ptr
 	g.emit("mov r13, rsi") // save len
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("mov [rax], r12d")     // [+0..+3] data_ptr (i32)
 	g.emit("mov [rax + 4], r13d") // [+4..+7] len (i32)
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("ret")
-	g.line(".size __lang_slice_make, .-__lang_slice_make")
+	g.line(".size __fern_slice_make, .-__fern_slice_make")
 }
 
-// emitMemcpyRuntime emits `__lang_memcpy(dst, src, n)` —
+// emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
 // AAPCS-style return-the-dst contract (matches arm64). Uses
 // `rep movsb` for the copy. Simple, correct, and on modern
 // x86-64 CPUs the microcoded fast-string path is competitive
@@ -2664,18 +2664,18 @@ func (g *generator) emitSliceMakeRuntime() {
 // runtime sees (HTTP buffers, JSON, map entries).
 func (g *generator) emitMemcpyRuntime() {
 	g.line("")
-	g.line(".globl __lang_memcpy")
-	g.line(".type __lang_memcpy, @function")
-	g.label("__lang_memcpy")
+	g.line(".globl __fern_memcpy")
+	g.line(".type __fern_memcpy, @function")
+	g.label("__fern_memcpy")
 	g.emit("mov rax, rdi")  // save dst for return
 	g.emit("mov rcx, rdx")  // count → rcx for `rep movsb`
 	g.emit("cld")            // direction-flag = forward
 	g.emit("rep movsb")     // [rdi++] = [rsi++], rcx times
 	g.emit("ret")
-	g.line(".size __lang_memcpy, .-__lang_memcpy")
+	g.line(".size __fern_memcpy, .-__fern_memcpy")
 }
 
-// emitRcIncRuntime emits `__lang_rc_inc(ptr) -> ptr` —
+// emitRcIncRuntime emits `__fern_rc_inc(ptr) -> ptr` —
 // increment the refcount at `[ptr - 8]` and return the input
 // pointer unchanged. NULL-safe and sentinel-aware: if the rc
 // word's high bit is set (0x80000000 = "static, never touch"),
@@ -2688,14 +2688,14 @@ func (g *generator) emitMemcpyRuntime() {
 // Returning the input pointer (rather than void) lets the IR
 // codegen splice an inc into an expression evaluation chain
 // without spilling to a temp local: `evaluate RHS; call
-// __lang_rc_inc; store LHS` becomes a straight-line sequence.
+// __fern_rc_inc; store LHS` becomes a straight-line sequence.
 //
 // See docs/RC-PERCEUS-PLAN.md "Core operations".
 func (g *generator) emitRcIncRuntime() {
 	g.line("")
-	g.line(".globl __lang_rc_inc")
-	g.line(".type __lang_rc_inc, @function")
-	g.label("__lang_rc_inc")
+	g.line(".globl __fern_rc_inc")
+	g.line(".type __fern_rc_inc, @function")
+	g.label("__fern_rc_inc")
 	g.emit("mov rax, rdi") // return value = input ptr
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcinc_ret")
@@ -2706,10 +2706,10 @@ func (g *generator) emitRcIncRuntime() {
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	g.label(".Lrcinc_ret")
 	g.emit("ret")
-	g.line(".size __lang_rc_inc, .-__lang_rc_inc")
+	g.line(".size __fern_rc_inc, .-__fern_rc_inc")
 }
 
-// emitRcDecRuntime emits `__lang_rc_dec(ptr)` — decrement the
+// emitRcDecRuntime emits `__fern_rc_dec(ptr)` — decrement the
 // refcount at `[ptr - 8]`. NULL-safe and sentinel-aware (see
 // emitRcIncRuntime). Phase-1 simplification: on rc == 1 the
 // helper still decrements to 0 instead of calling a
@@ -2721,9 +2721,9 @@ func (g *generator) emitRcIncRuntime() {
 // testing will rely on.
 func (g *generator) emitRcDecRuntime() {
 	g.line("")
-	g.line(".globl __lang_rc_dec")
-	g.line(".type __lang_rc_dec, @function")
-	g.label("__lang_rc_dec")
+	g.line(".globl __fern_rc_dec")
+	g.line(".type __fern_rc_dec, @function")
+	g.label("__fern_rc_dec")
 	g.emit("mov rax, rdi") // return value = input ptr (matches arm64)
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcdec_ret")
@@ -2741,42 +2741,42 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
-	g.line(".size __lang_rc_dec, .-__lang_rc_dec")
+	g.line(".size __fern_rc_dec, .-__fern_rc_dec")
 }
 
-// emitAllocBoxRuntime emits `__lang_alloc_box(size) -> data`
+// emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data`
 // — allocate a heap box with an 8-byte rc header carrying the
 // static-sentinel 0x80000000 at `[base + 0]`, returning the
 // data pointer `base + 8`. Used by every runtime helper that
 // builds an Option / Result / IoError box so Phase 1e's
-// predicate widening can call __lang_rc_inc/dec on enum
+// predicate widening can call __fern_rc_inc/dec on enum
 // values safely: the inc/dec helpers see the high bit at
 // `[data - 8]` and short-circuit, leaving the runtime-owned
 // box untouched.
 //
 // The caller passes the payload size (the same value it used
-// to pass to __lang_alloc); this helper adds the header. All
+// to pass to __fern_alloc); this helper adds the header. All
 // the caller's subsequent `[rax + off]` tag / payload stores
 // stay at their existing offsets — they're relative to the
 // returned data pointer, which already points past the header.
 func (g *generator) emitAllocBoxRuntime() {
 	g.line("")
-	g.line(".globl __lang_alloc_box")
-	g.line(".type __lang_alloc_box, @function")
-	g.label("__lang_alloc_box")
+	g.line(".globl __fern_alloc_box")
+	g.line(".type __fern_alloc_box, @function")
+	g.label("__fern_alloc_box")
 	g.emit("add edi, 8") // size + rc header
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("pop rbp")
 	g.emit("mov dword ptr [rax], 0x80000000") // static sentinel
 	g.emit("add rax, 8")                      // return base + 8 (= data)
 	g.emit("ret")
-	g.line(".size __lang_alloc_box, .-__lang_alloc_box")
+	g.line(".size __fern_alloc_box, .-__fern_alloc_box")
 }
 
-// emitAllocRc1Runtime emits `__lang_alloc_rc1(size) -> data` —
-// identical to __lang_alloc_box but writes a live rc=1 at
+// emitAllocRc1Runtime emits `__fern_alloc_rc1(size) -> data` —
+// identical to __fern_alloc_box but writes a live rc=1 at
 // `[base+0]` instead of the immortal 0x80000000 sentinel. Used
 // by closure env-block / pair allocations so the value is a
 // real refcounted object (droppable at rc=0 in Phase 3) rather
@@ -2785,30 +2785,30 @@ func (g *generator) emitAllocBoxRuntime() {
 // caller's `[rax + off]` stores stay at their existing offsets.
 func (g *generator) emitAllocRc1Runtime() {
 	g.line("")
-	g.line(".globl __lang_alloc_rc1")
-	g.line(".type __lang_alloc_rc1, @function")
-	g.label("__lang_alloc_rc1")
+	g.line(".globl __fern_alloc_rc1")
+	g.line(".type __fern_alloc_rc1, @function")
+	g.label("__fern_alloc_rc1")
 	g.emit("add edi, 8") // size + rc header
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("pop rbp")
 	g.emit("mov dword ptr [rax], 1") // live rc = 1
 	g.emit("add rax, 8")             // return base + 8 (= data)
 	g.emit("ret")
-	g.line(".size __lang_alloc_rc1, .-__lang_alloc_rc1")
+	g.line(".size __fern_alloc_rc1, .-__fern_alloc_rc1")
 }
 
-// emitArrPushGrowRuntime emits `__lang_arr_push_grow(arr,
+// emitArrPushGrowRuntime emits `__fern_arr_push_grow(arr,
 // oldLen, stride) -> new_data` — System V counterpart of the
 // arm64 helper. Inputs rdi=arr, esi=oldLen, edx=stride.
 // Returns new data pointer in rax. See arm64.go's
 // emitArrPushGrowRuntime + docs/RC-PERCEUS-PLAN.md "Phase 2".
 func (g *generator) emitArrPushGrowRuntime() {
 	g.line("")
-	g.line(".globl __lang_arr_push_grow")
-	g.line(".type __lang_arr_push_grow, @function")
-	g.label("__lang_arr_push_grow")
+	g.line(".globl __fern_arr_push_grow")
+	g.line(".type __fern_arr_push_grow, @function")
+	g.label("__fern_arr_push_grow")
 	// Fast path: rc == 1 AND oldLen < cap.
 	g.emit("mov eax, dword ptr [rdi - 8]") // rc
 	g.emit("cmp eax, 1")
@@ -2825,7 +2825,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.label(".Lpush_copy")
 	// Copy path. Stash arr / oldLen / stride / newLen / newCap /
 	// headerBytes / new_data in callee-saves so they survive the
-	// __lang_alloc + __lang_memcpy calls.
+	// __fern_alloc + __fern_memcpy calls.
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
@@ -2859,10 +2859,10 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("imul eax, r13d")
 	g.emit("add eax, ecx")
 	g.emit("mov edi, eax")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	// rax = base. new_data = base + headerBytes. Reload
 	// headerBytes from stack (it was rcx, but rcx is caller-save
-	// and __lang_alloc may have clobbered it).
+	// and __fern_alloc may have clobbered it).
 	g.emit("mov rcx, qword ptr [rsp + 8]") // reload headerBytes
 	g.emit("lea r11, [rax + rcx]")         // r11 = new_data (caller-save, OK)
 	// Store cap at [base + headerBytes - 12]
@@ -2881,7 +2881,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("imul eax, r13d")
 	g.emit("mov edx, eax")
 	g.emit("mov qword ptr [rsp], r11") // stash new_data across the call
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("mov rax, qword ptr [rsp]") // reload new_data
 	// Tear down. We pushed THREE 8-byte slots beyond the 6
 	// callee-saves: prolog pad + inner push rcx + inner pad.
@@ -2895,21 +2895,21 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_arr_push_grow, .-__lang_arr_push_grow")
+	g.line(".size __fern_arr_push_grow, .-__fern_arr_push_grow")
 }
 
-// emitArrCowInPlaceRuntime emits `__lang_arr_cow_inplace(arr,
+// emitArrCowInPlaceRuntime emits `__fern_arr_cow_inplace(arr,
 // stride) -> buf` — System V counterpart of arm64's helper.
 // Inputs: rdi=arr, esi=stride. Returns new data ptr in rax.
 // See arm64.go's emitArrCowInPlaceRuntime + docs/RC-PERCEUS-PLAN.md
 // for the contract (helper internalises rc bookkeeping so the
 // IR-side emit doesn't have to coordinate with the
-// __lang_rc_dec low-address guard).
+// __fern_rc_dec low-address guard).
 func (g *generator) emitArrCowInPlaceRuntime() {
 	g.line("")
-	g.line(".globl __lang_arr_cow_inplace")
-	g.line(".type __lang_arr_cow_inplace, @function")
-	g.label("__lang_arr_cow_inplace")
+	g.line(".globl __fern_arr_cow_inplace")
+	g.line(".type __fern_arr_cow_inplace, @function")
+	g.label("__fern_arr_cow_inplace")
 	// Fast path: rc == 1 → return arr.
 	g.emit("mov eax, dword ptr [rdi - 8]")
 	g.emit("cmp eax, 1")
@@ -2949,7 +2949,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("imul eax, r12d")
 	g.emit("add eax, r15d")
 	g.emit("mov edi, eax")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	// rax = base. new_data = base + headerBytes (in r15d → rcx).
 	g.emit("mov ecx, r15d")
 	g.emit("lea r11, [rax + rcx]")
@@ -2970,7 +2970,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("imul eax, r12d")
 	g.emit("mov edx, eax")
 	g.emit("mov qword ptr [rsp], r11")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("mov rax, qword ptr [rsp]")
 	// Tear down. Mirror emitArrPushGrowRuntime: free the 8-byte
 	// pad above r15 before popping callee-saves.
@@ -2982,21 +2982,21 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_arr_cow_inplace, .-__lang_arr_cow_inplace")
+	g.line(".size __fern_arr_cow_inplace, .-__fern_arr_cow_inplace")
 }
 
-// emitStrcatRuntime emits `__lang_strcat(a, b)` — concat two
+// emitStrcatRuntime emits `__fern_strcat(a, b)` — concat two
 // length-prefixed strings into a fresh allocation. a / b
 // are data pointers (post-prefix); 4-byte length lives at
 // `[ptr - 4]`. Returns the new data pointer.
 //
 // Uses callee-save r12..r15 to keep state across the calls
-// to __lang_alloc and __lang_memcpy.
+// to __fern_alloc and __fern_memcpy.
 func (g *generator) emitStrcatRuntime() {
 	g.line("")
-	g.line(".globl __lang_strcat")
-	g.line(".type __lang_strcat, @function")
-	g.label("__lang_strcat")
+	g.line(".globl __fern_strcat")
+	g.line(".type __fern_strcat, @function")
+	g.label("__fern_strcat")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	// rbx + r12..r15 are all System V callee-save — we save
@@ -3056,13 +3056,13 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("lea rdi, [rbp - 63]")
 	g.emit("mov rsi, r12")
 	g.emit("mov rdx, r14")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// memcpy([rbp - 63 + la], b_data, lb).
 	g.emit("lea rdi, [rbp - 63]")
 	g.emit("add rdi, r14")
 	g.emit("mov rsi, r13")
 	g.emit("mov rdx, r15")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// Load the full 8-byte inline value (length byte + 7 data
 	// bytes + zero padding) into rax.
 	g.emit("mov rax, [rbp - 64]")
@@ -3071,9 +3071,9 @@ func (g *generator) emitStrcatRuntime() {
 	// --- Heap output path ---
 	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
 	g.emit("lea rdi, [r14 + r15 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	// rax = base; data ptr = base + 4. Stash dst in rbx
-	// (callee-save) so it survives both __lang_memcpy
+	// (callee-save) so it survives both __fern_memcpy
 	// calls, then return it at the end.
 	g.emit("lea rbx, [rax + 4]")
 	// Combined length, then route through emitStrLenStore.
@@ -3087,12 +3087,12 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov rdi, rbx")
 	g.emit("mov rsi, r12")
 	g.emit("mov rdx, r14")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// memcpy(dst + la, b, lb)
 	g.emit("lea rdi, [rbx + r14]")
 	g.emit("mov rsi, r13")
 	g.emit("mov rdx, r15")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// Trailing NUL at dst + la + lb.
 	g.emit("lea rdi, [rbx + r14]")
 	g.emit("add rdi, r15")
@@ -3107,17 +3107,17 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_strcat, .-__lang_strcat")
+	g.line(".size __fern_strcat, .-__fern_strcat")
 }
 
-// emitStrcmpRuntime emits `__lang_strcmp(a, b)` — returns 0
+// emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
 // if a and b have the same length AND the same bytes, else 1.
 // Pure equality comparator (no lex ordering), matching arm64.
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
-	g.line(".globl __lang_strcmp")
-	g.line(".type __lang_strcmp, @function")
-	g.label("__lang_strcmp")
+	g.line(".globl __fern_strcmp")
+	g.line(".type __fern_strcmp, @function")
+	g.label("__fern_strcmp")
 	// Frame: 32 bytes — saved rbp (8) + 16 bytes for two
 	// emitStrDataPtr scratch slots (one per operand) + 8 bytes
 	// padding to keep rsp 16-aligned for `rep cmpsb`. Two slots
@@ -3155,10 +3155,10 @@ func (g *generator) emitStrcmpRuntime() {
 	g.emit("add rsp, 32")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_strcmp, .-__lang_strcmp")
+	g.line(".size __fern_strcmp, .-__fern_strcmp")
 }
 
-// emitPutsRuntime emits `__lang_puts(s)` — write the string,
+// emitPutsRuntime emits `__fern_puts(s)` — write the string,
 // then a single trailing newline. Two write(2) calls keeps
 // the code simple at the cost of one extra syscall per call;
 // per-call cost is dominated by the syscall itself either
@@ -3167,9 +3167,9 @@ func (g *generator) emitStrcmpRuntime() {
 // consistency.
 func (g *generator) emitPutsRuntime() {
 	g.line("")
-	g.line(".globl __lang_puts")
-	g.line(".type __lang_puts, @function")
-	g.label("__lang_puts")
+	g.line(".globl __fern_puts")
+	g.line(".type __fern_puts, @function")
+	g.label("__fern_puts")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
@@ -3192,16 +3192,16 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("pop r12")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_puts, .-__lang_puts")
+	g.line(".size __fern_puts, .-__fern_puts")
 }
 
-// emitWriteRuntime emits `__lang_write(s)` — write the
+// emitWriteRuntime emits `__fern_write(s)` — write the
 // string with no trailing newline. Single write(2) syscall.
 func (g *generator) emitWriteRuntime() {
 	g.line("")
-	g.line(".globl __lang_write")
-	g.line(".type __lang_write, @function")
-	g.label("__lang_write")
+	g.line(".globl __fern_write")
+	g.line(".type __fern_write, @function")
+	g.label("__fern_write")
 	// Frame: 16 bytes — 8 bytes scratch slot for emitStrDataPtr
 	// + 8 bytes for the saved original string value (so we can
 	// return it after the syscall clobbers caller-save regs).
@@ -3218,17 +3218,17 @@ func (g *generator) emitWriteRuntime() {
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_write, .-__lang_write")
+	g.line(".size __fern_write, .-__fern_write")
 }
 
-// emitEprintRuntime emits `__lang_eprint(s)` — stderr
+// emitEprintRuntime emits `__fern_eprint(s)` — stderr
 // counterpart to print(). Two write(2)s to fd=2: the string,
-// then a newline. Mirrors __lang_puts modulo the fd.
+// then a newline. Mirrors __fern_puts modulo the fd.
 func (g *generator) emitEprintRuntime() {
 	g.line("")
-	g.line(".globl __lang_eprint")
-	g.line(".type __lang_eprint, @function")
-	g.label("__lang_eprint")
+	g.line(".globl __fern_eprint")
+	g.line(".type __fern_eprint, @function")
+	g.label("__fern_eprint")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
@@ -3249,18 +3249,18 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("pop r12")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_eprint, .-__lang_eprint")
+	g.line(".size __fern_eprint, .-__fern_eprint")
 }
 
 // emitStrBufRuntime emits the three global mutable-string-builder
 // helpers and the BSS scratch they share.
 //
-//   __lang_strbuf_data: .skip 64 MiB
-//   __lang_strbuf_len:  .quad 0 (current byte count)
+//   __fern_strbuf_data: .skip 64 MiB
+//   __fern_strbuf_len:  .quad 0 (current byte count)
 //
-//   __lang_strbuf_reset()       — len = 0
-//   __lang_strbuf_append(s)     — memcpy s past current tail, bump len
-//   __lang_strbuf_take() -> str — allocate fresh string of accumulated
+//   __fern_strbuf_reset()       — len = 0
+//   __fern_strbuf_append(s)     — memcpy s past current tail, bump len
+//   __fern_strbuf_take() -> str — allocate fresh string of accumulated
 //                                 bytes, copy, reset len, return it
 //
 // Built for the asm self-host backend's emit_module — the
@@ -3275,30 +3275,30 @@ func (g *generator) emitStrBufRuntime() {
 	g.line("")
 	g.line(".section .bss")
 	g.line(".align 8")
-	g.line("__lang_strbuf_len: .skip 8")
+	g.line("__fern_strbuf_len: .skip 8")
 	g.line(".align 8")
-	g.line("__lang_strbuf_data: .skip 67108864") // 64 MiB
+	g.line("__fern_strbuf_data: .skip 67108864") // 64 MiB
 	g.line(".section .text")
 
-	// __lang_strbuf_reset(): len = 0
+	// __fern_strbuf_reset(): len = 0
 	g.line("")
-	g.line(".globl __lang_strbuf_reset")
-	g.line(".type __lang_strbuf_reset, @function")
-	g.label("__lang_strbuf_reset")
-	g.emit("mov qword ptr [rip + __lang_strbuf_len], 0")
+	g.line(".globl __fern_strbuf_reset")
+	g.line(".type __fern_strbuf_reset, @function")
+	g.label("__fern_strbuf_reset")
+	g.emit("mov qword ptr [rip + __fern_strbuf_len], 0")
 	g.emit("ret")
-	g.line(".size __lang_strbuf_reset, .-__lang_strbuf_reset")
+	g.line(".size __fern_strbuf_reset, .-__fern_strbuf_reset")
 
-	// __lang_strbuf_append(s): rdi = string (may be inline-tagged).
+	// __fern_strbuf_append(s): rdi = string (may be inline-tagged).
 	// Reads len via emitStrLen, materialises data ptr via
 	// emitStrDataPtr (spilling inline form to a frame slot), then
-	// memcpys bytes to __lang_strbuf_data + __lang_strbuf_len and
+	// memcpys bytes to __fern_strbuf_data + __fern_strbuf_len and
 	// bumps the counter. No bounds check — overflow is UB (caller
 	// keeps total under 64 MiB).
 	g.line("")
-	g.line(".globl __lang_strbuf_append")
-	g.line(".type __lang_strbuf_append, @function")
-	g.label("__lang_strbuf_append")
+	g.line(".globl __fern_strbuf_append")
+	g.line(".type __fern_strbuf_append, @function")
+	g.label("__fern_strbuf_append")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
@@ -3308,80 +3308,80 @@ func (g *generator) emitStrBufRuntime() {
 	g.emitStrLen("ebx", "r12")             // ebx = src len
 	g.emitStrDataPtr("r12", "r12", "[rbp - 32]") // r12 = src data ptr
 	// dst = strbuf_data + strbuf_len
-	g.emit("mov rcx, qword ptr [rip + __lang_strbuf_len]")
-	g.emit("lea rdi, [rip + __lang_strbuf_data]")
+	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
+	g.emit("lea rdi, [rip + __fern_strbuf_data]")
 	g.emit("add rdi, rcx")
 	g.emit("mov rsi, r12")
 	g.emit("mov edx, ebx")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// strbuf_len += src len
-	g.emit("mov rcx, qword ptr [rip + __lang_strbuf_len]")
+	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
 	g.emit("add ecx, ebx")
-	g.emit("mov qword ptr [rip + __lang_strbuf_len], rcx")
+	g.emit("mov qword ptr [rip + __fern_strbuf_len], rcx")
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_strbuf_append, .-__lang_strbuf_append")
+	g.line(".size __fern_strbuf_append, .-__fern_strbuf_append")
 
-	// __lang_strbuf_take(): allocates a fresh `[prefix(4) + data(N) +
+	// __fern_strbuf_take(): allocates a fresh `[prefix(4) + data(N) +
 	// NUL(1)]` block, copies the accumulated bytes into it, writes
 	// the length prefix, NUL-terminates, resets the strbuf, returns
 	// the data pointer.
 	g.line("")
-	g.line(".globl __lang_strbuf_take")
-	g.line(".type __lang_strbuf_take, @function")
-	g.label("__lang_strbuf_take")
+	g.line(".globl __fern_strbuf_take")
+	g.line(".type __fern_strbuf_take, @function")
+	g.label("__fern_strbuf_take")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("push r12")
 	g.emit("sub rsp, 8")                                       // align
-	g.emit("mov r12, qword ptr [rip + __lang_strbuf_len]")     // r12 = current len
+	g.emit("mov r12, qword ptr [rip + __fern_strbuf_len]")     // r12 = current len
 	// alloc len + 5 bytes
 	g.emit("lea rdi, [r12 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea rbx, [rax + 4]") // rbx = data ptr
 	// length prefix
 	g.emit("mov ecx, r12d")
 	g.emitStrLenStore("ecx", "rbx")
-	// memcpy(rbx, &__lang_strbuf_data, r12)
+	// memcpy(rbx, &__fern_strbuf_data, r12)
 	g.emit("mov rdi, rbx")
-	g.emit("lea rsi, [rip + __lang_strbuf_data]")
+	g.emit("lea rsi, [rip + __fern_strbuf_data]")
 	g.emit("mov edx, r12d")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// NUL terminator at rbx + r12
 	g.emit("lea rdi, [rbx + r12]")
 	g.emit("mov byte ptr [rdi], 0")
 	// reset
-	g.emit("mov qword ptr [rip + __lang_strbuf_len], 0")
+	g.emit("mov qword ptr [rip + __fern_strbuf_len], 0")
 	g.emit("mov rax, rbx")
 	g.emit("add rsp, 8")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_strbuf_take, .-__lang_strbuf_take")
+	g.line(".size __fern_strbuf_take, .-__fern_strbuf_take")
 }
 
-// emitExitRuntime emits `__lang_exit(code)` — direct exit
+// emitExitRuntime emits `__fern_exit(code)` — direct exit
 // syscall. rdi already holds the user-supplied exit code from
 // the System V arg-pop. exit_group never returns; the trailing
 // `ret` is assembler-completeness only.
 func (g *generator) emitExitRuntime() {
 	g.line("")
-	g.line(".globl __lang_exit")
-	g.line(".type __lang_exit, @function")
-	g.label("__lang_exit")
+	g.line(".globl __fern_exit")
+	g.line(".type __fern_exit, @function")
+	g.label("__fern_exit")
 	// rdi already holds the exit code (System V arg 1).
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 	g.emit("ret")
-	g.line(".size __lang_exit, .-__lang_exit")
+	g.line(".size __fern_exit, .-__fern_exit")
 }
 
-// emitNowUnixMsRuntime emits `__lang_now_unix_ms()` — wall-
+// emitNowUnixMsRuntime emits `__fern_now_unix_ms()` — wall-
 // clock milliseconds since the Unix epoch via x86_64
 // `clock_gettime(CLOCK_REALTIME, &ts)` (syscall 228). The
 // kernel writes a `struct timespec { i64 tv_sec; i64 tv_nsec }`
@@ -3398,9 +3398,9 @@ func (g *generator) emitExitRuntime() {
 // both the clock id and the buffer.
 func (g *generator) emitNowUnixMsRuntime() {
 	g.line("")
-	g.line(".globl __lang_now_unix_ms")
-	g.line(".type __lang_now_unix_ms, @function")
-	g.label("__lang_now_unix_ms")
+	g.line(".globl __fern_now_unix_ms")
+	g.line(".type __fern_now_unix_ms, @function")
+	g.label("__fern_now_unix_ms")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("sub rsp, 24") // 16 timespec + 8 alignment
@@ -3418,16 +3418,16 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_now_unix_ms, .-__lang_now_unix_ms")
+	g.line(".size __fern_now_unix_ms, .-__fern_now_unix_ms")
 }
 
-// emitPutcharRuntime emits `__lang_putchar(c)` — write a
+// emitPutcharRuntime emits `__fern_putchar(c)` — write a
 // single byte to stdout. Stash on the stack, write(1, &c, 1).
 func (g *generator) emitPutcharRuntime() {
 	g.line("")
-	g.line(".globl __lang_putchar")
-	g.line(".type __lang_putchar, @function")
-	g.label("__lang_putchar")
+	g.line(".globl __fern_putchar")
+	g.line(".type __fern_putchar, @function")
+	g.label("__fern_putchar")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("sub rsp, 16")        // 1 byte slot + alignment
@@ -3440,10 +3440,10 @@ func (g *generator) emitPutcharRuntime() {
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_putchar, .-__lang_putchar")
+	g.line(".size __fern_putchar, .-__fern_putchar")
 }
 
-// emitTcpListenRuntime emits `__lang_tcp_listen(port)` —
+// emitTcpListenRuntime emits `__fern_tcp_listen(port)` —
 // opens a TCP listening socket on 0.0.0.0:port. Returns the
 // listener fd on success, or `-errno` on failure. C-style
 // API; callers check `if (fd < 0)`. Same shape as arm64's
@@ -3454,9 +3454,9 @@ func (g *generator) emitPutcharRuntime() {
 // allocated sockaddr_in; listen with backlog=128.
 func (g *generator) emitTcpListenRuntime() {
 	g.line("")
-	g.line(".globl __lang_tcp_listen")
-	g.line(".type __lang_tcp_listen, @function")
-	g.label("__lang_tcp_listen")
+	g.line(".globl __fern_tcp_listen")
+	g.line(".type __fern_tcp_listen, @function")
+	g.label("__fern_tcp_listen")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // callee-save scratch
@@ -3509,35 +3509,35 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_tcp_listen, .-__lang_tcp_listen")
+	g.line(".size __fern_tcp_listen, .-__fern_tcp_listen")
 }
 
-// emitTcpAcceptRuntime emits `__lang_tcp_accept(listener)` —
+// emitTcpAcceptRuntime emits `__fern_tcp_accept(listener)` —
 // blocks waiting for a connection. Returns the new client fd
 // or -errno. accept(fd, NULL, NULL) discards peer address.
 func (g *generator) emitTcpAcceptRuntime() {
 	g.line("")
-	g.line(".globl __lang_tcp_accept")
-	g.line(".type __lang_tcp_accept, @function")
-	g.label("__lang_tcp_accept")
+	g.line(".globl __fern_tcp_accept")
+	g.line(".type __fern_tcp_accept, @function")
+	g.label("__fern_tcp_accept")
 	// fd in rdi; pass NULL/NULL for addr/addrlen.
 	g.emit("xor esi, esi")
 	g.emit("xor edx, edx")
 	g.emit(fmt.Sprintf("mov eax, %d", sysAccept))
 	g.emit("syscall")
 	g.emit("ret")
-	g.line(".size __lang_tcp_accept, .-__lang_tcp_accept")
+	g.line(".size __fern_tcp_accept, .-__fern_tcp_accept")
 }
 
-// emitTcpRecvRuntime emits `__lang_tcp_recv(fd, max)` —
+// emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —
 // reads up to `max` bytes from the socket fd into a fresh
 // length-prefixed lang string. EOF / error → length 0.
 // Saves r12 across the syscall so the data pointer survives.
 func (g *generator) emitTcpRecvRuntime() {
 	g.line("")
-	g.line(".globl __lang_tcp_recv")
-	g.line(".type __lang_tcp_recv, @function")
-	g.label("__lang_tcp_recv")
+	g.line(".globl __fern_tcp_recv")
+	g.line(".type __fern_tcp_recv, @function")
+	g.label("__fern_tcp_recv")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // fd
@@ -3548,7 +3548,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("mov r12d, esi")   // r12 = max
 	// Allocate max + 5 bytes (4 prefix + max data + 1 NUL).
 	g.emit("lea edi, [r12 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea r13, [rax + 4]") // r13 = data ptr
 	// read(fd, data, max)
 	g.emit("mov edi, ebx")
@@ -3570,10 +3570,10 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_tcp_recv, .-__lang_tcp_recv")
+	g.line(".size __fern_tcp_recv, .-__fern_tcp_recv")
 }
 
-// emitTcpSendRuntime emits `__lang_tcp_send(fd, data)` —
+// emitTcpSendRuntime emits `__fern_tcp_send(fd, data)` —
 // writes the full length-prefixed string to the socket.
 // Returns the byte count or -errno on the first write.
 // Single write(2) call — no buffering / partial-write loop;
@@ -3581,9 +3581,9 @@ func (g *generator) emitTcpRecvRuntime() {
 // themselves.
 func (g *generator) emitTcpSendRuntime() {
 	g.line("")
-	g.line(".globl __lang_tcp_send")
-	g.line(".type __lang_tcp_send, @function")
-	g.label("__lang_tcp_send")
+	g.line(".globl __fern_tcp_send")
+	g.line(".type __fern_tcp_send, @function")
+	g.label("__fern_tcp_send")
 	// Frame: 16 bytes — 8 scratch slot for emitStrDataPtr + 8
 	// alignment. The materialisation lets an inline-tagged
 	// `data` value yield a real byte pointer for the syscall.
@@ -3597,33 +3597,33 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_tcp_send, .-__lang_tcp_send")
+	g.line(".size __fern_tcp_send, .-__fern_tcp_send")
 }
 
-// emitTcpCloseRuntime emits `__lang_tcp_close(fd)` —
+// emitTcpCloseRuntime emits `__fern_tcp_close(fd)` —
 // closes the socket via the close syscall. Returns 0 or
 // -errno.
 func (g *generator) emitTcpCloseRuntime() {
 	g.line("")
-	g.line(".globl __lang_tcp_close")
-	g.line(".type __lang_tcp_close, @function")
-	g.label("__lang_tcp_close")
+	g.line(".globl __fern_tcp_close")
+	g.line(".type __fern_tcp_close, @function")
+	g.label("__fern_tcp_close")
 	g.emit(fmt.Sprintf("mov eax, %d", sysClose))
 	g.emit("syscall")
 	g.emit("ret")
-	g.line(".size __lang_tcp_close, .-__lang_tcp_close")
+	g.line(".size __fern_tcp_close, .-__fern_tcp_close")
 }
 
-// emitEnvRuntime emits `__lang_env(name)` — walks the envp
+// emitEnvRuntime emits `__fern_env(name)` — walks the envp
 // vector for NAME=VALUE entries. Returns Option[string]: a
 // 16-byte heap object [tag:i32, _pad:i32, str_ptr:i64].
 // Payload offset 8 matches the IR's PR #267 layout (8-byte-
 // aligned pointer payload).
 func (g *generator) emitEnvRuntime() {
 	g.line("")
-	g.line(".globl __lang_env")
-	g.line(".type __lang_env, @function")
-	g.label("__lang_env")
+	g.line(".globl __fern_env")
+	g.line(".type __fern_env, @function")
+	g.label("__fern_env")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // envp cursor
@@ -3634,7 +3634,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("sub rsp, 24") // 8 bytes scratch for emitStrDataPtr + 16 padding
 	g.emitStrLen("r13d", "rdi")              // r13 = name length (rdi = caller's value)
 	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]") // r12 = name byte pointer
-	g.emit("mov rbx, [rip + __lang_envp]")
+	g.emit("mov rbx, [rip + __fern_envp]")
 	g.label(".Lenv_loop")
 	g.emit("mov rdi, [rbx]")
 	g.emit("test rdi, rdi")
@@ -3663,17 +3663,17 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov r15, rcx")
 	// Allocate len+5 bytes for the value string (4 prefix + N data + 1 NUL).
 	g.emit("lea edi, [r15 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea rdi, [rax + 4]") // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r15d", "rdi")
 	g.emit("mov rsi, r14")
 	g.emit("mov rdx, r15")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// rax = data ptr returned from memcpy. Build Option[string]:
 	//   16 bytes [tag=0, pad, ptr]
 	g.emit("mov r14, rax") // stash str ptr
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
 	g.emit("mov [rax + 8], r14")     // payload at +8 (8-byte slot)
 	g.emit("jmp .Lenv_done")
@@ -3682,7 +3682,7 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("jmp .Lenv_loop")
 	g.label(".Lenv_none")
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.label(".Lenv_done")
 	g.emit("add rsp, 24")
@@ -3693,15 +3693,15 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_env, .-__lang_env")
+	g.line(".size __fern_env, .-__fern_env")
 }
 
-// emitArgsRuntime emits `__lang_args()` — returns a length-
+// emitArgsRuntime emits `__fern_args()` — returns a length-
 // prefixed `string[]` materialised from the argc / argv pair
 // captured at `_start`. Each entry is a fresh length-prefixed
 // string with a trailing NUL preserved (for libc-shape
 // consumers like `puts`). Result is cached in
-// `__lang_args_cache` so repeat calls are O(1). Same shape
+// `__fern_args_cache` so repeat calls are O(1). Same shape
 // arm64 uses (PR #267 ptr-width-stride layout):
 //
 //   [pad:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
@@ -3711,9 +3711,9 @@ func (g *generator) emitEnvRuntime() {
 // argv entry.
 func (g *generator) emitArgsRuntime() {
 	g.line("")
-	g.line(".globl __lang_args")
-	g.line(".type __lang_args, @function")
-	g.label("__lang_args")
+	g.line(".globl __fern_args")
+	g.line(".type __fern_args, @function")
+	g.label("__fern_args")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")  // argc
@@ -3723,18 +3723,18 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("push r15")  // current argv[i] / strlen
 	g.emit("sub rsp, 8") // align
 	// Fast path: cached?
-	g.emit("mov rax, [rip + __lang_args_cache]")
+	g.emit("mov rax, [rip + __fern_args_cache]")
 	g.emit("test rax, rax")
 	g.emit("jnz .Largs_ret")
 	// argc / argv from globals captured by _start.
-	g.emit("mov rbx, [rip + __lang_argc]")
-	g.emit("mov r12, [rip + __lang_argv]")
+	g.emit("mov rbx, [rip + __fern_argc]")
+	g.emit("mov r12, [rip + __fern_argv]")
 	// alloc(argc * 8 + 16) — 16-byte header (pad / cap / rc /
 	// len, 4 bytes each) keeps element 0 at a 16-aligned
 	// offset; canonical cap / rc / len at data-12 / -8 / -4
 	// (Phase 2-prep layout).
 	g.emit("lea rdi, [rbx * 8 + 16]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea r14, [rax + 16]")  // r14 = data ptr (16-aligned)
 	g.emit("mov dword ptr [r14 - 12], ebx") // cap = argc (Phase 2-prep)
 	g.emit("mov dword ptr [r14 - 8], 1")    // rc = 1
@@ -3761,7 +3761,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("mov rdx, rcx")          // save strlen (r15 is C ptr; need it for memcpy)
 	g.emit("lea edi, [rcx + 5]")
 	g.emit("push rdx")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("pop rdx")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("edx", "rdi") // length prefix
@@ -3769,7 +3769,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("mov rsi, r15")           // src = argv[i]
 	g.emit("lea rdx, [rdx + 1]")
 	g.emit("push rax")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("pop rax")
 	// result[i] = data ptr (full 8 bytes — pointer-stride).
 	g.emit("lea rcx, [rax + 4]")
@@ -3777,7 +3777,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("inc r13")
 	g.emit("jmp .Largs_loop")
 	g.label(".Largs_done")
-	g.emit("mov [rip + __lang_args_cache], r14")
+	g.emit("mov [rip + __fern_args_cache], r14")
 	g.emit("mov rax, r14")
 	g.label(".Largs_ret")
 	g.emit("add rsp, 8")
@@ -3788,10 +3788,10 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_args, .-__lang_args")
+	g.line(".size __fern_args, .-__fern_args")
 }
 
-// emitRandomBytesRuntime emits `__lang_random_bytes(n)` —
+// emitRandomBytesRuntime emits `__fern_random_bytes(n)` —
 // allocates a fresh length-prefixed lang string of n bytes
 // and fills it with kernel CSPRNG output via a single
 // `getrandom(buf, n, 0)` syscall (Linux x86-64 #318;
@@ -3799,9 +3799,9 @@ func (g *generator) emitArgsRuntime() {
 // initialised; flags=0). Returns the data pointer.
 func (g *generator) emitRandomBytesRuntime() {
 	g.line("")
-	g.line(".globl __lang_random_bytes")
-	g.line(".type __lang_random_bytes, @function")
-	g.label("__lang_random_bytes")
+	g.line(".globl __fern_random_bytes")
+	g.line(".type __fern_random_bytes, @function")
+	g.label("__fern_random_bytes")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")  // n
@@ -3809,7 +3809,7 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("mov ebx, edi")  // rbx = n
 	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
 	g.emit("lea edi, [rbx + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea r12, [rax + 4]")     // r12 = data ptr
 	g.emitStrLenStore("ebx", "r12")  // length prefix
 	// getrandom(buf=r12, n=rbx, flags=0)
@@ -3826,12 +3826,12 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_random_bytes, .-__lang_random_bytes")
+	g.line(".size __fern_random_bytes, .-__fern_random_bytes")
 }
 
-// emitReadLineRuntime emits `__lang_read_line()` — reads
+// emitReadLineRuntime emits `__fern_read_line()` — reads
 // stdin one byte at a time into the 4 KiB
-// `__lang_read_line_buf` (.bss), stops at '\n' (kept in
+// `__fern_read_line_buf` (.bss), stops at '\n' (kept in
 // the result) or 4 KiB or EOF/error. Returns
 // Option[string]: Some(line) when at least one byte was
 // read, None when the very first read returned 0 (EOF
@@ -3847,16 +3847,16 @@ func (g *generator) emitRandomBytesRuntime() {
 // memcpy calls.
 func (g *generator) emitReadLineRuntime() {
 	g.line("")
-	g.line(".globl __lang_read_line")
-	g.line(".type __lang_read_line, @function")
-	g.label("__lang_read_line")
+	g.line(".globl __fern_read_line")
+	g.line(".type __fern_read_line, @function")
+	g.label("__fern_read_line")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")  // buf base
 	g.emit("push r12")  // bytes-read counter
 	g.emit("push r13")  // stash (str ptr across alloc, etc.)
 	g.emit("sub rsp, 8")
-	g.emit("lea rbx, [rip + __lang_read_line_buf]")
+	g.emit("lea rbx, [rip + __fern_read_line_buf]")
 	g.emit("xor r12d, r12d")  // bytes read = 0
 	g.label(".Lrl_loop")
 	g.emit("cmp r12, 4096")
@@ -3882,25 +3882,25 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("test r12, r12")
 	g.emit("jnz .Lrl_some")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")  // tag = 1 (None)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
 	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
 	g.emit("lea edi, [r12 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea r13, [rax + 4]")     // r13 = data ptr
 	g.emitStrLenStore("r12d", "r13") // length prefix
 	// memcpy(r13, rbx, r12)
 	g.emit("mov rdi, r13")
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// Trailing NUL.
 	g.emit("mov byte ptr [r13 + r12], 0")
 	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")  // tag = 0 (Some)
 	g.emit("mov [rax + 8], r13")       // payload at +8 (8-byte slot)
 	g.label(".Lrl_ret")
@@ -3910,44 +3910,44 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_read_line, .-__lang_read_line")
+	g.line(".size __fern_read_line, .-__fern_read_line")
 }
 
-// emitStdinRuntime emits `__lang_stdin()` — a 1-instruction
+// emitStdinRuntime emits `__fern_stdin()` — a 1-instruction
 // stub returning 0. The checker requires `stdin()` to be
 // callable but the backend doesn't yet model per-fd
 // Readers, so the receiver value is unused; any sentinel
 // works. Matches arm64's shape.
 func (g *generator) emitStdinRuntime() {
 	g.line("")
-	g.line(".globl __lang_stdin")
-	g.line(".type __lang_stdin, @function")
-	g.label("__lang_stdin")
+	g.line(".globl __fern_stdin")
+	g.line(".type __fern_stdin, @function")
+	g.label("__fern_stdin")
 	g.emit("xor eax, eax")
 	g.emit("ret")
-	g.line(".size __lang_stdin, .-__lang_stdin")
+	g.line(".size __fern_stdin, .-__fern_stdin")
 }
 
 // emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
-// `__lang_arena_save()` returns the current heap pointer;
-// `__lang_arena_restore(saved)` resets it. Used by tcp_serve
+// `__fern_arena_save()` returns the current heap pointer;
+// `__fern_arena_restore(saved)` resets it. Used by tcp_serve
 // to bracket each request's allocations so they're reclaimed
 // before the next accept.
 func (g *generator) emitArenaRuntime() {
 	g.line("")
-	g.line(".globl __lang_arena_save")
-	g.line(".type __lang_arena_save, @function")
-	g.label("__lang_arena_save")
-	g.emit("mov rax, [rip + __lang_heap_ptr]")
+	g.line(".globl __fern_arena_save")
+	g.line(".type __fern_arena_save, @function")
+	g.label("__fern_arena_save")
+	g.emit("mov rax, [rip + __fern_heap_ptr]")
 	g.emit("ret")
-	g.line(".size __lang_arena_save, .-__lang_arena_save")
+	g.line(".size __fern_arena_save, .-__fern_arena_save")
 	g.line("")
-	g.line(".globl __lang_arena_restore")
-	g.line(".type __lang_arena_restore, @function")
-	g.label("__lang_arena_restore")
-	g.emit("mov [rip + __lang_heap_ptr], rdi")
+	g.line(".globl __fern_arena_restore")
+	g.line(".type __fern_arena_restore, @function")
+	g.label("__fern_arena_restore")
+	g.emit("mov [rip + __fern_heap_ptr], rdi")
 	g.emit("ret")
-	g.line(".size __lang_arena_restore, .-__lang_arena_restore")
+	g.line(".size __fern_arena_restore, .-__fern_arena_restore")
 }
 
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
@@ -3975,7 +3975,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("jmp .Lallocu8_ret")
 	g.label(".Lallocu8_alloc")
 	g.emit("lea edi, [rbx + 16]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea rax, [rax + 16]") // rax = data ptr (past 16-byte header)
 	g.emit("mov dword ptr [rax - 12], ebx") // cap = n (Phase 2-prep)
 	g.emit("mov dword ptr [rax - 8], 1")    // rc = 1 (phase 1 of RC rollout)
@@ -4024,19 +4024,19 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("lea rdi, [rbp - 23]")
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("mov rax, [rbp - 24]")
 	g.emit("jmp .Lsfb_ret")
 	g.label(".Lsfb_heap")
 	g.emit("lea edi, [r12 + 4]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r12d", "rdi") // length prefix
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
 	g.emit("push rdi")            // save data ptr across memcpy
 	g.emit("sub rsp, 8")          // align
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("add rsp, 8")
 	g.emit("pop rax")             // rax = data ptr (return value)
 	g.label(".Lsfb_ret")
@@ -4107,20 +4107,20 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("lea rdi, [rbp - 47]")
 	g.emit("lea rsi, [rbx + r12]")
 	g.emit("mov rdx, r14")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("mov rax, [rbp - 48]")
 	g.emit("jmp .Lstrslice_ret")
 	g.label(".Lstrslice_heap")
 	// --- Heap output path ---
 	g.emit("lea edi, [r14 + 4]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r14d", "rdi") // length prefix
 	g.emit("lea rsi, [rbx + r12]") // src = base_byte_ptr + low
 	g.emit("mov rdx, r14")
 	g.emit("push rdi")              // save data ptr
 	g.emit("sub rsp, 8") // align
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	g.emit("add rsp, 8")
 	g.emit("pop rax")               // rax = data ptr
 	g.label(".Lstrslice_ret")
@@ -4246,7 +4246,7 @@ func (g *generator) emitMemsetRuntime() {
 	g.line(".size __memset, .-__memset")
 }
 
-// emitIoErrorRuntime emits `__lang_io_error(errno, path) → ptr`
+// emitIoErrorRuntime emits `__fern_io_error(errno, path) → ptr`
 // — constructs an `IoError` enum box for a Linux errno. Mirrors
 // arm64's emitIoErrorRuntime; same layout (16-byte box with
 // pointer-payload at +8, 8-byte tag-only box for payload-less
@@ -4268,9 +4268,9 @@ func (g *generator) emitMemsetRuntime() {
 // System V: rdi=errno, rsi=path; result in rax.
 func (g *generator) emitIoErrorRuntime() {
 	g.line("")
-	g.line(".globl __lang_io_error")
-	g.line(".type __lang_io_error, @function")
-	g.label("__lang_io_error")
+	g.line(".globl __fern_io_error")
+	g.line(".type __fern_io_error, @function")
+	g.label("__fern_io_error")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")  // callee-save
@@ -4290,7 +4290,7 @@ func (g *generator) emitIoErrorRuntime() {
 
 	// Other(path, ""). 24-byte box: tag, pad, path, "".
 	g.emit("mov edi, 24")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 6")
 	g.emit("mov [rax + 8], r12")
 	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
@@ -4308,13 +4308,13 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("jmp .Lioe_with_path")
 	g.label(".Lioe_intr")
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 4")
 	g.emit("jmp .Lioe_done")
 
 	g.label(".Lioe_with_path")
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("mov [rax], ebx")     // tag
 	g.emit("mov [rax + 8], r12") // path
 
@@ -4324,7 +4324,7 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_io_error, .-__lang_io_error")
+	g.line(".size __fern_io_error, .-__fern_io_error")
 
 	// Compile-time empty-string literal for the Other variant.
 	// Length=0 prefix + NUL — same layout as user-facing string
@@ -4337,11 +4337,11 @@ func (g *generator) emitIoErrorRuntime() {
 	g.line(".text")
 }
 
-// emitReadFileRuntime emits `__lang_read_file(path) →
+// emitReadFileRuntime emits `__fern_read_file(path) →
 // Result[string, IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_RDONLY) → fstat → alloc length-prefixed buffer → read-loop
 // → close → Result.Ok(string). Syscall errors short-circuit to
-// Result.Err via __lang_io_error.
+// Result.Err via __fern_io_error.
 //
 // Result box (matches IR):
 //
@@ -4352,9 +4352,9 @@ func (g *generator) emitIoErrorRuntime() {
 // struct stat: st_size at offset 48 on both arm64 + x86-64.
 func (g *generator) emitReadFileRuntime() {
 	g.line("")
-	g.line(".globl __lang_read_file")
-	g.line(".type __lang_read_file, @function")
-	g.label("__lang_read_file")
+	g.line(".globl __fern_read_file")
+	g.line(".type __fern_read_file, @function")
+	g.label("__fern_read_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // path byte ptr (materialised below)
@@ -4392,7 +4392,7 @@ func (g *generator) emitReadFileRuntime() {
 
 	// alloc string buf: 4 + size, r13 = data ptr (one past length prefix).
 	g.emit("lea rdi, [r14 + 4]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("lea r13, [rax + 4]")
 	g.emitStrLenStore("r14d", "r13")
 
@@ -4418,7 +4418,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("syscall")
 	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], r13") // r13 is already the data ptr
 	g.emit("jmp .Lrf_return")
@@ -4437,13 +4437,13 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov r13, rax")
 
 	g.label(".Lrf_err_dispatch")
-	// __lang_io_error(errno, path) → rax = IoError box.
+	// __fern_io_error(errno, path) → rax = IoError box.
 	g.emit("mov edi, r13d")
 	g.emit("mov rsi, [rbp - 56]") // original path string value (heap or inline)
-	g.emit("call __lang_io_error")
+	g.emit("call __fern_io_error")
 	g.emit("mov r13, rax") // stash IoError box across the next alloc
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // tag=1 (Err)
 	g.emit("mov [rax + 8], r13")
 
@@ -4456,10 +4456,10 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_read_file, .-__lang_read_file")
+	g.line(".size __fern_read_file, .-__fern_read_file")
 }
 
-// emitWriteFileRuntime emits `__lang_write_file(path, content)
+// emitWriteFileRuntime emits `__fern_write_file(path, content)
 // → Option[IoError]`. Pipeline: openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC=577, 0644) → write-loop → close →
 // None. Errors → Some(IoError).
@@ -4470,9 +4470,9 @@ func (g *generator) emitReadFileRuntime() {
 //	tag=1 (None) → 8-byte box, no payload
 func (g *generator) emitWriteFileRuntime() {
 	g.line("")
-	g.line(".globl __lang_write_file")
-	g.line(".type __lang_write_file, @function")
-	g.label("__lang_write_file")
+	g.line(".globl __fern_write_file")
+	g.line(".type __fern_write_file, @function")
+	g.label("__fern_write_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // path byte ptr (materialised)
@@ -4481,7 +4481,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("push r14") // content_len
 	g.emit("push r15") // bytes_written
 	g.emit("sub rsp, 24") // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
-	g.emit("mov [rbp - 64], rdi") // save original path string value for __lang_io_error
+	g.emit("mov [rbp - 64], rdi") // save original path string value for __fern_io_error
 	g.emitStrLen("r14d", "rsi") // content_len (from caller's rsi before materialise)
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr
 	g.emitStrDataPtr("r12", "rsi", "[rbp - 56]") // content byte ptr
@@ -4518,7 +4518,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("syscall")
 	// Option.None: 8-byte box, tag=1.
 	g.emit("mov edi, 8")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lwf_return")
 
@@ -4537,10 +4537,10 @@ func (g *generator) emitWriteFileRuntime() {
 	g.label(".Lwf_err_dispatch")
 	g.emit("mov edi, r14d")
 	g.emit("mov rsi, [rbp - 64]") // original path string value (heap or inline)
-	g.emit("call __lang_io_error")
+	g.emit("call __fern_io_error")
 	g.emit("mov r14, rax") // stash IoError box
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // tag=0 (Some)
 	g.emit("mov [rax + 8], r14")
 
@@ -4553,33 +4553,33 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_write_file, .-__lang_write_file")
+	g.line(".size __fern_write_file, .-__fern_write_file")
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer
 // runtime bundle on x86-64. Mirrors arm64's helper of the same
 // name — same handle layout (4-byte i32 fd at +0), same wasm-
-// shaped Result/Option boxes, same shared __lang_io_error
+// shaped Result/Option boxes, same shared __fern_io_error
 // error path. See the arm64 generator's comment for the
 // design rationale.
 func (g *generator) emitReaderWriterRuntime() {
-	// __lang_make_handle(fd) → ptr to {fd:i32 @0}.
+	// __fern_make_handle(fd) → ptr to {fd:i32 @0}.
 	//
 	// Phase 1e-runtime: 8-byte rc header at `[ptr - 8]`
 	// holds the static-sentinel 0x80000000 so
-	// `__lang_rc_inc/dec` no-op when a Reader/Writer alias is
+	// `__fern_rc_inc/dec` no-op when a Reader/Writer alias is
 	// inc'd. Alloc bumps by 8; data lives at `base + 8`.
 	g.line("")
-	g.line(".globl __lang_make_handle")
-	g.line(".type __lang_make_handle, @function")
-	g.label("__lang_make_handle")
+	g.line(".globl __fern_make_handle")
+	g.line(".type __fern_make_handle, @function")
+	g.label("__fern_make_handle")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, edi") // stash fd
 	g.emit("mov edi, 12")  // size + 8-byte rc header
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0x80000000") // static sentinel at base + 0
 	g.emit("mov [rax + 8], ebx")              // fd at base + 8 (= data + 0)
 	g.emit("add rax, 8")                      // return base + 8 (= data)
@@ -4587,23 +4587,23 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_make_handle, .-__lang_make_handle")
+	g.line(".size __fern_make_handle, .-__fern_make_handle")
 
-	// __lang_stdin / __lang_stdout / __lang_stderr.
+	// __fern_stdin / __fern_stdout / __fern_stderr.
 	for _, e := range []struct {
 		sym string
 		fd  int
 	}{
-		{"__lang_stdin", 0},
-		{"__lang_stdout", 1},
-		{"__lang_stderr", 2},
+		{"__fern_stdin", 0},
+		{"__fern_stdout", 1},
+		{"__fern_stderr", 2},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)
 		g.line(".type " + e.sym + ", @function")
 		g.label(e.sym)
 		g.emit(fmt.Sprintf("mov edi, %d", e.fd))
-		g.emit("jmp __lang_make_handle") // tail-call
+		g.emit("jmp __fern_make_handle") // tail-call
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
@@ -4613,9 +4613,9 @@ func (g *generator) emitReaderWriterRuntime() {
 		flags     int
 		mode      int
 	}{
-		{"__lang_open_reader", 0, 0},
-		{"__lang_open_writer", 577, 0644},
-		{"__lang_open_appender", 1089, 0644},
+		{"__fern_open_reader", 0, 0},
+		{"__fern_open_writer", 577, 0644},
+		{"__fern_open_appender", 1089, 0644},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)
@@ -4637,10 +4637,10 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("js .Lorw_err_" + e.sym)
 		// Success: alloc handle, store fd, wrap in Ok box.
 		g.emit("mov edi, eax")
-		g.emit("call __lang_make_handle")
+		g.emit("call __fern_make_handle")
 		g.emit("mov r12, rax") // handle ptr in callee-save
 		g.emit("mov edi, 16")
-		g.emit("call __lang_alloc_box")
+		g.emit("call __fern_alloc_box")
 		g.emit("mov dword ptr [rax], 0") // tag=0 (Ok)
 		g.emit("mov [rax + 8], r12")
 		g.emit("jmp .Lorw_ret_" + e.sym)
@@ -4648,10 +4648,10 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("neg rax")
 		g.emit("mov edi, eax")    // errno
 		g.emit("mov rsi, rbx")    // path
-		g.emit("call __lang_io_error")
+		g.emit("call __fern_io_error")
 		g.emit("mov r12, rax")    // IoError ptr
 		g.emit("mov edi, 16")
-		g.emit("call __lang_alloc_box")
+		g.emit("call __fern_alloc_box")
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
@@ -4662,11 +4662,11 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
-	// __lang_reader_read_line(reader_ptr) → Option[string].
+	// __fern_reader_read_line(reader_ptr) → Option[string].
 	g.line("")
-	g.line(".globl __lang_reader_read_line")
-	g.line(".type __lang_reader_read_line, @function")
-	g.label("__lang_reader_read_line")
+	g.line(".globl __fern_reader_read_line")
+	g.line(".type __fern_reader_read_line, @function")
+	g.label("__fern_reader_read_line")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // fd
@@ -4674,7 +4674,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r13") // bytes_read
 	g.emit("push r14") // last byte
 	g.emit("mov ebx, [rdi]") // fd
-	g.emit("lea r12, [rip + __lang_read_line_buf]")
+	g.emit("lea r12, [rip + __fern_read_line_buf]")
 	g.emit("xor r13, r13")
 	g.label(".Lrrl_loop")
 	g.emit("cmp r13, 4096")
@@ -4696,23 +4696,23 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("jne .Lrrl_some")
 	// None
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lrrl_ret")
 	g.label(".Lrrl_some")
 	g.emit("lea rdi, [r13 + 5]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("mov [rax], r13d") // length prefix
 	g.emit("lea r14, [rax + 4]") // data ptr
 	g.emit("mov rdi, r14")
 	g.emit("mov rsi, r12")
 	g.emit("mov rdx, r13")
-	g.emit("call __lang_memcpy")
+	g.emit("call __fern_memcpy")
 	// trailing NUL
 	g.emit("mov byte ptr [r14 + r13], 0")
 	g.emit("mov rbx, r14")    // stash str ptr (rbx no longer needed for fd)
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lrrl_ret")
@@ -4722,13 +4722,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_reader_read_line, .-__lang_reader_read_line")
+	g.line(".size __fern_reader_read_line, .-__fern_reader_read_line")
 
-	// __lang_reader_read_chunk(reader_ptr, n) → Option[string].
+	// __fern_reader_read_chunk(reader_ptr, n) → Option[string].
 	g.line("")
-	g.line(".globl __lang_reader_read_chunk")
-	g.line(".type __lang_reader_read_chunk, @function")
-	g.label("__lang_reader_read_chunk")
+	g.line(".globl __fern_reader_read_chunk")
+	g.line(".type __fern_reader_read_chunk, @function")
+	g.label("__fern_reader_read_chunk")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // fd
@@ -4739,7 +4739,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov r12, rsi")    // n
 	// alloc n + 4
 	g.emit("lea rdi, [r12 + 4]")
-	g.emit("call __lang_alloc")
+	g.emit("call __fern_alloc")
 	g.emit("mov r13, rax")
 	// read(fd, base+4, n)
 	g.emit("mov edi, ebx")
@@ -4754,13 +4754,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("lea rbx, [r13 + 4]") // data ptr
 	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Lrrc_ret")
 	g.label(".Lrrc_none")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.label(".Lrrc_ret")
 	g.emit("add rsp, 8")
@@ -4769,13 +4769,13 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_reader_read_chunk, .-__lang_reader_read_chunk")
+	g.line(".size __fern_reader_read_chunk, .-__fern_reader_read_chunk")
 
-	// __lang_writer_write(writer_ptr, s) → Option[IoError].
+	// __fern_writer_write(writer_ptr, s) → Option[IoError].
 	g.line("")
-	g.line(".globl __lang_writer_write")
-	g.line(".type __lang_writer_write, @function")
-	g.label("__lang_writer_write")
+	g.line(".globl __fern_writer_write")
+	g.line(".type __fern_writer_write, @function")
+	g.label("__fern_writer_write")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // fd
@@ -4801,17 +4801,17 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("jmp .Lww_loop")
 	g.label(".Lww_done")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lww_ret")
 	g.label(".Lww_err")
 	g.emit("neg rax")
 	g.emit("mov edi, eax")
 	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
-	g.emit("call __lang_io_error")
+	g.emit("call __fern_io_error")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lww_ret")
@@ -4821,14 +4821,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_writer_write, .-__lang_writer_write")
+	g.line(".size __fern_writer_write, .-__fern_writer_write")
 
-	// __lang_close_fd_box(handle_ptr) → Option[IoError].
+	// __fern_close_fd_box(handle_ptr) → Option[IoError].
 	// Shared by Reader.close + Writer.close.
 	g.line("")
-	g.line(".globl __lang_close_fd_box")
-	g.line(".type __lang_close_fd_box, @function")
-	g.label("__lang_close_fd_box")
+	g.line(".globl __fern_close_fd_box")
+	g.line(".type __fern_close_fd_box, @function")
+	g.label("__fern_close_fd_box")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
@@ -4839,17 +4839,17 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")
 	g.emit("mov edi, 4")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1") // None
 	g.emit("jmp .Lcfb_ret")
 	g.label(".Lcfb_err")
 	g.emit("neg rax")
 	g.emit("mov edi, eax")
 	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
-	g.emit("call __lang_io_error")
+	g.emit("call __fern_io_error")
 	g.emit("mov rbx, rax")
 	g.emit("mov edi, 16")
-	g.emit("call __lang_alloc_box")
+	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], rbx")
 	g.label(".Lcfb_ret")
@@ -4857,7 +4857,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __lang_close_fd_box, .-__lang_close_fd_box")
+	g.line(".size __fern_close_fd_box, .-__fern_close_fd_box")
 }
 
 // escapeForGAS escapes a string for the GAS `.asciz`

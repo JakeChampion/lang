@@ -19,7 +19,7 @@ The compiler already exposes most of what an LSP needs as ordinary Go API:
   `Locals`, `Structs`, `Enums`. That's a ready-made symbol table.
 - `internal/diag` defines structured error interfaces (`Positioned`,
   `Spanned`, `Hinted`) that map 1:1 onto LSP `Diagnostic` fields.
-- `cmd/lang-wasm` already builds the compiler to `GOOS=js GOARCH=wasm` and
+- `cmd/fern-wasm` already builds the compiler to `GOOS=js GOARCH=wasm` and
   exposes a JS-callable entry point. Adding a second entry point for LSP
   requests is mechanical.
 
@@ -37,7 +37,7 @@ The compiler already exposes most of what an LSP needs as ordinary Go API:
 
 ## Architecture
 
-### LSP server — `cmd/lang-lsp/main.go` (new)
+### LSP server — `cmd/fern-lsp/main.go` (new)
 
 A thin Go binary that:
 
@@ -57,15 +57,15 @@ dependency and keeps the wasm build small.
 
 ### Playground wiring
 
-Same wasm binary, in-process LSP. Extend `cmd/lang-wasm/main.go` to export
-a second global `langLsp(jsonString) -> jsonString`. The browser drives the
+Same wasm binary, in-process LSP. Extend `cmd/fern-wasm/main.go` to export
+a second global `fernLsp(jsonString) -> jsonString`. The browser drives the
 editor, posts JSON-RPC messages synchronously into wasm, and gets
 diagnostics / hover back. No worker, no server, no protocol mismatch.
 
 Replace the `<textarea>` in `web/index.html` with **CodeMirror 6**
 (~150 KB vs Monaco's ~2 MB; lint, hover, autocomplete extensions ship
 separately so we only pay for what we use). Keep the existing `Run`
-button and `langInterpret` flow untouched.
+button and `fernInterpret` flow untouched.
 
 ## PR ordering
 
@@ -79,8 +79,8 @@ Each step landed as a separate commit on the same branch.
    errors, and only two niche features (type-annotation hover,
    field-access hover) need real end positions. Future PR.
 
-2. **`cmd/lang-lsp` MVP.** ✓ `internal/lsp` +
-   `cmd/lang-lsp` — hand-rolled JSON-RPC wire format (no
+2. **`cmd/fern-lsp` MVP.** ✓ `internal/lsp` +
+   `cmd/fern-lsp` — hand-rolled JSON-RPC wire format (no
    third-party deps so the wasm build stays slim). Handles
    `initialize` / `shutdown` / `exit`, full-sync `didOpen` /
    `didChange` / `didClose`, and publishes parser + checker
@@ -94,13 +94,13 @@ Each step landed as a separate commit on the same branch.
    via `variantOf` without rewriting the AST) get a fallback
    `lookupVariant` sweep.
 
-4. **Playground hookup.** ✓ `cmd/lang-wasm` exposes
-   `langLsp(json)` + `langLspOnNotify(cb)`; the same
+4. **Playground hookup.** ✓ `cmd/fern-wasm` exposes
+   `fernLsp(json)` + `fernLspOnNotify(cb)`; the same
    `internal/lsp.Server` runs in-process. `web/index.html`
    keeps the textarea (no CodeMirror swap — out of scope for
    this PR) and gains a Problems panel + click-for-type
    cursor strip. CodeMirror migration is now an independent
-   follow-up — the `langLsp` wire is stable, swapping the
+   follow-up — the `fernLsp` wire is stable, swapping the
    editor on top of it is mechanical.
 
 5. **`completion` + `signatureHelp`.** ✓ Completion

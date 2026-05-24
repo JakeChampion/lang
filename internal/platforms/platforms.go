@@ -40,7 +40,7 @@ type Descriptor struct {
 	Name string
 
 	// Description is a one-line human-readable summary of the
-	// target. Surfaces in `lang -targets` listing output and in
+	// target. Surfaces in `fern -targets` listing output and in
 	// future LSP completions for the -target flag.
 	Description string
 
@@ -75,7 +75,7 @@ var table = map[string]Descriptor{
 		// through but capabilities are minimal today.
 		// Long-term targets: `log` (stderr-shaped),
 		// `now` (clock_gettime — already shipped via
-		// __lang_now_unix_ms), `env`.
+		// __fern_now_unix_ms), `env`.
 		Capabilities: []string{"log", "now", "env"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
@@ -132,7 +132,7 @@ func ForTarget(name string) *Descriptor {
 }
 
 // Targets returns the canonical -target= names in a stable
-// order. Used by `lang -targets`-style listings and by tests
+// order. Used by `fern -targets`-style listings and by tests
 // that walk every supported target.
 func Targets() []string {
 	out := make([]string, 0, len(table))
@@ -161,7 +161,7 @@ func HasCapability(target, capability string) bool {
 }
 
 // String renders the descriptor as a one-line listing entry —
-// `name: description`. Used by `lang -targets` output.
+// `name: description`. Used by `fern -targets` output.
 func (d *Descriptor) String() string {
 	return fmt.Sprintf("%s: %s", d.Name, d.Description)
 }

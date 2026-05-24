@@ -1,6 +1,6 @@
 name: Playground E2E
 
-# Headless-browser tests for the lang playground. Two suites with
+# Headless-browser tests for the Fern playground. Two suites with
 # complementary roles:
 #
 #   playwright (gate)  — scripted golden-path tests; deterministic,

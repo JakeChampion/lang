@@ -44,7 +44,7 @@
 //     consumed by `[static]response-outparam.set`.
 //
 // Each canonical-ABI retptr fits in 64 bytes (the wrapper
-// allocates a single 64-byte scratch via __lang_alloc at entry
+// allocates a single 64-byte scratch via __fern_alloc at entry
 // and reuses it).
 
 package wasmbin
@@ -72,7 +72,7 @@ import (
 //
 //	2: $buf — fresh heap buffer
 func buildBytesToLangStringBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 
 	var body []byte
 
@@ -111,12 +111,12 @@ func buildBytesToLangStringBody(idxs map[string]uint32) []byte {
 // dynamically-sized return values (e.g. `list<u8>` for header
 // names / values, `field-value` byte lists). Aligns the bump
 // cursor up to `align` (power-of-two), then forwards to
-// __lang_alloc. Today's callers only pass orig_ptr=0 and
+// __fern_alloc. Today's callers only pass orig_ptr=0 and
 // align ≤ 4, so the shrink / grow paths aren't implemented.
 //
 // Locals: none.
 func buildCabiReallocBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	alloc := idxs["__fern_alloc"]
 	var body []byte
 
 	// Align mem[40] up to $align: mem[40] = (mem[40] + align - 1) & ~(align - 1).
@@ -133,7 +133,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = memory.InstI32Store(body, 2, 0)
 
-	// return __lang_alloc(new_size)
+	// return __fern_alloc(new_size)
 	body = inst.InstLocalGet(body, 3) // new_size
 	body = inst.InstCall(body, alloc)
 
@@ -236,9 +236,9 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 // functionally equivalent but loses the SSO compare seam. Track
 // in the wasi-http parity PR (next in the series).
 func buildHttpEntryBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
-	arenaSave := idxs["__lang_arena_save"]
-	arenaRestore := idxs["__lang_arena_restore"]
+	alloc := idxs["__fern_alloc"]
+	arenaSave := idxs["__fern_arena_save"]
+	arenaRestore := idxs["__fern_arena_restore"]
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	handleFn, hasHandle := idxs["handle"]
@@ -502,7 +502,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// Phase 1e-runtime: HttpRequest carries a static-sentinel
 	// rc header at `[req - 8]` so user code that aliases the
 	// request via `var r = req;` or `req.body_string()` can
-	// safely run through __lang_rc_inc/dec (Phase 1e-struct-ii
+	// safely run through __fern_rc_inc/dec (Phase 1e-struct-ii
 	// widened the inc predicate to include struct types). Alloc
 	// bumps 28 → 36; sentinel at base+0; data = base+8. All
 	// field offsets below are still relative to the slot-17

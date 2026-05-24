@@ -227,9 +227,9 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 	}
 }
 
-// String concat via the runtime `__lang_strcat` helper.
+// String concat via the runtime `__fern_strcat` helper.
 // Exercises the alloc + memcpy + length-prefix path
-// end-to-end: each `+` lowers to `OpCallDirect __lang_strcat`,
+// end-to-end: each `+` lowers to `OpCallDirect __fern_strcat`,
 // which mmaps the heap on first call, copies both operands
 // in, and returns a fresh data pointer.
 func TestX86_64StringConcat(t *testing.T) {
@@ -353,7 +353,7 @@ func TestX86_64StringLines(t *testing.T) {
 }
 
 // x86-64 small-string-optimisation (tagged-pointer inline).
-// Strings of length 1..7 produced by __lang_strcat / __str_slice /
+// Strings of length 1..7 produced by __fern_strcat / __str_slice /
 // string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
 // 1..3 = length, bytes 1..7 = data) rather than being allocated
 // on the heap. Verified behaviourally: every consumer of the
@@ -468,7 +468,7 @@ function main(): i32 {
 }
 
 // x86-64 empty-string sentinel: the string-constructing runtime
-// helpers (__lang_strcat, __str_slice, string_from_bytes) skip
+// helpers (__fern_strcat, __str_slice, string_from_bytes) skip
 // the alloc + memcpy and return the shared .LStr_Empty sentinel
 // when the result length is 0. Verified behaviourally — mirrors
 // the arm64 + wasm tests of the same shape.
@@ -640,7 +640,7 @@ function main(): i32 {
 	}
 }
 
-// Array literals + indexing. Pulls in __lang_alloc + the
+// Array literals + indexing. Pulls in __fern_alloc + the
 // inline `lea rax, [base + idx*N]` per-stride index-helper
 // path. Mirrors TestArm64ArrayLiteral so the two backends
 // stay observably equivalent.
@@ -910,7 +910,7 @@ func TestX86_64Print(t *testing.T) {
 }
 
 // argv capture. `args()` returns the program's argv as a
-// `string[]` materialised by `__lang_args()`, populated
+// `string[]` materialised by `__fern_args()`, populated
 // from the argc / argv stashed at `_start`. Same shape as
 // `TestArm64Args`: spawn the binary with three fixed user
 // args, print each, check (a) len(args) reports the right
@@ -1135,8 +1135,8 @@ func TestX86_64ReadLine(t *testing.T) {
 }
 
 // Bare `read_line()` builtin — the stdin-only path through
-// __lang_read_line (distinct from stdin().read_line()'s
-// receiver-aware __lang_reader_read_line). Same .bss buffer +
+// __fern_read_line (distinct from stdin().read_line()'s
+// receiver-aware __fern_reader_read_line). Same .bss buffer +
 // byte loop + Some/None wrap.
 func TestX86_64ReadLineBuiltin(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -2824,7 +2824,7 @@ function main(): i32 {
 }
 
 // Phase 1d: `var y = x;` where x is an array variable load
-// bumps the refcount via __lang_rc_inc, so both x and y own
+// bumps the refcount via __fern_rc_inc, so both x and y own
 // references. Returns 0 iff the post-alias rc is exactly 2.
 func TestX86_64RcAliasInc(t *testing.T) {
 	src := `import "core/no_prelude";
@@ -2959,7 +2959,7 @@ func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 }
 
 // Mirror of TestArm64ArrayIndexSetInPlaceFastPath. Phase 2b
-// arr[i]=v lowers to __lang_arr_cow_inplace; rc==1 returns
+// arr[i]=v lowers to __fern_arr_cow_inplace; rc==1 returns
 // arr unchanged.
 func TestX86_64ArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
@@ -2999,7 +2999,7 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64ArrayIndexSetU8Stride. The int_to_string
 // scratch[i] = digit pattern hit the wasm raw-_start path's
-// __lang_rc_dec low-address guard before the helper internalised
+// __fern_rc_dec low-address guard before the helper internalised
 // rc bookkeeping; covers the u8 stride here on x86-64 for
 // regression parity.
 func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {

@@ -4,9 +4,9 @@
 from lang to make a self-host viable (union sugar, sort,
 process spawn, etc.). It does *not* cover the orthogonal
 question of **bootstrap strategy** — how the Go-implemented
-production compiler should hand over to the lang-implemented
+production compiler should hand over to the fern-implemented
 one, in what stages, at what pace, with what guarantees about
-trust, reproducibility, CI cost, and the langsmith
+trust, reproducibility, CI cost, and the fernsmith
 differential oracle.
 
 This doc surveys how other languages made that transition
@@ -27,7 +27,7 @@ Reaching self-host has three orthogonal axes:
    parser, constfold, checker, vm, printer, asm — i.e. the
    majority of the pipeline minus production codegen.
 
-2. **Transition.** Once the lang-port is feature-complete,
+2. **Transition.** Once the fern-port is feature-complete,
    how do we hand over the production compiler? Flip overnight
    ("Crystal-style ditch the bootstrap language"), run both in
    parallel forever ("TypeScript with two impls"), or
@@ -53,22 +53,22 @@ porting effort already underway.
 - **The Go compiler is feature-complete and shipped.** Not
   "an MVP we're going to throw out." It produces ELF / Mach-O
   / .wasm artifacts that work on real hardware. Anything the
-  lang-port can't do, the Go reference can — which means the
-  lang-port can be developed without urgency.
+  fern-port can't do, the Go reference can — which means the
+  fern-port can be developed without urgency.
 
 - **Per-stage cross-validation is already wired** via
   `internal/e2e/self_host_cross_validation_test.go` and the
   per-layer `internal/e2e/self_host_*_test.go` files. The
-  lang-implemented layer's output is compared against the
+  fern-implemented layer's output is compared against the
   Go-implemented layer's output for a corpus of inputs.
   This is the exact shape Wheeler's *Diverse Double
   Compiling* requires for trust verification, even before
   we formalise it.
 
-- **langsmith differential oracle exists** (per
-  `internal/langsmith/` and `IMPROVEMENTS.md`). Fuzzed input
+- **fernsmith differential oracle exists** (per
+  `internal/fernsmith/` and `IMPROVEMENTS.md`). Fuzzed input
   → run through both implementations → assert identical
-  output. The Go reference *is* the langsmith oracle's
+  output. The Go reference *is* the fernsmith oracle's
   reference. This is load-bearing for the transition — see
   Rec §6.
 
@@ -150,7 +150,7 @@ day rebuild) but verifiable.
   language.** Three stages is the right rigour when
   distribution is to millions of users on hostile networks.
   For one user it's ceremony. **Two-stage is the sweet
-  spot**: stage0 (last known good lang-compiled compiler)
+  spot**: stage0 (last known good fern-compiled compiler)
   builds stage1 (current source). Comparing stage1 = stage2
   is cheap and catches non-determinism without paying for a
   full third stage on every build.
@@ -158,7 +158,7 @@ day rebuild) but verifiable.
 - **`stage0` as a checked-in artifact, not a download.**
   Rust downloads; Zig snapshots. For a single repo, snapshot
   is simpler and reproducible. The next-most-recent
-  release's lang-compiled compiler binary lives at
+  release's fern-compiled compiler binary lives at
   `bootstrap/stage0.<target>.<sha>.{wasm,bin}` in the repo.
   On `make bootstrap`, the build system uses this binary to
   compile current source.
@@ -253,14 +253,14 @@ from an older snapshot.
   hits" is exactly the path this codebase is on. Don't
   delete the Go compiler prematurely; flip when:
   - Every `internal/e2e/` test passes when run against the
-    lang-compiled compiler.
-  - The langsmith differential oracle (which currently
+    fern-compiled compiler.
+  - The fernsmith differential oracle (which currently
     diffs interp vs codegen of one implementation) is
-    extended to diff lang-impl vs Go-impl for a corpus.
+    extended to diff fern-impl vs Go-impl for a corpus.
   - Cross-stage `make bootstrap; make distcheck` passes.
 
 - **WASM as the snapshot format.** This codebase already
-  emits WASM. A WASM-compiled version of the lang-port is
+  emits WASM. A WASM-compiled version of the fern-port is
   the natural snapshot — small, portable across hosts,
   audit-able. The build system needs a WASM runtime to
   unpack and execute the snapshot; wasmtime is already a
@@ -270,8 +270,8 @@ from an older snapshot.
 
 - **Don't delete the Go compiler.** Even after self-host
   parity, the Go compiler stays useful as:
-  - The langsmith differential oracle.
-  - A debugging tool when the lang-compiled compiler has
+  - The fernsmith differential oracle.
+  - A debugging tool when the fern-compiled compiler has
     bugs (cross-check by running both).
   - A canary in CI that catches behavioural drift.
 
@@ -286,7 +286,7 @@ from an older snapshot.
 
 - *Deleting the Go compiler post-transition.* Zig deleted
   theirs; we shouldn't, because the differential oracle is
-  too valuable to give up. The langsmith fuzzer's whole
+  too valuable to give up. The fernsmith fuzzer's whole
   value proposition is "two implementations exist and we
   check they agree." Keep both.
 
@@ -313,13 +313,13 @@ where both versions co-exist.
   compiler around. Ruby is duck-typed; Crystal is statically
   typed. They share syntax-shape but no compiler-internal
   invariants. There's no value to fuzz-comparing them.
-- This codebase has the langsmith differential oracle which
+- This codebase has the fernsmith differential oracle which
   *requires* two implementations.
 
 **What translates:**
 
 - **The downloadable-previous-release pattern.** Once the
-  lang-compiled compiler is the production tool, distributing
+  fern-compiled compiler is the production tool, distributing
   it via "download the most recent release as your stage0"
   is the standard pattern. Could be a tagged GitHub release
   with a single binary per target.
@@ -379,10 +379,10 @@ change to the compiler must be testable against itself.
   (we'd use wasmtime as the unpacker).
 
 - **Continuous bootstrap testing as the CI gate.** Every
-  PR runs the lang-compiled compiler against the test
-  suite. If the lang-port is behind, individual PRs may
+  PR runs the fern-compiled compiler against the test
+  suite. If the fern-port is behind, individual PRs may
   not be self-host-compilable — that's fine *until* the
-  flip; after the flip, "the lang-compiled compiler can't
+  flip; after the flip, "the fern-compiled compiler can't
   compile its own source" is a hard CI fail.
 
 - **`make bootstrap` regenerates the snapshot.** Done
@@ -447,7 +447,7 @@ specific previous release."
   translates 1:1.
 
 - **The single-release flip is the right cadence.** Don't
-  ship a half-finished lang-port as "the new compiler";
+  ship a half-finished fern-port as "the new compiler";
   keep the Go compiler as production until parity hits,
   then flip in a single release tag.
 
@@ -503,7 +503,7 @@ but unified in behaviour.
 - **Two-impl-forever as a deliberate design choice.**
   Names the situation we're in (and would benefit from
   remaining in) explicitly. The Go compiler is the
-  spec authority + langsmith oracle; the lang-impl
+  spec authority + fernsmith oracle; the fern-impl
   compiler is the production cold-start path. Both
   generate the same `.s` / `.wat`. Each PR runs both.
 
@@ -511,7 +511,7 @@ but unified in behaviour.
   Not "both produce *correct* output," but "both produce
   the *same* output." This is what `internal/e2e/
   self_host_cross_validation_test.go` already checks, and
-  langsmith differential oracle generalises. Lock it in.
+  fernsmith differential oracle generalises. Lock it in.
 
 - **Shared spec / test corpus.** Both impls consume the
   same source files and produce the same artifacts. Lives
@@ -538,12 +538,12 @@ port; don't take the opportunity to redesign.
 - **The `examples/self_host/` approach is correct.** Each
   step mirrors a specific Go source file in the existing
   compiler. The per-step `internal/e2e/self_host_*_test.go`
-  tests verify the lang-impl matches the Go-impl on the
+  tests verify the fern-impl matches the Go-impl on the
   same inputs. Keep doing this; resist the urge to
   redesign during the port.
 
 - **No "improvements" during the port.** If the
-  lang-impl spots a bug in the Go-impl, fix the Go-impl
+  fern-impl spots a bug in the Go-impl, fix the Go-impl
   first, *then* port the fix. Otherwise the cross-
   validation test starts to diverge and you lose the
   oracle property.
@@ -571,7 +571,7 @@ wrong.
   cheap.** TCC's self-compile is fast because the language
   is small and the compiler is small. Our compiler is in
   the same league size-wise (`internal/` is ~50k Go LOC;
-  the lang-port will be roughly the same). Bootstrap should
+  the fern-port will be roughly the same). Bootstrap should
   be ≤2× normal build time. Watch this number as a CI
   metric.
 
@@ -627,7 +627,7 @@ designed with it in mind from the start.
 
 2. **Two implementations are better than one — for
    diverging-by-design reasons.** TypeScript / tsgo, our
-   Go-impl / lang-impl, hypothetically OCaml + a future
+   Go-impl / fern-impl, hypothetically OCaml + a future
    port. The reasons aren't the bootstrap chain itself
    (which prefers a single canonical impl), they're the
    *diff-oracle property* and the *risk-of-bug-in-one-impl*
@@ -671,9 +671,9 @@ State publicly (in `LANGUAGE-DIRECTION.md` and / or this
 doc) that the Go compiler will *not* be deleted post-
 self-host. The Go-impl stays as:
 
-- The langsmith differential oracle's reference.
+- The fernsmith differential oracle's reference.
 - The spec-authority for behaviour comparison.
-- A debug tool when the lang-impl has bugs.
+- A debug tool when the fern-impl has bugs.
 - A canary in CI.
 
 Reasoning: TypeScript / tsgo pattern works. Zig's deletion
@@ -682,7 +682,7 @@ oracle. We have an active fuzzer; killing one of its two
 witnesses degrades it.
 
 Implication: the Go-impl must not be allowed to bit-rot.
-Every language feature added to the lang-impl must also
+Every language feature added to the fern-impl must also
 land in the Go-impl, *or* the diff oracle relaxes to
 ignore that feature. Doc'd as "both impls track the same
 spec; diff-oracle is the regression test."
@@ -695,11 +695,11 @@ spec; diff-oracle is the regression test."
 Lock in the bootstrap shape:
 
 1. `bootstrap/stage0.wasm.zst` lives in the repo — a
-   recent lang-compiled compiler, compressed.
+   recent fern-compiled compiler, compressed.
 2. `make bootstrap` decompresses, runs under wasmtime,
-   compiles current source to `bin/lang` (the production
+   compiles current source to `bin/fern` (the production
    target binary).
-3. `make distcheck` runs `bin/lang` against current
+3. `make distcheck` runs `bin/fern` against current
    source again, byte-compares the output to step 2.
    Diff = non-determinism bug; investigate.
 
@@ -707,7 +707,7 @@ Two stages, not three. The Wheeler-DDC third stage runs
 only on tagged release builds, not per-PR.
 
 Snapshot regeneration: `make bootstrap-update` rebuilds
-the snapshot from current `bin/lang`. Done manually, every
+the snapshot from current `bin/fern`. Done manually, every
 ~50 PRs or when new language features require it.
 
 ### 3. Defer the flip until parity criteria are explicit
@@ -717,30 +717,30 @@ and met
 outcome.**
 
 Parity criteria for flipping the production compiler from
-Go-impl to lang-impl:
+Go-impl to fern-impl:
 
-- **All `internal/e2e/*` tests pass against the lang-impl.**
+- **All `internal/e2e/*` tests pass against the fern-impl.**
 - **Langsmith fuzzer**: ≥ 1M iterations with zero
   divergence on a recent run.
-- **Cross-stage test passes**: lang-impl compiled by itself
-  produces byte-identical output to lang-impl compiled by
-  Go-impl. (Eliminates "the lang-impl miscompiles itself
+- **Cross-stage test passes**: fern-impl compiled by itself
+  produces byte-identical output to fern-impl compiled by
+  Go-impl. (Eliminates "the fern-impl miscompiles itself
   but the Go-impl masks it" class of bugs.)
 - **Build time for `make all`** under 2× the current
   Go-impl build time. (TCC threshold.)
 - **CI on three targets** (arm64-linux, arm64-darwin,
-  x86_64-linux, wasi-http) goes green with the lang-impl
+  x86_64-linux, wasi-http) goes green with the fern-impl
   as the primary compiler for at least one week before the
   tag.
 
 Until all five are met, the Go-impl is the default. The
-lang-impl is a `-self-host` opt-in for testers.
+fern-impl is a `-self-host` opt-in for testers.
 
 ### 4. Add `make bootstrap` and `make distcheck` to CI
 
 **Cost: 1 day.** **Impact: catches regressions early.**
 
-Once the lang-impl is feature-complete:
+Once the fern-impl is feature-complete:
 
 - Every PR runs `make bootstrap` — checks that the snapshot
   can build current source.
@@ -760,7 +760,7 @@ avoids snapshot rot.**
 
 Regenerate `bootstrap/stage0.wasm.zst` when:
 
-- The lang-impl uses a language feature the snapshot
+- The fern-impl uses a language feature the snapshot
   doesn't support yet. (Otherwise `make bootstrap` fails.)
 - 50 PRs have accumulated since the last snapshot. (Keeps
   the snapshot fresh; reduces "fix backward-compat to old
@@ -771,20 +771,20 @@ Regenerate `bootstrap/stage0.wasm.zst` when:
 Procedure documented in `docs/BOOTSTRAP.md` (separate from
 this research doc — see Rec §10).
 
-### 6. Extend langsmith to differential-test Go-impl vs lang-impl
+### 6. Extend fernsmith to differential-test Go-impl vs fern-impl
 
 **Cost: 2-3 weeks.** **Impact: critical for the
 two-implementations-forever posture.**
 
-Today langsmith compares interp vs codegen of one
-implementation (per `IMPROVEMENTS.md ▸ langsmith`). For
+Today fernsmith compares interp vs codegen of one
+implementation (per `IMPROVEMENTS.md ▸ fernsmith`). For
 the two-impl world, extend to:
 
 - Same source program → Go-impl → produces output A.
-- Same source program → lang-impl → produces output B.
+- Same source program → fern-impl → produces output B.
 - Assert A == B.
 
-Inputs: the existing langsmith generator's 64-seed corpus
+Inputs: the existing fernsmith generator's 64-seed corpus
 (per `e2e: bump diff-oracle seed count to 64` commit).
 Outputs: native binaries, `.wat`, `.s` text. Diff at the
 output level — same bytes = pass.
@@ -904,17 +904,17 @@ mechanism, not a design proposal.
 
 ## When to revisit
 
-- **When the lang-impl reaches parity with the Go-impl**
+- **When the fern-impl reaches parity with the Go-impl**
   (per `ROADMAP-AND-SELF-HOSTING.md ▸ Part 2`'s "Full
   lexer → IR on wasm: 4-6 weeks; Full compiler self-host
   on wasm: 6-9 weeks" estimate). At that point, Rec §2-7
   become actionable.
 
-- **When the langsmith differential oracle catches its
-  first lang-impl-vs-Go-impl divergence.** That's the
+- **When the fernsmith differential oracle catches its
+  first fern-impl-vs-Go-impl divergence.** That's the
   signal Rec §6 has paid off; double down.
 
-- **When the lang-impl's compile speed approaches the
+- **When the fern-impl's compile speed approaches the
   Go-impl's.** TCC's rule: bootstrap should be ≤2×
   normal build. If we're at 4-5×, look at
   `PERFORMANCE-RESEARCH.md ▸ Rec §1 SSA` first; if 2-3×,

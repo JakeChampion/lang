@@ -1,6 +1,6 @@
 name: Examples
 
-# Compile every `examples/*.lang` for the arm64-Linux target. The
+# Compile every `examples/*.fern` for the arm64-Linux target. The
 # legacy combined CI workflow ran this as a tail step on its
 # 10-minute test job; pulled out here so it gates independently
 # (and so a codegen regression on the example surface fails its
@@ -30,14 +30,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
       - name: Compile every example (arm64 target)
         run: |
-          go build -o bin/lang ./cmd/lang
+          go build -o bin/fern ./cmd/fern
           mkdir -p build
-          for f in examples/*.lang; do
-            name=$(basename "$f" .lang)
-            ./bin/lang -target arm64 "$f" > "build/$name.s"
+          for f in examples/*.fern; do
+            name=$(basename "$f" .fern)
+            ./bin/fern -target arm64 "$f" > "build/$name.s"
             if [ "${{ matrix.host }}" = "aarch64" ]; then
               gcc -static -nostdlib "build/$name.s" -o "build/$name"
               echo "::group::run $name"

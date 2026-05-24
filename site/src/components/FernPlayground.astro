@@ -103,7 +103,7 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
       // Subsequent flips don't need a reload — postMessage tells
       // the running playground to re-theme.
       try {
-        iframe.contentWindow.postMessage({ type: "lang:theme", theme }, "*");
+        iframe.contentWindow.postMessage({ type: "fern:theme", theme }, "*");
       } catch (e) { /* iframe not yet ready; next observer tick will catch it */ }
     }
     function syncAll() {

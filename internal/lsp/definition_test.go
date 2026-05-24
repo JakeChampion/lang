@@ -119,7 +119,7 @@ func TestHandleMessage_Definition(t *testing.T) {
 	open := jsonRaw(didOpenParams{
 		TextDocument: textDocumentItem{
 			URI:        "file:///def.fern",
-			LanguageID: "lang",
+			LanguageID: "fern",
 			Text:       "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n",
 		},
 	})

@@ -1,11 +1,11 @@
-package langsmith_test
+package fernsmith_test
 
 import (
 	"encoding/binary"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/langsmith"
+	"github.com/jakechampion/lang/internal/fernsmith"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -16,7 +16,7 @@ import (
 // chunk of generator decisions — exactly the corpus-minimisation
 // property `wasm-smith` relies on for shrinking failing inputs.
 //
-// Run with: go test -fuzz=FuzzGenerate_ParseRoundTrips ./internal/langsmith
+// Run with: go test -fuzz=FuzzGenerate_ParseRoundTrips ./internal/fernsmith
 func FuzzGenerate_ParseRoundTrips(f *testing.F) {
 	// Seed with a handful of deterministic uint64 seeds repackaged
 	// as 8-byte slices. The fuzzer will mutate around these.
@@ -26,7 +26,7 @@ func FuzzGenerate_ParseRoundTrips(f *testing.F) {
 		f.Add(b[:])
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
-		src := langsmith.GenBytes(data)
+		src := fernsmith.GenBytes(data)
 		prog, err := parser.Parse(src)
 		if err != nil {
 			t.Fatalf("generated program failed to parse:\ndata=%x\nsrc:\n%s\nerr: %v", data, src, err)

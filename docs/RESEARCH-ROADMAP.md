@@ -177,8 +177,8 @@ criteria are met.
     Decision, not engineering work. State publicly.
 25. **B Rec §2+§4: Two-stage snapshot bootstrap + CI
     integration.** ~2 weeks together.
-26. **B Rec §6: Extend langsmith to differential-test
-    Go-impl vs lang-impl.** Critical for the
+26. **B Rec §6: Extend fernsmith to differential-test
+    Go-impl vs fern-impl.** Critical for the
     two-impls-forever posture.
 27. **M Rec §1-§5: Manifest, lockfile, MVS, content-
     addressed cache, workspaces.** Whole package-manager
@@ -269,8 +269,8 @@ Cross-doc edges (the load-bearing inter-doc dependencies):
   block but a substantial enabler.
 - **D-§2 (structured Diagnostic) → I-§8 (LSP code-actions)**:
   IDE quick-fixes need machine-applicable suggestions.
-- **B-§6 (differential oracle) ← langsmith fuzzer**:
-  Existing infrastructure already in `internal/langsmith/`.
+- **B-§6 (differential oracle) ← fernsmith fuzzer**:
+  Existing infrastructure already in `internal/fernsmith/`.
 
 ## One-recommendation-per-doc, ranked by absolute leverage
 

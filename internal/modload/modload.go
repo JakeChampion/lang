@@ -430,7 +430,7 @@ func readSource(path string, overrides map[string]string) (string, error) {
 	// file is open, even when it hasn't been saved yet. The
 	// override map is threaded through loadRecursive rather than
 	// stashed on a package-level var so concurrent `Load` calls
-	// (e.g. parallel langsmith differential subtests) don't race.
+	// (e.g. parallel fernsmith differential subtests) don't race.
 	if overrides != nil {
 		if src, ok := overrides[path]; ok {
 			return src, nil

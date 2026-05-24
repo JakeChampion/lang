@@ -3,7 +3,7 @@
 // from `internal/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the same surface by piping
-// an inline Lang program through `lang -interp` and
+// an inline Lang program through `fern -interp` and
 // checking the exit code + stdout. The migration replaces
 // that subprocess-and-grep shape with direct in-process
 // assertions: the program *IS* the test, and the

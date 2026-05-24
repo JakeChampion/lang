@@ -1,16 +1,16 @@
-// WIT worlds for the lang components. Two flavours:
+// WIT worlds for the Fern components. Two flavours:
 //
-//   - `lang` is the CLI world: imports the preview-2 interfaces
+//   - `fern` is the CLI world: imports the preview-2 interfaces
 //     the WASM backend emits natively, runs `_start` once via
 //     wasi:cli/run.run (wired through the preview-1 adapter).
-//   - `http` is the HTTP-handler world: same imports as `lang`
+//   - `http` is the HTTP-handler world: same imports as `fern`
 //     plus wasi:http/types, and EXPORTS
 //     wasi:http/incoming-handler so the host (e.g.
 //     `wasmtime serve`) can dispatch inbound requests into the
 //     user's `handle(req: HttpRequest): HttpResponse`.
-package local:lang@0.0.0;
+package local:fern@0.0.0;
 
-world lang {
+world fern {
     import wasi:cli/stdin@0.2.0;
     import wasi:cli/stdout@0.2.0;
     import wasi:cli/stderr@0.2.0;

@@ -14,7 +14,7 @@ cd ..               # back to site/
 ./build-deps.sh     # or run the pages.yml steps manually:
                     #   ../web/build.sh
                     #   mkdir -p public/playground && cp ...
-                    #   go run ../cmd/langdoc -out src/content/docs/stdlib/
+                    #   go run ../cmd/ferndoc -out src/content/docs/stdlib/
 npm install
 npm run build       # → site/dist/
 

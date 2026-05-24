@@ -1,7 +1,7 @@
 name: Fuzz parse round-trip
 
 # Wasm-smith-style structured fuzzer over the parser + checker.
-# Every program emitted by langsmith parses + type-checks by
+# Every program emitted by fernsmith parses + type-checks by
 # construction, so any failure here is a real parser / checker
 # bug. Caught bugs in #588 and #614 that the seed-based sweeps in
 # `go test` didn't surface.
@@ -26,5 +26,5 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
-      - run: go test -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/langsmith
+      - uses: ./.github/actions/setup-fern
+      - run: go test -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/fernsmith

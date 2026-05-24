@@ -31,7 +31,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "sum.lang")
+	srcPath := filepath.Join(dir, "sum.fern")
 	// Triangular sum: returns n*(n-1)/2 via a while loop —
 	// exercises arithmetic, control flow, and the relooper's
 	// loop-handling end-to-end through the CLI.
@@ -49,8 +49,8 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -65,7 +65,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("lang -target wasm-ssa: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+		t.Fatalf("fern -target wasm-ssa: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// wasm-tools validate confirms the emitted module is
@@ -112,8 +112,8 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "lang")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/lang")
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build lang: %v\n%s", err, out)
 	}
@@ -144,7 +144,7 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			srcPath := filepath.Join(dir, c.name+".lang")
+			srcPath := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
@@ -159,7 +159,7 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 			emit.Stdout = &obuf
 			emit.Stderr = &ebuf
 			if err := emit.Run(); err != nil {
-				t.Fatalf("lang -target wasm-ssa -component-wrap-cli: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+				t.Fatalf("fern -target wasm-ssa -component-wrap-cli: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 			}
 			if out, err := exec.Command("wasm-tools", "validate", outWasm).CombinedOutput(); err != nil {
 				t.Fatalf("wasm-tools validate: %v\n%s", err, out)

@@ -1,10 +1,10 @@
 // Differential-execution oracle. Generates Lang programs with
-// `langsmith.GenMain` and runs each through every available
+// `fernsmith.GenMain` and runs each through every available
 // backend, asserting they all agree on `main()`'s byte return
 // value.
 //
 // The byte-mutation FuzzParse / FuzzCheck fuzzers and the
-// langsmith parse-roundtrip fuzzer all stop at the front end;
+// fernsmith parse-roundtrip fuzzer all stop at the front end;
 // they catch parser / checker bugs but say nothing about IR
 // lowering or codegen. This harness is the cross-backend
 // counterpart: same source, four backends, one expected result.
@@ -34,7 +34,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/interp"
-	"github.com/jakechampion/lang/internal/langsmith"
+	"github.com/jakechampion/lang/internal/fernsmith"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -122,7 +122,7 @@ func runArm64Diag(t *testing.T, src string) diagInfo {
 	gcc, qemu := arm64Tooling(t)
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.lang")
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -173,7 +173,7 @@ func runX86_64Diag(t *testing.T, src string) diagInfo {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.lang")
+	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
@@ -234,7 +234,7 @@ func preserveDiagArtifacts(t *testing.T, label string, src string, d diagInfo) s
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return ""
 	}
-	_ = os.WriteFile(filepath.Join(dest, "main.lang"), []byte(src), 0o644)
+	_ = os.WriteFile(filepath.Join(dest, "main.fern"), []byte(src), 0o644)
 	if d.asmPath != "" {
 		if b, err := os.ReadFile(d.asmPath); err == nil {
 			_ = os.WriteFile(filepath.Join(dest, "prog.s"), b, 0o644)
@@ -307,7 +307,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
-			src := langsmith.GenMain(seed)
+			src := fernsmith.GenMain(seed)
 			expected := runInterpByte(t, src)
 
 			t.Run("arm64", func(t *testing.T) {
@@ -342,7 +342,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			// (`-target wasm` / `-target wasi-http`). Dropping
 			// WAT here unblocks the bigger seed-count bump and
 			// stops false-positive WAT codegen bugs from gating
-			// langsmith-corpus expansion.
+			// fernsmith-corpus expansion.
 			t.Run("wasmbin", func(t *testing.T) {
 				got := compileAndRunWasmbinMain(t, src)
 				if got != expected {
@@ -487,7 +487,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 		f.Add(b[:])
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
-		src := langsmith.GenMainBytes(data)
+		src := fernsmith.GenMainBytes(data)
 		expected := runInterpByte(t, src)
 		t.Run("arm64", func(t *testing.T) {
 			_, code := compileAndRunArm64(t, src)
@@ -526,15 +526,15 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 
 // runInterpByte parses + checks + runs `main()` under the in-
 // process interpreter and returns the result masked to a byte.
-// Sources from `langsmith.GenMain` already mask to a byte; the
+// Sources from `fernsmith.GenMain` already mask to a byte; the
 // extra `& 0xFF` here is defensive in case the harness is ever
 // fed a program that doesn't.
 //
 // Interp-side coverage gaps (closures, the `?` propagation
 // operator, etc.) `t.Skipf` rather than fail — the interpreter
-// isn't a feature-complete target, and the langsmith corpus
+// isn't a feature-complete target, and the fernsmith corpus
 // regularly emits programs it doesn't model. Parser / checker
-// errors still Fatal because those would mean langsmith
+// errors still Fatal because those would mean fernsmith
 // generated something the front end shouldn't have accepted.
 func runInterpByte(t *testing.T, src string) int {
 	t.Helper()

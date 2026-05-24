@@ -36,12 +36,12 @@ var (
 func buildLangBinForInterp(t *testing.T) string {
 	t.Helper()
 	langBinOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "lang-e2e-bin-")
+		dir, err := os.MkdirTemp("", "fern-e2e-bin-")
 		if err != nil {
 			langBinErr = err
 			return
 		}
-		bin := filepath.Join(dir, "lang")
+		bin := filepath.Join(dir, "fern")
 		build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
 		if out, err := build.CombinedOutput(); err != nil {
 			langBinErr = err
@@ -56,7 +56,7 @@ func buildLangBinForInterp(t *testing.T) string {
 	return langBinPath
 }
 
-// `lang -interp FILE.fern` — script-mode end-to-end. The
+// `fern -interp FILE.fern` — script-mode end-to-end. The
 // interpreter runs the lang program through the AST evaluator
 // (no codegen, no link, no temp binary) and main()'s return
 // value becomes the process exit code, clamped to 0..255.
@@ -91,7 +91,7 @@ function main(): i32 {
 	}
 }
 
-// `lang -interp -` — pipe a program through stdin. Skips
+// `fern -interp -` — pipe a program through stdin. Skips
 // modload entirely (no imports available in the stdin form);
 // parses the buffer as a single file.
 func TestInterpScriptStdin(t *testing.T) {
@@ -152,7 +152,7 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 func TestInterpScriptReadLine(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "prog.lang")
+	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`function main(): i32 {
     match (read_line()) {
         Some(line) => { return line.len(); },
@@ -277,7 +277,7 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 //      flat-load route.
 //
 // Each shape writes a `.fern` file to a tempdir and runs
-// `lang -interp FILE` rather than piping over stdin: the
+// `fern -interp FILE` rather than piping over stdin: the
 // stdin path skips modload entirely (no imports), so it
 // wouldn't exercise the mangling code path the fix targets.
 func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {

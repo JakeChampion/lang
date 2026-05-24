@@ -1,7 +1,7 @@
 name: Test e2e differential
 
 # `TestDifferential_LangsmithMain` — the static (non-fuzz)
-# differential oracle. Iterates 2048 langsmith seeds; for each
+# differential oracle. Iterates 2048 fernsmith seeds; for each
 # one, compares the interpreter's result against arm64, x86_64,
 # and wasmbin backends. Asserts byte-for-byte agreement.
 #
@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-lang
+      - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
           gotestsum: "true"
@@ -50,7 +50,7 @@ jobs:
           # Per-shard artifact dir so multiple shards on the
           # same runner don't clobber each other's failed-
           # program asm. `diffOracleArtifactDir()` reads this.
-          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/lang-diff-failures"
+          DIFF_ORACLE_ARTIFACT_DIR: "${{ runner.temp }}/fern-diff-failures"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestDifferential' ./internal/e2e/
 
       - name: Upload failing-seed artifacts
@@ -60,6 +60,6 @@ jobs:
           # Disambiguate per matrix cell so the upload doesn't
           # collide across the 8-job matrix on the same PR.
           name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard }}
-          path: ${{ runner.temp }}/lang-diff-failures
+          path: ${{ runner.temp }}/fern-diff-failures
           if-no-files-found: ignore
           retention-days: 7

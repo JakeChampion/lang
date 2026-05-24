@@ -1,6 +1,6 @@
 // Package componenttype embeds the precomputed `component-type`
 // custom-section payloads for the two production WIT worlds
-// (`lang` and `http`) and exposes a function that appends one
+// (`fern` and `http`) and exposes a function that appends one
 // to a core wasm module — the same operation `wasm-tools
 // component embed -w <world>` performs.
 //
@@ -11,7 +11,7 @@
 // linking against wasm-tools.
 //
 // Regeneration: see doc.go for the exact wasm-tools invocation
-// that produced lang.bin / http.bin from cmd/fern/wit/.
+// that produced fern.bin / http.bin from cmd/fern/wit/.
 package componenttype
 
 import (
@@ -19,15 +19,15 @@ import (
 	"fmt"
 )
 
-//go:embed lang.bin
-var langPayload []byte
+//go:embed fern.bin
+var fernPayload []byte
 
 //go:embed http.bin
 var httpPayload []byte
 
 // Embed appends the `component-type` custom section for `world`
 // to `core` and returns the concatenated bytes. `world` must
-// be "lang" or "http"; any other value returns an error. `core`
+// be "fern" or "http"; any other value returns an error. `core`
 // is not modified.
 //
 // Custom section wire format
@@ -73,12 +73,12 @@ func PayloadFor(world string) ([]byte, error) {
 
 func payloadFor(world string) ([]byte, error) {
 	switch world {
-	case "lang":
-		return langPayload, nil
+	case "fern":
+		return fernPayload, nil
 	case "http":
 		return httpPayload, nil
 	default:
-		return nil, fmt.Errorf("componenttype: unknown world %q (want \"lang\" or \"http\")", world)
+		return nil, fmt.Errorf("componenttype: unknown world %q (want \"fern\" or \"http\")", world)
 	}
 }
 

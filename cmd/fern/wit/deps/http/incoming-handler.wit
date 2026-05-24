@@ -1,7 +1,7 @@
 package wasi:http@0.2.0;
 
 // Vendored copy of `wasi:http/incoming-handler@0.2.0`. The
-// `lang -target wasi-http` compile mode emits a component that
+// `fern -target wasi-http` compile mode emits a component that
 // EXPORTS this interface — the host (e.g. `wasmtime serve`) calls
 // `handle(request, response-out)` for each inbound HTTP request.
 // Source: https://github.com/WebAssembly/wasi-http/blob/main/wit/proxy.wit
