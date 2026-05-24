@@ -433,6 +433,94 @@ func appendCliRunExport(buf []byte, coreExportName string) []byte {
 	return buf
 }
 
+// WrapWasiWallClockComponent wraps a core module that imports
+// `wasi:clocks/wall-clock@0.2.0::now` (lowered to `(out_ptr i32)
+// -> ()` for the indirect datetime return) into a preview-2
+// component. The user's core module must export `memory`.
+//
+// Simpler than the print wrap — wall-clock has no resource
+// dependencies, so there's a single imported interface (no
+// wasi:io/error / wasi:io/streams). But `now`'s canon-lower
+// still needs the user instance's memory (datetime is returned
+// via an out-pointer), so the 1-i32 trampoline / fixup pattern
+// breaks the canon-lower / instantiation cycle.
+//
+// Index assignment:
+//
+//   - Component type 0: wall-clock instance type.
+//   - Component instance 0: the imported wall-clock.
+//   - Component func 0: aliased `now`.
+//   - Core modules: user (0), trampoline-1i32 (1), fixup-1i32 (2).
+//   - Core instance 0: trampoline. Core func 0: its "0" export.
+//   - Core instance 1: packages core func 0 as "now".
+//   - Core instance 2: the user module, instantiated with
+//     wasi:clocks/wall-clock = core instance 1.
+//   - Core memory 0 / table 0: aliased from instances 2 / 0.
+//   - Core func 1: canon-lower of `now` with memory(0).
+//   - Core instance 3: fixup arg (table + func 1).
+//   - Core instance 4: the fixup module.
+func WrapWasiWallClockComponent(coreBytes []byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Type 0: wall-clock instance type. Import as instance 0.
+	buf = PutTypeSectionRawBody(buf, WasiClocksWallClockInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:clocks/wall-clock@0.2.0", 0)
+
+	// Core modules: user (0), trampoline (1), fixup (2).
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleForNI32NoResult(1))
+	buf = PutCoreModuleSection(buf, FixupModuleForNI32NoResult(1))
+
+	// Instantiate trampoline → core instance 0.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+
+	// Alias trampoline "0" → core func 0; wrap as core instance 1
+	// under "now".
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "now", 0)
+
+	// Instantiate user with wasi:clocks/wall-clock = instance 1
+	// → core instance 2.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{"wasi:clocks/wall-clock@0.2.0"}, []uint32{1})
+
+	// Alias user memory + trampoline table.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
+
+	// Alias `now` from the wall-clock import → component func 0,
+	// canon-lower it with memory(0) → core func 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 0, "now")
+	buf = PutCanonSectionLowerWithMemory(buf, 0, 0)
+
+	// Fixup arg instance (table + lowered func) → core instance 3,
+	// then instantiate the fixup module → core instance 4.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 1},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
+		[]string{""}, []uint32{3})
+	return buf
+}
+
+// WrapWasiWallClockAsCliRun extends WrapWasiWallClockComponent
+// with a wasi:cli/run@0.2.0 export. After the wall-clock wrap,
+// the index spaces are: component types 1, component funcs 1,
+// component instances 1, core funcs 2, core instances 5. The
+// cli-run tail aliases the user's `coreExportName` (core
+// instance 2 — the user module) as core func 2, lifts it, and
+// packages + exports a run instance.
+func WrapWasiWallClockAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiWallClockComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 2, coreExportName)
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 1)
+	buf = PutCanonSectionLiftNoOpts(buf, 2, 2)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 1)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 1)
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:

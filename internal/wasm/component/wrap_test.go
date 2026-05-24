@@ -735,3 +735,95 @@ func TestWrapWasiPrintAsCliRun_RunsUnderWasmtime(t *testing.T) {
 		t.Fatalf("wasmtime run failed: %v", err)
 	}
 }
+
+// wallClockCliRunCoreModule is a hand-rolled core module shaped
+// like the user side of a WrapWasiWallClockAsCliRun input:
+//
+//   - imports wasi:clocks/wall-clock@0.2.0::now as `(i32) -> ()`
+//     (the indirect datetime out-pointer ABI)
+//   - exports memory + a `_lang_run() -> i32` returning 0
+//
+// The _lang_run body doesn't call now (proves the linkage works
+// without exercising the host side).
+func wallClockCliRunCoreModule() []byte {
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	// type section: vec(2) — type 0: (i32)->(), type 1: ()->i32
+	typeBody := []byte{
+		0x02,
+		0x60, 0x01, 0x7f, 0x00,
+		0x60, 0x00, 0x01, 0x7f,
+	}
+	out = appendCoreSec(out, 0x01, typeBody)
+	// import section: wasi:clocks/wall-clock@0.2.0 . now (type 0)
+	importBody := []byte{0x01}
+	importBody = append(importBody, byte(len("wasi:clocks/wall-clock@0.2.0")))
+	importBody = append(importBody, "wasi:clocks/wall-clock@0.2.0"...)
+	importBody = append(importBody, byte(len("now")))
+	importBody = append(importBody, "now"...)
+	importBody = append(importBody, 0x00, 0x00) // func, typeidx 0
+	out = appendCoreSec(out, 0x02, importBody)
+	// function section: vec(1) typeidx [1] (_lang_run)
+	out = appendCoreSec(out, 0x03, []byte{0x01, 0x01})
+	// memory section: vec(1), min=1
+	out = appendCoreSec(out, 0x05, []byte{0x01, 0x00, 0x01})
+	// export section: memory 0, _lang_run func 1 (import shift: now=0)
+	exportBody := []byte{0x02}
+	exportBody = append(exportBody, byte(len("memory")))
+	exportBody = append(exportBody, "memory"...)
+	exportBody = append(exportBody, 0x02, 0x00) // memory 0
+	exportBody = append(exportBody, byte(len("_lang_run")))
+	exportBody = append(exportBody, "_lang_run"...)
+	exportBody = append(exportBody, 0x00, 0x01) // func 1
+	out = appendCoreSec(out, 0x07, exportBody)
+	// code section: vec(1) body — vec(0) locals, i32.const 0, end
+	out = appendCoreSec(out, 0x0a, []byte{0x01, 0x04, 0x00, 0x41, 0x00, 0x0b})
+	return out
+}
+
+// appendCoreSec is a test-local core-section appender (id +
+// uleb size + body) — the leb-free path here only needs single-
+// byte sizes, so a plain length byte suffices.
+func appendCoreSec(buf []byte, id byte, body []byte) []byte {
+	buf = append(buf, id, byte(len(body)))
+	return append(buf, body...)
+}
+
+// TestWrapWasiWallClockAsCliRun_RunsUnderWasmtime exercises the
+// wall-clock wrap end-to-end. The component imports
+// wasi:clocks/wall-clock@0.2.0 + exports wasi:cli/run@0.2.0;
+// _lang_run returns 0 so wasmtime exits clean. Validates the
+// 1-i32 trampoline + datetime-record instance type wire up
+// correctly.
+func TestWrapWasiWallClockAsCliRun_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	comp := component.WrapWasiWallClockAsCliRun(wallClockCliRunCoreModule(), "_lang_run")
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "wc.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:clocks/wall-clock@0.2.0", "wasi:cli/run@0.2.0", "datetime"} {
+		if !bytes.Contains(printOut, []byte(want)) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
