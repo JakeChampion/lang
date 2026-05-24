@@ -665,6 +665,53 @@ func WasiFilesystemTypesReadViaStreamInstanceTypeBody(outerInputStreamTypeidx ui
 	return body
 }
 
+// WasiFilesystemTypesWriteViaStreamInstanceTypeBody is the
+// write-side counterpart of
+// WasiFilesystemTypesReadViaStreamInstanceTypeBody: declares
+// `descriptor` + `error-code` + the `write-via-stream` method:
+//
+//	write-via-stream: func(self: borrow<descriptor>, offset: u64)
+//	    -> result<own<output-stream>, error-code>
+//
+// `output-stream` is outer-aliased from wasi:io/streams
+// (`outerOutputStreamTypeidx`). The file-write path opens a
+// descriptor, then write-via-stream turns it into an output-stream
+// that blocking-write-and-flush drains. Same 10-decl shape as the
+// read body, only the stream resource name + method name differ.
+func WasiFilesystemTypesWriteViaStreamInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x0a}
+	// 0: descriptor resource
+	body = append(body, ExportSubResourceDecl("descriptor")...)
+	// 1: alias outer output-stream
+	body = append(body, OuterAliasTypeDecl(1, outerOutputStreamTypeidx)...)
+	// 2: export "output-stream" (eq 1)
+	body = append(body, ExportTypeEqDecl("output-stream", 1)...)
+	// 3: enum error-code
+	body = append(body, 0x01)
+	body = append(body, InnerTypeEnum(WasiFilesystemErrorCodeNames)...)
+	// 4: export "error-code" (eq 3)
+	body = append(body, ExportTypeEqDecl("error-code", 3)...)
+	// 5: own<output-stream=2>
+	body = append(body, 0x01, 0x69, 0x02)
+	// 6: borrow<descriptor=0>
+	body = append(body, 0x01, 0x68, 0x00)
+	// 7: result<ok=5, err=4>
+	body = append(body, 0x01)
+	body = append(body, InnerTypeResultOkErr(5, 4)...)
+	// 8: func(self: borrow 6, offset: u64) -> typeidx 7
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x06,
+		0x06, 'o', 'f', 'f', 's', 'e', 't', CValtypeU64,
+		0x00, 0x07,
+	)
+	// 9: export "[method]descriptor.write-via-stream" (func 8)
+	body = append(body, 0x04, 0x00, byte(len("[method]descriptor.write-via-stream")))
+	body = append(body, "[method]descriptor.write-via-stream"...)
+	body = append(body, 0x01, 0x08)
+	return body
+}
+
 // WasiFilesystemPreopensInstanceTypeBody returns the type-section
 // body for the `wasi:filesystem/preopens@0.2.0` instance type —
 // `get-directories: func() -> list<tuple<own<descriptor>, string>>`,

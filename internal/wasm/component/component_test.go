@@ -310,6 +310,45 @@ func TestWasiFilesystemTypesReadViaStreamInstanceTypeBody_Validates(t *testing.T
 	}
 }
 
+// TestWasiFilesystemTypesWriteViaStreamInstanceTypeBody_Validates
+// composes the write-via-stream descriptor method (which
+// outer-aliases output-stream from wasi:io/streams) and confirms
+// wasm-tools accepts it.
+func TestWasiFilesystemTypesWriteViaStreamInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	// io/error (instance 0) → error top-level type 1.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")
+	// io/streams (instance 1) → output-stream top-level type 3.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsInstanceTypeBody(1))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")
+	// filesystem/types write-via-stream, referencing output-stream (type 3).
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesWriteViaStreamInstanceTypeBody(3))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "fswrite.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"write-via-stream", "descriptor", "error-code", "output-stream"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiFilesystemPreopensInstanceTypeBody_Validates composes
 // the preopens instance type (which outer-aliases the descriptor
 // resource from a wasi:filesystem/types import) and confirms
