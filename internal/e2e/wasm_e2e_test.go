@@ -9589,6 +9589,91 @@ func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithReadFile drives a Fern program
+// that reads a file via read_file() through `-component-wrap-cli`.
+// The driver detects the four-import read-file preview-2 shape
+// (wasi:filesystem/preopens::get-directories +
+// wasi:filesystem/types::{open-at,read-via-stream} +
+// wasi:io/streams::blocking-read), rebuilds with cabi_realloc
+// exported, and routes via WrapWasiReadFileAsCliRun. The whole
+// chain (get-directories → open-at → read-via-stream →
+// blocking-read loop) runs under `wasmtime run --dir`.
+//
+// Observed via exit code: 0 when read_file returns Ok with the
+// expected length, 1 on Err (missing file) or wrong length.
+func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	// A file whose content spans more than one 4096-byte chunk to
+	// exercise the doubling accumulator.
+	content := strings.Repeat("x", 10000)
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	srcPath := filepath.Join(dir, "rf.fern")
+	src := []byte(`function main(): i32 {
+    match (read_file("data.txt")) {
+        Ok(s) => { if (s.len() == 10000) { return 0; } return 1; },
+        Err(e) => { return 1; }
+    }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "rf.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (read_file) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{
+		"wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0",
+		"wasi:io/streams@0.2.0", "wasi:cli/run@0.2.0",
+	} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// Present file (10000 bytes) → Ok, correct length → exit 0.
+	ok := exec.Command("wasmtime", "run", "--dir", dir, compPath)
+	if err := ok.Run(); err != nil {
+		t.Errorf("read_file present: wasmtime run failed (want exit 0): %v", err)
+	}
+	// Missing file → open-at fails → Err → exit 1.
+	miss := filepath.Join(dir, "rfmiss.fern")
+	if err := os.WriteFile(miss, []byte(`function main(): i32 {
+    match (read_file("nope.txt")) { Ok(s) => { return 0; }, Err(e) => { return 1; } }
+    return 1;
+}`), 0o644); err != nil {
+		t.Fatalf("write miss src: %v", err)
+	}
+	missComp := filepath.Join(dir, "rfmiss.wasm")
+	mc := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", missComp, miss)
+	mc.Dir = projectRoot(t)
+	if out, err := mc.CombinedOutput(); err != nil {
+		t.Fatalf("fern (read_file miss) failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, missComp).Run(); err == nil {
+		t.Errorf("read_file missing: wasmtime run exited 0, want non-zero (Err arm)")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the

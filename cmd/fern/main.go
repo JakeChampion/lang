@@ -622,6 +622,25 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if usesPreview2ReadFileOnly(bin) {
+					// The file-read chain (get-directories / open-at /
+					// read-via-stream / blocking-read) returns lists, so
+					// its canon-lowers need realloc; rebuild with
+					// ForceMemorySection. Scoped to read-file programs.
+					rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+						ForceMemorySection: true,
+						Preview2WASI:       true,
+						SynthCliRun:        true,
+					})
+					if err != nil {
+						return 1, err
+					}
+					comp := component.WrapWasiReadFileAsCliRun(rb, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -1140,6 +1159,38 @@ func usesPreview2EnvOnly(bin []byte) bool {
 	}
 	p := pairs[0]
 	return p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment"
+}
+
+// usesPreview2ReadFileOnly reports whether the core module's imports
+// are exactly the four file-read preview-2 funcs —
+// wasi:filesystem/preopens::get-directories,
+// wasi:filesystem/types::[method]descriptor.{open-at,read-via-stream},
+// and wasi:io/streams::[method]input-stream.blocking-read — and
+// nothing else. These need the multi-trampoline WrapWasiReadFileAsCliRun.
+func usesPreview2ReadFileOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 4 {
+		return false
+	}
+	want := map[[2]string]bool{
+		{"wasi:filesystem/preopens@0.2.0", "get-directories"}:                 false,
+		{"wasi:filesystem/types@0.2.0", "[method]descriptor.open-at"}:         false,
+		{"wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream"}: false,
+		{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:       false,
+	}
+	for _, p := range pairs {
+		k := [2]string{p.module, p.name}
+		if _, ok := want[k]; !ok {
+			return false
+		}
+		want[k] = true
+	}
+	for _, seen := range want {
+		if !seen {
+			return false
+		}
+	}
+	return true
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {

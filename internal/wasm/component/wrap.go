@@ -945,6 +945,23 @@ func WrapWasiReadFileComponent(coreBytes []byte) []byte {
 	return buf
 }
 
+// WrapWasiReadFileAsCliRun extends WrapWasiReadFileComponent with a
+// wasi:cli/run@0.2.0 export. After the read-file wrap the index
+// spaces are: component types 7, component funcs 4, component
+// instances 4, core funcs 9 (0-3 trampoline aliases, 4 cabi_realloc,
+// 5-8 lowers), core instances 16 (user is core instance 7). The
+// cli-run tail aliases `coreExportName` from the user instance →
+// core func 9, lifts it, and packages + exports a run instance.
+func WrapWasiReadFileAsCliRun(coreBytes []byte, coreExportName string) []byte {
+	buf := WrapWasiReadFileComponent(coreBytes)
+	buf = PutAliasSectionCoreExportFunc(buf, 7, coreExportName) // core func 9
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 7)
+	buf = PutCanonSectionLiftNoOpts(buf, 9, 8)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", 4)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 4)
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
