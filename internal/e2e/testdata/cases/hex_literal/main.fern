@@ -1,0 +1,7 @@
+// Hexadecimal integer literals (0x / 0X). 0x2A = 42, 0xFF = 255;
+// 42 + (255 - 255) = 42.
+function main(): i32 {
+    var a: i32 = 0x2A;
+    var b: i32 = 0xFF;
+    return a + (b - 0xFF);
+}

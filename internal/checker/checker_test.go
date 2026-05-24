@@ -35,6 +35,26 @@ func TestGoodPrograms(t *testing.T) {
 	}
 }
 
+// A bare variant struct literal in a struct-field initializer should
+// implicitly widen to its union type, the same way it already does in
+// `var x: Union = Variant{...}`, returns, and call arguments. Before
+// the fix this reported `field "left": expected Tree, got Leaf`.
+func TestUnionWidenInStructField(t *testing.T) {
+	src := `struct Leaf { v: i32 }
+struct Node { left: Tree, right: Tree }
+type Tree = Leaf | Node;
+function main(): i32 {
+    var t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Node(n) => { return 0; }
+    }
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestTypeErrors(t *testing.T) {
 	cases := []struct {
 		src  string

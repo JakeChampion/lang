@@ -5182,7 +5182,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
 		}
-		for _, f := range n.Fields {
+		for i := range n.Fields {
+			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
 			if !present {
 				c.errfCode(n.P, "E043", "struct %s has no field %q", sd.Name, f.Name)
@@ -5198,6 +5199,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.settleNumeric(f.Value, expected)
 			vt = postSettleType(f.Value, vt)
+			// Implicit union-wrap: a bare variant struct literal in a
+			// field position widens to its union type, matching the
+			// `var x: Union = Variant{...}`, return, and call-argument
+			// behaviour. Mutates the real AST slot (Fields are values),
+			// so index rather than the loop copy.
+			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)

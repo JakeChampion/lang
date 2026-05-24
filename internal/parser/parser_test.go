@@ -457,6 +457,34 @@ func TestTryOpParses(t *testing.T) {
 	}
 }
 
+// Hex integer literals parse to the right decimal value (base 16),
+// independent of decimal-literal handling.
+func TestHexLiteralValue(t *testing.T) {
+	cases := map[string]int64{
+		"0x2A":       42,
+		"0xff":       255,
+		"0X10":       16,
+		"0x0":        0,
+		"0xDEADBEEF": 3735928559,
+	}
+	for src, wantVal := range cases {
+		prog, err := Parse(`function f(): i32 { return ` + src + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse: %v", src, err)
+			continue
+		}
+		ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+		lit, ok := ret.Value.(*ast.NumberLit)
+		if !ok {
+			t.Errorf("%s: expected *NumberLit, got %T", src, ret.Value)
+			continue
+		}
+		if lit.Value != wantVal {
+			t.Errorf("%s: Value = %d, want %d", src, lit.Value, wantVal)
+		}
+	}
+}
+
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
 // sees a non-polymorphic type from the get-go.

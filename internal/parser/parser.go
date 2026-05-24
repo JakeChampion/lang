@@ -2802,8 +2802,19 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Number:
 		p.advance()
 		var n int64
-		for _, c := range t.Text {
-			n = n*10 + int64(c-'0')
+		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
+			// Hex literal: parse the digits after the `0x` prefix.
+			// Width up to 64 bits so `0xFFFFFFFF` round-trips; the
+			// checker applies the same range rules as decimal.
+			v, err := strconv.ParseInt(t.Text[2:], 16, 64)
+			if err != nil {
+				p.errors = append(p.errors, p.errorf(t.Pos, "invalid hex literal %q: %v", t.Text, err))
+			}
+			n = v
+		} else {
+			for _, c := range t.Text {
+				n = n*10 + int64(c-'0')
+			}
 		}
 		lit := &ast.NumberLit{P: t.Pos, Value: n}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned

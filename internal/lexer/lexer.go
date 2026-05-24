@@ -180,6 +180,10 @@ func validNumericSuffix(s string) bool {
 	return false
 }
 
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
 // Tokenize turns src into a slice of tokens terminated by an EOF
 // token, plus the `//` line comments encountered along the way (in
 // source order). Comments are returned separately rather than as a
@@ -316,8 +320,24 @@ func (l *lexer) next() (Token, error) {
 	// lexer unambiguous about Index-style `a[0].x` style suffixes.
 	if unicode.IsDigit(r) {
 		begin := l.i
-		for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
-			l.advance()
+		// `0x` / `0X` hex integer literal: consume hex digits and skip
+		// the float (fractional / exponent) upgrades below.
+		isHex := false
+		if l.src[l.i] == '0' && l.i+1 < len(l.src) && (l.src[l.i+1] == 'x' || l.src[l.i+1] == 'X') {
+			isHex = true
+			l.advance() // '0'
+			l.advance() // 'x' / 'X'
+			hexDigits := l.i
+			for l.i < len(l.src) && isHexDigit(rune(l.src[l.i])) {
+				l.advance()
+			}
+			if l.i == hexDigits {
+				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x"}
+			}
+		} else {
+			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+				l.advance()
+			}
 		}
 		isFloat := false
 		// When the previous emitted token was a `.`, we're parsing
@@ -326,7 +346,7 @@ func (l *lexer) next() (Token, error) {
 		// field-access, not a fractional part — suppress the float
 		// upgrade so the second `.0` lands as `.` `0` instead of
 		// being eaten as a continuation of `1`.
-		if !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
+		if !isHex && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
 			isFloat = true
 			l.advance() // '.'
 			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
@@ -340,7 +360,7 @@ func (l *lexer) next() (Token, error) {
 		// the `e` for the next token. Suppressed right after a `.`
 		// so a chained tuple index like `t.1e3` keeps `1` as the
 		// selector (same rationale as the fractional-dot guard).
-		if !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
+		if !isHex && !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
 			j := l.i + 1
 			if j < len(l.src) && (l.src[j] == '+' || l.src[j] == '-') {
 				j++

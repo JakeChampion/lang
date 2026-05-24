@@ -1,6 +1,7 @@
 // A mutually-recursive type: a binary tree where interior nodes hold
-// further Trees. The leaves are bound to Tree-typed locals so they
-// widen to the union before going into Node's fields. 40 + 2 = 42.
+// further Trees. The Leaf literals widen to the Tree union directly
+// in Node's field initializers (no intermediate typed locals needed).
+// 40 + 2 = 42.
 struct Leaf { v: i32 }
 struct Node { left: Tree, right: Tree }
 type Tree = Leaf | Node;
@@ -13,8 +14,6 @@ function tree_sum(t: Tree): i32 {
 }
 
 function main(): i32 {
-    var l: Tree = Leaf { v: 40 };
-    var r: Tree = Leaf { v: 2 };
-    var t: Tree = Node { left: l, right: r };
+    var t: Tree = Node { left: Leaf { v: 40 }, right: Leaf { v: 2 } };
     return tree_sum(t);
 }
