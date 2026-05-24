@@ -1,0 +1,11 @@
+// A generic struct with a generic unbox helper, monomorphised at i32.
+struct Box[T] { value: T }
+
+function unbox[T](b: Box[T]): T {
+    return b.value;
+}
+
+function main(): i32 {
+    var b: Box[i32] = Box { value: 42 };
+    return unbox(b);
+}

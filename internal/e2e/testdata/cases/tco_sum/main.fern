@@ -1,0 +1,12 @@
+// Tail-recursive accumulator over 1..10000 = 50005000. Relies on
+// the tail-call pass keeping stack depth O(1); a naive frame per
+// call would blow the stack well before 10000.
+function sum_to(n: i32, acc: i32): i32 {
+    if (n == 0) { return acc; }
+    return sum_to(n - 1, acc + n);
+}
+
+function main(): i32 {
+    print(sum_to(10000, 0).to_string());
+    return 0;
+}

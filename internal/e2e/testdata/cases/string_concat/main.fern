@@ -1,0 +1,5 @@
+function main(): i32 {
+    var name: string = "Fern";
+    print("Hello, " + name + "!");
+    return 0;
+}

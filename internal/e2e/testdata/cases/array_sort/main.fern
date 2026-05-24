@@ -1,0 +1,6 @@
+// sorted_asc() returns a fresh ascending copy; index the ends.
+function main(): i32 {
+    var a = [5, 3, 8, 1, 9, 2];
+    var s = a.sorted_asc();
+    return s[0] * 10 + s[5];
+}

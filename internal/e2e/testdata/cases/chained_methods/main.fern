@@ -1,0 +1,5 @@
+// Method chaining: trim then upper-case.
+function main(): i32 {
+    print("  hello  ".trim().to_upper());
+    return 0;
+}

@@ -1,0 +1,14 @@
+// Nested generic instantiation Option[Option[i32]], unwrapped by
+// nested match arms.
+function main(): i32 {
+    var x: Option[Option[i32]] = Some(Some(42));
+    match (x) {
+        Some(inner) => {
+            match (inner) {
+                Some(n) => { return n; },
+                None => { return 1; }
+            }
+        },
+        None => { return 2; }
+    }
+}

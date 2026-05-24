@@ -1,0 +1,4 @@
+function main(): i32 {
+    print(["alice", "bob", "ciri"].join(", "));
+    return 0;
+}

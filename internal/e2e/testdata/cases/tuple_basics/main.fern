@@ -1,0 +1,5 @@
+// Tuple literal with positional `.0` / `.1` / `.2` access.
+function main(): i32 {
+    var t = (7, 11, 24);
+    return t.0 + t.1 + t.2;
+}

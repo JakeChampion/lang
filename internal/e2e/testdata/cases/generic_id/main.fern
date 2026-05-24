@@ -1,0 +1,11 @@
+// A generic identity function instantiated at both i32 and string.
+function id[T](x: T): T {
+    return x;
+}
+
+function main(): i32 {
+    var a = id(42);
+    var s = id("hi");
+    if (s == "hi") { return a; }
+    return 0;
+}

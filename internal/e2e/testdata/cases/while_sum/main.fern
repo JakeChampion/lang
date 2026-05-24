@@ -1,0 +1,12 @@
+// Sum 1..100 = 5050. Printed (not returned) because the value
+// exceeds the 0..255 exit-code range.
+function main(): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 1;
+    while (i <= 100) {
+        sum = sum + i;
+        i = i + 1;
+    }
+    print(sum.to_string());
+    return 0;
+}

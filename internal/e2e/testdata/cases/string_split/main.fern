@@ -1,0 +1,5 @@
+// split() on a separator yields a string array; count the parts.
+function main(): i32 {
+    var parts = "a,b,c,d".split(",");
+    return parts.len();
+}

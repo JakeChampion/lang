@@ -1,0 +1,15 @@
+// An enum mixing payloadless and payload-carrying variants, matched
+// to recover the carried value.
+enum Light { On, Off, Dim(i32) }
+
+function level(l: Light): i32 {
+    match (l) {
+        On => { return 100; },
+        Off => { return 0; },
+        Dim(n) => { return n; }
+    }
+}
+
+function main(): i32 {
+    return level(Dim(42));
+}

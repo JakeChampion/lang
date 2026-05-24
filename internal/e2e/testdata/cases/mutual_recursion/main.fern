@@ -1,0 +1,16 @@
+// Mutual recursion with a forward reference (is_even calls is_odd,
+// defined later). is_even(10) is true -> exit 1.
+function is_even(n: i32): boolean {
+    if (n == 0) { return true; }
+    return is_odd(n - 1);
+}
+
+function is_odd(n: i32): boolean {
+    if (n == 0) { return false; }
+    return is_even(n - 1);
+}
+
+function main(): i32 {
+    if (is_even(10)) { return 1; }
+    return 0;
+}

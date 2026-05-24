@@ -1,0 +1,16 @@
+// An array of struct literals, iterated with for-in, summing a
+// derived field. 2*5 + 3*4 + 1*10 = 32.
+struct Item { qty: i32, price: i32 }
+
+function main(): i32 {
+    var items = [
+        Item { qty: 2, price: 5 },
+        Item { qty: 3, price: 4 },
+        Item { qty: 1, price: 10 }
+    ];
+    var total: i32 = 0;
+    for it in items {
+        total = total + it.qty * it.price;
+    }
+    return total;
+}

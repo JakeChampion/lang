@@ -1,0 +1,10 @@
+// Stdlib array methods from the prelude: sum() and max() (Option).
+// 5+3+8+1 = 17, max = 8, 17 + 8 = 25.
+function main(): i32 {
+    var a = [5, 3, 8, 1];
+    var total = a.sum();
+    match (a.max()) {
+        Some(m) => { return total + m; },
+        None => { return 255; }
+    }
+}
