@@ -591,10 +591,29 @@ End-to-end exit code 42 demo (covered by
     getter lowers with trampoline blocking-read/-write lowers.
     End-to-end tests:
     `TestCmdLangComponentWrapCliWith{PrintExit,ReadLinePrint}`.
+  - **Reader / Writer streaming API. Shipped.** Preview-2 has no
+    fds, so a Reader / Writer carries a stream handle instead of an
+    fd (stored in the same 12-byte rc struct at +8). `stdin()`
+    stores the `get-stdin` input-stream handle (#1317);
+    `open_reader` opens via get-directories → open-at →
+    read-via-stream and stores that input-stream handle, with
+    `read_line` / `read_chunk` blocking-reading on it (#1320);
+    `open_writer` mirrors it with write-via-stream, and `write`
+    blocking-write-and-flushes the output-stream handle (#1322).
+    Each reuses an existing wrap (the read-only / read-file /
+    write-file routes — the import sets already match), so no new
+    component wrap was needed. End-to-end tests:
+    `TestCmdLangComponentWrapCliWith{StdinReadLine,OpenReader,OpenWriter}`.
   - **Still to do:**
-    - `open_reader` / `open_writer` (fd-based Reader/Writer over
-      preview-2 descriptors — the fd model needs a descriptor /
-      stream handle table).
+    - `open_reader` / `open_writer` with no subsequent read / write
+      method: the bare open chain imports only 3 host calls (no
+      blocking-read/-write) and so doesn't match the 4-import
+      read-file / write-file routes; such open-and-never-use
+      programs still need the adapter. A 3-import wrap variant (or
+      the general composition engine below) would close this.
+    - `open_appender` (CREATE without TRUNCATE + append semantics)
+      is still preview-1 only — preview-2 has no fd-append flag, so
+      it needs an explicit seek-to-end before write-via-stream.
     - Further mixed combinations (e.g. read_file + print, or
       args + write_file) — each currently needs its own wrap +
       detector; a general N-interface composition engine would
