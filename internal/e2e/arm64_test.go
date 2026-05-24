@@ -13221,6 +13221,31 @@ func TestArm64MapSetAliasedCopies(t *testing.T) {
 	}
 }
 
+// Phase 2d: Map.delete / Map.clear copy-on-write — arm64 sibling
+// of TestX86_64MapDeleteClearAliasedCopies.
+func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var m1: Map[string, i32] = map_new(8);
+    m1.set("a", 1);
+    m1.set("b", 2);
+    var m2 = m1;                       // alias → rc=2
+    var (m3, ok) = m2.delete("a");     // rc>1 → copy; m1/m2 intact
+    if (!ok)            { return 1; }
+    if (m1.len() != 2)  { return 2; }
+    if (!m1.has("a"))   { return 3; }
+    if (m3.len() != 1)  { return 4; }
+    if (m3.has("a"))    { return 5; }
+    var m4 = m1;                       // alias → rc=2
+    m4 = m4.clear();                   // rc>1 → copy; m1 intact
+    if (m1.len() != 2)  { return 6; }
+    if (m4.len() != 0)  { return 7; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased Map.delete/clear must copy)", code)
+	}
+}
+
 // Pointer-typed tuple element — struct, array, or nested tuple in
 // a tuple slot must round-trip through ptrW-aligned storage.
 // Bug: exprType returned nil for *ast.StructLit / *ast.ArrayLit /
