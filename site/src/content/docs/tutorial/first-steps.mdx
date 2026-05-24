@@ -10,8 +10,8 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 ## Variables
 
 `var` declares a mutable binding; `let` is reserved for pattern-
-binding (covered later). Annotate the type explicitly, or let the
-checker infer it from the initialiser.
+binding (covered later). Annotate the type, or let the checker
+infer it from the initialiser.
 
 <FernPlayground
   code={`function main(): i32 {
@@ -26,8 +26,8 @@ checker infer it from the initialiser.
 
 There's no untyped `int`. The eight integer types are `i8`, `i16`,
 `i32`, `i64` (signed) and `u8`, `u16`, `u32`, `u64` (unsigned),
-plus `usize` for native pointer-width counts. Two float types:
-`f32` and `f64`. Mixing widths needs an explicit cast.
+plus `usize` for native pointer-width counts. Two floats: `f32`
+and `f64`. Mixing widths needs an explicit cast.
 
 ```fern
 var a: i32 = 7;
@@ -37,7 +37,7 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 
 ## Control flow
 
-`if` / `else`, `while`, and three-part `for` — straightforward.
+`if` / `else`, `while`, and three-part `for`.
 
 <FernPlayground
   code={`function main(): i32 {
@@ -52,7 +52,7 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 }`}
 />
 
-`if` is also an expression — useful for one-line ternaries.
+`if` is also an expression, for one-line ternaries.
 
 ```fern
 var max: i32 = if (a > b) { a } else { b };
@@ -66,8 +66,7 @@ function add(a: i32, b: i32): i32 {
 }
 ```
 
-Return type is always required — even `void` for procedures.
-Parameter types are always required too; no inference at the
-function-signature boundary.
+Return and parameter types are always required — even `void` for
+procedures. There's no inference at the signature boundary.
 
 [Next: Types →](../types/)

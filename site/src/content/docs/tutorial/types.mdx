@@ -9,8 +9,8 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 
 ## Structs
 
-Plain records. Fields are positional in memory (layout matches
-declaration order), addressed by name in source.
+Plain records. Fields are laid out in declaration order, addressed
+by name in source.
 
 <FernPlayground
   code={`struct Point { x: i32, y: i32 }
@@ -28,8 +28,8 @@ function main(): i32 {
 
 ## Methods
 
-Receiver syntax goes between `function` and the name. Method calls
-dispatch by receiver type at the call site.
+The receiver goes between `function` and the name. Calls dispatch
+by receiver type at the call site.
 
 <FernPlayground
   code={`struct Point { x: i32, y: i32 }
@@ -48,8 +48,8 @@ function main(): i32 {
 ## Enums
 
 Tagged unions with optional positional payloads. The standard
-library injects `Option[T]` and `Result[T, E]` so you don't have
-to re-declare them.
+library injects `Option[T]` and `Result[T, E]`, so you don't
+re-declare them.
 
 <FernPlayground
   code={`enum Shape {
@@ -73,8 +73,8 @@ function main(): i32 {
 
 ## Match is exhaustive
 
-The checker fails the build if a `match` misses a variant — or
-requires a wildcard `_` arm to acknowledge the gap.
+The checker fails the build if a `match` misses a variant, unless
+a wildcard `_` arm acknowledges the gap.
 
 ```fern
 function describe(s: Shape): string {
