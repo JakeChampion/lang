@@ -9175,8 +9175,8 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 // that BOTH writes stdout (print) AND calls exit() — the mixed
 // trampoline-pattern + structured-flow case. The driver detects
 // the stream-write pair plus the structured wasi:cli/exit import
-// (classifyPrintPlusStructured) and routes through
-// WrapWasiPrintWithStructuredAsCliRun. exit(0) → stdout printed +
+// (classifyComposeCliStream) and routes through
+// ComposePreview2CliRun. exit(0) → stdout printed +
 // exit 0; exit(1) → printed + non-zero (wasi:cli/exit only models
 // the result discriminant, so codes are 0/1).
 func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
@@ -9478,7 +9478,7 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 // preview-2 imports (wasi:cli/stdin::get-stdin +
 // wasi:io/streams::blocking-read), rebuilds with cabi_realloc
 // exported (the blocking-read canon-lower allocates the returned
-// list<u8> through it), and routes via WrapWasiReadAsCliRun.
+// list<u8> through it), and routes via ComposePreview2CliRun.
 //
 // Observed via exit code (a read-only program can't print): the
 // program returns 0 (ok) when a line is present, 1 (err) at EOF.
@@ -9542,7 +9542,7 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 // the four-import read+print shape (get-stdin +
 // input-stream.blocking-read + get-stdout +
 // output-stream.blocking-write-and-flush) and routes via
-// WrapWasiReadLinePrintAsCliRun (combined io/streams, two
+// ComposePreview2CliRun (combined io/streams, two
 // trampolines + two no-trampoline getters).
 func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

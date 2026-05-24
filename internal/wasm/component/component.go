@@ -107,37 +107,11 @@ func wrapSection(buf []byte, id byte, body []byte) []byte {
 	return buf
 }
 
-// FixupModuleFor4I32NoResult returns the bytes of the tiny core
-// wasm module that, paired with TrampolineModuleFor4I32NoResult,
-// closes the canon-lower / instantiation cycle.
-//
-// The fixup module:
-//
-//   - imports the canon-lowered WASI func as `("" "0")` (i32 i32
-//     i32 i32) → ()
-//   - imports the trampoline's funcref table as `("" "$imports")`
-//   - emits an `(elem (i32.const 0) func 0)` segment that
-//     installs the lowered func into table[0]
-//
-// Instantiating this module triggers the elem segment, after
-// which the trampoline's `call_indirect` resolves to the real
-// canon-lowered host func. By then the user's core module has
-// already been instantiated (the trampoline indirection let it
-// import a memory-less func), so the lowered func can safely
-// reference the user's memory + cabi_realloc via its canon-
-// lower opts.
-//
-// Output bytes match what wasm-tools emits for this method
-// (verified by hex-dumping a canonical print-component).
-func FixupModuleFor4I32NoResult() []byte {
-	return FixupModuleForNI32NoResult(4)
-}
-
-// FixupModuleForNI32NoResult is the param-count-generalised
-// FixupModuleFor4I32NoResult. The imported func type is
-// `(i32 × nparams) -> ()`; everything else (the func + table
-// imports and the elem segment that installs the lowered func
-// into table[0]) is independent of the param count.
+// FixupModuleForNI32NoResult returns the fixup core module for an
+// imported func type of `(i32 × nparams) -> ()`. Paired with
+// TrampolineModuleForNI32NoResult; the func + table imports and the
+// elem segment that installs the lowered func into table[0] are
+// independent of the param count.
 func FixupModuleForNI32NoResult(nparams int) []byte {
 	return FixupModuleForParamsNoResult(repeatByte(0x7f, nparams))
 }
@@ -183,36 +157,10 @@ func appendCoreSection(buf []byte, id byte, body []byte) []byte {
 	return append(buf, body...)
 }
 
-// TrampolineModuleFor4I32NoResult returns the bytes of a tiny
-// core wasm trampoline module that exports a single function of
-// type `(param i32 i32 i32 i32) -> ()` whose body is a 1-entry
-// funcref-table call_indirect. The table is also exported. This
-// is the shape `wasm-tools component new` uses to break the
-// canon-lower / core-instantiation dependency cycle for
-// list<u8>-shaped imports — the user's core module imports the
-// trampoline func (no memory dependency yet), then after the
-// user instance is instantiated and its memory aliased, the
-// real canon-lowered func gets bound into the trampoline's
-// table[0] via an elem segment in a tiny fixup module.
-//
-// Function-type signature (4 i32, no result) matches the
-// lowered ABI for
-// `wasi:io/streams::[method]output-stream.blocking-write-and-flush`:
-//
-//	(self: i32, ptr: i32, len: i32, ret_ptr: i32) -> ()
-//
-// Other lowered-method shapes will need their own trampoline
-// builders; this one is fd_write-specific. Output bytes match
-// what wasm-tools emits for this method (verified by hex-
-// dumping a canonical print-component).
-func TrampolineModuleFor4I32NoResult() []byte {
-	return TrampolineModuleForNI32NoResult(4)
-}
-
-// TrampolineModuleForNI32NoResult is the param-count-generalised
-// TrampolineModuleFor4I32NoResult. The exported func type is
-// `(i32 × nparams) -> ()`; the body forwards all nparams to a
-// 1-entry funcref-table call_indirect.
+// TrampolineModuleForNI32NoResult returns the trampoline core
+// module whose exported func type is `(i32 × nparams) -> ()`; the
+// body forwards all nparams to a 1-entry funcref-table
+// call_indirect. Paired with FixupModuleForNI32NoResult.
 func TrampolineModuleForNI32NoResult(nparams int) []byte {
 	return TrampolineModuleForParamsNoResult(repeatByte(0x7f, nparams))
 }
