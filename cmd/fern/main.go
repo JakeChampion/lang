@@ -588,15 +588,22 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				}
 				if opts, ok := classifyComposeCliStream(bin); ok {
 					// General CLI-stream + structured composition: any mix of
-					// stdout/stderr write, stdin read, read_file open-chain, and
-					// no-memory structured imports (exit/random/monotonic) the
+					// stdout/stderr write, stdin read, file open-chains,
+					// wall-clock/args/env, and no-memory structured imports the
 					// specific routes above didn't already claim (e.g.
-					// read_line+exit, read_file+print, write_file+exit). The
-					// read side and the file open-chain (get-directories)
-					// return lists, so rebuild with ForceMemorySection
-					// (cabi_realloc) when any is present.
+					// read_line+exit, read_file+print, now()+print, args+exit).
+					// The read side, the file open-chain (get-directories), and
+					// the list-returning args/env imports allocate through
+					// cabi_realloc, so rebuild with ForceMemorySection when any
+					// is present.
+					needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite
+					for _, mt := range opts.MemTramp {
+						if mt.NeedsRealloc {
+							needsRealloc = true
+						}
+					}
 					b := bin
-					if opts.ReadStdin || opts.FileRead || opts.FileWrite {
+					if needsRealloc {
 						rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 							ForceMemorySection: true,
 							Preview2WASI:       true,
@@ -1075,6 +1082,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	var opts component.ComposeOpts
 	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
 	var getDirs, openAt, readVia, writeVia bool
+	var wallNow, getArgs, getEnv bool
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
 		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
@@ -1095,6 +1103,12 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 			readVia = true
 		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.write-via-stream":
 			writeVia = true
+		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
+			wallNow = true
+		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments":
+			getArgs = true
+		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
+			getEnv = true
 		default:
 			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
 			if !ok {
@@ -1144,11 +1158,40 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	opts.ReadStdin = getStdin
 	opts.FileRead = fileRead
 	opts.FileWrite = fileWrite
-	// Only claim shapes with a stream/file side. Pure-structured
-	// (exit/random/monotonic with no stream) stays on
-	// WrapWasiImportedAsCliRun; no imports falls to
+	// Mem-trampoline imports (wall-clock now / args / env). args and
+	// env share the wasi:cli/environment interface, so they can't both
+	// be imported as separate instances — reject that combination.
+	if getArgs && getEnv {
+		return component.ComposeOpts{}, false
+	}
+	if wallNow {
+		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
+			InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(),
+			InterfaceName:    "wasi:clocks/wall-clock@0.2.0",
+			FuncName:         "now",
+		})
+	}
+	if getArgs {
+		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
+			InstanceTypeBody: component.WasiCliEnvironmentArgsInstanceTypeBody(),
+			InterfaceName:    "wasi:cli/environment@0.2.0",
+			FuncName:         "get-arguments",
+			NeedsRealloc:     true,
+		})
+	}
+	if getEnv {
+		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
+			InstanceTypeBody: component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody(),
+			InterfaceName:    "wasi:cli/environment@0.2.0",
+			FuncName:         "get-environment",
+			NeedsRealloc:     true,
+		})
+	}
+	// Only claim shapes with a stream/file/mem-trampoline side.
+	// Pure-structured (exit/random/monotonic with no other side) stays
+	// on WrapWasiImportedAsCliRun; no imports falls to
 	// BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite {
+	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && len(opts.MemTramp) == 0 {
 		return component.ComposeOpts{}, false
 	}
 	return opts, true
