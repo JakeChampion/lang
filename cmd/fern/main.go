@@ -488,33 +488,17 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		}
 		if wasiAdapter == "" {
 			if componentWrap {
-				// Wrap the core module as a preview-2 component via
-				// the Go-side encoder — no wasm-tools shell-out, no
-				// adapter. Lifts `main` as a component-level u32-
-				// returning function.
-				//
-				// Three branches:
-				//
-				//   - No imports → BuildLiftedExportComponent (simplest).
-				//   - Only preview-2 imports we know how to route →
-				//     WrapWasiImportedWithExport.
-				//   - Anything else (preview-1 imports we haven't
-				//     migrated yet) → error pointing at -wasi-adapter.
-				wasiImports, unknown := classifyPreview2Imports(bin)
-				if len(unknown) > 0 {
-					return 1, fmt.Errorf("-component-wrap can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter PATH to wrap through wasm-tools.", len(unknown), strings.Join(unknown, ", "))
-				}
-				// `_lang_run` is the wasmbin-synthesised wrapper
-				// (SynthCliRun above) that normalises main's
-				// signature to `() -> i32` regardless of what the
-				// user declared. The component-level export name
-				// stays as "main" so `wasmtime run --invoke main()`
-				// keeps working.
-				var comp []byte
-				if len(wasiImports) == 0 {
-					comp = component.BuildLiftedExportComponent(bin, "_lang_run", "main", nil, nil, component.CValtypeU32)
-				} else {
-					comp = component.WrapWasiImportedWithExport(bin, wasiImports, "_lang_run", "main", nil, nil, component.CValtypeU32)
+				// Wrap the core module as a preview-2 component via the
+				// Go-side encoder (no wasm-tools, no adapter), lifting the
+				// run func as a component-level u32-returning export named
+				// "main" (callable via `wasmtime run --invoke main()`).
+				// Same composer as -component-wrap-cli, only the lift tail
+				// differs (named u32 export vs wasi:cli/run). `_lang_run`
+				// is the SynthCliRun wrapper normalising main's signature
+				// to `() -> i32`.
+				comp, err := buildPreview2Component(prog, info, bin, "main")
+				if err != nil {
+					return 1, fmt.Errorf("-component-wrap %w", err)
 				}
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
@@ -866,7 +850,7 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 }
 
 // preview2ImportSpec describes one preview-2 WASI import the
-// driver knows how to route through `WrapWasiImportedWithExport`.
+// driver knows how to route through the composer.
 // Keyed by (core-module, core-name) the core wasm module declared
 // — i.e. the import-name pair wasmbin emitted under
 // `EmitOptions.Preview2WASI`.
@@ -937,7 +921,19 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 // through cabi_realloc, so the module is rebuilt with
 // ForceMemorySection when any is present.
 func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []byte) ([]byte, error) {
+	return buildPreview2Component(prog, info, bin, "")
+}
+
+// buildPreview2Component is buildPreview2CliRunComponent generalised
+// over the lift tail: exportName == "" produces the wasi:cli/run
+// shape; a non-empty exportName lifts the run func as a u32-returning
+// component func exported under that name (the non-cli
+// `-component-wrap` shape, callable via `--invoke <name>()`). Both
+// share the composer for every recognised import shape and fall back
+// to the matching import-free builder.
+func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, exportName string) ([]byte, error) {
 	if opts, ok := classifyComposeCliStream(bin); ok {
+		opts.ExportName = exportName
 		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend
 		for _, mt := range opts.MemTramp {
 			if mt.NeedsRealloc {
@@ -963,6 +959,9 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 	// can't place.
 	if _, unknown := classifyPreview2Imports(bin); len(unknown) > 0 {
 		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
+	}
+	if exportName != "" {
+		return component.BuildLiftedExportComponent(bin, "_lang_run", exportName, nil, nil, component.CValtypeU32), nil
 	}
 	return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
 }
@@ -1094,7 +1093,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 
 // classifyPreview2Imports walks the core module's import section and
 // bucketises each: known structured imports become component.WasiImport
-// entries (for WrapWasiImportedWithExport); anything else is returned as
+// entries; anything else is returned as
 // an "module.name" string so the driver can surface a clear error.
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
 	pairs := coreModuleImportPairs(bin)

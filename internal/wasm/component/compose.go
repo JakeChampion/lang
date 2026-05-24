@@ -51,6 +51,11 @@ type ComposeOpts struct {
 	WriteStream bool
 	Structured  []WasiImport
 	MemTramp    []MemTrampImport
+	// ExportName selects the tail: "" lifts the run func as
+	// wasi:cli/run@0.2.0 (the default cli shape); a non-empty name
+	// lifts it as a plain u32-returning component func exported under
+	// that name (the non-cli `-component-wrap` shape).
+	ExportName string
 }
 
 // MemTrampImport is a self-contained single-function import whose
@@ -567,8 +572,22 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		fixup(mtFixupMod[i], mtTable[i], mtCoreF[i])
 	}
 
-	// --- Phase I: wasi:cli/run tail. ---
+	// --- Phase I: lift + export tail. ---
 	runCoreF := c.aliasCoreFunc(userInst, coreExportName)
+	if opts.ExportName != "" {
+		// Export mode: lift the run func as a plain u32-returning
+		// component func exported under ExportName (the non-cli
+		// `-component-wrap` shape, callable via `--invoke <name>()`).
+		funcType := c.nType
+		c.buf = PutTypeSectionOneFunc(c.buf, nil, nil, CValtypeU32)
+		c.nType++
+		c.buf = PutCanonSectionLiftNoOpts(c.buf, runCoreF, funcType)
+		liftedCFunc := c.nCFunc
+		c.nCFunc++
+		c.buf = PutExportSectionOneFunc(c.buf, opts.ExportName, liftedCFunc)
+		return c.buf
+	}
+	// wasi:cli/run tail: lift main()'s i32 → result<_,_>, package + export run.
 	resultType := c.nType
 	c.buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(c.buf, resultType)
 	c.nType += 2 // result type + unit-func-returning-result type

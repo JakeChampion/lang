@@ -8978,9 +8978,11 @@ function main(): i32 {
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
+	// TCP (wasi:sockets) is not in the composer's recognised set, so
+	// -component-wrap must reject it. (args/print/etc. now compose.)
 	src := []byte(`function main(): i32 {
-    var a: string[] = args();
-    return a.len();
+    var s: i32 = tcp_listen(8080);
+    return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -9004,9 +9006,9 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 // calls exit() through `-component-wrap` end-to-end. With the
 // preview-2 migration of proc_exit and the result-type encoding
 // for the wasi:cli/exit interface shipped, the driver detects the
-// `wasi:cli/exit@0.2.0::exit` import, wraps it via
-// `WrapWasiImportedWithExport`, and the produced component links
-// against wasmtime's host wasi:cli/exit implementation.
+// `wasi:cli/exit@0.2.0::exit` import, composes it (export mode),
+// and the produced component links against wasmtime's host
+// wasi:cli/exit implementation.
 //
 // wasmtime's wasi:cli/exit::exit treats the err arm of `result<_,
 // _>` as a non-zero exit. The Lang `exit(0)` lowers to
