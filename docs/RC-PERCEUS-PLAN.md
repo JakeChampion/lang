@@ -781,15 +781,22 @@ Phase 3 CANNOT start with the freelist — it must start by
 
 #### Implementation sequence (safe order)
 
-1. **rc-underflow detector (FIRST) — SHIPPED (wasm).**
-   `__fern_rc_dec` (wasm `buildRcDecBody`), after the null /
-   low-address / sentinel guards, tests `rc <= 0` *before*
-   decrementing and bumps a counter at a fixed low-memory slot
-   (`rcUnderflowAddr = 48`, in the reserved mem[44..64] gap). The
-   `__rc_underflow_count()` builtin reads it back so tests can
-   assert a program is drift-free. Pure instrumentation, no
-   behavior change. `TestWASMRcUnderflowDetector` pins both
-   contracts (clean program → 0; a deliberate double-dec → 1).
+1. **rc-underflow detector (FIRST) — SHIPPED (all three backends).**
+   `__fern_rc_dec`, after the null / low-address / sentinel guards,
+   tests `rc <= 0` *before* decrementing and bumps an over-release
+   counter: wasm at a fixed linear-memory slot (`rcUnderflowAddr =
+   48`, in the reserved mem[44..64] gap); arm64 / x86_64 at a BSS
+   global `__fern_rc_underflow`. The `__rc_underflow_count()`
+   builtin lowers to a per-backend runtime helper
+   (`__fern_rc_underflow_count`) that reads the right store, so the
+   detector runs everywhere. Pure instrumentation, no behavior
+   change. `Test{WASM,X86_64,Arm64}RcUnderflowDetector` pin both
+   contracts (clean program → 0; a deliberate double-dec → 1), and
+   the x86_64 / arm64 variants additionally confirm the IR-side
+   drift fixes hold on the natives (map self-assign → 0
+   over-releases), since those fixes live in the shared IR layer.
+   This de-risks the eventual step-4 free flip: a corpus-wide
+   green detector across all backends is the go/no-go signal.
 
    **First measurements (the drift Phases 1–2 left behind):**
    - `m = m.set(k, v)` repeated (the idiomatic value-returning

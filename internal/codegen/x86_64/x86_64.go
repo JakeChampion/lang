@@ -215,6 +215,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
+	if g.usesRcUnderflowCount {
+		g.emitRcUnderflowCountRuntime()
+	}
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
@@ -426,6 +429,11 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesRcUnderflowCount gates the Phase 3 detector reader
+	// `__fern_rc_underflow_count` (returns the BSS over-release
+	// counter __fern_rc_dec bumps). Set when the IR emits the
+	// matching OpCallDirect.
+	usesRcUnderflowCount bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -462,6 +470,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRcInc = true
 	case "__fern_rc_dec":
 		g.usesRcDec = true
+	case "__fern_rc_underflow_count":
+		g.usesRcUnderflowCount = true
 	case "__fern_arr_push_grow":
 		g.usesArrPushGrow = true
 		g.usesAlloc = true
@@ -2476,7 +2486,7 @@ func (g *generator) emitDataSections() {
 	// path spill is overwritten on each call, but the value
 	// is consumed immediately by OpLoadByte before the next
 	// __str_idx fires).
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
@@ -2527,6 +2537,14 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label("__fern_read_line_buf")
 			g.line("\t.space 4096")
+		}
+		if g.usesRcDec || g.usesRcUnderflowCount {
+			// Phase 3 rc-underflow detector counter (i32 in the
+			// low word). __fern_rc_dec bumps it on an over-release;
+			// __fern_rc_underflow_count reads it back.
+			g.line(".align 8")
+			g.label("__fern_rc_underflow")
+			g.line("\t.quad 0")
 		}
 	}
 }
@@ -2737,11 +2755,31 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("mov ecx, dword ptr [rdi - 8]")
 	g.emit("test ecx, ecx")
 	g.emit("js .Lrcdec_ret") // bit 31 set ⇒ static sentinel
+	// Phase 3 underflow detector: a healthy dec operates on rc >= 1.
+	// If rc <= 0 here this dec over-releases — bump the counter.
+	g.emit("cmp ecx, 0")
+	g.emit("jg .Lrcdec_dec")
+	g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
+	g.label(".Lrcdec_dec")
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_dec, .-__fern_rc_dec")
+}
+
+// emitRcUnderflowCountRuntime emits `__fern_rc_underflow_count()
+// -> i32` — returns the Phase 3 over-release counter that
+// __fern_rc_dec bumps in __fern_rc_underflow. Mirrors arm64 + the
+// wasm linear-memory reader.
+func (g *generator) emitRcUnderflowCountRuntime() {
+	g.line("")
+	g.line(".globl __fern_rc_underflow_count")
+	g.line(".type __fern_rc_underflow_count, @function")
+	g.label("__fern_rc_underflow_count")
+	g.emit("mov eax, dword ptr [rip + __fern_rc_underflow]")
+	g.emit("ret")
+	g.line(".size __fern_rc_underflow_count, .-__fern_rc_underflow_count")
 }
 
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data`
