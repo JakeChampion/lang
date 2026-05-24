@@ -660,6 +660,23 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if getFuncName, structured, ok := classifyPrintPlusStructured(bin); ok {
+					// Mixed case: a stream-write (print/eprint) plus K
+					// no-memory structured imports (exit/random/monotonic)
+					// in one component. Rebuild with ForceMemorySection is
+					// NOT needed (the stream-write lower is memory-only, no
+					// realloc), but the print path already runs without it.
+					var comp []byte
+					if getFuncName == "get-stderr" {
+						comp = component.WrapWasiEprintWithStructuredAsCliRun(bin, structured, "_lang_run")
+					} else {
+						comp = component.WrapWasiPrintWithStructuredAsCliRun(bin, structured, "_lang_run")
+					}
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -1241,6 +1258,52 @@ func usesPreview2WriteFileOnly(bin []byte) bool {
 		}
 	}
 	return true
+}
+
+// classifyPrintPlusStructured detects the mixed case: a stream-write
+// (print → get-stdout, or eprint → get-stderr, plus
+// output-stream.blocking-write-and-flush) combined with one or more
+// no-memory structured imports (exit / random / monotonic, all in
+// knownPreview2Imports). Returns the getter name ("get-stdout" /
+// "get-stderr"), the classified structured imports, and ok=true when
+// the import set is exactly {stream-write pair} ∪ {≥1 known
+// structured} and nothing else. The pure stream-write case (no
+// structured) is handled earlier by usesPreview2{Print,Eprint}Only,
+// so this requires at least one structured import.
+func classifyPrintPlusStructured(bin []byte) (string, []component.WasiImport, bool) {
+	pairs := coreModuleImportPairs(bin)
+	const blockingWrite = "[method]output-stream.blocking-write-and-flush"
+	hasWrite := false
+	getFuncName := ""
+	var structured []component.WasiImport
+	for _, p := range pairs {
+		switch {
+		case p.module == "wasi:io/streams@0.2.0" && p.name == blockingWrite:
+			hasWrite = true
+		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
+			getFuncName = "get-stdout"
+		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
+			getFuncName = "get-stderr"
+		default:
+			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
+			if !ok {
+				return "", nil, false // an import we can't place
+			}
+			structured = append(structured, component.WasiImport{
+				InterfaceName:    spec.interfaceName,
+				FuncName:         p.name,
+				ParamNames:       spec.paramNames,
+				ParamValtypes:    spec.paramValtypes,
+				CoreImportModule: spec.coreImportModule,
+				InnerTypes:       spec.innerTypes,
+				ResultValtypes:   spec.resultValtypes,
+			})
+		}
+	}
+	if !hasWrite || getFuncName == "" || len(structured) == 0 {
+		return "", nil, false
+	}
+	return getFuncName, structured, true
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
