@@ -76,7 +76,7 @@ function test_starts_with_ci_fail(): Option[string] {
 }
 
 function test_ends_with_ci_pass(): Option[string] {
-    return assert_ends_with_ci("script.LANG", ".fern");
+    return assert_ends_with_ci("script.FERN", ".fern");
 }
 
 function test_ends_with_ci_fail(): Option[string] {
