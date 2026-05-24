@@ -1,0 +1,15 @@
+// Map literal `Map { k: v, ... }` with string keys, read back via get.
+function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 40, "b": 2 };
+    var a: i32 = 0;
+    var b: i32 = 0;
+    match (m.get("a")) {
+        Some(x) => { a = x; },
+        None => { return 1; }
+    }
+    match (m.get("b")) {
+        Some(x) => { b = x; },
+        None => { return 2; }
+    }
+    return a + b;
+}

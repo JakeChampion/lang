@@ -1,0 +1,8 @@
+// Calling a 1-arg function with no arguments.
+function f(n: i32): i32 {
+    return n;
+}
+
+function main(): i32 {
+    return f();
+}

@@ -1,0 +1,5 @@
+// replace() swaps every occurrence of a substring.
+function main(): i32 {
+    print("a.b.c".replace(".", "-"));
+    return 0;
+}

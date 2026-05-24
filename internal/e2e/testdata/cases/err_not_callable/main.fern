@@ -1,0 +1,5 @@
+// Calling a non-function value.
+function main(): i32 {
+    var x: i32 = 5;
+    return x();
+}

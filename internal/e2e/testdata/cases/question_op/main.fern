@@ -1,0 +1,20 @@
+// The `?` operator unwraps an Option, early-returning None from the
+// enclosing (Option-returning) function on the None case. Both
+// divisions succeed here, so compute() yields Some(42).
+function checked_div(a: i32, b: i32): Option[i32] {
+    if (b == 0) { return None; }
+    return Some(a / b);
+}
+
+function compute(): Option[i32] {
+    var x: i32 = checked_div(84, 2)?;
+    var y: i32 = checked_div(x, 1)?;
+    return Some(y);
+}
+
+function main(): i32 {
+    match (compute()) {
+        Some(n) => { return n; },
+        None => { return 1; }
+    }
+}
