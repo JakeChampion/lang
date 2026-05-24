@@ -16,7 +16,8 @@ package component
 // It currently subsumes: structured-only (exit/random/monotonic),
 // print/eprint, read_line, read_line+print, the read_file open-chain
 // (get-directories → open-at → read-via-stream → blocking-read), the
-// write_file open-chain (… → write-via-stream → blocking-write), and
+// write_file / open_appender open-chains (… → write/append-via-stream
+// → blocking-write), and
 // the standalone mem-trampoline imports (wall-clock now / args
 // get-arguments / env get-environment), and any mix of those —
 // including new combinations the bespoke wraps never covered
@@ -45,6 +46,7 @@ type ComposeOpts struct {
 	ReadStdin   bool
 	FileRead    bool
 	FileWrite   bool
+	FileAppend  bool
 	ReadStream  bool
 	WriteStream bool
 	Structured  []WasiImport
@@ -73,6 +75,7 @@ var (
 	composeGetDirsParams    = []byte{0x7f} // (ret_ptr)
 	composeOpenAtParams     = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f} // (self, offset, ret_ptr)
+	composeAppendViaParams  = []byte{0x7f, 0x7f}       // (self, ret_ptr) — append, no offset
 	composeOneI32Params     = []byte{0x7f}             // (ret_ptr) — wall-clock/args/env
 )
 
@@ -83,6 +86,7 @@ const (
 	composeOpenAtName     = "[method]descriptor.open-at"
 	composeReadViaName    = "[method]descriptor.read-via-stream"
 	composeWriteViaName   = "[method]descriptor.write-via-stream"
+	composeAppendViaName  = "[method]descriptor.append-via-stream"
 )
 
 type p2composer struct {
@@ -227,7 +231,11 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	hasStdin := opts.ReadStdin
 	hasFileRead := opts.FileRead
 	hasFileWrite := opts.FileWrite
-	hasFile := hasFileRead || hasFileWrite
+	hasFileAppend := opts.FileAppend
+	// write_file and open_appender share the write-side open-chain
+	// (output-stream); they differ only in the via-stream method.
+	writeSideFile := hasFileWrite || hasFileAppend
+	hasFile := hasFileRead || writeSideFile
 	// useBlock{Read,Write} = the user module actually imports the
 	// stream method. need{Input,Output}Stream = io/streams must
 	// declare + alias the resource because *some* producer
@@ -238,7 +246,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	useBlockRead := opts.ReadStream
 	useBlockWrite := opts.WriteStream
 	needInputStream := hasStdin || hasFileRead || useBlockRead
-	needOutputStream := hasWriteGetter || hasFileWrite || useBlockWrite
+	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite
 	needStreams := needInputStream || needOutputStream
 	hasMemTramp := len(opts.MemTramp) > 0
 	// memory backs every trampoline lower (block read/write, the file
@@ -253,9 +261,15 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 			needRealloc = true
 		}
 	}
-	// Which descriptor stream method the file open-chain uses.
+	// Which descriptor stream method the file open-chain uses, and its
+	// core-import signature (append-via-stream takes no offset).
 	viaName := composeReadViaName
-	if hasFileWrite {
+	viaParams := composeReadViaParams
+	switch {
+	case hasFileAppend:
+		viaName = composeAppendViaName
+		viaParams = composeAppendViaParams
+	case hasFileWrite:
 		viaName = composeWriteViaName
 	}
 
@@ -296,9 +310,12 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	var fsTypesInst, preopensInst uint32
 	if hasFile {
 		var fsBody []byte
-		if hasFileWrite {
+		switch {
+		case hasFileAppend:
+			fsBody = WasiFilesystemTypesAppendPathInstanceTypeBody(tOut)
+		case hasFileWrite:
 			fsBody = WasiFilesystemTypesWritePathInstanceTypeBody(tOut)
-		} else {
+		default:
 			fsBody = WasiFilesystemTypesReadPathInstanceTypeBody(tIn)
 		}
 		tFsTypes := c.typeRaw(fsBody)
@@ -360,8 +377,8 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		fixupOpenMod = c.coreModule(FixupModuleForParamsNoResult(composeOpenAtParams))
 		// read-via-stream and write-via-stream share the (self, offset,
 		// ret_ptr) shape.
-		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(composeReadViaParams))
-		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(composeReadViaParams))
+		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(viaParams))
+		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(viaParams))
 	}
 	// One 1-i32 trampoline + fixup per mem-trampoline import.
 	mtTrampMod := make([]uint32, len(opts.MemTramp))
