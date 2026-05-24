@@ -9672,6 +9672,83 @@ func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliComposedFileRead exercises the
+// composer's filesystem-read fold: read_file's open-chain
+// (get-directories → open-at → read-via-stream → blocking-read)
+// combined with a stream/structured side, which the read-file wrap
+// alone never covered. read_file+print is a cat-like tool;
+// read_file+exit is read-config-then-exit. Both errored under
+// -component-wrap-cli before the fold.
+func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	build := func(name, src string) string {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		return compPath
+	}
+
+	// read_file + print (cat): file contents "hello\n" printed back
+	// (+ print's trailing newline) → "hello\n\n", exit 0.
+	rfp := build("rfp", `function main(): i32 {
+    match (read_file("data.txt")) {
+        Ok(s) => { print(s); return 0; },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	cmd := exec.Command("wasmtime", "run", "--dir", dir, rfp)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Errorf("read_file+print: want exit 0, got %v", err)
+	}
+	if out.String() != "hello\n\n" {
+		t.Errorf("read_file+print stdout = %q, want %q", out.String(), "hello\n\n")
+	}
+
+	// read_file + exit: 6-byte file → exit 0; missing file → Err → exit 1.
+	rfe := build("rfe", `function main(): i32 {
+    match (read_file("data.txt")) {
+        Ok(s) => { if (s.len() == 6) { exit(0); return 0; } exit(2); return 2; },
+        Err(e) => { exit(1); return 1; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, rfe).Run(); err != nil {
+		t.Errorf("read_file+exit (6 bytes): want exit 0, got %v", err)
+	}
+	miss := build("rfmiss", `function main(): i32 {
+    match (read_file("nope.txt")) {
+        Ok(s) => { exit(0); return 0; },
+        Err(e) => { exit(1); return 1; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, miss).Run(); err == nil {
+		t.Errorf("read_file+exit (missing): want non-zero exit")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithStdinReadLine drives the Reader
 // streaming API — stdin().read_line() — through `-component-wrap-cli`.
 // Preview-2 has no fds, so the stdin Reader holds the get-stdin

@@ -626,13 +626,14 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 				}
 				if opts, ok := classifyComposeCliStream(bin); ok {
 					// General CLI-stream + structured composition: any mix of
-					// stdout/stderr write, stdin read, and no-memory structured
-					// imports (exit/random/monotonic) the specific routes above
-					// didn't already claim (e.g. read_line+exit,
-					// read_line+print+random). The read side returns a list, so
-					// rebuild with ForceMemorySection (cabi_realloc) when present.
+					// stdout/stderr write, stdin read, read_file open-chain, and
+					// no-memory structured imports (exit/random/monotonic) the
+					// specific routes above didn't already claim (e.g.
+					// read_line+exit, read_file+print). The read / file sides
+					// return lists, so rebuild with ForceMemorySection
+					// (cabi_realloc) when either is present.
 					b := bin
-					if opts.ReadStdin {
+					if opts.ReadStdin || opts.FileRead {
 						rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 							ForceMemorySection: true,
 							Preview2WASI:       true,
@@ -1174,6 +1175,7 @@ func usesPreview2WriteFileOnly(bin []byte) bool {
 func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	var opts component.ComposeOpts
 	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
+	var getDirs, openAt, readVia bool
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
 		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
@@ -1186,6 +1188,12 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 			blockWrite = true
 		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
 			blockRead = true
+		case p.module == "wasi:filesystem/preopens@0.2.0" && p.name == "get-directories":
+			getDirs = true
+		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.open-at":
+			openAt = true
+		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.read-via-stream":
+			readVia = true
 		default:
 			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
 			if !ok {
@@ -1205,12 +1213,19 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	if getStdout && getStderr {
 		return component.ComposeOpts{}, false // single write stream only
 	}
+	// The filesystem read open-chain is all-or-nothing.
+	fileRead := getDirs || openAt || readVia
+	if fileRead && !(getDirs && openAt && readVia) {
+		return component.ComposeOpts{}, false
+	}
 	// Each side must have both its getter and its method, or neither.
 	writeGetter := getStdout || getStderr
 	if writeGetter != blockWrite {
 		return component.ComposeOpts{}, false
 	}
-	if getStdin != blockRead {
+	// blocking-read backs both stdin reads and the file read-chain;
+	// it must appear iff one of them does (never alone, never missing).
+	if (getStdin || fileRead) != blockRead {
 		return component.ComposeOpts{}, false
 	}
 	if getStdout {
@@ -1219,11 +1234,12 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 		opts.WriteGetter = "get-stderr"
 	}
 	opts.ReadStdin = getStdin
-	// Only claim shapes with a stream side. Pure-structured
+	opts.FileRead = fileRead
+	// Only claim shapes with a stream/file side. Pure-structured
 	// (exit/random/monotonic with no stream) stays on
 	// WrapWasiImportedAsCliRun; no imports falls to
 	// BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin {
+	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead {
 		return component.ComposeOpts{}, false
 	}
 	return opts, true
