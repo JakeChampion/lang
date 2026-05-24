@@ -389,6 +389,7 @@ func New() *Interp {
 	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
+	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
@@ -1537,6 +1538,34 @@ func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
 	one := make([]byte, 1)
 	for {
 		n, err := r.Read(one)
+		if n > 0 {
+			buf = append(buf, one[0])
+			if one[0] == '\n' {
+				return optionSome(String(string(buf))), nil
+			}
+		}
+		if err != nil {
+			if len(buf) == 0 {
+				return optionNone(), nil
+			}
+			return optionSome(String(string(buf))), nil
+		}
+	}
+}
+
+// builtinReadLine implements the bare `read_line(): Option[string]`
+// builtin — reads one line from stdin (i.Stdin), including the
+// trailing '\n' if present. Returns Some(line) or None at EOF
+// before any byte. Mirrors builtinReaderReadLine but reads stdin
+// directly rather than a Reader receiver.
+func builtinReadLine(i *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("read_line: expected 0 args")
+	}
+	var buf []byte
+	one := make([]byte, 1)
+	for {
+		n, err := i.Stdin.Read(one)
 		if n > 0 {
 			buf = append(buf, one[0])
 			if one[0] == '\n' {

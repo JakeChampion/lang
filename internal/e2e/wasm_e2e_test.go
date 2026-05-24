@@ -500,6 +500,27 @@ func TestWASMReadLineBuiltin(t *testing.T) {
 	}
 }
 
+// Bare `read_line()` builtin (the stdin-only __lang_read_line
+// path) on the default wasm target — distinct from
+// stdin().read_line()'s receiver-aware path above. Reads a line
+// and echoes it + its length.
+func TestWASMReadLineBareBuiltin(t *testing.T) {
+	src := `function main(): i32 {
+		match (read_line()) {
+			Some(line) => { write(line); return line.len(); },
+			None => { return -1; }
+		}
+		return -2;
+	}`
+	stdout, _, _ := runWasmStdinEnv(t, src, "hi\n", nil)
+	if !strings.Contains(stdout, "hi\n") {
+		t.Errorf("stdout missing `hi\\n`: %q", stdout)
+	}
+	if !strings.Contains(stdout, "3") {
+		t.Errorf("stdout should contain `3` (len of \"hi\\n\"): %q", stdout)
+	}
+}
+
 // EOF on the first byte routes through the `None` arm; a
 // non-empty line (even just "\n") routes through `Some`. The
 // match arms are how callers disambiguate now — no sentinel
@@ -9383,6 +9404,70 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	}
 	if got := stdout.String(); got != "hello world\n" {
 		t.Errorf("wasmtime stdout = %q, want %q", got, "hello world\n")
+	}
+}
+
+// TestCmdLangComponentWrapCliWithReadLine drives a Lang program
+// that reads stdin via the bare `read_line()` builtin through
+// `-component-wrap-cli`. The driver detects the read-only
+// preview-2 imports (wasi:cli/stdin::get-stdin +
+// wasi:io/streams::blocking-read), rebuilds with cabi_realloc
+// exported (the blocking-read canon-lower allocates the returned
+// list<u8> through it), and routes via WrapWasiReadAsCliRun.
+//
+// Observed via exit code (a read-only program can't print): the
+// program returns 0 (ok) when a line is present, 1 (err) at EOF.
+func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "rd.lang")
+	src := []byte(`function main(): i32 {
+    match (read_line()) {
+        Some(line) => { return 0; },
+        None => { return 1; }
+    }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "rd.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (read_line) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/stdin@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/run@0.2.0"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// A present line → Some → exit 0.
+	some := exec.Command("wasmtime", "run", compPath)
+	some.Stdin = strings.NewReader("hello\n")
+	if err := some.Run(); err != nil {
+		t.Errorf("read_line with input: wasmtime run failed (want exit 0): %v", err)
+	}
+	// Empty stdin → None → exit 1.
+	none := exec.Command("wasmtime", "run", compPath)
+	none.Stdin = strings.NewReader("")
+	if err := none.Run(); err == nil {
+		t.Errorf("read_line at EOF: wasmtime run exited 0, want non-zero (None arm)")
 	}
 }
 

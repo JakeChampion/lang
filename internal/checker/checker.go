@@ -1262,6 +1262,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// read_line(): Option[string] — read one line from stdin
+	// (including the trailing '\n' if present), returning
+	// Some(line) or None at end-of-file before any byte. The
+	// ergonomic stdin reader for CLI tools — the bare counterpart
+	// to `stdin().read_line()`. Implemented on every backend
+	// (native reads byte-by-byte into a scratch buffer; wasm wraps
+	// preview-1 `fd_read` / preview-2 `wasi:cli/stdin::get-stdin` +
+	// `wasi:io/streams::blocking-read`).
+	c.info.FuncSigs["read_line"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
 	// sleep_ms(ms): void — best-effort sleep for the given
 	// duration. Useful in tests that want to wait for a
 	// timer / background process to make progress. Not

@@ -12351,6 +12351,60 @@ func TestArm64ReadLine(t *testing.T) {
 	runCase("hello\n", 1) // Some(line)
 }
 
+// Bare `read_line()` builtin — the stdin-only path through
+// __lang_read_line (distinct from stdin().read_line()'s
+// receiver-aware __lang_reader_read_line). Exercises the same
+// .bss buffer + byte loop + Some/None wrap.
+func TestArm64ReadLineBuiltin(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+
+	src := `function main(): i32 {
+    match (read_line()) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return 0 - 1;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := arm64codegen.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	dir := t.TempDir()
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	runCase := func(stdin string, want int) {
+		t.Helper()
+		cmd := runArm64Bin(qemu, binPath)
+		cmd.Stdin = strings.NewReader(stdin)
+		_, _ = cmd.CombinedOutput()
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
+		}
+	}
+	runCase("", 0)        // EOF before any byte → None
+	runCase("hello\n", 1) // Some(line)
+}
+
 // Reader / Writer file I/O round-trip. open_writer +
 // Writer.write + Writer.close; open_appender; open_reader +
 // Reader.read_chunk / Reader.read_line / Reader.close. Mirrors
