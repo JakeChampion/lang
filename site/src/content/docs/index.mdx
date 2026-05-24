@@ -8,7 +8,7 @@ template: splash
 # resolve to `/lang/tutorial/install/` etc. instead of 404-ing
 # at the apex `/tutorial/install/`.
 hero:
-  tagline: Fern is a small, fast-startup language for CLI tools and edge-function HTTP servers — lean, fresh, and at home on every target.
+  tagline: A small, fast-startup language for CLI tools and edge HTTP servers.
   actions:
     - text: Get started
       link: /lang/tutorial/install/
@@ -26,30 +26,26 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 import FernPlayground from "../../components/FernPlayground.astro";
 
-**Fern** is a small, statically-typed compiled language that grows
-everywhere — lean binaries for CLI tools, tiny wasm modules for
-short-lived edge HTTP servers, and the same source compiling to
-arm64 (Linux + macOS), x86-64, and WebAssembly. Fast to start, fresh
-to write, and low to the ground.
+**Fern** is a small, statically-typed compiled language. One source
+compiles to lean CLI binaries and tiny wasm edge modules across arm64
+(Linux + macOS), x86-64, and WebAssembly.
 
 <CardGrid stagger>
   <Card title="Fast-startup binaries" icon="rocket">
-    Native arm64 + x86-64 ELF binaries with no runtime / no GC.
-    Compile a CLI tool, link statically, start in milliseconds.
+    Native arm64 + x86-64 ELF, no runtime, no GC. Link statically,
+    start in milliseconds.
   </Card>
   <Card title="WebAssembly ready" icon="puzzle">
     WASI Preview 2 component output. Drop the `.wasm` into wasmtime
-    or any other host with no glue code.
+    or any host — no glue code.
   </Card>
-  <Card title="Real LSP, real editor support" icon="laptop">
-    `fern-lsp` ships hover, goto-definition, completion,
-    signature help, inlay hints, rename, format-on-save, and a
-    VS Code extension that wraps it.
+  <Card title="Real editor support" icon="laptop">
+    `fern-lsp` ships hover, goto-definition, completion, signature
+    help, inlay hints, rename, format-on-save, and a VS Code extension.
   </Card>
   <Card title="Type-checked" icon="approve-check-circle">
-    Sized integer types, generics with monomorphisation, tagged-
-    union enums with exhaustive pattern matching, `Option` and
-    `Result` baked in.
+    Sized integers, monomorphised generics, tagged-union enums with
+    exhaustive matching, `Option` and `Result` built in.
   </Card>
 </CardGrid>
 
@@ -64,11 +60,9 @@ to write, and low to the ground.
 
 ## Where next
 
-- **[Tutorial](tutorial/install/)** — install the toolchain and walk
-  through the language one concept at a time.
-- **[Reference](reference/syntax/)** — formal-ish syntax + type
-  system docs.
-- **[Standard library](stdlib/)** — every public function in
-  `std/*` with signatures and inline examples.
-- **[Playground](playground/)** — try Fern in your browser. No
-  install required.
+- **[Tutorial](tutorial/install/)** — install the toolchain and learn
+  the language one concept at a time.
+- **[Reference](reference/syntax/)** — syntax and type system docs.
+- **[Standard library](stdlib/)** — every `std/*` function with
+  signatures and examples.
+- **[Playground](playground/)** — try Fern in your browser, no install.
