@@ -227,6 +227,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
+	if g.usesRcIsUnique {
+		g.emitRcIsUniqueRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -451,6 +454,9 @@ type generator struct {
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See arm64's mirror + the wasm runtime.
 	usesDropArrPtr bool
+	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
+	// "last reference?" check used by the Phase 3 struct drop.
+	usesRcIsUnique bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -490,6 +496,8 @@ func (g *generator) recordUse(target string) {
 	case "__fern_drop_arr_ptr":
 		g.usesDropArrPtr = true
 		g.usesRcDec = true
+	case "__fern_rc_is_unique":
+		g.usesRcIsUnique = true
 	case "__alloc":
 		g.usesAlloc = true
 	case "__slice_make":
@@ -3103,6 +3111,34 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_drop_arr_ptr, .-__fern_drop_arr_ptr")
+}
+
+// emitRcIsUniqueRuntime emits `__fern_rc_is_unique(ptr) -> i32` —
+// returns 1 iff ptr is a real, uniquely-owned heap value
+// (non-null, above the low-address guard, not a static sentinel,
+// rc == 1); else 0. Same guard chain as __fern_rc_dec, so it is
+// safe on a slot that might hold a non-pointer scalar. Used by the
+// Phase 3 struct drop to gate recursive field decs on "this is the
+// last reference". Leaf (no calls), so no frame.
+func (g *generator) emitRcIsUniqueRuntime() {
+	g.line("")
+	g.line(".globl __fern_rc_is_unique")
+	g.line(".type __fern_rc_is_unique, @function")
+	g.label("__fern_rc_is_unique")
+	g.emit("xor eax, eax")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lisuniq_ret")
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Lisuniq_ret")
+	g.emit("mov ecx, dword ptr [rdi - 8]")
+	g.emit("test ecx, ecx")
+	g.emit("js .Lisuniq_ret") // bit 31 set ⇒ static sentinel
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Lisuniq_ret")
+	g.emit("mov eax, 1")
+	g.label(".Lisuniq_ret")
+	g.emit("ret")
+	g.line(".size __fern_rc_is_unique, .-__fern_rc_is_unique")
 }
 
 // emitStrcatRuntime emits `__fern_strcat(a, b)` — concat two

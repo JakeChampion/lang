@@ -402,6 +402,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
+				case "__fern_rc_is_unique":
+					needs.add("__fern_rc_is_unique")
 				case "__fern_rc_underflow_count":
 					needs.add("__fern_rc_underflow_count")
 				case "__str_idx":
@@ -838,6 +840,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildDropArrPtrBody,
+	},
+	"__fern_rc_is_unique": {
+		// (ptr) → i32. Phase 3 struct-drop helper: 1 iff ptr is a
+		// real, uniquely-owned heap value (non-null, above the
+		// low-address guard, not a static sentinel, rc == 1). See
+		// buildRcIsUniqueBody + docs/RC-PERCEUS-PLAN.md.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRcIsUniqueBody,
 	},
 	"__fern_rc_underflow_count": {
 		// () → i32. Phase 3 detector probe. Returns the
@@ -2171,6 +2182,53 @@ func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, rcdec)
 	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildRcIsUniqueBody — (ptr) → i32. Returns 1 iff ptr is a real,
+// uniquely-owned heap value: non-null, above the low-address
+// guard, not a static sentinel (high rc bit clear), and rc == 1.
+// Otherwise 0. Same guard chain as buildRcDecBody, so it's safe to
+// call on a slot that might hold a non-pointer scalar (enum tag,
+// stack garbage). Used by the Phase 3 struct drop emission to gate
+// recursive field decs on "this is the last reference" without the
+// IR having to read [ptr-8] unguarded.
+//
+// Locals: 0=ptr (param), 1=rc.
+func buildRcIsUniqueBody(_ map[string]uint32) []byte {
+	var body []byte
+	// ptr == 0 → 0
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// ptr < 0x10000 → 0 (low-address guard)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// rc = mem[ptr-8]; if rc & 0x80000000 → 0 (static sentinel)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 1)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// return rc == 1
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

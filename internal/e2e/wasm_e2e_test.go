@@ -15761,6 +15761,57 @@ function main(): i32 {
 	}
 }
 
+// Phase 3 step 3: struct drop handlers. A user struct with
+// pointer-shaped rc-tracked fields drops those fields on its last
+// reference (gated by __fern_rc_is_unique) before dec'ing the box,
+// balancing the per-field inc from Phase 1e-struct-ii. Mirrors
+// TestX86_64RcDropStructFields / TestArm64RcDropStructFields.
+func TestWASMRcDropStructFields(t *testing.T) {
+	fires := `struct Holder { items: u8[] }
+function consume(inner: u8[]): i32 {
+    var h: Holder = Holder { items: inner };
+    return 0;
+}
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(4);
+    var before: i32 = __rc_get(inner);
+    var ignore: i32 = consume(inner);
+    var after: i32 = __rc_get(inner);
+    return (before - 1) + (after - 1) + __rc_underflow_count();
+}`
+	if got := runWasm(t, fires); got != 0 {
+		t.Errorf("got %d, want 0 (struct field drop must dec the array back to rc 1)", got)
+	}
+
+	aliased := `struct Holder { items: i32[] }
+function main(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var h1: Holder = Holder { items: inner };
+    var h2: Holder = h1;
+    return h2.items[2] + __rc_underflow_count() - 3;
+}`
+	if got := runWasm(t, aliased); got != 0 {
+		t.Errorf("got %d, want 0 (aliased struct: no double field-drop, 0 underflow)", got)
+	}
+
+	nested := `struct Grid { rows: i32[][] }
+struct Inner { v: i32[] }
+struct Outer { inner: Inner }
+function build(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var g: Grid = Grid { rows: [a] };
+    var arr: i32[] = [7, 8];
+    var o: Outer = Outer { inner: Inner { v: arr } };
+    return g.rows[0][1] + o.inner.v[0] + __rc_underflow_count();
+}
+function main(): i32 {
+    return build() - 9;
+}`
+	if got := runWasm(t, nested); got != 0 {
+		t.Errorf("got %d, want 0 (nested struct/array fields: correct values, 0 underflow)", got)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestWASMRcDecOnOverwrite(t *testing.T) {

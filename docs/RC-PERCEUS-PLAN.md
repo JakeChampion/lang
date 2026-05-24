@@ -879,10 +879,33 @@ Phase 3 CANNOT start with the freelist — it must start by
      prove the drop fires (a nested element's rc returns to its
      pre-construction value) with 0 over-releases;
      `TestSelfHostVM{X86_64,Arm64}` exercise the low-address guard.
-   - **Remaining:** struct / enum / closure / map drop handlers;
-     the dec-on-overwrite site; and deep (nested-of-nested)
-     recursion via per-element `drop_<T>` rather than the flat
-     `rc_dec` used now (sufficient while free is off).
+   - **Struct field drop — SHIPPED ON ALL THREE BACKENDS.** A user
+     struct (`info.Structs[Name]` present) with pointer-shaped
+     rc-tracked fields drops those fields on its LAST reference
+     before dec'ing the box, balancing the per-field inc from
+     Phase 1e-struct-ii. Dispatch is IR-side in `emitRcDecLocalsAtExit`:
+     `__fern_rc_is_unique(ptr) → i32` (a new guarded helper —
+     null / low-address / sentinel / `rc==1`, mirrored on wasm +
+     arm64 + x86_64) gates an `OpIf`; inside, each pointer field is
+     loaded at its `structFieldLayout` offset and dec'd via the
+     shared `decValueOnStack` (array fields recurse one level through
+     `__fern_drop_arr_ptr`; struct / enum / closure fields are
+     flat-dec'd). Runtime handle types (Map / Reader / Writer /
+     MapIter) have no `StructDecl`, so they fall through to the plain
+     box dec — and the `is_unique` sentinel guard skips the
+     sentinel-headered ones anyway. `Test{WASM,X86_64,Arm64}RcDropStructFields`
+     pin: drop fires (aliased array field returns to rc 1), aliased
+     struct (`var h2 = h1`) does NOT double-drop, and nested
+     struct/array fields stay value-correct with 0 over-releases.
+     `TestSelfHostVM*` (heavy struct users) stay green.
+   - **Remaining:** enum / closure / map drop handlers; the
+     dec-on-overwrite site (entangled — `push`'s copy path transfers
+     element ownership without an inc, so routing array overwrite
+     through the drop would double-release; needs a per-method
+     ownership audit or a self-push exclusion first); and deep
+     (nested-of-nested) recursion via per-type `drop_<T>` rather than
+     the flat `rc_dec` used for non-array fields/elements now
+     (sufficient while free is off).
 4. **Freelist allocator, behind a build flag.** Per-size-class
    free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
    1024/2048; larger → bump+unmap). The free path needs the
