@@ -12866,6 +12866,35 @@ function main(): i32 {
 	}
 }
 
+// Phase 3: the rc-underflow detector on arm64 (BSS counter
+// __fern_rc_underflow bumped by __fern_rc_dec, read by
+// __fern_rc_underflow_count). Mirrors TestX86_64RcUnderflowDetector
+// — pins the mechanism and that map self-assign is drift-free.
+func TestArm64RcUnderflowDetector(t *testing.T) {
+	selfAssign := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("a", 9);
+    return __rc_underflow_count() * 100
+         + (m.len() - 2)
+         + (m.get_or("a", 0) - 9);
+}`
+	if _, code := compileAndRunArm64(t, selfAssign); code != 0 {
+		t.Errorf("got %d, want 0 (arm64 map self-assign: 0 underflow, correct contents)", code)
+	}
+
+	overRelease := `function main(): i32 {
+    var a: u8[] = __alloc_u8(8);
+    __rc_dec(a);
+    __rc_dec(a);
+    return __rc_underflow_count();
+}`
+	if _, code := compileAndRunArm64(t, overRelease); code != 1 {
+		t.Errorf("got %d, want 1 (arm64 double-dec over-release count)", code)
+	}
+}
+
 // Phase 2: arr.push(v) checks rc + cap. When rc==1 and cap >
 // len, the helper mutates in place — the returned pointer
 // equals the input pointer. First push of a 3-element literal

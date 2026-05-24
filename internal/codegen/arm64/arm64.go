@@ -310,6 +310,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcDec {
 		g.emitRcDecRuntime()
 	}
+	if g.usesRcUnderflowCount {
+		g.emitRcUnderflowCountRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -536,7 +539,7 @@ func (g *generator) emitDataSections() {
 		g.label(".LLangNewline")
 		g.line(`	.asciz "\n"`)
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -610,6 +613,15 @@ func (g *generator) emitDataSections() {
 		g.line(`.align 3`)
 		g.label("__fern_str_idx_scratch")
 		g.line(`	.quad 0`)
+		g.line(`	.quad 0`)
+	}
+	if g.usesRcDec || g.usesRcUnderflowCount {
+		// Phase 3 rc-underflow detector counter. __fern_rc_dec
+		// bumps it when asked to decrement an rc already <= 0;
+		// __fern_rc_underflow_count reads it back. i32 in the low
+		// word of an 8-byte aligned slot.
+		g.line(`.align 3`)
+		g.label("__fern_rc_underflow")
 		g.line(`	.quad 0`)
 	}
 }
@@ -808,11 +820,36 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("b.lo .Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
+	// Phase 3 underflow detector: a healthy dec operates on rc >= 1.
+	// If rc <= 0 here (past the null / low-address / sentinel
+	// guards) this dec over-releases — bump __fern_rc_underflow.
+	g.emit("cmp w1, #0")
+	g.emit("b.gt .Lrcdec_dec")
+	g.adrpAdd("x2", "__fern_rc_underflow")
+	g.emit("ldr w3, [x2]")
+	g.emit("add w3, w3, #1")
+	g.emit("str w3, [x2]")
+	g.label(".Lrcdec_dec")
 	g.emit("sub w1, w1, #1")
 	g.emit("stur w1, [x0, #-8]")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_rc_dec")
+}
+
+// emitRcUnderflowCountRuntime emits `__fern_rc_underflow_count()
+// -> i32` — returns the Phase 3 over-release counter that
+// __fern_rc_dec bumps in __fern_rc_underflow. Mirrors the wasm
+// helper that reads the linear-memory counter slot.
+func (g *generator) emitRcUnderflowCountRuntime() {
+	g.line("")
+	g.line(".global __fern_rc_underflow_count")
+	g.typeDirective("__fern_rc_underflow_count")
+	g.label("__fern_rc_underflow_count")
+	g.adrpAdd("x0", "__fern_rc_underflow")
+	g.emit("ldr w0, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__fern_rc_underflow_count")
 }
 
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data` —
@@ -4441,6 +4478,11 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesRcUnderflowCount gates the Phase 3 detector reader
+	// `__fern_rc_underflow_count` (returns the BSS over-release
+	// counter that __fern_rc_dec bumps). Set when the IR emits the
+	// matching OpCallDirect (the `__rc_underflow_count()` builtin).
+	usesRcUnderflowCount bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -6434,6 +6476,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcInc = true
 		case "__fern_rc_dec":
 			g.usesRcDec = true
+		case "__fern_rc_underflow_count":
+			g.usesRcUnderflowCount = true
 		case "__fern_arr_push_grow":
 			g.usesArrPushGrow = true
 			g.usesAlloc = true

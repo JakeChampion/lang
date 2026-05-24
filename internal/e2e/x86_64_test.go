@@ -2901,6 +2901,38 @@ function main(): i32 {
 	}
 }
 
+// Phase 3: the rc-underflow detector now runs on the native
+// backends too — __fern_rc_dec bumps a BSS counter
+// (__fern_rc_underflow) on any over-release, read back by
+// __fern_rc_underflow_count(). This pins both the detector
+// mechanism (clean→0, deliberate double-dec→1) AND that the
+// IR-side drift fixes hold on x86_64: idiomatic `m = m.set(...)`
+// self-assignment reports 0 over-releases, same as wasm.
+func TestX86_64RcUnderflowDetector(t *testing.T) {
+	selfAssign := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a", 1);
+    m = m.set("b", 2);
+    m = m.set("a", 9);
+    return __rc_underflow_count() * 100
+         + (m.len() - 2)
+         + (m.get_or("a", 0) - 9);
+}`
+	if _, code := compileAndRunX86_64(t, selfAssign); code != 0 {
+		t.Errorf("got %d, want 0 (x86 map self-assign: 0 underflow, correct contents)", code)
+	}
+
+	overRelease := `function main(): i32 {
+    var a: u8[] = __alloc_u8(8);
+    __rc_dec(a);   // 1 -> 0
+    __rc_dec(a);   // 0 -> -1 (over-release, counted)
+    return __rc_underflow_count();
+}`
+	if _, code := compileAndRunX86_64(t, overRelease); code != 1 {
+		t.Errorf("got %d, want 1 (x86 double-dec over-release count)", code)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestX86_64RcDecOnOverwrite(t *testing.T) {

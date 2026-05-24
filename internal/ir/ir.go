@@ -5678,17 +5678,15 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
-	// __rc_underflow_count(): i32 — Phase 3 step 1 detector probe.
-	// Reads the rc-underflow counter the wasm runtime bumps in
-	// __fern_rc_dec whenever it over-releases a value (decrements
-	// an rc already <= 0). Lowered as a load of the fixed
-	// low-memory counter slot. WASM-ONLY: the address is a linear-
-	// memory offset; native backends have no counter there yet, so
-	// only wasm e2e tests call this builtin.
+	// __rc_underflow_count(): i32 — Phase 3 detector probe. Reads
+	// the rc-underflow counter that __fern_rc_dec bumps whenever it
+	// over-releases a value (decrements an rc already <= 0). Lowered
+	// to a runtime-helper call so each backend reads its own counter
+	// store: wasm a fixed linear-memory slot, the natives a BSS
+	// global. Lets the detector run on all three backends.
 	if id.Name == "__rc_underflow_count" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpConstI32, I32: 48})
-			b.emit(Op{Kind: OpLoad})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_underflow_count", I32: 0})
 			return nil
 		}
 	}

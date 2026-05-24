@@ -402,6 +402,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
+				case "__fern_rc_underflow_count":
+					needs.add("__fern_rc_underflow_count")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __fern_str_byte but returns a byte
@@ -836,6 +838,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildDropArrPtrBody,
+	},
+	"__fern_rc_underflow_count": {
+		// () → i32. Phase 3 detector probe. Returns the
+		// rc-underflow counter buildRcDecBody bumps at
+		// rcUnderflowAddr. The native backends implement the same
+		// entry point over a BSS global.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildRcUnderflowCountBody,
 	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
@@ -2047,6 +2058,17 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildRcUnderflowCountBody — () → i32. Returns the rc-underflow
+// counter at rcUnderflowAddr (bumped by buildRcDecBody). Phase 3
+// detector probe; the native backends provide the same entry over
+// a BSS global.
+func buildRcUnderflowCountBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, rcUnderflowAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildDropArrPtrBody — (ptr, stride) → ptr. Phase 3 step 3 drop
