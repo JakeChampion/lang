@@ -228,6 +228,49 @@ func TestWasiIoErrorInstanceTypeBody_Bytes(t *testing.T) {
 	}
 }
 
+// TestWasiFilesystemTypesDescriptorInstanceTypeBody_Bytes pins the
+// bytes of the minimal wasi:filesystem/types instance type (one
+// exported `descriptor` sub-resource).
+func TestWasiFilesystemTypesDescriptorInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiFilesystemTypesDescriptorInstanceTypeBody()
+	want := []byte{
+		0x01, 0x42, 0x01,
+		0x04, 0x00, 0x0a, 'd', 'e', 's', 'c', 'r', 'i', 'p', 't', 'o', 'r', 0x03, 0x01,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiFilesystemTypesDescriptorInstanceTypeBody() = % x, want % x", got, want)
+	}
+}
+
+// TestWasiFilesystemTypesDescriptorInstanceTypeBody_Validates
+// composes the descriptor instance type as an import and confirms
+// wasm-tools accepts it + the descriptor sub-resource appears.
+func TestWasiFilesystemTypesDescriptorInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesDescriptorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "fstypes.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"descriptor", "(sub resource)"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiCliStdoutInstanceTypeBody_Bytes pins the bytes of the
 // wasi:cli/stdout instance type body. The expected bytes match
 // what wasm-tools emits when wasi:cli/stdout is the THIRD import
