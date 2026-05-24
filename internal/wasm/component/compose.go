@@ -17,11 +17,13 @@ package component
 // print/eprint, read_line, read_line+print, the read_file open-chain
 // (get-directories → open-at → read-via-stream → blocking-read), the
 // write_file open-chain (… → write-via-stream → blocking-write), and
-// any mix of those — including new combinations the bespoke wraps
-// never covered (read_line+exit, read_file+print, write_file+exit,
-// write_file+print, eprint+monotonic, ...). read_file and write_file
-// in one program (both descriptor stream directions) plus open_* and
-// TCP stay on their own wraps for now.
+// the standalone mem-trampoline imports (wall-clock now / args
+// get-arguments / env get-environment), and any mix of those —
+// including new combinations the bespoke wraps never covered
+// (read_line+exit, read_file+print, write_file+print, now()+print,
+// args+exit, ...). read_file and write_file in one program (both
+// descriptor stream directions), args+env together (shared
+// interface), open_* and TCP stay on their own wraps for now.
 
 // ComposeOpts describes the CLI-stream + structured imports a core
 // module needs. WriteGetter is "get-stdout", "get-stderr", or "" (no
@@ -40,6 +42,20 @@ type ComposeOpts struct {
 	FileRead    bool
 	FileWrite   bool
 	Structured  []WasiImport
+	MemTramp    []MemTrampImport
+}
+
+// MemTrampImport is a self-contained single-function import whose
+// canon-lower needs memory (and optionally realloc) — the
+// wall-clock now / args get-arguments / env get-environment shape.
+// Unlike Structured (no-memory) imports it needs a 1-i32 trampoline
+// + fixup; unlike the stream / file imports it has no shared
+// resource-type dependencies, so its instance type stands alone.
+type MemTrampImport struct {
+	InstanceTypeBody []byte // standalone instance type (one func export)
+	InterfaceName    string // import name + user-module arg name
+	FuncName         string // aliased func + core-instance export name
+	NeedsRealloc     bool   // list-returning funcs (args/env) need realloc
 }
 
 // blockWriteParams / blockReadParams are the core import signatures
@@ -51,6 +67,7 @@ var (
 	composeGetDirsParams    = []byte{0x7f} // (ret_ptr)
 	composeOpenAtParams     = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f} // (self, offset, ret_ptr)
+	composeOneI32Params     = []byte{0x7f}             // (ret_ptr) — wall-clock/args/env
 )
 
 const (
@@ -214,8 +231,17 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// filesystem/types + preopens instances.
 	hasFile := hasFileRead || hasFileWrite
 	needStreams := hasOutputStream || hasInputStream
-	// blocking-read and get-directories both return lists → realloc.
+	// memory is aliased for any trampoline lower (streams, file, or the
+	// standalone mem-trampoline imports).
+	needMemory := needStreams || hasFile || len(opts.MemTramp) > 0
+	// blocking-read + get-directories return lists → realloc; so do the
+	// list-returning mem-trampoline imports (args / env).
 	needRealloc := hasInputStream || hasFile
+	for _, mt := range opts.MemTramp {
+		if mt.NeedsRealloc {
+			needRealloc = true
+		}
+	}
 	// Which descriptor stream method the file open-chain uses.
 	viaName := composeReadViaName
 	if hasFileWrite {
@@ -296,6 +322,14 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		structInst[i] = c.importInstance(imp.InterfaceName, ti)
 	}
 
+	// Standalone mem-trampoline imports (wall-clock / args / env):
+	// each carries its own self-contained instance type.
+	mtInst := make([]uint32, len(opts.MemTramp))
+	for i, mt := range opts.MemTramp {
+		ti := c.typeRaw(mt.InstanceTypeBody)
+		mtInst[i] = c.importInstance(mt.InterfaceName, ti)
+	}
+
 	// --- Phase B: core modules (user + trampoline/fixup pairs). ---
 	userMod := c.coreModule(coreBytes)
 	var trampWMod, fixupWMod, trampRMod, fixupRMod uint32
@@ -318,6 +352,13 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(composeReadViaParams))
 		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(composeReadViaParams))
 	}
+	// One 1-i32 trampoline + fixup per mem-trampoline import.
+	mtTrampMod := make([]uint32, len(opts.MemTramp))
+	mtFixupMod := make([]uint32, len(opts.MemTramp))
+	for i := range opts.MemTramp {
+		mtTrampMod[i] = c.coreModule(TrampolineModuleForParamsNoResult(composeOneI32Params))
+		mtFixupMod[i] = c.coreModule(FixupModuleForParamsNoResult(composeOneI32Params))
+	}
 
 	// --- Phase C: instantiate trampolines. ---
 	var trampWInst, trampRInst uint32
@@ -332,6 +373,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		trampDirsInst = c.instantiate(trampDirsMod)
 		trampOpenInst = c.instantiate(trampOpenMod)
 		trampViaInst = c.instantiate(trampViaMod)
+	}
+	mtTrampInst := make([]uint32, len(opts.MemTramp))
+	for i := range opts.MemTramp {
+		mtTrampInst[i] = c.instantiate(mtTrampMod[i])
 	}
 
 	// --- Phase D: no-memory lowers + arg-instance packaging. ---
@@ -358,6 +403,15 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		coreF := c.lowerNoOpts(cf)
 		wrap := c.coreInstOneFunc(imp.FuncName, coreF)
 		argNames = append(argNames, imp.CoreImportModule)
+		argInsts = append(argInsts, wrap)
+	}
+
+	// Mem-trampoline args package each import's trampoline placeholder
+	// under its interface name (fixed up after user inst).
+	for i, mt := range opts.MemTramp {
+		tf := c.aliasCoreFunc(mtTrampInst[i], "0")
+		wrap := c.coreInstOneFunc(mt.FuncName, tf)
+		argNames = append(argNames, mt.InterfaceName)
 		argInsts = append(argInsts, wrap)
 	}
 
@@ -403,11 +457,11 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// --- Phase F: alias memory / realloc / trampoline tables. ---
 	var reallocFunc, tableW, tableR uint32
 	var tableDirs, tableOpen, tableVia uint32
-	if needStreams {
+	if needMemory {
 		c.aliasMemory(userInst)
 	}
-	// blocking-read + get-directories return lists → their canon-lower
-	// needs realloc.
+	// blocking-read + get-directories + args/env return lists → their
+	// canon-lower needs realloc.
 	if needRealloc {
 		reallocFunc = c.aliasReallocFunc(userInst)
 	}
@@ -421,6 +475,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		tableDirs = c.aliasTable(trampDirsInst)
 		tableOpen = c.aliasTable(trampOpenInst)
 		tableVia = c.aliasTable(trampViaInst)
+	}
+	mtTable := make([]uint32, len(opts.MemTramp))
+	for i := range opts.MemTramp {
+		mtTable[i] = c.aliasTable(mtTrampInst[i])
 	}
 
 	// --- Phase G: memory-dependent lowers. ---
@@ -444,6 +502,15 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		cfVia := c.aliasInstFunc(fsTypesInst, viaName)
 		viaCoreF = c.lowerMem(cfVia)
 	}
+	mtCoreF := make([]uint32, len(opts.MemTramp))
+	for i, mt := range opts.MemTramp {
+		cf := c.aliasInstFunc(mtInst[i], mt.FuncName)
+		if mt.NeedsRealloc {
+			mtCoreF[i] = c.lowerMemRealloc(cf, reallocFunc)
+		} else {
+			mtCoreF[i] = c.lowerMem(cf)
+		}
+	}
 
 	// --- Phase H: fixups (install lowered funcs into tramp tables). ---
 	fixup := func(mod, table, fn uint32) {
@@ -463,6 +530,9 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		fixup(fixupDirsMod, tableDirs, dirsCoreF)
 		fixup(fixupOpenMod, tableOpen, openCoreF)
 		fixup(fixupViaMod, tableVia, viaCoreF)
+	}
+	for i := range opts.MemTramp {
+		fixup(mtFixupMod[i], mtTable[i], mtCoreF[i])
 	}
 
 	// --- Phase I: wasi:cli/run tail. ---
