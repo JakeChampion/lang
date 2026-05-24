@@ -231,7 +231,48 @@ shaped. No functional payoff until Phase 3 frees at rc=0; this
 slice is the safety groundwork so enum values can be tracked
 without corruption.
 
-### Phase 1e-strings / closures
+### Phase 1e-closures-i: rc-header layout for closures (this PR)
+
+A `FuncType` local holds one of: a heap closure pair
+`{fn, env}` (`OpMakeClosure`), a heap env block (`OpMakeEnv`),
+a static `{fn, env=0}` cell (`OpConstFunc`), or null. The heap
+allocations move from raw `__lang_alloc` to a new
+`__lang_alloc_rc1(size)→base+8` helper (mirrors
+`__lang_alloc_box` but writes a live `rc=1` instead of the
+immortal sentinel, so closures are droppable in Phase 3). The
+static `OpConstFunc` cells gain the immortal `0x80000000`
+header on the natives (`.rodata`); the wasm cells live in the
+sub-64-KiB reserved window and are handled by the rc helpers'
+low-address guard in -ii. Because each pointer keeps pointing at
+the data view (`base+8`), all intra-env capture offsets and
+intra-pair fn/env offsets are UNCHANGED — the shift lives only
+at the alloc sites. Behavior-neutral; full suite green.
+
+### Phase 1e-closures-ii: widen the predicates to FuncType (FOLLOW-UP — needs optimizer work)
+
+Widening `rcTracked` / `zeroRcTracked` / `isArrayTypeOfLocal` /
+`needsRcIncOnAlias` to `*ast.FuncType` is NOT a drop-in like
+enums: it fights two closure optimization passes that run in the
+backend after rc insertion.
+  - **Zero-init poisons defunctionalisation.** The zero-init
+    store (`OpConstI32 0; OpStoreLocal slot`) gives every closure
+    slot a second, non-`OpMakeClosure` writer, so
+    `Defunctionalise` / `ElideClosurePair` mark the slot
+    polymorphic and bail — `OpCallIndirect` is no longer
+    rewritten to `OpCallClosureDirect`, and zero-capture closures
+    stop eliding their alloc. Fix: teach the passes to ignore a
+    `const-0` writer when classifying closure slots.
+  - **`rc_inc` breaks alias chains.** An alias `b = a` lowers to
+    `OpLoadLocal a; OpCallDirect __lang_rc_inc; OpStoreLocal b`;
+    the mono-slot chaser must see `__lang_rc_inc` as a
+    value-preserving pass-through (it returns its argument) to
+    keep propagating the target through the hop.
+  - wasm needs the `rc_inc` low-address guard (mirror `rc_dec`)
+    so the sub-64-KiB static cells short-circuit.
+The layout (-i) is shipped and inert; do -ii only with the two
+optimizer fixes in the same PR, gated on the defunc/elide tests.
+
+### Phase 1e-strings
 
 Same pattern after structs land. Strings have the extra
 wrinkle of SSO (inline vs. heap) — only the heap case grows

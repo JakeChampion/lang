@@ -4171,6 +4171,60 @@ func TestEmitMakeClosureZeroCaptures(t *testing.T) {
 	}
 }
 
+// TestEmitMakeClosureRcHeader — Phase 1e-closures layout: the
+// closure pair AND its env block are allocated via
+// __lang_alloc_rc1, so each carries an 8-byte rc header with a
+// live rc=1 at [data-8]. The data pointers (pair / env) are
+// base+8, so the call-site +0 (fn_idx) / +4 (env_ptr) reads are
+// unchanged. Read the rc words back to pin the header presence.
+func TestEmitMakeClosureRcHeader(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "target",
+			Captures:   []ast.Param{{Name: "x", Type: i32()}},
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: 0}},
+		},
+		{
+			// rc word of the closure pair: [pair_ptr - 8] == 1.
+			Name:       "pairRc",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 7}, // capture value
+				{Kind: ir.OpMakeClosure, I32: 1, Str: "target"},
+				{Kind: ir.OpConstI32, I32: -8},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad},
+			},
+		},
+		{
+			// rc word of the env block: [env_ptr - 8] == 1.
+			Name:       "envRc",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 7},
+				{Kind: ir.OpMakeClosure, I32: 1, Str: "target"},
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad}, // env_ptr at pair+4
+				{Kind: ir.OpConstI32, I32: -8},
+				{Kind: ir.OpAdd},
+				{Kind: ir.OpLoad},
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "pairRc"); got != "1" {
+		t.Fatalf("closure pair rc = %q, want 1", got)
+	}
+	if got := runUnderWasmtime(t, bin, "envRc"); got != "1" {
+		t.Fatalf("env block rc = %q, want 1", got)
+	}
+}
+
 // TestEmitMakeEnvI64Capture — a target whose Captures list says
 // `i64` must store 8 bytes per capture; reading it back with
 // OpLoad Width=64 recovers the original i64 value.
