@@ -131,6 +131,26 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				case OpLoadLocal:
 					w.aliasOk = true
 					w.aliasSrc = prev.I32
+				case OpCallDirect:
+					if prev.Str == "__lang_rc_inc" && i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
+						// rc-tracked alias `b = a` → `OpLoadLocal a;
+						// OpCallDirect __lang_rc_inc; OpStoreLocal b`.
+						// rc_inc passes its argument through, so the
+						// alias source is the slot loaded before it.
+						w.aliasOk = true
+						w.aliasSrc = fn.Ops[i-2].I32
+					} else {
+						failed[op.I32] = true
+					}
+				case OpConstI32:
+					if prev.I32 == 0 {
+						// Zero-init store (Phase 1e pre-zeroes
+						// rc-tracked slots, closures included). Not a
+						// closure-pair writer; skip it so it neither
+						// contributes a root nor disqualifies the slot.
+						continue
+					}
+					failed[op.I32] = true
 				default:
 					failed[op.I32] = true
 				}
@@ -159,6 +179,25 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 			if !r.canonicalOk && i+1 < len(fn.Ops) && fn.Ops[i+1].Kind == OpStoreLocal {
 				r.aliasOk = true
 				r.aliasDst = fn.Ops[i+1].I32
+			}
+			// rc-tracked alias read: OpLoadLocal slot; OpCallDirect
+			// __lang_rc_inc; OpStoreLocal dst. The dst slot copies
+			// this value (through the pass-through rc_inc), so it's
+			// an alias edge just like the bare load+store form.
+			if !r.canonicalOk && !r.aliasOk && i+2 < len(fn.Ops) &&
+				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__lang_rc_inc" &&
+				fn.Ops[i+2].Kind == OpStoreLocal {
+				r.aliasOk = true
+				r.aliasDst = fn.Ops[i+2].I32
+			}
+			// Benign exit dec: OpLoadLocal slot; OpCallDirect
+			// __lang_rc_dec. The dec sweep reads every tracked slot
+			// at function exit; rc_dec consumes the pointer and its
+			// result is dropped, so the value never escapes. Skip it
+			// so it neither qualifies nor disqualifies the slot.
+			if !r.canonicalOk && !r.aliasOk && i+1 < len(fn.Ops) &&
+				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__lang_rc_dec" {
+				continue
 			}
 			if !r.canonicalOk && !r.aliasOk {
 				failed[op.I32] = true

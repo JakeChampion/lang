@@ -1682,6 +1682,19 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	// Defensive low-address guard, mirroring buildRcDecBody. The
+	// static OpConstFunc closure cells live in the reserved
+	// sub-64-KiB window (closuresBase..1024); rc-tracking FuncType
+	// locals would otherwise inc one of those cells and read
+	// scratch / cell bytes at [ptr-8]. Heap closures (alloc_rc1)
+	// sit above 0x10000 on the WASI layout and still get tracked.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
 	// $rcaddr = ptr - 8.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 8)

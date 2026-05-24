@@ -248,12 +248,19 @@ the data view (`base+8`), all intra-env capture offsets and
 intra-pair fn/env offsets are UNCHANGED — the shift lives only
 at the alloc sites. Behavior-neutral; full suite green.
 
-### Phase 1e-closures-ii: widen the predicates to FuncType (FOLLOW-UP — needs optimizer work)
+### Phase 1e-closures-ii: widen the predicates to FuncType (SHIPPED)
 
 Widening `rcTracked` / `zeroRcTracked` / `isArrayTypeOfLocal` /
-`needsRcIncOnAlias` to `*ast.FuncType` is NOT a drop-in like
-enums: it fights two closure optimization passes that run in the
-backend after rc insertion.
+`needsRcIncOnAlias` to `*ast.FuncType` was NOT a drop-in like
+enums: it fought two closure optimization passes that run in the
+backend after rc insertion. Both `Defunctionalise` /
+`returnTargetFor` and `ElideClosurePair` were made rc-aware:
+they ignore the zero-init (`const 0`) writer, treat
+`OpCallDirect __lang_rc_inc` as a value-preserving pass-through
+when chasing alias chains, skip the benign exit
+`OpLoadLocal; __lang_rc_dec` reader, and skip the exit dec-sweep
+triples when locating a function's returned value. wasm gained
+the `rc_inc` low-address guard. Original interaction notes:
   - **Zero-init poisons defunctionalisation.** The zero-init
     store (`OpConstI32 0; OpStoreLocal slot`) gives every closure
     slot a second, non-`OpMakeClosure` writer, so

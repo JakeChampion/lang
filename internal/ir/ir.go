@@ -1514,6 +1514,14 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		if _, isEnum := t.(ast.EnumType); isEnum {
 			return true
 		}
+		// Phase 1e-closures-ii: a FuncType local holds a heap
+		// closure pair / env block (rc=1 header via
+		// __lang_alloc_rc1) or a static function-value cell
+		// (immortal sentinel on natives, low-address short-circuit
+		// on wasm). All pointer-shaped; rc_inc/dec are safe.
+		if _, isFunc := t.(*ast.FuncType); isFunc {
+			return true
+		}
 		return false
 	}
 	// Params first: each parameter name is unique in the
@@ -1620,6 +1628,10 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		// sweep's `ptr == 0` null guard fires on never-initialised
 		// enum locals (conditional / match-arm declarations).
 		if _, isEnum := t.(ast.EnumType); isEnum {
+			return true
+		}
+		// Phase 1e-closures-ii: zero FuncType (closure) slots too.
+		if _, isFunc := t.(*ast.FuncType); isFunc {
 			return true
 		}
 		return false
@@ -6197,6 +6209,9 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		if _, isEnum := t.(ast.EnumType); isEnum {
 			return true
 		}
+		if _, isFunc := t.(*ast.FuncType); isFunc {
+			return true
+		}
 		return false
 	}
 	for _, p := range b.fn.Params {
@@ -6295,6 +6310,12 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// __lang_rc_inc short-circuits on the sentinel and bumps a
 	// real rc on a user box.
 	if _, isEnum := t.(ast.EnumType); isEnum {
+		return true
+	}
+	// Phase 1e-closures-ii: aliasing a FuncType (closure) value
+	// inc's its rc=1 heap header; static cells short-circuit
+	// (sentinel on natives, low-address guard on wasm).
+	if _, isFunc := t.(*ast.FuncType); isFunc {
 		return true
 	}
 	return false

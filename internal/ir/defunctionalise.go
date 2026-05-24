@@ -129,6 +129,11 @@ func returnTargetFor(fn *Func) (string, bool) {
 			monoSlot[slot] = t
 			continue
 		}
+		// Zero-init store (Phase 1e pre-zeroes rc-tracked slots).
+		// Not a closure writer; ignore so it doesn't poison the slot.
+		if i > 0 && fn.Ops[i-1].Kind == OpConstI32 && fn.Ops[i-1].I32 == 0 {
+			continue
+		}
 		polySlot[slot] = true
 		delete(monoSlot, slot)
 	}
@@ -145,7 +150,21 @@ func returnTargetFor(fn *Func) (string, bool) {
 		if i == 0 {
 			return "", false
 		}
-		prev := fn.Ops[i-1]
+		// The return value is pushed before the exit rc dec-sweep
+		// (a run of `OpLoadLocal s; OpCallDirect __lang_rc_dec;
+		// OpDrop` triples inserted just before OpReturn). Skip
+		// those triples backwards to find the op that actually
+		// produces the returned value.
+		j := i - 1
+		for j >= 2 && fn.Ops[j].Kind == OpDrop &&
+			fn.Ops[j-1].Kind == OpCallDirect && fn.Ops[j-1].Str == "__lang_rc_dec" &&
+			fn.Ops[j-2].Kind == OpLoadLocal {
+			j -= 3
+		}
+		if j < 0 {
+			return "", false
+		}
+		prev := fn.Ops[j]
 		var t string
 		switch prev.Kind {
 		case OpMakeClosure:
@@ -223,7 +242,23 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 					target = prev.Str
 					resolved = true
 				case OpCallDirect:
-					if t, ok := returns[prev.Str]; ok {
+					if prev.Str == "__lang_rc_inc" && i >= 2 && fn.Ops[i-2].Kind == OpLoadLocal {
+						// rc-tracked alias `b = a` lowers to
+						// `OpLoadLocal a; OpCallDirect __lang_rc_inc;
+						// OpStoreLocal b`. rc_inc returns its
+						// argument unchanged, so look through it to
+						// the slot being aliased.
+						src := fn.Ops[i-2].I32
+						if t, ok := monoSlot[src]; ok {
+							target = t
+							resolved = true
+						} else if polySlot[src] {
+							polySlot[slot] = true
+							delete(monoSlot, slot)
+							changed = true
+							continue
+						}
+					} else if t, ok := returns[prev.Str]; ok {
 						target = t
 						resolved = true
 					}
@@ -241,6 +276,15 @@ func defunctionaliseFunc(fn *Func, returns map[string]string, pairEnvOffset int3
 						polySlot[slot] = true
 						delete(monoSlot, slot)
 						changed = true
+						continue
+					}
+				case OpConstI32:
+					if prev.I32 == 0 {
+						// Zero-init store the rc dec-sweep relies on
+						// (Phase 1e zeroes rc-tracked slots, closures
+						// included, so the exit null-guard fires).
+						// It is not a closure writer; skip it so it
+						// doesn't poison the mono-slot analysis.
 						continue
 					}
 				}
