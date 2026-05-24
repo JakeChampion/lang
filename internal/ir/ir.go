@@ -4837,7 +4837,15 @@ func (b *builder) binary(n *ast.Binary) error {
 	// floats sidestep because they need NaN / signed-zero
 	// handling we don't want to bake in here, and string +
 	// has its own handling below.
-	if !n.IsStringConcat && !n.IsStringCmp && !n.IsFloat {
+	//
+	// Skipped for sub-i32 results (width 8 / 16): the fold paths
+	// emit + return early, bypassing the wrap-narrowing the main
+	// path applies below. e.g. `a * 16u8` strength-reduces to a
+	// shift and would escape the `& 0xff` mask. Sub-i32 arithmetic
+	// is rare, so forgoing the fold there costs nothing measurable
+	// and keeps the wrap semantics correct.
+	subI32 := n.IntWidth == 8 || n.IntWidth == 16
+	if !n.IsStringConcat && !n.IsStringCmp && !n.IsFloat && !subI32 {
 		if folded, ok := b.maybeFoldArithIdentity(n); ok {
 			return folded
 		}
@@ -4917,6 +4925,29 @@ func (b *builder) binary(n *ast.Binary) error {
 		w = 32
 	}
 	b.emit(Op{Kind: op, Width: w, Unsigned: n.IsUnsigned})
+	// Sub-i32 arithmetic wraps to its declared width. `+`, `-`,
+	// `*`, `<<` can push the result past 8 / 16 bits (e.g.
+	// `255u8 + 1u8` → 256), but scalar locals + struct fields are
+	// stored full-width (only array elements narrow via the
+	// store8 / store16 op), so without an explicit narrow the
+	// out-of-range value leaks — a `u16` var would hold 65536 and
+	// a later widening cast / comparison (which assumes "every
+	// store narrows", see the cast lowering) reads garbage. Mask
+	// (unsigned) or sign-extend (signed) back to width. The other
+	// ops (`/ % & | ^ >>`) can't exceed the operands' width.
+	if w == 8 || w == 16 {
+		switch op {
+		case OpAdd, OpSub, OpMul, OpShl:
+			if n.IsUnsigned {
+				b.emit(Op{Kind: OpConstI32, I32: int32((1 << w) - 1)})
+				b.emit(Op{Kind: OpAnd})
+			} else if w == 8 {
+				b.emit(Op{Kind: OpSignExtend8})
+			} else {
+				b.emit(Op{Kind: OpSignExtend16})
+			}
+		}
+	}
 	return nil
 }
 
