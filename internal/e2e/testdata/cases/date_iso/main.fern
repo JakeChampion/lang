@@ -1,0 +1,6 @@
+// Date.format_iso() renders YYYY-MM-DD with zero-padding.
+function main(): i32 {
+    var d = date_make(2026, 5, 24);
+    print(d.format_iso());
+    return 0;
+}

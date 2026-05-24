@@ -1,0 +1,11 @@
+// Repeated string concatenation in a loop (heap-allocated growth).
+function main(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 5) {
+        s = s + "ab";
+        i = i + 1;
+    }
+    print(s);
+    return 0;
+}

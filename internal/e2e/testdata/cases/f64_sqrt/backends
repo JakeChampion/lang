@@ -1,0 +1,2 @@
+# sqrt needs libm; the -nostdlib native backends can't link it.
+interp wasm

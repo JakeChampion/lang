@@ -1,0 +1,15 @@
+// A match whose final arm is a wildcard catch-all.
+enum Sign { Neg, Zero, Pos }
+
+function classify(n: i32): Sign {
+    if (n < 0) { return Neg; }
+    if (n == 0) { return Zero; }
+    return Pos;
+}
+
+function main(): i32 {
+    match (classify(7)) {
+        Zero => { return 1; },
+        _ => { return 42; }
+    }
+}

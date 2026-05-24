@@ -1,0 +1,7 @@
+// std/time calendar helpers: 2024 is a leap year, 2023 is not, and
+// February 2024 has 29 days.
+function main(): i32 {
+    if (!is_leap_year(2024)) { return 1; }
+    if (is_leap_year(2023)) { return 2; }
+    return days_in_month(2024, 2);
+}

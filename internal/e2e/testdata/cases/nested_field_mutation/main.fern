@@ -1,0 +1,9 @@
+// Assignment through a nested struct field path.
+struct Inner { x: i32 }
+struct Outer { inner: Inner }
+
+function main(): i32 {
+    var o: Outer = Outer { inner: Inner { x: 0 } };
+    o.inner.x = 42;
+    return o.inner.x;
+}
