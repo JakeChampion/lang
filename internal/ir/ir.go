@@ -7559,6 +7559,17 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	b.locals[fmt.Sprintf("__del_m_%d", mapSlot)] = mapSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
 
+	// Phase 2d: copy-on-write. Route the receiver through
+	// __map_cow_inplace before delete mutates it, then store the
+	// (possibly new) handle back into mapSlot so it becomes BOTH
+	// the mutation target and the map placed in the result tuple.
+	// An aliased map (rc>1) is deep-copied here, so the source
+	// alias keeps the deleted key; a uniquely-held map is mutated
+	// in place.
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_cow_inplace", I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+
 	// Push map and key for the delete call, boxing key when needed.
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	needBoxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
@@ -7616,6 +7627,14 @@ func (b *builder) emitMapClearReturningMap(n *ast.Call) error {
 	}
 	mapSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__clr_m_%d", mapSlot)] = mapSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+
+	// Phase 2d: copy-on-write — see emitMapDeleteReturningTuple.
+	// cow the receiver before clear empties it, then thread the
+	// (possibly new) handle back as both the clear target and the
+	// returned map so an aliased map keeps its entries.
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_cow_inplace", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
 
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})

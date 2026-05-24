@@ -694,13 +694,25 @@ Test coverage: `Test{Arm64,X86_64,WASM}MapSetAliasedCopies` —
 defer / `query_parse` ref-mutation tests confirm function-passed
 maps still mutate in place under the borrow model.
 
-**Follow-up (not yet done): `Map.delete` / `Map.clear` CoW.**
-Those mutate in place today (rc=1 handle doesn't change that — no
-cow on their path). Adding cow needs IR-wrapper handle-threading:
-`emitMapDeleteReturningTuple` / `emitMapClearReturningMap` reuse
-the pre-call receiver slot, which would go stale if cow copies, so
-the new handle must be plumbed out of the (bool / void)-returning
-impls. Same split as arrays shipped push (2a) then index-set (2b).
+#### Phase 2d-ii: Map.delete / Map.clear CoW — SHIPPED
+
+Extends CoW to the other two mutators. They return `bool` /
+`void` at the impl level (the value-returning API is synthesised
+by the IR wrappers `emitMapDeleteReturningTuple` /
+`emitMapClearReturningMap`), so cow can't live inside the impls
+the way it does for `set` — the new handle had nowhere to go. The
+fix threads cow at the **wrapper**: right after stashing the
+receiver in `mapSlot`, route it through `__map_cow_inplace` and
+store the (possibly new) handle back into `mapSlot`. That slot is
+already used as both the mutation target passed to the impl AND
+the map placed in the result (tuple element 0 for delete, the
+returned value for clear), so an aliased map is deep-copied before
+the in-place delete/clear runs and the source alias keeps its
+entries.
+
+Test coverage: `Test{Arm64,X86_64,WASM}MapDeleteClearAliasedCopies`
+— `var (m3, _) = m2.delete(k)` and `m4 = m4.clear()` on an aliased
+map leave the original intact.
 
 Prerequisites that landed during Phase 2-prep:
 
