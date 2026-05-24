@@ -160,6 +160,16 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_append_via_stream_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.append-via-stream lowered to
+		//   (self: i32, retptr: i32) -> (). Like write-via-stream but
+		//   with no offset — the returned output-stream appends at EOF.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.append-via-stream",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -811,7 +821,17 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_open_appender"] {
-		in.add("wasi_path_open")
+		if opts.Preview2WASI {
+			// open_appender opens via get-directories → open-at(create,
+			// no truncate) → append-via-stream and stores the EOF-
+			// positioned output-stream handle in the Writer; the Writer's
+			// write method pulls in blocking-write-and-flush.
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_append_via_stream_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
 	}
 	if helpers.set["__fern_stdin"] && opts.Preview2WASI {
 		// Preview-2 stdin Reader holds the get-stdin input-stream handle.
@@ -1197,6 +1217,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
+	"__fern_open_appender":       buildOpenAppenderBodyP2,
 	"__fern_writer_write":        buildWriterWriteBodyP2,
 }
 

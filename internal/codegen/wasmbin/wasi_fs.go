@@ -1495,6 +1495,105 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildOpenAppenderBodyP2 is the preview-2 variant of open_appender:
+// like buildOpenWriterBodyP2 but opens with CREATE only (no TRUNCATE,
+// so an existing file's contents are kept) and uses append-via-stream
+// — which takes no offset and returns an output-stream already
+// positioned at end-of-file, so Writer.write appends. Returns
+// Result[Writer, IoError]. Locals mirror buildOpenWriterBodyP2.
+func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	appendVia := idxs["wasi_descriptor_append_via_stream_p2"]
+
+	// open-flags: create(bit0) only = 1; descriptor-flags: write = 2.
+	const openFlagsCreate = 1
+	const descFlagsWrite = 2
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
+	// get-directories(rb); preopen = mem[mem[rb+0]].
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, getDirs)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5)
+	// open-at(preopen, 1, path_buf, path_byte_len, create, write, rb).
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, openFlagsCreate)
+	body = inst.InstI32Const(body, descFlagsWrite)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, openAt)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+	}
+	body = inst.InstEnd(body)
+	// fd = mem[rb+4].
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 6)
+	// append-via-stream(fd, rb) — no offset.
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, appendVia)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+	}
+	body = inst.InstEnd(body)
+	// stream = mem[rb+4].
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 7)
+
+	// Writer struct: 12 bytes (rc sentinel @ +0, {handle} @ +8).
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 8)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 7)
+	body = memory.InstI32Store(body, 2, 0)
+
+	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 8)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildOpenAppenderBody — open with CREATE + write rights +
 // fdflag APPEND. Returns Result[Writer, IoError].
 func buildOpenAppenderBody(idxs map[string]uint32) []byte {

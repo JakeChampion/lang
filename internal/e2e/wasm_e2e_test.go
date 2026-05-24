@@ -10394,6 +10394,62 @@ func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
 }`)
 }
 
+// TestCmdLangComponentWrapCliWithOpenAppender drives open_appender:
+// preview-2 has no fd-append flag, so the composer's FileAppend
+// dimension opens via get-directories → open-at(CREATE, no TRUNCATE)
+// → append-via-stream (the offset-less method) and stores the
+// EOF-positioned output-stream handle; Writer.write then appends. The
+// existing file's contents must be preserved.
+func TestCmdLangComponentWrapCliWithOpenAppender(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "log.txt"), []byte("line1\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	srcPath := filepath.Join(dir, "ap.fern")
+	src := []byte(`function main(): i32 {
+    match (open_appender("log.txt")) {
+        Ok(w) => {
+            match (w.write("line2\n")) {
+                Some(e) => { return 2; },
+                None => { return 0; }
+            }
+            return 4;
+        },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "ap.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (open_appender) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Errorf("open_appender.write: wasmtime run failed (want exit 0): %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "log.txt"))
+	if err != nil {
+		t.Fatalf("read log.txt: %v", err)
+	}
+	// Append, not truncate: both lines present.
+	if string(got) != "line1\nline2\n" {
+		t.Errorf("log.txt = %q, want %q", string(got), "line1\nline2\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the
