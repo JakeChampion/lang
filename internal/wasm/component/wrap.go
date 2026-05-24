@@ -75,17 +75,17 @@ type WasiImport struct {
 //
 // The component:
 //
-//   1. Declares an instance type per WASI import describing its
-//      interface.
-//   2. Imports each interface under its WASI name (e.g.
-//      "wasi:cli/exit@0.2.0").
-//   3. Aliases each interface's function as a component-level func.
-//   4. Lowers each component-level func to a core func.
-//   5. Packages each lowered core func into a single-export core
-//      instance.
-//   6. Embeds the core module.
-//   7. Instantiates the core module, passing each packaged core
-//      instance under its CoreImportModule name.
+//  1. Declares an instance type per WASI import describing its
+//     interface.
+//  2. Imports each interface under its WASI name (e.g.
+//     "wasi:cli/exit@0.2.0").
+//  3. Aliases each interface's function as a component-level func.
+//  4. Lowers each component-level func to a core func.
+//  5. Packages each lowered core func into a single-export core
+//     instance.
+//  6. Embeds the core module.
+//  7. Instantiates the core module, passing each packaged core
+//     instance under its CoreImportModule name.
 //
 // This is the Go-side counterpart of
 // `build_wasi_multi_imported_component` in std/wasm/component.lang.
@@ -142,12 +142,12 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 //
 // Recipe (matches the Lang helper):
 //
-//   1. core-module:    embed the core module
-//   2. core-instance:  instantiate (no args)
-//   3. alias:          alias the named core export as a core-func
-//   4. type:           declare the component-level functype
-//   5. canon:          lift core-func 0 → component-func 0 (no opts)
-//   6. export:         expose component-func 0 as exportName
+//  1. core-module:    embed the core module
+//  2. core-instance:  instantiate (no args)
+//  3. alias:          alias the named core export as a core-func
+//  4. type:           declare the component-level functype
+//  5. canon:          lift core-func 0 → component-func 0 (no opts)
+//  6. export:         expose component-func 0 as exportName
 //
 // This is the simplest preview-2 component shape that wasmtime
 // can `--invoke`. The byte-equivalence test pins the output
@@ -372,6 +372,111 @@ func wrapWasiStreamWriteComponent(coreBytes []byte, cliInterface, getFuncName st
 	// Instantiate the fixup module with that arg → core
 	// instance 5. Instantiation triggers the elem segment that
 	// installs the lowered func into the trampoline's table[0].
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
+		[]string{""}, []uint32{4})
+
+	return buf
+}
+
+// WrapWasiReadComponent wraps a core module that imports
+// `wasi:cli/stdin::get-stdin` and
+// `wasi:io/streams::[method]input-stream.blocking-read` into a
+// preview-2 component — the read-side counterpart of
+// WrapWasiPrintComponent. The user's core module must:
+//
+//   - import `wasi:cli/stdin@0.2.0::get-stdin` as `() -> i32`
+//   - import `wasi:io/streams@0.2.0::[method]input-stream.blocking-read`
+//     as `(self: i32, len: i64, ret_ptr: i32) -> ()`
+//   - export `memory` and `cabi_realloc`
+//
+// The shape mirrors the write wrap (three imported interfaces —
+// wasi:io/error, wasi:io/streams, wasi:cli/stdin — with shared
+// resource types via outer aliases, plus trampoline + fixup to
+// break the canon-lower / instantiation cycle), with two
+// read-specific differences:
+//
+//   - the lowered blocking-read ABI is `(i32, i64, i32) -> ()`
+//     (the mixed-valtype trampoline), and
+//   - blocking-read returns `result<list<u8>, stream-error>`, so
+//     its canon-lower needs `realloc` (to allocate the returned
+//     list in the user's memory) in addition to `memory`. The
+//     user's `cabi_realloc` export is aliased for that.
+func WrapWasiReadComponent(coreBytes []byte) []byte {
+	readParams := []byte{0x7f, 0x7e, 0x7f} // (self: i32, len: i64, ret_ptr: i32)
+	buf := PutComponentHeader(nil)
+
+	// Type 0: wasi:io/error instance type. Import as instance 0.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	// Top-level alias of `error` → type 1.
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+
+	// Type 2: read-side wasi:io/streams instance type (references
+	// type 1). Import as instance 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsReadInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	// Top-level alias of `input-stream` → type 3.
+	buf = PutAliasSectionInstanceExportType(buf, 1, "input-stream")
+
+	// Type 4: wasi:cli/stdin instance type (references type 3).
+	// Import as instance 2.
+	buf = PutTypeSectionRawBody(buf, WasiCliStdinInstanceTypeBody(3))
+	buf = PutImportSectionOneInstance(buf, "wasi:cli/stdin@0.2.0", 4)
+
+	// Core modules: user (0), trampoline (1), fixup (2). The
+	// trampoline / fixup carry the mixed (i32, i64, i32) read ABI.
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(readParams))
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(readParams))
+
+	// Instantiate trampoline (no args) → core instance 0.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+
+	// Alias get-stdin from instance 2 → component func 0,
+	// canon-lower it (no opts — `() -> handle`) → core func 0,
+	// wrap as core instance 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "get-stdin")
+	buf = PutCanonSectionLowerNoOpts(buf, 0)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-stdin", 0)
+
+	// Alias "0" func from trampoline (core instance 0) → core
+	// func 1. Wrap as core instance 2 under the method name.
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]input-stream.blocking-read", 1)
+
+	// Instantiate user core module with stdin=instance 1,
+	// streams=instance 2 (the trampoline wrapper) → core
+	// instance 3.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{"wasi:cli/stdin@0.2.0", "wasi:io/streams@0.2.0"},
+		[]uint32{1, 2})
+
+	// Alias memory + cabi_realloc from the user core instance and
+	// the trampoline's table. Unlike the write wrap, the read
+	// canon-lower needs realloc: blocking-read returns a
+	// host-allocated list<u8>, so the canonical ABI calls
+	// cabi_realloc to place those bytes in the user's memory.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 3, "cabi_realloc") // core func 2
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
+
+	// Alias blocking-read from streams instance → component func 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]input-stream.blocking-read")
+
+	// Canon-lower the method with memory(0) + realloc(core func 2)
+	// → core func 3.
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 1, 0, 2)
+
+	// Build the fixup arg instance — packages the trampoline's
+	// table + the lowered func (core func 3) → core instance 4.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 3},
+	})
+
+	// Instantiate the fixup module with that arg → core
+	// instance 5. Triggers the elem segment that installs the
+	// lowered func into the trampoline's table[0].
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
 		[]string{""}, []uint32{4})
 

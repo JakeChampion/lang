@@ -498,15 +498,16 @@ func TestRawInstanceTypeBody_EscapeHatch(t *testing.T) {
 // RawInstanceTypeBody.
 //
 // The interface body matches what wasm-tools emits for
-//   interface error { resource error; }
+//
+//	interface error { resource error; }
 //
 // in WIT — `42 01 04 00 05 "error" 03 01`:
 //
-//   42       instance type form
-//   01       vec(1) decls
-//   04       export decl
-//   00 05 "error"  exportname (label + uleb len + name bytes)
-//   03 01    externdesc type, bound = (sub)
+//	42       instance type form
+//	01       vec(1) decls
+//	04       export decl
+//	00 05 "error"  exportname (label + uleb len + name bytes)
+//	03 01    externdesc type, bound = (sub)
 //
 // Wrapped in `01 42 ...` (the vec(1) types of the type section
 // body), the full body is 13 bytes (0x0d).
@@ -568,16 +569,16 @@ func TestRawInstanceTypeBody_ResourceDecl(t *testing.T) {
 //
 // The bytes match what `wasm-tools parse` produces from the WAT:
 //
-//   (module
-//     (import "wasi:cli/stdout@0.2.0" "get-stdout"
-//             (func $get_stdout (result i32)))
-//     (import "wasi:io/streams@0.2.0"
-//             "[method]output-stream.blocking-write-and-flush"
-//             (func $write (param i32 i32 i32 i32)))
-//     (memory (export "memory") 1)
-//     (func (export "cabi_realloc")
-//           (param i32 i32 i32 i32) (result i32)
-//       i32.const 0))
+//	(module
+//	  (import "wasi:cli/stdout@0.2.0" "get-stdout"
+//	          (func $get_stdout (result i32)))
+//	  (import "wasi:io/streams@0.2.0"
+//	          "[method]output-stream.blocking-write-and-flush"
+//	          (func $write (param i32 i32 i32 i32)))
+//	  (memory (export "memory") 1)
+//	  (func (export "cabi_realloc")
+//	        (param i32 i32 i32 i32) (result i32)
+//	    i32.const 0))
 //
 // Captured by hex-dumping the same WAT in the /tmp build
 // playground.
@@ -658,6 +659,96 @@ func TestWrapWasiPrintComponent_Validates(t *testing.T) {
 	}
 }
 
+// readCoreModule returns a tiny hand-rolled core wasm module
+// shaped like the user-side of a WrapWasiReadComponent input:
+//
+//   - imports wasi:cli/stdin@0.2.0::get-stdin as `() -> i32`
+//   - imports wasi:io/streams@0.2.0::[method]input-stream.blocking-read
+//     as `(i32, i64, i32) -> ()`  (self, len, ret_ptr)
+//   - exports memory + cabi_realloc
+//
+// Same WAT shape as printCoreModule, with the read-side imports
+// (the blocking-read func type carries an i64 `len` param).
+func readCoreModule() []byte {
+	return []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		// type section: 3 types
+		//   0: () -> i32
+		//   1: (i32 i64 i32) -> ()
+		//   2: (i32 i32 i32 i32) -> i32
+		0x01, 0x13, 0x03,
+		0x60, 0x00, 0x01, 0x7f,
+		0x60, 0x03, 0x7f, 0x7e, 0x7f, 0x00,
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
+		// import section: 2 imports
+		0x02, 0x5d,
+		0x02,
+		// wasi:cli/stdin@0.2.0 . get-stdin (func type 0)
+		0x14, 'w', 'a', 's', 'i', ':', 'c', 'l', 'i', '/', 's', 't', 'd', 'i', 'n', '@', '0', '.', '2', '.', '0',
+		0x09, 'g', 'e', 't', '-', 's', 't', 'd', 'i', 'n',
+		0x00, 0x00,
+		// wasi:io/streams@0.2.0 . [method]input-stream.blocking-read (func type 1)
+		0x15, 'w', 'a', 's', 'i', ':', 'i', 'o', '/', 's', 't', 'r', 'e', 'a', 'm', 's', '@', '0', '.', '2', '.', '0',
+		0x22,
+		'[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'i', 'n', 'p', 'u', 't', '-', 's', 't', 'r', 'e', 'a', 'm', '.', 'b', 'l', 'o', 'c', 'k', 'i', 'n', 'g', '-', 'r', 'e', 'a', 'd',
+		0x00, 0x01,
+		// function section: vec(1) typeidx [2] (cabi_realloc)
+		0x03, 0x02, 0x01, 0x02,
+		// memory section: vec(1), no-max flag, min=1
+		0x05, 0x03, 0x01, 0x00, 0x01,
+		// export section: vec(2)
+		//   memory 0 → "memory"
+		//   func 2 → "cabi_realloc"  (imports take funcidx 0+1)
+		0x07, 0x19, 0x02,
+		0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00,
+		0x0c, 'c', 'a', 'b', 'i', '_', 'r', 'e', 'a', 'l', 'l', 'o', 'c', 0x00, 0x02,
+		// code section: vec(1), body length 4: vec(0) locals, i32.const 0, end
+		0x0a, 0x06, 0x01, 0x04, 0x00, 0x41, 0x00, 0x0b,
+	}
+}
+
+// TestWrapWasiReadComponent_Validates calls the read wrap helper
+// on a hand-rolled user core module and confirms the produced
+// component validates under wasm-tools. The printed output must
+// include the three imports, the input-stream / blocking-read
+// names, the trampoline indirection, and a realloc-bearing
+// canon-lower.
+func TestWrapWasiReadComponent_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	comp := component.WrapWasiReadComponent(readCoreModule())
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "read.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:io/error@0.2.0",
+		"wasi:io/streams@0.2.0",
+		"wasi:cli/stdin@0.2.0",
+		"input-stream",
+		"blocking-read",
+		"call_indirect",
+		"canon lower",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, string(out))
+		}
+	}
+}
+
 // printCliRunCoreModule is printCoreModule extended with a
 // `_lang_run() -> i32` export that just returns 0. Used to
 // exercise WrapWasiPrintAsCliRun end-to-end: the produced
@@ -675,10 +766,10 @@ func printCliRunCoreModule() []byte {
 		// type section: vec(4) — same as printCoreModule plus
 		// type 3 = () -> i32 for _lang_run.
 		0x01, 0x18, 0x04,
-		0x60, 0x00, 0x01, 0x7f,                                  // type 0: () -> i32 (get-stdout)
-		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00,                // type 1: (i32 i32 i32 i32) -> () (write)
-		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,          // type 2: (i32 i32 i32 i32) -> i32 (cabi_realloc)
-		0x60, 0x00, 0x01, 0x7f,                                  // type 3: () -> i32 (_lang_run)
+		0x60, 0x00, 0x01, 0x7f, // type 0: () -> i32 (get-stdout)
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x00, // type 1: (i32 i32 i32 i32) -> () (write)
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f, // type 2: (i32 i32 i32 i32) -> i32 (cabi_realloc)
+		0x60, 0x00, 0x01, 0x7f, // type 3: () -> i32 (_lang_run)
 		// import section (same as printCoreModule)
 		0x02, 0x6b, 0x02,
 		0x15, 'w', 'a', 's', 'i', ':', 'c', 'l', 'i', '/', 's', 't', 'd', 'o', 'u', 't', '@', '0', '.', '2', '.', '0',
