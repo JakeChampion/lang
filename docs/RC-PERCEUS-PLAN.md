@@ -781,17 +781,31 @@ Phase 3 CANNOT start with the freelist — it must start by
 
 #### Implementation sequence (safe order)
 
-1. **rc-balance / underflow detector (FIRST — ship standalone).**
-   A debug-build instrumented `rc_dec` that, after the sentinel
-   check, tests `rc <= 0` *before* decrementing and bumps a global
-   "underflow" counter at a fixed low-memory address; `rc_inc` /
-   `rc_dec` also maintain a net live-rc counter. A Go harness runs
-   the existing e2e corpus and asserts underflow == 0 (catches the
-   premature-drop drift that is the UAF precursor — a plain
-   "rc>0 at exit" leak walk does NOT catch under-counting). This
-   slice is pure instrumentation: zero behavior change to release
-   builds, and it quantifies exactly how much drift Phases 1–2 left
-   behind.
+1. **rc-underflow detector (FIRST) — SHIPPED (wasm).**
+   `__fern_rc_dec` (wasm `buildRcDecBody`), after the null /
+   low-address / sentinel guards, tests `rc <= 0` *before*
+   decrementing and bumps a counter at a fixed low-memory slot
+   (`rcUnderflowAddr = 48`, in the reserved mem[44..64] gap). The
+   `__rc_underflow_count()` builtin reads it back so tests can
+   assert a program is drift-free. Pure instrumentation, no
+   behavior change. `TestWASMRcUnderflowDetector` pins both
+   contracts (clean program → 0; a deliberate double-dec → 1).
+
+   **First measurements (the drift Phases 1–2 left behind):**
+   - `m = m.set(k, v)` repeated (the idiomatic value-returning
+     form) → **underflow**. cow keeps the unique handle in place
+     and returns it, then the assignment's dec-on-overwrite drops
+     its rc 1→0; the *next* self-assign dec's 0→−1. Counted once
+     per handle (after −1 the high bit trips the sentinel guard).
+   - statement-form `m.set(k, v)` (no reassignment) → **clean (0)**
+     — no dec-on-overwrite, cow stays in place at rc==1.
+
+   So the dominant drift source is exactly `x = x.<mutator>()`
+   self-assignment. That scopes step 2: make the dec-on-overwrite
+   cow-aware (skip the dec when the value was kept in place),
+   rather than the unconditional dec used today. Natives get their
+   own counter slot once the SSO flip frees up the string work
+   around the same `rc_dec` helper.
 2. **Drift audit + fixes.** Drive the detector to zero across the
    suite. Expected hot spots: the self-assign mutation paths above.
    Likely fix shape: route `x = x.<mutator>()` through a
