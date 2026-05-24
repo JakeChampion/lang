@@ -534,8 +534,27 @@ End-to-end exit code 42 demo (covered by
     `cabi_realloc` (gated behind `ForceMemorySection`, rebuilt
     only for detected read-only programs). End-to-end test:
     `TestCmdLangComponentWrapCliWithReadLine`.
+  - **`args()` migration. Shipped.** `__fern_arg_count` /
+    `__fern_arg_at` / `__fern_args` source argv from
+    `wasi:cli/environment::get-arguments` (→ `list<string>`) under
+    `EmitOptions.Preview2WASI`. The get-arguments instance type
+    (#1276), the realloc-bearing `WrapWasiArgs{Component,AsCliRun}`
+    (#1277), the wasmbin P2 bodies (#1279), and `usesPreview2ArgsOnly`
+    driver routing (#1281) complete it. The list elements are already
+    `(ptr, len)` pairs, so no preview-1 NUL walk. End-to-end test:
+    `TestCmdLangComponentWrapCliWithArgs`.
+  - **`env()` migration. Shipped.** `__fern_env` (the `env(name)`
+    lookup) sources variables from
+    `wasi:cli/environment::get-environment`
+    (→ `list<tuple<string, string>>`) under
+    `EmitOptions.Preview2WASI`. The get-environment instance type
+    (#1281), the `WrapWasiEnv{Component,AsCliRun}` wrap (#1282), the
+    wasmbin `buildEnvBodyP2` (#1285), and `usesPreview2EnvOnly`
+    driver routing (#1286) complete it. get-environment returns
+    pre-split `(key, value)` pairs, so the lookup is a plain
+    length + byte compare (no `'='` scan). End-to-end test:
+    `TestCmdLangComponentWrapCliWithEnv`.
   - **Still to do (smaller migrations):**
-    - `environ_*` / `args_*` need lists / records.
     - `path_*` needs filesystem resources.
     - Mixed-import cases (e.g. print + exit, or random + print)
       — currently routed only when the imports are exactly one
