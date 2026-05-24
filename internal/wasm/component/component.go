@@ -547,6 +547,36 @@ func WasiCliStderrInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
 	return wasiCliStreamGetterInstanceTypeBody(outerOutputStreamTypeidx, "get-stderr")
 }
 
+// WasiClocksWallClockInstanceTypeBody returns the type-section
+// body bytes for the `wasi:clocks/wall-clock@0.2.0` instance
+// type. The interface declares
+// `now: func() -> datetime` where `datetime` is the record
+// `{ seconds: u64; nanoseconds: u32 }` — no resources, so
+// (unlike the stdio interfaces) there's no wasi:io/error
+// dependency or outer alias.
+//
+// Inside-instance decl list (4 decls):
+//
+//  0. type record { seconds: u64; nanoseconds: u32 }  → typeidx 0
+//  1. export "datetime" (type (eq 0))                 → typeidx 1
+//  2. type func () -> typeidx 1                        → typeidx 2
+//  3. export "now" (func 2)
+func WasiClocksWallClockInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x04}
+	// decl 0: type record { seconds: u64; nanoseconds: u32 }
+	body = append(body, 0x01) // type decl
+	body = append(body, 0x72, 0x02)
+	body = append(body, 0x07, 's', 'e', 'c', 'o', 'n', 'd', 's', CValtypeU64)
+	body = append(body, 0x0b, 'n', 'a', 'n', 'o', 's', 'e', 'c', 'o', 'n', 'd', 's', CValtypeU32)
+	// decl 1: export "datetime" (type (eq 0))
+	body = append(body, ExportTypeEqDecl("datetime", 0)...)
+	// decl 2: type func() -> typeidx 1 (the exported datetime)
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x01)
+	// decl 3: export "now" (func 2)
+	body = append(body, 0x04, 0x00, 0x03, 'n', 'o', 'w', 0x01, 0x02)
+	return body
+}
+
 // wasiCliStreamGetterInstanceTypeBody builds the shared
 // instance-type body for wasi:cli/stdout / wasi:cli/stderr —
 // both declare a single `<getFuncName>: func() -> output-stream`
