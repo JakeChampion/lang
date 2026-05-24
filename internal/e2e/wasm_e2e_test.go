@@ -9857,6 +9857,87 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithOpenReader drives the file Reader
+// API — open_reader(path) then Reader.read_line / read_chunk —
+// through `-component-wrap-cli`. Preview-2 has no fds: open_reader
+// opens via get-directories → open-at → read-via-stream and stores
+// the stream handle in the Reader; the read methods blocking-read on
+// it. The import set (open chain + blocking-read) matches the
+// read-file route, so no new wrap is needed.
+func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	build := func(name, src string) string {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		return compPath
+	}
+	// read_line: first line "hello\n" is 6 bytes → exit 0.
+	rl := build("orl", `function main(): i32 {
+    match (open_reader("data.txt")) {
+        Ok(r) => {
+            match (r.read_line()) {
+                Some(line) => { if (line.len() == 6) { return 0; } return 2; },
+                None => { return 3; }
+            }
+            return 4;
+        },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, rl).Run(); err != nil {
+		t.Errorf("open_reader.read_line: wasmtime run failed (want exit 0): %v", err)
+	}
+	// read_chunk(4): "hell" is 4 bytes → exit 0.
+	rc := build("orc", `function main(): i32 {
+    match (open_reader("data.txt")) {
+        Ok(r) => {
+            match (r.read_chunk(4)) {
+                Some(chunk) => { if (chunk.len() == 4) { return 0; } return 2; },
+                None => { return 3; }
+            }
+            return 4;
+        },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, rc).Run(); err != nil {
+		t.Errorf("open_reader.read_chunk: wasmtime run failed (want exit 0): %v", err)
+	}
+	// Missing file → open-at fails → Err → non-zero.
+	miss := build("ormiss", `function main(): i32 {
+    match (open_reader("nope.txt")) {
+        Ok(r) => { match (r.read_line()) { Some(l) => { return 7; }, None => { return 8; } } return 4; },
+        Err(e) => { return 1; }
+    }
+    return 5;
+}`)
+	if err := exec.Command("wasmtime", "run", "--dir", dir, miss).Run(); err == nil {
+		t.Errorf("open_reader missing: wasmtime run exited 0, want non-zero (Err arm)")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWriteFile drives a Fern program
 // that writes a file via write_file() through `-component-wrap-cli`.
 // The driver detects the four-import write-file preview-2 shape

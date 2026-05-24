@@ -1271,6 +1271,114 @@ func buildOpenReaderBody(idxs map[string]uint32) []byte {
 	return buildOpenBody(idxs, 0, wasiRightFdRead|wasiRightFdSeek, 0)
 }
 
+// buildOpenReaderBodyP2 is the preview-2 variant of open_reader.
+// Preview-2 has no fds, so the Reader holds an input-stream handle:
+// the get-directories → open-at → read-via-stream chain (identical
+// to buildReadFileBodyP2's open prefix) yields a stream handle that
+// is stored in the same 12-byte Reader struct buildOpenBody builds
+// (8-byte rc sentinel + {handle: i32} at +8). Returns
+// Result[Reader, IoError]; the two host-call error checks map the
+// error-code to an IoError via buildReadFileErr. The Reader's
+// read_line / read_chunk methods then blocking-read on the handle.
+//
+// Locals mirror buildReadFileBodyP2 (15 locals, slots 2..16) so the
+// shared buildReadFileErr / appendErrnoFromErrorCode helpers line
+// up: 2=rb, 3=path_buf, 4=path_byte_len, 5=preopen, 6=fd, 7=stream,
+// 8=reader base/data, 9=Ok box, 13/15/16 used by the err helper,
+// 14=normalize scratch.
+func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
+
+	var body []byte
+	// rb = alloc(16) — shared retbuf for the host calls.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	// Normalize path → path_buf(3), path_byte_len(4).
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
+	// get-directories(rb); preopen = mem[mem[rb+0]].
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, getDirs)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5)
+	// open-at(preopen, path-flags=1, path_buf, path_byte_len,
+	//   open-flags=0, descriptor-flags=1 read, rb).
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, openAt)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+	}
+	body = inst.InstEnd(body)
+	// fd = mem[rb+4].
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 6)
+	// read-via-stream(fd, offset=0, rb).
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, readVia)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 16)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
+	}
+	body = inst.InstEnd(body)
+	// stream = mem[rb+4].
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 7)
+
+	// Reader struct: 12 bytes (rc sentinel @ +0, {handle} @ +8).
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 8)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 8) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 7) // stream handle
+	body = memory.InstI32Store(body, 2, 0)
+
+	// Result.Ok: 8 bytes, tag=0 @ +0, Reader ptr @ +4.
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 8)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildOpenWriterBody — open with CREATE|TRUNCATE + write
 // rights. Returns Result[Writer, IoError].
 func buildOpenWriterBody(idxs map[string]uint32) []byte {
@@ -1933,6 +2041,92 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 6)
 
 	// 5 i32 locals after the 2 params (slots 2..6).
+	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReaderReadChunkBodyP2 is the preview-2 variant of
+// __method_Reader_read_chunk. A single
+// wasi:io/streams::blocking-read(handle, n) on the Reader's stored
+// stream handle; the host returns the bytes in a freshly
+// realloc'd list, so the Some(string) points straight at that
+// buffer (no copy). disc != 0 (closed / error) or an empty list
+// yields None.
+//
+// Locals (after 2 params r, n): 2=retbuf(12), 3=handle,
+// 4=chunk_ptr, 5=chunk_len, 6=box.
+func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	blockingRead := idxs["wasi_io_blocking_read"]
+
+	var body []byte
+	// retbuf = alloc(12).
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	// handle = mem[r].
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 3)
+	// blocking-read(handle, (i64)n, retbuf).
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 1)
+	body = append(body, 0xAD) // i64.extend_i32_u
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, blockingRead)
+	// disc != 0 → None.
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// chunk_len = mem[rb+8]; if 0 → None.
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstLocalTee(body, 5)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstCall(body, allocBox)
+		body = inst.InstLocalTee(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// chunk_ptr = mem[rb+4].
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 4)
+	// Some(string): box(16) tag=0 @0, data=chunk_ptr @+8, len @+12.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 6)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 6)
+
 	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

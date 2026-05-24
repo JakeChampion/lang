@@ -785,8 +785,19 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_close")
 		}
 	}
-	if helpers.set["__fern_open_reader"] ||
-		helpers.set["__fern_open_writer"] ||
+	if helpers.set["__fern_open_reader"] {
+		if opts.Preview2WASI {
+			// open_reader opens via the get-directories → open-at →
+			// read-via-stream chain and stores the stream handle in the
+			// Reader; the Reader's read methods pull in blocking-read.
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_read_via_stream_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
+	if helpers.set["__fern_open_writer"] ||
 		helpers.set["__fern_open_appender"] {
 		in.add("wasi_path_open")
 	}
@@ -802,7 +813,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_reader_read_chunk"] {
-		in.add("wasi_fd_read")
+		if opts.Preview2WASI {
+			in.add("wasi_io_blocking_read")
+		} else {
+			in.add("wasi_fd_read")
+		}
 	}
 	if helpers.set["__fern_writer_write"] {
 		in.add("wasi_fd_write")
@@ -1163,6 +1178,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_write_file":          buildWriteFileBodyP2,
 	"__fern_stdin":               buildStdinBodyP2,
 	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
+	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
+	"__fern_open_reader":         buildOpenReaderBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
