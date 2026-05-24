@@ -653,6 +653,37 @@ func WasiCliEnvironmentArgsInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiCliEnvironmentGetEnvironmentInstanceTypeBody is the
+// wasi:cli/environment@0.2.0 instance type declaring just
+// `get-environment: func() -> list<tuple<string, string>>` — the
+// import Lang's `env()` builtin needs. Each tuple is a (key, value)
+// pair from a "KEY=VALUE" environment entry. Like the args body,
+// an import's instance type only lists what we consume.
+//
+// Inside-instance decl list (4 decls):
+//
+//  0. type tuple<string, string>            → typeidx 0
+//  1. type list<typeidx 0>                  → typeidx 1
+//  2. type func() -> typeidx 1              → typeidx 2
+//  3. export "get-environment" (func 2)
+//
+// The returned list<tuple<string, string>> is a variable-size
+// canonical-ABI value, so its canon-lower needs memory + realloc.
+func WasiCliEnvironmentGetEnvironmentInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x04}
+	// decl 0: type tuple<string, string>  (0x6f tuple, 2 elems)
+	body = append(body, 0x01, 0x6f, 0x02, CValtypeString, CValtypeString)
+	// decl 1: type list<typeidx 0>
+	body = append(body, 0x01, 0x70, 0x00)
+	// decl 2: type func() -> typeidx 1
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x01)
+	// decl 3: export "get-environment" (func 2)
+	body = append(body, 0x04, 0x00, byte(len("get-environment")))
+	body = append(body, "get-environment"...)
+	body = append(body, 0x01, 0x02)
+	return body
+}
+
 // WasiCliStdinInstanceTypeBody is the wasi:cli/stdin@0.2.0
 // counterpart — `get-stdin: func() -> input-stream`. Same shape
 // as the stdout/stderr getters, only the stream resource type
