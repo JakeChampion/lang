@@ -1045,6 +1045,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{u8ArrType},
 		Result: ast.NumberType{},
 	}
+	// __rc_underflow_count(): i32 — Phase 3 step 1 detector. Reads
+	// the count of rc over-releases (decrements of an already-<=0
+	// rc) the runtime has observed. WASM-only probe; see the IR
+	// lowering. Used by tests to assert a program is drift-free.
+	c.info.FuncSigs["__rc_underflow_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /

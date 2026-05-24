@@ -14954,6 +14954,39 @@ function main(): i32 {
 	}
 }
 
+// Phase 3 step 1: rc-underflow detector. __fern_rc_dec bumps a
+// counter (read back via __rc_underflow_count) whenever it is
+// asked to decrement an rc that is already <= 0 — an over-release
+// that, once Phase 3 turns on reclamation, becomes a
+// use-after-free. WASM-only probe (the counter is a linear-memory
+// slot). This test pins the detector's two contracts:
+//   - a program with no over-release reports 0 (no false
+//     positives from healthy 1->0 decs or sentinel statics), and
+//   - a deliberate double-dec (1->0 healthy, then 0-> under) is
+//     caught and counted exactly once.
+func TestWASMRcUnderflowDetector(t *testing.T) {
+	clean := `function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m.set("a", 1);
+    m.set("b", 2);
+    var xs: i32[] = [1, 2, 3];
+    return __rc_underflow_count() + m.get_or("a", 0) - 1 + xs[0] - 1;
+}`
+	if got := runWasm(t, clean); got != 0 {
+		t.Errorf("clean program: got %d, want 0 (no over-release expected)", got)
+	}
+
+	overRelease := `function main(): i32 {
+    var a: u8[] = __alloc_u8(8);   // rc = 1
+    __rc_dec(a);                   // 1 -> 0 (healthy)
+    __rc_dec(a);                   // 0 -> -1 (over-release, counted)
+    return __rc_underflow_count();
+}`
+	if got := runWasm(t, overRelease); got != 1 {
+		t.Errorf("double-dec: got underflow count %d, want 1", got)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestWASMRcDecOnOverwrite(t *testing.T) {

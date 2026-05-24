@@ -1142,6 +1142,19 @@ const allocCursorAddr = 40
 // memory state. 64 matches the WAT path's floor.
 const allocMinStart = 64
 
+// rcUnderflowAddr is a 4-byte counter in the reserved low-memory
+// gap (mem[44..64], between the bump cursor at 40 and the first
+// allocation at 64). Phase 3 step 1: the rc-underflow detector.
+// buildRcDecBody bumps it whenever __fern_rc_dec is asked to
+// decrement an rc that is already <= 0 — i.e. a value that has
+// been over-released. Under the current no-free arena that is
+// harmless drift (the Phase 1/2 CoW paths rely on it), but once
+// Phase 3 turns on reclamation each such event is a
+// use-after-free. The counter starts at 0 (linear memory is
+// zero-initialised) and is read back by the `__rc_underflow_count`
+// builtin so tests can assert it stays 0 across a program.
+const rcUnderflowAddr = 48
+
 // buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
 // Signature: (param $data i32) (param $len i32) (result i32)
@@ -1772,6 +1785,24 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Phase 3 underflow detector: a healthy dec operates on rc >= 1
+	// (1 -> 0 frees, n -> n-1 otherwise). If rc is already <= 0 here
+	// — past the null / low-address / sentinel guards, so it's a
+	// genuine heap value — this dec over-releases it: bump
+	// mem[rcUnderflowAddr]. (Note: a prior underflow leaves rc = -1,
+	// whose high bit trips the sentinel guard above, so each
+	// distinct over-release is counted exactly once.)
+	body = inst.InstLocalGet(body, 2) // $rc
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, rcUnderflowAddr)
+	body = inst.InstI32Const(body, rcUnderflowAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstLocalGet(body, 2)
