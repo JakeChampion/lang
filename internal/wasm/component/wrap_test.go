@@ -952,6 +952,104 @@ func appendCoreSec(buf []byte, id byte, body []byte) []byte {
 	return append(buf, body...)
 }
 
+// argsCliRunCoreModule is a hand-rolled core module shaped like
+// the user side of a WrapWasiArgsAsCliRun input:
+//
+//   - imports wasi:cli/environment@0.2.0::get-arguments as
+//     `(i32) -> ()` (the indirect list<string> out-pointer ABI)
+//   - exports memory + cabi_realloc + a `_lang_run() -> i32`
+//     returning 0
+//
+// The _lang_run body doesn't call get-arguments (proves the
+// linkage works without exercising the host side); the
+// cabi_realloc export just returns 0.
+func argsCliRunCoreModule() []byte {
+	out := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	// type section: vec(3)
+	//   0: (i32)->()                 get-arguments
+	//   1: ()->i32                   _lang_run
+	//   2: (i32 i32 i32 i32)->i32     cabi_realloc
+	typeBody := []byte{
+		0x03,
+		0x60, 0x01, 0x7f, 0x00,
+		0x60, 0x00, 0x01, 0x7f,
+		0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
+	}
+	out = appendCoreSec(out, 0x01, typeBody)
+	// import section: wasi:cli/environment@0.2.0 . get-arguments (type 0)
+	importBody := []byte{0x01}
+	importBody = append(importBody, byte(len("wasi:cli/environment@0.2.0")))
+	importBody = append(importBody, "wasi:cli/environment@0.2.0"...)
+	importBody = append(importBody, byte(len("get-arguments")))
+	importBody = append(importBody, "get-arguments"...)
+	importBody = append(importBody, 0x00, 0x00) // func, typeidx 0
+	out = appendCoreSec(out, 0x02, importBody)
+	// function section: vec(2) typeidx [2, 1]
+	//   func 1 = cabi_realloc (type 2), func 2 = _lang_run (type 1)
+	out = appendCoreSec(out, 0x03, []byte{0x02, 0x02, 0x01})
+	// memory section: vec(1), min=1
+	out = appendCoreSec(out, 0x05, []byte{0x01, 0x00, 0x01})
+	// export section: memory 0, cabi_realloc func 1, _lang_run func 2
+	exportBody := []byte{0x03}
+	exportBody = append(exportBody, byte(len("memory")))
+	exportBody = append(exportBody, "memory"...)
+	exportBody = append(exportBody, 0x02, 0x00) // memory 0
+	exportBody = append(exportBody, byte(len("cabi_realloc")))
+	exportBody = append(exportBody, "cabi_realloc"...)
+	exportBody = append(exportBody, 0x00, 0x01) // func 1
+	exportBody = append(exportBody, byte(len("_lang_run")))
+	exportBody = append(exportBody, "_lang_run"...)
+	exportBody = append(exportBody, 0x00, 0x02) // func 2
+	out = appendCoreSec(out, 0x07, exportBody)
+	// code section: vec(2) bodies, each `vec(0) locals; i32.const 0; end`
+	out = appendCoreSec(out, 0x0a, []byte{
+		0x02,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+		0x04, 0x00, 0x41, 0x00, 0x0b,
+	})
+	return out
+}
+
+// TestWrapWasiArgsAsCliRun_RunsUnderWasmtime exercises the args
+// wrap end-to-end. The component imports wasi:cli/environment@0.2.0
+// + exports wasi:cli/run@0.2.0; _lang_run returns 0 so wasmtime
+// exits clean. Validates the 1-i32 trampoline + list<string>
+// instance type + the realloc-bearing canon-lower (with the
+// cabi_realloc alias) wire up correctly.
+func TestWrapWasiArgsAsCliRun_RunsUnderWasmtime(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	comp := component.WrapWasiArgsAsCliRun(argsCliRunCoreModule(), "_lang_run")
+	dir := t.TempDir()
+	compPath := filepath.Join(dir, "args.wasm")
+	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		hex := bytes.Buffer{}
+		for _, b := range comp {
+			fmt.Fprintf(&hex, "%02x ", b)
+		}
+		t.Fatalf("wasm-tools validate failed: %v\noutput: %s\nbytes:\n%s", err, out, hex.String())
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/environment@0.2.0", "wasi:cli/run@0.2.0", "get-arguments"} {
+		if !bytes.Contains(printOut, []byte(want)) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
 // TestWrapWasiWallClockAsCliRun_RunsUnderWasmtime exercises the
 // wall-clock wrap end-to-end. The component imports
 // wasi:clocks/wall-clock@0.2.0 + exports wasi:cli/run@0.2.0;
