@@ -9997,7 +9997,7 @@ func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
 // (wasi:filesystem/preopens::get-directories +
 // wasi:filesystem/types::{open-at,read-via-stream} +
 // wasi:io/streams::blocking-read), rebuilds with cabi_realloc
-// exported, and routes via WrapWasiReadFileAsCliRun. The whole
+// exported, and routes via ComposePreview2CliRun. The whole
 // chain (get-directories → open-at → read-via-stream →
 // blocking-read loop) runs under `wasmtime run --dir`.
 //
@@ -10162,7 +10162,7 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 // The driver detects the four-import write-file preview-2 shape
 // (get-directories + descriptor.{open-at,write-via-stream} +
 // output-stream.blocking-write-and-flush), rebuilds with
-// cabi_realloc exported, and routes via WrapWasiWriteFileAsCliRun.
+// cabi_realloc exported, and routes via ComposePreview2CliRun.
 // The chain runs under `wasmtime run --dir` and the host file is
 // checked afterward.
 func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
