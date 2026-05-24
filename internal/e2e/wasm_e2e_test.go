@@ -9536,6 +9536,71 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithReadLinePrint drives the canonical
+// filter — a program that BOTH reads stdin (read_line) AND writes
+// stdout (print) — through `-component-wrap-cli`. The driver detects
+// the four-import read+print shape (get-stdin +
+// input-stream.blocking-read + get-stdout +
+// output-stream.blocking-write-and-flush) and routes via
+// WrapWasiReadLinePrintAsCliRun (combined io/streams, two
+// trampolines + two no-trampoline getters).
+func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "rp.fern")
+	src := []byte(`function main(): i32 {
+    match (read_line()) {
+        Some(line) => { print(line); return 0; },
+        None => { return 1; }
+    }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "rp.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (read_line+print) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/stdin@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/run@0.2.0"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// stdin "hello\n" → read_line Some("hello\n") → print adds '\n' →
+	// stdout "hello\n\n"; exit 0.
+	some := exec.Command("wasmtime", "run", compPath)
+	some.Stdin = strings.NewReader("hello\n")
+	var sout bytes.Buffer
+	some.Stdout = &sout
+	if err := some.Run(); err != nil {
+		t.Errorf("read_line+print with input: wasmtime run failed (want exit 0): %v", err)
+	}
+	if sout.String() != "hello\n\n" {
+		t.Errorf("read_line+print stdout = %q, want %q", sout.String(), "hello\n\n")
+	}
+	// Empty stdin → None → exit 1.
+	none := exec.Command("wasmtime", "run", compPath)
+	none.Stdin = strings.NewReader("")
+	if err := none.Run(); err == nil {
+		t.Errorf("read_line+print EOF: wasmtime run exited 0, want non-zero")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithArgs drives a Fern program that
 // reads argv via args() through `-component-wrap-cli`. The driver
 // detects the args-only preview-2 import
