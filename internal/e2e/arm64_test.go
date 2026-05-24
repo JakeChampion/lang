@@ -13419,6 +13419,38 @@ function main(): i32 {
 	}
 }
 
+// Unsigned comparison condition codes. arm64 emitted signed
+// `lt`/`le`/`gt`/`ge` for every `<`/`<=`/`>`/`>=`, ignoring the
+// op's Unsigned flag — so a u32 like 4294967295 (bit 31 set, reads
+// negative under signed compare) ordered wrong against small
+// values. Fix uses `lo`/`ls`/`hi`/`hs` for unsigned operands.
+// x86 / wasm were already correct, so this was a native-arm
+// divergence.
+func TestArm64UnsignedComparison(t *testing.T) {
+	src := `function main(): i32 {
+    var big: u32 = 4294967295u32;     // -1 if misread as signed
+    if (!(big > 0u32)) { return 1; }
+    if (!(big > 1000000u32)) { return 2; }
+    if (big < 5u32) { return 3; }
+    if (!(big >= 4294967295u32)) { return 4; }
+    if (big <= 100u32) { return 5; }
+    var b64: u64 = 18446744073709551615u64;
+    if (!(b64 > 9u64)) { return 6; }
+    if (b64 < 9u64) { return 7; }
+    var u: u8 = 200u8;
+    if (!(u > 100u8)) { return 8; }
+    // loop bound driven by unsigned compare
+    var i: u32 = 4294967293u32;
+    var c: i32 = 0;
+    while (i > 4294967290u32) { c = c + 1; i = i - 1u32; }
+    if (c != 3) { return 9; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (unsigned comparison condition codes)", code)
+	}
+}
+
 func intToString(n int) string {
 	if n == 0 {
 		return "0"

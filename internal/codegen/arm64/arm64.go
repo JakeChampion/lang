@@ -5721,22 +5721,44 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpLtS:
 		g.binPop()
 		g.cmpForWidth(op.Width)
-		g.emit("cset w0, lt")
+		// Unsigned operands (u8/u16/u32/u64/usize) need the
+		// unsigned condition code `lo` (lower); signed uses `lt`.
+		// Without this, a u32 like 4294967295 — which has bit 31
+		// set and so reads as negative under signed compare —
+		// orders wrong against small values. x86 / wasm already
+		// branch on op.Unsigned here.
+		if op.Unsigned {
+			g.emit("cset w0, lo")
+		} else {
+			g.emit("cset w0, lt")
+		}
 		g.push()
 	case ir.OpLeS:
 		g.binPop()
 		g.cmpForWidth(op.Width)
-		g.emit("cset w0, le")
+		if op.Unsigned {
+			g.emit("cset w0, ls")
+		} else {
+			g.emit("cset w0, le")
+		}
 		g.push()
 	case ir.OpGtS:
 		g.binPop()
 		g.cmpForWidth(op.Width)
-		g.emit("cset w0, gt")
+		if op.Unsigned {
+			g.emit("cset w0, hi")
+		} else {
+			g.emit("cset w0, gt")
+		}
 		g.push()
 	case ir.OpGeS:
 		g.binPop()
 		g.cmpForWidth(op.Width)
-		g.emit("cset w0, ge")
+		if op.Unsigned {
+			g.emit("cset w0, hs")
+		} else {
+			g.emit("cset w0, ge")
+		}
 		g.push()
 
 	// -------- logical / unary --------
