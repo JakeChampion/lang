@@ -13203,6 +13203,24 @@ func TestArm64MapClearReturnsMap(t *testing.T) {
 	}
 }
 
+// Phase 2d: Map.set copy-on-write — arm64 sibling of
+// TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
+// has rc=2, so m2.set(...) copies and leaves m1 intact.
+func TestArm64MapSetAliasedCopies(t *testing.T) {
+	src := `function main(): i32 {
+    var m1: Map[string, i32] = map_new(8);
+    m1.set("a", 1);                 // in-place (rc==1)
+    var m2 = m1;                    // alias → rc=2
+    m2 = m2.set("a", 999);          // rc>1 → copy; m1 unchanged
+    if (m1.get_or("a", 0) != 1)   { return 1; }
+    if (m2.get_or("a", 0) != 999) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (aliased Map.set must copy)", code)
+	}
+}
+
 // Pointer-typed tuple element — struct, array, or nested tuple in
 // a tuple slot must round-trip through ptrW-aligned storage.
 // Bug: exprType returned nil for *ast.StructLit / *ast.ArrayLit /

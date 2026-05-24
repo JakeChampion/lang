@@ -142,10 +142,46 @@ pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     // buf)` reads + writes hit the buf cell exactly as
     // before — they're at offset 0 of the data pointer.
     var base: usize = __alloc(16);
-    __store_i32(base, 0 - 2147483647 - 1);  // 0x80000000 sentinel
+    __store_i32(base, 1);  // Phase 2d: live rc=1 (was 0x80000000 sentinel)
     var m: usize = base + 8;
     __store_ptr(m, buf);
     return m;
+}
+
+// __map_cow_inplace — Phase 2d copy-on-write seam, modelled on
+// __lang_arr_cow_inplace. Returns a handle the caller may safely
+// mutate:
+//
+//   - rc <= 1 (sole owner, or the immortal high-bit sentinel
+//     which reads as a large negative i32): mutate in place,
+//     return `m` unchanged.
+//   - rc >  1 (aliased): deep-copy BOTH the handle cell AND the
+//     kv buffer (a shallow handle copy would still share the
+//     buffer and alias mutations), give the fresh handle rc=1,
+//     and return it. The source handle's rc is left to the
+//     normal dec-on-overwrite at the assignment site; under the
+//     Phase-1 bump allocator nothing is freed, so the functional
+//     isolation comes from the copy, not the exact rc.
+//
+// Borrowed-parameter model (PR #1280) is what makes this safe:
+// passing a Map to a function no longer inc's the handle, so a
+// map mutated through a borrow stays rc==1 and is mutated in
+// place (visible to the caller). Only a genuine local alias
+// (`var m2 = m1`) bumps rc above 1 and so triggers the copy.
+pub function __map_cow_inplace(m: usize): usize {
+    var rc: i32 = __load_i32(m - 8);
+    if (rc <= 1) { return m; }
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var entryStride: i32 = 2 * __ptr_width();
+    var bufBytes: i32 = 16 + cap * (4 + entryStride);
+    var newBuf: usize = __alloc(bufBytes);
+    __memcpy(newBuf, buf, bufBytes);
+    var base: usize = __alloc(16);
+    __store_i32(base, 1);
+    var nm: usize = base + 8;
+    __store_ptr(nm, newBuf);
+    return nm;
 }
 
 pub function __map_len_impl(m: usize): i32 {
@@ -261,6 +297,7 @@ pub function __map_grow(m: usize): usize {
 }
 
 pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
+    m = __map_cow_inplace(m);
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);

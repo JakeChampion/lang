@@ -663,26 +663,44 @@ observable behavior is identical except where the exact rc was
 asserted — the `*RcAliasIncCallArg` / `Arm64RcDecAtExit` tests
 were updated to the borrow counts.
 
-#### Phase 2d: Map CoW (handle rc=1 + `__map_cow_inplace`)
+#### Phase 2d: Map.set CoW (handle rc=1 + `__map_cow_inplace`) — SHIPPED
 
-Closes the gap left by Phase 2c. Requires Phase 1e prereqs:
+Closes the `Map.set` half of the gap left by Phase 2c. Built on
+the borrowed-parameter model above, which is what makes it sound:
+a Map mutated through a borrow stays rc==1 and is updated in place
+(ref semantics preserved for `f(m); m.set(...)`), while a genuine
+local alias (`var m2 = m1`) bumps rc and so copies.
 
-  - Add rc slot to the Map handle (or its `buf`). Current
-    `map_new_impl` does `__alloc(8)` for the handle cell with
-    no header; either grow that to `__alloc(8 + headerBytes)`
-    with rc at `[m - 8]`, or move rc onto the buffer (which
-    today also lacks an rc word).
-  - `__fern_map_cow_inplace(m) → m` runtime helper, modelled
-    on `__fern_arr_cow_inplace`: rc==1 fast path returns `m`
-    unchanged; rc>1 allocates fresh handle + buf, memcpy's the
-    buf contents, dec's the source's rc, returns new handle.
-  - Update `__map_set_impl`, `__map_delete_impl`, and
-    `__map_clear_impl` (plus their IR-side wrappers) to thread
-    through `__fern_map_cow_inplace` before mutating.
+Shipped:
 
-Test coverage to add: aliasing tests mirroring
-`TestArm64ArraySetAliasedCopies` / `TestArm64ArrayPushAliasedCopies`
-for `Map.set` / `Map.delete` / `Map.clear`.
+  - **Live rc=1 on the handle.** `map_new_impl` now writes `1`
+    (not the `0x80000000` immortal sentinel) into the handle's
+    rc word at `[m - 8]`, so inc/dec on alias actually track.
+  - **`__map_cow_inplace(m) → m`** — written in Fern (not per-
+    backend asm; the `__alloc` / `__memcpy` / `__load_i32` shims
+    let it live in `core/map.fern`). rc <= 1 (sole owner, or the
+    negative-reading sentinel) → return `m` unchanged; rc > 1 →
+    deep-copy BOTH the handle cell AND the kv buffer (a shallow
+    handle copy would still share the buffer), fresh handle gets
+    rc=1, return it. The source's rc is left to the assignment
+    site's dec-on-overwrite (Phase-1 no-free makes the exact rc
+    immaterial; isolation comes from the copy).
+  - `__map_set_impl` threads through `__map_cow_inplace` before
+    mutating. No bump on the in-place path, so MapLit's repeated
+    per-entry sets stay rc==1 (in-place) without spurious copies.
+
+Test coverage: `Test{Arm64,X86_64,WASM}MapSetAliasedCopies` —
+`var m2 = m1; m2 = m2.set(...)` leaves `m1` intact. The existing
+defer / `query_parse` ref-mutation tests confirm function-passed
+maps still mutate in place under the borrow model.
+
+**Follow-up (not yet done): `Map.delete` / `Map.clear` CoW.**
+Those mutate in place today (rc=1 handle doesn't change that — no
+cow on their path). Adding cow needs IR-wrapper handle-threading:
+`emitMapDeleteReturningTuple` / `emitMapClearReturningMap` reuse
+the pre-call receiver slot, which would go stale if cow copies, so
+the new handle must be plumbed out of the (bool / void)-returning
+impls. Same split as arrays shipped push (2a) then index-set (2b).
 
 Prerequisites that landed during Phase 2-prep:
 
