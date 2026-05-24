@@ -716,6 +716,53 @@ func TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Validates(t *testing.T
 	}
 }
 
+// TestInnerTypeEnum_Bytes pins a small enum defvaltype.
+func TestInnerTypeEnum_Bytes(t *testing.T) {
+	got := component.InnerTypeEnum([]string{"a", "bc"})
+	want := []byte{0x6d, 0x02, 0x01, 'a', 0x02, 'b', 'c'}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeEnum = % x, want % x", got, want)
+	}
+}
+
+// TestWasiFilesystemErrorCodeEnum_Validates composes the 37-case
+// error-code enum inside an instance type (exported under
+// "error-code") and confirms wasm-tools accepts it.
+func TestWasiFilesystemErrorCodeEnum_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	if n := len(component.WasiFilesystemErrorCodeNames); n != 37 {
+		t.Fatalf("error-code names = %d, want 37", n)
+	}
+	// instance type: vec(2) decls — the enum type + its export.
+	enum := component.InnerTypeEnum(component.WasiFilesystemErrorCodeNames)
+	ibody := []byte{0x01, 0x42, 0x02}
+	ibody = append(ibody, 0x01)        // type decl
+	ibody = append(ibody, enum...)     // inner 0 = enum
+	ibody = append(ibody, component.ExportTypeEqDecl("error-code", 0)...)
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, ibody)
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "errcode.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"error-code", "would-block", "cross-device"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
 func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
 	got := component.InnerTypeResultOkErr(7, 5)
