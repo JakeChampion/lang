@@ -349,6 +349,45 @@ func TestWasiFilesystemTypesWriteViaStreamInstanceTypeBody_Validates(t *testing.
 	}
 }
 
+// TestInnerTypeFlags_Bytes pins a small flags defvaltype.
+func TestInnerTypeFlags_Bytes(t *testing.T) {
+	got := component.InnerTypeFlags([]string{"a", "bc"})
+	want := []byte{0x6e, 0x02, 0x01, 'a', 0x02, 'b', 'c'}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeFlags = % x, want % x", got, want)
+	}
+}
+
+// TestWasiFilesystemTypesOpenAtInstanceTypeBody_Validates composes
+// the self-contained open-at descriptor method (descriptor +
+// error-code + the three flag types) and confirms wasm-tools
+// accepts it.
+func TestWasiFilesystemTypesOpenAtInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesOpenAtInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "openat.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"open-at", "path-flags", "open-flags", "descriptor-flags", "symlink-follow"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiFilesystemPreopensInstanceTypeBody_Validates composes
 // the preopens instance type (which outer-aliases the descriptor
 // resource from a wasi:filesystem/types import) and confirms
