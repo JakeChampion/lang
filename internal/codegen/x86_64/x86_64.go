@@ -2436,7 +2436,17 @@ func (g *generator) emitDataSections() {
 			}
 			sort.Ints(tags)
 			for _, t := range tags {
+				// Phase 1e-enums-ii: each sentinel carries the same
+				// 8-byte rc header as a heap box (rc=0x80000000 at
+				// [ptr-8], pad at [ptr-4]) so __lang_rc_inc/dec
+				// short-circuit on the high bit when the enum-ii
+				// predicate widening starts dec'ing enum locals that
+				// hold a payloadless variant. Without it the dec
+				// would read .rodata at [ptr-8] and attempt a write
+				// (segfault on the read-only section).
 				g.line(".align 4")
+				g.line("\t.4byte 0x80000000") // rc header (static sentinel)
+				g.line("\t.4byte 0")          // pad
 				g.line(fmt.Sprintf(".LEnumSentinel_%d:", t))
 				g.line(fmt.Sprintf("\t.4byte %d", t))
 			}

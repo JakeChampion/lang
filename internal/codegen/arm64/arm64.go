@@ -502,7 +502,16 @@ func (g *generator) emitDataSections() {
 		}
 		sort.Ints(tags)
 		for _, t := range tags {
+			// Phase 1e-enums-ii: prepend the 8-byte rc header
+			// (rc=0x80000000 at [ptr-8], pad at [ptr-4]) so the
+			// rc_inc/dec helpers short-circuit on the high bit once
+			// enum-ii widens the dec sweep to enum locals that hold
+			// a payloadless variant. The sentinel itself stays a
+			// shared read-only static — the header just makes the
+			// rc helpers treat it as immortal.
 			g.line(`.align 2`)
+			g.line(`	.4byte 0x80000000`) // rc header (static sentinel)
+			g.line(`	.4byte 0`)          // pad
 			g.label(fmt.Sprintf(".LEnumSentinel_%d", t))
 			g.line(fmt.Sprintf(`	.4byte %d`, t))
 		}

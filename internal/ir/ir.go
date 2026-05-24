@@ -1504,6 +1504,16 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		if _, isStruct := t.(ast.StructType); isStruct {
 			return true
 		}
+		// Phase 1e-enums-ii: enum values are always pointer-shaped
+		// in a local / param slot — either a headered heap box
+		// (emitEnumNew / pair rebox / runtime helper) or a static
+		// sentinel that now carries a 0x80000000 rc header. The
+		// transient pair-form (tag, payload) only lives on the
+		// operand stack between a pair call and its match dispatch,
+		// never in a slot, so the dec sweep never sees it.
+		if _, isEnum := t.(ast.EnumType); isEnum {
+			return true
+		}
 		return false
 	}
 	// Params first: each parameter name is unique in the
@@ -1604,6 +1614,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			return true
 		}
 		if _, isStruct := t.(ast.StructType); isStruct {
+			return true
+		}
+		// Phase 1e-enums-ii: zero enum slots too so the exit dec
+		// sweep's `ptr == 0` null guard fires on never-initialised
+		// enum locals (conditional / match-arm declarations).
+		if _, isEnum := t.(ast.EnumType); isEnum {
 			return true
 		}
 		return false
@@ -1798,6 +1814,14 @@ func (b *builder) emitRepackPairAsHeapBox(payloadWidth int) error {
 			storeOp = Op{Kind: OpStore, Width: WidthPtr}
 		}
 	}
+	// Phase 1e-enums-ii: the reboxed pair carries the same 8-byte
+	// rc header as emitEnumNew (rc=1 at [base+0]; data = base+8;
+	// tag / payload stores shift by rcHeaderBytes). Without it,
+	// the dec sweep that enum-ii's predicate widening enables
+	// would read heap-allocator metadata at [data-8] and corrupt
+	// it; with it, the reboxed Option / Result value picks up real
+	// rc tracking exactly like a directly-constructed box.
+	const rcHeaderBytes = 8
 	// Stack: [tag, payload] — top is payload. Stash payload in
 	// a scratch local so we can alloc + store the box without
 	// shuffling values around.
@@ -1807,23 +1831,32 @@ func (b *builder) emitRepackPairAsHeapBox(payloadWidth int) error {
 	tagSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__pair_repack_tag_%d", tagSlot)] = tagSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-	b.emit(Op{Kind: OpConstI32, I32: boxSize})
+	b.emit(Op{Kind: OpConstI32, I32: boxSize + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	boxSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__pair_repack_box_%d", boxSlot)] = boxSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
-	// Store tag at box+0 (always 4-byte i32).
+	// rc = 1 at [base + 0].
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// Store tag at data+0 (= base + rcHeaderBytes; always 4-byte i32).
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
 	b.emit(Op{Kind: OpStore})
-	// Store payload at the right offset (4 for i32, 8 for
+	// Store payload at data + payloadOff (4 for i32, 8 for
 	// pointer-shape) and width.
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
-	b.emit(Op{Kind: OpConstI32, I32: payloadOff})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + payloadOff})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 	b.emit(storeOp)
+	// Push the user-visible data pointer (= base + rc header).
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	return nil
 }
 
@@ -6161,6 +6194,9 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		if _, isStruct := t.(ast.StructType); isStruct {
 			return true
 		}
+		if _, isEnum := t.(ast.EnumType); isEnum {
+			return true
+		}
 		return false
 	}
 	for _, p := range b.fn.Params {
@@ -6251,6 +6287,14 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// bit so runtime-owned values stay shareable, and user-
 	// allocated values pick up real rc tracking.
 	if _, isStruct := t.(ast.StructType); isStruct {
+		return true
+	}
+	// Phase 1e-enums-ii: aliasing an enum-typed ident / field /
+	// index inc's the box. The value is always a heap pointer
+	// (headered box) or a header-carrying static sentinel, so
+	// __lang_rc_inc short-circuits on the sentinel and bumps a
+	// real rc on a user box.
+	if _, isEnum := t.(ast.EnumType); isEnum {
 		return true
 	}
 	return false

@@ -186,7 +186,52 @@ type set (`ArrayType` plus user-declared `StructType`).
 predicate already mirrors `needsRcIncOnAlias`; widening it to
 accept struct types matches the inc side.
 
-### Phase 1e-strings / enums / closures
+### Phase 1e-enums-i: rc header in `emitEnumNew` (SHIPPED)
+
+Variant boxes grow the 8-byte rc header (rc=1 at `[base+0]`,
+data = `base+8`). Same layout migration as struct-i.
+
+### Phase 1e-enums-runtime: sentinel runtime enum boxes (SHIPPED, arm64 + x86_64 + PR #1259 wasmbin)
+
+`__lang_alloc_box(size)→data` on every backend; every
+runtime-built Option / Result / IoError box routes through it
+so the static sentinel `0x80000000` sits at `[data-8]`.
+
+### Phase 1e-enums-ii: widen the rc predicates to `EnumType` (this PR)
+
+Not a one-line widening — three coordinated changes, because an
+enum-typed local can hold *three* pointer shapes and all of them
+must survive `__lang_rc_inc/dec`:
+
+  1. **Headered heap box** from `emitEnumNew` — already safe
+     (enums-i).
+  2. **Pair-form rebox.** `emitRepackPairAsHeapBox` (the
+     call-site repack of an `OpCallDirectPair` result that flows
+     into a var / field instead of straight into a `match`) built
+     a *headerless* box. Migrated to the same `rcHeaderBytes`
+     layout as `emitEnumNew`. The transient `(tag, payload)` pair
+     never lands in a slot — only on the operand stack between a
+     pair call and its match dispatch — so the dec sweep never
+     sees a non-pointer enum value.
+  3. **Static nullary sentinel.** `OpEnumSentinel` (None,
+     `IoError.Interrupted`, `JNull`, any payloadless variant)
+     lowered to a bare `.4byte tag` in `.rodata` (natives) / the
+     data segment (wasm) with **no** preceding rc word. Dec'ing
+     such a value would read `[ptr-8]` (arbitrary `.rodata`) and,
+     absent the high bit, *write* `rc-1` back → segfault on the
+     read-only section. Fixed by prepending the 8-byte
+     `0x80000000` header to every sentinel cell in all three
+     backends. `OpMatchTag`'s `[ptr+0]` read is unchanged.
+
+With those three in place the four predicates (`rcTracked` /
+`zeroRcTracked` exit sweep, `isArrayTypeOfLocal` dec-on-
+overwrite, `needsRcIncOnAlias`) accept `EnumType` directly — no
+pair-form exclusion needed, since slots are always pointer-
+shaped. No functional payoff until Phase 3 frees at rc=0; this
+slice is the safety groundwork so enum values can be tracked
+without corruption.
+
+### Phase 1e-strings / closures
 
 Same pattern after structs land. Strings have the extra
 wrinkle of SSO (inline vs. heap) — only the heap case grows
