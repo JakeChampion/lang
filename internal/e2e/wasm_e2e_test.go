@@ -9601,6 +9601,77 @@ func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliComposedCombos exercises the general
+// CLI-stream + structured composition engine
+// (component.ComposePreview2CliRun) on combinations the bespoke
+// routes never covered: a read side mixed with structured imports,
+// and both stream trampolines mixed with a structured import. These
+// errored under -component-wrap-cli before the composer existed.
+func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	build := func(name, src string) string {
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		return compPath
+	}
+
+	// read_line + exit: read side + structured. Some → exit 0, None → exit 1.
+	rle := build("rle", `function main(): i32 {
+    match (read_line()) {
+        Some(line) => { exit(0); return 0; },
+        None => { exit(1); return 1; }
+    }
+    return 5;
+}`)
+	rleSome := exec.Command("wasmtime", "run", rle)
+	rleSome.Stdin = strings.NewReader("hi\n")
+	if err := rleSome.Run(); err != nil {
+		t.Errorf("read_line+exit (Some): want exit 0, got %v", err)
+	}
+	rleNone := exec.Command("wasmtime", "run", rle)
+	rleNone.Stdin = strings.NewReader("")
+	if err := rleNone.Run(); err == nil {
+		t.Errorf("read_line+exit (None): want non-zero exit")
+	}
+
+	// read_line + print + exit: both stream trampolines + structured.
+	// stdin "echo me\n" → printed back (+ print's newline) → exit 0.
+	rlpe := build("rlpe", `function main(): i32 {
+    match (read_line()) {
+        Some(line) => { print(line); exit(0); return 0; },
+        None => { exit(2); return 2; }
+    }
+    return 5;
+}`)
+	cmd := exec.Command("wasmtime", "run", rlpe)
+	cmd.Stdin = strings.NewReader("echo me\n")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Errorf("read_line+print+exit: want exit 0, got %v", err)
+	}
+	if out.String() != "echo me\n\n" {
+		t.Errorf("read_line+print+exit stdout = %q, want %q", out.String(), "echo me\n\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithStdinReadLine drives the Reader
 // streaming API — stdin().read_line() — through `-component-wrap-cli`.
 // Preview-2 has no fds, so the stdin Reader holds the get-stdin
