@@ -553,6 +553,13 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 					}
 					return 0, nil
 				}
+				if usesPreview2WallClockOnly(bin) {
+					comp := component.WrapWasiWallClockAsCliRun(bin, "_lang_run")
+					if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+						return 1, err
+					}
+					return 0, nil
+				}
 				wasiImports, unknown := classifyPreview2Imports(bin)
 				if len(unknown) > 0 {
 					return 1, fmt.Errorf("-component-wrap-cli can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -component-wrap / -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
@@ -995,6 +1002,22 @@ func usesPreview2StreamWriteOnly(bin []byte, cliInterface, getFuncName string) b
 		}
 	}
 	return hasGetter && hasWrite
+}
+
+// usesPreview2WallClockOnly reports whether the core module's
+// imports are exactly the single preview-2 wall-clock pair —
+// `wasi:clocks/wall-clock@0.2.0::now`. The realtime-clock
+// helpers (now_ns / now_unix_ms) lower now() via the
+// indirect-datetime out-pointer ABI, so the wrap uses the
+// 1-i32 trampoline (WrapWasiWallClockAsCliRun) rather than the
+// structured WasiImport flow.
+func usesPreview2WallClockOnly(bin []byte) bool {
+	pairs := coreModuleImportPairs(bin)
+	if len(pairs) != 1 {
+		return false
+	}
+	p := pairs[0]
+	return p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now"
 }
 
 func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {

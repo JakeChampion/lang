@@ -9248,6 +9248,56 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithNowNs drives a Lang program
+// that calls now_ns() (the realtime wall-clock helper) through
+// `-component-wrap-cli`. With the preview-2 migration of
+// __lang_now_ns to wasi:clocks/wall-clock@0.2.0::now (the
+// datetime-record indirect-return shape) + the 1-i32 trampoline
+// wrap, the produced component imports wasi:clocks/wall-clock +
+// exports wasi:cli/run and runs cleanly under `wasmtime run`.
+func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "now.lang")
+	src := []byte(`function main(): i32 {
+    var t: i64 = now_ns();
+    if (t >= 0i64) { return 0; }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "now.wasm")
+	cmd := exec.Command("go", "run", "./cmd/lang",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lang -component-wrap-cli (now_ns) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:clocks/wall-clock@0.2.0", "wasi:cli/run@0.2.0"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
+		t.Fatalf("wasmtime run failed: %v", err)
+	}
+}
+
 // TestCmdLangComponentWrapCliVoidMain confirms `-component-wrap-cli`
 // transparently handles a void `main`. wasmbin's `SynthCliRun`
 // synthesises a `_lang_run() -> i32` wrapper that calls main and
