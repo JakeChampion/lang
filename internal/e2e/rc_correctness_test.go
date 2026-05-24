@@ -157,6 +157,110 @@ function main(): i32 {
     return (g.rows[1].cells[2] - 5) + (g.rows.len() - 2) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Churn: build + discard an array-of-structs every
+		// iteration. Stresses the dec-on-overwrite + drop paths
+		// repeatedly; the underflow counter must stay 0 across all
+		// iterations (a per-iteration over-release would accumulate).
+		name: "churn_loop_structs",
+		src: `struct P { x: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 64) {
+        var ps: P[] = [P{x: i}, P{x: i + 1}];
+        acc = acc + ps[1].x;
+        i = i + 1;
+    }
+    return (acc - 2080) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Array of unions, built via push (the checker's array
+		// literal doesn't widen mixed variants to the union type),
+		// indexed + matched.
+		name: "array_of_unions",
+		src: `struct VInt { v: i32 }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function vi(n: i32): Value { return VInt { v: n }; }
+function va(xs: i32[]): Value { return VArr { v: xs }; }
+function main(): i32 {
+    var vs: Value[] = [];
+    vs = vs.push(vi(1));
+    vs = vs.push(va([2, 3]));
+    vs = vs.push(vi(4));
+    var got: i32 = 0;
+    match (vs[1]) { VInt(n) => { got = n.v; }, VArr(a) => { got = a.v[1]; } }
+    return (got - 3) + (vs.len() - 3) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Struct holding both a union and an array.
+		name: "struct_union_and_array",
+		src: `struct VInt { v: i32 }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Box { tag: Value, data: i32[] }
+function main(): i32 {
+    var b: Box = Box { tag: VArr { v: [9, 9] }, data: [1, 2, 3] };
+    return (b.data.len() - 3) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Closure capturing a struct (pointer capture; leaks under
+		// no-free, must not over-release).
+		name: "closure_capture_struct",
+		src: `struct S { v: i32 }
+function main(): i32 {
+    var s: S = S { v: 21 };
+    var f = function (d: i32): i32 { return s.v + d; };
+    return (f(0) - 21) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Array of closures, each capturing the same array.
+		name: "array_of_closures",
+		src: `function main(): i32 {
+    var base: i32[] = [10, 20, 30];
+    var f = function (i: i32): i32 { return base[i]; };
+    var g = function (i: i32): i32 { return base[i] + 1; };
+    return (f(2) - 30) + (g(0) - 11) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Generic enum (Option) wrapping a pointer — falls through
+		// to plain dec (leaks, no underflow).
+		name: "option_of_array",
+		src: `function pick(xs: i32[]): Option[i32[]] {
+    if (xs.len() > 0) { return Some(xs); }
+    return None;
+}
+function main(): i32 {
+    var got: i32 = 0;
+    match (pick([7, 8, 9])) { Some(a) => { got = a[2]; }, None => { got = 0; } }
+    return (got - 9) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Tuple of arrays, destructured.
+		name: "tuple_of_arrays",
+		src: `function main(): i32 {
+    var t: (i32[], i32[]) = ([1, 2], [3, 4, 5]);
+    return (t.0[1] - 2) + (t.1[2] - 5) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Map with i32 keys and array values (rc-tracked values).
+		name: "map_array_values",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(8);
+    m = m.set(1, [10, 20]);
+    m = m.set(2, [30, 40, 50]);
+    var v: i32[] = m.get_or(2, []);
+    return (v.len() - 3) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
