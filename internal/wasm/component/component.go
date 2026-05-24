@@ -462,6 +462,42 @@ func InnerTypeVariant(cases []VariantCase) []byte {
 	return out
 }
 
+// InnerTypeTuple returns the defvaltype body for a `tuple<...>` —
+// an ordered, unnamed product type. Each element is a single valtype
+// byte (a primitive CValtype* or a small inner-scope typeidx, e.g.
+// `ipv4-address = tuple<u8,u8,u8,u8>`).
+//
+// Encoding: 6f <count> <valtype>*
+func InnerTypeTuple(elemValtypes []byte) []byte {
+	out := []byte{0x6f}
+	out = leb128.UlebU64(out, uint64(len(elemValtypes)))
+	out = append(out, elemValtypes...)
+	return out
+}
+
+// RecordField is one named field of an InnerTypeRecord. Valtype is a
+// primitive CValtype* or a small inner-scope typeidx.
+type RecordField struct {
+	Name    string
+	Valtype byte
+}
+
+// InnerTypeRecord returns the defvaltype body for a `record { ... }`
+// — a named product type (e.g. `ipv4-socket-address = record { port:
+// u16, address: ipv4-address }`).
+//
+// Encoding: 72 <count> (<name-len> <name> <valtype>)*
+func InnerTypeRecord(fields []RecordField) []byte {
+	out := []byte{0x72}
+	out = leb128.UlebU64(out, uint64(len(fields)))
+	for _, f := range fields {
+		out = leb128.UlebU64(out, uint64(len(f.Name)))
+		out = append(out, f.Name...)
+		out = append(out, f.Valtype)
+	}
+	return out
+}
+
 // OuterAliasTypeDecl returns the bytes for an instance-type
 // "alias outer" decl that exposes a parent-scope component type
 // as an inner type in the enclosing instance type body. Used
