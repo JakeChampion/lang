@@ -898,14 +898,37 @@ Phase 3 CANNOT start with the freelist — it must start by
      struct (`var h2 = h1`) does NOT double-drop, and nested
      struct/array fields stay value-correct with 0 over-releases.
      `TestSelfHostVM*` (heavy struct users) stay green.
-   - **Remaining:** enum / closure / map drop handlers; the
-     dec-on-overwrite site (entangled — `push`'s copy path transfers
-     element ownership without an inc, so routing array overwrite
-     through the drop would double-release; needs a per-method
-     ownership audit or a self-push exclusion first); and deep
-     (nested-of-nested) recursion via per-type `drop_<T>` rather than
-     the flat `rc_dec` used for non-array fields/elements now
-     (sufficient while free is off).
+   - **Enum payload drop (uniform case) — SHIPPED ON ALL THREE
+     BACKENDS.** A heap-boxed enum (`[rc@-8 | tag@0, payloads@…]`)
+     drops its pointer-shaped payloads on its LAST reference before
+     dec'ing the box. Same IR-side `__fern_rc_is_unique`-gated shape
+     as the struct drop. `uniformEnumDropLoads` emits the payload
+     decs unconditionally (no runtime tag switch) ONLY when every
+     payload-carrying variant shares an identical droppable
+     signature — same `payloadLayout` offsets, same array-vs-flat
+     kind. That is exactly the union shape (`type Value = VInt | VArr
+     | …`): each variant carries a single struct pointer at the same
+     offset, so whatever the tag, the box holds a droppable pointer
+     there. Payloadless variants (static sentinels, no box) don't
+     constrain the signature; the `is_unique` sentinel guard skips
+     them at runtime regardless. NON-uniform enums (JsonValue, where
+     JArray carries a pointer but JBool doesn't) and GENERIC enums
+     (Option / Result — `ParamType` payloads aren't statically
+     droppable) return `(nil,false)` and fall through to the plain
+     box dec: their payloads leak, which is safe under no-free and
+     reports 0 over-releases. `Test{WASM,X86_64,Arm64}RcDropEnumPayload`
+     pin fresh + aliased-widened + non-uniform shapes (all 0
+     over-releases); `TestSelfHostVM*` (heavy `Value`-union users)
+     stay green.
+   - **Remaining:** per-tag enum dispatch (non-uniform variants) +
+     generic-enum type-arg substitution; closure / map drop handlers;
+     the dec-on-overwrite site (entangled — `push`'s copy path
+     transfers element ownership without an inc, so routing array
+     overwrite through the drop would double-release; needs a
+     per-method ownership audit or a self-push exclusion first); and
+     deep (nested-of-nested) recursion via per-type `drop_<T>` rather
+     than the flat `rc_dec` used for non-array fields/elements/
+     payloads now (sufficient while free is off).
 4. **Freelist allocator, behind a build flag.** Per-size-class
    free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
    1024/2048; larger → bump+unmap). The free path needs the

@@ -1541,6 +1541,47 @@ func (b *builder) emitRcDecLocalsAtExit() {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
+		// Phase 3 step 3: a heap-boxed enum with pointer-shaped
+		// rc-tracked payloads drops those payloads on its LAST
+		// reference before dec'ing the box. The box layout is
+		// [rc@-8 | tag@0, payloads@payloadLayout offsets]. This
+		// slice handles the UNIFORM case — every payload-carrying
+		// variant shares an identical droppable-payload signature
+		// (same offsets, same array-vs-flat kind) — so the payload
+		// decs are emitted unconditionally inside the is_unique
+		// guard, with no tag switch. That covers unions
+		// (`type Value = VInt | VArr | ...`), whose variants each
+		// carry a single struct pointer at the same offset.
+		// Non-uniform enums (e.g. JsonValue, where JArray carries a
+		// pointer but JBool doesn't) and generic enums (Option /
+		// Result, whose ParamType payloads aren't statically
+		// droppable) fall through to the plain box dec — their
+		// payloads leak for now, which is safe under no-free and
+		// reports 0 over-releases. Per-tag dispatch + type-arg
+		// substitution are a later slice.
+		if et, ok := t.(ast.EnumType); ok {
+			if ed, edOk := b.info.Enums[et.Name]; edOk {
+				if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					for _, ld := range loads {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						if ld.off != 0 {
+							b.emit(Op{Kind: OpConstI32, I32: ld.off})
+							b.emit(Op{Kind: OpAdd})
+						}
+						b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+						decValueOnStack(ld.typ)
+					}
+					b.emit(Op{Kind: OpEnd})
+				}
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
@@ -1637,6 +1678,81 @@ func arrElemIsRcTracked(elem ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// enumDropLoad is one pointer-shaped payload slot the enum drop
+// must dec: the offset from the box's data pointer plus the
+// payload's static type (which decValueOnStack uses to pick the
+// recursive array drop vs a flat dec).
+type enumDropLoad struct {
+	off int32
+	typ ast.Type
+}
+
+// uniformEnumDropLoads reports the per-box droppable payload loads
+// for an enum IFF every payload-carrying variant shares an
+// identical droppable signature — same offsets, and the same
+// array-drop-vs-flat-dec kind at each. In that case the loads can
+// be emitted unconditionally inside the is_unique guard with no
+// runtime tag switch, because every heap box of this enum (whatever
+// its tag) holds droppable pointers at exactly those offsets.
+//
+// This is the union shape (`type V = A | B | ...`): each variant
+// carries a single struct pointer at offset 4. Payloadless
+// variants (sentinels — never heap boxes) don't constrain the
+// signature and are skipped. Returns (nil, false) when no variant
+// has a droppable payload, or when payload-carrying variants
+// disagree — those enums fall back to the plain box dec (their
+// payloads leak, which is safe under no-free). Generic ParamType
+// payloads are not statically droppable, so generic enums return
+// (nil, false) too.
+func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
+	dropKind := func(t ast.Type) (int, bool) {
+		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+			return 1, true // recursive array drop
+		}
+		if arrElemIsRcTracked(t) {
+			return 2, true // flat dec (struct / enum / closure)
+		}
+		return 0, false
+	}
+	var want []enumDropLoad
+	var wantKey string
+	have := false
+	for _, v := range ed.Variants {
+		if len(v.Payloads) == 0 {
+			continue // payloadless ⇒ static sentinel, no box
+		}
+		offsets, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+		var loads []enumDropLoad
+		key := ""
+		for i, pt := range v.Payloads {
+			kind, ok := dropKind(pt)
+			if !ok {
+				continue
+			}
+			loads = append(loads, enumDropLoad{off: offsets[i], typ: pt})
+			key += fmt.Sprintf("%d:%d;", offsets[i], kind)
+		}
+		if len(loads) == 0 {
+			// A payload-carrying variant with NO droppable payload
+			// (e.g. Some(i32), JBool(bool)) breaks uniformity: a box
+			// of that variant has nothing to drop at the shared
+			// offsets, so an unconditional dec would be wrong.
+			return nil, false
+		}
+		if !have {
+			want, wantKey, have = loads, key, true
+			continue
+		}
+		if key != wantKey {
+			return nil, false
+		}
+	}
+	if !have {
+		return nil, false
+	}
+	return want, true
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {

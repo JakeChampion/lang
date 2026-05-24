@@ -3036,6 +3036,64 @@ function main(): i32 {
 	}
 }
 
+// Phase 3 step 3: enum drop handlers (uniform case). A heap-boxed
+// enum whose payload-carrying variants share an identical
+// droppable-payload signature drops those payloads on its last
+// reference (gated by __fern_rc_is_unique) before dec'ing the box.
+// This covers unions (`type U = W | V2`), where every variant
+// carries a single struct pointer at the same payload offset.
+// Non-uniform / generic enums fall through to the plain box dec.
+func TestX86_64RcDropEnumPayload(t *testing.T) {
+	// Fresh struct boxed into a union, dropped at scope exit — the
+	// box transfer-owns the payload, so the drop balances (0
+	// over-releases) and the value round-trips.
+	fresh := `struct W { a: i32[] }
+struct V2 { b: i32 }
+type U = W | V2;
+function mk(): U { return W { a: [1, 2, 3] }; }
+function build(): i32 {
+    var u: U = mk();
+    match (u) { W(w) => { return w.a[1] + __rc_underflow_count(); }, V2(x) => { return x.b; } }
+    return 0 - 1;
+}
+function main(): i32 { return build() - 2; }`
+	if _, code := compileAndRunX86_64(t, fresh); code != 0 {
+		t.Errorf("got %d, want 0 (union payload drop: value 2, 0 underflow)", code)
+	}
+
+	// Aliased struct widened into a union: widening inc's the
+	// payload, so dropping the union must not over-release the
+	// still-live struct.
+	aliased := `struct W { a: i32 }
+struct V2 { b: i32 }
+type U = W | V2;
+function main(): i32 {
+    var w: W = W { a: 7 };
+    var u: U = w;
+    return w.a + __rc_underflow_count() - 7;
+}`
+	if _, code := compileAndRunX86_64(t, aliased); code != 0 {
+		t.Errorf("got %d, want 0 (aliased struct widened to union: 0 underflow)", code)
+	}
+
+	// Non-uniform enum (pointer payload in one variant, scalar in
+	// another) falls through to the plain box dec — payload leaks,
+	// but no over-release.
+	nonUniform := `enum E { Arr(i32[]), Num(i32) }
+function main(): i32 {
+    var e: E = Arr([1, 2, 3]);
+    var f: E = Num(9);
+    match (e) {
+        Arr(a) => { return a.len() + __rc_underflow_count() - 3; },
+        Num(_) => { return 0 - 1; }
+    }
+    return 0 - 2;
+}`
+	if _, code := compileAndRunX86_64(t, nonUniform); code != 0 {
+		t.Errorf("got %d, want 0 (non-uniform enum: correct value, 0 underflow)", code)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestX86_64RcDecOnOverwrite(t *testing.T) {
