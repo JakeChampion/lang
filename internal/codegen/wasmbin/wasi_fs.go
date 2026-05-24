@@ -103,7 +103,7 @@ const (
 //	2: $path_len
 //	3: $result
 func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	var body []byte
 
 	// Each errno case: compare, if-then-allocate-and-return the
@@ -118,7 +118,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
 		{
 			b = inst.InstI32Const(b, 16) // 16-byte single-string variant
-			b = inst.InstCall(b, alloc)
+			b = inst.InstCall(b, allocBox)
 			b = inst.InstLocalTee(b, 3)
 			b = inst.InstI32Const(b, tag)
 			b = memory.InstI32Store(b, 2, 0) // tag @ +0
@@ -147,7 +147,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
 		{
 			b = inst.InstI32Const(b, 4) // 4-byte tag-only variant
-			b = inst.InstCall(b, alloc)
+			b = inst.InstCall(b, allocBox)
 			b = inst.InstLocalTee(b, 3)
 			b = inst.InstI32Const(b, tag)
 			b = memory.InstI32Store(b, 2, 0)
@@ -172,7 +172,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 	// literal; acceptable for the first wasmbin slice — the
 	// shaped variant tag still drives match-arm dispatch.
 	body = inst.InstI32Const(body, 24)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 3)
 	body = inst.InstI32Const(body, ioErrTagOther)
 	body = memory.InstI32Store(body, 2, 0) // tag
@@ -246,6 +246,7 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	15: $i_path             str-normalize loop counter
 func buildReadFileBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdRead := idxs["wasi_fd_read"]
@@ -301,7 +302,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 		// at +0, IoError ptr at +4); Ok stays 16 (string is
 		// 8-byte-aligned at +8).
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 12) // $result
 		body = inst.InstI32Const(body, 1)  // tag = 1 (Err)
 		body = memory.InstI32Store(body, 2, 0)
@@ -427,7 +428,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 
 	// Build Ok(string) — 16 bytes: tag=0 @ 0, data @ +8, len @ +12.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 12) // $result
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0) // tag = 0 (Ok)
@@ -544,6 +545,7 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 //	16: $result         (heap-form Option pointer)
 func buildWriteFileBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 	fdWrite := idxs["wasi_fd_write"]
@@ -597,7 +599,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 		// runtime helpers return heap-form via OpCallDirect):
 		// 8 bytes, tag=0 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 16) // $result
 		body = inst.InstI32Const(body, 0)  // tag = 0 (Some)
 		body = memory.InstI32Store(body, 2, 0)
@@ -686,7 +688,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 
 	// Return None (4-byte alloc, tag = 1).
 	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 16)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -725,6 +727,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 //	10: $i_path           str-normalize loop counter
 func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags int32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
 
@@ -763,7 +766,7 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 
 		// Result.Err layout: 8 bytes, tag=1 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 7)
 		body = inst.InstI32Const(body, 1) // tag = 1 (Err)
 		body = memory.InstI32Store(body, 2, 0)
@@ -805,7 +808,7 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 
 	// Result.Ok layout: 8 bytes, tag=0 @ +0, struct ptr @ +4.
 	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
 	body = memory.InstI32Store(body, 2, 0)
@@ -875,7 +878,7 @@ func buildWriterCloseBody(idxs map[string]uint32) []byte {
 // both Reader.close and Writer.close — the struct layout is
 // identical.
 func buildCloseBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	fdClose := idxs["wasi_fd_close"]
 
@@ -898,7 +901,7 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 
 		// Some(IoError): 8 bytes, tag=0 @ +0, IoError ptr @ +4.
 		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 3)
 		body = inst.InstI32Const(body, 0)
 		body = memory.InstI32Store(body, 2, 0)
@@ -914,7 +917,7 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 
 	// Return None (4-byte alloc, tag=1).
 	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 3)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -949,6 +952,7 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 //	12: $nwritten
 func buildWriterWriteBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	fdWrite := idxs["wasi_fd_write"]
 
@@ -1014,7 +1018,7 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 			body = inst.InstCall(body, buildIoErr)
 			body = inst.InstLocalSet(body, 6)
 			body = inst.InstI32Const(body, 8)
-			body = inst.InstCall(body, alloc)
+			body = inst.InstCall(body, allocBox)
 			body = inst.InstLocalTee(body, 7)
 			body = inst.InstI32Const(body, 0)
 			body = memory.InstI32Store(body, 2, 0)
@@ -1051,7 +1055,7 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 
 	// Return None.
 	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1085,6 +1089,7 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 //	10: $result
 func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
 	var body []byte
@@ -1204,7 +1209,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = inst.InstI32Const(body, 4)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 10)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
@@ -1223,7 +1228,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 
 	// Build Some(string): 16 bytes, tag=0, padding, data@8, len@12.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 10)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
@@ -1261,6 +1266,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 //	6: $result
 func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__lang_alloc"]
+	allocBox := idxs["__lang_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
 	var body []byte
@@ -1313,7 +1319,7 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = inst.InstI32Const(body, 4)
-		body = inst.InstCall(body, alloc)
+		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 6)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 0)
@@ -1324,7 +1330,7 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 
 	// Build Some(string): 16 bytes, tag=0, data@8, len@12.
 	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
