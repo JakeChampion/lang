@@ -379,6 +379,24 @@ func InnerTypeResultErr(errTypeidx uint32) []byte {
 	return out
 }
 
+// InnerTypeResultOkErr returns the defvaltype body for a
+// `result<ok=<okTypeidx>, err=<errTypeidx>>` — both arms typed.
+// Used by wasi:io/streams::blocking-read, whose result is
+// `result<list<u8>, stream-error>`.
+//
+// Encoding:
+//
+//	6a            -- result form
+//	01 <ok>       -- ok present + typeidx uleb
+//	01 <err>      -- err present + typeidx uleb
+func InnerTypeResultOkErr(okTypeidx, errTypeidx uint32) []byte {
+	out := []byte{0x6a, 0x01}
+	out = leb128.UlebU64(out, uint64(okTypeidx))
+	out = append(out, 0x01)
+	out = leb128.UlebU64(out, uint64(errTypeidx))
+	return out
+}
+
 // VariantCase describes one arm of a variant defvaltype.
 // HasPayload selects whether the case carries a typed value.
 // PayloadValtype is the valtype byte for that value (only
@@ -677,6 +695,53 @@ func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	body = append(body, 0x04, 0x00, 0x2e) // export, kind=label, name-len 46
 	body = append(body, "[method]output-stream.blocking-write-and-flush"...)
 	body = append(body, 0x01, 0x09) // externdesc func, typeidx 9
+	return body
+}
+
+// WasiIoStreamsReadInstanceTypeBody is the read-side counterpart
+// of WasiIoStreamsInstanceTypeBody: declares the input-stream
+// resource + the `blocking-read` method
+// (`func(len: u64) -> result<list<u8>, stream-error>`). Used by
+// the fd_read wrap. Same stream-error / error-resource scaffolding
+// as the write side; the differences are the input-stream resource
+// name, the both-arms result (the ok arm carries the returned
+// list<u8>), and the method signature (a u64 `len` param, no
+// list param).
+//
+// Inner typeidxs match the write body through decl 7; decl 8's
+// result gains an ok arm and decl 9's functype takes `len: u64`
+// instead of `contents: list<u8>`.
+func WasiIoStreamsReadInstanceTypeBody(outerErrorTypeidx uint32) []byte {
+	body := []byte{0x01, 0x42, 0x0b}
+	body = append(body, ExportSubResourceDecl("input-stream")...)        // inner 0
+	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...)      // inner 1
+	body = append(body, ExportTypeEqDecl("error", 1)...)                 // inner 2
+	body = append(body, 0x01, 0x69, 0x02)                                // inner 3: own<2>
+	body = append(body, 0x01)                                            // inner 4: variant
+	body = append(body, InnerTypeVariant([]VariantCase{
+		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x03},
+		{Name: "closed"},
+	})...)
+	body = append(body, ExportTypeEqDecl("stream-error", 4)...)          // inner 5
+	body = append(body, 0x01)                                            // inner 6: borrow<0>
+	body = append(body, InnerTypeBorrow(0)...)
+	body = append(body, 0x01)                                            // inner 7: list<u8>
+	body = append(body, InnerTypeListU8...)
+	body = append(body, 0x01)                                            // inner 8: result<ok=7, err=5>
+	body = append(body, InnerTypeResultOkErr(7, 5)...)
+	// inner 9: func(self: borrow<input-stream> typeidx 6, len: u64) -> typeidx 8
+	body = append(body,
+		0x01,                          // type decl
+		0x40,                          // functype form
+		0x02,                          // vec(2) params
+		0x04, 's', 'e', 'l', 'f', 0x06, // param "self" valtype=typeidx 6
+		0x03, 'l', 'e', 'n', CValtypeU64, // param "len" valtype=u64
+		0x00, 0x08, // resultlist single anonymous, valtype = typeidx 8
+	)
+	// decl 10: export "[method]input-stream.blocking-read" (func 9)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.blocking-read")))
+	body = append(body, "[method]input-stream.blocking-read"...)
+	body = append(body, 0x01, 0x09)
 	return body
 }
 

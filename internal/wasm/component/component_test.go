@@ -508,3 +508,49 @@ func TestWasiCliStdinInstanceTypeBody_Bytes(t *testing.T) {
 		t.Errorf("WasiCliStdinInstanceTypeBody(3) mismatch\ngot  % x\nwant % x", got, want)
 	}
 }
+
+// TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
+func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
+	got := component.InnerTypeResultOkErr(7, 5)
+	want := []byte{0x6a, 0x01, 0x07, 0x01, 0x05}
+	if !bytes.Equal(got, want) {
+		t.Errorf("InnerTypeResultOkErr(7,5) = % x, want % x", got, want)
+	}
+}
+
+// TestWasiIoStreamsReadInstanceTypeBody_Validates composes the
+// read-side streams instance type via the escape hatch (with a
+// wasi:io/error import to satisfy the outer alias) and confirms
+// wasm-tools accepts it + the input-stream / blocking-read names
+// appear.
+func TestWasiIoStreamsReadInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	// wasi:io/error import (instance 0) so the outer alias of
+	// `error` (top-level type 1) resolves.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")
+	// The read-streams instance type referencing top-level type 1.
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadInstanceTypeBody(1))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "rd.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"input-stream", "blocking-read", "(list u8)"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
