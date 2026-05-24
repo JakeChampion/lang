@@ -585,6 +585,57 @@ func TestWasiCliEnvironmentArgsInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Bytes pins
+// the bytes of the get-environment instance type
+// (`func() -> list<tuple<string, string>>`).
+func TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody()
+	want := []byte{
+		0x01, 0x42, 0x04,
+		// type tuple<string, string>
+		0x01, 0x6f, 0x02, 0x73, 0x73,
+		// type list<typeidx 0>
+		0x01, 0x70, 0x00,
+		// type func() -> typeidx 1
+		0x01, 0x40, 0x00, 0x00, 0x01,
+		// export "get-environment" (func 2)
+		0x04, 0x00, 0x0f, 'g', 'e', 't', '-', 'e', 'n', 'v', 'i', 'r', 'o', 'n', 'm', 'e', 'n', 't', 0x01, 0x02,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiCliEnvironmentGetEnvironmentInstanceTypeBody() mismatch\ngot  % x\nwant % x", got, want)
+	}
+}
+
+// TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Validates
+// composes the instance type as a single import and confirms
+// wasm-tools accepts it + the get-environment / tuple / list names
+// appear.
+func TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:cli/environment@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "getenv.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"get-environment", "tuple", "list"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
 func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
 	got := component.InnerTypeResultOkErr(7, 5)
