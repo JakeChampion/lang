@@ -6015,25 +6015,41 @@ func (b *builder) assign(n *ast.Assign) error {
 		// / structs / enums / closures together with their
 		// matching inc sites.
 		//
-		// Phase 3 step 2: skip this dec for a self-mutating map
-		// reassignment `m = m.set(...)` / `m = m.clear()`. The
-		// map mutators copy-on-write through __map_cow_inplace,
-		// which (unlike array push) does NOT bump rc on the
-		// in-place path — so on a uniquely-held map the call
-		// returns the SAME handle and dec'ing it here would drop
-		// a live rc to 0 (and a second self-assign to -1: the
-		// over-release the Phase 3 underflow detector flagged).
-		// The map keeps its single owner across the reassignment,
-		// so no dec is owed. (Limitation: when the map is ALSO
-		// aliased — `var m2 = m1; m2 = m2.set(...)` — cow copies
-		// and the source's rc is then over-counted by 1; that is
-		// a leak, not an over-release, so it is safe under the
-		// no-free arena and detector-clean. A cow-aware
-		// conditional dec is a follow-up.)
-		if isArrayTypeOfLocal(t.Name, b) && !isSelfMapMutation(n.Value, t.Name) {
-			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
+		// Phase 3 step 2: a self-mutating map reassignment
+		// `m = m.set(...)` / `m = m.clear()` needs a COW-AWARE
+		// dec. The map mutators copy-on-write through
+		// __map_cow_inplace, which (unlike array push) does NOT
+		// bump rc on the in-place path:
+		//   - rc==1 (in-place): the call returns the SAME handle
+		//     the slot holds, no reference was released, so an
+		//     unconditional dec would drop a live rc to 0 (and a
+		//     second self-assign to -1 — the over-release the
+		//     detector flagged). Must NOT dec.
+		//   - rc>1 (aliased copy): the call returns a fresh
+		//     handle; the slot's old handle loses this binding's
+		//     claim and MUST be dec'd, or its rc leaks.
+		// Both cases are covered by dec'ing iff the new value
+		// differs from the old (i.e. cow copied). Other rc-tracked
+		// reassignments keep the unconditional dec.
+		if isArrayTypeOfLocal(t.Name, b) {
+			if isSelfMapMutation(n.Value, t.Name) {
+				newTmp := b.allocSlot()
+				b.locals[fmt.Sprintf("__selfmap_new_%d", newTmp)] = newTmp
+				b.emit(Op{Kind: OpStoreLocal, I32: newTmp}) // stash new (RHS result)
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})     // old handle
+				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})  // new handle
+				b.emit(Op{Kind: OpNe})                      // cow copied?
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpEnd})
+				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
+			} else {
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
@@ -6292,10 +6308,13 @@ func (b *builder) assign(n *ast.Assign) error {
 // a `m = m.set(...)` / `m = m.clear()` reassignment. The checker
 // has already rewritten the source `m.set(k, v)` into a Call whose
 // Callee is the `__method_Map_set` ident and whose Args[0] is the
-// receiver. Used by `b.assign` to suppress the dec-on-overwrite:
-// the map mutators cow in place without bumping rc, so the call
-// returns the same handle the slot already holds and no reference
-// was released. (delete is excluded — it returns a tuple and is
+// receiver. Used by `b.assign` to switch the dec-on-overwrite to a
+// COW-AWARE form: the map mutators cow in place without bumping rc,
+// so on a uniquely-held map the call returns the same handle the
+// slot already holds (no reference released → no dec), while on an
+// aliased map it returns a fresh copy (old handle released → dec).
+// b.assign distinguishes the two at runtime by comparing the old
+// and new handles. (delete is excluded — it returns a tuple and is
 // bound via destructuring, not a bare `m = ...` reassignment.)
 func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	call, ok := value.(*ast.Call)

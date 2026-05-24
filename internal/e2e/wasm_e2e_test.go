@@ -15209,13 +15209,10 @@ func TestWASMRcUnderflowDetector(t *testing.T) {
 
 // Phase 3 step 2: the idiomatic value-returning map mutation
 // `m = m.set(...)` / `m = m.clear()` must NOT over-release. The
-// mutators cow in place without bumping rc, so the call returns
-// the same handle and b.assign suppresses the dec-on-overwrite
-// (isSelfMapMutation) — otherwise the first reassign would drop
-// rc 1->0 and the second 0->-1. This pins underflow == 0 across a
-// run of self-assignments, while a parallel check confirms the
-// map still holds the right entries (the suppression must not
-// leak the mutation).
+// mutators cow in place without bumping rc, so b.assign uses a
+// cow-aware dec (isSelfMapMutation): dec the old handle only when
+// the call returned a different one. On a uniquely-held map the
+// handle is unchanged → no dec → no 1->0 then 0->-1 over-release.
 func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 	src := `function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -15232,6 +15229,23 @@ func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("got %d, want 0 (self-assign map mutation: 0 underflow, correct contents)", got)
+	}
+
+	// Aliased self-assign: the cow-aware dec must fire on the COPY
+	// path (old handle differs from the fresh copy) so the source
+	// alias's rc is released rather than leaked — and still no
+	// over-release. m1 keeps its entry, m2 gets the mutated copy.
+	aliased := `function main(): i32 {
+    var m1: Map[string, i32] = map_new(8);
+    m1.set("a", 1);
+    var m2 = m1;                  // alias → rc 2
+    m2 = m2.set("a", 999);        // copy; old handle released, not leaked
+    return __rc_underflow_count() * 1000
+         + (m1.get_or("a", 0) - 1)
+         + (m2.get_or("a", 0) - 999);
+}`
+	if got := runWasm(t, aliased); got != 0 {
+		t.Errorf("got %d, want 0 (aliased self-assign: 0 underflow, m1=1, m2=999)", got)
 	}
 }
 
