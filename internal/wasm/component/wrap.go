@@ -483,6 +483,134 @@ func WrapWasiReadComponent(coreBytes []byte) []byte {
 	return buf
 }
 
+// wrapWasiStreamWriteWithStructured generalises
+// wrapWasiStreamWriteComponent to additionally import K no-memory
+// "structured" preview-2 funcs (exit / random / monotonic — funcs
+// whose canon-lower needs no memory and so no trampoline). This is
+// the mixed-import case: a program that both writes a stream
+// (print / eprint) and calls e.g. exit(). The stream-write half
+// keeps its trampoline/fixup wiring; each structured import is a
+// plain alias + no-opts lower + packaged instance (the structured
+// WasiImport flow), instantiated as an extra arg to the user module.
+//
+// Index plan with K = len(structured):
+//
+//   - Component types: 0 io/error, 1 error, 2 io/streams,
+//     3 output-stream, 4 cli/std{out,err}, 5..4+K structured ITs.
+//   - Component instances: 0 io/error, 1 io/streams,
+//     2 cli/std{out,err}, 3..2+K structured.
+//   - Core modules: user 0, trampoline 1, fixup 2.
+//   - Core funcs: 0 get-std lower, 1 trampoline alias,
+//     2..1+K structured lowers, 2+K blocking-write lower.
+//   - Core instances: 0 trampoline, 1 get-std wrapper,
+//     2 blocking-write wrapper, 3..2+K structured wrappers,
+//     3+K user, 4+K fixup arg, 5+K fixup.
+func wrapWasiStreamWriteWithStructured(coreBytes []byte, cliInterface, getFuncName string, structured []WasiImport) []byte {
+	k := uint32(len(structured))
+	buf := PutComponentHeader(nil)
+
+	// io/error (inst 0) → error type 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+	// io/streams (inst 1) → output-stream type 3.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	buf = PutAliasSectionInstanceExportType(buf, 1, "output-stream")
+	// cli/std{out,err} (inst 2).
+	if getFuncName == "get-stderr" {
+		buf = PutTypeSectionRawBody(buf, WasiCliStderrInstanceTypeBody(3))
+	} else {
+		buf = PutTypeSectionRawBody(buf, WasiCliStdoutInstanceTypeBody(3))
+	}
+	buf = PutImportSectionOneInstance(buf, cliInterface, 4)
+	// Structured imports (inst 3..2+K).
+	for i, imp := range structured {
+		buf = PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf, imp.InnerTypes, imp.FuncName, imp.ParamNames, imp.ParamValtypes, imp.ResultValtypes)
+		// Instance type lands at component type 5+i (after io/error=0,
+		// error=1, io/streams=2, output-stream=3, cli/std=4); the
+		// import creates instance 3+i.
+		buf = PutImportSectionOneInstance(buf, imp.InterfaceName, uint32(5+i))
+	}
+
+	// Core modules.
+	buf = PutCoreModuleSection(buf, coreBytes)
+	buf = PutCoreModuleSection(buf, TrampolineModuleFor4I32NoResult())
+	buf = PutCoreModuleSection(buf, FixupModuleFor4I32NoResult())
+
+	// Trampoline → core inst 0.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+	// get-std{out,err}: alias (inst 2) → cfunc 0; lower → core func 0; wrap → core inst 1.
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, getFuncName)
+	buf = PutCanonSectionLowerNoOpts(buf, 0)
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, getFuncName, 0)
+	// trampoline "0" → core func 1; wrap → core inst 2.
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]output-stream.blocking-write-and-flush", 1)
+	// Structured: alias (inst 3+i) → cfunc 1+i; lower noopts → core func 2+i; wrap → core inst 3+i.
+	for i, imp := range structured {
+		buf = PutAliasSectionInstanceExportFunc(buf, uint32(3+i), imp.FuncName)
+		buf = PutCanonSectionLowerNoOpts(buf, uint32(1+i))
+		buf = PutCoreInstanceSectionFromOneFuncExport(buf, imp.FuncName, uint32(2+i))
+	}
+
+	// Instantiate user with cli/std=1, io/streams=2, structured[i]=3+i → core inst 3+K.
+	argNames := []string{cliInterface, "wasi:io/streams@0.2.0"}
+	argInsts := []uint32{1, 2}
+	for i, imp := range structured {
+		argNames = append(argNames, imp.CoreImportModule)
+		argInsts = append(argInsts, uint32(3+i))
+	}
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, argNames, argInsts)
+
+	// Alias memory (user inst 3+K) + trampoline table (inst 0).
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3+k, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")
+	// blocking-write-and-flush: alias (io/streams inst 1) → cfunc 1+K; lower mem → core func 2+K.
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]output-stream.blocking-write-and-flush")
+	buf = PutCanonSectionLowerWithMemory(buf, 1+k, 0)
+	// Fixup arg {table 0, blocking-write core func 2+K} → core inst 4+K; fixup → core inst 5+K.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 2 + k},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{4 + k})
+	return buf
+}
+
+// WrapWasiPrintWithStructuredAsCliRun wraps a core module that
+// writes stdout (print) AND calls K no-memory structured preview-2
+// funcs (e.g. exit), exporting wasi:cli/run. After
+// wrapWasiStreamWriteWithStructured the user module is core
+// instance 3+K; the cli-run tail aliases its `coreExportName` →
+// core func 3+K, lifts it (component type 5+K result / 6+K func,
+// component func K+2), and packages + exports run as component
+// instance 3+K.
+func WrapWasiPrintWithStructuredAsCliRun(coreBytes []byte, structured []WasiImport, coreExportName string) []byte {
+	return appendStreamWriteStructuredCliRun(
+		wrapWasiStreamWriteWithStructured(coreBytes, "wasi:cli/stdout@0.2.0", "get-stdout", structured),
+		uint32(len(structured)), coreExportName)
+}
+
+// WrapWasiEprintWithStructuredAsCliRun is the stderr sibling.
+func WrapWasiEprintWithStructuredAsCliRun(coreBytes []byte, structured []WasiImport, coreExportName string) []byte {
+	return appendStreamWriteStructuredCliRun(
+		wrapWasiStreamWriteWithStructured(coreBytes, "wasi:cli/stderr@0.2.0", "get-stderr", structured),
+		uint32(len(structured)), coreExportName)
+}
+
+// appendStreamWriteStructuredCliRun adds the wasi:cli/run tail for
+// wrapWasiStreamWriteWithStructured. k = number of structured
+// imports.
+func appendStreamWriteStructuredCliRun(buf []byte, k uint32, coreExportName string) []byte {
+	buf = PutAliasSectionCoreExportFunc(buf, 3+k, coreExportName) // run = core func 3+k
+	buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf, 5+k)
+	buf = PutCanonSectionLiftNoOpts(buf, 3+k, 6+k)
+	buf = PutInstanceSectionOnePackagedFunc(buf, "run", k+2)
+	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 3+k)
+	return buf
+}
+
 // WrapWasiPrintAsCliRun extends WrapWasiPrintComponent with a
 // `wasi:cli/run@0.2.0` export so the produced component runs
 // under plain `wasmtime run prog.wasm` (no `--invoke`). The

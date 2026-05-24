@@ -9171,6 +9171,71 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithPrintExit drives a Fern program
+// that BOTH writes stdout (print) AND calls exit() — the mixed
+// trampoline-pattern + structured-flow case. The driver detects
+// the stream-write pair plus the structured wasi:cli/exit import
+// (classifyPrintPlusStructured) and routes through
+// WrapWasiPrintWithStructuredAsCliRun. exit(0) → stdout printed +
+// exit 0; exit(1) → printed + non-zero (wasi:cli/exit only models
+// the result discriminant, so codes are 0/1).
+func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	build := func(src string) string {
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "pe.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, "pe.wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (print+exit) failed: %v\n%s", err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+		}
+		printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+		if err != nil {
+			t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+		}
+		for _, want := range []string{"wasi:cli/stdout@0.2.0", "wasi:cli/exit@0.2.0", "wasi:cli/run@0.2.0"} {
+			if !strings.Contains(string(printOut), want) {
+				t.Errorf("expected %q in component, got:\n%s", want, printOut)
+			}
+		}
+		return compPath
+	}
+	// exit(0): "hi\n" on stdout, exit 0.
+	ok := build(`function main(): i32 { print("hi"); exit(0); return 0; }`)
+	okCmd := exec.Command("wasmtime", "run", ok)
+	var okOut bytes.Buffer
+	okCmd.Stdout = &okOut
+	if err := okCmd.Run(); err != nil {
+		t.Errorf("print+exit(0): wasmtime run failed (want exit 0): %v", err)
+	}
+	if okOut.String() != "hi\n" {
+		t.Errorf("print+exit(0) stdout = %q, want %q", okOut.String(), "hi\n")
+	}
+	// exit(1): "oops\n" on stdout, non-zero exit.
+	errComp := build(`function main(): i32 { print("oops"); exit(1); return 0; }`)
+	errCmd := exec.Command("wasmtime", "run", errComp)
+	var errOut bytes.Buffer
+	errCmd.Stdout = &errOut
+	if err := errCmd.Run(); err == nil {
+		t.Errorf("print+exit(1): wasmtime run exited 0, want non-zero")
+	}
+	if errOut.String() != "oops\n" {
+		t.Errorf("print+exit(1) stdout = %q, want %q", errOut.String(), "oops\n")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithRandom drives a Lang program
 // that calls random_i32() through `-component-wrap-cli`. With
 // the preview-2 migration of wasi_random_get →
