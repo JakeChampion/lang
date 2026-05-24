@@ -731,11 +731,100 @@ Prerequisites that landed during Phase 2-prep:
 
 ### Phase 3: real allocator
 
-PR: replace the bump allocator with size-class freelists. Dec'd
-values' storage actually gets reclaimed.
+PR series: replace the bump allocator with size-class freelists so
+dec'd values' storage actually gets reclaimed.
 
-Effect: long-running programs (TCP handlers, etc.) stop leaking.
-Memory usage drops.
+Effect: long-running programs (TCP handlers, etc.) stop leaking;
+the rc==1 in-place CoW paths (Phase 2a/2b/2d) finally realise
+their O(N) win because the rc==0 path returns storage instead of
+bumping forever.
+
+#### Current state (read before implementing)
+
+- **`rc_dec` has NO free path.** On every backend the dec helper
+  (`buildRcDecBody` in `internal/codegen/wasmbin/runtime.go:1740`;
+  `emitRcDecRuntime` in `internal/codegen/arm64/arm64.go` ~766 and
+  the x86_64 mirror) does: null guard → low-address guard
+  (`<0x10000`) → load rc at `[ptr-8]` → static-sentinel
+  short-circuit (high bit) → `rc = rc - 1` → store. **When rc
+  reaches 0 nothing happens** — the storage is never reclaimed and
+  no drop handler runs.
+- **`__fern_alloc` is a pure bump cursor** (wasm: `buildAllocBody`
+  at `runtime.go:1199`, cursor at `mem[40]`; natives mirror it).
+  No size class, no freelist, `free()` is implicit (leak).
+- **No drop handlers exist yet.** Nothing recursively decrements a
+  freed value's pointer-typed fields/elements.
+
+#### Prerequisite: drift-free rc (THE blocker)
+
+Phases 1–2 were explicitly built on "free is a no-op, so the
+exact rc doesn't matter — functional correctness comes from the
+copy decision, not the count." Several shipped paths deliberately
+let the rc drift to or below 0:
+
+- **Array push in-place** bumps rc to 2 so the dec-on-overwrite
+  nets to 1 (Phase 2a); a statement-position `xs.push(x)` with no
+  reassignment leaves it bumped.
+- **Map CoW** (`__map_cow_inplace`, Phase 2d): the in-place path
+  returns the handle unchanged and relies on the assignment site's
+  dec-on-overwrite; a unique `m = m.set(k,v)` therefore dec's the
+  live handle to rc=0, and a *second* self-assign dec's it to −1.
+- **The borrow model** (PR #1280) removed the call-arg inc / param
+  exit-dec, which is correct, but means any code that still assumes
+  the old owned-parameter counts is off by the borrow delta.
+
+Turning on real freeing converts every one of these drifts from
+"harmless" into a **use-after-free** (a value dec'd to 0 while
+still referenced gets reclaimed under another live alias). So
+Phase 3 CANNOT start with the freelist — it must start by
+*measuring and then eliminating* the drift.
+
+#### Implementation sequence (safe order)
+
+1. **rc-balance / underflow detector (FIRST — ship standalone).**
+   A debug-build instrumented `rc_dec` that, after the sentinel
+   check, tests `rc <= 0` *before* decrementing and bumps a global
+   "underflow" counter at a fixed low-memory address; `rc_inc` /
+   `rc_dec` also maintain a net live-rc counter. A Go harness runs
+   the existing e2e corpus and asserts underflow == 0 (catches the
+   premature-drop drift that is the UAF precursor — a plain
+   "rc>0 at exit" leak walk does NOT catch under-counting). This
+   slice is pure instrumentation: zero behavior change to release
+   builds, and it quantifies exactly how much drift Phases 1–2 left
+   behind.
+2. **Drift audit + fixes.** Drive the detector to zero across the
+   suite. Expected hot spots: the self-assign mutation paths above.
+   Likely fix shape: route `x = x.<mutator>()` through a
+   dec-on-overwrite that is *cow-aware* (skip the dec when the cow
+   helper kept the value in place), rather than the unconditional
+   dec used today.
+3. **Drop handlers (generated, no free yet).** Per concrete type,
+   codegen emits `__fern_drop_<type>` that decrements each
+   pointer-shaped field/element, then (for now) does nothing else.
+   Wire `rc_dec`'s rc==0 branch to call it. Still no reclamation,
+   so still safe; validates the recursive-dec walk under the
+   detector.
+4. **Freelist allocator, behind a build flag.** Per-size-class
+   free lists (Roc's classes: 8/16/24/32/48/64/96/128/256/512/
+   1024/2048; larger → bump+unmap). The free path needs the
+   allocation's size at `rc==0`: store the size class in a header
+   word (the rc word has spare bits, or add a class nibble) so
+   free can find the right list. `__fern_alloc` checks the class
+   list before bumping. Flag-gated so the no-free arena stays the
+   default until the detector is green end-to-end.
+5. **Enable + verify.** Flip the flag on, run the entire e2e suite
+   under the detector with identical exit codes/stdout/stderr, plus
+   the rc-correctness fuzzer (random nested values).
+
+#### Resolved design decisions (from Open Questions)
+
+- **rc width:** i32, panic on overflow (Roc-style).
+- **rc offset:** fixed `-8` from the data pointer (already the
+  convention every backend's inc/dec uses), so the helpers stay
+  polymorphic.
+- **Drop dispatch:** generated `__fern_drop_<type>` direct calls
+  (we already monomorphise) rather than a runtime vtable.
+
 
 ### Phase 4: Perceus pair-cancellation
 
