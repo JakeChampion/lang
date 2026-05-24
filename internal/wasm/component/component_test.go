@@ -537,6 +537,54 @@ func TestWasiCliStdinInstanceTypeBody_Bytes(t *testing.T) {
 	}
 }
 
+// TestWasiCliEnvironmentArgsInstanceTypeBody_Bytes pins the bytes
+// of the wasi:cli/environment instance type for
+// `get-arguments: func() -> list<string>`.
+func TestWasiCliEnvironmentArgsInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiCliEnvironmentArgsInstanceTypeBody()
+	want := []byte{
+		0x01, 0x42, 0x03,
+		// type list<string>
+		0x01, 0x70, 0x73,
+		// type func() -> typeidx 0
+		0x01, 0x40, 0x00, 0x00, 0x00,
+		// export "get-arguments" (func 1)
+		0x04, 0x00, 0x0d, 'g', 'e', 't', '-', 'a', 'r', 'g', 'u', 'm', 'e', 'n', 't', 's', 0x01, 0x01,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiCliEnvironmentArgsInstanceTypeBody() mismatch\ngot  % x\nwant % x", got, want)
+	}
+}
+
+// TestWasiCliEnvironmentArgsInstanceTypeBody_Validates composes
+// the instance type as a single import and confirms wasm-tools
+// accepts it + the get-arguments / (list string) names appear.
+func TestWasiCliEnvironmentArgsInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiCliEnvironmentArgsInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:cli/environment@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "env.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"get-arguments", "list string"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeResultOkErr_Bytes pins result<ok=7, err=5>.
 func TestInnerTypeResultOkErr_Bytes(t *testing.T) {
 	got := component.InnerTypeResultOkErr(7, 5)

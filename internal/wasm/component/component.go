@@ -622,6 +622,37 @@ func WasiClocksWallClockInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiCliEnvironmentArgsInstanceTypeBody is the
+// wasi:cli/environment@0.2.0 instance type declaring just
+// `get-arguments: func() -> list<string>` — the import Lang's
+// `args()` builtin needs. The host's real wasi:cli/environment
+// interface exports more (get-environment, get-initial-cwd), but
+// an import's instance type only needs to list what we consume
+// (structural subtyping); the host provides the superset.
+//
+// No resources / outer aliases — list<string> is a plain
+// defvaltype. Inside-instance decl list (3 decls):
+//
+//  0. type list<string>                  → typeidx 0
+//  1. type func() -> typeidx 0           → typeidx 1
+//  2. export "get-arguments" (func 1)
+//
+// The returned list<string> is a variable-size canonical-ABI
+// value, so its canon-lower needs memory + realloc (the host
+// allocates the list + each string's bytes through cabi_realloc).
+func WasiCliEnvironmentArgsInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x03}
+	// decl 0: type list<string>  (0x70 list, 0x73 string)
+	body = append(body, 0x01, 0x70, CValtypeString)
+	// decl 1: type func() -> typeidx 0
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x00)
+	// decl 2: export "get-arguments" (func 1)
+	body = append(body, 0x04, 0x00, byte(len("get-arguments")))
+	body = append(body, "get-arguments"...)
+	body = append(body, 0x01, 0x01)
+	return body
+}
+
 // WasiCliStdinInstanceTypeBody is the wasi:cli/stdin@0.2.0
 // counterpart — `get-stdin: func() -> input-stream`. Same shape
 // as the stdout/stderr getters, only the stream resource type
