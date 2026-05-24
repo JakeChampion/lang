@@ -15367,6 +15367,47 @@ func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 	}
 }
 
+// Phase 3 step 3: drop handlers. An array of pointer-shaped
+// rc-tracked elements (here u8[][]) routes its scope-exit dec
+// through __fern_drop_arr_ptr, which on the last reference dec's
+// each element — balancing the per-element inc the IR emits at
+// array-literal construction (Phase 1d-viii). Without the drop,
+// the nested element's rc leaks.
+func TestWASMRcDropArrayElements(t *testing.T) {
+	// Proof the drop FIRES: `consume` nests `inner` into a local
+	// array and drops it on exit; inner's rc must return to its
+	// pre-call value (1), not stay at the constructed 2.
+	fires := `function consume(inner: u8[]): i32 {
+    var outer: u8[][] = [inner];
+    return 0;
+}
+function main(): i32 {
+    var inner: u8[] = __alloc_u8(4);
+    var before: i32 = __rc_get(inner);
+    var ignore: i32 = consume(inner);
+    var after: i32 = __rc_get(inner);
+    return (before - 1) + (after - 1);  // 0 iff drop balanced the inc
+}`
+	if got := runWasm(t, fires); got != 0 {
+		t.Errorf("got %d, want 0 (drop must dec the nested element back to rc 1)", got)
+	}
+
+	// And no over-release: nesting fresh + aliased elements and
+	// dropping the outer array reports 0 underflows.
+	noUnder := `function build(): i32 {
+    var inner: i32[] = [1, 2, 3];
+    var a: i32[][] = [inner];        // aliased element (inc'd)
+    var b: i32[][] = [[4, 5], [6]];  // fresh elements (not inc'd)
+    return a[0][1] + b[1][0];        // 2 + 6
+}
+function main(): i32 {
+    return (build() - 8) + __rc_underflow_count();
+}`
+	if got := runWasm(t, noUnder); got != 0 {
+		t.Errorf("got %d, want 0 (nested-array drop: correct values, 0 underflow)", got)
+	}
+}
+
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestWASMRcDecOnOverwrite(t *testing.T) {

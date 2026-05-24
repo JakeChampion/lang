@@ -1464,7 +1464,25 @@ func (b *builder) emitDeferCleanup() error {
 // briefly to zero on the returned ptr, harmless under the
 // no-free regime.
 func (b *builder) emitRcDecLocalsAtExit() {
-	emitDec := func(slot int32) {
+	emitDec := func(slot int32, t ast.Type) {
+		// Phase 3 step 3: arrays of pointer-shaped rc-tracked
+		// elements route through __fern_drop_arr_ptr, which dec's
+		// each element (balancing the per-element inc emitted at
+		// array-literal construction) on the last reference before
+		// dec'ing the array. WASM-only for now (ptrW==4); the
+		// drop helper is wired in the wasm runtime. Native backends
+		// keep the plain dec (their nested elements still leak, as
+		// before — no regression). Pointer elements have ptr-width
+		// stride.
+		if b.ptrW == 4 {
+			if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				return
+			}
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		// __fern_rc_dec is a void-returning runtime helper but
@@ -1548,8 +1566,24 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		if !ok {
 			continue
 		}
-		emitDec(slot)
+		emitDec(slot, v.Type)
 	}
+}
+
+// arrElemIsRcTracked reports whether an array element type is a
+// pointer-shaped rc-tracked value — array / struct (incl. Map) /
+// enum / closure. These are the elements __fern_drop_arr_ptr can
+// safely dec on the array's last release (each was inc'd at
+// array-literal construction). Strings are deliberately excluded:
+// they are not rc-tracked yet (the SSO native flip is in flight),
+// so they are never inc'd on insertion and must not be dec'd.
+// Primitive elements (i32 etc.) are not pointers, so no drop.
+func arrElemIsRcTracked(elem ast.Type) bool {
+	switch elem.(type) {
+	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType:
+		return true
+	}
+	return false
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {
