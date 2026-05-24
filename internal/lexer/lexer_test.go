@@ -225,6 +225,45 @@ func TestFloatScientificNotation(t *testing.T) {
 	}
 }
 
+// Hex integer literals: `0x` / `0X` followed by hex digits come back
+// as a single Number token whose text includes the prefix. Mixed
+// case digits and an optional integer suffix are accepted.
+func TestHexLiteral(t *testing.T) {
+	toks, _, err := Tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		k      Kind
+		s      string
+		suffix string
+	}{
+		{Number, "0x2A", ""},
+		{Number, "0xff", ""},
+		{Number, "0X0", ""},
+		{Number, "0xDEADBEEF", ""},
+		{Number, "0x10", "u8"},
+		{EOF, "", ""},
+	}
+	if len(toks) != len(want) {
+		t.Fatalf("got %d tokens, want %d: %v", len(toks), len(want), toks)
+	}
+	for i, w := range want {
+		if toks[i].Kind != w.k || toks[i].Text != w.s || toks[i].Suffix != w.suffix {
+			t.Errorf("tok[%d] = (%v %q suffix=%q), want (%v %q suffix=%q)",
+				i, toks[i].Kind, toks[i].Text, toks[i].Suffix, w.k, w.s, w.suffix)
+		}
+	}
+}
+
+// A bare `0x` with no hex digits is an error, not a silent `0`
+// followed by an `x` identifier.
+func TestHexLiteralNeedsDigits(t *testing.T) {
+	if _, _, err := Tokenize("0x"); err == nil {
+		t.Fatal("expected error for bare 0x literal, got nil")
+	}
+}
+
 // A dangling `e` with no exponent digits is NOT an exponent — the
 // number stops before it and the `e...` lexes as a separate
 // identifier. Guards against eating the `e` of `1einvalid`.
