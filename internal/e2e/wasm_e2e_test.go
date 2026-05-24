@@ -9529,6 +9529,66 @@ func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
 	}
 }
 
+// TestCmdLangComponentWrapCliWithEnv drives a Fern program that
+// reads an env var via env() through `-component-wrap-cli`. The
+// driver detects the env-only preview-2 import
+// (wasi:cli/environment::get-environment), rebuilds with
+// cabi_realloc exported, and routes via WrapWasiEnvAsCliRun.
+//
+// Observed via exit code: the program returns 0 when env("FOO")
+// resolves (Some), 1 when unset (None).
+func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "e.fern")
+	src := []byte(`function main(): i32 {
+    match (env("FOO")) {
+        Some(v) => { return 0; },
+        None => { return 1; }
+    }
+    return 1;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "e.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin",
+		"-component-wrap-cli",
+		"-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (env) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{"wasi:cli/environment@0.2.0", "wasi:cli/run@0.2.0", "get-environment"} {
+		if !strings.Contains(string(printOut), want) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+	// FOO set → Some → exit 0.
+	set := exec.Command("wasmtime", "run", "--env", "FOO=bar", compPath)
+	if err := set.Run(); err != nil {
+		t.Errorf("env FOO set: wasmtime run failed (want exit 0): %v", err)
+	}
+	// FOO unset → None → exit 1.
+	unset := exec.Command("wasmtime", "run", compPath)
+	if err := unset.Run(); err == nil {
+		t.Errorf("env FOO unset: wasmtime run exited 0, want non-zero (None arm)")
+	}
+}
+
 // TestCmdLangComponentWrapCliWithWrite drives a Lang program
 // that calls write("hello") through `-component-wrap-cli`. With
 // __fern_write migrated to preview-2 in the same slice, the
