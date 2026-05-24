@@ -800,6 +800,151 @@ func appendEnvironmentGetterCliRun(buf []byte, coreExportName string) []byte {
 	return buf
 }
 
+// WrapWasiReadFileComponent wraps a core module that imports the
+// four preview-2 WASI functions the file-read path chains into a
+// component. The user's core module must import (and the wrap
+// satisfies via the trampoline / fixup cycle-break):
+//
+//   - wasi:filesystem/preopens@0.2.0::get-directories
+//     lowered `(ret_ptr: i32) -> ()`
+//   - wasi:filesystem/types@0.2.0::[method]descriptor.open-at
+//     lowered `(self, path-flags, path_ptr, path_len, open-flags,
+//     descriptor-flags, ret_ptr: i32) -> ()` (7×i32)
+//   - wasi:filesystem/types@0.2.0::[method]descriptor.read-via-stream
+//     lowered `(self: i32, offset: i64, ret_ptr: i32) -> ()`
+//   - wasi:io/streams@0.2.0::[method]input-stream.blocking-read
+//     lowered `(self: i32, len: i64, ret_ptr: i32) -> ()`
+//
+// and must export `memory` + `cabi_realloc`. The four imported
+// interfaces (wasi:io/error, wasi:io/streams, wasi:filesystem/types,
+// wasi:filesystem/preopens) share resource types via outer aliases.
+// Each lowered func references the user's memory, so each gets its
+// own 1-func trampoline + fixup pair (four of them) — the same
+// cycle-break as the single-import wraps, just repeated.
+//
+// Index plan (see inline comments). This composer returns just the
+// component bytes; pair with a cli-run / lifted-export tail for a
+// runnable end product.
+func WrapWasiReadFileComponent(coreBytes []byte) []byte {
+	i32 := byte(0x7f)
+	i64 := byte(0x7e)
+	getDirsParams := []byte{i32}                              // (ret_ptr)
+	openAtParams := []byte{i32, i32, i32, i32, i32, i32, i32} // 7×i32
+	streamReadParams := []byte{i32, i64, i32}                 // (self, off/len, ret_ptr)
+
+	buf := PutComponentHeader(nil)
+
+	// ---- Imports + shared resource types ----
+	// type 0: io/error; instance 0; alias error → type 1.
+	buf = PutTypeSectionRawBody(buf, WasiIoErrorInstanceTypeBody())
+	buf = PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
+	buf = PutAliasSectionInstanceExportType(buf, 0, "error")
+	// type 2: io/streams (read side, refs error type 1); instance 1;
+	// alias input-stream → type 3.
+	buf = PutTypeSectionRawBody(buf, WasiIoStreamsReadInstanceTypeBody(1))
+	buf = PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
+	buf = PutAliasSectionInstanceExportType(buf, 1, "input-stream")
+	// type 4: filesystem/types read path (refs input-stream type 3);
+	// instance 2; alias descriptor → type 5.
+	buf = PutTypeSectionRawBody(buf, WasiFilesystemTypesReadPathInstanceTypeBody(3))
+	buf = PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
+	buf = PutAliasSectionInstanceExportType(buf, 2, "descriptor")
+	// type 6: filesystem/preopens (refs descriptor type 5); instance 3.
+	buf = PutTypeSectionRawBody(buf, WasiFilesystemPreopensInstanceTypeBody(5))
+	buf = PutImportSectionOneInstance(buf, "wasi:filesystem/preopens@0.2.0", 6)
+
+	// ---- Core modules: user + 4 (trampoline, fixup) pairs ----
+	buf = PutCoreModuleSection(buf, coreBytes)                                           // module 0
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(getDirsParams))    // 1
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(getDirsParams))         // 2
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(openAtParams))     // 3
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(openAtParams))          // 4
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(streamReadParams)) // 5
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(streamReadParams))      // 6
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsNoResult(streamReadParams)) // 7
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsNoResult(streamReadParams))      // 8
+
+	// Instantiate the 4 trampolines → core instances 0,1,2,3.
+	buf = PutCoreInstanceSectionInstantiate(buf, 1)
+	buf = PutCoreInstanceSectionInstantiate(buf, 3)
+	buf = PutCoreInstanceSectionInstantiate(buf, 5)
+	buf = PutCoreInstanceSectionInstantiate(buf, 7)
+
+	// Alias each trampoline's "0" export → core funcs 0..3.
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0") // core func 0: get-directories tramp
+	buf = PutAliasSectionCoreExportFunc(buf, 1, "0") // core func 1: open-at tramp
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "0") // core func 2: read-via-stream tramp
+	buf = PutAliasSectionCoreExportFunc(buf, 3, "0") // core func 3: blocking-read tramp
+
+	// Package the trampoline funcs into per-interface instance args.
+	// core instance 4: preopens arg {get-directories: func 0}
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "get-directories", 0)
+	// core instance 5: fs/types arg {open-at: func 1, read-via-stream: func 2}
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "[method]descriptor.open-at", Sort: CoreSortFunc, Idx: 1},
+		{Name: "[method]descriptor.read-via-stream", Sort: CoreSortFunc, Idx: 2},
+	})
+	// core instance 6: io/streams arg {blocking-read: func 3}
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "[method]input-stream.blocking-read", 3)
+
+	// Instantiate the user module → core instance 7.
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0,
+		[]string{
+			"wasi:filesystem/preopens@0.2.0",
+			"wasi:filesystem/types@0.2.0",
+			"wasi:io/streams@0.2.0",
+		},
+		[]uint32{4, 5, 6})
+
+	// Alias user memory (core memory 0) + cabi_realloc (core func 4) +
+	// the 4 trampoline tables (core tables 0..3).
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 7, "memory")
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 7, "cabi_realloc") // core func 4
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")    // table 0 (getdirs)
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 1, "$imports")    // table 1 (open-at)
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 2, "$imports")    // table 2 (read-via)
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 3, "$imports")    // table 3 (blocking-read)
+
+	// Alias + canon-lower the 4 funcs. get-directories + blocking-read
+	// return lists → need realloc(core func 4); open-at + read-via-stream
+	// need memory only.
+	buf = PutAliasSectionInstanceExportFunc(buf, 3, "get-directories")                    // component func 0
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 0, 0, 4)                             // core func 5
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "[method]descriptor.open-at")         // component func 1
+	buf = PutCanonSectionLowerWithMemory(buf, 1, 0)                                       // core func 6
+	buf = PutAliasSectionInstanceExportFunc(buf, 2, "[method]descriptor.read-via-stream") // component func 2
+	buf = PutCanonSectionLowerWithMemory(buf, 2, 0)                                       // core func 7
+	buf = PutAliasSectionInstanceExportFunc(buf, 1, "[method]input-stream.blocking-read") // component func 3
+	buf = PutCanonSectionLowerWithMemoryRealloc(buf, 3, 0, 4)                             // core func 8
+
+	// Fixup arg instances (table + lowered func) + fixup instantiations.
+	// getdirs: table 0 + func 5 → arg inst 8, fixup module 2 → inst 9.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 5},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{8})
+	// open-at: table 1 + func 6 → arg inst 10, fixup module 4 → inst 11.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 1},
+		{Name: "0", Sort: CoreSortFunc, Idx: 6},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 4, []string{""}, []uint32{10})
+	// read-via-stream: table 2 + func 7 → arg inst 12, fixup module 6 → inst 13.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 2},
+		{Name: "0", Sort: CoreSortFunc, Idx: 7},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 6, []string{""}, []uint32{12})
+	// blocking-read: table 3 + func 8 → arg inst 14, fixup module 8 → inst 15.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 3},
+		{Name: "0", Sort: CoreSortFunc, Idx: 8},
+	})
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 8, []string{""}, []uint32{14})
+	return buf
+}
+
 // WrapWasiImportedWithExport composes WrapWasiImported's import
 // wiring with BuildLiftedExportComponent's export wiring. The
 // resulting component:
