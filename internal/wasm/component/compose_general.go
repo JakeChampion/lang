@@ -209,6 +209,7 @@ const (
 	gFsRead gFsMode = iota
 	gFsWrite
 	gFsAppend
+	gFsReadWrite // read AND write of files in one program (combined descriptor)
 )
 
 // ensureFilesystem imports wasi:filesystem/types (one descriptor direction)
@@ -219,6 +220,9 @@ func (g *gComposer) ensureFilesystem(mode gFsMode) {
 	}
 	var body []byte
 	switch mode {
+	case gFsReadWrite:
+		g.ensureIoStreams(true, true)
+		body = WasiFilesystemTypesReadWritePathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])
 	case gFsAppend:
 		g.ensureIoStreams(false, true)
 		body = WasiFilesystemTypesAppendPathInstanceTypeBody(g.surfaced["output-stream"])
@@ -326,15 +330,22 @@ func (g *gComposer) finish(coreBytes []byte, coreExportName, tailExportName stri
 	}
 	// Phase E: instantiate the user module.
 	userInst := c.instantiateArgs(userMod, argNames, argInsts)
-	// Phase F: memory + realloc + trampoline tables.
-	c.aliasMemory(userInst)
-	var reallocF uint32
-	needRealloc := false
+	// Phase F: memory + realloc + trampoline tables. A program that only
+	// uses no-opt / resource.drop imports (e.g. exit() alone) has no
+	// trampoline, so it needs neither the memory alias nor realloc.
+	needMem, needRealloc := false, false
 	for i := range g.imports {
-		if g.imports[i].kind == gMemRealloc {
-			needRealloc = true
+		switch g.imports[i].kind {
+		case gMem:
+			needMem = true
+		case gMemRealloc:
+			needMem, needRealloc = true, true
 		}
 	}
+	if needMem {
+		c.aliasMemory(userInst)
+	}
+	var reallocF uint32
 	if needRealloc {
 		reallocF = c.aliasReallocFunc(userInst)
 	}
