@@ -51,7 +51,7 @@ func repeatI32(n int) []byte {
 // that print()s / eprint()s for logging composes too (the write reuses
 // the connection's output-stream.blocking-write-and-flush lowering,
 // which tcpStreamUsage already detects since print imports it).
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr, hasFileRead, hasFileWrite, hasFileAppend bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr, hasStdin, hasFileRead, hasFileWrite, hasFileAppend bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -98,13 +98,17 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		structInst[i] = c.importInstance(imp.InterfaceName, c.structuredType(imp))
 	}
 	// Optional CLI write streams (print / eprint logging), over the
-	// shared output-stream resource surfaced above.
-	var stdoutInst, stderrInst uint32
+	// shared output-stream resource surfaced above; and stdin (get-stdin
+	// returns the same input-stream resource).
+	var stdoutInst, stderrInst, stdinInst uint32
 	if hasStdout {
 		stdoutInst = c.importInstance("wasi:cli/stdout@0.2.0", c.typeRaw(WasiCliStdoutInstanceTypeBody(tOut)))
 	}
 	if hasStderr {
 		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
+	}
+	if hasStdin {
+		stdinInst = c.importInstance("wasi:cli/stdin@0.2.0", c.typeRaw(WasiCliStdinInstanceTypeBody(tIn)))
 	}
 	// Optional filesystem open-chain (read_file → static file server;
 	// write_file / open_appender → access logs / uploads). Imports
@@ -290,6 +294,11 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		f := c.lowerNoOpts(c.aliasInstFunc(stderrInst, "get-stderr"))
 		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
 		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
+	}
+	if hasStdin {
+		f := c.lowerNoOpts(c.aliasInstFunc(stdinInst, "get-stdin"))
+		argNames = append(argNames, "wasi:cli/stdin@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stdin", f))
 	}
 	// No-opt structured extras (exit / random / monotonic).
 	for i, imp := range structured {

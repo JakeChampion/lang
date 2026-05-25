@@ -812,8 +812,12 @@ End-to-end exit code 42 demo (covered by
     rejection; the remaining adapter-forcing cases are all sockets/http
     mixes. (read+append in one program is still unsupported — the
     combined body is read+write, not read+append.)
+  - **TCP + stdin. Shipped.** A TCP server that also reads stdin (e.g.
+    config) composes adapter-free — `ComposeTcpServerCliRun` surfaces
+    `wasi:cli/stdin`'s get-stdin (the stdin input-stream reuses the
+    connection's blocking-read lowering)
+    (`TestWasmPreview2TcpStdinAdapterFree`).
   - **Still to do — the adapter-retirement punch list:**
-    - **TCP + stdin** — surface `get-stdin` in the TCP composer.
     - **TCP + UDP** in one program — both socket families in one composer.
     - **UDP + files** — filesystem open-chain into the UDP composer (it
       now has io/streams from udp+print).

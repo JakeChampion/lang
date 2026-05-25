@@ -1118,6 +1118,64 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 }`, "a.log", "entry\n")
 }
 
+// TestWasmPreview2TcpStdinAdapterFree exercises TCP + stdin: a server
+// that reads a line from stdin (e.g. config) then listens, composed
+// adapter-free. ComposeTcpServerCliRun surfaces wasi:cli/stdin's
+// get-stdin (the stdin input-stream reuses the connection's blocking-read
+// lowering). Run with stdin piped; the echoed line confirms the read.
+func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	probe, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "stdin.fern")
+	src := `function main(): i32 {
+    var r = stdin();
+    match (r.read_line()) {
+        Some(line) => { print(line); },
+        None => { print("no-input"); }
+    }
+    var s: i32 = tcp_listen(` + itoa(port) + `);
+    if (s < 0) { return 1; }
+    tcp_close(s);
+    return 0;
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "stdin.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (tcp+stdin, no adapter): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
+	run.Stdin = strings.NewReader("config-line\n")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (tcp+stdin): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("config-line")) {
+		t.Errorf("expected the stdin line echoed on stdout, got: %q", string(out))
+	}
+}
+
 // TestWasmPreview2SocketCliExtrasAdapterFree exercises the composer
 // unification: a TCP server and a UDP client that ALSO use the
 // standalone CLI capabilities (now() / env() / print()) compose
