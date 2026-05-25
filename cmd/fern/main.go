@@ -946,7 +946,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		return component.ComposeTcpServerCliRun(rb, "_lang_run"), nil
+		hasRead, hasWrite := tcpStreamUsage(bin)
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
@@ -1000,6 +1001,26 @@ var preview2TcpServerImports = map[[2]string]bool{
 	{"wasi:io/poll@0.2.0", "[resource-drop]pollable"}:              true,
 	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:       true,
 	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:      true,
+	// tcp_recv / tcp_send (read/write the accepted connection).
+	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
+	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
+}
+
+// tcpStreamUsage reports whether a TCP program reads (tcp_recv →
+// input-stream.blocking-read) and/or writes (tcp_send →
+// output-stream.blocking-write-and-flush) the connection.
+func tcpStreamUsage(bin []byte) (hasRead, hasWrite bool) {
+	for _, p := range coreModuleImportPairs(bin) {
+		if p.module == "wasi:io/streams@0.2.0" {
+			switch p.name {
+			case "[method]input-stream.blocking-read":
+				hasRead = true
+			case "[method]output-stream.blocking-write-and-flush":
+				hasWrite = true
+			}
+		}
+	}
+	return hasRead, hasWrite
 }
 
 func usesPreview2TcpServer(bin []byte) bool {

@@ -8978,15 +8978,16 @@ function main(): i32 {
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// A TCP server that recv()s pulls in input-stream.blocking-read on
-	// the connection, which the listen/accept TCP composer doesn't lower
-	// yet, so -component-wrap must reject it. (listen/accept-only TCP,
-	// args, print, etc. now compose.)
+	// TCP mixed with a CLI-stream capability (here print → wasi:cli/stdout)
+	// isn't composable — the TCP composer requires the imports to be the
+	// sockets/io set only, so -component-wrap must reject it. (TCP-only
+	// servers, including recv/send echo, and CLI-stream-only programs both
+	// compose on their own.)
 	src := []byte(`function main(): i32 {
+    print("listening");
     var s: i32 = tcp_listen(8080);
-    var c: i32 = tcp_accept(s);
-    var d: string = tcp_recv(c, 1024);
-    return d.len();
+    tcp_close(s);
+    return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -9058,6 +9059,29 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	} {
 		if !bytes.Contains(printOut, []byte(want)) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+
+	// echo server (tcp_recv / tcp_send) — adds input-stream.blocking-read
+	// + output-stream.blocking-write-and-flush on the connection. Just
+	// validated here (running it needs a connecting client); confirms the
+	// stream methods are composed in.
+	echo := build("tcpecho", `function main(): i32 {
+    var s: i32 = tcp_listen(8080);
+    var c: i32 = tcp_accept(s);
+    var d: string = tcp_recv(c, 1024);
+    tcp_send(c, d);
+    tcp_close(c);
+    tcp_close(s);
+    return 0;
+}`)
+	echoOut, err := exec.Command("wasm-tools", "print", echo).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, echoOut)
+	}
+	for _, want := range []string{"input-stream.blocking-read", "output-stream.blocking-write-and-flush"} {
+		if !bytes.Contains(echoOut, []byte(want)) {
+			t.Errorf("expected %q in echo component, got:\n%s", want, echoOut)
 		}
 	}
 
@@ -10885,18 +10909,17 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 
 // TestCmdLangTargetWasmNoAdapterRejectsUnsupported confirms the
 // no-adapter `-target wasm` path surfaces a clear error when the
-// program pulls in WASI imports the Go-side composer can't place yet
-// (here a TCP server that recv()s — input-stream.blocking-read on the
-// connection isn't lowered by the listen/accept TCP composer) —
-// pointing the user at -wasi-adapter as the workaround.
+// program pulls in a combination the Go-side composer can't place yet
+// (here TCP mixed with print — sockets + CLI-stream don't compose
+// together) — pointing the user at -wasi-adapter as the workaround.
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	src := []byte(`function main(): i32 {
+    print("listening");
     var s: i32 = tcp_listen(8080);
-    var c: i32 = tcp_accept(s);
-    var d: string = tcp_recv(c, 1024);
-    return d.len();
+    tcp_close(s);
+    return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
