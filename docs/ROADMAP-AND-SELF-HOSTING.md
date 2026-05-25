@@ -133,6 +133,38 @@ bootstrapping from a previous version. Rough estimate:
 blocker (union types) has since landed — see the resolved
 section below. Updated estimate: ~75% portable.
 
+### ✅ UPDATE: a convergent self-hosting fixpoint is achieved
+
+The `examples/self_host/` Fern port — lexer + recursive-descent
+parser + x86-64 emitter (`asm.fern`) + module-flattening
+(`flatten.fern`) + a stdin driver — now **compiles its own source
+to a byte-identical compiler**. The bootstrap chain
+(`internal/e2e/self_host_fixpoint_test.go`):
+
+```
+stage 0  Go compiler builds bundle_run (the multi-module driver)
+stage 1  bundle_run bundles lexer+parser+asm+flatten+driver  -> mmc
+stage 2  mmc compiles its own source                         -> gen2
+stage 3  gen2 compiles its own source                        -> gen3
+```
+
+`gen2` and `gen3` are **byte-identical** (~3.6 MB of asm), and `gen2`
+also compiles independent programs (e.g. a 2-module `a.add(19,23)`)
+to working binaries. `mmc` differs from `gen2` only by one trailing
+newline (the Go-built `bundle_run`'s `print` vs the self-host
+emitter's), so the convergence point is stage 2.
+
+The walls cleared to get here (all in `examples/self_host/`, gated by
+`internal/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
+parser non-advance runaways on qualified names
+(`parse_type_name` / `parse_pattern`) and qualified struct literals;
+`strbuf` + `read_all_stdin` builtins + a 256 MiB heap in the emitter;
+struct-field-read and method-call-result type inference; module
+flattening (qualified-ref rewrite + own-decl mangling + bundle); and
+amortised-O(1) array `push` (geometric growth with a hidden capacity
+word). The original "minimal fix … ~1-2 weeks" / "6-9 weeks" estimates
+below are superseded by this result.
+
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
 Originally the audit's main blocker. Landed in PR #390
