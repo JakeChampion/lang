@@ -30,11 +30,34 @@ var (
 // monotonic (no-opts, Structured) — the same set the CLI-stream composer
 // handles. A UDP client runs under wasi:cli/run (`wasmtime run`), whose
 // full CLI world grants all of these, so e.g. udp telemetry stamped with
-// now() or addressed from env() composes adapter-free.
-func ComposeUdpClientCliRun(coreBytes []byte, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
+// now() or addressed from env() composes adapter-free. hasStdout /
+// hasStderr add wasi:cli/stdout / wasi:cli/stderr — print() / eprint()
+// for telemetry logging. Unlike TCP, UDP's datagram path isn't
+// io/streams, so print pulls in a fresh wasi:io/streams (output side)
+// for the get-{stdout,stderr} stream's blocking-write-and-flush.
+func ComposeUdpClientCliRun(coreBytes []byte, hasStdout, hasStderr bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing. ---
+	// Optional CLI write streams (print / eprint). UDP has no io/streams
+	// of its own, so import io/error + io/streams (output side) here and
+	// surface the output-stream the get-{stdout,stderr} getters return.
+	var streamsInst, stdoutInst, stderrInst, tOut uint32
+	hasWrite := hasStdout || hasStderr
+	if hasWrite {
+		tErr := c.typeRaw(WasiIoErrorInstanceTypeBody())
+		errInst := c.importInstance("wasi:io/error@0.2.0", tErr)
+		tErrAlias := c.aliasType(errInst, "error")
+		streamsInst = c.importInstance("wasi:io/streams@0.2.0", c.typeRaw(WasiIoStreamsInstanceTypeBody(tErrAlias)))
+		tOut = c.aliasType(streamsInst, "output-stream")
+		if hasStdout {
+			stdoutInst = c.importInstance("wasi:cli/stdout@0.2.0", c.typeRaw(WasiCliStdoutInstanceTypeBody(tOut)))
+		}
+		if hasStderr {
+			stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
+		}
+	}
+
 	tNet := c.typeRaw(WasiSocketsNetworkInstanceTypeBody())
 	netInst := c.importInstance("wasi:sockets/network@0.2.0", tNet)
 	tNetwork := c.aliasType(netInst, "network")
@@ -86,6 +109,13 @@ func ComposeUdpClientCliRun(coreBytes []byte, extras []MemTrampImport, structure
 		{inst: udpInst, name: "[method]outgoing-datagram-stream.check-send", params: udpSelfRetParams},
 		{inst: udpInst, name: "[method]outgoing-datagram-stream.send", params: udpSendParams},
 	}
+	// print / eprint: output-stream.blocking-write-and-flush on the
+	// get-{stdout,stderr} stream (mem trampoline, no realloc).
+	idxBlockWrite := -1
+	if hasWrite {
+		idxBlockWrite = len(mems)
+		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockWriteName, params: composeBlockWriteParams})
+	}
 	// Standalone mem-trampoline extras (now / env / args) — each a
 	// (ret_ptr)->() lower over its own instance; env / args return lists
 	// so they need realloc.
@@ -131,13 +161,36 @@ func ComposeUdpClientCliRun(coreBytes []byte, extras []MemTrampImport, structure
 		"wasi:sockets/udp@0.2.0",
 	}
 	argInsts := []uint32{instNetArg, createArg, udpArg}
-	// Standalone CLI extras: each mem-tramp extra (placeholder in
-	// memTramp, after the 6 socket methods) + each no-opt structured
-	// import gets its own per-interface arg instance.
+	// print / eprint: io/streams {blocking-write} + the get-{stdout,
+	// stderr} getters (no-opts), each its own per-interface arg.
+	if hasWrite {
+		streamsArg := c.coreInstExports([]CoreInstanceExport{
+			{Name: composeBlockWriteName, Sort: CoreSortFunc, Idx: memTramp[idxBlockWrite]},
+		})
+		argNames = append(argNames, "wasi:io/streams@0.2.0")
+		argInsts = append(argInsts, streamsArg)
+	}
+	if hasStdout {
+		f := c.lowerNoOpts(c.aliasInstFunc(stdoutInst, "get-stdout"))
+		argNames = append(argNames, "wasi:cli/stdout@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stdout", f))
+	}
+	if hasStderr {
+		f := c.lowerNoOpts(c.aliasInstFunc(stderrInst, "get-stderr"))
+		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
+	}
+	// Standalone CLI extras: each mem-tramp extra placeholder (after the
+	// 6 socket methods + optional blocking-write) + each no-opt
+	// structured import gets its own per-interface arg instance.
+	extraStart := 6
+	if hasWrite {
+		extraStart = 7
+	}
 	needRealloc := false
 	for i, mt := range extras {
 		argNames = append(argNames, mt.InterfaceName)
-		argInsts = append(argInsts, c.coreInstOneFunc(mt.FuncName, memTramp[6+i]))
+		argInsts = append(argInsts, c.coreInstOneFunc(mt.FuncName, memTramp[extraStart+i]))
 		if mt.NeedsRealloc {
 			needRealloc = true
 		}

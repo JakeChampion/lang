@@ -989,8 +989,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		extras, structured, _, _, _ := socketCliExtras(bin, preview2UdpClientImports)
-		return component.ComposeUdpClientCliRun(rb, extras, structured, "_lang_run"), nil
+		extras, structured, hasStdout, hasStderr, _ := socketCliExtras(bin, preview2UdpClientImports)
+		return component.ComposeUdpClientCliRun(rb, hasStdout, hasStderr, extras, structured, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
@@ -1284,11 +1284,21 @@ var preview2UdpClientImports = map[[2]string]bool{
 	{"wasi:sockets/udp@0.2.0", "[resource-drop]outgoing-datagram-stream"}:           true,
 }
 
+// udpClientStdioImports are the print/eprint write surface a UDP client
+// can also pull in. Unlike TCP (which already imports io/streams for the
+// connection), UDP brings io/streams in fresh for the stdout/stderr
+// stream, so the blocking-write method is part of the set too.
+var udpClientStdioImports = map[[2]string]bool{
+	{"wasi:cli/stdout@0.2.0", "get-stdout"}:                                     true,
+	{"wasi:cli/stderr@0.2.0", "get-stderr"}:                                     true,
+	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
+}
+
 func usesPreview2UdpClient(bin []byte) bool {
 	sawUdp := false
 	for _, p := range coreModuleImportPairs(bin) {
 		key := [2]string{p.module, p.name}
-		if !preview2UdpClientImports[key] && !standaloneCliCapImports[key] {
+		if !preview2UdpClientImports[key] && !standaloneCliCapImports[key] && !udpClientStdioImports[key] {
 			return false
 		}
 		if strings.HasPrefix(p.module, "wasi:sockets/udp") {

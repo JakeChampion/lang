@@ -795,13 +795,19 @@ End-to-end exit code 42 demo (covered by
     end-to-end — a Go client fetches on-disk content over the socket
     (`TestWasmPreview2TcpFileServerAdapterFree`), and write/append
     on-disk content is checked (`TestWasmPreview2TcpFileWriteAdapterFree`).
+  - **UDP client + stdout/stderr. Shipped.** A telemetry client that
+    also `print`s / `eprint`s for logging composes adapter-free. UDP's
+    datagram path isn't io/streams, so `ComposeUdpClientCliRun` pulls in
+    a fresh `wasi:io/streams` (output side) + `wasi:cli/stdout` for the
+    log write's `blocking-write-and-flush`. Verified end-to-end — the
+    datagram reaches a Go socket and the log line lands on the guest's
+    stdout (`TestWasmPreview2UdpSendStdoutAdapterFree`).
   - **Still to do (genuinely niche / large):**
     - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
       path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
     - The remaining stream-backed mixes: HTTP handler + files (needs a
-      host world that grants filesystem), sockets + stdin, and
-      `udp + print` (UDP has no io/streams at all yet) — all follow the
-      TCP filesystem pattern.
+      host world that grants filesystem) and sockets + stdin — both
+      follow the TCP filesystem pattern.
     - Read+write of files in one program (both descriptor stream
       directions at once) — the filesystem/types instance type carries
       a single direction; each direction composes on its own.
