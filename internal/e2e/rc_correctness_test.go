@@ -567,6 +567,49 @@ function main(): i32 {
     return (total - 40000) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Real stdlib hot path: query_parse builds a
+		// Map[string, string[]] (map-structural reclamation + the
+		// escape-out path + string[] values). Round-trips a few keys
+		// and checks the underflow counter stays 0 under free.
+		name: "stdlib_query_parse_roundtrip",
+		src: `function main(): i32 {
+    var bad: i32 = 0;
+    var m: Map[string, string[]] = query_parse("a=1&b=2&tag=x&tag=y");
+    if (m.len() != 3) { bad = bad + 1; }
+    match (m.get("tag")) {
+        Some(arr) => { if (arr.len() != 2) { bad = bad + 10; } },
+        None => { bad = bad + 100; }
+    }
+    match (m.get("a")) {
+        Some(arr) => { if (arr[0] != "1") { bad = bad + 1000; } },
+        None => { bad = bad + 10000; }
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
+		// Real stdlib hot path: json_parse builds a JsonValue tree
+		// (non-uniform enum box reclamation + nested Map / array), and
+		// json_encode walks it back. Exercises the per-tag enum drop +
+		// map drop together; the underflow counter must stay 0.
+		name: "stdlib_json_roundtrip",
+		src: `function main(): i32 {
+    var bad: i32 = 0;
+    match (json_parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
+        Some(v) => {
+            match (v) {
+                JObject(m) => { if (m.len() != 2) { bad = bad + 1; } },
+                _ => { bad = bad + 10; }
+            }
+        },
+        None => { bad = bad + 100; }
+    }
+    var arr: JsonValue[] = [JNumber("1"), JBool(true)];
+    if (json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
+    return bad + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
