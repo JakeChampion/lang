@@ -912,6 +912,22 @@ function parse_type_name(p: Par): TypeNameResult {
         return TypeNameResult { par: p, name: "" };
     }
     p = p.advance();
+    // Qualified type name: `pkg.Name` (e.g. `lexer.Token`). Consume
+    // the `.ident` suffix chain so cross-module type references in
+    // struct fields / params / return types parse cleanly. Without
+    // this the `.` is left on the cursor and the surrounding field /
+    // decl loop can't make progress — it spins, allocating until the
+    // process is OOM-killed. parser.fern itself is full of
+    // `lexer.Token` field / param types, so this is required for the
+    // self-host parser to parse its own source.
+    while (p.peek_punct() == ".") {
+        p = p.advance();  // consume `.`
+        var seg0: string = p.peek_ident();
+        if (seg0.len() == 0) { seg0 = p.peek_keyword(); }
+        if (seg0.len() == 0) { break; }
+        base = base + "." + seg0;
+        p = p.advance();
+    }
     if (p.peek_punct() != "[") {
         return TypeNameResult { par: p, name: base };
     }
@@ -1969,6 +1985,30 @@ function main(): i32 {
         },
         _ => { return 1115; }
     }
+
+    // Qualified type names in struct fields: `lexer.Token` (and the
+    // array form `lexer.Token[]`). Before the parse_type_name fix
+    // the stray `.` parked the field loop and the parser spun until
+    // OOM — fatal for parsing parser.fern's own source. Assert the
+    // field type-name strings round-trip the qualifier (and the
+    // unqualified array form still works).
+    var srcQ: string = "struct Par { toks: lexer.Token[], cur: parser.Node, n: i32 } function main(): i32 { return 0; }";
+    var modQ: Module = parse_module(lexer.tokenize(srcQ));
+    if (modQ.structs.len() != 1) { return 1120; }
+    if (modQ.structs[0].name != "Par") { return 1121; }
+    if (modQ.structs[0].fields.len() != 3) { return 1122; }
+    if (modQ.structs[0].fields[0].type_name != "lexer.Token[]") { return 1123; }
+    if (modQ.structs[0].fields[1].type_name != "parser.Node") { return 1124; }
+    if (modQ.structs[0].fields[2].type_name != "i32") { return 1125; }
+    if (modQ.funcs.len() != 1) { return 1126; }
+
+    // Qualified type as a param + return type.
+    var srcQ2: string = "function f(t: lexer.Token): lexer.Token { return t; }";
+    var modQ2: Module = parse_module(lexer.tokenize(srcQ2));
+    if (modQ2.funcs.len() != 1) { return 1130; }
+    if (modQ2.funcs[0].params.len() != 1) { return 1131; }
+    if (modQ2.funcs[0].params[0].type_name != "lexer.Token") { return 1132; }
+    if (modQ2.funcs[0].ret_type != "lexer.Token") { return 1133; }
 
     return 0;
 }
