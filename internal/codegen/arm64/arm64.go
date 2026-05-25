@@ -298,6 +298,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesFree {
 		g.emitFreeRuntime()
 	}
+	if g.usesArrDec {
+		g.emitArrDecRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -790,6 +793,58 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.sizeDirective("__fern_free")
+	g.line(".ltorg")
+}
+
+// emitArrDecRuntime emits `__fern_arr_dec(data, stride)` — the
+// Phase 3 step-4 size-aware array dec (arm64 mirror of the x86_64
+// helper). Decrements the array's rc and, on the last reference
+// (rc==1), returns the BUFFER to the freelist (base = data -
+// headerBytes, headerBytes = max(16, stride), size = headerBytes +
+// cap*stride; cap at data-12) — it does NOT walk elements. Same
+// null / low-address / sentinel / underflow guards as
+// __fern_rc_dec. Only emitted/used when the flag is on; the return
+// value is discarded by the caller's OpDrop.
+func (g *generator) emitArrDecRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_dec")
+	g.typeDirective("__fern_arr_dec")
+	g.label("__fern_arr_dec")
+	g.emit("stp x29, x30, [sp, #-16]!") // frame for __fern_free call
+	g.emit("mov x29, sp")
+	g.emit("cbz x0, .Larrdec_ret")
+	g.emit("cmp x0, #0x10000")
+	g.emit("b.lo .Larrdec_ret")
+	g.emit("ldur w2, [x0, #-8]") // rc
+	g.emit("tbnz w2, #31, .Larrdec_ret")
+	g.emit("cmp w2, #0")
+	g.emit("b.gt .Larrdec_pos")
+	g.adrpAdd("x3", "__fern_rc_underflow")
+	g.emit("ldr w4, [x3]")
+	g.emit("add w4, w4, #1")
+	g.emit("str w4, [x3]")
+	g.emit("b .Larrdec_dec")
+	g.label(".Larrdec_pos")
+	g.emit("cmp w2, #1")
+	g.emit("b.ne .Larrdec_dec")
+	// rc == 1 → free the buffer.
+	g.emit("mov x3, #16")
+	g.emit("cmp x1, #16")
+	g.emit("csel x3, x1, x3, hi") // headerBytes = max(16, stride)
+	g.emit("ldur w4, [x0, #-12]") // cap
+	g.emit("mul x5, x4, x1")      // cap * stride
+	g.emit("add x5, x5, x3")      // + headerBytes = size
+	g.emit("sub x0, x0, x3")      // base = data - headerBytes (arg0)
+	g.emit("mov x1, x5")          // size (arg1)
+	g.emit("bl __fern_free")
+	g.emit("b .Larrdec_ret")
+	g.label(".Larrdec_dec")
+	g.emit("sub w2, w2, #1")
+	g.emit("stur w2, [x0, #-8]")
+	g.label(".Larrdec_ret")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_dec")
 	g.line(".ltorg")
 }
 
@@ -4690,6 +4745,9 @@ type generator struct {
 	// usesFree gates `__fern_free` — the Phase 3 step-4 freelist
 	// return path. Pulls in __fern_alloc (shares the freelist BSS).
 	usesFree bool
+	// usesArrDec gates `__fern_arr_dec` — the size-aware array dec
+	// that frees the buffer at rc==0. Pulls in __fern_free.
+	usesArrDec bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6697,6 +6755,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAlloc = true
 		case "__free":
 			target = "__fern_free"
+			g.usesFree = true
+			g.usesAlloc = true
+		case "__fern_arr_dec":
+			g.usesArrDec = true
 			g.usesFree = true
 			g.usesAlloc = true
 		case "__slice_make":

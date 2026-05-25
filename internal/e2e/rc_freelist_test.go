@@ -185,6 +185,32 @@ function main(): i32 {
     return acc + __rc_underflow_count();
 }`
 
+// pushLoopFreeSrc is the headline push-loop case: 200 grows of a
+// plain i32[]. Flag-on, each copy-grow frees the OLD buffer
+// (dec-on-overwrite → __fern_arr_dec → __free), which the next grow
+// reuses from the freelist — the O(N²)→O(N) reclamation. If a freed
+// buffer were handed out while still referenced, the read-back sum
+// would be wrong; 0 only if every free+reuse is sound. Sum
+// 0..199 = 19900.
+const pushLoopFreeSrc = `function build(): i32 {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < 200) {
+        xs = xs.push(i);
+        i = i + 1;
+    }
+    var sum: i32 = 0;
+    var j: i32 = 0;
+    while (j < xs.len()) {
+        sum = sum + xs[j];
+        j = j + 1;
+    }
+    return sum;
+}
+function main(): i32 {
+    return (build() - 19900) + __rc_underflow_count();
+}`
+
 // Phase 3 step-4: arrays free their buffer when rc hits 0 (flag-on).
 // This exercises __fern_drop_arr_ptr's tail-free + freelist reuse
 // across 50 build/drop cycles, and re-runs the whole rc-correctness
@@ -193,6 +219,9 @@ function main(): i32 {
 func TestX86_64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {
 		t.Errorf("drop+free+reuse: got %d, want 0 (a corrupted reuse or over-release would drift)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, pushLoopFreeSrc); code != 0 {
+		t.Errorf("push-loop free+reuse: got %d, want 0", code)
 	}
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {
@@ -206,6 +235,9 @@ func TestX86_64ArrayDropFree(t *testing.T) {
 func TestArm64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {
 		t.Errorf("drop+free+reuse: got %d, want 0", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, pushLoopFreeSrc); code != 0 {
+		t.Errorf("push-loop free+reuse: got %d, want 0", code)
 	}
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {
@@ -221,6 +253,9 @@ func TestWASMArrayDropFree(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = false }()
 	if got := runWasm(t, arrayDropFreeReuseSrc); got != 0 {
 		t.Errorf("drop+free+reuse: got %d, want 0", got)
+	}
+	if got := runWasm(t, pushLoopFreeSrc); got != 0 {
+		t.Errorf("push-loop free+reuse: got %d, want 0", got)
 	}
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {

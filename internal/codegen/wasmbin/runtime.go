@@ -396,6 +396,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add(op.Str)
 				case "__free":
 					needs.add("__free")
+				case "__fern_arr_dec":
+					needs.add("__fern_arr_dec")
+					needs.add("__free")
+					needs.add("__fern_alloc")
 				case "__memcpy":
 					needs.add("__memcpy")
 				case "__memset":
@@ -802,6 +806,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildFreeBody,
+	},
+	"__fern_arr_dec": {
+		// (data, stride) → data. Phase 3 step-4 size-aware array
+		// dec; frees the buffer at rc==1. See buildArrDecBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrDecBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1437,6 +1448,107 @@ func buildFreeBody(_ map[string]uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArrDecBody — (data, stride) → data. Phase 3 step-4
+// size-aware array dec (wasm mirror of the native helpers).
+// Decrements the array's rc and, on the last reference (rc==1),
+// returns the BUFFER to the freelist (base = data - headerBytes,
+// headerBytes = max(16, stride), size = headerBytes + cap*stride;
+// cap at data-12) instead of dec'ing to 0 — it does NOT walk
+// elements. Same null / low-address / sentinel / underflow guards
+// as buildRcDecBody. Returns data (the caller drops it).
+//
+// Locals: 0=data, 1=stride (params); 2=rc, 3=headerBytes, 4=cap.
+func buildArrDecBody(helperIdxs map[string]uint32) []byte {
+	free := helperIdxs["__free"]
+	var body []byte
+	// null guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// low-address guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// rc = mem[data-8]; sentinel guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 2) // $rc
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// if rc == 1: free buffer; else: maybe-bump-underflow + dec.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// headerBytes = max(16, stride) → local 3
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstSelect(body)
+		body = inst.InstLocalSet(body, 3)
+		// cap = mem[data-12] → local 4
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 12)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 4)
+		// __free(base = data - headerBytes, size = headerBytes + cap*stride)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 3)
+		body = numeric.InstI32Sub(body) // base
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body) // size
+		body = inst.InstCall(body, free)
+	}
+	body = inst.InstElse(body)
+	{
+		// if rc <= 0: bump the over-release counter.
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32LeS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, rcUnderflowAddr)
+		body = inst.InstI32Const(body, rcUnderflowAddr)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstEnd(body)
+		// mem[data-8] = rc - 1
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	// return data
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

@@ -986,11 +986,24 @@ Phase 3 CANNOT start with the freelist — it must start by
    ENTIRE rc-correctness corpus re-run with free actually happening
    — the use-after-free net. All 20 corpus programs + the churn stay
    value-correct with 0 over-releases on x86_64 locally; arm64 + wasm
-   ride CI. Still NOT wired: plain-array (`i32[]`) dec + the
-   dec-on-overwrite site (the push-loop old-buffer free) — those need
-   a size-aware `__fern_arr_dec` and are the next slice. The flip
-   itself stays gated on a corpus-wide-green detector on all backends
-   + explicit owner sign-off.
+   ride CI.
+
+   **Second dec-site wiring — `__fern_arr_dec` (all backends).** A
+   size-aware array dec — dec the rc and, on the last reference,
+   return the BUFFER to the freelist (base/size from cap+stride, no
+   element walk). The IR routes two sites to it flag-on: plain-array
+   (`i32[]`) scope-exit, and the **array dec-on-overwrite** (`xs =
+   …`). The latter is the O(N²)→O(N) push-loop win: on a copy-grow
+   the old buffer's pointer elements were transferred to the new
+   buffer (no inc), so freeing the old BUFFER is correct, while an
+   in-place push (rc bumped to 2) dec's to 1 and doesn't free.
+   Struct / enum / closure overwrite targets keep the plain dec.
+   Validated flag-on by adding a 200-grow push-loop (`xs = xs.push`)
+   to `Test{X86_64,Arm64,WASM}ArrayDropFree` alongside the churn +
+   the full corpus: the read-back sum stays correct only if every
+   free+reuse is sound. Green on x86_64 locally; arm64 + wasm ride
+   CI. The flip itself stays gated on a corpus-wide-green detector on
+   all backends + explicit owner sign-off.
 5. **Enable + verify.** Flip the flag on, run the entire e2e suite
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).
