@@ -246,12 +246,17 @@ func countCallDirect(ops []Op, name string) int {
 // LowerWith, before the backend's defunctionalise / elide passes)
 // so the assertion is deterministic.
 func TestLowerClosureValueRcTracked(t *testing.T) {
+	// `b = a` while `a` is still live afterwards (used at `a()`) is a
+	// genuine alias, not a move — so it must inc the closure value;
+	// the closure locals are dec'd at exit. (A single-use chain would
+	// instead take the move-on-alias path and elide the inc, which is
+	// also correct — this shape pins the inc-on-live-alias case.)
 	src := `function main(): i32 {
     var n: i32 = 5;
     function f(): i32 { return n; }
     var a = f;
     var b = a;
-    return 0;
+    return a() + b();
 }`
 	prog := lowerSourceWith(t, src, 8)
 	fn := findFunc(prog, "main")
@@ -259,7 +264,7 @@ func TestLowerClosureValueRcTracked(t *testing.T) {
 		t.Fatal("main not found")
 	}
 	if got := countCallDirect(fn.Ops, "__fern_rc_inc"); got < 1 {
-		t.Errorf("closure alias `b = a` must emit __fern_rc_inc, got %d:\n%s", got, prog)
+		t.Errorf("live closure alias `b = a` must emit __fern_rc_inc, got %d:\n%s", got, prog)
 	}
 	if got := countCallDirect(fn.Ops, "__fern_rc_dec"); got < 1 {
 		t.Errorf("closure locals must be dec'd at exit, got %d __fern_rc_dec:\n%s", got, prog)
