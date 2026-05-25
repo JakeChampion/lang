@@ -1835,6 +1835,7 @@ var CallDirectAliases = map[string]string{
 	"tcp_recv":   "__fern_tcp_recv",
 	"tcp_send":   "__fern_tcp_send",
 	"tcp_close":  "__fern_tcp_close",
+	"udp_send":   "__fern_udp_send",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the prelude

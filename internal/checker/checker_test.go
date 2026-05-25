@@ -168,6 +168,19 @@ func TestBuiltinPutchar(t *testing.T) {
 	}
 }
 
+func TestBuiltinUdpSend(t *testing.T) {
+	if err := checkSource(t, `function f(): i32 { return udp_send("127.0.0.1", 8125, "metric:1|c"); }`); err != nil {
+		t.Errorf("udp_send(string, number, string) should type-check: %v", err)
+	}
+	// Wrong arg types are rejected: host must be a string, port a number.
+	if err := checkSource(t, `function f(): i32 { return udp_send(8125, 8125, "x"); }`); err == nil {
+		t.Errorf("udp_send with a non-string host should fail")
+	}
+	if err := checkSource(t, `function f(): i32 { return udp_send("h", "p", "x"); }`); err == nil {
+		t.Errorf("udp_send with a non-number port should fail")
+	}
+}
+
 func TestFloatArithmeticIsFlagged(t *testing.T) {
 	prog, err := parser.Parse(`function f(x: f32, y: f32): f32 { return x + y; }`)
 	if err != nil {

@@ -1194,6 +1194,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
+	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
+	// local port, connects to host:port, sends data, and tears the
+	// socket down. Returns the bytes accepted by the host, or a negative
+	// errno on failure. (Send-only / IPv4-literal v1 — for telemetry /
+	// syslog to a local agent.)
+	c.info.FuncSigs["udp_send"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
 	// read_file(path): Result[string, IoError] — reads the entire
 	// file into a single string. WASM builds need a preopen
 	// directory (e.g. `wasmtime --dir=.`); the path is

@@ -441,6 +441,94 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	// ---- wasi:sockets/udp (send-only) for udp_send. Mirrors the tcp
+	// socket family: create → bind → stream(connect) → check-send →
+	// send, plus the three datagram resource drops. ----
+	"wasi_sockets_create_udp_socket": {
+		// (family: i32, retptr: i32). family=0 → ipv4. retptr gets
+		// result<udp-socket, error-code> (disc @ +0, handle @ +4 on Ok).
+		module:  "wasi:sockets/udp-create-socket@0.2.0",
+		name:    "create-udp-socket",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_start_bind": {
+		// Same 15-i32 ip-socket-address flattening as tcp start-bind
+		// (self, borrow<network>, disc, 11 payload, retptr).
+		module: "wasi:sockets/udp@0.2.0",
+		name:   "[method]udp-socket.start-bind",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_sockets_udp_finish_bind": {
+		// (self, retptr) → (). result<_, error-code> at retptr.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]udp-socket.finish-bind",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_stream": {
+		// stream(self, remote-address: option<ip-socket-address>) ->
+		// result<tuple<incoming-datagram-stream, outgoing-datagram-stream>,
+		// error-code>. The option flattens to 13 i32 (1 option disc + 1
+		// ip-addr disc + 11 payload); + self + retptr = 15 i32. retptr
+		// holds the result: disc @ +0, (incoming, outgoing) @ +4/+8 on Ok.
+		module: "wasi:sockets/udp@0.2.0",
+		name:   "[method]udp-socket.stream",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_sockets_udp_check_send": {
+		// (self, retptr) → (). result<u64, error-code>: disc @ +0,
+		// u64 permit count @ +8 on Ok.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]outgoing-datagram-stream.check-send",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_send": {
+		// (self, datagrams_ptr, datagrams_len, retptr) → (). datagrams
+		// is a list<outgoing-datagram>; each 60-byte record is
+		// { data: (ptr@+0, len@+4), remote-address: option @ +8 }.
+		// retptr holds result<u64, error-code>: disc @ +0, u64 sent
+		// count @ +8 on Ok.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]outgoing-datagram-stream.send",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_socket_drop": {
+		// (handle) → (). Drops a udp-socket. After the datagram-stream
+		// children are dropped.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[resource-drop]udp-socket",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_incoming_datagram_stream_drop": {
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[resource-drop]incoming-datagram-stream",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_outgoing_datagram_stream_drop": {
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[resource-drop]outgoing-datagram-stream",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_io_blocking_read": {
 		// (handle: i32, len: u64, retptr: i32) → (). Reads up to
 		// `len` bytes. retptr holds result<list<u8>, stream-error>:
@@ -898,6 +986,20 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_tcp_socket_drop")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
+	}
+	// udp_send is one self-contained helper: create → bind → stream
+	// (connect) → check-send → send → drop the three datagram resources.
+	if helpers.set["__fern_udp_send"] {
+		in.add("wasi_sockets_instance_network")
+		in.add("wasi_sockets_create_udp_socket")
+		in.add("wasi_sockets_udp_start_bind")
+		in.add("wasi_sockets_udp_finish_bind")
+		in.add("wasi_sockets_udp_stream")
+		in.add("wasi_sockets_udp_check_send")
+		in.add("wasi_sockets_udp_send")
+		in.add("wasi_sockets_udp_socket_drop")
+		in.add("wasi_sockets_incoming_datagram_stream_drop")
+		in.add("wasi_sockets_outgoing_datagram_stream_drop")
 	}
 
 	// wasi:http wrapper. The single __http_entry helper pulls in
