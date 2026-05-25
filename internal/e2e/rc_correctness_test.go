@@ -610,6 +610,23 @@ function main(): i32 {
     return bad + __rc_underflow_count();
 }`,
 	},
+	{
+		// Map growth reclamation: inserting 100 keys into one map
+		// triggers several __map_grow doublings (cap 4→8→…→128), each
+		// freeing the previous kv buffer. The read-back checksum + the
+		// underflow counter catch a corrupted copy or a freed buffer
+		// that was still referenced. sum_{0..99} 2i = 2*4950 = 9900.
+		name: "map_growth_buffer_free",
+		src: `function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 100) { m = m.set(i, i * 2); i = i + 1; }
+    var sum: i32 = 0;
+    var j: i32 = 0;
+    while (j < 100) { sum = sum + m.get_or(j, -1); j = j + 1; }
+    return (sum - 9900) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

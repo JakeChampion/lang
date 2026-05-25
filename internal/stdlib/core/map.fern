@@ -253,9 +253,9 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
 // __map_grow doubles the kv buffer's capacity and re-hashes
 // every existing entry into the new bucket array. Updates
 // the wrapper's data ptr in place; returns the new buffer
-// for the inline caller. The bump allocator can't reclaim
-// the old buffer; that pays back when the arena resets at
-// scope exit.
+// for the inline caller. The old buffer is returned to the
+// freelist once the entries are copied (see the __free at the
+// end) — a no-op when the freelist is disabled.
 pub function __map_grow(m: usize): usize {
     var oldBuf: usize = __load_ptr(m);
     var oldCap: i32 = __load_i32(oldBuf);
@@ -293,6 +293,15 @@ pub function __map_grow(m: usize): usize {
         i = i + 1;
     }
     __store_ptr(m, newBuf);
+    // Return the old kv buffer to the freelist. After the repoint
+    // above, oldBuf is unreferenced: the entries' key/value POINTERS
+    // were copied into newBuf (the keys/values themselves live in
+    // their own allocations, untouched), and the handle now points at
+    // newBuf. __map_set_impl runs __map_cow_inplace first, so the map
+    // is uniquely owned here — nothing else aliases oldBuf. `__free`
+    // is a no-op when the freelist is disabled.
+    var oldBytes: i32 = 16 + oldCap * (4 + entryStride);
+    __free(oldBuf, oldBytes);
     return newBuf;
 }
 
