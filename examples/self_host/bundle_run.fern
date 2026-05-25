@@ -105,6 +105,9 @@ function main(): i32 {
     var entry: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[count - 1]));
 
     var merged: parser.Module = flatten.bundle(entry, loaded);
-    print(asm.emit_module(merged));
+    // `write` (no trailing newline) rather than `print`, so output is
+    // byte-identical whether this driver is built by the Go compiler
+    // or self-hosted — see the print/write note in asm.fern.
+    write(asm.emit_module(merged));
     return 0;
 }
