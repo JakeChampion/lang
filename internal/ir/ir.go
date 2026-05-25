@@ -1641,11 +1641,14 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case ast.ArrayType:
 			elig[v.Name] = true
 		case ast.StructType:
-			// A Map local (runtime handle, StructType "Map") is owned
-			// when untainted, so its buf + handle may be freed at the
-			// last reference. Other StructType locals are user structs
-			// whose box never frees yet (rc_dec leak) — not eligible.
+			// A Map local (runtime handle "Map") frees its buf + handle;
+			// a user struct (has a StructDecl) frees its box. Both at
+			// the last reference, when owned (untainted). Other runtime
+			// handles (Reader/Writer/MapIter) have no StructDecl and no
+			// drop handler — not eligible.
 			if t.Name == "Map" {
+				elig[v.Name] = true
+			} else if _, isUser := b.info.Structs[t.Name]; isUser {
 				elig[v.Name] = true
 			}
 		}
@@ -1762,7 +1765,48 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		// at one level (decValueOnStack); nested struct/enum/closure
 		// fields are flat-dec'd (deep recursion is a later slice).
 		if st, ok := t.(ast.StructType); ok {
-			if sd, sdOk := b.info.Structs[st.Name]; sdOk {
+			sd, sdOk := b.info.Structs[st.Name]
+			// Phase 3 struct-box reclamation: an OWNED user struct
+			// returns its box to the freelist on the last reference
+			// (rc==1) after dropping its rc-tracked fields. Gated on
+			// eligible (computeFreeEligible) + flag-on; otherwise the
+			// box only dec's (leaks) as before. The box was alloc'd as
+			// `structFieldLayout size + 8` rc header, so __fern_box_free
+			// frees base = data-8, size+8.
+			if sdOk && ast.RcFreeEnabled && eligible {
+				offs, size := structFieldLayout(sd.Fields, b.ptrW)
+				var ptrFields []ast.Param
+				for _, f := range sd.Fields {
+					if arrElemIsRcTracked(f.Type) {
+						ptrFields = append(ptrFields, f)
+					}
+				}
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				// rc == 1: drop fields, then free the box.
+				for _, f := range ptrFields {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					if off := offs[f.Name]; off != 0 {
+						b.emit(Op{Kind: OpConstI32, I32: off})
+						b.emit(Op{Kind: OpAdd})
+					}
+					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+					decValueOnStack(f.Type, false)
+				}
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpConstI32, I32: size})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpElse})
+				// rc > 1: just dec the box.
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpEnd})
+				return
+			}
+			if sdOk {
 				offs, _ := structFieldLayout(sd.Fields, b.ptrW)
 				var ptrFields []ast.Param
 				for _, f := range sd.Fields {

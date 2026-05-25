@@ -215,6 +215,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMapDrop {
 		g.emitMapDropRuntime()
 	}
+	if g.usesBoxFree {
+		g.emitBoxFreeRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -477,6 +480,12 @@ type generator struct {
 	// reclamation handler that frees the buf + handle at rc==1
 	// (Map scope-exit). Pulls in __fern_free when the flag is on.
 	usesMapDrop bool
+	// usesBoxFree gates `__fern_box_free` — the Phase 3 box
+	// reclamation helper `(data, size) -> data` that returns a
+	// struct/enum box (base = data-8) to the freelist. The IR
+	// pre-gates it on rc==1 (is_unique), so the helper is just a
+	// uniform-result __free wrapper. Pulls in __fern_free.
+	usesBoxFree bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -538,6 +547,10 @@ func (g *generator) recordUse(target string) {
 			g.usesFree = true
 			g.usesAlloc = true
 		}
+	case "__fern_box_free":
+		g.usesBoxFree = true
+		g.usesFree = true
+		g.usesAlloc = true
 	case "__slice_make":
 		g.usesSliceMake = true
 		g.usesAlloc = true
@@ -2903,6 +2916,47 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_map_drop, .-__fern_map_drop")
+}
+
+// emitBoxFreeRuntime emits `__fern_box_free(data, size) -> data` — the
+// Phase 3 struct/enum box reclamation helper. The IR pre-gates the
+// call on rc==1 (an __fern_rc_is_unique block) and has already dropped
+// the box's rc-tracked fields/payloads, so this helper just returns
+// the box (base = data - 8 rc header) to the freelist. Returning data
+// gives the uniform "OpCallDirect pushes one result" shape every
+// backend relies on (so the IR can OpDrop it), which a direct
+// void-returning __free call cannot on wasm. NULL / low-address guards
+// keep a stray call safe. System V: rdi = data, rsi = size.
+func (g *generator) emitBoxFreeRuntime() {
+	g.line("")
+	g.line(".globl __fern_box_free")
+	g.line(".type __fern_box_free, @function")
+	g.label("__fern_box_free")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // save caller rbx; holds data across the __fern_free call
+	g.emit("push r12") // 16-byte alignment padding for the call
+	g.emit("mov rax, rdi") // default return = data
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lboxfree_ret")
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Lboxfree_ret")
+	if ast.RcFreeDebug {
+		// Quarantine: poison the rc word, don't recycle (UAF detector).
+		g.emit(fmt.Sprintf("mov dword ptr [rdi - 8], %d", ast.RcPoison))
+		g.emit("jmp .Lboxfree_ret")
+	}
+	g.emit("mov rbx, rdi") // preserve data across __fern_free
+	g.emit("sub rdi, 8")   // base = data - 8 rc header (arg1)
+	g.emit("add rsi, 8")   // size + 8 rc header (arg2)
+	g.emit("call __fern_free")
+	g.emit("mov rax, rbx")
+	g.label(".Lboxfree_ret")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_box_free, .-__fern_box_free")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:

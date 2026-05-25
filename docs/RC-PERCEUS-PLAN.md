@@ -1048,8 +1048,10 @@ Phase 3 CANNOT start with the freelist — it must start by
    three backends in CI and (b) explicit owner sign-off. The
    pre-step-5 no-free arena stays the default; a handful of tests pin
    it via save/restore. What LEAKS (safe — no over-release):
-   borrowed/borrowed-derived buffers, struct / enum / closure boxes,
-   struct/enum array fields, and map entry keys/values.
+   borrowed/borrowed-derived buffers, enum / closure boxes, nested
+   struct/enum fields (one level), and map entry keys/values. (Owned
+   top-level arrays, maps, and struct boxes now free — see the
+   widening slices below.)
 
    **Widening slice — map structural reclamation (DONE).** A Map is a
    runtime handle (StructType "Map") whose rc already balances (it
@@ -1066,6 +1068,26 @@ Phase 3 CANNOT start with the freelist — it must start by
    return-inc (the drop only frees at rc==1). Covered by
    `rc_correctness`'s `map_owned_churn_free` (50 build/free cycles) and
    `map_returned_not_freed`, run free-on on all three backends.
+
+   **Widening slice — struct-box reclamation (DONE).** A user struct
+   already drops its rc-tracked fields at the last reference (the
+   `__fern_rc_is_unique` block in `emitDec`) and inc's as a struct on
+   alias/return, so freeing its box is the natural next step. New
+   `__fern_box_free(data, size) -> data` (all three backends) returns
+   the box (base = data-8 rc header, freed size = size+8) to the
+   freelist and returns `data` — the uniform-result shape the IR's
+   `OpDrop` needs, which a direct void `__free` can't give on wasm. The
+   IR pre-gates it on rc==1 and emits it after the field drops, so the
+   helper is a thin guarded `__free` wrapper. `computeFreeEligible` now
+   marks owned user-struct locals eligible (same borrow-aware taint;
+   structs that escape into a container are tainted, and returned
+   structs are protected by the struct return-inc + the rc==1 gate).
+   Nested struct/enum fields still leak (one level, like arrays).
+   Covered by `rc_correctness`'s `struct_box_churn_free` (200
+   build/free cycles) and `struct_returned_not_freed`, plus the
+   existing struct-heavy corpus entries, run free-on on all three
+   backends. The same `__fern_box_free` will reclaim enum boxes next
+   (per-variant size from the tag).
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire
