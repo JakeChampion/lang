@@ -1071,6 +1071,43 @@ Phase 3 CANNOT start with the freelist — it must start by
      detector is the tool to finish the diagnosis; the fix (correct
      borrowed-temp-argument lifetime) is the next step and the
      remaining flip blocker.
+   - **Return-value UAF (#2a) — FIXED.** The first instance the
+     detector + a gdb watchpoint pinned down: `return <local array>`
+     left the value on the operand stack while the exit sweep's
+     `__fern_drop_arr_ptr` freed it (rc 1→0), handing the caller a
+     dangling pointer (`lexer.tokenize` returning its `ts: Token[]`).
+     Fixed by inc'ing a returned alias before the sweep
+     (`needsRcIncOnAlias`, closures excluded to preserve defunc).
+     Also fixed a symmetric latent underflow the no-free arena
+     masked.
+   - **THE CORE BLOCKER — borrow model ⇄ free are incompatible.**
+     After #2a the detector traps next in `compile_block` dec'ing a
+     freed `ops: Op[]`. A watchpoint shows the buffer freed at
+     `compile_stmt`'s exit while `compile_block` still holds it.
+     Root: `compile_stmt(st, ops, lt)` / `compile_block(body, ops,
+     lt)` / `compile_expr` / `patch_jump` thread `ops` through
+     BORROWED params and `CompileResult { ops, lt }` fields. Under
+     the borrow model (Phase 2d) a borrowed arg gets NO caller-side
+     inc, so the rc undercounts every borrowed alias — fine under
+     no-free, but with free a dec-to-0 (a struct-field drop, a
+     scope-exit drop, …) reclaims a buffer that a live borrow still
+     references. Disabling the struct-field free just shifts the
+     over-release elsewhere (the freelist makes the bugs interact
+     non-locally), confirming this is not a series of one-off bugs
+     but the borrow/free tension itself. **The flip cannot ship
+     until it's resolved**, and the resolution is a design choice,
+     not a patch:
+       (a) inc borrowed args at the call (revert the Phase 2d borrow
+           optimization) → rc accurate, free safe, but loses Map /
+           array mutate-in-place;
+       (b) a borrow-aware "don't free a borrowed value or anything
+           aliased from one" analysis (taint borrowed-derived
+           locals) — Perceus's actual rule; the principled but larger
+           fix;
+       (c) keep free OFF (today's safe default) until (a)/(b) lands.
+     Until then `RcFreeEnabled` stays false; the array reclamation,
+     freelist, gate, and detector are all in place to support
+     whichever resolution is chosen.
 
 #### Resolved design decisions (from Open Questions)
 
