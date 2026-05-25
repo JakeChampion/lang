@@ -302,6 +302,41 @@ function (p: Par) peek_ident(): string {
 struct ExprResult { par: Par, expr: Expr }
 struct StmtResult { par: Par, stmt: Stmt }
 
+// parse_struct_lit_body parses `{ f: v, … }` (the cursor is on the
+// opening `{`) and returns an ExprStructLit with the given
+// type_name. Shared by the bare-ident struct literal in
+// parse_primary and the qualified `pkg.Type { … }` form in
+// parse_postfix.
+function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
+    p = p.advance();  // consume `{`
+    var fnames: string[] = [];
+    var fvals: Expr[] = [];
+    if (p.peek_punct() != "}") {
+        while (true) {
+            var fn: string = p.peek_ident();
+            if (fn.len() == 0) {
+                return ExprResult { par: p, expr: e_unknown("missing field name in struct lit") };
+            }
+            p = p.advance();
+            if (p.peek_punct() != ":") {
+                return ExprResult { par: p, expr: e_unknown("missing : in struct lit") };
+            }
+            p = p.advance();
+            var fv = parse_expr(p);
+            p = fv.par;
+            fnames = fnames.push(fn);
+            fvals = fvals.push(fv.expr);
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+    }
+    if (p.peek_punct() != "}") {
+        return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
+    }
+    p = p.advance();
+    return ExprResult { par: p, expr: e_struct_lit(type_name, fnames, fvals) };
+}
+
 // parse_postfix runs the chained-postfix loop on a base
 // expression. Handles call (`(args)`), index / slice (`[i]`,
 // `[i:j]`), and field access (`.name` / `.0`). Returns when
@@ -365,7 +400,36 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 return ExprResult { par: p, expr: e_unknown("missing field name after .") };
             }
             p = p.advance();
-            base = e_field_access(base, fname);
+            // Qualified struct literal: `pkg.Type { f: v, … }`. Only
+            // when the base is a bare (module) ident and a struct-lit
+            // `{` follows — same look-ahead guard parse_primary uses
+            // for bare `Name { … }` so it doesn't swallow a
+            // `for x in pkg.iter { body }` block. flatten.fern
+            // reconstructs parser AST nodes this way
+            // (`parser.ExprBinary { … }`), so the self-host parser
+            // must accept it to parse its own source.
+            var qname: string = "";
+            match (base) {
+                ExprIdent(qid) => { qname = qid.name; },
+                _ => { }
+            }
+            var qstruct_ok: boolean = false;
+            if (qname.len() > 0 && p.peek_punct() == "{") {
+                var qlook: Par = p.advance();
+                if (qlook.peek_punct() == "}") {
+                    qstruct_ok = true;
+                } else if ((qlook.peek_ident()).len() > 0) {
+                    var qlook2: Par = qlook.advance();
+                    if (qlook2.peek_punct() == ":") { qstruct_ok = true; }
+                }
+            }
+            if (qstruct_ok) {
+                var qr: ExprResult = parse_struct_lit_body(p, qname + "." + fname);
+                p = qr.par;
+                base = qr.expr;
+            } else {
+                base = e_field_access(base, fname);
+            }
         } else {
             break;
         }
