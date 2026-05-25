@@ -7,9 +7,21 @@
 //     full Go lexer threads positions through a `*lexer` struct)
 //   - mutual recursion isn't needed; everything's a forward loop
 //   - pattern matching with literal patterns drives the dispatch
-//     between Number / Ident / Keyword / Punct / String
-//   - f-strings + hex literals are out of scope for this first cut
-//     (the Go lexer covers them; this port leaves them as TODO)
+//     between Number / Ident / Keyword / Punct / String / Error
+//
+// Parity with internal/lexer/lexer.go now covers: hex integer
+// literals (`0x2A`, `0x10u8`), scientific-notation floats
+// (`1e3`, `1.5e-2`), the afterDot guard for chained tuple
+// access (`t.1.0`), closed-list numeric-suffix validation, and a
+// first-class TokError variant for the failure paths (bad
+// suffix, unterminated / bad-escape / newline-in string, bare
+// `0x`, unexpected character) instead of the old EOF-as-error
+// sentinel.
+//
+// Still out of scope (the Go lexer covers them; deferred to a
+// follow-up port): f-strings (`f"..."` → FParts) and the
+// separate comment list (skip_trivia drops comments here rather
+// than accumulating them).
 //
 // Goal: validate that the language can express the lexer's logic
 // end-to-end without resorting to Go-side workarounds. The Go
@@ -22,8 +34,16 @@ pub struct TokIdent { name: string, line: i32, col: i32 }
 pub struct TokKeyword { name: string, line: i32, col: i32 }
 pub struct TokPunct { text: string, line: i32, col: i32 }
 pub struct TokString { value: string, line: i32, col: i32 }
+// TokError surfaces a lex failure (bad numeric suffix, unterminated
+// string, bare `0x`, unexpected character, …) as a first-class
+// token rather than masquerading as EOF. The Go lexer returns a
+// `*lexer.Error` through a side channel; lang has no exception /
+// multi-return-with-error idiom in this port, so the error rides
+// the token stream and `tokenize` stops at the first one. Parser
+// consumers already fall through these via their `_` match arms.
+pub struct TokError { msg: string, line: i32, col: i32 }
 
-pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString;
+pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString | TokError;
 
 // is_digit / is_alpha / is_alnum — byte-level classifiers,
 // matching the Go lexer's `unicode.IsDigit` / `IsLetter` on the
@@ -33,6 +53,9 @@ function is_alpha(b: i32): boolean {
     return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
 function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+function is_hex_digit(b: i32): boolean {
+    return (b >= 48 && b <= 57) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70);
+}
 function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13; }
 function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 102; }   // 'i' 'u' 'f'
 
@@ -180,21 +203,93 @@ pub function punct_tok(text: string, line: i32, col: i32): Token {
 pub function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
     return TokNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
 }
+pub function error_tok(msg: string, line: i32, col: i32): Token {
+    return TokError { msg: msg, line: line, col: col };
+}
 
-function scan_number(l: Lex, start_line: i32, start_col: i32): NumResult {
+// is_error_tok / has_error — predicates over the Token union used
+// by `tokenize` to halt at the first lex error and by the test
+// harness to assert that malformed inputs surface one.
+pub function is_error_tok(t: Token): boolean {
+    match (t) {
+        TokError(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+pub function has_error(toks: Token[]): boolean {
+    var i: i32 = 0;
+    while (i < toks.len()) {
+        if (is_error_tok(toks[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `after_dot` is true when the previously-emitted token was a `.`
+// punctuator. In that context a trailing `.<digit>` (or `e<digit>`)
+// is the NEXT field access of a chained tuple selector like
+// `t.1.0`, not a fractional / exponent continuation — so the float
+// upgrades below are suppressed. Mirrors the Go lexer's
+// `l.afterDot` guard.
+function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32): NumResult {
     var begin: i32 = l.i;
-    while (!l.at_end() && is_digit(l.peek_byte())) {
-        l = l.advance();
+    var is_hex: boolean = false;
+    // `0x` / `0X` hex integer literal: consume hex digits, skip the
+    // float (fractional / exponent) upgrades. A bare `0x` with no
+    // following hex digit is an error, not a silent `0` + `x` ident.
+    if (l.peek_byte() == 48 && l.i + 1 < l.n
+        && (l.src[l.i + 1] == 120 || l.src[l.i + 1] == 88)) {   // 'x' / 'X'
+        is_hex = true;
+        l = l.advance();   // '0'
+        l = l.advance();   // 'x' / 'X'
+        var hex_start: i32 = l.i;
+        while (!l.at_end() && is_hex_digit(l.peek_byte())) {
+            l = l.advance();
+        }
+        if (l.i == hex_start) {
+            return NumResult { lex: l, tok: error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
+        }
+    } else {
+        while (!l.at_end() && is_digit(l.peek_byte())) {
+            l = l.advance();
+        }
     }
     var is_float: boolean = false;
-    if (l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
+    // Fractional part: `.<digit>+`. Suppressed for hex and right
+    // after a `.` (chained tuple index).
+    if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
         is_float = true;
         l = l.advance();   // consume `.`
         while (!l.at_end() && is_digit(l.peek_byte())) {
             l = l.advance();
         }
     }
+    // Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on an
+    // integer base (`1e3`) or a fractional one (`1.5e-2`). Only
+    // consumed when at least one exponent digit follows the optional
+    // sign — a bare `1e` / `1efoo` leaves the `e` for the next token.
+    if (!is_hex && !after_dot && !l.at_end()
+        && (l.peek_byte() == 101 || l.peek_byte() == 69)) {   // 'e' / 'E'
+        var j: i32 = l.i + 1;
+        if (j < l.n && (l.src[j] == 43 || l.src[j] == 45)) { j = j + 1; }   // '+' / '-'
+        if (j < l.n && is_digit(l.src[j])) {
+            is_float = true;
+            l = l.advance();   // 'e' / 'E'
+            if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
+                l = l.advance();   // sign
+            }
+            while (!l.at_end() && is_digit(l.peek_byte())) {
+                l = l.advance();
+            }
+        }
+    }
     var text: string = l.src[begin:l.i];
+    // Optional typed suffix: i8/i16/i32/i64/u8/u16/u32/u64/f32/f64.
+    // The suffix character set is a closed list, so misspellings
+    // like `42i33` / a truncated `42i` fail here rather than
+    // partially consuming. An integer suffix on a float literal
+    // (`1.5i32`) is likewise an error.
     var suffix: string = "";
     if (!l.at_end() && is_suffix_start(l.peek_byte())) {
         var s_begin: i32 = l.i;
@@ -203,6 +298,12 @@ function scan_number(l: Lex, start_line: i32, start_col: i32): NumResult {
             l = l.advance();
         }
         suffix = l.src[s_begin:l.i];
+        if (!is_valid_numeric_suffix(suffix)) {
+            return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
+        }
+        if (is_float && suffix[0] != 102) {   // not 'f'
+            return NumResult { lex: l, tok: error_tok("integer suffix on float literal", start_line, start_col) };
+        }
     }
     // `42f32` / `42f64` — integer text with float suffix promotes
     // the token to Float so a downstream parser routes via the
@@ -232,22 +333,21 @@ function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
 // scan_string reads `"…"` with C-style escapes. The Go lexer
 // uses strings.Builder + WriteRune; here we build the unescaped
 // value by walking the source and concatenating. Errors (newline
-// inside string, unknown escape, unterminated) return TokEof to
-// keep the signature uniform — production self-host needs a
-// Result type here, deferred to a follow-up port.
+// inside string, unknown escape, unterminated) surface as a
+// TokError carrying a diagnostic message — matching the Go
+// lexer's error shapes.
 function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
     l = l.advance();   // opening "
     var out: string = "";
     while (!l.at_end() && l.peek_byte() != 34) {
         var c: i32 = l.peek_byte();
         if (c == 10) {
-            // newline inside string — surface as Eof for now.
-            return NumResult { lex: l, tok: eof_tok(start_line, start_col) };
+            return NumResult { lex: l, tok: error_tok("newline inside string literal", start_line, start_col) };
         }
         if (c == 92) {   // backslash
             l = l.advance();
             if (l.at_end()) {
-                return NumResult { lex: l, tok: eof_tok(start_line, start_col) };
+                return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
             }
             var esc: i32 = l.peek_byte();
             l = l.advance();
@@ -258,7 +358,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
             else if (esc == 34) { out = out + "\""; }
             else if (esc == 92) { out = out + "\\"; }
             else {
-                return NumResult { lex: l, tok: eof_tok(start_line, start_col) };
+                return NumResult { lex: l, tok: error_tok("unknown escape in string literal", start_line, start_col) };
             }
             continue;
         }
@@ -266,7 +366,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
         l = l.advance();
     }
     if (l.at_end()) {
-        return NumResult { lex: l, tok: eof_tok(start_line, start_col) };
+        return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
     }
     l = l.advance();   // closing "
     return NumResult { lex: l, tok: string_tok(out, start_line, start_col) };
@@ -277,6 +377,10 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
 pub function tokenize(src: string): Token[] {
     var l: Lex = Lex { src: src, i: 0, n: src.len(), line: 1, col: 1 };
     var out: Token[] = [];
+    // Tracks whether the previously-emitted token was a `.` punct,
+    // so the number scanner can suppress the chained-tuple float
+    // upgrade (`t.1.0`). Mirrors the Go lexer's `l.afterDot`.
+    var after_dot: boolean = false;
     while (true) {
         l = skip_trivia(l);
         if (l.at_end()) {
@@ -287,21 +391,26 @@ pub function tokenize(src: string): Token[] {
         var start_col: i32 = l.col;
         var b: i32 = l.peek_byte();
         if (is_digit(b)) {
-            var rn = scan_number(l, start_line, start_col);
+            var rn = scan_number(l, after_dot, start_line, start_col);
             l = rn.lex;
             out = out.push(rn.tok);
+            if (is_error_tok(rn.tok)) { return out; }
+            after_dot = false;
             continue;
         }
         if (is_alpha(b)) {
             var ri = scan_ident(l, start_line, start_col);
             l = ri.lex;
             out = out.push(ri.tok);
+            after_dot = false;
             continue;
         }
         if (b == 34) {   // "
             var rs = scan_string(l, start_line, start_col);
             l = rs.lex;
             out = out.push(rs.tok);
+            if (is_error_tok(rs.tok)) { return out; }
+            after_dot = false;
             continue;
         }
         var mp: string = match_multipunct(l.src, l.i, l.n);
@@ -312,29 +421,29 @@ pub function tokenize(src: string): Token[] {
                 i = i + 1;
             }
             out = out.push(TokPunct { text: mp, line: start_line, col: start_col });
+            after_dot = false;
             continue;
         }
         if (is_single_punct(b)) {
             var text: string = l.src[l.i:l.i + 1];
             l = l.advance();
             out = out.push(TokPunct { text: text, line: start_line, col: start_col });
+            after_dot = (text == ".");
             continue;
         }
-        // Unknown byte — emit EOF and stop, matching the Go
-        // lexer's `unexpected character` shape without a real
-        // error channel.
-        out = out.push(TokEof { line: start_line, col: start_col });
+        // Unknown byte — surface a TokError and stop, matching the
+        // Go lexer's `unexpected character` error.
+        out = out.push(error_tok("unexpected character", start_line, start_col));
         return out;
     }
     return out;
 }
 
-// main is the validation entrypoint: feed a mixed-token input
-// through tokenize, walk the resulting Token[] with literal-
-// pattern match arms, and return 0 if every assertion holds.
-// Non-zero return codes pinpoint which assertion fired so the
-// Go test can surface the right diagnostic without re-running.
-function main(): i32 {
+// test_mixed feeds a mixed-token input through tokenize, walks the
+// resulting Token[] with literal-pattern match arms, and returns 0
+// if every assertion holds. Non-zero return codes pinpoint which
+// arm fired so the Go test can surface the right diagnostic.
+function test_mixed(): i32 {
     var src: string = "var x: i32 = 42i64; // a comment\nreturn x + 1.5f64;\n";
     var toks: Token[] = tokenize(src);
 
@@ -439,4 +548,208 @@ function main(): i32 {
         _ => { return 1300; }
     }
     return -1;
+}
+
+// test_hex — `0x` / `0X` integer literals, mixed-case digits, and a
+// trailing typed suffix (`0x10u8`). All come back as non-float
+// Number tokens whose text includes the prefix.
+function test_hex(): i32 {
+    var toks: Token[] = tokenize("0x2A 0xff 0X0 0xDEADBEEF 0x10u8");
+    if (toks.len() != 6) { return 1400; }
+    match (toks[0]) {
+        TokNumber(t) => {
+            if (t.text != "0x2A") { return 1401; }
+            if (t.is_float) { return 1402; }
+        },
+        _ => { return 1403; }
+    }
+    match (toks[1]) {
+        TokNumber(t) => { if (t.text != "0xff") { return 1404; } },
+        _ => { return 1405; }
+    }
+    match (toks[2]) {
+        TokNumber(t) => { if (t.text != "0X0") { return 1406; } },
+        _ => { return 1407; }
+    }
+    match (toks[3]) {
+        TokNumber(t) => { if (t.text != "0xDEADBEEF") { return 1408; } },
+        _ => { return 1409; }
+    }
+    match (toks[4]) {
+        TokNumber(t) => {
+            if (t.text != "0x10") { return 1410; }
+            if (t.suffix != "u8") { return 1411; }
+        },
+        _ => { return 1412; }
+    }
+    match (toks[5]) {
+        TokEof(_) => { return 0; },
+        _ => { return 1413; }
+    }
+    return 1414;
+}
+
+// test_scientific — `[eE][+-]?[0-9]+` exponents on both integer and
+// fractional bases. Every input is a single Float whose text is
+// ParseFloat-ready.
+function test_scientific(): i32 {
+    var toks: Token[] = tokenize("1e3 1.5e10 1.5E3 2.0e-2 6.022e+23");
+    if (toks.len() != 6) { return 1500; }
+    match (toks[0]) {
+        TokNumber(t) => {
+            if (t.text != "1e3") { return 1501; }
+            if (!t.is_float) { return 1502; }
+        },
+        _ => { return 1503; }
+    }
+    match (toks[1]) {
+        TokNumber(t) => { if (t.text != "1.5e10") { return 1504; } },
+        _ => { return 1505; }
+    }
+    match (toks[2]) {
+        TokNumber(t) => { if (t.text != "1.5E3") { return 1506; } },
+        _ => { return 1507; }
+    }
+    match (toks[3]) {
+        TokNumber(t) => { if (t.text != "2.0e-2") { return 1508; } },
+        _ => { return 1509; }
+    }
+    match (toks[4]) {
+        TokNumber(t) => { if (t.text != "6.022e+23") { return 1510; } },
+        _ => { return 1511; }
+    }
+    return 0;
+}
+
+// test_bare_e — a dangling `e` with no exponent digits is NOT an
+// exponent: the number stops before it and the `e...` lexes as a
+// separate identifier. `1e foo` → Number "1", Ident "e", Ident
+// "foo", EOF.
+function test_bare_e(): i32 {
+    var toks: Token[] = tokenize("1e foo");
+    if (toks.len() != 4) { return 1550; }
+    match (toks[0]) {
+        TokNumber(t) => { if (t.text != "1") { return 1551; } },
+        _ => { return 1552; }
+    }
+    match (toks[1]) {
+        TokIdent(t) => { if (t.name != "e") { return 1553; } },
+        _ => { return 1554; }
+    }
+    match (toks[2]) {
+        TokIdent(t) => { if (t.name != "foo") { return 1555; } },
+        _ => { return 1556; }
+    }
+    return 0;
+}
+
+// test_chained_tuple — `t.1.0` must lex as three values joined by
+// two dots, NOT `t . 1.0` with `1.0` eaten as a float. The afterDot
+// guard suppresses the `.<digit>` float upgrade after a `.`.
+function test_chained_tuple(): i32 {
+    var toks: Token[] = tokenize("t.1.0");
+    if (toks.len() != 6) { return 1600; }
+    match (toks[0]) {
+        TokIdent(t) => { if (t.name != "t") { return 1601; } },
+        _ => { return 1602; }
+    }
+    match (toks[1]) {
+        TokPunct(t) => { if (t.text != ".") { return 1603; } },
+        _ => { return 1604; }
+    }
+    match (toks[2]) {
+        TokNumber(t) => {
+            if (t.text != "1") { return 1605; }
+            if (t.is_float) { return 1606; }
+        },
+        _ => { return 1607; }
+    }
+    match (toks[3]) {
+        TokPunct(t) => { if (t.text != ".") { return 1608; } },
+        _ => { return 1609; }
+    }
+    match (toks[4]) {
+        TokNumber(t) => {
+            if (t.text != "0") { return 1610; }
+            if (t.is_float) { return 1611; }
+        },
+        _ => { return 1612; }
+    }
+    return 0;
+}
+
+// test_float_after_nondot — pin that the afterDot suppression
+// doesn't over-fire: a `.<digit>` after a non-dot context still
+// upgrades to a float. `var f = 1.5;` yields exactly one Float.
+function test_float_after_nondot(): i32 {
+    var toks: Token[] = tokenize("var f = 1.5;");
+    var floats: i32 = 0;
+    var i: i32 = 0;
+    while (i < toks.len()) {
+        match (toks[i]) {
+            TokNumber(t) => { if (t.is_float) { floats = floats + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    if (floats != 1) { return 1650; }
+    return 0;
+}
+
+// test_suffix_errors — the closed-list suffix validation: bad
+// (`42i33`), truncated (`42i`), and integer-on-float (`1.5i32`)
+// suffixes all surface a TokError, while the valid forms don't.
+function test_suffix_errors(): i32 {
+    if (!has_error(tokenize("42i33"))) { return 1700; }
+    if (!has_error(tokenize("42i"))) { return 1701; }
+    if (!has_error(tokenize("1.5i32"))) { return 1702; }
+    if (has_error(tokenize("42i64"))) { return 1703; }
+    if (has_error(tokenize("7u8"))) { return 1704; }
+    if (has_error(tokenize("42f32"))) { return 1705; }
+    if (has_error(tokenize("1.5f64"))) { return 1706; }
+    return 0;
+}
+
+// test_hex_needs_digits — a bare `0x` with no hex digit is an error.
+function test_hex_needs_digits(): i32 {
+    if (!has_error(tokenize("0x"))) { return 1800; }
+    if (has_error(tokenize("0x1"))) { return 1801; }
+    return 0;
+}
+
+// test_string_errors — unterminated, unknown-escape, and
+// newline-inside string literals each surface a TokError; a
+// well-formed literal does not.
+function test_string_errors(): i32 {
+    if (!has_error(tokenize("\"oops"))) { return 1850; }
+    if (!has_error(tokenize("\"a\\zb\""))) { return 1851; }
+    if (!has_error(tokenize("\"with\nnewline\""))) { return 1852; }
+    if (has_error(tokenize("\"ok\""))) { return 1853; }
+    return 0;
+}
+
+// test_unknown_char — an unexpected byte surfaces a TokError.
+function test_unknown_char(): i32 {
+    if (!has_error(tokenize("@"))) { return 1900; }
+    return 0;
+}
+
+// main runs every feature test in sequence and returns the first
+// non-zero code. Exit code 0 means the lang lexer port matches the
+// Go lexer across mixed tokens, hex / scientific literals, the
+// afterDot chained-tuple guard, suffix validation, and the error
+// paths.
+function main(): i32 {
+    var c: i32 = 0;
+    c = test_mixed();              if (c != 0) { return c; }
+    c = test_hex();                if (c != 0) { return c; }
+    c = test_scientific();         if (c != 0) { return c; }
+    c = test_bare_e();             if (c != 0) { return c; }
+    c = test_chained_tuple();      if (c != 0) { return c; }
+    c = test_float_after_nondot(); if (c != 0) { return c; }
+    c = test_suffix_errors();      if (c != 0) { return c; }
+    c = test_hex_needs_digits();   if (c != 0) { return c; }
+    c = test_string_errors();      if (c != 0) { return c; }
+    c = test_unknown_char();       if (c != 0) { return c; }
+    return 0;
 }
