@@ -11474,6 +11474,132 @@ function main(): i32 {
 	}
 }
 
+// TestWASMCoreEncoderGoLangByteEquivalence is the byte-exact parity
+// gate between the two core-module encoders: the Go production
+// encoder (internal/wasm/{module,inst,sections,memory,...}) and the
+// Fern reimplementation (internal/stdlib/std/wasm/*). Both build the
+// SAME representative module — type / function / funcref-table /
+// element / memory / export / code sections, with a body that
+// exercises i32.const, memory.fill, memory.copy, and call_indirect —
+// and the test asserts the produced bytes are identical.
+//
+// This locks the two implementations together: if a future change
+// touches one encoder (an opcode, a section layout) without the
+// matching change on the other side, the bytes diverge and this
+// fails. It's the core-module analogue of the component-level
+// TestWASMComponentGoLangByteEquivalence above.
+func TestWASMCoreEncoderGoLangByteEquivalence(t *testing.T) {
+	// --- Go side: build via internal/wasm/* (the production encoder).
+	goMod := mod.New()
+	goMod.TypeParams = [][]byte{{}}                   // type 0: () -> i32
+	goMod.TypeResults = [][]byte{{encode.ValtypeI32}} //
+	goMod.FunctionTypeidxs = []uint32{0, 0}           // func0 (callee), func1 (main)
+	goMod.MemoryPresent = true
+	goMod.MemoryMin = 1
+	goMod.MemoryMax = -1
+	goMod.TablePresent = true // funcref table, min 1
+	goMod.TableMin = 1
+	goMod.TableMax = -1
+	goMod.ElementOffsets = []int32{0} // table[0] = func0
+	goMod.ElementFuncidxs = [][]uint32{{0}}
+	goMod.ExportNames = []string{"main"}
+	goMod.ExportKinds = []byte{sections.ExportFunc}
+	goMod.ExportIdxs = []uint32{1}
+
+	// func0: memory.fill(0, 9, 1); memory.copy(4, 0, 1); i32.const 7.
+	f0 := inst.InstI32Const(nil, 0)
+	f0 = inst.InstI32Const(f0, 9)
+	f0 = inst.InstI32Const(f0, 1)
+	f0 = mem.InstMemoryFill(f0)
+	f0 = inst.InstI32Const(f0, 4)
+	f0 = inst.InstI32Const(f0, 0)
+	f0 = inst.InstI32Const(f0, 1)
+	f0 = mem.InstMemoryCopy(f0)
+	f0 = inst.InstI32Const(f0, 7)
+	f0body := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), f0)
+
+	// func1 (main): i32.const 0; call_indirect type 0 table 0.
+	f1 := inst.InstI32Const(nil, 0)
+	f1 = inst.InstCallIndirect(f1, 0, 0)
+	f1body := inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), f1)
+
+	goMod.CodeBodies = [][]byte{f0body, f1body}
+	goBytes := mod.Build(goMod)
+
+	// --- Lang side: build the identical module via std/wasm/*.
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32, 0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.table_present = true;
+    m.table_reftype = imports.reftype_funcref();
+    m.table_min = 1u32;
+    m.table_max = 0 - 1;
+    m.elem_offsets = [0];
+    m.elem_funcidxs = [[0u32]];
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [1u32];
+
+    var f0: u8[] = inst.inst_i32_const([], 0);
+    f0 = inst.inst_i32_const(f0, 9);
+    f0 = inst.inst_i32_const(f0, 1);
+    f0 = memory.inst_memory_fill(f0);
+    f0 = inst.inst_i32_const(f0, 4);
+    f0 = inst.inst_i32_const(f0, 0);
+    f0 = inst.inst_i32_const(f0, 1);
+    f0 = memory.inst_memory_copy(f0);
+    f0 = inst.inst_i32_const(f0, 7);
+    var f0body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f0);
+
+    var f1: u8[] = inst.inst_i32_const([], 0);
+    f1 = inst.inst_call_indirect(f1, 0u32, 0u32);
+    var f1body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f1);
+
+    m.code_bodies = [f0body, f1body];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < bytes.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	out := strings.TrimSpace(runWasmCapturingStdout(t, src))
+	if out == "" {
+		t.Fatal("empty stdout from Lang program")
+	}
+	fields := strings.Fields(out)
+	langBytes := make([]byte, 0, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatalf("byte %d: parse %q: %v", i, f, err)
+		}
+		langBytes = append(langBytes, byte(n))
+	}
+
+	if !bytes.Equal(goBytes, langBytes) {
+		t.Fatalf("Go vs Lang core-module bytes differ:\n  go   (%d): % x\n  lang (%d): % x", len(goBytes), goBytes, len(langBytes), langBytes)
+	}
+}
+
 // TestWASMComponentWasiHelperBuildsValid exercises the high-level
 // `build_wasi_imported_component` helper. Same shape as the full-
 // pipeline test (`TestWASMComponentWasiExitFullPipeline`), but with
