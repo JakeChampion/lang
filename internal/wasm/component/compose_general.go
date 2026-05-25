@@ -272,6 +272,26 @@ func (g *gComposer) ensureCliWrite(iface, getter string) {
 	g.inst[iface] = g.c.importInstance(iface, g.c.typeRaw(body))
 }
 
+// ensureCliEnvironment imports wasi:cli/environment with the combination
+// of get-arguments / get-environment requested. Both funcs share the one
+// interface, so they import as a single instance (a combined type body
+// when both are present).
+func (g *gComposer) ensureCliEnvironment(args, env bool) {
+	if _, ok := g.inst["wasi:cli/environment@0.2.0"]; ok {
+		return
+	}
+	var body []byte
+	switch {
+	case args && env:
+		body = WasiCliEnvironmentArgsAndEnvInstanceTypeBody()
+	case env:
+		body = WasiCliEnvironmentGetEnvironmentInstanceTypeBody()
+	default:
+		body = WasiCliEnvironmentArgsInstanceTypeBody()
+	}
+	g.inst["wasi:cli/environment@0.2.0"] = g.c.importInstance("wasi:cli/environment@0.2.0", g.c.typeRaw(body))
+}
+
 // importStandalone imports a self-contained instance (its own type body,
 // no shared deps) — the MemTramp (now/env/args) + Structured
 // (exit/random/monotonic) capabilities.

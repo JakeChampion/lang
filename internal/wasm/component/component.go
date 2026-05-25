@@ -2017,6 +2017,51 @@ func WasiCliEnvironmentGetEnvironmentInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiCliEnvironmentArgsAndEnvInstanceTypeBody is the
+// wasi:cli/environment@0.2.0 instance type declaring BOTH
+// `get-arguments: func() -> list<string>` and
+// `get-environment: func() -> list<tuple<string, string>>` — for a
+// program that imports both args() and env(). They share one
+// interface, so they must live in a single instance type (two separate
+// single-func imports of the same interface name don't compose).
+//
+// Inside-instance decl list (7 decls):
+//
+//	0. type list<string>                  → typeidx 0
+//	1. type func() -> typeidx 0           → typeidx 1
+//	2. export "get-arguments" (func 1)
+//	3. type tuple<string, string>         → typeidx 2
+//	4. type list<typeidx 2>               → typeidx 3
+//	5. type func() -> typeidx 3           → typeidx 4
+//	6. export "get-environment" (func 4)
+//
+// Func exports occupy the func index space, not the type index space,
+// so the get-environment types resume numbering after the
+// get-arguments functype. Both returns are variable-size, so their
+// canon-lowers need memory + realloc.
+func WasiCliEnvironmentArgsAndEnvInstanceTypeBody() []byte {
+	body := []byte{0x01, 0x42, 0x07}
+	// decl 0: type list<string>
+	body = append(body, 0x01, 0x70, CValtypeString)
+	// decl 1: type func() -> typeidx 0
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x00)
+	// decl 2: export "get-arguments" (func 1)
+	body = append(body, 0x04, 0x00, byte(len("get-arguments")))
+	body = append(body, "get-arguments"...)
+	body = append(body, 0x01, 0x01)
+	// decl 3: type tuple<string, string>
+	body = append(body, 0x01, 0x6f, 0x02, CValtypeString, CValtypeString)
+	// decl 4: type list<typeidx 2>
+	body = append(body, 0x01, 0x70, 0x02)
+	// decl 5: type func() -> typeidx 3
+	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x03)
+	// decl 6: export "get-environment" (func 4)
+	body = append(body, 0x04, 0x00, byte(len("get-environment")))
+	body = append(body, "get-environment"...)
+	body = append(body, 0x01, 0x04)
+	return body
+}
+
 // WasiCliStdinInstanceTypeBody is the wasi:cli/stdin@0.2.0
 // counterpart — `get-stdin: func() -> input-stream`. Same shape
 // as the stdout/stderr getters, only the stream resource type
