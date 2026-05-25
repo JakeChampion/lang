@@ -162,6 +162,75 @@ func TestX86_64FreelistReuse(t *testing.T) {
 	}
 }
 
+// arrayDropFreeReuseSrc builds a 3-element array of structs
+// (rc-tracked elements → __fern_drop_arr_ptr) inside a helper,
+// returns a scalar so the array is dropped at the helper's exit,
+// and calls it 50× from a loop. Flag-on, each call's buffer is
+// freed and the next same-size call reuses it; if free/reuse
+// corrupted memory the read-back value would drift, so the
+// folded check stays 0 only if every reuse is sound. Also asserts
+// 0 over-releases.
+const arrayDropFreeReuseSrc = `struct Foo { v: i32 }
+function consume(n: i32): i32 {
+    var fs: Foo[] = [Foo { v: n }, Foo { v: n + 1 }, Foo { v: n + 2 }];
+    return fs[2].v;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + (consume(i) - (i + 2));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`
+
+// Phase 3 step-4: arrays free their buffer when rc hits 0 (flag-on).
+// This exercises __fern_drop_arr_ptr's tail-free + freelist reuse
+// across 50 build/drop cycles, and re-runs the whole rc-correctness
+// corpus with free actually happening — the use-after-free net for
+// the eventual flag flip.
+func TestX86_64ArrayDropFree(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {
+		t.Errorf("drop+free+reuse: got %d, want 0 (a corrupted reuse or over-release would drift)", code)
+	}
+	for _, c := range rcCorpus {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption when blocks are freed+reused)", c.name, code)
+			}
+		})
+	}
+}
+
+func TestArm64ArrayDropFree(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {
+		t.Errorf("drop+free+reuse: got %d, want 0", code)
+	}
+	for _, c := range rcCorpus {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, code)
+			}
+		})
+	}
+}
+
+func TestWASMArrayDropFree(t *testing.T) {
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = false }()
+	if got := runWasm(t, arrayDropFreeReuseSrc); got != 0 {
+		t.Errorf("drop+free+reuse: got %d, want 0", got)
+	}
+	for _, c := range rcCorpus {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, got)
+			}
+		})
+	}
+}
+
 // Wasm mirror of TestX86_64FreelistReuse. Sets ast.RcFreeEnabled
 // around runWasm (buildComponent reads it at emit time; wasm
 // codegen doesn't take CodegenMu, and this test isn't parallel).
