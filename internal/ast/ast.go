@@ -384,23 +384,23 @@ func UseTwoWordStrings(ptrW int) bool {
 // which `CodegenMu` enforces.
 var TwoWordOverride bool
 
-// RcFreeEnabled gates the Phase 3 freelist allocator. When true,
-// codegen emits a segregated freelist: `__fern_free` returns a
-// block to its size class and `__fern_alloc` reuses a class's
-// freelist before bumping, and the array dec sites
-// (__fern_drop_arr_ptr / __fern_arr_dec) return buffers to it at
-// rc==0. When false (the default), `__fern_alloc` is a pure bump
-// cursor and `__fern_free` is a no-op — the pre-step-5 arena.
+// RcFreeEnabled gates the Phase 3 freelist allocator. When true (the
+// DEFAULT, as of step 5), codegen emits a segregated freelist:
+// `__fern_free` returns a block to its size class and `__fern_alloc`
+// reuses a class's freelist before bumping, and the array dec sites
+// (__fern_drop_arr_ptr / __fern_arr_dec) return OWNED array buffers
+// to it at rc==0. When false, `__fern_alloc` is a pure bump cursor
+// and `__fern_free` is a no-op — the pre-step-5 leak-forever arena.
 //
-// STILL OFF BY DEFAULT. The fixture-corpus flip-readiness gate is
-// green free-on, but the self-host VM (TestSelfHostVMX86_64 — a far
-// larger real program) hits a use-after-free with free on: array
-// reclamation has a residual over-release that the fixtures don't
-// exercise. The flip waits on diagnosing + fixing that (and the
-// gate is being broadened to include the self-host VM so it can't
-// regress silently). The flag is set per-Emit by the flag-on tests
-// (save/restore), guarded by CodegenMu on the natives.
-var RcFreeEnabled = false
+// FLIPPED ON (step 5). Gated on: the free-on-vs-off fixture
+// differential gate green on all backends; the borrow-aware free
+// analysis (computeFreeEligible) that closed the last correctness
+// blocker — borrowed/borrowed-derived buffers are never freed, only
+// the owner frees; and the self-host VM clean under RcFreeDebug
+// (zero use-after-free). The whole `./internal/...` suite passes
+// with this on. A few tests pin the pre-step-5 no-free arena and
+// toggle it off via save/restore (guarded by CodegenMu on natives).
+var RcFreeEnabled = true
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
