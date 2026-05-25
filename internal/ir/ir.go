@@ -1872,29 +1872,19 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// Phase 3 map reclamation: an OWNED Map local returns its buf
 		// + handle to the freelist at the last reference (rc==1) via
-		// __fern_map_drop. For an array-typed V, first free the value
-		// column via __map_drop_values (which self-guards on rc==1):
-		// it reads the buf's valKind (2 = plain-elem array, 3 = rc-
-		// elem array) and frees each live value with arr_dec /
-		// drop_arr_ptr at the IR-computed element stride. The
-		// retain-on-store (inc-on-set) + retain-on-read (inc-on-get)
-		// balance keeps this release-balanced. Non-array V (stride 0)
-		// and entry KEYS still leak — a later slice. Ineligible
-		// (borrowed-derived) maps and flag-off builds fall through to
-		// the plain box dec.
+		// __fern_map_drop. First free the value column via
+		// __map_drop_values (which self-guards on rc==1): it reads the
+		// buf's packed valKind+stride (2 = plain-elem array → arr_dec,
+		// 3 = rc-elem array → drop_arr_ptr) and frees each live value.
+		// The retain-on-store (inc-on-set) + retain-on-read (inc-on-
+		// get) balance keeps this release-balanced. Non-array V and
+		// entry KEYS still leak — a later slice. Ineligible (borrowed-
+		// derived) maps and flag-off builds fall through to the plain
+		// box dec.
 		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
-			valStride := int32(0)
-			if len(st.Args) >= 2 {
-				if at, ok := st.Args[1].(ast.ArrayType); ok {
-					valStride = int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))
-				}
-			}
-			if valStride != 0 {
-				b.emit(Op{Kind: OpLoadLocal, I32: slot})
-				b.emit(Op{Kind: OpConstI32, I32: valStride})
-				b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 2})
-				b.emit(Op{Kind: OpDrop})
-			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
+			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -4823,7 +4813,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
-		b.emit(Op{Kind: OpConstI32, I32: mapValKindTag(n.ValueType)})
+		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
@@ -6219,10 +6209,10 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 //	2 = array value with non-rc elements (plain arr_dec free)
 //	3 = array value with rc-tracked elements (drop_arr_ptr)
 //
-// Kinds 2 / 3 carry enough information for a future entry-
-// walking map_drop to free the value column; until then they
-// behave identically to kind 1 at every reader (kind != 0 ==
-// pointer-shaped).
+// Kinds 2 / 3 are reclaimed by __map_drop_values + the
+// overwrite-dec in __map_set_impl; readers mask the low byte
+// (kind != 0 == pointer-shaped) since map_new stores the packed
+// mapValTag (kind | stride<<8), not the bare kind.
 func mapValKindTag(t ast.Type) int32 {
 	if at, ok := t.(ast.ArrayType); ok {
 		if arrElemIsRcTracked(at.Elem) {
@@ -6234,6 +6224,24 @@ func mapValKindTag(t ast.Type) int32 {
 		return 1
 	}
 	return 0
+}
+
+// mapValTag is what map_new actually stores at buf+12: the low
+// byte is the valKind (mapValKindTag) and, for array values
+// (kind 2/3), the high bytes carry the value's element stride in
+// bytes. Both __map_drop_values and __map_set_impl's overwrite-
+// dec read the stride straight from the buf (vk = tag & 255,
+// stride = tag >> 8) so the runtime can arr_dec / drop_arr_ptr a
+// value without the IR threading the stride through every set /
+// drop call. Non-array kinds (0/1) carry no stride.
+func mapValTag(t ast.Type, ptrW int) int32 {
+	kind := mapValKindTag(t)
+	if kind >= 2 {
+		if at, ok := t.(ast.ArrayType); ok {
+			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
+		}
+	}
+	return kind
 }
 
 // callArgTypesFromSig builds the ArgTypes slice for an
@@ -6780,7 +6788,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
-			valKind = mapValKindTag(n.TypeArgs[1])
+			valKind = mapValTag(n.TypeArgs[1], b.ptrW)
 		}
 		b.emit(Op{Kind: OpConstI32, I32: keyKind})
 		b.emit(Op{Kind: OpConstI32, I32: valKind})

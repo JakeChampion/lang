@@ -699,8 +699,10 @@ function main(): i32 {
 	},
 	{
 		// get → push → overwrite-set (the std/url query_parse shape).
-		// The overwritten old value leaks for now (no overwrite-dec
-		// yet — Stage D), but must NOT over-release: counter stays 0.
+		// The overwrite frees the prior value (overwrite-dec), but here
+		// a live get-borrow (cur) holds it, so the rc-aware dec only
+		// decrements; the final plain borrow-dec leaks it. Either way
+		// the counter must stay 0 (no over-release).
 		name: "map_get_push_overwrite",
 		src: `function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
@@ -711,6 +713,36 @@ function main(): i32 {
     }
     var v: i32[] = m.get_or(1, []);
     return (v.len() - 2) + (v[1] - 20) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Overwrite-dec under churn: 200 fresh arrays stored at the
+		// same key. With no live borrow, each overwrite frees the prior
+		// value at rc==1 → the freelist recycles, memory stays bounded,
+		// and the counter stays 0. Last write is [199,200,201].
+		name: "map_overwrite_churn_free",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    var i: i32 = 0;
+    while (i < 200) { m = m.set(7, [i, i + 1, i + 2]); i = i + 1; }
+    var v: i32[] = m.get_or(7, []);
+    return (v[2] - 201) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Overwrite-dec is rc-aware: an outstanding get-borrow of the
+		// old value (inc-on-get → rc 2) must NOT be freed by the
+		// overwrite (rc 2→1, no free). The borrow stays readable; the
+		// counter stays 0.
+		name: "map_overwrite_with_live_borrow",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [10, 11]);
+    var borrow: i32[] = m.get_or(1, []);
+    m = m.set(1, [20, 21]);
+    var x: i32 = borrow[1];
+    var y: i32 = m.get_or(1, [])[0];
+    return (x + y - 31) + __rc_underflow_count();
 }`,
 	},
 	{
