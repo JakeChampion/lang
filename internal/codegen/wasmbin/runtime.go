@@ -1266,22 +1266,24 @@ const allocMinStart = 64
 // at stringStart=1024, so every heap allocation lands at >= 1024 —
 // the closures window is exactly [96, 1024).
 //
-// __fern_rc_inc previously used 0x10000 (64 KiB), carried over from a
-// WASI memory layout whose heap sat above 64 KiB. On the native
-// preview-2 layout (heap at ~1024) that silently skipped EVERY
-// increment, so an aliasing `var y = x` never bumped x's refcount and
-// `y.set(...)` mutated x in place (copy-on-write read the stale rc==1
-// and took the mutate-in-place fast path). The increment side is safe
-// to enable on its own — an inc never frees.
+// Both sides previously used 0x10000 (64 KiB), carried over from a WASI
+// memory layout whose heap sat above 64 KiB. On the native preview-2
+// layout (heap at ~1024) that silently skipped EVERY rc op: inc never
+// bumped a refcount (so an aliasing `var y = x` left x at rc==1 and
+// `y.set(...)` took the mutate-in-place CoW fast path, corrupting x),
+// and dec/free never reclaimed (so the freelist stayed empty and alloc
+// was a pure bump).
 //
-// The dec-side helpers (__fern_rc_dec / __fern_arr_dec / __fern_map_dec
-// and the reclamation paths) still use the 0x10000 floor: lowering
-// theirs would activate freeing + Phase-3 freelist reuse on the native
-// layout, which warrants its own change with dedicated
-// use-after-free / double-free coverage. Enabling inc alone leaves the
-// freelist empty (no dec fires → nothing is freed → alloc stays a pure
-// bump), so this fix carries no reuse risk; the cow helper's own inline
-// dec keeps the copy-on-write accounting bounded.
+// The floor is now 1024 for both inc and the dec/free/reclamation
+// helpers (__fern_rc_dec / __fern_arr_dec / __fern_drop_arr_ptr /
+// __fern_map_drop / __fern_box_free / __fern_rc_is_unique). 1024 is the
+// correct skip threshold on every layout: the static closure window is
+// [closuresBase=96, 1024) (cells with no rc header at [ptr-8]) and the
+// bump cursor is seeded at >= stringStart=1024, so 1024 skips null + the
+// closure window while catching every real heap object. The WASI/adapter
+// layout (heap above 64 KiB) is unaffected — its objects clear both
+// thresholds — so lowering the floor only changes the native path, where
+// it makes dec symmetric with inc and turns on Phase-3 freelist reuse.
 const rcLowAddrGuard = 1024
 
 // rcUnderflowAddr is a 4-byte counter in the reserved low-memory
@@ -1547,7 +1549,7 @@ func buildArrDecBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	// low-address guard → return data
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -1649,7 +1651,7 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	// low-address guard → return m
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -1678,7 +1680,7 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalTee(body, 2)
 		// if buf u>= 0x10000 (covers null + low-address): free it.
-		body = inst.InstI32Const(body, 0x10000)
+		body = inst.InstI32Const(body, rcLowAddrGuard)
 		body = numeric.InstI32GeU(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
@@ -1754,7 +1756,7 @@ func buildBoxFreeBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	// low-address guard → return data
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -2277,7 +2279,7 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	// whatever lives there. See arm64's emitRcDecRuntime for
 	// the matching guard and full rationale.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -2588,7 +2590,7 @@ func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
 	// the scratch / low-memory region; treat the low 64 KiB as
 	// "not a heap object" and pass it through untouched.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -2736,7 +2738,7 @@ func buildRcIsUniqueBody(_ map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	// ptr < 0x10000 → 0 (low-address guard)
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstI32Const(body, 0)
