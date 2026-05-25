@@ -1309,6 +1309,52 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiSocketsUdpInstanceTypeBody_Validates composes the send-only
+// wasi:sockets/udp + udp-create-socket instance types over
+// sockets/network (no io/streams / io/poll — the datagram path is its
+// own resources) and confirms wasm-tools validates the udp-socket /
+// datagram-stream resources, the outgoing-datagram record, and the
+// start-bind / stream / check-send / send / create-udp-socket methods.
+func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody()) // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 0)          // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "network")                       // type 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                    // type 2
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")             // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")             // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3)) // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp@0.2.0", 5)              // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "udp-socket")                    // type 6
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpCreateSocketInstanceTypeBody(4, 2, 6)) // type 7
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp-create-socket@0.2.0", 7)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "udp.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"udp-socket", "incoming-datagram-stream", "outgoing-datagram-stream",
+		"udp-socket.start-bind", "udp-socket.stream",
+		"outgoing-datagram-stream.check-send", "outgoing-datagram-stream.send",
+		"create-udp-socket",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeTuple_Bytes pins tuple<u8,u8,u8,u8> (ipv4-address).
 func TestInnerTypeTuple_Bytes(t *testing.T) {
 	got := component.InnerTypeTuple([]byte{component.CValtypeU8, component.CValtypeU8, component.CValtypeU8, component.CValtypeU8})
