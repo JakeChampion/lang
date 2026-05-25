@@ -14,19 +14,29 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// TestSelfHostBootstrapsItself pipes a piece of the self-host
-// source itself (lexer.fern, ~16 KB) through the asm-self-host
-// driver and verifies the result assembles cleanly. This is the
-// first checkpoint on the road to a real bootstrap.
+// TestSelfHostBootstrapsItself pipes self-host source files through
+// the asm-self-host driver and verifies each result assembles
+// cleanly. The driver now compiles its own lexer.fern (~40 KB) AND
+// parser.fern (~86 KB) end-to-end.
 //
-// Known wall *before* attempting bigger inputs (parser.fern ~80 KB
-// or asm.fern ~200 KB): the asm self-host's `s = s.out + text`
-// pattern is O(N²) — for an N-byte output built via M writes, it
-// allocates roughly N*M/2 total bytes through the bump heap which
-// never reclaims. parser.fern would need ~7 GB; asm.fern ~60 GB.
-// A real bootstrap needs either a growable-buffer primitive or a
-// chunked-output `string[]` accumulator (the latter requires
-// amortised-O(1) `array.push`, which today is O(N) per push).
+// Two classes of wall used to block the bigger inputs, both now
+// fixed:
+//   1. The asm self-host's `s = s.out + text` output build was O(N²)
+//      — replaced on both backends by the amortised-O(1) global
+//      strbuf primitive (strbuf_reset / strbuf_append / strbuf_take);
+//      array.push is likewise amortised O(1) (geometric push-grow
+//      with an in-place rc==1 fast path).
+//   2. A family of parser non-advance runaways: parse_type_name and
+//      parse_pattern read only a single base identifier, so a
+//      qualified type name (`lexer.Token`) or qualified variant
+//      pattern (`lexer.TokNumber(n)`) left a stray `.` on the cursor
+//      and the surrounding loop spun, allocating until OOM. Since
+//      parser.fern is itself full of `lexer.*` qualified types and
+//      patterns, this blocked it from parsing its own source.
+//
+// asm.fern (~294 KB) is the next frontier: it now emits without OOM,
+// but the emitted asm doesn't gcc-assemble cleanly yet (a separate
+// emit-correctness gap) — so it's not in the probe list below.
 func TestSelfHostBootstrapsItself(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -63,61 +73,68 @@ func TestSelfHostBootstrapsItself(t *testing.T) {
 		t.Fatalf("driver gcc: %v\n%s", err, out)
 	}
 
-	// Read the lexer.fern source (smaller — 442 lines vs asm.fern's
-	// 6391) and pipe it into the driver. Used as a baseline probe.
-	asmLangPath := filepath.Join("../../examples/self_host", "lexer.fern")
-	asmLangSrc, err := os.ReadFile(asmLangPath)
-	if err != nil {
-		t.Fatalf("read lexer.fern: %v", err)
-	}
-	t.Logf("piping all %d bytes of lexer.fern", len(asmLangSrc))
+	// Pipe self-host source files through the driver and assert each
+	// emits gcc-assemblable asm. lexer.fern (~40 KB) is the baseline
+	// probe; parser.fern (~86 KB) was historically OOM-killed by the
+	// O(N²) `s.out + text` output build AND a family of parser
+	// non-advance runaways (qualified type names / qualified variant
+	// patterns) — all since fixed, so the self-host compiler now
+	// compiles its own lexer AND parser. asm.fern is NOT yet in this
+	// list: it emits without OOM but its output doesn't assemble
+	// cleanly yet (a separate emit-correctness gap — follow-up).
+	for _, name := range []string{"lexer.fern", "parser.fern"} {
+		langSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		t.Logf("piping all %d bytes of %s", len(langSrc), name)
 
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
-	}
-	cmd.Stdin = bytes.NewReader(asmLangSrc)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("stdout pipe: %v", err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start driver: %v", err)
-	}
-	emittedAsm, err := io.ReadAll(stdout)
-	if err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	werr := cmd.Wait()
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+		}
+		cmd.Stdin = bytes.NewReader(langSrc)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatalf("%s: stdout pipe: %v", name, err)
+		}
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("%s: start driver: %v", name, err)
+		}
+		emittedAsm, err := io.ReadAll(stdout)
+		if err != nil {
+			t.Fatalf("%s: read stdout: %v", name, err)
+		}
+		werr := cmd.Wait()
 
-	emittedPath := filepath.Join(dir, "self_hosted_asm.s")
-	if err := os.WriteFile(emittedPath, emittedAsm, 0o644); err != nil {
-		t.Fatalf("write emitted: %v", err)
-	}
+		emittedPath := filepath.Join(dir, name+".self_hosted.s")
+		if err := os.WriteFile(emittedPath, emittedAsm, 0o644); err != nil {
+			t.Fatalf("%s: write emitted: %v", name, err)
+		}
 
-	// First sanity check: did the driver finish?
-	if werr != nil {
-		t.Fatalf("driver wait err: %v\nstderr:\n%s\nemitted bytes: %d (at %s)",
-			werr, stderr.String(), len(emittedAsm), emittedPath)
-	}
-	if len(emittedAsm) == 0 {
-		t.Fatalf("driver emitted 0 bytes; stderr:\n%s", stderr.String())
-	}
+		// First sanity check: did the driver finish?
+		if werr != nil {
+			t.Fatalf("%s: driver wait err: %v\nstderr:\n%s\nemitted bytes: %d (at %s)",
+				name, werr, stderr.String(), len(emittedAsm), emittedPath)
+		}
+		if len(emittedAsm) == 0 {
+			t.Fatalf("%s: driver emitted 0 bytes; stderr:\n%s", name, stderr.String())
+		}
 
-	// Second sanity check: can gcc assemble it?
-	// Copy emitted asm to a stable path so we can inspect after fail.
-	copyPath := "/tmp/last_self_hosted.s"
-	_ = os.WriteFile(copyPath, emittedAsm, 0o644)
-	innerBin := filepath.Join(dir, "self_hosted")
-	out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", emittedPath, "-o", innerBin).CombinedOutput()
-	if err != nil {
-		t.Fatalf("gcc on emitted asm: %v\n%s\nemitted asm saved to %s",
-			err, out, copyPath)
+		// Second sanity check: can gcc assemble it?
+		innerBin := filepath.Join(dir, name+".self_hosted")
+		out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", emittedPath, "-o", innerBin).CombinedOutput()
+		if err != nil {
+			copyPath := filepath.Join("/tmp", name+".last_self_hosted.s")
+			_ = os.WriteFile(copyPath, emittedAsm, 0o644)
+			t.Fatalf("%s: gcc on emitted asm: %v\n%s\nemitted asm saved to %s",
+				name, err, out, copyPath)
+		}
+		t.Logf("self-host bootstrap probe: %s -> %d bytes asm, gcc-assembled OK -> %s",
+			name, len(emittedAsm), innerBin)
 	}
-	t.Logf("self-host bootstrap probe: emitted %d bytes, gcc-assembled OK -> %s",
-		len(emittedAsm), innerBin)
 }
