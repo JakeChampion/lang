@@ -521,6 +521,122 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2TcpServerStdoutAdapterFree composes an adapter-free
+// TCP echo server that also print()s — TCP + CLI-stream stdout mixing.
+// ComposeTcpServerCliRun surfaces wasi:cli/stdout.get-stdout and reuses
+// tcp_send's output-stream.blocking-write-and-flush lowering for the log
+// write. Built with `-target wasm` (no adapter); a Go client round-trips
+// a payload, and the print output is verified in wasmtime's stdout.
+func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "echolog.fern")
+	src := strings.Replace(`function main(): i32 {
+    var sock = tcp_listen(__PORT__);
+    if (sock < 0) { return 1; }
+    print("LISTENING");
+    var conn = tcp_accept(sock);
+    if (conn < 0) { return 2; }
+    var msg = tcp_recv(conn, 1024);
+    print("GOTDATA");
+    var sent = tcp_send(conn, msg);
+    if (sent < 0) { return 3; }
+    tcp_close(conn);
+    tcp_close(sock);
+    return 0;
+}
+`, "__PORT__", strings.TrimSpace(itoa(port)), 1)
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "echolog.component.wasm")
+	emit := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasm (tcp+stdout): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit failed: %v\n%s", err, wit)
+	}
+	if !bytes.Contains(wit, []byte("wasi:cli/stdout")) {
+		t.Errorf("expected wasi:cli/stdout import, got:\n%s", wit)
+	}
+
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime run start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	var conn net.Conn
+	for {
+		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer conn.Close()
+
+	want := "tcp-with-logging\n"
+	if _, err := conn.Write([]byte(want)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if cw, ok := conn.(*net.TCPConn); ok {
+		cw.CloseWrite()
+	}
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("echo = %q; want %q (stderr=%q)", string(got), want, serr.String())
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("wasmtime exit: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+	}
+	// The two print()s land on the server's stdout.
+	if !bytes.Contains(sout.Bytes(), []byte("LISTENING")) || !bytes.Contains(sout.Bytes(), []byte("GOTDATA")) {
+		t.Errorf("expected LISTENING + GOTDATA in server stdout, got:\n%s", sout.String())
+	}
+}
+
 // itoa is a tiny strconv.Itoa shim — we don't import strconv
 // elsewhere in this file and the cost of pulling it in for one
 // call isn't worth it.
