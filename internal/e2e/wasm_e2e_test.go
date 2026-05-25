@@ -8978,11 +8978,15 @@ function main(): i32 {
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// TCP (wasi:sockets) is not in the composer's recognised set, so
-	// -component-wrap must reject it. (args/print/etc. now compose.)
+	// A TCP server that recv()s pulls in input-stream.blocking-read on
+	// the connection, which the listen/accept TCP composer doesn't lower
+	// yet, so -component-wrap must reject it. (listen/accept-only TCP,
+	// args, print, etc. now compose.)
 	src := []byte(`function main(): i32 {
     var s: i32 = tcp_listen(8080);
-    return 0;
+    var c: i32 = tcp_accept(s);
+    var d: string = tcp_recv(c, 1024);
+    return d.len();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -8999,6 +9003,74 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "unrecognised imports") {
 		t.Errorf("expected unrecognised-imports error message in output, got:\n%s", out)
+	}
+}
+
+// TestCmdLangComponentWrapCliWithTcpServer drives a TCP server
+// (tcp_listen / tcp_accept / tcp_close) through `-component-wrap-cli`
+// — the wasi:sockets path, composed adapter-free via
+// ComposeTcpServerCliRun (seven instances, four resource.drops, six
+// memory-trampoline methods). A listen+close program runs to
+// completion under wasmtime's host sockets (exit 0); a listen+accept
+// program validates and links (it would block waiting for a client,
+// so it's only validated, not run).
+func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	build := func(name, src string) string {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		compPath := filepath.Join(dir, name+".wasm")
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd.Dir = projectRoot(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools validate (%s) failed: %v\n%s", name, err, out)
+		}
+		return compPath
+	}
+
+	// listen + accept: validates + the imports are all present.
+	full := build("tcpfull", `function main(): i32 {
+    var s: i32 = tcp_listen(8080);
+    if (s < 0) { return 1; }
+    var c: i32 = tcp_accept(s);
+    tcp_close(c);
+    tcp_close(s);
+    return 0;
+}`)
+	printOut, err := exec.Command("wasm-tools", "print", full).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{
+		"wasi:sockets/tcp@0.2.0", "tcp-socket.accept", "tcp-socket.subscribe",
+		"wasi:sockets/instance-network@0.2.0", "wasi:io/poll@0.2.0", "wasi:cli/run@0.2.0",
+	} {
+		if !bytes.Contains(printOut, []byte(want)) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+
+	// listen + close (no accept) runs to completion against the host
+	// sockets — exit 0 confirms the component links and executes.
+	srv := build("tcplisten", `function main(): i32 {
+    var s: i32 = tcp_listen(8080);
+    if (s < 0) { return 1; }
+    tcp_close(s);
+    return 0;
+}`)
+	if err := exec.Command("wasmtime", "run", "-S", "inherit-network", srv).Run(); err != nil {
+		t.Errorf("tcp listen+close: wasmtime run failed (want exit 0): %v", err)
 	}
 }
 
@@ -10814,14 +10886,17 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 // TestCmdLangTargetWasmNoAdapterRejectsUnsupported confirms the
 // no-adapter `-target wasm` path surfaces a clear error when the
 // program pulls in WASI imports the Go-side composer can't place yet
-// (here TCP / wasi:sockets) — pointing the user at -wasi-adapter as
-// the workaround.
+// (here a TCP server that recv()s — input-stream.blocking-read on the
+// connection isn't lowered by the listen/accept TCP composer) —
+// pointing the user at -wasi-adapter as the workaround.
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	src := []byte(`function main(): i32 {
     var s: i32 = tcp_listen(8080);
-    return 0;
+    var c: i32 = tcp_accept(s);
+    var d: string = tcp_recv(c, 1024);
+    return d.len();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)

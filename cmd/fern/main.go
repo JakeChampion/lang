@@ -932,6 +932,22 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 // share the composer for every recognised import shape and fall back
 // to the matching import-free builder.
 func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, exportName string) ([]byte, error) {
+	// TCP servers (wasi:sockets) are a self-contained shape with their
+	// own composer — always the wasi:cli/run lift (a server isn't an
+	// --invoke export). The socket methods write fixed-size results
+	// through caller retptrs, so the module needs memory exported
+	// (ForceMemorySection); no realloc (no list returns).
+	if usesPreview2TcpServer(bin) {
+		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			ForceMemorySection: true,
+			Preview2WASI:       true,
+			SynthCliRun:        true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return component.ComposeTcpServerCliRun(rb, "_lang_run"), nil
+	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
 		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend
@@ -964,6 +980,39 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		return component.BuildLiftedExportComponent(bin, "_lang_run", exportName, nil, nil, component.CValtypeU32), nil
 	}
 	return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
+}
+
+// preview2TcpServerImports is the exact import set a listen/accept/close
+// TCP server pulls in (no recv/send — those add blocking-read/-write,
+// not yet composed). usesPreview2TcpServer reports whether every import
+// is in this set and at least one wasi:sockets import is present.
+var preview2TcpServerImports = map[[2]string]bool{
+	{"wasi:sockets/instance-network@0.2.0", "instance-network"}:   true,
+	{"wasi:sockets/tcp-create-socket@0.2.0", "create-tcp-socket"}: true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-bind"}:    true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.finish-bind"}:   true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-listen"}:  true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.finish-listen"}: true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.accept"}:        true,
+	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.subscribe"}:     true,
+	{"wasi:sockets/tcp@0.2.0", "[resource-drop]tcp-socket"}:        true,
+	{"wasi:io/poll@0.2.0", "[method]pollable.block"}:               true,
+	{"wasi:io/poll@0.2.0", "[resource-drop]pollable"}:              true,
+	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:       true,
+	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:      true,
+}
+
+func usesPreview2TcpServer(bin []byte) bool {
+	sawSocket := false
+	for _, p := range coreModuleImportPairs(bin) {
+		if !preview2TcpServerImports[[2]string{p.module, p.name}] {
+			return false
+		}
+		if strings.HasPrefix(p.module, "wasi:sockets/") {
+			sawSocket = true
+		}
+	}
+	return sawSocket
 }
 
 func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {

@@ -196,6 +196,13 @@ func (c *p2composer) aliasCoreFunc(coreInstIdx uint32, name string) uint32 {
 	return idx
 }
 
+func (c *p2composer) resourceDrop(resourceTypeidx uint32) uint32 {
+	c.buf = PutCanonResourceDrop(c.buf, resourceTypeidx)
+	idx := c.nCoreFunc
+	c.nCoreFunc++
+	return idx
+}
+
 func (c *p2composer) aliasMemory(coreInstIdx uint32) {
 	c.buf = PutAliasSectionCoreExport(c.buf, CoreSortMemory, coreInstIdx, "memory")
 }
