@@ -777,14 +777,25 @@ End-to-end exit code 42 demo (covered by
     (`TestWasmPreview2SocketCliExtrasAdapterFree`). The HTTP handler uses
     the same extras path, scoped to what the `wasi:http/proxy` world
     grants (clocks / random; env / files route to the adapter there).
+  - **Static file server — TCP + read_file. Shipped.** The motivating
+    stream-backed mix: a TCP server that reads files off disk and serves
+    them while logging to stdout. `ComposeTcpServerCliRun` gained
+    `hasFileRead`, folding the filesystem read open-chain
+    (`wasi:filesystem/preopens.get-directories` →
+    `filesystem/types.{open-at, read-via-stream}`) into its mems-loop;
+    the file's `blocking-read` reuses tcp_recv's io/streams read
+    lowering. So `tcp_listen`/`accept`/`send` + `read_file` + `print`
+    composes adapter-free and runs under `wasmtime run --dir` (the
+    cli/run world grants filesystem). Verified end-to-end — a Go client
+    fetches the on-disk file content over the socket
+    (`TestWasmPreview2TcpFileServerAdapterFree`).
   - **Still to do (genuinely niche / large):**
     - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
       path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
-    - Sockets/http + the *stream-backed* CLI capabilities (stdin, file
-      open-chains) — UDP can't even do `print` yet (no io/streams). The
-      standalone extras are done; the io/streams- and filesystem-backed
-      ones would need those instance types wired into the socket/http
-      composers (or the full composer merge).
+    - The remaining stream-backed mixes: TCP/http + file *write* /
+      append, sockets + stdin, and `udp + print` (UDP has no io/streams
+      at all yet). The read open-chain is wired into TCP; the write
+      side + io/streams-into-UDP would follow the same pattern.
     - Read+write of files in one program (both descriptor stream
       directions at once) — the filesystem/types instance type carries
       a single direction; each direction composes on its own.

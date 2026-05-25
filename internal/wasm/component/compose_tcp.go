@@ -51,7 +51,7 @@ func repeatI32(n int) []byte {
 // that print()s / eprint()s for logging composes too (the write reuses
 // the connection's output-stream.blocking-write-and-flush lowering,
 // which tcpStreamUsage already detects since print imports it).
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr, hasFileRead bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -106,6 +106,18 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	if hasStderr {
 		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
 	}
+	// Optional read-only filesystem open-chain (read_file — a static
+	// file server). Imports wasi:filesystem/types (read path, over the
+	// input-stream surfaced above) + wasi:filesystem/preopens. The
+	// blocking-read on the file's input-stream is the same lowering
+	// tcp_recv uses (hasStreamRead is set whenever blocking-read is
+	// imported, including via read_file).
+	var fsTypesInst, preopensInst uint32
+	if hasFileRead {
+		fsTypesInst = c.importInstance("wasi:filesystem/types@0.2.0", c.typeRaw(WasiFilesystemTypesReadPathInstanceTypeBody(tIn)))
+		tDesc := c.aliasType(fsTypesInst, "descriptor")
+		preopensInst = c.importInstance("wasi:filesystem/preopens@0.2.0", c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc)))
+	}
 
 	// --- Phase B: core modules (user + a trampoline/fixup pair per
 	// memory-lowered method). ---
@@ -140,6 +152,18 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	if hasStreamRead {
 		idxBlockRead = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true})
+	}
+	// read_file open-chain: get-directories (list result → realloc),
+	// open-at, read-via-stream. The file's input-stream uses the
+	// blocking-read added above (hasStreamRead).
+	idxGetDirs, idxOpenAt, idxReadVia := -1, -1, -1
+	if hasFileRead {
+		idxGetDirs = len(mems)
+		mems = append(mems, memMethod{inst: preopensInst, name: composeGetDirsName, params: composeGetDirsParams, realloc: true})
+		idxOpenAt = len(mems)
+		mems = append(mems, memMethod{inst: fsTypesInst, name: composeOpenAtName, params: composeOpenAtParams})
+		idxReadVia = len(mems)
+		mems = append(mems, memMethod{inst: fsTypesInst, name: composeReadViaName, params: composeReadViaParams})
 	}
 	// Standalone mem-trampoline extras (now / env / args) — each a
 	// (ret_ptr)->() lower over its own instance; env / args return lists
@@ -214,6 +238,17 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		"wasi:io/streams@0.2.0",
 	}
 	argInsts := []uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg}
+	// read_file open-chain args: filesystem/types {open-at,
+	// read-via-stream} + filesystem/preopens {get-directories}.
+	if hasFileRead {
+		fsArg := c.coreInstExports([]CoreInstanceExport{
+			{Name: composeOpenAtName, Sort: CoreSortFunc, Idx: memTramp[idxOpenAt]},
+			{Name: composeReadViaName, Sort: CoreSortFunc, Idx: memTramp[idxReadVia]},
+		})
+		preopensArg := c.coreInstOneFunc(composeGetDirsName, memTramp[idxGetDirs])
+		argNames = append(argNames, "wasi:filesystem/types@0.2.0", "wasi:filesystem/preopens@0.2.0")
+		argInsts = append(argInsts, fsArg, preopensArg)
+	}
 	// Standalone CLI extras (now / env / args) — each its own
 	// per-interface arg, placeholder in memTramp after the socket +
 	// stream methods.
@@ -248,7 +283,7 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	// result or a list-returning extra) + the trampoline tables. ---
 	c.aliasMemory(userInst)
 	var reallocF uint32
-	if hasStreamRead || extraNeedsRealloc {
+	if hasStreamRead || extraNeedsRealloc || hasFileRead {
 		reallocF = c.aliasReallocFunc(userInst)
 	}
 	for i := range mems {

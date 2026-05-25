@@ -974,7 +974,7 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		}
 		hasRead, hasWrite := tcpStreamUsage(bin)
 		extras, structured, hasStdout, hasStderr, _ := socketCliExtras(bin, preview2TcpServerImports)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, extras, structured, "_lang_run"), nil
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, tcpUsesFileRead(bin), extras, structured, "_lang_run"), nil
 	}
 	// UDP clients (udp_send) are likewise a self-contained sockets shape
 	// with their own composer + the wasi:cli/run lift. Memory-only lowers
@@ -1205,11 +1205,21 @@ var tcpServerStdioImports = map[[2]string]bool{
 	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
 }
 
+// tcpServerFileReadImports are the read_file open-chain the TCP composer
+// also accepts (a static file server): the blocking-read on the file's
+// input-stream reuses tcp's io/streams read lowering, so only the
+// preopens + descriptor open/read methods are extra.
+var tcpServerFileReadImports = map[[2]string]bool{
+	{"wasi:filesystem/preopens@0.2.0", "get-directories"}:          true,
+	{"wasi:filesystem/types@0.2.0", "[method]descriptor.open-at"}:  true,
+	{"wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream"}: true,
+}
+
 func usesPreview2TcpServer(bin []byte) bool {
 	sawSocket := false
 	for _, p := range coreModuleImportPairs(bin) {
 		key := [2]string{p.module, p.name}
-		if !preview2TcpServerImports[key] && !standaloneCliCapImports[key] && !tcpServerStdioImports[key] {
+		if !preview2TcpServerImports[key] && !standaloneCliCapImports[key] && !tcpServerStdioImports[key] && !tcpServerFileReadImports[key] {
 			return false
 		}
 		if strings.HasPrefix(p.module, "wasi:sockets/") {
@@ -1217,6 +1227,17 @@ func usesPreview2TcpServer(bin []byte) bool {
 		}
 	}
 	return sawSocket
+}
+
+// tcpUsesFileRead reports whether a TCP server core imports the read_file
+// open-chain (so ComposeTcpServerCliRun surfaces wasi:filesystem).
+func tcpUsesFileRead(bin []byte) bool {
+	for _, p := range coreModuleImportPairs(bin) {
+		if p.module == "wasi:filesystem/preopens@0.2.0" && p.name == "get-directories" {
+			return true
+		}
+	}
+	return false
 }
 
 // preview2UdpClientImports is the exact import set a send-only udp_send

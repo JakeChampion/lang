@@ -797,6 +797,121 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2TcpFileServerAdapterFree is the motivating
+// composer-unification case: a static file server — a TCP server that
+// reads a file off disk and serves it, while logging to stdout —
+// composes adapter-free (`-target wasm`, no -wasi-adapter). It mixes
+// wasi:sockets/tcp + wasi:io/streams + wasi:cli/stdout +
+// wasi:filesystem (the read open-chain), which only compose together
+// once the TCP composer folds in the filesystem read open-chain. Runs
+// under `wasmtime run --dir` (the cli/run world grants filesystem); a Go
+// client fetches the served bytes and they must equal the file content.
+func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	want := "<!doctype html><h1>static from wasm</h1>"
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte(want), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	srcPath := filepath.Join(dir, "srv.fern")
+	src := `function main(): i32 {
+    var s: i32 = tcp_listen(` + itoa(port) + `);
+    if (s < 0) { return 1; }
+    print("file server up");
+    var c: i32 = tcp_accept(s);
+    if (c < 0) { return 2; }
+    match (read_file("index.html")) {
+        Ok(content) => { tcp_send(c, content); },
+        Err(e) => { tcp_send(c, "ERR"); }
+    }
+    tcp_close(c);
+    tcp_close(s);
+    return 0;
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "srv.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (tcp file server, no adapter): %v\n%s", err, out)
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
+	}
+	for _, w := range []string{"wasi:filesystem/types", "wasi:filesystem/preopens", "wasi:cli/stdout", "wasi:sockets/tcp"} {
+		if !bytes.Contains(wit, []byte(w)) {
+			t.Errorf("expected %q import, got:\n%s", w, wit)
+		}
+	}
+
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", "--dir", root+"::/", componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime run start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	var conn net.Conn
+	for {
+		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", itoa(port)))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer conn.Close()
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("served = %q; want %q (stderr=%q)", string(got), want, serr.String())
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("wasmtime exit: %v\nstderr:\n%s", err, serr.String())
+	}
+	if !bytes.Contains(sout.Bytes(), []byte("file server up")) {
+		t.Errorf("expected log line in server stdout, got:\n%s", sout.String())
+	}
+}
+
 // TestWasmPreview2SocketCliExtrasAdapterFree exercises the composer
 // unification: a TCP server and a UDP client that ALSO use the
 // standalone CLI capabilities (now() / env() / print()) compose
