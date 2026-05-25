@@ -51,7 +51,7 @@ func repeatI32(n int) []byte {
 // that print()s / eprint()s for logging composes too (the write reuses
 // the connection's output-stream.blocking-write-and-flush lowering,
 // which tcpStreamUsage already detects since print imports it).
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr, hasFileRead bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr, hasFileRead, hasFileWrite, hasFileAppend bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -106,15 +106,35 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	if hasStderr {
 		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
 	}
-	// Optional read-only filesystem open-chain (read_file — a static
-	// file server). Imports wasi:filesystem/types (read path, over the
-	// input-stream surfaced above) + wasi:filesystem/preopens. The
-	// blocking-read on the file's input-stream is the same lowering
-	// tcp_recv uses (hasStreamRead is set whenever blocking-read is
-	// imported, including via read_file).
+	// Optional filesystem open-chain (read_file → static file server;
+	// write_file / open_appender → access logs / uploads). Imports
+	// wasi:filesystem/types (one descriptor direction — read over the
+	// input-stream, write/append over the output-stream surfaced above)
+	// + wasi:filesystem/preopens. The blocking-read / blocking-write on
+	// the file's stream reuses tcp_recv / tcp_send's io/streams lowering
+	// (hasStreamRead/Write is set whenever blocking-read/write is
+	// imported, including via the file helpers). The three directions
+	// are mutually exclusive (single-direction instance type).
+	hasFile := hasFileRead || hasFileWrite || hasFileAppend
+	viaName, viaParams := composeReadViaName, composeReadViaParams
+	switch {
+	case hasFileAppend:
+		viaName, viaParams = composeAppendViaName, composeAppendViaParams
+	case hasFileWrite:
+		viaName = composeWriteViaName
+	}
 	var fsTypesInst, preopensInst uint32
-	if hasFileRead {
-		fsTypesInst = c.importInstance("wasi:filesystem/types@0.2.0", c.typeRaw(WasiFilesystemTypesReadPathInstanceTypeBody(tIn)))
+	if hasFile {
+		var fsBody []byte
+		switch {
+		case hasFileAppend:
+			fsBody = WasiFilesystemTypesAppendPathInstanceTypeBody(tOut)
+		case hasFileWrite:
+			fsBody = WasiFilesystemTypesWritePathInstanceTypeBody(tOut)
+		default:
+			fsBody = WasiFilesystemTypesReadPathInstanceTypeBody(tIn)
+		}
+		fsTypesInst = c.importInstance("wasi:filesystem/types@0.2.0", c.typeRaw(fsBody))
 		tDesc := c.aliasType(fsTypesInst, "descriptor")
 		preopensInst = c.importInstance("wasi:filesystem/preopens@0.2.0", c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc)))
 	}
@@ -153,17 +173,17 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		idxBlockRead = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true})
 	}
-	// read_file open-chain: get-directories (list result → realloc),
-	// open-at, read-via-stream. The file's input-stream uses the
-	// blocking-read added above (hasStreamRead).
-	idxGetDirs, idxOpenAt, idxReadVia := -1, -1, -1
-	if hasFileRead {
+	// File open-chain: get-directories (list result → realloc), open-at,
+	// and the direction's via-stream. The file's stream uses the
+	// blocking-read/write added above (hasStreamRead/Write).
+	idxGetDirs, idxOpenAt, idxVia := -1, -1, -1
+	if hasFile {
 		idxGetDirs = len(mems)
 		mems = append(mems, memMethod{inst: preopensInst, name: composeGetDirsName, params: composeGetDirsParams, realloc: true})
 		idxOpenAt = len(mems)
 		mems = append(mems, memMethod{inst: fsTypesInst, name: composeOpenAtName, params: composeOpenAtParams})
-		idxReadVia = len(mems)
-		mems = append(mems, memMethod{inst: fsTypesInst, name: composeReadViaName, params: composeReadViaParams})
+		idxVia = len(mems)
+		mems = append(mems, memMethod{inst: fsTypesInst, name: viaName, params: viaParams})
 	}
 	// Standalone mem-trampoline extras (now / env / args) — each a
 	// (ret_ptr)->() lower over its own instance; env / args return lists
@@ -238,12 +258,12 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		"wasi:io/streams@0.2.0",
 	}
 	argInsts := []uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg}
-	// read_file open-chain args: filesystem/types {open-at,
-	// read-via-stream} + filesystem/preopens {get-directories}.
-	if hasFileRead {
+	// File open-chain args: filesystem/types {open-at, via-stream} +
+	// filesystem/preopens {get-directories}.
+	if hasFile {
 		fsArg := c.coreInstExports([]CoreInstanceExport{
 			{Name: composeOpenAtName, Sort: CoreSortFunc, Idx: memTramp[idxOpenAt]},
-			{Name: composeReadViaName, Sort: CoreSortFunc, Idx: memTramp[idxReadVia]},
+			{Name: viaName, Sort: CoreSortFunc, Idx: memTramp[idxVia]},
 		})
 		preopensArg := c.coreInstOneFunc(composeGetDirsName, memTramp[idxGetDirs])
 		argNames = append(argNames, "wasi:filesystem/types@0.2.0", "wasi:filesystem/preopens@0.2.0")
@@ -283,7 +303,7 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	// result or a list-returning extra) + the trampoline tables. ---
 	c.aliasMemory(userInst)
 	var reallocF uint32
-	if hasStreamRead || extraNeedsRealloc || hasFileRead {
+	if hasStreamRead || extraNeedsRealloc || hasFile {
 		reallocF = c.aliasReallocFunc(userInst)
 	}
 	for i := range mems {

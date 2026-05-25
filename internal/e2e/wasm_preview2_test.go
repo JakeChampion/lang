@@ -912,6 +912,84 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2TcpFileWriteAdapterFree covers the write + append
+// directions of the TCP composer's filesystem open-chain (a server that
+// writes access logs / uploads to disk). write and append are separate
+// programs — the filesystem/types instance type is single-direction, so
+// one program can't do both (nor read+write). Each composes adapter-free
+// (`-target wasm`) and runs under `wasmtime run --dir`; the on-disk file
+// content is checked.
+func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	// Each phase: a TCP listen+close server (no accept needed) that also
+	// touches a file, run with its own preopen dir; check the file.
+	run := func(name, src, file, want string) {
+		root := filepath.Join(dir, name)
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		sp := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(sp, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		comp := filepath.Join(dir, name+".wasm")
+		if out, err := exec.Command(bin, "-target", "wasm", "-o", comp, sp).CombinedOutput(); err != nil {
+			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", comp).CombinedOutput(); err != nil {
+			t.Fatalf("validate (%s): %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", "--dir", root+"::/", comp).CombinedOutput(); err != nil {
+			t.Fatalf("wasmtime run (%s): %v\n%s", name, err, out)
+		}
+		got, err := os.ReadFile(filepath.Join(root, file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s: on-disk = %q; want %q", name, string(got), want)
+		}
+	}
+	// A free port for the listen() (closed immediately; no client).
+	probe, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	p := itoa(port)
+
+	run("wsrv", `function main(): i32 {
+    print("write server");
+    match (write_file("access.log", "GET / 200\n")) { Some(e) => { return 3; }, None => {} }
+    var s: i32 = tcp_listen(`+p+`);
+    if (s < 0) { return 1; }
+    tcp_close(s);
+    return 0;
+}`, "access.log", "GET / 200\n")
+
+	run("asrv", `function main(): i32 {
+    match (open_appender("a.log")) {
+        Ok(w) => { w.write("entry\n"); w.close(); },
+        Err(e) => { return 3; }
+    }
+    var s: i32 = tcp_listen(`+p+`);
+    if (s < 0) { return 1; }
+    tcp_close(s);
+    return 0;
+}`, "a.log", "entry\n")
+}
+
 // TestWasmPreview2SocketCliExtrasAdapterFree exercises the composer
 // unification: a TCP server and a UDP client that ALSO use the
 // standalone CLI capabilities (now() / env() / print()) compose

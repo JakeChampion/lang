@@ -777,25 +777,31 @@ End-to-end exit code 42 demo (covered by
     (`TestWasmPreview2SocketCliExtrasAdapterFree`). The HTTP handler uses
     the same extras path, scoped to what the `wasi:http/proxy` world
     grants (clocks / random; env / files route to the adapter there).
-  - **Static file server — TCP + read_file. Shipped.** The motivating
-    stream-backed mix: a TCP server that reads files off disk and serves
-    them while logging to stdout. `ComposeTcpServerCliRun` gained
-    `hasFileRead`, folding the filesystem read open-chain
-    (`wasi:filesystem/preopens.get-directories` →
-    `filesystem/types.{open-at, read-via-stream}`) into its mems-loop;
-    the file's `blocking-read` reuses tcp_recv's io/streams read
-    lowering. So `tcp_listen`/`accept`/`send` + `read_file` + `print`
-    composes adapter-free and runs under `wasmtime run --dir` (the
-    cli/run world grants filesystem). Verified end-to-end — a Go client
-    fetches the on-disk file content over the socket
-    (`TestWasmPreview2TcpFileServerAdapterFree`).
+  - **TCP + filesystem (read / write / append). Shipped.** The
+    motivating stream-backed mixes: a static file server (read files off
+    disk and serve them) and a logging server (write access logs /
+    uploads), both while logging to stdout. `ComposeTcpServerCliRun`
+    gained `hasFileRead` / `hasFileWrite` / `hasFileAppend`, folding the
+    filesystem open-chain (`wasi:filesystem/preopens.get-directories` →
+    `filesystem/types.{open-at, read|write|append-via-stream}`) into its
+    mems-loop over the input/output-stream it already surfaces; the
+    file's `blocking-read`/`blocking-write` reuses tcp_recv / tcp_send's
+    io/streams lowering. The three directions are mutually exclusive
+    (single-direction `filesystem/types` instance type), enforced by
+    `usesPreview2TcpServer` (a program touching two directions falls
+    through to the adapter). So `tcp_listen`/`accept`/`send` +
+    `read_file` (or `write_file` / `open_appender`) + `print` composes
+    adapter-free and runs under `wasmtime run --dir`. Verified
+    end-to-end — a Go client fetches on-disk content over the socket
+    (`TestWasmPreview2TcpFileServerAdapterFree`), and write/append
+    on-disk content is checked (`TestWasmPreview2TcpFileWriteAdapterFree`).
   - **Still to do (genuinely niche / large):**
     - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
       path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
-    - The remaining stream-backed mixes: TCP/http + file *write* /
-      append, sockets + stdin, and `udp + print` (UDP has no io/streams
-      at all yet). The read open-chain is wired into TCP; the write
-      side + io/streams-into-UDP would follow the same pattern.
+    - The remaining stream-backed mixes: HTTP handler + files (needs a
+      host world that grants filesystem), sockets + stdin, and
+      `udp + print` (UDP has no io/streams at all yet) — all follow the
+      TCP filesystem pattern.
     - Read+write of files in one program (both descriptor stream
       directions at once) — the filesystem/types instance type carries
       a single direction; each direction composes on its own.
