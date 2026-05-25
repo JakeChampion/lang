@@ -1108,6 +1108,23 @@ Phase 3 CANNOT start with the freelist — it must start by
      Until then `RcFreeEnabled` stays false; the array reclamation,
      freelist, gate, and detector are all in place to support
      whichever resolution is chosen.
+   - **RESOLVED via borrow-aware free analysis (option b).**
+     `computeFreeEligible` (in `lowerFunc`) computes, per function,
+     which array-typed locals are OWNED: every value written to them
+     is freshly owned (an array literal, or a call whose args+receiver
+     are all owned), and they're never a parameter, a for-in / match /
+     if-let / let-else / destructure binding, nor assigned a tainted
+     ident / field / index / slice. Taint propagates to a fixpoint
+     (a call passed a tainted arg yields a tainted result — the
+     conservative inter-procedural alias). The array dec sites
+     (scope-exit `emitDec`, the dec-on-overwrite) free ONLY eligible
+     locals; borrowed-derived ones use a plain `rc_dec`. Struct fields
+     and enum payloads never free (their borrow-ness isn't tracked —
+     `decValueOnStack(..., mayFree=false)`). Result: the self-host VM
+     runs CLEAN with free on — `RcFreeDebug` reports no use-after-free
+     across the whole compile, where before it trapped. The flip's
+     correctness blocker is closed; flipping the default is now a
+     decision (owner sign-off) on top of the still-green gate.
 
 #### Resolved design decisions (from Open Questions)
 
