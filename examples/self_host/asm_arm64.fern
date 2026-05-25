@@ -1369,6 +1369,25 @@ function ret_tag_of(name: string): string {
     return "unknown";
 }
 
+// field_type_tag infers the type tag of a struct-field read (`x.s`)
+// by finding a struct decl that declares a field of that name and
+// mapping its declared type. Mirrors the x86-64 emitter (asm.fern).
+function field_type_tag(field: string, s: EmitState): string {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        var sd: parser.StructDecl = s.struct_decls[di];
+        var fi: i32 = 0;
+        while (fi < sd.fields.len()) {
+            if (sd.fields[fi].name == field) {
+                return ret_tag_of(sd.fields[fi].type_name);
+            }
+            fi = fi + 1;
+        }
+        di = di + 1;
+    }
+    return "unknown";
+}
+
 function infer_expr_type(e: parser.Expr, s: EmitState): string {
     match (e) {
         parser.ExprNumber(_) => { return "i32"; },
@@ -1417,6 +1436,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
+                    if (id.name == "read_all_stdin") { return "string"; }
                     if (id.name == "i32_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
@@ -1526,6 +1546,16 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             mi = mi + 1;
                         }
                     }
+                    // Method call on a struct receiver: resolve by
+                    // method name alone (the coarse "struct" tag loses
+                    // the receiver's name). Mirrors asm.fern.
+                    var mj: i32 = 0;
+                    while (mj < s.funcs.len()) {
+                        if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
+                            return ret_tag_of(s.funcs[mj].ret_type);
+                        }
+                        mj = mj + 1;
+                    }
                     return "unknown";
                 },
                 _ => { return "unknown"; }
@@ -1539,7 +1569,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             return "i32";
         },
         parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
-        parser.ExprFieldAccess(_) => { return "unknown"; },
+        parser.ExprFieldAccess(fa) => { return field_type_tag(fa.field, s); },
         parser.ExprUnknown(_) => { return "unknown"; }
     }
     return "unknown";
@@ -2929,7 +2959,10 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
-            if (name == "print" && c.args.len() == 1) {
+            // `write(s)` == `print(s)` here (the self-host print
+            // runtime has no trailing newline); the bootstrap driver
+            // uses write for byte-identical output. Mirrors asm.fern.
+            if ((name == "print" || name == "write") && c.args.len() == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
@@ -3062,6 +3095,15 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // read_line() — no-arg builtin. Returns string box.
             if (name == "read_line" && c.args.len() == 0) {
                 s = s.write("    bl __fern_read_line\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_str_read_line();
+                return s;
+            }
+            // read_all_stdin() — read fd 0 to EOF into one box (loops
+            // the read syscall, unlike read_line's single read).
+            // Piggybacks the read_line needs-flag for runtime + heap.
+            if (name == "read_all_stdin" && c.args.len() == 0) {
+                s = s.write("    bl __fern_read_all_stdin\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_read_line();
                 return s;
@@ -3259,12 +3301,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(a.elements[ai], s);
                 ai = ai + 1;
             }
-            var a_bytes: i32 = (n_elems + 1) * 8;
+            // Layout with a hidden capacity word: alloc
+            // [cap, len, e0, …] at base B and return B+8, so readers
+            // see the classic [len@0, e_i@(i+1)*8] layout while
+            // __fern_arr_push finds cap at -8 and can grow
+            // geometrically. cap = len for a literal (first push
+            // reallocs, then doubles).
+            var a_bytes: i32 = (n_elems + 2) * 8;
             s = s.write("    mov x0, #" + i32_to_string(a_bytes) + "\n");
             s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    mov x1, #" + i32_to_string(n_elems) + "\n");
-            s = s.write("    str x1, [x0]\n");
+            s = s.write("    str x1, [x0]\n");        // cap at base
+            s = s.write("    add x0, x0, #8\n");      // shift to returned ptr (base+8)
+            s = s.write("    str x1, [x0]\n");        // len at base+8
             var aj: i32 = n_elems - 1;
             while (aj >= 0) {
                 s = s.write("    ldr x1, [sp], #16\n");
@@ -4453,6 +4503,39 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        // __fern_read_all_stdin: read fd 0 to EOF into one box.
+        // Loops sys_read appending into a 32 MiB buffer; returns a
+        // 16-byte box [data, total_len]. Mirrors the x86-64 builtin.
+        s = s.write("__fern_read_all_stdin:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    str x21, [sp, #-16]!\n");
+        s = s.write("    ldr x0, =33554432\n");   // 32 MiB buffer
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x19, x0\n");          // buf base
+        s = s.write("    mov x20, x0\n");          // write ptr
+        s = s.write("    mov x21, #0\n");          // total
+        s = s.write(".Lras_loop:\n");
+        s = s.write("    mov x0, #0\n");           // fd 0
+        s = s.write("    mov x1, x20\n");          // dst
+        s = s.write("    ldr x2, =1048576\n");     // up to 1 MiB per read
+        s = s.write("    mov x8, #63\n");          // sys_read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Lras_done\n");      // 0 = EOF, <0 = error
+        s = s.write("    add x21, x21, x0\n");
+        s = s.write("    add x20, x20, x0\n");
+        s = s.write("    b .Lras_loop\n");
+        s = s.write(".Lras_done:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x19, [x0]\n");
+        s = s.write("    str x21, [x0, #8]\n");
+        s = s.write("    ldr x21, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
     }
     // __fern_i32_to_string: x0 = i32 → x0 = string box ptr.
     // Convert decimal digits MSB-first into a 32-byte scratch
@@ -5025,14 +5108,18 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    add x25, x25, #1\n");
         s = s.write("    b .Lsplit_cl\n");
         s = s.write(".Lsplit_count_done:\n");
-        // Allocate array: 8 + (count+1)*8 bytes.
+        // Allocate array: 16 (cap + len words) + (count+1)*8 bytes.
         s = s.write("    add x0, x21, #1\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    add x0, x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x22, x0\n");
-        s = s.write("    add x1, x21, #1\n");
-        s = s.write("    str x1, [x22]\n");
+        // cap at base, shift to base+8, store returned ptr + len
+        // (hidden-cap layout; see __fern_arr_push).
+        s = s.write("    add x1, x21, #1\n");        // len = count + 1
+        s = s.write("    str x1, [x0]\n");           // cap
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    mov x22, x0\n");            // returned arr ptr (base+8)
+        s = s.write("    str x1, [x22]\n");          // len
         s = s.write("    mov x23, #0\n");
         s = s.write("    mov x24, #0\n");
         s = s.write("    ldr x4, [x19]\n");
@@ -5139,7 +5226,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip 1048576\n");
+        s = s.write("__fern_heap: .skip 268435456\n");   // 256 MiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
@@ -5196,41 +5283,61 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ret\n");
     }
     // __fern_arr_push: append an 8-byte payload to an array.
-    // x0 = source array ptr ([len: 8, e0: 8, e1: 8, …]),
-    // x1 = value to append (i32 or string-box ptr).
-    // Returns a fresh array — never mutates the input.
+    // x0 = arr ptr (returned form, [len@0, e_i@(i+1)*8]; capacity
+    // hidden at -8), x1 = value. Amortised O(1): mutate in place when
+    // len < cap, else alloc a doubled buffer ([cap, len, …] at base
+    // B, returned B+8), copy, return the new pointer. Mirrors the
+    // x86-64 emitter; replaces the old O(N²) fresh-copy-every-push.
     if (s.needs_arr_push) {
         s = s.write("__fern_arr_push:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // src arr ptr
+        s = s.write("    mov x19, x0\n");           // arr ptr
         s = s.write("    mov x20, x1\n");           // value
-        s = s.write("    ldr x21, [x19]\n");        // old length
-        // alloc bytes = (old_len + 2) * 8
-        s = s.write("    add x0, x21, #2\n");
+        s = s.write("    ldr x21, [x19]\n");        // len
+        s = s.write("    ldur x22, [x19, #-8]\n");  // cap (hidden at -8)
+        s = s.write("    cmp x21, x22\n");
+        s = s.write("    b.ge .Larr_push_grow\n");  // len >= cap → grow
+        // In place: store value at slot (len+1), bump len.
+        s = s.write("    add x1, x21, #1\n");
+        s = s.write("    str x20, [x19, x1, lsl #3]\n");
+        s = s.write("    add x21, x21, #1\n");
+        s = s.write("    str x21, [x19]\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    b .Larr_push_ret\n");
+        s = s.write(".Larr_push_grow:\n");
+        // newcap = cap == 0 ? 4 : cap * 2.
+        s = s.write("    cmp x22, #0\n");
+        s = s.write("    b.ne .Larr_push_dbl\n");
+        s = s.write("    mov x2, #4\n");
+        s = s.write("    b .Larr_push_cap\n");
+        s = s.write(".Larr_push_dbl:\n");
+        s = s.write("    lsl x2, x22, #1\n");
+        s = s.write(".Larr_push_cap:\n");
+        s = s.write("    mov x22, x2\n");           // x22 = newcap
+        s = s.write("    add x0, x2, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x22, x0\n");           // dst arr ptr
-        // new length = old + 1, stored at offset 0
+        s = s.write("    bl __fern_alloc\n");        // base in x0
+        s = s.write("    str x22, [x0]\n");          // cap at base
+        s = s.write("    add x0, x0, #8\n");         // returned ptr = base+8
         s = s.write("    add x1, x21, #1\n");
-        s = s.write("    str x1, [x22]\n");
-        // copy old elements: i from 0 to old_len, dst[i+1] = src[i+1]
-        s = s.write("    mov x2, #0\n");            // i
-        s = s.write(".Larr_push_loop:\n");
+        s = s.write("    str x1, [x0]\n");           // new len = old+1
+        // Copy old elements (slots 1..len) from old arr to new.
+        s = s.write("    mov x2, #1\n");
+        s = s.write(".Larr_push_copy:\n");
         s = s.write("    cmp x2, x21\n");
-        s = s.write("    b.ge .Larr_push_done\n");
-        s = s.write("    add x3, x2, #1\n");
-        s = s.write("    ldr x4, [x19, x3, lsl #3]\n");
-        s = s.write("    str x4, [x22, x3, lsl #3]\n");
+        s = s.write("    b.gt .Larr_push_copy_done\n");
+        s = s.write("    ldr x3, [x19, x2, lsl #3]\n");
+        s = s.write("    str x3, [x0, x2, lsl #3]\n");
         s = s.write("    add x2, x2, #1\n");
-        s = s.write("    b .Larr_push_loop\n");
-        s = s.write(".Larr_push_done:\n");
-        // store new element at offset (old_len + 1) * 8
+        s = s.write("    b .Larr_push_copy\n");
+        s = s.write(".Larr_push_copy_done:\n");
+        // Store the new value at slot (len+1).
         s = s.write("    add x1, x21, #1\n");
-        s = s.write("    str x20, [x22, x1, lsl #3]\n");
-        s = s.write("    mov x0, x22\n");
+        s = s.write("    str x20, [x0, x1, lsl #3]\n");
+        s = s.write(".Larr_push_ret:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
@@ -5251,12 +5358,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x20, x1\n");           // start
         s = s.write("    mov x21, x2\n");           // end
         s = s.write("    sub x22, x21, x20\n");     // new len = end - start
-        // alloc (new_len + 1) * 8 bytes
-        s = s.write("    add x0, x22, #1\n");
+        // alloc (new_len + 2) * 8 bytes (extra word for the hidden cap)
+        s = s.write("    add x0, x22, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    bl __fern_alloc\n");
-        // x0 = dst arr; write new len at offset 0
-        s = s.write("    str x22, [x0]\n");
+        // cap at base, then shift to base+8 and write len (see __fern_arr_push)
+        s = s.write("    str x22, [x0]\n");          // cap
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    str x22, [x0]\n");          // len
         // copy elements: i from 0 to new_len, dst[i+1] = src[start + i + 1]
         s = s.write("    mov x3, #0\n");            // i
         s = s.write(".Larr_slice_loop:\n");
@@ -5288,14 +5397,16 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x20, x1\n");           // arr B
         s = s.write("    ldr x21, [x19]\n");        // a_len
         s = s.write("    ldr x22, [x20]\n");        // b_len
-        // alloc (a_len + b_len + 1) * 8
+        // alloc (a_len + b_len + 2) * 8 (extra word for the hidden cap)
         s = s.write("    add x0, x21, x22\n");
-        s = s.write("    add x0, x0, #1\n");
+        s = s.write("    add x0, x0, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    bl __fern_alloc\n");
-        // write new len = a_len + b_len at offset 0
+        // cap at base, shift to base+8, then len (see __fern_arr_push)
         s = s.write("    add x1, x21, x22\n");
-        s = s.write("    str x1, [x0]\n");
+        s = s.write("    str x1, [x0]\n");           // cap
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    str x1, [x0]\n");           // len
         // copy A's elements
         s = s.write("    mov x2, #0\n");            // i
         s = s.write(".Larr_concat_a:\n");
@@ -5334,11 +5445,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");           // src
         s = s.write("    ldr x20, [x19]\n");        // len
-        // alloc (len + 1) * 8 bytes
-        s = s.write("    add x0, x20, #1\n");
+        // alloc (len + 2) * 8 bytes (extra word for the hidden cap)
+        s = s.write("    add x0, x20, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");
+        s = s.write("    str x20, [x0]\n");          // cap
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    str x20, [x0]\n");          // len
         // for i in 0..len: dst[i+1] = src[len - i]
         s = s.write("    mov x1, #0\n");            // i
         s = s.write(".Larr_rev_loop:\n");
@@ -5509,10 +5622,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
         s = s.write("    ldr x19, [x0]\n");         // src data
         s = s.write("    ldr x20, [x0, #8]\n");     // src len
-        // alloc (len + 1) * 8
-        s = s.write("    add x0, x20, #1\n");
+        // alloc (len + 2) * 8 (extra word for the hidden cap)
+        s = s.write("    add x0, x20, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x20, [x0]\n");          // cap
+        s = s.write("    add x0, x0, #8\n");         // shift to base+8
         s = s.write("    mov x21, x0\n");           // arr
         s = s.write("    str x20, [x21]\n");        // arr.len
         s = s.write("    mov x22, #0\n");           // i
@@ -5546,10 +5661,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x19, x0\n");           // src box
         s = s.write("    ldr x20, [x19]\n");        // src data
         s = s.write("    ldr x21, [x19, #8]\n");    // src len
-        // alloc array (len + 1) * 8 bytes
-        s = s.write("    add x0, x21, #1\n");
+        // alloc array (len + 2) * 8 bytes (extra word for the hidden cap)
+        s = s.write("    add x0, x21, #2\n");
         s = s.write("    lsl x0, x0, #3\n");
         s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");          // cap
+        s = s.write("    add x0, x0, #8\n");         // shift to base+8
         s = s.write("    mov x22, x0\n");           // arr
         s = s.write("    str x21, [x22]\n");        // arr.len
         s = s.write("    mov x23, #0\n");           // i

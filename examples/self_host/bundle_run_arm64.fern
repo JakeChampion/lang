@@ -1,0 +1,90 @@
+// examples/self_host/bundle_run_arm64.fern — ARM64 sibling of
+// bundle_run.fern. Reads a bundle of Fern modules from stdin,
+// flattens + merges them into one Module (flatten.bundle), and
+// emits aarch64 assembly for the result via asm_arm64.
+//
+// This is the multi-module self-host driver for the ARM64
+// backend: the x86-64 counterpart (bundle_run.fern) emits
+// x86-64 asm; this one emits aarch64. Both share the same
+// front end (lexer + parser + flatten) and the same marked
+// `///MODULE <name>` stdin bundle format — see bundle_run.fern
+// for the input-format documentation.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./asm_arm64";
+
+struct Sections { names: string[], sources: string[] }
+
+function is_marker(line: string): boolean {
+    var p: string = "///MODULE ";
+    if (line.len() < p.len()) { return false; }
+    var i: i32 = 0;
+    while (i < p.len()) {
+        if (line[i] != p[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function marker_name(line: string): string {
+    var name: string = line[10:line.len()];
+    var n: i32 = name.len();
+    if (n > 0 && name[n - 1] == 13) { return name[0:n - 1]; }
+    return name;
+}
+
+function split_modules(blob: string): Sections {
+    var names: string[] = [];
+    var sources: string[] = [];
+    var n: i32 = blob.len();
+    var i: i32 = 0;
+    var line_start: i32 = 0;
+    var cur_name: string = "";
+    var src_start: i32 = 0;
+    var have: boolean = false;
+    while (i <= n) {
+        if (i == n || blob[i] == 10) {
+            var line: string = blob[line_start:i];
+            if (is_marker(line)) {
+                if (have) {
+                    names = names.push(cur_name);
+                    sources = sources.push(blob[src_start:line_start]);
+                }
+                cur_name = marker_name(line);
+                src_start = i + 1;
+                have = true;
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (have) {
+        names = names.push(cur_name);
+        sources = sources.push(blob[src_start:n]);
+    }
+    return Sections { names: names, sources: sources };
+}
+
+function main(): i32 {
+    var blob: string = io.read_all_stdin();
+    var secs: Sections = split_modules(blob);
+    var count: i32 = secs.names.len();
+    if (count == 0) { return 1; }
+
+    var loaded: flatten.LoadedModule[] = [];
+    var i: i32 = 0;
+    while (i < count - 1) {
+        var m: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[i]));
+        loaded = loaded.push(flatten.LoadedModule { name: secs.names[i], mod: m });
+        i = i + 1;
+    }
+    var entry: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[count - 1]));
+
+    var merged: parser.Module = flatten.bundle(entry, loaded);
+    write(asm_arm64.emit_module(merged));
+    return 0;
+}
