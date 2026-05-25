@@ -1285,6 +1285,13 @@ type builder struct {
 	info *checker.Info
 	fn   *ast.FuncDecl
 	out  *Func
+	// freeEligible[name] is true for array-typed locals the
+	// borrow-aware analysis proved are OWNED — safe for the array
+	// dec sites to return to the freelist at rc==0. Borrowed /
+	// borrowed-derived locals are absent (false) and use a plain
+	// dec instead. Computed once by computeFreeEligible. See
+	// docs/RC-PERCEUS-PLAN.md (the borrow⇄free resolution).
+	freeEligible map[string]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
@@ -1463,6 +1470,120 @@ func (b *builder) emitDeferCleanup() error {
 // mutate-in-place fast path. For now, the rc just goes
 // briefly to zero on the returned ptr, harmless under the
 // no-free regime.
+// computeFreeEligible runs the borrow-aware free analysis: it
+// returns the set of array-typed locals that are OWNED — every value
+// ever written to them is freshly owned (an array literal, or a call
+// whose arguments are all owned) — so the array dec sites may safely
+// return their buffer to the freelist at rc==0. Borrowed values flow
+// in without a caller-side inc (the Phase 2d borrow model), so the rc
+// undercounts them; freeing one would use-after-free a buffer a live
+// borrow still holds (the self-host VM's compile_stmt/compile_block
+// `ops` threading). The analysis taints such values and excludes
+// them; only the owner frees (Perceus's rule).
+//
+// Taint sources: parameters; for-in / match / if-let / let-else /
+// destructure bindings. Taint propagates through assignment: a local
+// becomes tainted if it's ever assigned a tainted Ident, a field /
+// index / slice access (which alias their container), or a call that
+// receives a tainted argument or receiver (the result may alias it).
+// Array literals and calls with only owned arguments produce owned
+// values. The default for an unrecognised RHS is tainted (sound:
+// over-tainting only costs reclamation, never safety). Fixpoint to a
+// stable set since taint can flow backward through `x = f(y)`.
+func (b *builder) computeFreeEligible() map[string]bool {
+	tainted := map[string]bool{}
+	for _, p := range b.fn.Params {
+		tainted[p.Name] = true
+	}
+	// assigns[name] = list of RHS expressions ever written to it.
+	assigns := map[string][]ast.Expr{}
+	markBindings := func(names []string) {
+		for _, n := range names {
+			tainted[n] = true
+		}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.Var:
+			if s.Init != nil {
+				assigns[s.Name] = append(assigns[s.Name], s.Init)
+			}
+		case *ast.Assign:
+			if id, ok := s.Target.(*ast.Ident); ok {
+				assigns[id.Name] = append(assigns[id.Name], s.Value)
+			}
+		case *ast.Destructure:
+			markBindings(s.Names)
+		case *ast.Match:
+			for _, arm := range s.Arms {
+				markBindings(arm.Bindings)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range s.Arms {
+				markBindings(arm.Bindings)
+			}
+		case *ast.IfLet:
+			markBindings(s.Bindings)
+		case *ast.LetElse:
+			markBindings(s.Bindings)
+		}
+		return true
+	})
+	for {
+		changed := false
+		for name, rhss := range assigns {
+			if tainted[name] {
+				continue
+			}
+			for _, rhs := range rhss {
+				if b.rhsTainted(rhs, tainted) {
+					tainted[name] = true
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	elig := map[string]bool{}
+	for _, v := range b.info.Locals[b.fn] {
+		if _, isArr := v.Type.(ast.ArrayType); isArr && !tainted[v.Name] {
+			elig[v.Name] = true
+		}
+	}
+	return elig
+}
+
+// rhsTainted reports whether the value produced by `e` may alias a
+// borrowed (tainted) value, given the current taint set. See
+// computeFreeEligible. Conservative: unknown shapes are tainted.
+func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.ArrayLit:
+		return false
+	case *ast.Ident:
+		return tainted[x.Name]
+	case *ast.FieldAccess, *ast.Index, *ast.SliceExpr:
+		return true
+	case *ast.Call:
+		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.rhsTainted(fa.Target, tainted) {
+			return true // method receiver is tainted
+		}
+		for _, a := range x.Args {
+			if b.rhsTainted(a, tainted) {
+				return true
+			}
+		}
+		return false
+	case *ast.IfExpr:
+		return b.rhsTainted(x.Then, tainted) || b.rhsTainted(x.Else, tainted)
+	default:
+		return true
+	}
+}
+
 func (b *builder) emitRcDecLocalsAtExit() {
 	// decValueOnStack consumes a pointer value already on the
 	// operand stack and dec's it per its static type. An array of
@@ -1472,8 +1593,13 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	// value gets a flat __fern_rc_dec (nested fields/elements of
 	// those leak for now — safe under no-free, no over-release).
 	// Both helpers carry the null / low-address / sentinel guards.
-	decValueOnStack := func(t ast.Type) {
-		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+	decValueOnStack := func(t ast.Type, mayFree bool) {
+		// `mayFree` is the borrow-aware permission to return this
+		// value's buffer to the freelist. It's true only for OWNED
+		// top-level array locals (computeFreeEligible); struct fields
+		// and enum payloads always pass false (their borrow-ness
+		// isn't tracked, so they never free — conservative, safe).
+		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) && mayFree {
 			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
 			b.emit(Op{Kind: OpDrop})
@@ -1486,25 +1612,26 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
-	emitDec := func(slot int32, t ast.Type) {
-		// Phase 3 step 3: arrays of pointer-shaped rc-tracked
-		// elements route through __fern_drop_arr_ptr on every
-		// backend (wasm runtime + arm64 / x86_64 asm); the helper
-		// carries the same null / low-address / sentinel guards as
-		// __fern_rc_dec, so an array-typed slot that actually
-		// holds a non-pointer (enum tag, never-taken-branch
-		// garbage) is passed through rather than dereferenced.
+	emitDec := func(slot int32, t ast.Type, eligible bool) {
+		// `eligible` is the borrow-aware verdict for THIS local: true
+		// only when it's a proven-OWNED array (computeFreeEligible).
+		// Arrays of pointer-shaped rc-tracked elements route through
+		// __fern_drop_arr_ptr (which walks + dec's the elements and,
+		// flag-on, frees the buffer) ONLY when eligible; an ineligible
+		// (borrowed-derived) array uses a plain dec — never freeing a
+		// buffer a live borrow still holds. The helper carries the
+		// null / low-address / sentinel guards.
 		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			decValueOnStack(t)
+			decValueOnStack(t, eligible)
 			return
 		}
 		// Phase 3 step-4: a plain array (primitive elements — i32[],
 		// u8[], …) frees its buffer at the last reference when the
-		// freelist is on. __fern_arr_dec carries the same guards as
-		// __fern_rc_dec, so a never-written array slot (NULL / stack
-		// garbage) is passed through. Flag-off keeps the plain dec.
-		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled {
+		// freelist is on AND it's an owned local. __fern_arr_dec
+		// carries the same guards as __fern_rc_dec. Ineligible /
+		// flag-off arrays fall through to the plain box dec.
+		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled && eligible {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
@@ -1543,7 +1670,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-						decValueOnStack(f.Type)
+						decValueOnStack(f.Type, false)
 					}
 					b.emit(Op{Kind: OpEnd})
 				}
@@ -1584,7 +1711,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
-						decValueOnStack(ld.typ)
+						decValueOnStack(ld.typ, false)
 					}
 					b.emit(Op{Kind: OpEnd})
 				}
@@ -1672,7 +1799,7 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		if !ok {
 			continue
 		}
-		emitDec(slot, v.Type)
+		emitDec(slot, v.Type, b.freeEligible[v.Name])
 	}
 }
 
@@ -1797,6 +1924,10 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		b.locals[v.Name] = int32(len(fn.Params) + i)
 	}
 	b.nextSlot = int32(len(fn.Params) + len(info.Locals[fn]))
+	// Borrow-aware free analysis: which array locals are OWNED and
+	// thus safe to return to the freelist at rc==0. Borrowed /
+	// borrowed-derived locals are excluded (only the owner frees).
+	b.freeEligible = b.computeFreeEligible()
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
 	// default; the IR sets it to 1 when the Defer statement
@@ -6289,7 +6420,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && !isParamName(t.Name, b) {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && b.freeEligible[t.Name] {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
@@ -6297,13 +6428,14 @@ func (b *builder) assign(n *ast.Assign) error {
 				// in-place push (rc bumped to 2) dec's to 1 and doesn't
 				// free. This is the O(N²)→O(N) push-loop reclamation.
 				//
-				// PARAMETERS are excluded: under the borrow model a
-				// borrowed array param has rc==1 (no caller-side inc), so
-				// `ps = ps.push(...)` on a param would free the OLD buffer
-				// — which the CALLER still references — a use-after-free
-				// (the self-host VM's `compile_expr(ops, …)` reassigning
-				// its `ops` param is exactly this). Params keep the plain
-				// dec; the caller owns and frees the buffer.
+				// Gated on freeEligible: only OWNED array locals free
+				// here. Borrowed / borrowed-derived locals (params, and
+				// anything aliased from them - e.g. the self-host VM's
+				// `ops` threaded through compile_stmt/compile_block) keep
+				// the plain dec: the owner upstream still references the
+				// buffer (the borrow model gives no caller-side inc, so
+				// the rc undercounts the borrow - freeing would be a
+				// use-after-free). See computeFreeEligible.
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
