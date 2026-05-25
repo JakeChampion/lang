@@ -548,7 +548,8 @@ function parse_primary(p: Par): ExprResult {
             p = p.advance();
             return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
         },
-        lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; }
+        lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; },
+        lexer.TokError(x) => { return ExprResult { par: p, expr: e_unknown("lex error: " + x.msg) }; }
     }
     return ExprResult { par: p, expr: e_unknown("primary") };
 }
