@@ -1828,6 +1828,13 @@ func buildAllocRc1Body(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
+	// mem[base+4] = $size — stash the payload size in the unused half
+	// of the rc1 header (= data-4) so a drop site can free the block
+	// without a separate size header (closure-env reclamation reads
+	// it). Harmless for every other rc1 user.
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 4)
 	// return base + 8
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 8)
