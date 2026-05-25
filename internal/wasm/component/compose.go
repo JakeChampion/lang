@@ -49,7 +49,13 @@ type ComposeOpts struct {
 	FileAppend  bool
 	ReadStream  bool
 	WriteStream bool
-	Structured  []WasiImport
+	// DropInputStream / DropOutputStream record that the core imports
+	// wasi:io/streams.[resource-drop]{input,output}-stream — a file /
+	// stdin Reader.close() / Writer.close() drops its own<…stream>
+	// handle via canon resource.drop. Lowered into the io/streams arg.
+	DropInputStream  bool
+	DropOutputStream bool
+	Structured       []WasiImport
 	MemTramp    []MemTrampImport
 	// ExportName selects the tail: "" lifts the run func as
 	// wasi:cli/run@0.2.0 (the default cli shape); a non-empty name
@@ -257,8 +263,8 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// read/written) compose without the blocking method.
 	useBlockRead := opts.ReadStream
 	useBlockWrite := opts.WriteStream
-	needInputStream := hasStdin || hasFileRead || useBlockRead
-	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite
+	needInputStream := hasStdin || hasFileRead || useBlockRead || opts.DropInputStream
+	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite || opts.DropOutputStream
 	needStreams := needInputStream || needOutputStream
 	hasMemTramp := len(opts.MemTramp) > 0
 	// memory backs every trampoline lower (block read/write, the file
@@ -480,7 +486,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// open_reader/open_writer imports io/streams only for the
 	// input/output-stream *type* (referenced by read/write-via-stream's
 	// result), not any io/streams function, so it gets no arg here.
-	if useBlockWrite || useBlockRead {
+	if useBlockWrite || useBlockRead || opts.DropInputStream || opts.DropOutputStream {
 		var exports []CoreInstanceExport
 		if useBlockWrite {
 			tf := c.aliasCoreFunc(trampWInst, "0")
@@ -489,6 +495,16 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		if useBlockRead {
 			tf := c.aliasCoreFunc(trampRInst, "0")
 			exports = append(exports, CoreInstanceExport{Name: composeBlockReadName, Sort: CoreSortFunc, Idx: tf})
+		}
+		// Reader/Writer close → canon resource.drop on the stream handle.
+		// No memory / trampoline needed, so lower it directly here.
+		if opts.DropInputStream {
+			df := c.resourceDrop(tIn)
+			exports = append(exports, CoreInstanceExport{Name: "[resource-drop]input-stream", Sort: CoreSortFunc, Idx: df})
+		}
+		if opts.DropOutputStream {
+			df := c.resourceDrop(tOut)
+			exports = append(exports, CoreInstanceExport{Name: "[resource-drop]output-stream", Sort: CoreSortFunc, Idx: df})
 		}
 		streamsArg := c.coreInstExports(exports)
 		argNames = append(argNames, "wasi:io/streams@0.2.0")

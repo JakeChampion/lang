@@ -718,11 +718,24 @@ End-to-end exit code 42 demo (covered by
     Verified end-to-end — a TCP echo server logs to stdout and
     round-trips a payload to a Go client
     (`TestWasmPreview2TcpServerStdoutAdapterFree`).
+  - **File I/O close → preview-2. Shipped.** The last preview-1 holdout
+    for file I/O was `Reader.close()` / `Writer.close()`, which lowered
+    to `wasi_snapshot_preview1.fd_close`. They now drop the
+    own<input-stream> / own<output-stream> handle the Reader / Writer
+    holds via canon `resource.drop` (the open chain already used
+    `append-via-stream` etc.), so `open_writer` / `open_appender` /
+    `open_reader` + `.close()` and `read_file` / `write_file` compose
+    fully adapter-free. The CLI composer surfaces the
+    `[resource-drop]{input,output}-stream` lowering into the io/streams
+    arg. Verified — a write-only program's on-disk bytes and a read-only
+    program's stdout both round-trip with no preview-1 imports
+    (`TestWasmPreview2FileCloseAdapterFree`).
   - **Still to do (genuinely niche / large):**
-    - UDP (`wasi:sockets/udp`).
-    - The file-append open-chain is still preview-1 only — preview-2
-      has no fd-append flag, so it needs `append-via-stream` (or an
-      explicit seek-to-end before write-via-stream).
+    - UDP (`wasi:sockets/udp`) — no Fern language support yet, so
+      nothing emits udp imports to compose.
+    - Read+write of files in one program (both descriptor stream
+      directions at once) — the filesystem/types instance type carries
+      a single direction; each direction composes on its own.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)

@@ -1142,6 +1142,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
 	var getDirs, openAt, readVia, writeVia, appendVia bool
 	var wallNow, getArgs, getEnv bool
+	var dropInput, dropOutput bool
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
 		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
@@ -1154,6 +1155,10 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 			blockWrite = true
 		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
 			blockRead = true
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[resource-drop]input-stream":
+			dropInput = true
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[resource-drop]output-stream":
+			dropOutput = true
 		case p.module == "wasi:filesystem/preopens@0.2.0" && p.name == "get-directories":
 			getDirs = true
 		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.open-at":
@@ -1224,6 +1229,8 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	opts.FileAppend = fileAppend
 	opts.ReadStream = blockRead
 	opts.WriteStream = blockWrite
+	opts.DropInputStream = dropInput
+	opts.DropOutputStream = dropOutput
 	// Mem-trampoline imports (wall-clock now / args / env). args and
 	// env share the wasi:cli/environment interface, so they can't both
 	// be imported as separate instances — reject that combination.

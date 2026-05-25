@@ -1683,6 +1683,45 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildReaderCloseFdBodyP2 / buildWriterCloseBodyP2 are the preview-2
+// close paths. The Reader / Writer holds an own<input-stream> /
+// own<output-stream> handle at offset 0 (not a preview-1 fd), so close
+// is a canon resource.drop on that handle rather than fd_close. drop
+// returns nothing, so these always return None — selected via
+// preview2HelperBodyOverrides.
+func buildReaderCloseFdBodyP2(idxs map[string]uint32) []byte {
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"])
+}
+
+func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"])
+}
+
+// buildStreamCloseBodyP2 drops the stream handle stored at the Reader /
+// Writer's offset 0 and returns None ((4-byte alloc, tag=1) — the
+// Option[IoError] success form). `drop` is the canon resource.drop
+// import for the relevant stream resource.
+func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
+	allocBox := idxs["__fern_alloc_box"]
+
+	var body []byte
+	// resource.drop(mem[$self+0]) — the own<…stream> handle.
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstCall(body, drop)
+
+	// Return None (4-byte alloc, tag=1).
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildWriterWriteBody — `__method_Writer_write(w, s_data, s_len)`.
 // Writes the SSO-normalized string bytes to w.fd via fd_write
 // in a loop. Returns None on success, Some(IoError) on

@@ -286,6 +286,98 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2FileCloseAdapterFree exercises file close on the
+// adapter-free path (`-target wasm`, no -wasi-adapter): Writer.close()
+// and Reader.close() now drop the own<output-stream> / own<input-stream>
+// handle via canon resource.drop instead of preview-1 fd_close (the last
+// preview-1 holdout for file I/O). Two phases — a write-only program
+// (output-stream drop) whose on-disk content is checked, then a
+// read-only program (input-stream drop) that reads it back to stdout —
+// since a single program can't mix both descriptor stream directions.
+func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	fsdir := filepath.Join(dir, "fs")
+	if err := os.Mkdir(fsdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	build := func(name, src string) string {
+		srcPath := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		comp := filepath.Join(dir, name+".wasm")
+		emit := exec.Command(bin, "-target", "wasm", "-o", comp, srcPath)
+		if out, err := emit.CombinedOutput(); err != nil {
+			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+		}
+		// Adapter-free: no preview-1 fd_close — the close drops the stream.
+		printed, err := exec.Command("wasm-tools", "print", comp).CombinedOutput()
+		if err != nil {
+			t.Fatalf("wasm-tools print (%s): %v\n%s", name, err, printed)
+		}
+		if bytes.Contains(printed, []byte("fd_close")) || bytes.Contains(printed, []byte("wasi_snapshot_preview1")) {
+			t.Errorf("%s: expected no preview-1 imports, got:\n%s", name, printed)
+		}
+		return comp
+	}
+
+	want := "close-via-drop\n" // on-disk bytes (Fern's \n → newline)
+	// Phase 1: write-only + close → output-stream resource.drop.
+	writer := build("writer", `function main(): i32 {
+    match (open_writer("f.txt")) {
+        Ok(w) => {
+            match (w.write("close-via-drop\n")) { Some(_) => { return 1; }, None => {} }
+            match (w.close()) { Some(_) => { return 2; }, None => {} }
+            return 0;
+        },
+        Err(_) => { return 3; }
+    }
+}`)
+	if out, err := exec.Command("wasmtime", "run", "--dir", fsdir+"::/", writer).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run writer: %v\n%s", err, out)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(fsdir, "f.txt"))
+	if err != nil {
+		t.Fatalf("read f.txt: %v", err)
+	}
+	if string(onDisk) != want {
+		t.Fatalf("on-disk = %q; want %q", string(onDisk), want)
+	}
+
+	// Phase 2: read-only + close → input-stream resource.drop.
+	reader := build("reader", `function main(): i32 {
+    match (open_reader("f.txt")) {
+        Ok(r) => {
+            match (r.read_line()) { Some(line) => { write(line); }, None => { return 1; } }
+            match (r.close()) { Some(_) => { return 2; }, None => {} }
+            return 0;
+        },
+        Err(_) => { return 3; }
+    }
+}`)
+	out, err := exec.Command("wasmtime", "run", "--dir", fsdir+"::/", reader).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run reader: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("close-via-drop")) {
+		t.Errorf("reader stdout = %q; want it to contain the file line", string(out))
+	}
+}
+
 // TestWasmPreview2ReadWriteFile exercises the convenience
 // helpers `write_file` / `read_file` through the preview-2
 // pipeline. Both delegate to the open_reader / open_writer
