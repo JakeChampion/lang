@@ -1004,9 +1004,18 @@ Phase 3 CANNOT start with the freelist — it must start by
    free+reuse is sound. Green on x86_64 locally; arm64 + wasm ride
    CI. The flip itself stays gated on a corpus-wide-green detector on
    all backends + explicit owner sign-off.
-5. **Enable + verify.** Flip the flag on, run the entire e2e suite
-   under the detector with identical exit codes/stdout/stderr, plus
-   the rc-correctness fuzzer (random nested values).
+5. **Enable + verify. — DONE. `RcFreeEnabled` is true by default.**
+   The flag flipped on after the borrow-aware free analysis closed
+   the last correctness blocker: the whole `./internal/...` suite
+   passes with reclamation on (x86_64 + interp locally; arm64 + wasm
+   on CI), the free-on-vs-off fixture differential gate is
+   byte-identical, and the self-host VM is clean under `RcFreeDebug`
+   (zero use-after-free). The pre-step-5 no-free arena is still
+   reachable by toggling the flag off (a handful of tests do, via
+   save/restore). What still LEAKS rather than reclaims (safe — no
+   over-release): borrowed/borrowed-derived array buffers, struct /
+   enum / closure / map boxes, and struct/enum array *fields*; those
+   are follow-on reclamation, not correctness.
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire
