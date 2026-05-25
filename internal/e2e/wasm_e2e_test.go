@@ -9059,16 +9059,15 @@ func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
 	// TCP mixed with a file read isn't composable — the TCP composer
-	// surfaces sockets/io + the standalone CLI extras (clocks / env /
-	// random / print), but NOT the filesystem open-chain, and the
-	// CLI-stream composer doesn't surface sockets. So -component-wrap
-	// must reject it. (TCP-only servers, TCP + now/env/print, and
-	// CLI-stream-only programs each compose on their own; this picks a
+	// Reading AND writing files in one program needs both descriptor
+	// stream directions at once, but the wasi:filesystem/types instance
+	// type carries a single direction — a fundamental single-direction
+	// limit — so -component-wrap must reject it. (Each direction, and
+	// sockets + file-read, compose on their own; this picks a
 	// combination that still falls through.)
 	src := []byte(`function main(): i32 {
-    var s: i32 = tcp_listen(8080);
-    tcp_close(s);
-    match (read_file("f")) { Ok(c) => {}, Err(e) => {} }
+    match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
+    match (write_file("b", "x")) { Some(e) => {}, None => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -11142,17 +11141,16 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// TCP mixed with a file read: the TCP composer surfaces sockets/io +
-	// the standalone CLI extras (clocks / env / random / print) but NOT
-	// the filesystem open-chain, and the CLI-stream composer doesn't
-	// surface sockets, so neither path claims it and the driver must
-	// reject with the adapter hint. (Earlier still-unsupported combos —
-	// args, tcp_recv, tcp+print, tcp+clock — each became supported as the
-	// composer grew; TCP+files is the current gap.)
+	// Reading AND writing files in one program needs both descriptor
+	// stream directions at once, but the wasi:filesystem/types instance
+	// type carries a single direction, so neither path claims it and the
+	// driver must reject with the adapter hint. (Earlier still-unsupported
+	// combos — args, tcp_recv, tcp+print, tcp+clock, tcp+file-read — each
+	// became supported as the composer grew; read+write files is the
+	// current gap.)
 	src := []byte(`function main(): i32 {
-    var s: i32 = tcp_listen(8080);
-    tcp_close(s);
-    match (read_file("f")) { Ok(c) => {}, Err(e) => {} }
+    match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
+    match (write_file("b", "x")) { Some(e) => {}, None => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
