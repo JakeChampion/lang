@@ -593,7 +593,8 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if extra := httpHandlerUnsupportedImports(core); len(extra) > 0 {
 				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(extra, ", "))
 			}
-			comp := component.ComposeHttpHandler(core, "wasi:http/incoming-handler@0.2.0#handle")
+			hasStdout, hasStderr := httpHandlerWriteStreams(core)
+			comp := component.ComposeHttpHandler(core, hasStdout, hasStderr, "wasi:http/incoming-handler@0.2.0#handle")
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
@@ -1080,6 +1081,10 @@ var httpHandlerComposableImports = map[[2]string]bool{
 	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
 	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:                    true,
 	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:                   true,
+	// print / eprint logging — the write stream shares the body's
+	// blocking-write-and-flush lowering, so only the getter is extra.
+	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
+	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
 }
 
 // httpHandlerUnsupportedImports returns the core's imports that fall
@@ -1093,6 +1098,21 @@ func httpHandlerUnsupportedImports(bin []byte) []string {
 		}
 	}
 	return extra
+}
+
+// httpHandlerWriteStreams reports whether the handler core imports the
+// stdout / stderr getters (print / eprint), so ComposeHttpHandler can
+// surface wasi:cli/stdout / wasi:cli/stderr.
+func httpHandlerWriteStreams(bin []byte) (hasStdout, hasStderr bool) {
+	for _, p := range coreModuleImportPairs(bin) {
+		switch {
+		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
+			hasStdout = true
+		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
+			hasStderr = true
+		}
+	}
+	return hasStdout, hasStderr
 }
 
 func usesPreview2TcpServer(bin []byte) bool {

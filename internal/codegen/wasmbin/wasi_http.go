@@ -263,7 +263,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	streamDrop := idxs["wasi_io_output_stream_drop"]
 	inStreamDrop := idxs["wasi_io_input_stream_drop"]
 	blockingRead := idxs["wasi_io_blocking_read"]
-	blockingWrite := idxs["wasi_io_blocking_write_and_flush"]
+	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
 	var body []byte
 
