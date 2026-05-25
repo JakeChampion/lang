@@ -1025,6 +1025,44 @@ func TestWasiIoPollInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiHttpValueTypesInstanceTypeBody_Validates composes the
+// wasi:http/types value types (method / scheme / header-error +
+// the 39-case error-code variant with its DNS-error /
+// TLS-alert-received / field-size payload records and the option<…>
+// wrappers) into a standalone instance type and confirms wasm-tools
+// validates the encoding + surfaces the named exports. This isolates
+// the variant / option / record encoders before they fold into the
+// full wasi:http/types instance type.
+func TestWasiHttpValueTypesInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiHttpValueTypesInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:http/types@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "httptypes.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"method", "scheme", "header-error", "error-code",
+		"DNS-error-payload", "TLS-alert-received-payload", "field-size-payload",
+		"HTTP-response-body-size", "internal-error",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiSocketsNetworkInstanceTypeBody_Validates composes the
 // wasi:sockets/network instance type — exercising the record / tuple
 // / variant encoders in their real ip-socket-address context — and
