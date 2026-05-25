@@ -962,12 +962,16 @@ Phase 3 CANNOT start with the freelist — it must start by
    (successor pointer in the block's first 8 bytes); `__fern_alloc`
    pops the matching class before bumping. Exposed to Fern as the
    `__free(ptr, size)` shim (companion to `__alloc`) so the path is
-   testable in isolation. `TestX86_64FreelistReuse` pins same-size
-   reuse, different-class non-aliasing, and LIFO order — flag-on.
-   NOT yet wired into the rc dec sites (rc_dec / the drop helpers
-   still don't free); that wiring + wasm/arm64 parity are the next
-   slices. The flip itself stays gated on a corpus-wide-green
-   detector on all backends + explicit owner sign-off.
+   testable in isolation. `Test{X86_64,Arm64}FreelistReuse` pin
+   same-size reuse, different-class non-aliasing, and LIFO order —
+   flag-on. x86_64 + arm64 are at parity (arm64 mirrors the x86_64
+   BSS freelist line-for-line). NOT yet wired into the rc dec sites
+   (rc_dec / the drop helpers still don't free); that wiring +
+   **wasm parity** (which needs 512 bytes of freelist heads carved
+   out of the reserved low-memory window — the current gap is only
+   mem[44..64]) are the next slices. The flip itself stays gated on
+   a corpus-wide-green detector on all backends + explicit owner
+   sign-off.
 5. **Enable + verify.** Flip the flag on, run the entire e2e suite
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).

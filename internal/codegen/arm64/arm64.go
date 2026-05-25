@@ -295,6 +295,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// Live-rc variant for closure env blocks / pairs.
 		g.emitAllocRc1Runtime()
 	}
+	if g.usesFree {
+		g.emitFreeRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -630,6 +633,13 @@ func (g *generator) emitDataSections() {
 		g.label("__fern_rc_underflow")
 		g.line(`	.quad 0`)
 	}
+	if ast.RcFreeEnabled && g.usesAlloc {
+		// Phase 3 step-4 segregated freelist: 128 heads, one per
+		// 16-byte size class (16..2048). Mirrors the x86_64 BSS.
+		g.line(`.align 3`)
+		g.label("__fern_freelist_heads")
+		g.line(`	.space 1024`)
+	}
 }
 
 // emitAllocRuntime emits `__fern_alloc(size: i64) -> i64`
@@ -673,6 +683,26 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("add x0, x0, #15")
 	g.emit("and x0, x0, #-16")
+	if ast.RcFreeEnabled {
+		// Phase 3 step-4: reuse a freed block of the same size class
+		// before bumping. x0 is the 16-byte-rounded request; classes
+		// cover 16..2048. idx = (x0>>4)-1; pop heads[idx] if non-nil.
+		g.emit("cmp x0, #16")
+		g.emit("b.lo .Lalloc_bump")
+		g.emit("cmp x0, #2048")
+		g.emit("b.hi .Lalloc_bump")
+		g.emit("lsr x1, x0, #4")
+		g.emit("sub x1, x1, #1") // class index
+		g.adrpAdd("x2", "__fern_freelist_heads")
+		g.emit("ldr x3, [x2, x1, lsl #3]") // head = heads[idx]
+		g.emit("cbz x3, .Lalloc_bump")
+		g.emit("ldr x4, [x3]")             // head.next
+		g.emit("str x4, [x2, x1, lsl #3]") // heads[idx] = next
+		g.emit("mov x0, x3")               // return reused block
+		g.emit("ldp x29, x30, [sp], #16")
+		g.emit("ret")
+		g.label(".Lalloc_bump")
+	}
 	// Pick cursor + end labels into x11 / x12 based on mode.
 	g.adrpAdd("x6", "__fern_alloc_mode")
 	g.emit("ldrb w7, [x6]")
@@ -728,6 +758,38 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x0, #137")
 	g.syscallExit()
 	g.sizeDirective("__fern_alloc")
+	g.line(".ltorg")
+}
+
+// emitFreeRuntime emits `__fern_free(base, size)` — the Phase 3
+// step-4 freelist return path (arm64 mirror of the x86_64 helper).
+// Pushes the size-byte block at base onto its 16-byte size class's
+// intrusive freelist (successor pointer in the block's first 8
+// bytes). Blocks outside 16..2048 stay in the bump region. A no-op
+// when the freelist is disabled. AAPCS64: x0 = base, x1 = size.
+// Leaf; no frame.
+func (g *generator) emitFreeRuntime() {
+	g.line("")
+	g.line(".global __fern_free")
+	g.typeDirective("__fern_free")
+	g.label("__fern_free")
+	if ast.RcFreeEnabled {
+		g.emit("add x1, x1, #15")
+		g.emit("and x1, x1, #-16")
+		g.emit("cmp x1, #16")
+		g.emit("b.lo .Lfree_ret")
+		g.emit("cmp x1, #2048")
+		g.emit("b.hi .Lfree_ret")
+		g.emit("lsr x2, x1, #4")
+		g.emit("sub x2, x2, #1") // class index
+		g.adrpAdd("x3", "__fern_freelist_heads")
+		g.emit("ldr x4, [x3, x2, lsl #3]") // old head
+		g.emit("str x4, [x0]")             // base.next = old head
+		g.emit("str x0, [x3, x2, lsl #3]") // heads[idx] = base
+		g.label(".Lfree_ret")
+	}
+	g.emit("ret")
+	g.sizeDirective("__fern_free")
 	g.line(".ltorg")
 }
 
@@ -4603,6 +4665,9 @@ type generator struct {
 	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
 	// "last reference?" check used by the Phase 3 struct drop.
 	usesRcIsUnique bool
+	// usesFree gates `__fern_free` — the Phase 3 step-4 freelist
+	// return path. Pulls in __fern_alloc (shares the freelist BSS).
+	usesFree bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6603,6 +6668,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesMemcpy = true
 		case "__alloc":
 			target = "__fern_alloc"
+			g.usesAlloc = true
+		case "__free":
+			target = "__fern_free"
+			g.usesFree = true
 			g.usesAlloc = true
 		case "__slice_make":
 			target = "__fern_slice_make"

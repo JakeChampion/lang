@@ -7,11 +7,50 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 )
+
+// freelistReuseSrc is the shared body for the flag-on freelist
+// tests across backends: same-size reuse, different-class
+// non-aliasing, and LIFO order. Each program returns 0 on success.
+var freelistReuseSrc = struct{ reuse, wrongClass, lifo string }{
+	reuse: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    __free(a, 64);
+    var b: usize = __alloc(64);
+    if (a == b) { return 0; }
+    return 1;
+}`,
+	wrongClass: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    __free(a, 64);
+    var b: usize = __alloc(32);
+    if (a == b) { return 1; }
+    return 0;
+}`,
+	lifo: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(48);
+    var b: usize = __alloc(48);
+    __free(a, 48);
+    __free(b, 48);
+    var c: usize = __alloc(48);
+    var d: usize = __alloc(48);
+    if (c == b) {
+        if (d == a) { return 0; }
+        return 1;
+    }
+    return 2;
+}`,
+}
 
 // compileAndRunX86_64FreeOn compiles + runs `src` with the Phase 3
 // step-4 freelist enabled (ast.RcFreeEnabled = true) for the
@@ -61,57 +100,78 @@ func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	return string(out), cmd.ProcessState.ExitCode()
 }
 
+// compileAndRunArm64FreeOn mirrors compileAndRunArm64 but flips
+// ast.RcFreeEnabled around codegen. arm64codegen.Emit acquires
+// ast.CodegenMu itself, so (as on x86) we must not hold it here.
+func compileAndRunArm64FreeOn(t *testing.T, src string) (string, int) {
+	t.Helper()
+	gcc, qemu := arm64Tooling(t)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	ast.RcFreeEnabled = true
+	asm, emitErr := arm64codegen.Emit(prog, info)
+	ast.RcFreeEnabled = false
+	if emitErr != nil {
+		t.Fatalf("emit: %v", emitErr)
+	}
+	asmPath := filepath.Join(dir, "prog.s")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+		t.Fatalf("write asm: %v", err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("gcc: %v\n%s", err, out)
+	}
+	cmd := runArm64Bin(qemu, binPath)
+	out, _ := cmd.CombinedOutput()
+	_ = out
+	return "", cmd.ProcessState.ExitCode()
+}
+
 // Phase 3 step-4: the freelist allocator, in isolation. A freed
 // block is reused by the next same-size __alloc; a different size
 // class is not aliased; and the bump path still works for sizes
 // outside the freelist range. Validates the mechanism end-to-end
 // before it's wired into the rc dec sites.
 func TestX86_64FreelistReuse(t *testing.T) {
-	// Same-size alloc after free reuses the exact block.
-	reuse := `import "core/no_prelude";
-function main(): i32 {
-    var a: usize = __alloc(64);
-    __free(a, 64);
-    var b: usize = __alloc(64);
-    if (a == b) { return 0; }
-    return 1;
-}`
-	if _, code := compileAndRunX86_64FreeOn(t, reuse); code != 0 {
+	if _, code := compileAndRunX86_64FreeOn(t, freelistReuseSrc.reuse); code != 0 {
 		t.Errorf("same-size reuse: got %d, want 0 (freed block should be reused)", code)
 	}
-
-	// A free into one class must not be handed out for a different
-	// class — a 32-byte request must NOT reuse the freed 64-byte
-	// block (different freelist head).
-	wrongClass := `import "core/no_prelude";
-function main(): i32 {
-    var a: usize = __alloc(64);
-    __free(a, 64);
-    var b: usize = __alloc(32);
-    if (a == b) { return 1; }
-    return 0;
-}`
-	if _, code := compileAndRunX86_64FreeOn(t, wrongClass); code != 0 {
+	if _, code := compileAndRunX86_64FreeOn(t, freelistReuseSrc.wrongClass); code != 0 {
 		t.Errorf("wrong-class reuse: got %d, want 0 (32-byte alloc must not reuse a 64-byte free)", code)
 	}
+	if _, code := compileAndRunX86_64FreeOn(t, freelistReuseSrc.lifo); code != 0 {
+		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", code)
+	}
+}
 
-	// LIFO across two frees of the same class: second alloc gets the
-	// most-recently-freed block, third gets the earlier one.
-	lifo := `import "core/no_prelude";
-function main(): i32 {
-    var a: usize = __alloc(48);
-    var b: usize = __alloc(48);
-    __free(a, 48);
-    __free(b, 48);
-    var c: usize = __alloc(48);
-    var d: usize = __alloc(48);
-    if (c == b) {
-        if (d == a) { return 0; }
-        return 1;
-    }
-    return 2;
-}`
-	if _, code := compileAndRunX86_64FreeOn(t, lifo); code != 0 {
+// Arm64 mirror of TestX86_64FreelistReuse. SKIPs without an
+// aarch64 toolchain (rides CI).
+func TestArm64FreelistReuse(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, freelistReuseSrc.reuse); code != 0 {
+		t.Errorf("same-size reuse: got %d, want 0 (freed block should be reused)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, freelistReuseSrc.wrongClass); code != 0 {
+		t.Errorf("wrong-class reuse: got %d, want 0 (32-byte alloc must not reuse a 64-byte free)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, freelistReuseSrc.lifo); code != 0 {
 		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", code)
 	}
 }
