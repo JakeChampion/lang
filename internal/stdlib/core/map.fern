@@ -22,8 +22,10 @@
 //   +0   cap     : i32 — bucket count, power-of-2, ≥ 4
 //   +4   len     : i32 — live entry count
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
-//   +12  valKind : i32 — 0 = i32-scalar, 1 = non-array
-//        pointer, 2 = array(plain elems), 3 = array(rc elems)
+//   +12  valTag : i32 — low byte = valKind (0 = i32-scalar,
+//        1 = non-array pointer, 2 = array(plain elems),
+//        3 = array(rc elems)); high bytes = value element
+//        stride for kinds 2/3 (see mapValTag / __map_val_*)
 //   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
 //   +16+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
 //                                      (8 on wasm32, 16 on arm64)
@@ -229,6 +231,35 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
     return __map_lookup(m, k) != (0 - 1);
 }
 
+// __map_val_kind / __map_val_stride unpack the value tag stored
+// at buf+12 by map_new: the low byte is the valKind (0 = scalar,
+// 1 = non-array pointer, 2 = plain-elem array, 3 = rc-elem
+// array); for kinds 2/3 the high bytes carry the value element
+// stride in bytes (the IR's mapValTag).
+function __map_val_kind(buf: usize): i32 {
+    return __load_i32(buf + 12) & 255;
+}
+function __map_val_stride(buf: usize): i32 {
+    return __load_i32(buf + 12) >> 8;
+}
+
+// __map_dec_value releases one array-typed value (valKind 2/3) at
+// the value element stride from the buf: arr_dec for plain-elem
+// arrays, drop_arr_ptr (recurse one level) for rc-elem arrays.
+// rc-aware — frees only at the value's last reference, so an
+// outstanding inc-on-get borrow stays alive. No-op for scalar /
+// non-array values.
+function __map_dec_value(buf: usize, v: usize) {
+    var vk: i32 = __map_val_kind(buf);
+    if (vk < 2) { return; }
+    var stride: i32 = __map_val_stride(buf);
+    if (vk == 3) {
+        __fern_drop_arr_ptr(v, stride);
+    } else {
+        __fern_arr_dec(v, stride);
+    }
+}
+
 // __map_retain_val bumps the rc of a pointer-shaped value that
 // map_drop will later free (valKind 2/3 = array values), so a
 // value handed out via get / get_or / values / iter co-owns its
@@ -236,7 +267,7 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
 // map-value reclamation). A no-op for scalar (0) and non-array
 // pointer (1) values, which map_drop does not yet reclaim.
 function __map_retain_val(buf: usize, v: usize): usize {
-    if (__load_i32(buf + 12) >= 2) {
+    if (__map_val_kind(buf) >= 2) {
         return __fern_rc_inc(v);
     }
     return v;
@@ -358,6 +389,11 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
                 eq = (entryK as string) == (k as string);
             }
             if (eq) {
+                // Overwrite-dec: release the old array value before
+                // replacing it (rc-aware, so an outstanding read borrow
+                // survives). Recovers the duplicate-key leak; a no-op
+                // for scalar / non-array values.
+                __map_dec_value(buf, __load_ptr(entriesBase + b * entryStride + ptrW));
                 __store_ptr(entriesBase + b * entryStride + ptrW, v);
                 return m;
             }
@@ -424,7 +460,7 @@ pub function __map_keys_impl(m: usize): usize {
 
 pub function __map_values_impl(m: usize): usize {
     var buf: usize = __load_ptr(m);
-    var valKind: i32 = __load_i32(buf + 12);
+    var valKind: i32 = __map_val_kind(buf);
     var ptrW: i32 = __ptr_width();
     // valKind != 0 == pointer-shaped (1 = string/struct/enum,
     // 2/3 = array values); all take the pointer-column path.
@@ -471,23 +507,26 @@ pub function __map_string_column(m: usize, kvOffset: i32, retainVals: i32): usiz
 
 // __map_drop_values frees the array-typed value column when a Map
 // is dropped at its LAST reference. The IR emits a call to this
-// just before the (unchanged, 1-arg) __fern_map_drop, so it
-// guards on the handle rc itself (at [m-8]): only the last
-// reference (rc==1) frees the values — a shared map (rc>1) or a
-// static-sentinel handle (negative rc) leaves them untouched,
-// matching __fern_map_drop's own rc==1 free of the buf+handle.
-// valKind 2 = array of plain elements (arr_dec frees the buffer);
-// valKind 3 = array of rc-tracked elements (drop_arr_ptr recurses
-// one level then frees). valStride is the value element stride the
-// IR computed from V. valKind 0/1 (scalar / non-array pointer)
+// just before the (1-arg) __fern_map_drop, so it guards on the
+// handle rc itself (at [m-8]): only the last reference (rc==1)
+// frees the values — a shared map (rc>1) or a static-sentinel
+// handle (negative rc) leaves them untouched, matching
+// __fern_map_drop's own rc==1 free of the buf+handle. The value
+// element stride is read from the buf's packed valKind tag
+// (__map_dec_value). valKind 0/1 (scalar / non-array pointer)
 // leave the column alone — those values still leak. Each value's
 // rc was bumped on store (inc-on-set) and on every read
 // (inc-on-get), so this dec is the balancing release.
-pub function __map_drop_values(m: usize, valStride: i32) {
-    if (__load_i32(m - 8) != 1) { return; }
+pub function __map_drop_values(m: usize): usize {
+    // Null / low-address guard, mirroring __fern_map_drop: an
+    // owned-Map slot can be unset on some path at the exit sweep.
+    // Dereferencing m-8 without this traps. Returns m so the IR's
+    // OpCallDirect/OpDrop pops a real value (matching every other
+    // drop helper), not a void-call phantom.
+    if (m < 65536) { return m; }
+    if (__load_i32(m - 8) != 1) { return m; }
     var buf: usize = __load_ptr(m);
-    var vk: i32 = __load_i32(buf + 12);
-    if (vk < 2) { return; }
+    if (__map_val_kind(buf) < 2) { return m; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
@@ -495,14 +534,10 @@ pub function __map_drop_values(m: usize, valStride: i32) {
     var entriesBase: usize = buf + 16 + cap * 4;
     var i: i32 = 0;
     while (i < len_) {
-        var v: usize = __load_ptr(entriesBase + i * entryStride + ptrW);
-        if (vk == 3) {
-            __fern_drop_arr_ptr(v, valStride);
-        } else {
-            __fern_arr_dec(v, valStride);
-        }
+        __map_dec_value(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
         i = i + 1;
     }
+    return m;
 }
 
 pub function __map_delete_impl(m: usize, k: usize): boolean {
