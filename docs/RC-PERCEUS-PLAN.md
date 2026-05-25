@@ -962,16 +962,21 @@ Phase 3 CANNOT start with the freelist — it must start by
    (successor pointer in the block's first 8 bytes); `__fern_alloc`
    pops the matching class before bumping. Exposed to Fern as the
    `__free(ptr, size)` shim (companion to `__alloc`) so the path is
-   testable in isolation. `Test{X86_64,Arm64}FreelistReuse` pin
+   testable in isolation. `Test{X86_64,Arm64,WASM}FreelistReuse` pin
    same-size reuse, different-class non-aliasing, and LIFO order —
-   flag-on. x86_64 + arm64 are at parity (arm64 mirrors the x86_64
-   BSS freelist line-for-line). NOT yet wired into the rc dec sites
-   (rc_dec / the drop helpers still don't free); that wiring +
-   **wasm parity** (which needs 512 bytes of freelist heads carved
-   out of the reserved low-memory window — the current gap is only
-   mem[44..64]) are the next slices. The flip itself stays gated on
-   a corpus-wide-green detector on all backends + explicit owner
-   sign-off.
+   flag-on. **All three backends are now at freelist parity.** arm64
+   mirrors the x86_64 BSS freelist line-for-line; wasm puts its 128
+   i32 heads at a fixed `freelistHeadsAddr = 256` (region [256, 768))
+   in the always-free reserved window [96, 1024) — the named
+   low-memory scratch tops out at 92 and the bump cursor floor is the
+   string-pool end, which never falls below `stringStart = 1024`.
+   wasm allocations round to 16 (matching the natives' class
+   granularity) only when the flag is on; flag-off keeps the 4-byte
+   rounding, so the default wasm module is byte-identical. NOT yet
+   wired into the rc dec sites (rc_dec / the drop helpers still don't
+   free); that wiring is the next slice — the push-loop reclamation
+   win. The flip itself stays gated on a corpus-wide-green detector
+   on all backends + explicit owner sign-off.
 5. **Enable + verify.** Flip the flag on, run the entire e2e suite
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).
