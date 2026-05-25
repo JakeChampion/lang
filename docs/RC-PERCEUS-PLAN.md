@@ -1023,6 +1023,38 @@ Phase 3 CANNOT start with the freelist — it must start by
    signal from this gate + the rc-underflow corpus is the evidence
    the default flip is waiting on (plus owner sign-off).
 
+   **Flip attempt — BLOCKED by the self-host VM (still off by
+   default).** With sign-off, the default was flipped to `true` and
+   the suite run. The fixture-corpus gate is green free-on, but
+   `TestSelfHostVMX86_64` (a far larger real program than any
+   fixture) hit a use-after-free: `__fern_alloc`'s freelist pop
+   dereferenced a corrupted next-pointer — a buffer freed while
+   still referenced, then written through the stale ref. (An earlier
+   "full e2e green free-on" probe was a FALSE green: the flag-on test
+   helpers reset the global to `false` mid-suite, so most tests
+   silently ran free-OFF. Making the helpers save/restore the prior
+   value exposed the real failure — and is the fix for the
+   false-green.)
+   - **Root cause #1 (fixed): borrowed-param overwrite.** Under the
+     borrow model a borrowed array param has rc==1 (no caller-side
+     inc), so `ps = ps.push(...)` on a *parameter* freed the OLD
+     buffer at the dec-on-overwrite — which the CALLER still
+     references (`compile_expr(ops, …)` reassigning its `ops` param).
+     Fix: the dec-on-overwrite free is now gated on
+     `!isParamName` — params keep the plain dec; the caller owns and
+     frees the buffer. This turned the SIGSEGV into a non-crash.
+   - **Root cause #2 (OPEN): residual value-corruption.** After the
+     param fix the VM no longer crashes but returns a wrong result
+     (a different over-release frees a still-live buffer that's then
+     reused, corrupting a value rather than the freelist). The flip
+     stays OFF until this is diagnosed + fixed. This is the
+     multi-bug reclamation-correctness slog the Risk register
+     predicted; the self-host VM is the oracle for it (the fixture
+     gate is necessary but not sufficient). Do NOT widen reclamation
+     (struct / enum / closure / map box free) onto this base until
+     the array over-releases are all closed — more free sites = more
+     UAF surface.
+
 #### Resolved design decisions (from Open Questions)
 
 - **rc width:** i32, panic on overflow (Roc-style).
