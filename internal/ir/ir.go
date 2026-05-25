@@ -1668,6 +1668,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// eligibility just grants permission — the same borrow-aware
 			// taint as arrays/structs.
 			elig[v.Name] = true
+		case *ast.FuncType:
+			// An owned closure frees its env / pair rc1 block at the
+			// last reference (emitDec → __fern_closure_drop). Same
+			// borrow-aware taint: a closure that escapes (returned via
+			// alias, stored into a container, passed as a retained arg)
+			// is tainted and falls back to the plain dec.
+			elig[v.Name] = true
 		}
 	}
 	return elig
@@ -1706,18 +1713,19 @@ func (b *builder) emitRcDecLocalsAtExit() {
 }
 
 // isOwnedRcLocal reports whether `name` is a declared rc-tracked local
-// (array / struct incl. Map / enum) that the exit sweep would dec.
-// Params are borrowed (not in info.Locals, never swept) and closures
-// (FuncType) take a different drop path, so both are excluded — the
-// move-on-return optimization only applies when the return-inc and the
-// sweep-dec genuinely cancel.
+// (array / struct incl. Map / enum / closure) that the exit sweep would
+// dec. Params are borrowed (not in info.Locals, never swept) so they're
+// excluded. FuncType (closure) locals now free their env/pair block at
+// the last reference (__fern_closure_drop), so they participate in
+// move-on-return / move-on-alias like the other owned types — the
+// transfer and the sweep-dec genuinely cancel.
 func (b *builder) isOwnedRcLocal(name string) bool {
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name != name {
 			continue
 		}
 		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType:
+		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType:
 			return true
 		}
 		return false
@@ -2089,6 +2097,20 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		// Closure reclamation: an OWNED FuncType local frees its env /
+		// pair rc1 block at the last reference (rc==1) via
+		// __fern_closure_drop (reads the payload size stashed at
+		// data-4 → box_free, else dec). Single load+call so
+		// ElideClosurePair's reader still recognises the drop as
+		// benign. Ineligible (borrowed / escaping) closures and
+		// flag-off builds fall through to the plain dec; captured
+		// pointer targets still leak (a later slice).
+		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_closure_drop", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -3488,18 +3510,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 			return nil
 		}
 		if needsRcIncOnAlias(n.Value, b) {
-			// Closures (FuncType) are excluded: the exit sweep dec's
-			// a closure local with the plain rc_dec, which never
-			// frees (only the array dec sites — drop_arr_ptr /
-			// arr_dec — return buffers to the freelist), so a
-			// returned closure can't be use-after-freed and needs no
-			// transfer inc. Excluding them also keeps the
-			// closure-factory shape that the defunctionalise pass
-			// pattern-matches intact. When closure-box free lands,
-			// the inc + a defunc update come together.
-			if _, isFunc := b.exprType(n.Value).(*ast.FuncType); !isFunc {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
-			}
+			// Transfer inc so the caller owns the returned alias and
+			// the callee's exit-sweep dec is balanced. A returned
+			// closure-via-Ident already took the move-on-return path
+			// above (no inc, sweep-excluded); this covers the
+			// remaining aliases (field / index loads), closures
+			// included now that they free their env at last reference.
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 		b.emitRcDecLocalsAtExit()
 		b.emit(Op{Kind: OpReturn})
