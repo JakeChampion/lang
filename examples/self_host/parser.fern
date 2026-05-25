@@ -672,6 +672,22 @@ function parse_pattern(p: Par): PatternResult {
         return PatternResult { par: p, pattern: p_variant("", "") };
     }
     p = p.advance();
+    // Qualified variant pattern: `pkg.Variant` (e.g.
+    // `lexer.TokNumber(n)`). Consume the `.ident` suffix chain so
+    // cross-module variant patterns parse. Without this the `.` is
+    // left on the cursor and parse_match_stmt's arm loop can't
+    // advance — it spins, allocating until OOM. parser.fern's own
+    // matches use `lexer.TokX(...)` throughout, so this is required
+    // for the self-host parser to parse its own source. Same gap as
+    // parse_type_name's qualified-name handling.
+    while (p.peek_punct() == ".") {
+        p = p.advance();  // consume `.`
+        var seg: string = p.peek_ident();
+        if (seg.len() == 0) { seg = p.peek_keyword(); }
+        if (seg.len() == 0) { break; }
+        name = name + "." + seg;
+        p = p.advance();
+    }
     var binding: string = "";
     if (p.peek_punct() == "(") {
         p = p.advance();
@@ -2009,6 +2025,31 @@ function main(): i32 {
     if (modQ2.funcs[0].params.len() != 1) { return 1131; }
     if (modQ2.funcs[0].params[0].type_name != "lexer.Token") { return 1132; }
     if (modQ2.funcs[0].ret_type != "lexer.Token") { return 1133; }
+
+    // Qualified variant patterns in a match: `lexer.TokNumber(n)`.
+    // Before the parse_pattern fix the stray `.` parked the arm loop
+    // and the parser spun until OOM — fatal for parsing parser.fern's
+    // own `match (t) { lexer.TokX(x) => … }` statements.
+    var srcM: string = "match (t) { lexer.TokNumber(n) => { x = 1; }, _ => { x = 0; } }";
+    var progM: Stmt[] = parse_program(lexer.tokenize(srcM));
+    if (progM.len() != 1) { return 1140; }
+    match (progM[0]) {
+        StmtMatch(m) => {
+            if (m.arms.len() != 2) { return 1141; }
+            match (m.arms[0].pattern) {
+                PatVariant(pv) => {
+                    if (pv.type_name != "lexer.TokNumber") { return 1142; }
+                    if (pv.binding != "n") { return 1143; }
+                },
+                _ => { return 1144; }
+            }
+            match (m.arms[1].pattern) {
+                PatWildcard(_) => { },
+                _ => { return 1145; }
+            }
+        },
+        _ => { return 1146; }
+    }
 
     return 0;
 }
