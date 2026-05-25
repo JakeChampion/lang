@@ -40,17 +40,23 @@ var watHelperDeps = map[string][]string{
 	// `__method_MapIter_*` names; the prelude bodies live
 	// under `_impl` suffixes that the codegen alias rewrites
 	// to. Pull each impl in when its alias is referenced.
-	"map_new":                 {"map_new_impl"},
-	"__method_Map_len":        {"__map_len_impl"},
-	"__method_Map_has":        {"__map_has_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get":        {"__map_get_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get_or":     {"__map_get_or_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_set":        {"__map_set_impl", "__map_grow", "__map_hash"},
-	"__method_Map_delete":     {"__map_delete_impl", "__map_hash"},
-	"__method_Map_clear":      {"__map_clear_impl"},
-	"__method_Map_keys":       {"__map_keys_impl", "__map_column"},
-	"__method_Map_values":     {"__map_values_impl", "__map_column"},
-	"__method_Map_iter":       {"__map_iter_impl"},
+	// map_new also roots __map_drop_values: the IR injects a call
+	// to it at every owned-Map drop site (after lowering, so no
+	// AST reference exists for tree-shake to follow), and every
+	// owned map traces back to a map_new. It transitively pulls in
+	// __map_dec_value / __map_val_kind / __map_val_stride from its
+	// body.
+	"map_new":                   {"map_new_impl", "__map_drop_values"},
+	"__method_Map_len":          {"__map_len_impl"},
+	"__method_Map_has":          {"__map_has_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get":          {"__map_get_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get_or":       {"__map_get_or_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash"},
+	"__method_Map_delete":       {"__map_delete_impl", "__map_hash"},
+	"__method_Map_clear":        {"__map_clear_impl"},
+	"__method_Map_keys":         {"__map_keys_impl", "__map_column"},
+	"__method_Map_values":       {"__map_values_impl", "__map_column"},
+	"__method_Map_iter":         {"__map_iter_impl"},
 	"__method_MapIter_has_next": {"__mapiter_has_next_impl"},
 	"__method_MapIter_key":      {"__mapiter_key_impl", "__mapiter_entry_addr"},
 	"__method_MapIter_value":    {"__mapiter_value_impl", "__mapiter_entry_addr"},
