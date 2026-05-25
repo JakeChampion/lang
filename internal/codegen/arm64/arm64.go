@@ -627,7 +627,7 @@ func (g *generator) emitDataSections() {
 		g.line(`	.quad 0`)
 		g.line(`	.quad 0`)
 	}
-	if g.usesRcDec || g.usesRcUnderflowCount {
+	if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec {
 		// Phase 3 rc-underflow detector counter. __fern_rc_dec
 		// bumps it when asked to decrement an rc already <= 0;
 		// __fern_rc_underflow_count reads it back. i32 in the low

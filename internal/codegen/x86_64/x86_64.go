@@ -2583,7 +2583,7 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_read_line_buf")
 			g.line("\t.space 4096")
 		}
-		if g.usesRcDec || g.usesRcUnderflowCount {
+		if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec {
 			// Phase 3 rc-underflow detector counter (i32 in the
 			// low word). __fern_rc_dec bumps it on an over-release;
 			// __fern_rc_underflow_count reads it back.

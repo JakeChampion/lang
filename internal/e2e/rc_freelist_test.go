@@ -16,6 +16,118 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
+// --- Phase 3 step-4 flip-readiness gate ---------------------------
+//
+// Freeing is semantically invisible: a program must produce
+// byte-identical stdout + the same exit code whether or not the
+// freelist is enabled. These tests run the entire data-driven
+// fixture corpus (testdata/cases) BOTH flag-off and flag-on and
+// assert the two runs agree. Any divergence is a reclamation bug
+// (a freed-then-reused block that was still referenced) surfaced by
+// a real program — exactly the evidence needed before flipping
+// ast.RcFreeEnabled on by default. This is the plan's step-5
+// "every test program runs identically before/after" gate, applied
+// to the fixture corpus.
+
+// fixtureFreeOnRunner emits `mainPath` with ast.RcFreeEnabled set,
+// using the same per-backend pipeline as the normal fixture runner.
+func runFixtureX86_64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	info, prog := loadCheckMono(t, mainPath)
+	ast.RcFreeEnabled = true
+	asm, err := x86_64.Emit(prog, info)
+	ast.RcFreeEnabled = false
+	if err != nil {
+		t.Fatalf("x86_64 emit (free-on): %v", err)
+	}
+	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib", "-no-pie")
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	return runBin(cmd, stdin)
+}
+
+func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
+	t.Helper()
+	gcc, qemu := arm64Tooling(t)
+	info, prog := loadCheckMono(t, mainPath)
+	ast.RcFreeEnabled = true
+	asm, err := arm64codegen.Emit(prog, info)
+	ast.RcFreeEnabled = false
+	if err != nil {
+		t.Fatalf("arm64 emit (free-on): %v", err)
+	}
+	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib")
+	cmd := runArm64Bin(qemu, bin)
+	return runBin(cmd, stdin)
+}
+
+// forEachRunnableFixture walks testdata/cases and invokes fn for
+// every non-compile-error fixture that targets `backend`.
+func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, f *fixtureSpec)) {
+	t.Helper()
+	root := "testdata/cases"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read %s: %v", root, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir, err := filepath.Abs(filepath.Join(root, e.Name()))
+		if err != nil {
+			t.Fatalf("abs: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "main.fern")); err != nil {
+			continue
+		}
+		f := loadFixture(t, dir)
+		if f.compileError || !f.backends[backend] {
+			continue
+		}
+		t.Run(f.name, func(t *testing.T) { fn(t, f) })
+	}
+}
+
+func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
+	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
+		outOff, exitOff := runFixtureX86_64(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
+func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
+		outOff, exitOff := runFixtureArm64(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
+func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
+		ast.RcFreeEnabled = true
+		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
+		ast.RcFreeEnabled = false
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
+// --- end flip-readiness gate --------------------------------------
+
 // freelistReuseSrc is the shared body for the flag-on freelist
 // tests across backends: same-size reuse, different-class
 // non-aliasing, and LIFO order. Each program returns 0 on success.

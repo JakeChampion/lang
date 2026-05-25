@@ -1008,6 +1008,21 @@ Phase 3 CANNOT start with the freelist — it must start by
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).
 
+   **Flip-readiness gate — LANDED (the step-5 differential).**
+   `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire
+   data-driven fixture corpus (`testdata/cases`, ~82 runnable
+   programs) BOTH flag-off and flag-on and assert byte-identical
+   stdout + exit. Freeing is semantically invisible, so any
+   divergence is a reclamation bug (a freed-then-reused block still
+   referenced) surfaced by a real program. All 82 agree on x86_64
+   locally; arm64 + wasm ride CI. This gate already paid for itself:
+   it caught a latent flag-on link error — `__fern_arr_dec`
+   referenced the `__fern_rc_underflow` BSS counter, which was only
+   emitted under `usesRcDec`/`usesRcUnderflowCount`; the gate
+   (`usesArrDec`) now pulls it in. The standing green-on-all-backends
+   signal from this gate + the rc-underflow corpus is the evidence
+   the default flip is waiting on (plus owner sign-off).
+
 #### Resolved design decisions (from Open Questions)
 
 - **rc width:** i32, panic on overflow (Roc-style).
