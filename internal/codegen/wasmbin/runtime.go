@@ -421,6 +421,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_box_free")
 					needs.add("__free")
 					needs.add("__fern_alloc")
+				case "__fern_closure_drop":
+					needs.add("__fern_closure_drop")
+					needs.add("__fern_box_free") // called on rc==1
+					needs.add("__fern_rc_dec")   // called otherwise
+					needs.add("__free")
+					needs.add("__fern_alloc")
 				case "__memcpy":
 					needs.add("__memcpy")
 				case "__memset":
@@ -850,6 +856,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildBoxFreeBody,
+	},
+	"__fern_closure_drop": {
+		// (f) → f. Closure env/pair reclamation: at the last
+		// reference (rc==1) frees the rc1 block via __fern_box_free
+		// (payload size at f-4, stashed by __fern_alloc_rc1); else
+		// (rc>1 / static sentinel) dec's via __fern_rc_dec. NULL /
+		// low-address guarded. See buildClosureDropBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildClosureDropBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1770,6 +1786,54 @@ func buildBoxFreeBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstCall(body, free)
 	// return data
 	body = inst.InstLocalGet(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildClosureDropBody assembles wasm bytes for
+// __fern_closure_drop(f) -> f (wasmbin mirror of the native
+// backends). At the last reference (rc==1) it frees the closure
+// env/pair rc1 block via __fern_box_free (payload size at f-4,
+// stashed by __fern_alloc_rc1); otherwise (rc>1 / static sentinel)
+// it dec's via __fern_rc_dec. NULL / low-address guarded. Captured
+// pointer targets (and a pair's env) leak for now.
+func buildClosureDropBody(helperIdxs map[string]uint32) []byte {
+	boxFree := helperIdxs["__fern_box_free"]
+	rcDec := helperIdxs["__fern_rc_dec"]
+	var body []byte
+	// null guard → return f
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// low-address guard → return f
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// rc = mem[f-8]; if rc == 1 → box_free(f, mem[f-4]); return
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // rc
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0) // data (arg0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // size (arg1) at f-4
+	body = inst.InstCall(body, boxFree)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// else rc != 1 → rc_dec(f); its result is the return value
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcDec)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

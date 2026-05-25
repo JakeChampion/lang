@@ -218,6 +218,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesBoxFree {
 		g.emitBoxFreeRuntime()
 	}
+	if g.usesClosureDrop {
+		g.emitClosureDropRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -486,6 +489,12 @@ type generator struct {
 	// pre-gates it on rc==1 (is_unique), so the helper is just a
 	// uniform-result __free wrapper. Pulls in __fern_free.
 	usesBoxFree bool
+	// usesClosureDrop gates `__fern_closure_drop` — the closure
+	// env/pair reclamation helper. At a FuncType local's last
+	// reference (rc==1) it frees the rc1 block (size at data-4,
+	// stashed by __fern_alloc_rc1); otherwise it dec's. Tail-calls
+	// __fern_box_free / __fern_rc_dec, so it pulls both in.
+	usesClosureDrop bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -512,6 +521,12 @@ func (g *generator) recordUse(target string) {
 		g.usesRcInc = true
 	case "__fern_rc_dec":
 		g.usesRcDec = true
+	case "__fern_closure_drop":
+		g.usesClosureDrop = true
+		g.usesBoxFree = true // tail-called on rc==1
+		g.usesFree = true    // box_free → __fern_free
+		g.usesAlloc = true   // shares the freelist BSS
+		g.usesRcDec = true   // tail-called otherwise
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
 	case "__fern_arr_push_grow":
@@ -2957,6 +2972,41 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_box_free, .-__fern_box_free")
+}
+
+// emitClosureDropRuntime emits `__fern_closure_drop(f) -> f` — the
+// closure env/pair reclamation handler. A FuncType local holds a
+// bare env block, a 16-byte closure pair, or a static function-
+// value cell. On the LAST reference (rc==1) the rc1 block is freed
+// via __fern_box_free (the payload size sits at [f-4], stashed by
+// __fern_alloc_rc1); otherwise (rc>1, or the high-bit static
+// sentinel) it routes to __fern_rc_dec, which carries the
+// sentinel / low-address / underflow guards. NULL / low-address
+// guarded. Captured pointer TARGETS (and, for a pair, the env it
+// points to) are not walked here — they leak for now, the same
+// one-level reclamation the other drop helpers do. System V:
+// rdi = f. Returns f (via the tail-called helper) in rax.
+func (g *generator) emitClosureDropRuntime() {
+	g.line("")
+	g.line(".globl __fern_closure_drop")
+	g.line(".type __fern_closure_drop, @function")
+	g.label("__fern_closure_drop")
+	g.emit("mov rax, rdi") // default return = f
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lcd_ret")
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Lcd_ret")
+	g.emit("mov ecx, dword ptr [rdi - 8]") // rc
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Lcd_dec") // rc != 1 (shared, or static sentinel) → dec
+	// rc == 1 → free the env/pair block; payload size at [f-4].
+	g.emit("mov esi, dword ptr [rdi - 4]")
+	g.emit("jmp __fern_box_free") // tail-call: box_free(f, size) -> f
+	g.label(".Lcd_dec")
+	g.emit("jmp __fern_rc_dec") // tail-call: rc_dec(f) -> f
+	g.label(".Lcd_ret")
+	g.emit("ret")
+	g.line(".size __fern_closure_drop, .-__fern_closure_drop")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:

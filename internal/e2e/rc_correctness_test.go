@@ -99,6 +99,39 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Closure env churn: create + call + drop a fresh closure each
+		// iteration. With reclamation the env rc1 block frees at the
+		// loop-body scope exit and the next alloc reuses it; the
+		// counter must stay 0 (no over-release). sum_{1..100} = 5050.
+		name: "closure_churn_free",
+		src: `function main(): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var base: i32 = i;
+        var f = function (x: i32): i32 { return base + x; };
+        sum = sum + f(1);
+        i = i + 1;
+    }
+    return (sum - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escaping closure: a factory returns its closure past its own
+		// frame. The factory must NOT free the env (move-on-return);
+		// main owns the surviving closure and frees it at exit. f(5)
+		// with n=10 → 15.
+		name: "closure_escapes_return",
+		src: `function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    var f = makeAdder(10);
+    return (f(5) - 15) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Map with string keys/values: build, read, drop.
 		name: "map_string_kv",
 		src: `function main(): i32 {

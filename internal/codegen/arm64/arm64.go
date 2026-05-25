@@ -307,6 +307,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesBoxFree {
 		g.emitBoxFreeRuntime()
 	}
+	if g.usesClosureDrop {
+		g.emitClosureDropRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -946,6 +949,36 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_box_free")
+	g.line(".ltorg")
+}
+
+// emitClosureDropRuntime emits `__fern_closure_drop(f) -> f` — the
+// closure env/pair reclamation handler (arm64 mirror of x86-64). On
+// the last reference (rc==1) it frees the rc1 block via
+// __fern_box_free (payload size stashed at data-4 by
+// __fern_alloc_rc1); otherwise (rc>1 or the static high-bit
+// sentinel) it tail-calls __fern_rc_dec (sentinel / underflow
+// guards). NULL / low-address guarded. No frame — both arms are
+// tail-calls, so f flows through in x0. Captured pointer targets
+// (and a pair's env) leak for now, the same one-level reclamation
+// as the other drop helpers.
+func (g *generator) emitClosureDropRuntime() {
+	g.line("")
+	g.line(".global __fern_closure_drop")
+	g.typeDirective("__fern_closure_drop")
+	g.label("__fern_closure_drop")
+	g.emit("cmp x0, #0x10000") // null + low-address guard
+	g.emit("b.lo .Lcd_ret")
+	g.emit("ldur w1, [x0, #-8]") // rc
+	g.emit("cmp w1, #1")
+	g.emit("b.ne .Lcd_dec") // rc != 1 (shared, or static sentinel) → dec
+	g.emit("ldur w1, [x0, #-4]") // rc==1: payload size → arg2
+	g.emit("b __fern_box_free") // tail-call box_free(x0=data, x1=size) -> x0
+	g.label(".Lcd_dec")
+	g.emit("b __fern_rc_dec") // tail-call rc_dec(x0) -> x0
+	g.label(".Lcd_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_closure_drop")
 	g.line(".ltorg")
 }
 
@@ -4866,6 +4899,11 @@ type generator struct {
 	// box reclamation helper `(data, size) -> data`. Pulls in
 	// __fern_free.
 	usesBoxFree bool
+	// usesClosureDrop gates `__fern_closure_drop` — the closure
+	// env/pair reclamation helper (frees the rc1 block at rc==1
+	// using the size stashed at data-4, else dec's). Tail-calls
+	// __fern_box_free / __fern_rc_dec.
+	usesClosureDrop bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6889,6 +6927,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesBoxFree = true
 			g.usesFree = true
 			g.usesAlloc = true
+		case "__fern_closure_drop":
+			g.usesClosureDrop = true
+			g.usesBoxFree = true // tail-called on rc==1
+			g.usesFree = true
+			g.usesAlloc = true
+			g.usesRcDec = true // tail-called otherwise
 		case "__slice_make":
 			target = "__fern_slice_make"
 			g.usesSliceMake = true

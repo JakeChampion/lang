@@ -199,6 +199,15 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_dec" {
 				continue
 			}
+			// Benign closure drop: OpLoadLocal slot; OpCallDirect
+			// __fern_closure_drop. Same as the rc_dec exit-sweep skip
+			// — the closure-env reclamation handler consumes the
+			// pointer and its result is dropped, so the value doesn't
+			// escape and the slot stays elision-eligible.
+			if !r.canonicalOk && !r.aliasOk && i+1 < len(fn.Ops) &&
+				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_closure_drop" {
+				continue
+			}
 			if !r.canonicalOk && !r.aliasOk {
 				failed[op.I32] = true
 			}
