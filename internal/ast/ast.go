@@ -392,15 +392,19 @@ var TwoWordOverride bool
 // to it at rc==0. When false, `__fern_alloc` is a pure bump cursor
 // and `__fern_free` is a no-op — the pre-step-5 leak-forever arena.
 //
-// FLIPPED ON (step 5). Gated on: the free-on-vs-off fixture
-// differential gate green on all backends; the borrow-aware free
-// analysis (computeFreeEligible) that closed the last correctness
-// blocker — borrowed/borrowed-derived buffers are never freed, only
-// the owner frees; and the self-host VM clean under RcFreeDebug
-// (zero use-after-free). The whole `./internal/...` suite passes
-// with this on. A few tests pin the pre-step-5 no-free arena and
-// toggle it off via save/restore (guarded by CodegenMu on natives).
-var RcFreeEnabled = true
+// STILL OFF BY DEFAULT. The borrow-aware analysis closed the
+// borrowed-IN over-release class, and the x86 suite + self-host VM
+// are clean free-on — but the wasm-only TestWASMQueryParse /
+// TestWASMJsonParse (not in the differential gate, so the flip probe
+// missed them) fail free-on on BOTH backends. Root cause: the dual
+// ESCAPE-OUT class. `map.set` transfers its `string[]` value into
+// the map WITHOUT an inc (like array push), so an "owned" array
+// local that escapes into a map is then freed at scope-exit while
+// the map still references it — a free-then-reuse value corruption.
+// The flip waits on consuming-call handling (inc on map.set values /
+// array-element stores, or an escape analysis). Toggled on per-Emit
+// by the flag-on tests (save/restore, CodegenMu-guarded).
+var RcFreeEnabled = false
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
