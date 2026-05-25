@@ -737,6 +737,67 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 // exits 0. The test then reads the datagram off the socket and checks
 // its bytes — proving the create → bind → stream → send → drop pipeline
 // runs end-to-end on wasmtime's host sockets.
+// TestWasmPreview2UdpSendStdoutAdapterFree is the udp_send path plus
+// print() — a telemetry client that logs. UDP's datagram path isn't
+// io/streams, so ComposeUdpClientCliRun pulls in a fresh wasi:io/streams
+// (output side) + wasi:cli/stdout for the log write. The datagram is
+// received by a Go socket and the log line lands on the guest's stdout.
+func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "send.fern")
+	src := "function main(): i32 {\n" +
+		"    print(\"emitting metric\");\n" +
+		"    if (udp_send(\"127.0.0.1\", " + itoa(port) + ", \"metric:1|c\") > 0) { return 0; }\n" +
+		"    return 1;\n" +
+		"}\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "send.component.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (udp+print, no adapter): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (udp+print): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("emitting metric")) {
+		t.Errorf("expected log line on stdout, got: %q", string(out))
+	}
+	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read datagram: %v", err)
+	}
+	if got := string(buf[:n]); got != "metric:1|c" {
+		t.Fatalf("datagram = %q; want %q", got, "metric:1|c")
+	}
+}
+
 func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
