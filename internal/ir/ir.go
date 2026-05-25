@@ -1482,10 +1482,15 @@ func (b *builder) emitDeferCleanup() error {
 // them; only the owner frees (Perceus's rule).
 //
 // Taint sources: parameters; for-in / match / if-let / let-else /
-// destructure bindings. Taint propagates through assignment: a local
-// becomes tainted if it's ever assigned a tainted Ident, a field /
-// index / slice access (which alias their container), or a call that
-// receives a tainted argument or receiver (the result may alias it).
+// destructure bindings; locals that ESCAPE into a container (stored
+// as a map/array element, struct/tuple/enum payload — retained
+// without an inc, so the owner must not free out from under them).
+// Taint propagates through assignment: a local becomes tainted if
+// it's ever assigned a tainted Ident, a field / index / slice access
+// (which alias their container), or a call that receives a tainted
+// argument or receiver (the result may alias it). It also flows
+// backward across bare-Ident aliasing (`tmp = arr`) so freeing the
+// source can't strand a tainted alias.
 // Array literals and calls with only owned arguments produce owned
 // values. The default for an unrecognised RHS is tainted (sound:
 // over-tainting only costs reclamation, never safety). Fixpoint to a
@@ -1502,6 +1507,20 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[n] = true
 		}
 	}
+	// escape taints a local that flows into a retain sink: a value
+	// stored into a container (map/array element, struct/tuple/enum
+	// payload) is RETAINED without a caller-side inc (the Phase 2d
+	// borrow model — only the owner counts). Freeing the local at
+	// scope exit would then use-after-free the alias the container
+	// still holds (e.g. `var arr = [val]; m.set(k, arr)` in
+	// std/url's __query_pair). Only direct Idents are tainted here;
+	// nested sinks (`m.set(k, JArray(inner))`) are caught when the
+	// walk visits the inner EnumLit / StructLit / TupleLit node.
+	escape := func(e ast.Expr) {
+		if id, ok := e.(*ast.Ident); ok {
+			tainted[id.Name] = true
+		}
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
@@ -1511,6 +1530,15 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case *ast.Assign:
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
+			} else {
+				// Storing into an existing element / field / capture
+				// (`grid[i] = row`, `p.items = arr`, `cap = arr`)
+				// retains the value without an inc, so the source
+				// local escapes into the container.
+				switch s.Target.(type) {
+				case *ast.Index, *ast.FieldAccess, *ast.CaptureRef:
+					escape(s.Value)
+				}
 			}
 		case *ast.Destructure:
 			markBindings(s.Names)
@@ -1526,20 +1554,77 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			markBindings(s.Bindings)
 		case *ast.LetElse:
 			markBindings(s.Bindings)
+		case *ast.Call:
+			// Retain sinks the checker lowers to Calls. None of
+			// these inc the stored rc value (unlike StructLit /
+			// TupleLit construction, which do — see
+			// needsRcIncOnAlias at the alias sites), so a local
+			// that flows in is retained uncounted and must not be
+			// freed at scope exit.
+			if id, ok := s.Callee.(*ast.Ident); ok {
+				switch {
+				case id.Name == "__method_Map_set":
+					// Args[0] is the map (mutated in place), not a
+					// retained value — skip it; taint key + value.
+					for _, a := range s.Args[1:] {
+						escape(a)
+					}
+				case id.Name == "__method_Array_push":
+					// Args[0] is the receiver array (threaded /
+					// reassigned), not retained — taint the element.
+					if len(s.Args) == 2 {
+						escape(s.Args[1])
+					}
+				default:
+					// Variant constructor (`Arr(xs)`): emitEnumNew
+					// stores the payload without an inc, so an array
+					// local passed as a payload escapes into the box.
+					if _, isLocal := b.locals[id.Name]; !isLocal {
+						if _, _, _, isVariant := b.lookupVariant(id.Name); isVariant {
+							for _, a := range s.Args {
+								escape(a)
+							}
+						}
+					}
+				}
+			}
+		case *ast.StructLit:
+			for _, f := range s.Fields {
+				escape(f.Value)
+			}
+		case *ast.TupleLit:
+			for _, e := range s.Elems {
+				escape(e)
+			}
+		case *ast.MapLit:
+			for _, ent := range s.Entries {
+				escape(ent.Key)
+				escape(ent.Value)
+			}
+		case *ast.EnumLit:
+			for _, a := range s.Args {
+				escape(a)
+			}
 		}
 		return true
 	})
 	for {
 		changed := false
 		for name, rhss := range assigns {
-			if tainted[name] {
-				continue
-			}
 			for _, rhs := range rhss {
-				if b.rhsTainted(rhs, tainted) {
+				if !tainted[name] && b.rhsTainted(rhs, tainted) {
 					tainted[name] = true
 					changed = true
-					break
+				}
+				// Backward alias propagation: a tainted local
+				// assigned a bare Ident shares that source's
+				// buffer, so the source must not be freed either
+				// (`tmp = arr; m.set(k, tmp)` taints arr too).
+				if tainted[name] {
+					if src, ok := rhs.(*ast.Ident); ok && !tainted[src.Name] {
+						tainted[src.Name] = true
+						changed = true
+					}
 				}
 			}
 		}

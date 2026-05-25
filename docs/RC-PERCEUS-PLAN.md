@@ -1004,30 +1004,46 @@ Phase 3 CANNOT start with the freelist — it must start by
    free+reuse is sound. Green on x86_64 locally; arm64 + wasm ride
    CI. The flip itself stays gated on a corpus-wide-green detector on
    all backends + explicit owner sign-off.
-5. **Enable + verify. — ATTEMPTED, reverted; one class left.** The
-   flip (`RcFreeEnabled = true`) passed the whole x86_64 + interp
-   suite, the fixture differential gate, and the self-host VM under
-   `RcFreeDebug` — but CI then caught two wasm-only tests
-   (`TestWASMQueryParse` exit 3, `TestWASMJsonParse` exit 40) failing
-   free-on. Reproduced on x86 too (so it's not wasm-specific; those
-   programs simply had no x86 coverage — they're `TestWASM*` and
-   aren't in the differential gate). Root cause: the **dual
+5. **Enable + verify. — escape-out class CLOSED; flip pending CI +
+   sign-off.** The first flip (`RcFreeEnabled = true`) passed the
+   whole x86_64 + interp suite, the fixture differential gate, and the
+   self-host VM under `RcFreeDebug` — but CI then caught two wasm-only
+   tests (`TestWASMQueryParse` exit 3, `TestWASMJsonParse` exit 40)
+   failing free-on. Reproduced on x86 too (so it's not wasm-specific;
+   those programs simply had no x86 coverage — they're `TestWASM*` and
+   weren't in the differential gate). Root cause: the **dual
    ESCAPE-OUT over-release**. The borrow-aware analysis closed the
-   borrowed-IN class (values that flow in uncounted), but the
-   symmetric case is values that flow OUT uncounted: `map.set`
-   transfers its `string[]` value into the map WITHOUT an inc (same
-   transfer-without-inc as array push), so a `computeFreeEligible`
-   "owned" array local that escapes into a map is freed at scope-exit
-   while the map still holds it — a free-then-reuse value corruption
-   (the detector's quarantine mode hides it, since it's a stale READ,
-   not an rc op). The flip stays OFF until consuming-call handling
-   lands: inc on `map.set` values (and any other transfer-without-inc
-   escape — array-element stores), or a proper escape analysis. THEN
-   the `TestWASM*` programs should join the differential gate so the
-   probe can't miss them again. The pre-step-5 no-free arena is the
-   default; a handful of tests pin it via save/restore. What LEAKS
-   (safe — no over-release): borrowed/borrowed-derived buffers,
-   struct / enum / closure / map boxes, struct/enum array fields.
+   borrowed-IN class (values that flow in uncounted); the symmetric
+   case is values that flow OUT uncounted — a local stored into a
+   container that retains it WITHOUT an inc, then freed at scope-exit
+   while the container still holds it (a free-then-reuse value
+   corruption; the detector's quarantine mode hides it, since it's a
+   stale READ, not an rc op).
+
+   **Fix (borrow-aware escape taint).** `computeFreeEligible` now also
+   taints any owned array local that escapes into a non-incrementing
+   sink, so the owner never frees out from under the container. The
+   non-incrementing sinks, confirmed by reading each lowering:
+   `__method_Map_set` key + value, MapLit entries, `__method_Array_push`
+   elements (emitArrayPush stores without inc), enum-constructor
+   payloads (emitEnumNew stores without inc), and index / field /
+   capture assignment targets (`grid[i] = row`, `p.items = arr`,
+   `cap = arr`). StructLit / TupleLit construction DO inc their stored
+   values (needsRcIncOnAlias at the alias sites), so escaping through
+   those is already safe and needs no taint. Taint also flows backward
+   across bare-Ident aliasing (`tmp = arr; m.set(k, tmp)` taints arr).
+   New `rc_correctness` entries `escape_array_into_{map_value,
+   pushed_element,enum_payload,index_assign,field_assign,struct_field}`
+   exercise each sink free-on (churn-forced reuse so a wrongly-freed
+   block corrupts the read-back); five fail free-on without the taint
+   (the struct one is inc-protected). They run on all three backends
+   via `Test{X86_64,Arm64,WASM}ArrayDropFree`. The flip now waits only
+   on (a) that corpus + the differential gate green corpus-wide on all
+   three backends in CI and (b) explicit owner sign-off. The
+   pre-step-5 no-free arena stays the default; a handful of tests pin
+   it via save/restore. What LEAKS (safe — no over-release):
+   borrowed/borrowed-derived buffers, struct / enum / closure / map
+   boxes, struct/enum array fields.
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire
