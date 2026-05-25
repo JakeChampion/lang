@@ -3168,10 +3168,20 @@ func (g *generator) emitAllocRc1Runtime() {
 	g.emit("add edi, 8") // size + rc header
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")            // scratch slot (keeps 16-alignment)
+	g.emit("mov dword ptr [rbp - 8], edi") // save size+8 across the call
 	g.emit("call __fern_alloc")
+	g.emit("mov edi, dword ptr [rbp - 8]") // restore size+8
+	g.emit("add rsp, 16")
 	g.emit("pop rbp")
-	g.emit("mov dword ptr [rax], 1") // live rc = 1
-	g.emit("add rax, 8")             // return base + 8 (= data)
+	g.emit("mov dword ptr [rax], 1") // live rc = 1 at base (= data-8)
+	// Stash the payload size at base+4 (= data-4, the unused half of
+	// the rc1 header) so a drop site can free the block without a
+	// separate size header — the closure-env reclamation path reads
+	// it. Harmless for every other rc1 user (nothing else reads it).
+	g.emit("sub edi, 8")                   // recover payload size
+	g.emit("mov dword ptr [rax + 4], edi") // size at base+4 (= data-4)
+	g.emit("add rax, 8")                   // return base + 8 (= data)
 	g.emit("ret")
 	g.line(".size __fern_alloc_rc1, .-__fern_alloc_rc1")
 }
