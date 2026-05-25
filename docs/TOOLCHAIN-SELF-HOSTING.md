@@ -802,15 +802,26 @@ End-to-end exit code 42 demo (covered by
     log write's `blocking-write-and-flush`. Verified end-to-end — the
     datagram reaches a Go socket and the log line lands on the guest's
     stdout (`TestWasmPreview2UdpSendStdoutAdapterFree`).
-  - **Still to do (genuinely niche / large):**
-    - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
-      path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
-    - The remaining stream-backed mixes: HTTP handler + files (needs a
-      host world that grants filesystem) and sockets + stdin — both
-      follow the TCP filesystem pattern.
-    - Read+write of files in one program (both descriptor stream
-      directions at once) — the filesystem/types instance type carries
-      a single direction; each direction composes on its own.
+  - **Read+write files in one program. Shipped.** A CLI tool that reads
+    one file and writes another composes adapter-free: the CLI composer
+    selects the combined `WasiFilesystemTypesReadWritePathInstanceTypeBody`
+    and threads a parallel write-via-stream lowering alongside read-via
+    (`hasFileReadWrite` / `via2`). Verified — `read_file` → `write_file`
+    copies content through `wasmtime run --dir`
+    (`TestWasmPreview2FileReadWriteAdapterFree`). This was the last CLI
+    rejection; the remaining adapter-forcing cases are all sockets/http
+    mixes. (read+append in one program is still unsupported — the
+    combined body is read+write, not read+append.)
+  - **Still to do — the adapter-retirement punch list:**
+    - **TCP + stdin** — surface `get-stdin` in the TCP composer.
+    - **TCP + UDP** in one program — both socket families in one composer.
+    - **UDP + files** — filesystem open-chain into the UDP composer (it
+      now has io/streams from udp+print).
+    - **HTTP handler + files** — filesystem into the http composer
+      (composes, though `wasmtime serve`'s proxy world won't run it).
+    - Then `-wasi-adapter` / preview-1 / `wasm-tools` can be retired
+      from the default toolchain. Inbound `udp_recv`, DNS hostnames, and
+      read+append remain genuinely niche.
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)

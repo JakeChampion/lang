@@ -286,6 +286,73 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2FileReadWriteAdapterFree exercises read+write of files
+// in one program (read one file, write another) — the combined-direction
+// wasi:filesystem/types instance type. It composed only via the adapter
+// before; now `-target wasm` (no adapter) handles it. Runs under
+// `wasmtime run --dir` and checks the copied content lands on disk.
+func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	want := "copied-through-wasm"
+	if err := os.WriteFile(filepath.Join(root, "in.txt"), []byte(want), 0o644); err != nil {
+		t.Fatalf("write in: %v", err)
+	}
+	srcPath := filepath.Join(dir, "rw.fern")
+	src := `function main(): i32 {
+    match (read_file("in.txt")) {
+        Ok(content) => {
+            match (write_file("out.txt", content)) { Some(e) => { return 2; }, None => {} }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "rw.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (read+write, no adapter): %v\n%s", err, out)
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
+	}
+	for _, w := range []string{"read-via-stream", "write-via-stream"} {
+		if !bytes.Contains(wit, []byte(w)) {
+			t.Errorf("expected %q in the component, got:\n%s", w, wit)
+		}
+	}
+	if out, err := exec.Command("wasmtime", "run", "--dir", root+"::/", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run (read+write): %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "out.txt"))
+	if err != nil {
+		t.Fatalf("read out.txt: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("out.txt = %q; want %q", string(got), want)
+	}
+}
+
 // TestWasmPreview2FileCloseAdapterFree exercises file close on the
 // adapter-free path (`-target wasm`, no -wasi-adapter): Writer.close()
 // and Reader.close() now drop the own<output-stream> / own<input-stream>

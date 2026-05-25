@@ -994,7 +994,7 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
-		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend
+		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend || opts.FileReadWrite
 		for _, mt := range opts.MemTramp {
 			if mt.NeedsRealloc {
 				needsRealloc = true
@@ -1366,15 +1366,17 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 		return component.ComposeOpts{}, false // single write stream only
 	}
 	// The filesystem open-chain (shared get-directories + open-at, plus
-	// exactly one descriptor stream method: read-, write-, or
-	// append-via-stream) must be complete and single-direction. Two
-	// directions in one program isn't supported — the filesystem/types
-	// instance type carries one method.
+	// descriptor stream method(s)) must be complete. A single direction
+	// (read-, write-, or append-via-stream) uses the matching
+	// single-direction instance type; read+write together uses the
+	// combined body. (append + read, or append + write, isn't supported —
+	// append shares the write-side but the combined body is read+write.)
 	fsAny := getDirs || openAt || readVia || writeVia || appendVia
 	fileRead := getDirs && openAt && readVia && !writeVia && !appendVia
 	fileWrite := getDirs && openAt && writeVia && !readVia && !appendVia
 	fileAppend := getDirs && openAt && appendVia && !readVia && !writeVia
-	if fsAny && !(fileRead || fileWrite || fileAppend) {
+	fileReadWrite := getDirs && openAt && readVia && writeVia && !appendVia
+	if fsAny && !(fileRead || fileWrite || fileAppend || fileReadWrite) {
 		return component.ComposeOpts{}, false
 	}
 	// blocking-write backs print/eprint and the file write/append-chain;
@@ -1383,10 +1385,10 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	// it, but a producer *without* the method is fine — a bare
 	// open_reader/open_writer opens a handle and never reads/writes.
 	writeGetter := getStdout || getStderr
-	if blockWrite && !(writeGetter || fileWrite || fileAppend) {
+	if blockWrite && !(writeGetter || fileWrite || fileAppend || fileReadWrite) {
 		return component.ComposeOpts{}, false
 	}
-	if blockRead && !(getStdin || fileRead) {
+	if blockRead && !(getStdin || fileRead || fileReadWrite) {
 		return component.ComposeOpts{}, false
 	}
 	if getStdout {
@@ -1398,6 +1400,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	opts.FileRead = fileRead
 	opts.FileWrite = fileWrite
 	opts.FileAppend = fileAppend
+	opts.FileReadWrite = fileReadWrite
 	opts.ReadStream = blockRead
 	opts.WriteStream = blockWrite
 	opts.DropInputStream = dropInput
@@ -1434,7 +1437,7 @@ func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
 	// Claim any shape with at least one import (stream / file /
 	// mem-trampoline / structured). Only a truly import-free program
 	// falls through — to BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && !opts.FileAppend && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
+	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && !opts.FileAppend && !opts.FileReadWrite && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
 		return component.ComposeOpts{}, false
 	}
 	return opts, true
