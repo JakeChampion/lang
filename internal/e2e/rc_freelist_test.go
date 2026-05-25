@@ -35,9 +35,10 @@ func runFixtureX86_64FreeOn(t *testing.T, mainPath, stdin string) (string, int) 
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	asm, err := x86_64.Emit(prog, info)
-	ast.RcFreeEnabled = false
+	ast.RcFreeEnabled = prev
 	if err != nil {
 		t.Fatalf("x86_64 emit (free-on): %v", err)
 	}
@@ -55,9 +56,10 @@ func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	asm, err := arm64codegen.Emit(prog, info)
-	ast.RcFreeEnabled = false
+	ast.RcFreeEnabled = prev
 	if err != nil {
 		t.Fatalf("arm64 emit (free-on): %v", err)
 	}
@@ -96,7 +98,10 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 
 func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
+		prev := ast.RcFreeEnabled
+		ast.RcFreeEnabled = false
 		outOff, exitOff := runFixtureX86_64(t, f.mainPath, f.stdin)
+		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
@@ -106,7 +111,10 @@ func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 
 func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
+		prev := ast.RcFreeEnabled
+		ast.RcFreeEnabled = false
 		outOff, exitOff := runFixtureArm64(t, f.mainPath, f.stdin)
+		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
@@ -116,10 +124,12 @@ func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 
 func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		prev := ast.RcFreeEnabled
+		ast.RcFreeEnabled = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
-		ast.RcFreeEnabled = false
+		ast.RcFreeEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -187,9 +197,10 @@ func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	// it here (the mutex isn't re-entrant). These tests don't call
 	// t.Parallel, so they run in the sequential phase with no other
 	// Emit racing the flag.
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	asm, emitErr := x86_64.Emit(prog, info)
-	ast.RcFreeEnabled = false
+	ast.RcFreeEnabled = prev
 	if emitErr != nil {
 		t.Fatalf("emit: %v", emitErr)
 	}
@@ -237,9 +248,10 @@ func compileAndRunArm64FreeOn(t *testing.T, src string) (string, int) {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	asm, emitErr := arm64codegen.Emit(prog, info)
-	ast.RcFreeEnabled = false
+	ast.RcFreeEnabled = prev
 	if emitErr != nil {
 		t.Fatalf("emit: %v", emitErr)
 	}
@@ -361,8 +373,9 @@ func TestArm64ArrayDropFree(t *testing.T) {
 }
 
 func TestWASMArrayDropFree(t *testing.T) {
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = false }()
+	defer func() { ast.RcFreeEnabled = prev }()
 	if got := runWasm(t, arrayDropFreeReuseSrc); got != 0 {
 		t.Errorf("drop+free+reuse: got %d, want 0", got)
 	}
@@ -385,8 +398,9 @@ func TestWASMArrayDropFree(t *testing.T) {
 // core/no_prelude import) to dodge the wasm harness's
 // no_prelude output-parsing quirk.
 func TestWASMFreelistReuse(t *testing.T) {
+	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = false }()
+	defer func() { ast.RcFreeEnabled = prev }()
 
 	reuse := `function main(): i32 {
     var a: usize = __alloc(64);

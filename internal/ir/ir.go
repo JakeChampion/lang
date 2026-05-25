@@ -6258,13 +6258,21 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && !isParamName(t.Name, b) {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
 				// the buffer — not walking elements — is correct; the
 				// in-place push (rc bumped to 2) dec's to 1 and doesn't
 				// free. This is the O(N²)→O(N) push-loop reclamation.
+				//
+				// PARAMETERS are excluded: under the borrow model a
+				// borrowed array param has rc==1 (no caller-side inc), so
+				// `ps = ps.push(...)` on a param would free the OLD buffer
+				// — which the CALLER still references — a use-after-free
+				// (the self-host VM's `compile_expr(ops, …)` reassigning
+				// its `ops` param is exactly this). Params keep the plain
+				// dec; the caller owns and frees the buffer.
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
