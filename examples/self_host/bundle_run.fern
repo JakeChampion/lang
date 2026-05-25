@@ -1,0 +1,110 @@
+// examples/self_host/bundle_run.fern — multi-module self-host driver.
+// Reads a bundle of Lang modules from stdin, flattens + merges them
+// into one Module (flatten.bundle), and emits x86-64 asm for the
+// result. This is the multi-module counterpart of asm_run.fern: where
+// that compiles a single self-contained file, this one accepts the
+// shape the compiler ITSELF has — several modules with cross-module
+// `mod.X` references.
+//
+// Input format — modules concatenated, each introduced by a marker
+// line `///MODULE <name>`; the LAST module is the entry, the rest are
+// its importable modules (their `<name>` is what the entry's
+// `import "./<name>"` resolves to):
+//
+//     ///MODULE a
+//     pub function add(x: i32, y: i32): i32 { return x + y; }
+//     ///MODULE main
+//     import "./a"; function main(): i32 { return a.add(2, 3); }
+//
+// Avoids filesystem / read_file / args plumbing: the bundle arrives
+// on the one stdin stream the driver already consumes. A later brick
+// can swap the marker splitter for real `import`-driven file loading
+// once the emitter grows read_file support for a self-compiled driver.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./asm";
+
+// Sections holds the split bundle: parallel name / source arrays in
+// input order (entry last).
+struct Sections { names: string[], sources: string[] }
+
+// MARKER is the module-introducer prefix: `///MODULE `.
+function is_marker(line: string): boolean {
+    var p: string = "///MODULE ";
+    if (line.len() < p.len()) { return false; }
+    var i: i32 = 0;
+    while (i < p.len()) {
+        if (line[i] != p[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function marker_name(line: string): string {
+    // Everything after `///MODULE ` (10 bytes), trimmed of a trailing
+    // '\r' if the input used CRLF.
+    var name: string = line[10:line.len()];
+    var n: i32 = name.len();
+    if (n > 0 && name[n - 1] == 13) { return name[0:n - 1]; }
+    return name;
+}
+
+// split_modules walks the blob line-by-line and slices out each
+// module's source between marker lines. Offset-based (one slice per
+// section) so it stays O(N), not the O(N²) of `acc = acc + line`.
+function split_modules(blob: string): Sections {
+    var names: string[] = [];
+    var sources: string[] = [];
+    var n: i32 = blob.len();
+    var i: i32 = 0;
+    var line_start: i32 = 0;
+    var cur_name: string = "";
+    var src_start: i32 = 0;
+    var have: boolean = false;
+    while (i <= n) {
+        if (i == n || blob[i] == 10) {   // end of a line (or EOF)
+            var line: string = blob[line_start:i];
+            if (is_marker(line)) {
+                if (have) {
+                    names = names.push(cur_name);
+                    sources = sources.push(blob[src_start:line_start]);
+                }
+                cur_name = marker_name(line);
+                src_start = i + 1;
+                have = true;
+            }
+            line_start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (have) {
+        names = names.push(cur_name);
+        sources = sources.push(blob[src_start:n]);
+    }
+    return Sections { names: names, sources: sources };
+}
+
+function main(): i32 {
+    var blob: string = io.read_all_stdin();
+    var secs: Sections = split_modules(blob);
+    var count: i32 = secs.names.len();
+    if (count == 0) { return 1; }
+
+    // The last section is the entry; the rest are importable modules.
+    var loaded: flatten.LoadedModule[] = [];
+    var i: i32 = 0;
+    while (i < count - 1) {
+        var m: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[i]));
+        loaded = loaded.push(flatten.LoadedModule { name: secs.names[i], mod: m });
+        i = i + 1;
+    }
+    var entry: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[count - 1]));
+
+    var merged: parser.Module = flatten.bundle(entry, loaded);
+    print(asm.emit_module(merged));
+    return 0;
+}
