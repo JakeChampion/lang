@@ -346,6 +346,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// tcp-socket to satisfy the canonical-ABI
 					// resource-has-children rule.
 					needs.add("__fern_tcp_close")
+				case "__fern_udp_send":
+					// (host, port, data) → i32 — one-shot UDP
+					// datagram (create → bind → connect → send →
+					// drop). Parses the IPv4 host literal and
+					// SSO-normalizes the data string.
+					needs.add("__fern_alloc")
+					needs.add("__network_handle")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_udp_send")
 				case "__slice_make":
 					needs.add("__fern_alloc")
 					needs.add("__slice_make")
@@ -994,6 +1004,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpCloseBody,
+	},
+	"__fern_udp_send": {
+		// (host_data, host_len, port, data_data, data_len) -> i32 —
+		// bytes accepted by the host, or -errno. String args lower to
+		// (ptr, len) pairs, so host + data are two i32s each.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpSendBody,
 	},
 	"__fern_open_reader": {
 		// (path_data, path_len) → i32 — heap-form
