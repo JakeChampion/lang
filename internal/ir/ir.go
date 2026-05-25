@@ -1692,6 +1692,37 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 }
 
 func (b *builder) emitRcDecLocalsAtExit() {
+	b.emitRcDecLocalsAtExitExcept("")
+}
+
+// isOwnedRcLocal reports whether `name` is a declared rc-tracked local
+// (array / struct incl. Map / enum) that the exit sweep would dec.
+// Params are borrowed (not in info.Locals, never swept) and closures
+// (FuncType) take a different drop path, so both are excluded — the
+// move-on-return optimization only applies when the return-inc and the
+// sweep-dec genuinely cancel.
+func (b *builder) isOwnedRcLocal(name string) bool {
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name != name {
+			continue
+		}
+		switch v.Type.(type) {
+		case ast.ArrayType, ast.StructType, ast.EnumType:
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// emitRcDecLocalsAtExitExcept is emitRcDecLocalsAtExit but skips the
+// dec for one named local. The Return lowering uses this for the
+// move-on-return optimization: when a function returns a bare
+// rc-tracked local, the return-transfer inc and that local's
+// exit-sweep dec cancel (the inc exists only to survive the sweep), so
+// emitting neither leaves the returned value at the same rc — fewer rc
+// ops, identical result. `exclude == ""` decs every owned local.
+func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// decValueOnStack consumes a pointer value already on the
 	// operand stack and dec's it per its static type. An array of
 	// pointer-shaped rc-tracked elements routes through
@@ -2027,6 +2058,11 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	// genuine local alias (`var m2 = m1`) still inc's and so gets
 	// a copy on write. Only OWNED locals are dec'd below.
 	seen := map[string]bool{}
+	if exclude != "" {
+		// Move-on-return: the returned local is handed to the caller
+		// without an inc, so it must NOT be dec'd here.
+		seen[exclude] = true
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue
@@ -3328,6 +3364,21 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// drift was masked; it also fixes the symmetric latent
 		// underflow where the caller later dec'd a value the callee
 		// had already dec'd to 0.)
+		// Move-on-return (Phase 4 pair-cancellation): when the value
+		// is a bare rc-tracked LOCAL, the return-transfer inc and that
+		// local's exit-sweep dec cancel. Emit neither — skip the inc
+		// and exclude the local from the sweep — so the value is handed
+		// to the caller at its current rc with no rc traffic. Only
+		// applies with no defers (the defer path stashes the value in a
+		// synthetic slot, so the returned value no longer aliases the
+		// named local on the stack). Other returned aliases (field /
+		// index loads) still take the inc; fresh values aren't locals.
+		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
+			needsRcIncOnAlias(n.Value, b) && b.isOwnedRcLocal(id.Name) {
+			b.emitRcDecLocalsAtExitExcept(id.Name)
+			b.emit(Op{Kind: OpReturn})
+			return nil
+		}
 		if needsRcIncOnAlias(n.Value, b) {
 			// Closures (FuncType) are excluded: the exit sweep dec's
 			// a closure local with the plain rc_dec, which never

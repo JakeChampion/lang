@@ -1294,6 +1294,21 @@ inc/dec pairs.
 Effect: short-lived values stop paying the rc tax. Performance
 on small benchmarks recovers and surpasses today's always-copy.
 
+**Move-on-return (DONE).** First pair-cancellation slice, done
+structurally at lowering (no separate pass / liveness analysis): when
+a function returns a bare owned rc local, the return-transfer inc and
+that local's exit-sweep dec cancel — the inc exists only to survive
+the sweep. `emitRcDecLocalsAtExitExcept` skips the returned local in
+the sweep and the inc is not emitted, so the value is handed to the
+caller at its current rc with zero rc traffic (saves an inc + a dec
+per rc-returning function). Excludes params (borrowed — never swept,
+so the inc has no dec to cancel) and closures (different drop path).
+Backend-agnostic (it's in `lowerFunc`). Covered by `move_on_return_test`
+(fires for owned locals, keeps the inc for params); the differential
+gate confirms the elision is observationally invisible. Still to do:
+move-on-alias (`y = x` where `x` is dead after — needs liveness) and
+the general redundant-pair pass.
+
 ### Phase 5: Drop reuse + borrowed params
 
 Two separate PRs:
