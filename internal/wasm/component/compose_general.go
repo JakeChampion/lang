@@ -156,6 +156,86 @@ func (g *gComposer) ensureUdpCreate() {
 	g.inst["wasi:sockets/udp-create-socket@0.2.0"] = inst
 }
 
+func (g *gComposer) ensureIoPoll() {
+	if _, ok := g.inst["wasi:io/poll@0.2.0"]; ok {
+		return
+	}
+	inst := g.c.importInstance("wasi:io/poll@0.2.0", g.c.typeRaw(WasiIoPollInstanceTypeBody()))
+	g.inst["wasi:io/poll@0.2.0"] = inst
+	g.surfaced["pollable"] = g.c.aliasType(inst, "pollable")
+}
+
+// ensureTcp imports wasi:sockets/tcp and surfaces tcp-socket. It pulls in
+// the full dependency chain: network (for ip-socket-address / error-code),
+// io/streams read+write (accept hands back both directions), and io/poll
+// (the socket's subscribe → pollable).
+func (g *gComposer) ensureTcp() {
+	if _, ok := g.inst["wasi:sockets/tcp@0.2.0"]; ok {
+		return
+	}
+	g.ensureNetwork()
+	g.ensureIoStreams(true, true)
+	g.ensureIoPoll()
+	inst := g.c.importInstance("wasi:sockets/tcp@0.2.0",
+		g.c.typeRaw(WasiSocketsTcpInstanceTypeBody(g.surfaced["network"], g.surfaced["error-code"], g.surfaced["ip-socket-address"], g.surfaced["input-stream"], g.surfaced["output-stream"], g.surfaced["pollable"])))
+	g.inst["wasi:sockets/tcp@0.2.0"] = inst
+	g.surfaced["tcp-socket"] = g.c.aliasType(inst, "tcp-socket")
+}
+
+func (g *gComposer) ensureTcpCreate() {
+	if _, ok := g.inst["wasi:sockets/tcp-create-socket@0.2.0"]; ok {
+		return
+	}
+	g.ensureTcp()
+	inst := g.c.importInstance("wasi:sockets/tcp-create-socket@0.2.0",
+		g.c.typeRaw(WasiSocketsTcpCreateSocketInstanceTypeBody(g.surfaced["ip-address-family"], g.surfaced["error-code"], g.surfaced["tcp-socket"])))
+	g.inst["wasi:sockets/tcp-create-socket@0.2.0"] = inst
+}
+
+func (g *gComposer) ensureCliStdin() {
+	if _, ok := g.inst["wasi:cli/stdin@0.2.0"]; ok {
+		return
+	}
+	g.ensureIoStreams(true, false)
+	g.inst["wasi:cli/stdin@0.2.0"] = g.c.importInstance("wasi:cli/stdin@0.2.0", g.c.typeRaw(WasiCliStdinInstanceTypeBody(g.surfaced["input-stream"])))
+}
+
+// gFsMode selects the single-direction filesystem open-chain: read over the
+// input-stream (static file server), write/append over the output-stream
+// (access logs / uploads).
+type gFsMode int
+
+const (
+	gFsRead gFsMode = iota
+	gFsWrite
+	gFsAppend
+)
+
+// ensureFilesystem imports wasi:filesystem/types (one descriptor direction)
+// + wasi:filesystem/preopens and surfaces descriptor.
+func (g *gComposer) ensureFilesystem(mode gFsMode) {
+	if _, ok := g.inst["wasi:filesystem/types@0.2.0"]; ok {
+		return
+	}
+	var body []byte
+	switch mode {
+	case gFsAppend:
+		g.ensureIoStreams(false, true)
+		body = WasiFilesystemTypesAppendPathInstanceTypeBody(g.surfaced["output-stream"])
+	case gFsWrite:
+		g.ensureIoStreams(false, true)
+		body = WasiFilesystemTypesWritePathInstanceTypeBody(g.surfaced["output-stream"])
+	default:
+		g.ensureIoStreams(true, false)
+		body = WasiFilesystemTypesReadPathInstanceTypeBody(g.surfaced["input-stream"])
+	}
+	inst := g.c.importInstance("wasi:filesystem/types@0.2.0", g.c.typeRaw(body))
+	g.inst["wasi:filesystem/types@0.2.0"] = inst
+	tDesc := g.c.aliasType(inst, "descriptor")
+	g.surfaced["descriptor"] = tDesc
+	g.inst["wasi:filesystem/preopens@0.2.0"] = g.c.importInstance("wasi:filesystem/preopens@0.2.0", g.c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc)))
+}
+
 func (g *gComposer) ensureCliWrite(iface, getter string) {
 	if _, ok := g.inst[iface]; ok {
 		return
