@@ -6187,16 +6187,32 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	return 0
 }
 
-// mapValKindTag is mapKeyKindTag's V-side counterpart. 0 =
-// i32-sized scalar (i32 / u32 / sub-i32); 1 = pointer-shaped
-// (string / array / struct / enum / slice / tuple). Stored at
-// buf+12 by map_new so `__map_values_impl` can size its
+// mapValKindTag is mapKeyKindTag's V-side counterpart. Stored
+// at buf+12 by map_new so `__map_values_impl` can size its
 // snapshot array's element stride correctly on arm64 (4-byte
 // for i32-V, 8-byte for pointer-V — surviving arm64-darwin's
 // high heap). i64 / f64 V types still use the boxed-cell
 // codepath (emitWideMapSet / emitWideMapGet) and never reach
 // the value-column snapshot directly.
+//
+// Encoding (widened for Stage A of map-value reclamation):
+//   0 = i32-sized scalar (no rc)
+//   1 = non-array pointer (string / struct / enum / slice /
+//       tuple) — pointer-shaped but not yet reclaimed by
+//       map_drop
+//   2 = array value with non-rc elements (plain arr_dec free)
+//   3 = array value with rc-tracked elements (drop_arr_ptr)
+// Kinds 2 / 3 carry enough information for a future entry-
+// walking map_drop to free the value column; until then they
+// behave identically to kind 1 at every reader (kind != 0 ==
+// pointer-shaped).
 func mapValKindTag(t ast.Type) int32 {
+	if at, ok := t.(ast.ArrayType); ok {
+		if arrElemIsRcTracked(at.Elem) {
+			return 3
+		}
+		return 2
+	}
 	if ast.IsPointerType(t) {
 		return 1
 	}
