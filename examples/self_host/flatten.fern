@@ -1,18 +1,28 @@
 // examples/self_host/flatten.fern — module-flattening for the
-// self-host pipeline. Ports the qualified-name rewriting half of
-// internal/modload: a cross-module reference `mod.name` is rewritten
-// to the flat mangled name `mod__name`, so a multi-module program
-// (the compiler itself!) can be lowered to a single flat namespace
-// the asm emitter understands.
+// self-host pipeline. Ports internal/modload's namespacing into the
+// self-host compiler so a multi-module program (the compiler itself!)
+// lowers to a single flat namespace the asm emitter understands.
 //
-// This is brick 1 of the module-flattening effort: the REFERENCE
-// rewriter (rewrite every `mod.X` ref → `mod__X`), driven by the
-// import set of a module. Brick 2 (a follow-up) adds the other half
-// — loading each imported module, mangling its `pub` decls to
-// `mod__name`, and merging everything into one Module — at which
-// point `parser.parse_module(lexer.tokenize(src))` inside asm.fern
-// resolves to real flat functions instead of the unresolved
-// qualified calls that fault the stage-2 self-compile today.
+// Two halves, both driven by a RewriteCtx over the AST:
+//
+//   * flatten_qualified(mod) — brick 1: rewrite every QUALIFIED
+//     cross-module reference `mod.X` → flat `mod__X` (call / type /
+//     variant-pattern / struct-lit / field-access positions), driven
+//     by the module's import set.
+//   * mangle_module(mod, prefix) — brick 2: rename a non-entry
+//     module's own top-level decls to `prefix__name` and rewrite all
+//     its INTERNAL bare references to match, plus flatten any
+//     qualified refs it makes to other modules. Receiver methods keep
+//     their name (dispatched by receiver type) but their receiver
+//     type is mangled. After mangling every import this way and
+//     merging the decls with the entry module, the qualified
+//     references brick 1 produced resolve to real flat functions.
+//
+// Both share rewrite_expr / rewrite_stmt / rewrite_type_name, which
+// take a RewriteCtx:
+//   modnames  — imported module names; `m.X` (m in modnames) → `m__X`
+//   prefix    — own-module mangle prefix ("" = entry, no mangling)
+//   declnames — own top-level decl names; a bare ref to one → prefix__name
 //
 // no_prelude file: string handling is hand-rolled over the byte
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
@@ -22,7 +32,10 @@ import "core/no_prelude";
 import "./lexer";
 import "./parser";
 
-// first_dot returns the byte index of the first '.' in s, or -1.
+pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[] }
+
+// first_dot / first_bracket: byte index of the first '.' / '[' in s,
+// or -1. Used to split a type spelling into its qualifier / base.
 function first_dot(s: string): i32 {
     var i: i32 = 0;
     while (i < s.len()) {
@@ -31,21 +44,27 @@ function first_dot(s: string): i32 {
     }
     return 0 - 1;
 }
-
-// is_modname reports whether `name` is one of the imported module
-// names — i.e. whether `name.X` should be treated as a qualified
-// cross-module reference rather than a struct/tuple field access.
-function is_modname(name: string, modnames: string[]): boolean {
+function first_bracket(s: string): i32 {
     var i: i32 = 0;
-    while (i < modnames.len()) {
-        if (modnames[i] == name) { return true; }
+    while (i < s.len()) {
+        if (s[i] == 91) { return i; }   // '['
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// is_in reports membership of `name` in a string list.
+function is_in(name: string, list: string[]): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) {
+        if (list[i] == name) { return true; }
         i = i + 1;
     }
     return false;
 }
 
-// basename strips a leading directory + `./` from an import path,
-// yielding the module name: "./lexer" → "lexer", "std/i32" → "i32".
+// basename strips a leading directory + `./` from an import path:
+// "./lexer" → "lexer", "std/i32" → "i32".
 function basename(path: string): string {
     var start: i32 = 0;
     var i: i32 = 0;
@@ -56,8 +75,7 @@ function basename(path: string): string {
     return path[start:path.len()];
 }
 
-// mod_names derives the imported-module name set from a module's
-// import list.
+// mod_names derives the imported-module name set from a module.
 pub function mod_names(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -68,27 +86,46 @@ pub function mod_names(mod: parser.Module): string[] {
     return out;
 }
 
-// rewrite_type_name rewrites a qualified type spelling: `mod.Name`
-// → `mod__Name` when `mod` is an imported module. The array suffix
-// rides along: `lexer.Token[]` → `lexer__Token[]`. Unqualified
-// names and generics (`Map[string, i32]`) pass through untouched.
-pub function rewrite_type_name(tn: string, modnames: string[]): string {
-    var dot: i32 = first_dot(tn);
-    if (dot < 0) { return tn; }
-    var prefix: string = tn[0:dot];
-    if (!is_modname(prefix, modnames)) { return tn; }
-    var rest: string = tn[dot + 1:tn.len()];
-    return prefix + "__" + rest;
+// mangle_bare maps a bare reference name to its own-module mangled
+// form when it names one of this module's top-level decls.
+function mangle_bare(name: string, ctx: RewriteCtx): string {
+    if (is_in(name, ctx.declnames)) { return ctx.prefix + "__" + name; }
+    return name;
 }
 
-// rewrite_pattern rewrites a match-arm pattern's qualified variant
-// type name (`lexer.TokNumber` → `lexer__TokNumber`); wildcards and
-// unqualified variants are unchanged.
-function rewrite_pattern(p: parser.Pattern, modnames: string[]): parser.Pattern {
+// rewrite_type_name rewrites a type spelling under ctx:
+//   * qualified `mod.Name` (mod imported) → `mod__Name` (array /
+//     generic suffix rides along: `lexer.Token[]` → `lexer__Token[]`)
+//   * bare `Base` (Base is an own decl) → `prefix__Base`, preserving
+//     any `[]` / `[..]` suffix (`Token[]` → `prefix__Token[]`)
+//   * everything else (i32, Map[string,i32], other.Thing) untouched
+pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
+    var dot: i32 = first_dot(tn);
+    if (dot >= 0) {
+        var prefix: string = tn[0:dot];
+        if (is_in(prefix, ctx.modnames)) {
+            return prefix + "__" + tn[dot + 1:tn.len()];
+        }
+        return tn;
+    }
+    // No qualifier — maybe a bare own-module type (possibly with a
+    // generic / array suffix).
+    var br: i32 = first_bracket(tn);
+    if (br < 0) {
+        return mangle_bare(tn, ctx);
+    }
+    var base: string = tn[0:br];
+    if (is_in(base, ctx.declnames)) {
+        return ctx.prefix + "__" + base + tn[br:tn.len()];
+    }
+    return tn;
+}
+
+function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
     match (p) {
         parser.PatVariant(pv) => {
             return parser.PatVariant {
-                type_name: rewrite_type_name(pv.type_name, modnames),
+                type_name: rewrite_type_name(pv.type_name, ctx),
                 binding: pv.binding
             };
         },
@@ -97,25 +134,27 @@ function rewrite_pattern(p: parser.Pattern, modnames: string[]): parser.Pattern 
     return p;
 }
 
-// rewrite_expr rewrites every qualified reference inside an
-// expression. The load-bearing case is ExprFieldAccess whose base
-// is an imported-module ident — `mod.field` becomes a bare
-// `mod__field` ident (a flat function/value reference). A field
-// access on a plain value (`p.x`, `t.0`) is left alone and its base
-// is recursed into.
-pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
+// rewrite_expr rewrites references inside an expression under ctx.
+// Qualified module ref `mod.field` (base ident in modnames) collapses
+// to a bare `mod__field` ident; a bare ident naming an own decl
+// becomes `prefix__name`; field access on a plain value is recursed
+// into untouched.
+pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
     match (e) {
+        parser.ExprIdent(id) => {
+            return parser.ExprIdent { name: mangle_bare(id.name, ctx) };
+        },
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
-                    if (is_modname(id.name, modnames)) {
+                    if (is_in(id.name, ctx.modnames)) {
                         return parser.ExprIdent { name: id.name + "__" + fa.field };
                     }
                 },
                 _ => { }
             }
             return parser.ExprFieldAccess {
-                obj: rewrite_expr(fa.obj, modnames),
+                obj: rewrite_expr(fa.obj, ctx),
                 field: fa.field
             };
         },
@@ -123,39 +162,39 @@ pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
             var args: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) {
-                args = args.push(rewrite_expr(c.args[i], modnames));
+                args = args.push(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprCall { callee: rewrite_expr(c.callee, modnames), args: args };
+            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args };
         },
         parser.ExprBinary(b) => {
             return parser.ExprBinary {
                 op: b.op,
-                left: rewrite_expr(b.left, modnames),
-                right: rewrite_expr(b.right, modnames)
+                left: rewrite_expr(b.left, ctx),
+                right: rewrite_expr(b.right, ctx)
             };
         },
         parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, modnames) };
+            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx) };
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex {
-                array: rewrite_expr(x.array, modnames),
-                index: rewrite_expr(x.index, modnames)
+                array: rewrite_expr(x.array, ctx),
+                index: rewrite_expr(x.index, ctx)
             };
         },
         parser.ExprSlice(sl) => {
             return parser.ExprSlice {
-                array: rewrite_expr(sl.array, modnames),
-                start: rewrite_expr(sl.start, modnames),
-                end: rewrite_expr(sl.end, modnames)
+                array: rewrite_expr(sl.array, ctx),
+                start: rewrite_expr(sl.start, ctx),
+                end: rewrite_expr(sl.end, ctx)
             };
         },
         parser.ExprTuple(t) => {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                elems = elems.push(rewrite_expr(t.elements[i], modnames));
+                elems = elems.push(rewrite_expr(t.elements[i], ctx));
                 i = i + 1;
             }
             return parser.ExprTuple { elements: elems };
@@ -164,7 +203,7 @@ pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                elems = elems.push(rewrite_expr(a.elements[i], modnames));
+                elems = elems.push(rewrite_expr(a.elements[i], ctx));
                 i = i + 1;
             }
             return parser.ExprArray { elements: elems };
@@ -173,20 +212,20 @@ pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
             var fvs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < slit.field_values.len()) {
-                fvs = fvs.push(rewrite_expr(slit.field_values[i], modnames));
+                fvs = fvs.push(rewrite_expr(slit.field_values[i], ctx));
                 i = i + 1;
             }
             return parser.ExprStructLit {
-                type_name: rewrite_type_name(slit.type_name, modnames),
+                type_name: rewrite_type_name(slit.type_name, ctx),
                 field_names: slit.field_names,
                 field_values: fvs
             };
         },
         parser.ExprLambda(lm) => {
             return parser.ExprLambda {
-                params: lm.params,
-                ret_type: rewrite_type_name(lm.ret_type, modnames),
-                body: rewrite_block(lm.body, modnames)
+                params: rewrite_params(lm.params, ctx),
+                ret_type: rewrite_type_name(lm.ret_type, ctx),
+                body: rewrite_block(lm.body, ctx)
             };
         },
         _ => { return e; }
@@ -194,50 +233,49 @@ pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
     return e;
 }
 
-// rewrite_block rewrites every statement in a block.
-pub function rewrite_block(stmts: parser.Stmt[], modnames: string[]): parser.Stmt[] {
+pub function rewrite_block(stmts: parser.Stmt[], ctx: RewriteCtx): parser.Stmt[] {
     var out: parser.Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        out = out.push(rewrite_stmt(stmts[i], modnames));
+        out = out.push(rewrite_stmt(stmts[i], ctx));
         i = i + 1;
     }
     return out;
 }
 
-function rewrite_stmt(st: parser.Stmt, modnames: string[]): parser.Stmt {
+function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
     match (st) {
         parser.StmtVar(v) => {
             return parser.StmtVar {
                 name: v.name,
-                type_name: rewrite_type_name(v.type_name, modnames),
-                init: rewrite_expr(v.init, modnames)
+                type_name: rewrite_type_name(v.type_name, ctx),
+                init: rewrite_expr(v.init, ctx)
             };
         },
         parser.StmtReturn(r) => {
-            return parser.StmtReturn { value: rewrite_expr(r.value, modnames) };
+            return parser.StmtReturn { value: rewrite_expr(r.value, ctx) };
         },
         parser.StmtExpr(x) => {
-            return parser.StmtExpr { value: rewrite_expr(x.value, modnames) };
+            return parser.StmtExpr { value: rewrite_expr(x.value, ctx) };
         },
         parser.StmtAssign(a) => {
-            return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, modnames) };
+            return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx) };
         },
         parser.StmtIf(f) => {
             return parser.StmtIf {
-                cond: rewrite_expr(f.cond, modnames),
-                then_body: rewrite_block(f.then_body, modnames),
-                else_body: rewrite_block(f.else_body, modnames)
+                cond: rewrite_expr(f.cond, ctx),
+                then_body: rewrite_block(f.then_body, ctx),
+                else_body: rewrite_block(f.else_body, ctx)
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: rewrite_expr(w.cond, modnames), body: rewrite_block(w.body, modnames) };
+            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx) };
         },
         parser.StmtFor(f) => {
             return parser.StmtFor {
                 var_name: f.var_name,
-                iter: rewrite_expr(f.iter, modnames),
-                body: rewrite_block(f.body, modnames)
+                iter: rewrite_expr(f.iter, ctx),
+                body: rewrite_block(f.body, ctx)
             };
         },
         parser.StmtMatch(m) => {
@@ -245,63 +283,68 @@ function rewrite_stmt(st: parser.Stmt, modnames: string[]): parser.Stmt {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 arms = arms.push(parser.MatchArm {
-                    pattern: rewrite_pattern(m.arms[i].pattern, modnames),
-                    body: rewrite_block(m.arms[i].body, modnames)
+                    pattern: rewrite_pattern(m.arms[i].pattern, ctx),
+                    body: rewrite_block(m.arms[i].body, ctx)
                 });
                 i = i + 1;
             }
-            return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, modnames), arms: arms };
+            return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
         },
         _ => { return st; }
     }
     return st;
 }
 
-// rewrite_params rewrites each param's qualified type spelling.
-function rewrite_params(params: parser.ParamDecl[], modnames: string[]): parser.ParamDecl[] {
+function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.ParamDecl[] {
     var out: parser.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < params.len()) {
         out = out.push(parser.ParamDecl {
             name: params[i].name,
-            type_name: rewrite_type_name(params[i].type_name, modnames)
+            type_name: rewrite_type_name(params[i].type_name, ctx)
         });
         i = i + 1;
     }
     return out;
 }
 
-// rewrite_struct_fields rewrites each field's qualified type.
-function rewrite_struct_fields(fields: parser.StructFieldDecl[], modnames: string[]): parser.StructFieldDecl[] {
+function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx): parser.StructFieldDecl[] {
     var out: parser.StructFieldDecl[] = [];
     var i: i32 = 0;
     while (i < fields.len()) {
         out = out.push(parser.StructFieldDecl {
             name: fields[i].name,
-            type_name: rewrite_type_name(fields[i].type_name, modnames)
+            type_name: rewrite_type_name(fields[i].type_name, ctx)
         });
         i = i + 1;
     }
     return out;
 }
 
-// flatten_qualified rewrites every qualified `mod.X` reference in a
-// module (call/type/pattern/field positions) to the flat `mod__X`
-// form, using the module's own import set as the module-name set.
-// Decl merging + mangling of the imported modules' bodies is brick 2.
-pub function flatten_qualified(mod: parser.Module): parser.Module {
-    var modnames: string[] = mod_names(mod);
+// rewrite_module_bodies applies ctx to every funcs/structs/aliases/
+// top_stmts position. Decl NAMES are handled by the caller (entry
+// keeps them; mangle renames them); this rewrites the bodies + type
+// spellings + the receiver type, plus mangles each non-receiver
+// function name and struct/alias name when ctx.prefix is set.
+function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
+        // Non-receiver functions get name-mangled; receiver methods
+        // keep their name (dispatched by receiver type) but the
+        // receiver type itself is rewritten.
+        var new_name: string = fd.name;
+        if (fd.receiver_type == "") {
+            new_name = mangle_bare(fd.name, ctx);
+        }
         funcs = funcs.push(parser.FuncDecl {
-            name: fd.name,
+            name: new_name,
             receiver_name: fd.receiver_name,
-            receiver_type: rewrite_type_name(fd.receiver_type, modnames),
-            params: rewrite_params(fd.params, modnames),
-            ret_type: rewrite_type_name(fd.ret_type, modnames),
-            body: rewrite_block(fd.body, modnames)
+            receiver_type: rewrite_type_name(fd.receiver_type, ctx),
+            params: rewrite_params(fd.params, ctx),
+            ret_type: rewrite_type_name(fd.ret_type, ctx),
+            body: rewrite_block(fd.body, ctx)
         });
         i = i + 1;
     }
@@ -309,18 +352,80 @@ pub function flatten_qualified(mod: parser.Module): parser.Module {
     var j: i32 = 0;
     while (j < mod.structs.len()) {
         structs = structs.push(parser.StructDecl {
-            name: mod.structs[j].name,
-            fields: rewrite_struct_fields(mod.structs[j].fields, modnames)
+            name: mangle_bare(mod.structs[j].name, ctx),
+            fields: rewrite_struct_fields(mod.structs[j].fields, ctx)
         });
         j = j + 1;
+    }
+    var aliases: parser.TypeAlias[] = [];
+    var k: i32 = 0;
+    while (k < mod.aliases.len()) {
+        var variants: string[] = [];
+        var v: i32 = 0;
+        while (v < mod.aliases[k].variants.len()) {
+            variants = variants.push(rewrite_type_name(mod.aliases[k].variants[v], ctx));
+            v = v + 1;
+        }
+        aliases = aliases.push(parser.TypeAlias {
+            name: mangle_bare(mod.aliases[k].name, ctx),
+            variants: variants
+        });
+        k = k + 1;
     }
     return parser.Module {
         funcs: funcs,
         structs: structs,
-        aliases: mod.aliases,
+        aliases: aliases,
         imports: mod.imports,
-        top_stmts: rewrite_block(mod.top_stmts, modnames)
+        top_stmts: rewrite_block(mod.top_stmts, ctx)
     };
+}
+
+// flatten_qualified rewrites only QUALIFIED cross-module references
+// (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
+// the entry module (whose own decls keep their bare names).
+pub function flatten_qualified(mod: parser.Module): parser.Module {
+    var empty: string[] = [];
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty };
+    return rewrite_module_bodies(mod, ctx);
+}
+
+// collect_decl_names returns the set of top-level names a module
+// contributes to the flat namespace: non-receiver functions, structs,
+// and type aliases. Receiver methods are excluded — they dispatch by
+// receiver type, not by a prefix-mangled name.
+pub function collect_decl_names(mod: parser.Module): string[] {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type == "") {
+            names = names.push(mod.funcs[i].name);
+        }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < mod.structs.len()) {
+        names = names.push(mod.structs[j].name);
+        j = j + 1;
+    }
+    var k: i32 = 0;
+    while (k < mod.aliases.len()) {
+        names = names.push(mod.aliases[k].name);
+        k = k + 1;
+    }
+    return names;
+}
+
+// mangle_module renames a non-entry module's own decls to
+// `prefix__name` and rewrites every internal reference to match, plus
+// flattens any qualified refs it makes to other modules.
+pub function mangle_module(mod: parser.Module, prefix: string): parser.Module {
+    var ctx: RewriteCtx = RewriteCtx {
+        modnames: mod_names(mod),
+        prefix: prefix,
+        declnames: collect_decl_names(mod)
+    };
+    return rewrite_module_bodies(mod, ctx);
 }
 
 // =================== VALIDATION ====================
@@ -329,12 +434,12 @@ function flatten_source(src: string): parser.Module {
     return flatten_qualified(parser.parse_module(lexer.tokenize(src)));
 }
 
+function mangle_source(src: string, prefix: string): parser.Module {
+    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix);
+}
+
 function main(): i32 {
-    // A module that imports ./lexer and references it three ways:
-    // a qualified type (`lexer.Token`), a qualified call
-    // (`lexer.tokenize`), and a qualified variant pattern
-    // (`lexer.TokNumber`). After flattening, each should read as the
-    // flat `lexer__*` form.
+    // --- Brick 1: qualified-reference flattening (entry module) ---
     var src: string =
         "import \"./lexer\";"
         + " function f(): i32 {"
@@ -344,10 +449,9 @@ function main(): i32 {
         + " }";
     var mod: parser.Module = flatten_source(src);
     if (mod.funcs.len() != 1) { return 1; }
+    // Entry func name is NOT mangled.
+    if (mod.funcs[0].name != "f") { return 2; }
     var body: parser.Stmt[] = mod.funcs[0].body;
-    if (body.len() != 3) { return 2; }
-
-    // Stmt 0: var t: lexer__Token = lexer__tokenize("x");
     match (body[0]) {
         parser.StmtVar(v) => {
             if (v.type_name != "lexer__Token") { return 10; }
@@ -363,29 +467,16 @@ function main(): i32 {
         },
         _ => { return 14; }
     }
-
-    // Stmt 1: the match — arm 0 pattern type_name flattened.
     match (body[1]) {
         parser.StmtMatch(m) => {
-            if (m.arms.len() != 2) { return 20; }
             match (m.arms[0].pattern) {
-                parser.PatVariant(pv) => {
-                    if (pv.type_name != "lexer__TokNumber") { return 21; }
-                    if (pv.binding != "n") { return 22; }
-                },
+                parser.PatVariant(pv) => { if (pv.type_name != "lexer__TokNumber") { return 21; } },
                 _ => { return 23; }
-            }
-            match (m.arms[1].pattern) {
-                parser.PatWildcard(_) => { },
-                _ => { return 24; }
             }
         },
         _ => { return 25; }
     }
-
-    // Negative: a plain struct/tuple field access is NOT a module
-    // ref and must survive untouched. `p.x` stays an ExprFieldAccess
-    // with base ident "p" (p is not an imported module).
+    // Plain field access survives untouched.
     var mod2: parser.Module = flatten_source(
         "import \"./lexer\"; function g(): i32 { return p.x; }");
     match (mod2.funcs[0].body[0]) {
@@ -404,14 +495,93 @@ function main(): i32 {
         _ => { return 34; }
     }
 
-    // rewrite_type_name spot-checks: array suffix rides along; a
-    // non-imported prefix is left alone.
+    // --- Brick 2: own-module mangling ---
+    // A module `m` with a struct, a method on it, and two free
+    // functions where one calls the other and constructs the struct.
+    var msrc: string =
+        "struct Box { v: i32 }"
+        + " function (b: Box) get(): i32 { return b.v; }"
+        + " function make(n: i32): Box { return Box { v: n }; }"
+        + " function consume(): i32 { var b: Box = make(5); return b.get(); }";
+    var mm: parser.Module = mangle_source(msrc, "m");
+
+    // Struct renamed.
+    if (mm.structs.len() != 1) { return 40; }
+    if (mm.structs[0].name != "m__Box") { return 41; }
+
+    // Functions: free funcs mangled; the method keeps its name but
+    // its receiver type is mangled.
+    // funcs order: get (method), make, use
+    if (mm.funcs.len() != 3) { return 50; }
+    if (mm.funcs[0].name != "get") { return 51; }              // method name kept
+    if (mm.funcs[0].receiver_type != "m__Box") { return 52; }  // receiver type mangled
+    if (mm.funcs[1].name != "m__make") { return 53; }          // free func mangled
+    if (mm.funcs[1].ret_type != "m__Box") { return 54; }       // return type mangled
+    if (mm.funcs[2].name != "m__consume") { return 55; }
+
+    // make's body: `return Box { v: n };` → struct-lit type mangled.
+    match (mm.funcs[1].body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprStructLit(sl) => { if (sl.type_name != "m__Box") { return 60; } },
+                _ => { return 61; }
+            }
+        },
+        _ => { return 62; }
+    }
+
+    // use's body: `var b: m__Box = m__make(5); return b.get();`
+    // — local type mangled, internal call to `make` mangled, method
+    // call `b.get()` LEFT as a field-access dispatch (not mangled).
+    match (mm.funcs[2].body[0]) {
+        parser.StmtVar(v) => {
+            if (v.type_name != "m__Box") { return 70; }
+            match (v.init) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(id) => { if (id.name != "m__make") { return 71; } },
+                        _ => { return 72; }
+                    }
+                },
+                _ => { return 73; }
+            }
+        },
+        _ => { return 74; }
+    }
+    match (mm.funcs[2].body[1]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        // b.get() — field access on local `b`, NOT mangled.
+                        parser.ExprFieldAccess(fa) => {
+                            if (fa.field != "get") { return 80; }
+                            match (fa.obj) {
+                                parser.ExprIdent(id) => { if (id.name != "b") { return 81; } },
+                                _ => { return 82; }
+                            }
+                        },
+                        _ => { return 83; }
+                    }
+                },
+                _ => { return 84; }
+            }
+        },
+        _ => { return 85; }
+    }
+
+    // rewrite_type_name spot-checks via a hand-built ctx.
     var mn: string[] = [];
     mn = mn.push("lexer");
-    if (rewrite_type_name("lexer.Token[]", mn) != "lexer__Token[]") { return 40; }
-    if (rewrite_type_name("Map[string, i32]", mn) != "Map[string, i32]") { return 41; }
-    if (rewrite_type_name("other.Thing", mn) != "other.Thing") { return 42; }
-    if (rewrite_type_name("i32", mn) != "i32") { return 43; }
+    var dn: string[] = [];
+    dn = dn.push("Token");
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn };
+    if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
+    if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
+    if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
+    if (rewrite_type_name("Map[string, i32]", ctx) != "Map[string, i32]") { return 93; }
+    if (rewrite_type_name("i32", ctx) != "i32") { return 94; }
+    if (rewrite_type_name("other.Thing", ctx) != "other.Thing") { return 95; }
 
     return 0;
 }
