@@ -1203,6 +1203,132 @@ func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSo
 	return body
 }
 
+// WasiSocketsUdpInstanceTypeBody returns the type-section body for the
+// send-only subset of `wasi:sockets/udp@0.2.0` — what udp_send (one-shot
+// fire-and-forget datagram) needs: the udp-socket resource plus
+// start-bind / finish-bind / stream, and the outgoing-datagram-stream
+// resource plus check-send / send. The incoming-datagram-stream is
+// declared as a bare resource (stream() returns a tuple of both, and
+// the unused incoming half is dropped) but carries no methods — instance
+// subtyping lets a send-only client omit receive / subscribe.
+//
+// Unlike TCP, the datagram path is NOT wasi:io/streams: send takes a
+// `list<outgoing-datagram>` (each `{ data: list<u8>, remote-address:
+// option<ip-socket-address> }`). It outer-aliases network / error-code /
+// ip-socket-address from sockets/network (no io/streams, no io/poll for
+// the send-only path); the caller surfaces those three and passes their
+// type indices.
+func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []byte {
+	var decls []byte
+	idx := uint32(0)
+	declCount := uint32(0)
+	alias := func(outer uint32) uint32 {
+		decls = append(decls, OuterAliasTypeDecl(1, outer)...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	sub := func(name string) uint32 {
+		decls = append(decls, ExportSubResourceDecl(name)...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	def := func(b []byte) uint32 {
+		decls = append(decls, 0x01)
+		decls = append(decls, b...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	exportType := func(name string, typeidx uint32) uint32 {
+		decls = append(decls, ExportTypeEqDecl(name, typeidx)...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	method := func(name string, paramNames []string, paramVT []byte, resultIdx byte) {
+		decls = append(decls, tcpMethodFuncDecl(name, paramNames, paramVT, resultIdx)...)
+		declCount++
+		idx++ // the functype decl
+		decls = append(decls, 0x04, 0x00, byte(len(name)))
+		decls = append(decls, name...)
+		decls = append(decls, 0x01, byte(idx-1)) // export refs the functype just emitted
+		declCount++
+	}
+
+	netT := alias(networkT)
+	errT := alias(errorCodeT)
+	// Re-export ip-socket-address under its name: the exported
+	// outgoing-datagram record references it (transitively), and an
+	// exported type may only reach other exported named types.
+	sockAddrT := exportType("ip-socket-address", alias(ipSockAddrT))
+
+	udpSock := sub("udp-socket")
+	inStream := sub("incoming-datagram-stream")
+	outStream := sub("outgoing-datagram-stream")
+
+	listU8 := def(InnerTypeListU8)
+	optAddr := def(InnerTypeOption(byte(sockAddrT)))
+	// outgoing-datagram is a named record in the WIT; export it so the
+	// send method's list<outgoing-datagram> param reaches an exported
+	// named type.
+	outDatagram := exportType("outgoing-datagram", def(InnerTypeRecord([]RecordField{
+		{Name: "data", Valtype: byte(listU8)},
+		{Name: "remote-address", Valtype: byte(optAddr)},
+	})))
+	bUdp := def(InnerTypeBorrow(udpSock))
+	bNet := def(InnerTypeBorrow(netT))
+	bOut := def(InnerTypeBorrow(outStream))
+	resEmptyErr := def(InnerTypeResultErr(errT))
+	ownIn := def([]byte{0x69, byte(inStream)})
+	ownOut := def([]byte{0x69, byte(outStream)})
+	tupStreams := def(InnerTypeTuple([]byte{byte(ownIn), byte(ownOut)}))
+	resStream := def(InnerTypeResultOkErr(tupStreams, errT))
+	resU64 := def(InnerTypeResultOkErr(CValtypeU64, errT))
+	listDatagram := def(InnerTypeList(byte(outDatagram)))
+
+	method("[method]udp-socket.start-bind",
+		[]string{"self", "network", "local-address"}, []byte{byte(bUdp), byte(bNet), byte(sockAddrT)}, byte(resEmptyErr))
+	method("[method]udp-socket.finish-bind", []string{"self"}, []byte{byte(bUdp)}, byte(resEmptyErr))
+	method("[method]udp-socket.stream", []string{"self", "remote-address"}, []byte{byte(bUdp), byte(optAddr)}, byte(resStream))
+	method("[method]outgoing-datagram-stream.check-send", []string{"self"}, []byte{byte(bOut)}, byte(resU64))
+	method("[method]outgoing-datagram-stream.send", []string{"self", "datagrams"}, []byte{byte(bOut), byte(listDatagram)}, byte(resU64))
+
+	body := []byte{0x01, 0x42}
+	body = leb128.UlebU64(body, uint64(declCount))
+	return append(body, decls...)
+}
+
+// WasiSocketsUdpCreateSocketInstanceTypeBody returns the type-section
+// body for `wasi:sockets/udp-create-socket@0.2.0`:
+// `create-udp-socket(address-family: ip-address-family) ->
+// result<own<udp-socket>, error-code>`. Mirrors the tcp-create-socket
+// body — outer-aliases ip-address-family + error-code (sockets/network)
+// and udp-socket (sockets/udp).
+//
+// Decls: 0 alias ip-address-family, 1 alias error-code, 2 alias
+// udp-socket, 3 own<udp-socket>, 4 result<own,error-code>, 5 func, 6
+// export "create-udp-socket".
+func WasiSocketsUdpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, udpSocketT uint32) []byte {
+	body := []byte{0x01, 0x42, 0x07} // 7 decls
+	body = append(body, OuterAliasTypeDecl(1, ipAddrFamilyT)...) // 0
+	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
+	body = append(body, OuterAliasTypeDecl(1, udpSocketT)...)    // 2
+	body = append(body, 0x01, 0x69, 0x02)                        // 3: own<udp-socket=2>
+	body = append(body, 0x01)                                    // 4: result<own=3, error-code=1>
+	body = append(body, InnerTypeResultOkErr(3, 1)...)
+	body = append(body, tcpMethodFuncDecl("create-udp-socket", []string{"address-family"}, []byte{0x00}, 0x04)...)
+	body = append(body, 0x04, 0x00, byte(len("create-udp-socket")))
+	body = append(body, "create-udp-socket"...)
+	body = append(body, 0x01, 0x05)
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
