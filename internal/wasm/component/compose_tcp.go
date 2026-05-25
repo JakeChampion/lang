@@ -40,7 +40,10 @@ func repeatI32(n int) []byte {
 
 // ComposeTcpServerCliRun wraps a core module that imports the
 // preview-2 TCP/sockets surface into a wasi:cli/run component.
-func ComposeTcpServerCliRun(coreBytes []byte, coreExportName string) []byte {
+// hasStreamRead / hasStreamWrite add the connection's
+// input-stream.blocking-read / output-stream.blocking-write-and-flush
+// (tcp_recv / tcp_send) — full read/write echo servers.
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -81,21 +84,33 @@ func ComposeTcpServerCliRun(coreBytes []byte, coreExportName string) []byte {
 	type memMethod struct {
 		inst    uint32 // component instance exporting the method
 		name    string // method name (alias + core export)
-		argMod  string // user-module import module name
 		params  []byte // core import signature
 		tramp   uint32 // trampoline module idx
 		fixup   uint32 // fixup module idx
 		trampIn uint32 // trampoline core instance
 		table   uint32 // aliased trampoline table
 		coreF   uint32 // lowered core func
+		realloc bool   // list-returning (blocking-read) → mem+realloc lower
 	}
 	mems := []memMethod{
-		{inst: createInst, name: "create-tcp-socket", argMod: "wasi:sockets/tcp-create-socket@0.2.0", params: composeTcpCreateParams},
-		{inst: tcpInst, name: "[method]tcp-socket.start-bind", argMod: "wasi:sockets/tcp@0.2.0", params: composeTcpStartBindParams},
-		{inst: tcpInst, name: "[method]tcp-socket.finish-bind", argMod: "wasi:sockets/tcp@0.2.0", params: composeTcpSelfRetParams},
-		{inst: tcpInst, name: "[method]tcp-socket.start-listen", argMod: "wasi:sockets/tcp@0.2.0", params: composeTcpSelfRetParams},
-		{inst: tcpInst, name: "[method]tcp-socket.finish-listen", argMod: "wasi:sockets/tcp@0.2.0", params: composeTcpSelfRetParams},
-		{inst: tcpInst, name: "[method]tcp-socket.accept", argMod: "wasi:sockets/tcp@0.2.0", params: composeTcpSelfRetParams},
+		{inst: createInst, name: "create-tcp-socket", params: composeTcpCreateParams},
+		{inst: tcpInst, name: "[method]tcp-socket.start-bind", params: composeTcpStartBindParams},
+		{inst: tcpInst, name: "[method]tcp-socket.finish-bind", params: composeTcpSelfRetParams},
+		{inst: tcpInst, name: "[method]tcp-socket.start-listen", params: composeTcpSelfRetParams},
+		{inst: tcpInst, name: "[method]tcp-socket.finish-listen", params: composeTcpSelfRetParams},
+		{inst: tcpInst, name: "[method]tcp-socket.accept", params: composeTcpSelfRetParams},
+	}
+	// tcp_send / tcp_recv operate on the accepted connection's streams.
+	// Track their slice positions so the io/streams arg can reference
+	// their trampoline placeholders.
+	idxBlockWrite, idxBlockRead := -1, -1
+	if hasStreamWrite {
+		idxBlockWrite = len(mems)
+		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockWriteName, params: composeBlockWriteParams})
+	}
+	if hasStreamRead {
+		idxBlockRead = len(mems)
+		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true})
 	}
 	for i := range mems {
 		mems[i].tramp = c.coreModule(TrampolineModuleForParamsNoResult(mems[i].params))
@@ -141,10 +156,17 @@ func ComposeTcpServerCliRun(coreBytes []byte, coreExportName string) []byte {
 		{Name: "[method]pollable.block", Sort: CoreSortFunc, Idx: blockF},
 		{Name: "[resource-drop]pollable", Sort: CoreSortFunc, Idx: dropPollableF},
 	})
-	streamsArg := c.coreInstExports([]CoreInstanceExport{
+	streamsExports := []CoreInstanceExport{
 		{Name: "[resource-drop]input-stream", Sort: CoreSortFunc, Idx: dropInputF},
 		{Name: "[resource-drop]output-stream", Sort: CoreSortFunc, Idx: dropOutputF},
-	})
+	}
+	if idxBlockWrite >= 0 {
+		streamsExports = append(streamsExports, CoreInstanceExport{Name: composeBlockWriteName, Sort: CoreSortFunc, Idx: memTramp[idxBlockWrite]})
+	}
+	if idxBlockRead >= 0 {
+		streamsExports = append(streamsExports, CoreInstanceExport{Name: composeBlockReadName, Sort: CoreSortFunc, Idx: memTramp[idxBlockRead]})
+	}
+	streamsArg := c.coreInstExports(streamsExports)
 
 	// --- Phase E: instantiate the user module. ---
 	userInst := c.instantiateArgs(userMod,
@@ -157,15 +179,25 @@ func ComposeTcpServerCliRun(coreBytes []byte, coreExportName string) []byte {
 		},
 		[]uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg})
 
-	// --- Phase F: alias memory + the trampoline tables. ---
+	// --- Phase F: alias memory (+ realloc for blocking-read's list
+	// result) + the trampoline tables. ---
 	c.aliasMemory(userInst)
+	var reallocF uint32
+	if hasStreamRead {
+		reallocF = c.aliasReallocFunc(userInst)
+	}
 	for i := range mems {
 		mems[i].table = c.aliasTable(mems[i].trampIn)
 	}
 
-	// --- Phase G: memory lowers for the six methods. ---
+	// --- Phase G: memory lowers (blocking-read needs realloc). ---
 	for i := range mems {
-		mems[i].coreF = c.lowerMem(c.aliasInstFunc(mems[i].inst, mems[i].name))
+		cf := c.aliasInstFunc(mems[i].inst, mems[i].name)
+		if mems[i].realloc {
+			mems[i].coreF = c.lowerMemRealloc(cf, reallocF)
+		} else {
+			mems[i].coreF = c.lowerMem(cf)
+		}
 	}
 
 	// --- Phase H: fixups (install lowered funcs into tramp tables). ---
