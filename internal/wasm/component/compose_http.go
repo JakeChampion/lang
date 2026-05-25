@@ -129,7 +129,16 @@ var httpOutparamSetParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7
 // handler that also print()s / eprint()s for request logging composes
 // adapter-free — the print's output-stream.blocking-write-and-flush is
 // the same lowering the response body already uses.
-func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, coreExportName string) []byte {
+//
+// extras / structured carry the standalone (no shared-resource-deps)
+// CLI capabilities a handler may also use — now() / env() / args()
+// (mem trampolines, MemTramp) and exit / random / monotonic (no-opts,
+// Structured). Each is imported as its own instance and packaged into
+// its own per-interface arg, so an HTTP handler that stamps a timestamp
+// (now()) or reads config (env()) composes adapter-free. This is the
+// same capability set the CLI-stream composer (ComposePreview2CliRun)
+// handles; sharing it is the composer-unification work.
+func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing. ---
@@ -158,6 +167,16 @@ func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, coreExportN
 	}
 	if hasStderr {
 		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
+	}
+	// Standalone CLI capability instances (now / env / args; exit /
+	// random / monotonic). Imported here; lowered + packaged below.
+	extraInst := make([]uint32, len(extras))
+	for i, mt := range extras {
+		extraInst[i] = c.importInstance(mt.InterfaceName, c.typeRaw(mt.InstanceTypeBody))
+	}
+	structInst := make([]uint32, len(structured))
+	for i, imp := range structured {
+		structInst[i] = c.importInstance(imp.InterfaceName, c.structuredType(imp))
 	}
 
 	// --- Phase B: core module + trampoline/fixup pair per mem method. ---
@@ -189,6 +208,12 @@ func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, coreExportN
 		{inst: httpInst, name: "[method]fields.entries", params: httpSelfRetParams, realloc: true},
 		{inst: streamsInst, name: composeBlockWriteName, params: composeBlockWriteParams},
 		{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true},
+	}
+	// Standalone CLI mem-trampoline extras (now / env / args) — each a
+	// (ret_ptr)->() lower over its own instance; env / args return lists
+	// so they need realloc.
+	for i, mt := range extras {
+		mems = append(mems, memMethod{inst: extraInst[i], name: mt.FuncName, params: composeOneI32Params, realloc: mt.NeedsRealloc})
 	}
 	for i := range mems {
 		mems[i].tramp = c.coreModule(TrampolineModuleForParamsNoResult(mems[i].params))
@@ -265,6 +290,18 @@ func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, coreExportN
 		f := c.lowerNoOpts(c.aliasInstFunc(stderrInst, "get-stderr"))
 		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
 		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
+	}
+	// Standalone CLI extras: each mem-tramp extra (placeholder already in
+	// coreFuncs) and each no-opt structured import gets its own
+	// per-interface arg instance.
+	for _, mt := range extras {
+		argNames = append(argNames, mt.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(mt.FuncName, coreFuncs[mt.FuncName]))
+	}
+	for i, imp := range structured {
+		f := c.lowerNoOpts(c.aliasInstFunc(structInst[i], imp.FuncName))
+		argNames = append(argNames, imp.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(imp.FuncName, f))
 	}
 
 	// --- Phase E: instantiate the user module. ---

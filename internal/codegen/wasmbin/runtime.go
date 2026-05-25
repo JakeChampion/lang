@@ -1304,25 +1304,28 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, allocCursorAddr)
 	body = memInstI32Load(body)
 	body = inst.InstLocalSet(body, 1) // $ptr
-	// Round size up to 4 — keeps the bump cursor word-aligned
-	// across all callers. Some helpers (path_open / fd_read /
-	// fd_write retptrs) pass alloc results to WASI imports that
-	// store u32 results there, and wasmtime enforces 4-byte
-	// alignment on those host writes. The slack (≤ 3 bytes per
-	// alloc) is bounded and the no-free arena means it doesn't
-	// fragment over time.
+	// Round size up to 8 — keeps the bump cursor 8-byte aligned
+	// across all callers. The heap base is 8-aligned, so 8-rounding
+	// every size keeps every returned pointer 8-aligned. This matters
+	// for canonical-ABI retptrs that hold an i64/u64/f64: e.g.
+	// wasi:clocks/wall-clock.now's record { seconds: u64, … } and the
+	// wasi:sockets/udp send/check-send result<u64,…> — wasmtime traps
+	// ("pointer not aligned") if their retptr is only 4-aligned, which
+	// is reachable once a prior odd-sized alloc has left the cursor at
+	// 4-mod-8 (e.g. inside a wasi:http handler). The slack (≤ 7 bytes
+	// per alloc) is bounded and the no-free arena doesn't fragment.
 	body = inst.InstLocalGet(body, 0) // $size
 	if ast.RcFreeEnabled {
 		// Round to the freelist's 16-byte class granularity so a
-		// freed block's size class matches a same-logical-size
-		// alloc. (Flag-off keeps the cheaper 4-byte rounding.)
+		// freed block's size class matches a same-logical-size alloc
+		// (16-rounding is also 8-aligned).
 		body = inst.InstI32Const(body, 15)
 		body = numeric.InstI32Add(body)
 		body = inst.InstI32Const(body, -16)
 	} else {
-		body = inst.InstI32Const(body, 3)
+		body = inst.InstI32Const(body, 7)
 		body = numeric.InstI32Add(body)
-		body = inst.InstI32Const(body, -4)
+		body = inst.InstI32Const(body, -8)
 	}
 	body = numeric.InstI32And(body)
 	body = inst.InstLocalSet(body, 0)
