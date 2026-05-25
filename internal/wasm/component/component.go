@@ -339,6 +339,15 @@ func InnerTypeBorrow(resourceTypeidx uint32) []byte {
 // Encoding: `70 7d` (list form + u8 cvaltype).
 var InnerTypeListU8 = []byte{0x70, CValtypeU8}
 
+// InnerTypeList returns the defvaltype body for a `list<T>` where T is
+// a primitive CValtype* or a small inner-scope typeidx. (InnerTypeListU8
+// is the common `list<u8>` special case.)
+//
+// Encoding: 70 <elemValtype>
+func InnerTypeList(elemValtype byte) []byte {
+	return []byte{0x70, elemValtype}
+}
+
 // InnerTypeResultErr returns the defvaltype body for a
 // `result<_, err=<typeidx>>` — an err-only result whose error
 // arm carries the given typeidx. The ok arm is empty.
@@ -410,6 +419,18 @@ var WasiFilesystemErrorCodeNames = []string{
 	"not-directory", "not-empty", "not-recoverable", "unsupported",
 	"no-tty", "no-such-device", "overflow", "not-permitted", "pipe",
 	"read-only", "invalid-seek", "text-file-busy", "cross-device",
+}
+
+// InnerTypeResultOk returns the defvaltype body for a `result<ok>`
+// (ok arm typed, err arm empty) — wasi:http/types's
+// `consume() -> result<incoming-body>` / `body() -> result<outgoing-body>`
+// / `stream() -> result<input-stream>` / `write() -> result<output-stream>`.
+//
+// Encoding: 6a 01 <ok> 00
+func InnerTypeResultOk(okTypeidx uint32) []byte {
+	out := []byte{0x6a, 0x01}
+	out = leb128.UlebU64(out, uint64(okTypeidx))
+	return append(out, 0x00)
 }
 
 // InnerTypeResultOkErr returns the defvaltype body for a
@@ -769,6 +790,182 @@ func WasiHttpValueTypesInstanceTypeBody() []byte {
 	decls, _, next := httpValueTypeDecls(0)
 	body := []byte{0x01, 0x42}
 	body = leb128.UlebU64(body, uint64(next)) // decl count == indices consumed from 0
+	return append(body, decls...)
+}
+
+// WasiHttpTypesInstanceTypeBody returns the type-section body for the
+// `wasi:http/types@0.2.0` instance type — the surface a
+// wasi:http/incoming-handler core module imports. It declares the
+// seven resources the handler touches (fields, incoming-request,
+// incoming-body, future-trailers, outgoing-response, outgoing-body,
+// response-outparam), the brick-1 value types (method / error-code /
+// option<string> / …), and the fifteen method / constructor / static
+// func decls + exports the core calls. The `[resource-drop]` imports
+// the core also has are NOT declared here — those are the canon
+// resource.drop intrinsic, lowered by the composer, not interface
+// exports.
+//
+// input-stream / output-stream are outer-aliased from io/streams
+// (incoming-body.stream / outgoing-body.write hand back streams); the
+// caller surfaces them at the top level and passes their type indices.
+//
+// An imported instance type may be a subtype of the host's interface,
+// so only the used methods are declared (the same way the tcp body
+// declares just the listen/accept set).
+func WasiHttpTypesInstanceTypeBody(inputStreamT, outputStreamT uint32) []byte {
+	var decls []byte
+	idx := uint32(0)
+	declCount := uint32(0)
+
+	// def appends a type-def decl (0x01 + body); returns its type index.
+	def := func(b []byte) uint32 {
+		decls = append(decls, 0x01)
+		decls = append(decls, b...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	aliasOuter := func(outerIdx uint32) uint32 {
+		decls = append(decls, OuterAliasTypeDecl(1, outerIdx)...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	subResource := func(name string) uint32 {
+		decls = append(decls, ExportSubResourceDecl(name)...)
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	// funcDef appends a functype decl; hasResult selects single
+	// anonymous result (00 <idx>) vs no result (01 00). Returns the
+	// functype's type index.
+	funcDef := func(paramNames []string, paramVT []byte, hasResult bool, resultIdx byte) uint32 {
+		decls = append(decls, 0x01, 0x40)
+		decls = leb128.UlebU64(decls, uint64(len(paramNames)))
+		for i, n := range paramNames {
+			decls = leb128.UlebU64(decls, uint64(len(n)))
+			decls = append(decls, n...)
+			decls = append(decls, paramVT[i])
+		}
+		if hasResult {
+			decls = append(decls, 0x00, resultIdx)
+		} else {
+			decls = append(decls, 0x01, 0x00)
+		}
+		declCount++
+		i := idx
+		idx++
+		return i
+	}
+	// exportFunc appends a func export decl; does NOT consume a type idx.
+	exportFunc := func(name string, funcIdx uint32) {
+		decls = append(decls, 0x04, 0x00)
+		decls = leb128.UlebU64(decls, uint64(len(name)))
+		decls = append(decls, name...)
+		decls = append(decls, 0x01)
+		decls = leb128.UlebU64(decls, uint64(funcIdx))
+		declCount++
+	}
+
+	// 0,1: outer aliases for the streams handed back by body methods.
+	inStream := aliasOuter(inputStreamT)
+	outStream := aliasOuter(outputStreamT)
+
+	// Value types (method / scheme / header-error / error-code +
+	// supporting records/options), continuing the index space.
+	vtDecls, vt, next := httpValueTypeDecls(idx)
+	decls = append(decls, vtDecls...)
+	declCount += next - idx
+	idx = next
+
+	// Resources (7).
+	fields := subResource("fields")
+	incomingRequest := subResource("incoming-request")
+	incomingBody := subResource("incoming-body")
+	futureTrailers := subResource("future-trailers")
+	outgoingResponse := subResource("outgoing-response")
+	outgoingBody := subResource("outgoing-body")
+	responseOutparam := subResource("response-outparam")
+
+	// Borrows (method `self`).
+	bIncReq := def(InnerTypeBorrow(incomingRequest))
+	bFields := def(InnerTypeBorrow(fields))
+	bIncBody := def(InnerTypeBorrow(incomingBody))
+	bOutResp := def(InnerTypeBorrow(outgoingResponse))
+	bOutBody := def(InnerTypeBorrow(outgoingBody))
+
+	// Owns (constructor / static `this` / handle returns).
+	oFields := def([]byte{0x69, byte(fields)})
+	oIncBody := def([]byte{0x69, byte(incomingBody)})
+	oFutTrail := def([]byte{0x69, byte(futureTrailers)})
+	oInStream := def([]byte{0x69, byte(inStream)})
+	oOutStream := def([]byte{0x69, byte(outStream)})
+	oOutResp := def([]byte{0x69, byte(outgoingResponse)})
+	oOutBody := def([]byte{0x69, byte(outgoingBody)})
+	oOutparam := def([]byte{0x69, byte(responseOutparam)})
+
+	// Result wrappers.
+	rIncBody := def(InnerTypeResultOk(oIncBody))    // consume
+	rInStream := def(InnerTypeResultOk(oInStream))   // incoming-body.stream
+	rOutBody := def(InnerTypeResultOk(oOutBody))     // outgoing-response.body
+	rOutStream := def(InnerTypeResultOk(oOutStream)) // outgoing-body.write
+	rHeaderErr := def(InnerTypeResultErr(vt.headerError))
+	rEmpty := def(InnerTypeResultEmpty)
+	rErrCode := def(InnerTypeResultErr(vt.errorCode)) // outgoing-body.finish
+	rOutRespErr := def(InnerTypeResultOkErr(oOutResp, vt.errorCode))
+
+	// fields.entries result: list<tuple<field-key=string, field-value=list<u8>>>.
+	fieldValue := def(InnerTypeListU8)
+	entryTuple := def(InnerTypeTuple([]byte{CValtypeString, byte(fieldValue)}))
+	entriesList := def(InnerTypeList(byte(entryTuple)))
+
+	// option<trailers> = option<own<fields>> (outgoing-body.finish).
+	optTrailers := def(InnerTypeOption(byte(oFields)))
+
+	// --- Method / constructor / static func decls + exports. ---
+	f := funcDef([]string{"self"}, []byte{byte(bIncReq)}, true, byte(vt.method))
+	exportFunc("[method]incoming-request.method", f)
+	f = funcDef([]string{"self"}, []byte{byte(bIncReq)}, true, byte(vt.optString))
+	exportFunc("[method]incoming-request.path-with-query", f)
+	f = funcDef([]string{"self"}, []byte{byte(bIncReq)}, true, byte(oFields))
+	exportFunc("[method]incoming-request.headers", f)
+	f = funcDef([]string{"self"}, []byte{byte(bIncReq)}, true, byte(rIncBody))
+	exportFunc("[method]incoming-request.consume", f)
+
+	f = funcDef([]string{"self"}, []byte{byte(bIncBody)}, true, byte(rInStream))
+	exportFunc("[method]incoming-body.stream", f)
+	f = funcDef([]string{"this"}, []byte{byte(oIncBody)}, true, byte(oFutTrail))
+	exportFunc("[static]incoming-body.finish", f)
+
+	f = funcDef(nil, nil, true, byte(oFields))
+	exportFunc("[constructor]fields", f)
+	f = funcDef([]string{"self"}, []byte{byte(bFields)}, true, byte(entriesList))
+	exportFunc("[method]fields.entries", f)
+	f = funcDef([]string{"self", "name", "value"},
+		[]byte{byte(bFields), CValtypeString, byte(fieldValue)}, true, byte(rHeaderErr))
+	exportFunc("[method]fields.append", f)
+
+	f = funcDef([]string{"headers"}, []byte{byte(oFields)}, true, byte(oOutResp))
+	exportFunc("[constructor]outgoing-response", f)
+	f = funcDef([]string{"self", "status-code"}, []byte{byte(bOutResp), CValtypeU16}, true, byte(rEmpty))
+	exportFunc("[method]outgoing-response.set-status-code", f)
+	f = funcDef([]string{"self"}, []byte{byte(bOutResp)}, true, byte(rOutBody))
+	exportFunc("[method]outgoing-response.body", f)
+
+	f = funcDef([]string{"self"}, []byte{byte(bOutBody)}, true, byte(rOutStream))
+	exportFunc("[method]outgoing-body.write", f)
+	f = funcDef([]string{"this", "trailers"}, []byte{byte(oOutBody), byte(optTrailers)}, true, byte(rErrCode))
+	exportFunc("[static]outgoing-body.finish", f)
+
+	f = funcDef([]string{"param", "response"}, []byte{byte(oOutparam), byte(rOutRespErr)}, false, 0)
+	exportFunc("[static]response-outparam.set", f)
+
+	body := []byte{0x01, 0x42}
+	body = leb128.UlebU64(body, uint64(declCount))
 	return append(body, decls...)
 }
 

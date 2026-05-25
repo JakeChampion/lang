@@ -1063,6 +1063,50 @@ func TestWasiHttpValueTypesInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestWasiHttpTypesInstanceTypeBody_Validates composes the full
+// wasi:http/types instance type — io/error + io/streams (for the
+// input-stream / output-stream the body methods hand back) surfaced
+// first, then the seven http resources, brick-1 value types, and the
+// fifteen method / constructor / static func decls — and confirms
+// wasm-tools validates the whole interface and surfaces the methods
+// the handler core imports.
+func TestWasiHttpTypesInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())              // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                       // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                               // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))  // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                     // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                       // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                        // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiHttpTypesInstanceTypeBody(4, 3))        // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:http/types@0.2.0", 5)                     // inst 2
+	dir := t.TempDir()
+	p := filepath.Join(dir, "httptypes.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"incoming-request", "incoming-body", "future-trailers", "outgoing-response",
+		"outgoing-body", "response-outparam", "fields",
+		"path-with-query", "set-status-code", "response-outparam.set",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiSocketsNetworkInstanceTypeBody_Validates composes the
 // wasi:sockets/network instance type — exercising the record / tuple
 // / variant encoders in their real ip-socket-address context — and
