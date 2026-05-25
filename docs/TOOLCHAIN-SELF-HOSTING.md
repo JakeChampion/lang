@@ -730,9 +730,26 @@ End-to-end exit code 42 demo (covered by
     arg. Verified — a write-only program's on-disk bytes and a read-only
     program's stdout both round-trip with no preview-1 imports
     (`TestWasmPreview2FileCloseAdapterFree`).
+  - **UDP send. Shipped (send-only / IPv4-literal v1).** `udp_send(host,
+    port, data)` — one-shot fire-and-forget datagram, for telemetry /
+    syslog to a local agent — composes adapter-free via
+    `ComposeUdpClientCliRun`. The datagram path is its own resources (not
+    io/streams): create-udp-socket → start-bind(0.0.0.0:0) →
+    stream(Some(host:port)) [connect] → check-send → send([{data,
+    remote:none}]) → drop the datagram streams + socket. Every method is
+    a memory trampoline (retptr results / a list param the host reads);
+    none need realloc, and there's no io/streams or io/poll. Three
+    bricks: the udp + udp-create-socket instance types (#1375), the
+    `udp_send` builtin + `buildUdpSendBody` codegen incl. the IPv4-literal
+    parse (#1377), then `compose_udp.go` + `usesPreview2UdpClient`
+    routing. Verified end-to-end — a Go `net.ListenPacket` receives the
+    datagram under `wasmtime run -S inherit-network`
+    (`TestWasmPreview2UdpSendAdapterFree`). Outbound UDP is gated by the
+    host network policy (`-S inherit-network`). Inbound `udp_recv` and
+    hostname (DNS) addressing are deliberately deferred.
   - **Still to do (genuinely niche / large):**
-    - UDP (`wasi:sockets/udp`) — no Fern language support yet, so
-      nothing emits udp imports to compose.
+    - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
+      path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
     - Read+write of files in one program (both descriptor stream
       directions at once) — the filesystem/types instance type carries
       a single direction; each direction composes on its own.

@@ -975,6 +975,20 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		hasRead, hasWrite, hasEnv, hasStdout, hasStderr := tcpStreamUsage(bin)
 		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasEnv, hasStdout, hasStderr, "_lang_run"), nil
 	}
+	// UDP clients (udp_send) are likewise a self-contained sockets shape
+	// with their own composer + the wasi:cli/run lift. Memory-only lowers
+	// (retptr results / a list param the host reads) — no realloc.
+	if usesPreview2UdpClient(bin) {
+		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			ForceMemorySection: true,
+			Preview2WASI:       true,
+			SynthCliRun:        true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return component.ComposeUdpClientCliRun(rb, "_lang_run"), nil
+	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
 		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend
@@ -1135,6 +1149,35 @@ func usesPreview2TcpServer(bin []byte) bool {
 		}
 	}
 	return sawSocket
+}
+
+// preview2UdpClientImports is the exact import set a send-only udp_send
+// program pulls in. usesPreview2UdpClient reports whether every import
+// is in this set and at least one wasi:sockets/udp import is present.
+var preview2UdpClientImports = map[[2]string]bool{
+	{"wasi:sockets/instance-network@0.2.0", "instance-network"}:   true,
+	{"wasi:sockets/udp-create-socket@0.2.0", "create-udp-socket"}: true,
+	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.start-bind"}:                     true,
+	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.finish-bind"}:                    true,
+	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.stream"}:                         true,
+	{"wasi:sockets/udp@0.2.0", "[method]outgoing-datagram-stream.check-send"}:       true,
+	{"wasi:sockets/udp@0.2.0", "[method]outgoing-datagram-stream.send"}:             true,
+	{"wasi:sockets/udp@0.2.0", "[resource-drop]udp-socket"}:                         true,
+	{"wasi:sockets/udp@0.2.0", "[resource-drop]incoming-datagram-stream"}:           true,
+	{"wasi:sockets/udp@0.2.0", "[resource-drop]outgoing-datagram-stream"}:           true,
+}
+
+func usesPreview2UdpClient(bin []byte) bool {
+	sawUdp := false
+	for _, p := range coreModuleImportPairs(bin) {
+		if !preview2UdpClientImports[[2]string{p.module, p.name}] {
+			return false
+		}
+		if strings.HasPrefix(p.module, "wasi:sockets/udp") {
+			sawUdp = true
+		}
+	}
+	return sawUdp
 }
 
 func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
