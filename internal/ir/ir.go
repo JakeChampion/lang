@@ -723,18 +723,18 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 //     struct / T[] are deliberately excluded today).
 //   - Every `return` statement in the body (including those
 //     inside if / for / while / match arms) returns one of:
-//       (a) a `Some(EXPR)` / `None` literal (for Option) or
-//           `Ok(EXPR)` / `Err(EXPR)` literal (for Result)
-//           directly,
-//       (b) a direct call `helper()` where `helper` is itself
-//           in the pair-form set — the call's heap-box result
-//           flows out unchanged, and `helper`'s callers got
-//           the pair-form treatment too, or
-//       (c) a ternary `cond ? Then : Else` whose Then and Else
-//           are each themselves an (a) / (b) / (c) shape
-//           (recursive). Each arm constructs a heap-box pair
-//           independently; consumers still apply
-//           `OpCallDirectPair` to the join.
+//     (a) a `Some(EXPR)` / `None` literal (for Option) or
+//     `Ok(EXPR)` / `Err(EXPR)` literal (for Result)
+//     directly,
+//     (b) a direct call `helper()` where `helper` is itself
+//     in the pair-form set — the call's heap-box result
+//     flows out unchanged, and `helper`'s callers got
+//     the pair-form treatment too, or
+//     (c) a ternary `cond ? Then : Else` whose Then and Else
+//     are each themselves an (a) / (b) / (c) shape
+//     (recursive). Each arm constructs a heap-box pair
+//     independently; consumers still apply
+//     `OpCallDirectPair` to the join.
 //
 // (b) is determined by fixpoint iteration: each pass adds
 // functions whose returns now resolve under (a) / (b) / (c)
@@ -969,7 +969,6 @@ func isPairFormPayloadShape(t ast.Type, ptrW int) bool {
 	}
 	return false
 }
-
 
 // allReturnsArePairFormShape walks every Return statement
 // reachable from s and reports whether each one is one of
@@ -1873,13 +1872,29 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// Phase 3 map reclamation: an OWNED Map local returns its buf
 		// + handle to the freelist at the last reference (rc==1) via
-		// __fern_map_drop. Entry keys/values keep their existing
-		// accounting (they leak — a follow-up converts map.set to
-		// retain-on-store and frees array-typed values). Ineligible
+		// __fern_map_drop. For an array-typed V, first free the value
+		// column via __map_drop_values (which self-guards on rc==1):
+		// it reads the buf's valKind (2 = plain-elem array, 3 = rc-
+		// elem array) and frees each live value with arr_dec /
+		// drop_arr_ptr at the IR-computed element stride. The
+		// retain-on-store (inc-on-set) + retain-on-read (inc-on-get)
+		// balance keeps this release-balanced. Non-array V (stride 0)
+		// and entry KEYS still leak — a later slice. Ineligible
 		// (borrowed-derived) maps and flag-off builds fall through to
-		// the plain box dec. The helper carries the same guards as
-		// __fern_arr_dec.
+		// the plain box dec.
 		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
+			valStride := int32(0)
+			if len(st.Args) >= 2 {
+				if at, ok := st.Args[1].(ast.ArrayType); ok {
+					valStride = int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))
+				}
+			}
+			if valStride != 0 {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpConstI32, I32: valStride})
+				b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -2951,12 +2966,12 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 		// checker pass over Literal already) handles each
 		// scrutinee type uniformly.
 		cond := &ast.Binary{
-			P:            arm.P,
-			Op:           "==",
-			Left:         &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
-			Right:        arm.Literal,
-			IsStringCmp:  isStringType(tagT),
-			IsFloat:      isFloatType(tagT),
+			P:           arm.P,
+			Op:          "==",
+			Left:        &ast.Ident{P: arm.P, Name: literalMatchScrName(scrSlot)},
+			Right:       arm.Literal,
+			IsStringCmp: isStringType(tagT),
+			IsFloat:     isFloatType(tagT),
 		}
 		// Stash the scrutinee under a synthetic local name so
 		// Ident lookup hits scrSlot — saves us a manual
@@ -4378,7 +4393,7 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpLoad}) // tag at ptr+0
+		b.emit(Op{Kind: OpLoad})             // tag at ptr+0
 		b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx is 1 for both Option and Result
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
@@ -6196,12 +6211,14 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 // the value-column snapshot directly.
 //
 // Encoding (widened for Stage A of map-value reclamation):
-//   0 = i32-sized scalar (no rc)
-//   1 = non-array pointer (string / struct / enum / slice /
-//       tuple) — pointer-shaped but not yet reclaimed by
-//       map_drop
-//   2 = array value with non-rc elements (plain arr_dec free)
-//   3 = array value with rc-tracked elements (drop_arr_ptr)
+//
+//	0 = i32-sized scalar (no rc)
+//	1 = non-array pointer (string / struct / enum / slice /
+//	    tuple) — pointer-shaped but not yet reclaimed by
+//	    map_drop
+//	2 = array value with non-rc elements (plain arr_dec free)
+//	3 = array value with rc-tracked elements (drop_arr_ptr)
+//
 // Kinds 2 / 3 carry enough information for a future entry-
 // walking map_drop to free the value column; until then they
 // behave identically to kind 1 at every reader (kind != 0 ==
@@ -6661,6 +6678,25 @@ func (b *builder) callBody(n *ast.Call) error {
 	// emitStringKMapCall when only K needs boxing.
 	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
 	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	// Map-value reclamation (write side): retain an aliased
+	// array-typed value (valKind 2/3) before it's stored, so the
+	// map co-owns it and map_drop's free balances the source
+	// local's exit-sweep dec. Fresh values (literals / call
+	// results) aren't aliases (needsRcIncOnAlias == false) and
+	// transfer their rc=1 to the map with no inc — preventing an
+	// over-count leak. Idempotent alias exprs (Ident / field /
+	// index) are safe to re-evaluate for the inc; the set below
+	// re-reads the same pointer. Runs before the wide/generic
+	// dispatch so both set lowerings are covered uniformly.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 &&
+		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1]) >= 2 &&
+		needsRcIncOnAlias(n.Args[2], b) {
+		if err := b.expr(n.Args[2]); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
 	// into a consumer-shaped `Option[V]`. The helper's payload sits
 	// at the usize slot offset (8 on natives), which only lines up
@@ -7179,7 +7215,7 @@ func (b *builder) assign(n *ast.Assign) error {
 //   - *ast.Ident       — variable load
 //   - *ast.FieldAccess — struct field load (member is an array)
 //   - *ast.Index       — element load (e.g. matrix[i] where matrix
-//                        is i32[][], so the element is i32[])
+//     is i32[][], so the element is i32[])
 //
 // Calls, literals, push results, slice / map operations etc.
 // all yield fresh values with rc=1 already initialised by their
@@ -7631,6 +7667,7 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 //   - pointer (string / array / struct /
 //     enum / slice / tuple / closure)    → OpStore Width:WidthPtr
 //     (4-byte on wasm32, 8-byte on arm64)
+//
 // Pairs with the symmetric read in array-indexing lowering.
 func arrayElemStoreOp(t ast.Type) Op {
 	return arrayElemStoreOpFor(t, 4)
@@ -7701,7 +7738,6 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 	}
 	return Op{Kind: OpLoad}
 }
-
 
 // isWideMapValueTypeIR matches the checker's
 // isWideMapValueType — V types that the Map runtime stores via

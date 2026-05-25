@@ -627,6 +627,108 @@ function main(): i32 {
     return (sum - 9900) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Map-value reclamation: i32[] values (valKind 2 = plain-elem
+		// array → arr_dec). Fresh literals transfer rc=1 to the map;
+		// get_or results bind to locals (inc-on-get balanced by the
+		// local's exit-sweep dec); map_drop_values frees each value.
+		name: "map_i32_array_values",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [10, 20, 30]);
+    m = m.set(2, [40, 50]);
+    var v1: i32[] = m.get_or(1, []);
+    var v2: i32[] = m.get_or(2, []);
+    return (v1[2] + v2[0] - 70) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Map-value reclamation: string[] values. string elements are
+		// not rc-tracked, so string[] is a plain-elem array (valKind 2
+		// → arr_dec frees the buffer; the strings themselves leak, as
+		// in standalone array reclamation).
+		name: "map_string_array_values",
+		src: `function main(): i32 {
+    var m: Map[string, string[]] = map_new(4);
+    m = m.set("a", ["x", "yy", "zzz"]);
+    var v: string[] = m.get_or("a", []);
+    return (v[2].len() - 3) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Map-value reclamation: i32[][] values (valKind 3 = rc-elem
+		// array → drop_arr_ptr recurses one level, dec'ing each inner
+		// i32[], then frees the outer buffer). Exercises the rc-elem
+		// value free path the other map cases don't.
+		name: "map_nested_array_values",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[][]] = map_new(4);
+    m = m.set(1, [[1, 2], [3, 4, 5]]);
+    var v: i32[][] = m.get_or(1, []);
+    return (v[1].len() + v[0][1] - 5) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Aliased array value: the set value is an Ident
+		// (needsRcIncOnAlias → inc-on-set), so the source local's
+		// exit dec and the map's drop balance to a single free.
+		name: "map_aliased_array_value",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    var arr: i32[] = [7, 8, 9];
+    m = m.set(5, arr);
+    var v: i32[] = m.get_or(5, []);
+    return (v[1] - 8) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escaping get-result: a borrowed-map helper returns one of
+		// its values past the map's frame. inc-on-get keeps the value
+		// alive (rc survives the owner map's drop in main); the caller
+		// local owns the surviving reference.
+		name: "map_value_escapes_return",
+		src: `function lookup(m: Map[i32, i32[]], k: i32): i32[] {
+    return m.get_or(k, []);
+}
+function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [100, 200]);
+    var got: i32[] = lookup(m, 1);
+    return (got[1] - 200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// get → push → overwrite-set (the std/url query_parse shape).
+		// The overwritten old value leaks for now (no overwrite-dec
+		// yet — Stage D), but must NOT over-release: counter stays 0.
+		name: "map_get_push_overwrite",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [10]);
+    match (m.get(1)) {
+        Some(cur) => { m = m.set(1, cur.push(20)); },
+        None => {}
+    }
+    var v: i32[] = m.get_or(1, []);
+    return (v.len() - 2) + (v[1] - 20) + __rc_underflow_count();
+}`,
+	},
+	{
+		// m.values() snapshot of an array-valued map: each element is
+		// retained (the snapshot co-owns), so dropping the snapshot
+		// and the map balances to a single free per value.
+		name: "map_values_array_snapshot",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [3, 4]);
+    m = m.set(2, [5, 6, 7]);
+    var vs: i32[][] = m.values();
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < vs.len()) { sum = sum + vs[i].len(); i = i + 1; }
+    return (sum - 5) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

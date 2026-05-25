@@ -1613,7 +1613,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// prelude (internal/prelude/prelude.fern); its
 	// signature is registered via the prelude's FuncDecl.
 
-
 	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
 	// thin lang-callable wrappers around wasm's bulk-memory
 	// `memory.copy` / `memory.fill`. The doc-roadmap calls
@@ -1653,6 +1652,29 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// where the heap lives above 4 GiB.
 	c.info.FuncSigs["__alloc"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
+		Result: usizeT,
+	}
+	// `__fern_rc_inc(ptr)` bumps the rc word at [ptr-8] and
+	// returns ptr (a no-op on null / low / static-sentinel
+	// pointers). Exposed to the Map runtime so __map_get*/values
+	// can retain a pointer-shaped value before handing it out —
+	// the read side of map-value reclamation.
+	c.info.FuncSigs["__fern_rc_inc"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
+	}
+	// `__fern_arr_dec(data, stride)` / `__fern_drop_arr_ptr(data,
+	// stride)` dec an array's rc and, on the last reference, free
+	// its buffer (drop_arr_ptr also recurses one level to dec
+	// pointer-shaped elements first). Exposed to the Map runtime
+	// so __map_drop_values can free array-typed values — the
+	// write/read incs (inc-on-set / inc-on-get) balance these.
+	c.info.FuncSigs["__fern_arr_dec"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__fern_drop_arr_ptr"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: usizeT,
 	}
 	// `__free(ptr, size)` returns the `size`-byte block at `ptr` to
