@@ -794,6 +794,31 @@ function main(): i32 {
     return (sum - 5) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Like map_values_array_snapshot, but dereferences the snapshot's
+		// inner elements (vs[i][j]) rather than only their lengths. The
+		// snapshot must store each value as a bare array POINTER at
+		// ptr-width stride — not a string-shaped two-word cell — or
+		// indexing reads a mangled element on wasm32 (the array header's
+		// length word interpreted as a pointer) and traps.
+		name: "map_values_array_elem_read",
+		src: `function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(4);
+    m = m.set(1, [3, 4]);
+    m = m.set(2, [5, 6, 7]);
+    var vs: i32[][] = m.values();
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        var inner: i32[] = vs[i];
+        var j: i32 = 0;
+        while (j < inner.len()) { acc = acc + inner[j]; j = j + 1; }
+        i = i + 1;
+    }
+    // 3+4+5+6+7 = 25.
+    return (acc - 25) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
