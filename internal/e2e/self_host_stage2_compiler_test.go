@@ -133,6 +133,17 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		{"struct_field", "function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.x + p.y; } struct P { x: i32, y: i32 }", 7},
 		{"method_reads_fields", "struct Pt { x: i32, y: i32 } function (p: Pt) sum(): i32 { return p.x + p.y; } function main(): i32 { var p: Pt = Pt { x: 30, y: 12 }; return p.sum(); }", 42},
 		{"union_match", "struct A { v: i32 } struct B { v: i32 } type U = A | B; function f(u: U): i32 { match (u) { A(a) => { return a.v; }, B(b) => { return b.v + 100; } } return 0 - 1; } function main(): i32 { var u: U = B { v: 5 }; return f(u); }", 105},
+		// More of the compiler-shaped feature set the self-hosted
+		// compiler must lower to eventually compile its own source.
+		{"string_concat", "function main(): i32 { var s: string = \"ab\"; var t: string = s + \"cd\"; return t.len(); }", 4},
+		{"string_slice", "function main(): i32 { var s: string = \"abcde\"; return s[1:4].len(); }", 3},
+		{"and_or", "function main(): i32 { var x: i32 = 3; if (x > 1 && x < 5) { return 1; } return 0; }", 1},
+		{"break_continue", "function main(): i32 { var i: i32 = 0; var c: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i == 7) { break; } c = c + 1; } return c; }", 5},
+		{"else_if_chain", "function main(): i32 { var x: i32 = 2; if (x == 1) { return 10; } else if (x == 2) { return 20; } else { return 30; } }", 20},
+		{"for_in", "function main(): i32 { var a: i32[] = [1, 2, 3, 4]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 10},
+		{"struct_param", "struct Pt { x: i32, y: i32 } function dist(p: Pt): i32 { return p.x + p.y; } function main(): i32 { var p: Pt = Pt { x: 15, y: 27 }; return dist(p); }", 42},
+		{"array_of_structs", "struct C { n: i32 } function main(): i32 { var arr: C[] = []; arr = arr.push(C { n: 5 }); arr = arr.push(C { n: 9 }); return arr[1].n; }", 9},
+		{"nested_match", "type T = A | B; struct A { v: i32 } struct B { v: i32 } function k(t: T): i32 { match (t) { A(a) => { match (a.v) { _ => { return a.v * 2; } } }, B(b) => { return b.v; } } return 0; } function main(): i32 { var t: T = A { v: 21 }; return k(t); }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
