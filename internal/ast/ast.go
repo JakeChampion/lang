@@ -402,6 +402,23 @@ var TwoWordOverride bool
 // (save/restore), guarded by CodegenMu on the natives.
 var RcFreeEnabled = false
 
+// RcFreeDebug turns the freelist into a use-after-free DETECTOR
+// (x86_64 only; a diagnostic build mode, set alongside
+// RcFreeEnabled). Instead of recycling a freed array buffer, the
+// free sites poison its rc word with RcPoison and quarantine the
+// block (never handed back — __fern_alloc keeps bumping).
+// __fern_rc_inc / __fern_rc_dec then trap (ud2 → SIGILL) the moment
+// they touch a poisoned block — i.e. a stale reference to an
+// over-released buffer — so a gdb backtrace pinpoints the holder the
+// rc undercounted. Chases the residual array over-release that
+// blocks the step-5 flip (see RC-PERCEUS-PLAN.md).
+var RcFreeDebug = false
+
+// RcPoison is the rc-word marker a quarantined (freed) block carries
+// in RcFreeDebug mode: a large positive value that can't be a real
+// refcount and isn't the high-bit static sentinel.
+const RcPoison = 0x7EEDFACE
+
 // CodegenMu serialises native codegen calls that read or
 // write `TwoWordOverride`. arm64.Emit toggles the flag during
 // its Emit body; x86_64.Emit reads it via `ir.LowerWith`.

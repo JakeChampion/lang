@@ -2787,6 +2787,12 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp ecx, 1")
 	g.emit("jne .Larrdec_dec")
 	// rc == 1 → free the buffer.
+	if ast.RcFreeDebug {
+		// Quarantine: poison the rc word and DON'T recycle, so any
+		// stale reference's later rc op traps. rdi is still data.
+		g.emit(fmt.Sprintf("mov dword ptr [rdi - 8], %d", ast.RcPoison))
+		g.emit("jmp .Larrdec_ret")
+	}
 	g.emit("mov r8, rsi") // stride
 	g.emit("cmp r8, 16")
 	g.emit("jae .Larrdec_hdr")
@@ -2893,6 +2899,14 @@ func (g *generator) emitRcIncRuntime() {
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcinc_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
+	if ast.RcFreeDebug {
+		// UAF detector: a poisoned rc word means this block was
+		// freed (quarantined) — touching it now is a use-after-free.
+		g.emit(fmt.Sprintf("cmp ecx, %d", ast.RcPoison))
+		g.emit("jne .Lrcinc_live")
+		g.emit("ud2") // trap → gdb backtrace shows the stale holder
+		g.label(".Lrcinc_live")
+	}
 	g.emit("test ecx, ecx")
 	g.emit("js .Lrcinc_ret") // bit 31 set ⇒ static sentinel
 	g.emit("add ecx, 1")
@@ -2928,6 +2942,12 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("cmp rdi, 0x10000")
 	g.emit("jb .Lrcdec_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
+	if ast.RcFreeDebug {
+		g.emit(fmt.Sprintf("cmp ecx, %d", ast.RcPoison))
+		g.emit("jne .Lrcdec_live")
+		g.emit("ud2") // UAF: dec of a freed (quarantined) block
+		g.label(".Lrcdec_live")
+	}
 	g.emit("test ecx, ecx")
 	g.emit("js .Lrcdec_ret") // bit 31 set ⇒ static sentinel
 	// Phase 3 underflow detector: a healthy dec operates on rc >= 1.
@@ -3264,6 +3284,11 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("mov ecx, dword ptr [rbx - 8]")
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrop_plaindec")
+		if ast.RcFreeDebug {
+			// Quarantine + poison the rc word (rbx is data); no recycle.
+			g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
+			g.emit("jmp .Ldrop_done")
+		}
 		g.emit("mov r8, r14") // stride
 		g.emit("cmp r8, 16")
 		g.emit("jae .Ldrop_hdr")
