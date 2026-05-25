@@ -240,6 +240,24 @@ func (g *gComposer) ensureFilesystem(mode gFsMode) {
 	g.inst["wasi:filesystem/preopens@0.2.0"] = g.c.importInstance("wasi:filesystem/preopens@0.2.0", g.c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc)))
 }
 
+// ensureHttpTypes imports wasi:http/types and surfaces the resources the
+// incoming-handler shape needs: incoming-request / fields / future-
+// trailers / response-outparam. The request and response bodies flow
+// over io/streams (read+write), so it pulls that in first.
+func (g *gComposer) ensureHttpTypes() {
+	if _, ok := g.inst["wasi:http/types@0.2.0"]; ok {
+		return
+	}
+	g.ensureIoStreams(true, true)
+	inst := g.c.importInstance("wasi:http/types@0.2.0",
+		g.c.typeRaw(WasiHttpTypesInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])))
+	g.inst["wasi:http/types@0.2.0"] = inst
+	g.surfaced["incoming-request"] = g.c.aliasType(inst, "incoming-request")
+	g.surfaced["fields"] = g.c.aliasType(inst, "fields")
+	g.surfaced["future-trailers"] = g.c.aliasType(inst, "future-trailers")
+	g.surfaced["response-outparam"] = g.c.aliasType(inst, "response-outparam")
+}
+
 func (g *gComposer) ensureCliWrite(iface, getter string) {
 	if _, ok := g.inst[iface]; ok {
 		return
@@ -273,10 +291,10 @@ func (g *gComposer) importStructured(imp WasiImport) {
 	g.inst[imp.InterfaceName] = g.c.importInstance(imp.InterfaceName, g.c.structuredType(imp))
 }
 
-// finish runs the generic Phase B–H lowering over the declared imports
-// and emits the tail. tailExportName: "" → wasi:cli/run; otherwise a
-// named u32 export. (incoming-handler is a later migration.)
-func (g *gComposer) finish(coreBytes []byte, coreExportName, tailExportName string) []byte {
+// lower runs the generic Phase B–H lowering over the declared imports
+// and returns the instantiated user core instance, ready for a tail to
+// alias its run/handle export. Shared by every finish* tail emitter.
+func (g *gComposer) lower(coreBytes []byte) uint32 {
 	c := g.c
 	// Phase B: user module + a trampoline/fixup pair per mem import.
 	userMod := c.coreModule(coreBytes)
@@ -375,7 +393,14 @@ func (g *gComposer) finish(coreBytes []byte, coreExportName, tailExportName stri
 			c.instantiateArgs(im.fixupMod, []string{""}, []uint32{arg})
 		}
 	}
-	// Phase I: tail.
+	return userInst
+}
+
+// finish runs the generic lowering and emits the CLI tail.
+// tailExportName: "" → wasi:cli/run; otherwise a named u32 export.
+func (g *gComposer) finish(coreBytes []byte, coreExportName, tailExportName string) []byte {
+	c := g.c
+	userInst := g.lower(coreBytes)
 	runCoreF := c.aliasCoreFunc(userInst, coreExportName)
 	if tailExportName != "" {
 		funcType := c.nType
@@ -397,5 +422,18 @@ func (g *gComposer) finish(coreBytes []byte, coreExportName, tailExportName stri
 	runInst := c.nInst
 	c.nInst++
 	c.buf = PutExportSectionOneInstance(c.buf, "wasi:cli/run@0.2.0", runInst)
+	return c.buf
+}
+
+// finishHttp runs the generic lowering and emits the
+// wasi:http/incoming-handler tail: lift the core handle func into
+// handle(own<incoming-request>, own<response-outparam>) and export the
+// handler instance. Requires ensureHttpTypes to have surfaced the two
+// resources.
+func (g *gComposer) finishHttp(coreBytes []byte, coreExportName string) []byte {
+	c := g.c
+	userInst := g.lower(coreBytes)
+	handleCoreF := c.aliasCoreFunc(userInst, coreExportName)
+	c.emitIncomingHandlerExport(g.surfaced["incoming-request"], g.surfaced["response-outparam"], handleCoreF)
 	return c.buf
 }
