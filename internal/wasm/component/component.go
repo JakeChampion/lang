@@ -388,6 +388,15 @@ func InnerTypeFlags(names []string) []byte {
 	return out
 }
 
+// InnerTypeOption returns the defvaltype body for an `option<T>` —
+// the canonical-ABI optional. innerValtype is a primitive CValtype*
+// or a small inner-scope typeidx (the wrapped type).
+//
+// Encoding: 6b <valtype>
+func InnerTypeOption(innerValtype byte) []byte {
+	return []byte{0x6b, innerValtype}
+}
+
 // WasiFilesystemErrorCodeNames is the ordered case list of the
 // `wasi:filesystem/types@0.2.0` `error-code` enum (37 cases). Order
 // fixes the discriminant values, so it must match the WIT exactly
@@ -588,6 +597,179 @@ func WasiIoErrorInstanceTypeBody() []byte {
 	body := []byte{0x01, 0x42, 0x01}
 	body = append(body, ExportSubResourceDecl("error")...)
 	return body
+}
+
+// httpMethodCases / httpSchemeCases / httpHeaderErrorCases mirror the
+// `variant method` / `variant scheme` / `variant header-error` of
+// wasi:http/types@0.2.0 exactly — case order fixes the discriminant
+// values, so it must match the WIT (cmd/fern/wit/deps/http/types.wit)
+// for the produced component to link against the host's wasi:http.
+var httpMethodCases = []VariantCase{
+	{Name: "get"}, {Name: "head"}, {Name: "post"}, {Name: "put"},
+	{Name: "delete"}, {Name: "connect"}, {Name: "options"},
+	{Name: "trace"}, {Name: "patch"},
+	{Name: "other", HasPayload: true, PayloadValtype: CValtypeString},
+}
+
+var httpSchemeCases = []VariantCase{
+	{Name: "HTTP"}, {Name: "HTTPS"},
+	{Name: "other", HasPayload: true, PayloadValtype: CValtypeString},
+}
+
+var httpHeaderErrorCases = []VariantCase{
+	{Name: "invalid-syntax"}, {Name: "forbidden"}, {Name: "immutable"},
+}
+
+// httpValueTypeIdx holds the instance-type type indices of the named
+// wasi:http/types value types after httpValueTypeDecls runs, so the
+// resource-method func decls (the full http/types instance type, a
+// later brick) can reference them.
+type httpValueTypeIdx struct {
+	method      uint32
+	scheme      uint32
+	headerError uint32
+	errorCode   uint32
+	optString   uint32 // option<string> — reused by path-with-query etc.
+}
+
+// httpErrorCodeCases builds the 39-case `variant error-code`. The
+// payload-bearing arms reference the supplied type indices: the
+// DNS-error / TLS-alert-received payload records, option<u64>,
+// option<u32>, option<field-size-payload>, the bare field-size-payload
+// record, and option<string>. All indices must be < 0x73 (single-byte
+// valtype encoding); the http/types instance keeps well under that.
+func httpErrorCodeCases(dnsPayload, tlsPayload, optU64, optU32, optFieldSize, fieldSize, optString uint32) []VariantCase {
+	p := func(idx uint32) (bool, byte) { return true, byte(idx) }
+	mk := func(name string, has bool, vt byte) VariantCase {
+		return VariantCase{Name: name, HasPayload: has, PayloadValtype: vt}
+	}
+	dnsH, dnsV := p(dnsPayload)
+	tlsH, tlsV := p(tlsPayload)
+	u64H, u64V := p(optU64)
+	u32H, u32V := p(optU32)
+	ofsH, ofsV := p(optFieldSize)
+	fsH, fsV := p(fieldSize)
+	strH, strV := p(optString)
+	return []VariantCase{
+		mk("DNS-timeout", false, 0),
+		mk("DNS-error", dnsH, dnsV),
+		mk("destination-not-found", false, 0),
+		mk("destination-unavailable", false, 0),
+		mk("destination-IP-prohibited", false, 0),
+		mk("destination-IP-unroutable", false, 0),
+		mk("connection-refused", false, 0),
+		mk("connection-terminated", false, 0),
+		mk("connection-timeout", false, 0),
+		mk("connection-read-timeout", false, 0),
+		mk("connection-write-timeout", false, 0),
+		mk("connection-limit-reached", false, 0),
+		mk("TLS-protocol-error", false, 0),
+		mk("TLS-certificate-error", false, 0),
+		mk("TLS-alert-received", tlsH, tlsV),
+		mk("HTTP-request-denied", false, 0),
+		mk("HTTP-request-length-required", false, 0),
+		mk("HTTP-request-body-size", u64H, u64V),
+		mk("HTTP-request-method-invalid", false, 0),
+		mk("HTTP-request-URI-invalid", false, 0),
+		mk("HTTP-request-URI-too-long", false, 0),
+		mk("HTTP-request-header-section-size", u32H, u32V),
+		mk("HTTP-request-header-size", ofsH, ofsV),
+		mk("HTTP-request-trailer-section-size", u32H, u32V),
+		mk("HTTP-request-trailer-size", fsH, fsV),
+		mk("HTTP-response-incomplete", false, 0),
+		mk("HTTP-response-header-section-size", u32H, u32V),
+		mk("HTTP-response-header-size", fsH, fsV),
+		mk("HTTP-response-body-size", u64H, u64V),
+		mk("HTTP-response-trailer-section-size", u32H, u32V),
+		mk("HTTP-response-trailer-size", fsH, fsV),
+		mk("HTTP-response-transfer-coding", strH, strV),
+		mk("HTTP-response-content-coding", strH, strV),
+		mk("HTTP-response-timeout", false, 0),
+		mk("HTTP-upgrade-failed", false, 0),
+		mk("HTTP-protocol-error", false, 0),
+		mk("loop-detected", false, 0),
+		mk("configuration-error", false, 0),
+		mk("internal-error", strH, strV),
+	}
+}
+
+// httpValueTypeDecls appends the wasi:http/types value-type decls
+// (method / scheme / header-error / error-code + the supporting
+// DNS-error-payload / TLS-alert-received-payload / field-size-payload
+// records and the anonymous option<…> wrappers they reference) to a
+// fresh decl stream starting at instance-type index `start`. It returns
+// the decl bytes, the resulting named-type indices, and the next free
+// index. Named records/variants are exported (referenced downstream by
+// their export index, matching the sockets-network convention); the
+// option<…> wrappers stay anonymous inner types.
+func httpValueTypeDecls(start uint32) ([]byte, httpValueTypeIdx, uint32) {
+	var decls []byte
+	idx := start
+	def := func(b []byte) uint32 {
+		decls = append(decls, 0x01)
+		decls = append(decls, b...)
+		i := idx
+		idx++
+		return i
+	}
+	export := func(name string, typeidx uint32) uint32 {
+		decls = append(decls, ExportTypeEqDecl(name, typeidx)...)
+		i := idx
+		idx++
+		return i
+	}
+
+	optString := def(InnerTypeOption(CValtypeString))
+	optU16 := def(InnerTypeOption(CValtypeU16))
+	optU8 := def(InnerTypeOption(CValtypeU8))
+	optU32 := def(InnerTypeOption(CValtypeU32))
+	optU64 := def(InnerTypeOption(CValtypeU64))
+
+	dnsDef := def(InnerTypeRecord([]RecordField{
+		{Name: "rcode", Valtype: byte(optString)},
+		{Name: "info-code", Valtype: byte(optU16)},
+	}))
+	dnsPayload := export("DNS-error-payload", dnsDef)
+	tlsDef := def(InnerTypeRecord([]RecordField{
+		{Name: "alert-id", Valtype: byte(optU8)},
+		{Name: "alert-message", Valtype: byte(optString)},
+	}))
+	tlsPayload := export("TLS-alert-received-payload", tlsDef)
+	fsDef := def(InnerTypeRecord([]RecordField{
+		{Name: "field-name", Valtype: byte(optString)},
+		{Name: "field-size", Valtype: byte(optU32)},
+	}))
+	fieldSize := export("field-size-payload", fsDef)
+	optFieldSize := def(InnerTypeOption(byte(fieldSize)))
+
+	methodDef := def(InnerTypeVariant(httpMethodCases))
+	method := export("method", methodDef)
+	schemeDef := def(InnerTypeVariant(httpSchemeCases))
+	scheme := export("scheme", schemeDef)
+	heDef := def(InnerTypeVariant(httpHeaderErrorCases))
+	headerError := export("header-error", heDef)
+	ecDef := def(InnerTypeVariant(httpErrorCodeCases(
+		dnsPayload, tlsPayload, optU64, optU32, optFieldSize, fieldSize, optString)))
+	errorCode := export("error-code", ecDef)
+
+	return decls, httpValueTypeIdx{
+		method:      method,
+		scheme:      scheme,
+		headerError: headerError,
+		errorCode:   errorCode,
+		optString:   optString,
+	}, idx
+}
+
+// WasiHttpValueTypesInstanceTypeBody wraps httpValueTypeDecls in a
+// standalone instance type exporting the named wasi:http/types value
+// types — for validating the encoders independently before they're
+// folded into the full http/types instance type.
+func WasiHttpValueTypesInstanceTypeBody() []byte {
+	decls, _, next := httpValueTypeDecls(0)
+	body := []byte{0x01, 0x42}
+	body = leb128.UlebU64(body, uint64(next)) // decl count == indices consumed from 0
+	return append(body, decls...)
 }
 
 // WasiIoPollInstanceTypeBody returns the type-section body for a
