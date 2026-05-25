@@ -972,8 +972,9 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		hasRead, hasWrite, hasEnv, hasStdout, hasStderr := tcpStreamUsage(bin)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasEnv, hasStdout, hasStderr, "_lang_run"), nil
+		hasRead, hasWrite := tcpStreamUsage(bin)
+		extras, structured, hasStdout, hasStderr, _ := socketCliExtras(bin, preview2TcpServerImports)
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, extras, structured, "_lang_run"), nil
 	}
 	// UDP clients (udp_send) are likewise a self-contained sockets shape
 	// with their own composer + the wasi:cli/run lift. Memory-only lowers
@@ -987,7 +988,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		return component.ComposeUdpClientCliRun(rb, "_lang_run"), nil
+		extras, structured, _, _, _ := socketCliExtras(bin, preview2UdpClientImports)
+		return component.ComposeUdpClientCliRun(rb, extras, structured, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
@@ -1044,36 +1046,71 @@ var preview2TcpServerImports = map[[2]string]bool{
 	// tcp_recv / tcp_send (read/write the accepted connection).
 	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
 	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
-	// env() — an HTTP-over-TCP handler reads its listen port from PORT
-	// (the synthesised main → __port_from_env → env() → get-environment).
-	{"wasi:cli/environment@0.2.0", "get-environment"}: true,
-	// print / eprint logging — the write stream shares tcp_send's
-	// blocking-write-and-flush lowering, so only the getter is extra.
-	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
-	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
 }
 
-// tcpStreamUsage reports which optional capabilities a TCP server's
-// core imports: reads (tcp_recv → input-stream.blocking-read), writes
-// (tcp_send / print → output-stream.blocking-write-and-flush), env
-// (env() → wasi:cli/environment.get-environment), and stdout / stderr
-// (print / eprint → wasi:cli/{stdout,stderr}.get-{stdout,stderr}).
-func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv, hasStdout, hasStderr bool) {
+// standaloneCliCapImports are the self-contained CLI capabilities (no
+// shared resource deps) any cli/run-shaped composer (TCP / UDP) can fold
+// in alongside its sockets surface via socketCliExtras: now / env / args
+// (mem trampolines) and exit / random / monotonic (no-opt structured).
+// A cli/run program runs under `wasmtime run`, whose full CLI world
+// grants all of these. stdout/stderr are handled separately (they need
+// the io/streams output-stream, which TCP already imports but UDP does
+// not), so they're not in this set.
+var standaloneCliCapImports = map[[2]string]bool{
+	{"wasi:clocks/wall-clock@0.2.0", "now"}:           true,
+	{"wasi:cli/environment@0.2.0", "get-environment"}: true,
+	{"wasi:cli/environment@0.2.0", "get-arguments"}:   true,
+	{"wasi:cli/exit@0.2.0", "exit"}:                   true,
+	{"wasi:random/random@0.2.0", "get-random-u64"}:    true,
+	{"wasi:clocks/monotonic-clock@0.2.0", "now"}:      true,
+}
+
+// socketCliExtras classifies a socket program's NON-socket imports (those
+// not in socketSet) into the standalone CLI capabilities ComposeTcp/Udp
+// fold in: stdout/stderr getters (flags), now/env/args (MemTramp extras),
+// exit/random/monotonic (Structured no-opts). Anything else (files,
+// stdin) lands in unsupported and forces the adapter.
+func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []component.MemTrampImport, structured []component.WasiImport, hasStdout, hasStderr bool, unsupported []string) {
+	for _, p := range coreModuleImportPairs(bin) {
+		key := [2]string{p.module, p.name}
+		if socketSet[key] {
+			continue
+		}
+		switch {
+		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
+			hasStdout = true
+		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
+			hasStderr = true
+		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
+			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(), InterfaceName: "wasi:clocks/wall-clock@0.2.0", FuncName: "now"})
+		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
+			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody(), InterfaceName: "wasi:cli/environment@0.2.0", FuncName: "get-environment", NeedsRealloc: true})
+		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments":
+			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiCliEnvironmentArgsInstanceTypeBody(), InterfaceName: "wasi:cli/environment@0.2.0", FuncName: "get-arguments", NeedsRealloc: true})
+		default:
+			if spec, ok := knownPreview2Imports[key]; ok {
+				structured = append(structured, component.WasiImport{InterfaceName: spec.interfaceName, FuncName: p.name, ParamNames: spec.paramNames, ParamValtypes: spec.paramValtypes, CoreImportModule: spec.coreImportModule, InnerTypes: spec.innerTypes, ResultValtypes: spec.resultValtypes})
+			} else {
+				unsupported = append(unsupported, p.module+"."+p.name)
+			}
+		}
+	}
+	return extras, structured, hasStdout, hasStderr, unsupported
+}
+
+// tcpStreamUsage reports whether a TCP server's core reads (tcp_recv →
+// input-stream.blocking-read) and/or writes (tcp_send / print →
+// output-stream.blocking-write-and-flush) a connection.
+func tcpStreamUsage(bin []byte) (hasRead, hasWrite bool) {
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
 		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
 			hasRead = true
 		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush":
 			hasWrite = true
-		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
-			hasEnv = true
-		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
-			hasStdout = true
-		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
-			hasStderr = true
 		}
 	}
-	return hasRead, hasWrite, hasEnv, hasStdout, hasStderr
+	return hasRead, hasWrite
 }
 
 // httpHandlerComposableImports is the exact import set ComposeHttpHandler
@@ -1160,10 +1197,19 @@ func httpHandlerCapabilities(bin []byte) (hasStdout, hasStderr bool, extras []co
 	return hasStdout, hasStderr, extras, structured, unsupported
 }
 
+// tcpServerStdioImports are the print/eprint write-stream getters the TCP
+// composer also accepts (TCP already imports io/streams for the
+// connection, so the getter is the only extra). UDP can't (no io/streams).
+var tcpServerStdioImports = map[[2]string]bool{
+	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
+	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
+}
+
 func usesPreview2TcpServer(bin []byte) bool {
 	sawSocket := false
 	for _, p := range coreModuleImportPairs(bin) {
-		if !preview2TcpServerImports[[2]string{p.module, p.name}] {
+		key := [2]string{p.module, p.name}
+		if !preview2TcpServerImports[key] && !standaloneCliCapImports[key] && !tcpServerStdioImports[key] {
 			return false
 		}
 		if strings.HasPrefix(p.module, "wasi:sockets/") {
@@ -1192,7 +1238,8 @@ var preview2UdpClientImports = map[[2]string]bool{
 func usesPreview2UdpClient(bin []byte) bool {
 	sawUdp := false
 	for _, p := range coreModuleImportPairs(bin) {
-		if !preview2UdpClientImports[[2]string{p.module, p.name}] {
+		key := [2]string{p.module, p.name}
+		if !preview2UdpClientImports[key] && !standaloneCliCapImports[key] {
 			return false
 		}
 		if strings.HasPrefix(p.module, "wasi:sockets/udp") {

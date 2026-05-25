@@ -762,9 +762,29 @@ End-to-end exit code 42 demo (covered by
     (`TestWasmPreview2UdpSendAdapterFree`). Outbound UDP is gated by the
     host network policy (`-S inherit-network`). Inbound `udp_recv` and
     hostname (DNS) addressing are deliberately deferred.
+  - **Composer unification — standalone CLI extras everywhere.
+    Shipped.** Rather than hand-port each CLI capability into each
+    socket/http composer one at a time, the sockets composers now share
+    the CLI-stream composer's standalone-capability descriptors
+    (`MemTrampImport` for now / env / args, `Structured` for exit /
+    random / monotonic). `socketCliExtras` classifies a socket program's
+    non-socket imports and `ComposeTcpServerCliRun` /
+    `ComposeUdpClientCliRun` fold them in via the shared mems-loop +
+    no-opt path; the `usesPreview2{Tcp,Udp}` gates admit them. So
+    `tcp + now/env/exit/random`, `udp + now/env/random`, and any mix
+    (e.g. a TCP server that prints, stamps `now()`, and reads `env()`)
+    compose adapter-free — verified end-to-end
+    (`TestWasmPreview2SocketCliExtrasAdapterFree`). The HTTP handler uses
+    the same extras path, scoped to what the `wasi:http/proxy` world
+    grants (clocks / random; env / files route to the adapter there).
   - **Still to do (genuinely niche / large):**
     - Inbound UDP (`udp_recv` / the incoming-datagram-stream.receive
       path) and hostname addressing (`wasi:sockets/ip-name-lookup`).
+    - Sockets/http + the *stream-backed* CLI capabilities (stdin, file
+      open-chains) — UDP can't even do `print` yet (no io/streams). The
+      standalone extras are done; the io/streams- and filesystem-backed
+      ones would need those instance types wired into the socket/http
+      composers (or the full composer merge).
     - Read+write of files in one program (both descriptor stream
       directions at once) — the filesystem/types instance type carries
       a single direction; each direction composes on its own.

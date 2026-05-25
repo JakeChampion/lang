@@ -24,7 +24,14 @@ var (
 // ComposeUdpClientCliRun wraps a core module that imports the send-only
 // wasi:sockets/udp surface (create → bind → stream(connect) → check-send
 // → send → drop) into a wasi:cli/run component.
-func ComposeUdpClientCliRun(coreBytes []byte, coreExportName string) []byte {
+//
+// extras / structured carry the standalone CLI capabilities a client may
+// also use — now() / env() / args() (MemTramp) and exit / random /
+// monotonic (no-opts, Structured) — the same set the CLI-stream composer
+// handles. A UDP client runs under wasi:cli/run (`wasmtime run`), whose
+// full CLI world grants all of these, so e.g. udp telemetry stamped with
+// now() or addressed from env() composes adapter-free.
+func ComposeUdpClientCliRun(coreBytes []byte, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing. ---
@@ -47,12 +54,24 @@ func ComposeUdpClientCliRun(coreBytes []byte, coreExportName string) []byte {
 	tCreate := c.typeRaw(WasiSocketsUdpCreateSocketInstanceTypeBody(tIpFam, tErrCode, tUdpSocket))
 	createInst := c.importInstance("wasi:sockets/udp-create-socket@0.2.0", tCreate)
 
+	// Standalone CLI capability instances (now / env / args; exit /
+	// random / monotonic) the client may also use.
+	extraInst := make([]uint32, len(extras))
+	for i, mt := range extras {
+		extraInst[i] = c.importInstance(mt.InterfaceName, c.typeRaw(mt.InstanceTypeBody))
+	}
+	structInst := make([]uint32, len(structured))
+	for i, imp := range structured {
+		structInst[i] = c.importInstance(imp.InterfaceName, c.structuredType(imp))
+	}
+
 	// --- Phase B: core module + trampoline/fixup pair per mem method. ---
 	userMod := c.coreModule(coreBytes)
 	type memMethod struct {
 		inst    uint32
 		name    string
 		params  []byte
+		realloc bool
 		tramp   uint32
 		fixup   uint32
 		trampIn uint32
@@ -66,6 +85,12 @@ func ComposeUdpClientCliRun(coreBytes []byte, coreExportName string) []byte {
 		{inst: udpInst, name: "[method]udp-socket.stream", params: udpBindStreamParams},
 		{inst: udpInst, name: "[method]outgoing-datagram-stream.check-send", params: udpSelfRetParams},
 		{inst: udpInst, name: "[method]outgoing-datagram-stream.send", params: udpSendParams},
+	}
+	// Standalone mem-trampoline extras (now / env / args) — each a
+	// (ret_ptr)->() lower over its own instance; env / args return lists
+	// so they need realloc.
+	for i, mt := range extras {
+		mems = append(mems, memMethod{inst: extraInst[i], name: mt.FuncName, params: composeOneI32Params, realloc: mt.NeedsRealloc})
 	}
 	for i := range mems {
 		mems[i].tramp = c.coreModule(TrampolineModuleForParamsNoResult(mems[i].params))
@@ -100,25 +125,51 @@ func ComposeUdpClientCliRun(coreBytes []byte, coreExportName string) []byte {
 		{Name: "[resource-drop]outgoing-datagram-stream", Sort: CoreSortFunc, Idx: dropOutF},
 	})
 
-	// --- Phase E: instantiate the user module. ---
-	userInst := c.instantiateArgs(userMod,
-		[]string{
-			"wasi:sockets/instance-network@0.2.0",
-			"wasi:sockets/udp-create-socket@0.2.0",
-			"wasi:sockets/udp@0.2.0",
-		},
-		[]uint32{instNetArg, createArg, udpArg})
+	argNames := []string{
+		"wasi:sockets/instance-network@0.2.0",
+		"wasi:sockets/udp-create-socket@0.2.0",
+		"wasi:sockets/udp@0.2.0",
+	}
+	argInsts := []uint32{instNetArg, createArg, udpArg}
+	// Standalone CLI extras: each mem-tramp extra (placeholder in
+	// memTramp, after the 6 socket methods) + each no-opt structured
+	// import gets its own per-interface arg instance.
+	needRealloc := false
+	for i, mt := range extras {
+		argNames = append(argNames, mt.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(mt.FuncName, memTramp[6+i]))
+		if mt.NeedsRealloc {
+			needRealloc = true
+		}
+	}
+	for i, imp := range structured {
+		f := c.lowerNoOpts(c.aliasInstFunc(structInst[i], imp.FuncName))
+		argNames = append(argNames, imp.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(imp.FuncName, f))
+	}
 
-	// --- Phase F: alias memory + trampoline tables (no realloc). ---
+	// --- Phase E: instantiate the user module. ---
+	userInst := c.instantiateArgs(userMod, argNames, argInsts)
+
+	// --- Phase F: alias memory (+ realloc when an extra returns a list)
+	// + trampoline tables. ---
 	c.aliasMemory(userInst)
+	var reallocF uint32
+	if needRealloc {
+		reallocF = c.aliasReallocFunc(userInst)
+	}
 	for i := range mems {
 		mems[i].table = c.aliasTable(mems[i].trampIn)
 	}
 
-	// --- Phase G: memory lowers. ---
+	// --- Phase G: memory lowers (list-returning extras need realloc). ---
 	for i := range mems {
 		cf := c.aliasInstFunc(mems[i].inst, mems[i].name)
-		mems[i].coreF = c.lowerMem(cf)
+		if mems[i].realloc {
+			mems[i].coreF = c.lowerMemRealloc(cf, reallocF)
+		} else {
+			mems[i].coreF = c.lowerMem(cf)
+		}
 	}
 
 	// --- Phase H: fixups (install lowered funcs into tramp tables). ---

@@ -9058,18 +9058,18 @@ function main(): i32 {
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// TCP mixed with a wall-clock read isn't composable — the TCP composer
-	// doesn't surface wasi:clocks and the CLI-stream composer doesn't
-	// surface sockets, so -component-wrap must reject it. (TCP-only servers
-	// — including recv/send echo and now print/eprint logging — and
+	// TCP mixed with a file read isn't composable — the TCP composer
+	// surfaces sockets/io + the standalone CLI extras (clocks / env /
+	// random / print), but NOT the filesystem open-chain, and the
+	// CLI-stream composer doesn't surface sockets. So -component-wrap
+	// must reject it. (TCP-only servers, TCP + now/env/print, and
 	// CLI-stream-only programs each compose on their own; this picks a
 	// combination that still falls through.)
 	src := []byte(`function main(): i32 {
     var s: i32 = tcp_listen(8080);
     tcp_close(s);
-    var t: i64 = now_ns();
-    if (t > 0) { return 0; }
-    return 1;
+    match (read_file("f")) { Ok(c) => {}, Err(e) => {} }
+    return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
@@ -11142,18 +11142,18 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// TCP mixed with a wall-clock read: the TCP composer doesn't surface
-	// wasi:clocks, and the CLI-stream composer doesn't surface sockets,
-	// so neither path claims it and the driver must reject with the
-	// adapter hint. (Earlier still-unsupported combos — args, then
-	// tcp_recv, then tcp+print — each became supported as the composer
-	// grew; TCP+clock is the current gap.)
+	// TCP mixed with a file read: the TCP composer surfaces sockets/io +
+	// the standalone CLI extras (clocks / env / random / print) but NOT
+	// the filesystem open-chain, and the CLI-stream composer doesn't
+	// surface sockets, so neither path claims it and the driver must
+	// reject with the adapter hint. (Earlier still-unsupported combos —
+	// args, tcp_recv, tcp+print, tcp+clock — each became supported as the
+	// composer grew; TCP+files is the current gap.)
 	src := []byte(`function main(): i32 {
     var s: i32 = tcp_listen(8080);
     tcp_close(s);
-    var t: i64 = now_ns();
-    if (t > 0) { return 0; }
-    return 1;
+    match (read_file("f")) { Ok(c) => {}, Err(e) => {} }
+    return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
