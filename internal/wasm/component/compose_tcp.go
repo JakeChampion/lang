@@ -46,12 +46,12 @@ func repeatI32(n int) []byte {
 // wasi:cli/environment.get-environment — an HTTP-over-TCP handler that
 // reads its listen port from the PORT env var (the synthesised
 // `main()` calls `__port_from_env`, which lowers to `env()` →
-// get-environment) composes adapter-free. hasStdout / hasStderr add
+// get-environment) composes adapter-free via the extras list. hasStdout / hasStderr add
 // wasi:cli/stdout.get-stdout / wasi:cli/stderr.get-stderr so a server
 // that print()s / eprint()s for logging composes too (the write reuses
 // the connection's output-stream.blocking-write-and-flush lowering,
 // which tcpStreamUsage already detects since print imports it).
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasEnv, hasStdout, hasStderr bool, coreExportName string) []byte {
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasStdout, hasStderr bool, extras []MemTrampImport, structured []WasiImport, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -86,13 +86,16 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	tCreate := c.typeRaw(WasiSocketsTcpCreateSocketInstanceTypeBody(tIpFam, tErrCode, tTcpSocket))
 	createInst := c.importInstance("wasi:sockets/tcp-create-socket@0.2.0", tCreate)
 
-	// wasi:cli/environment.get-environment is a standalone instance type
-	// (returns list<tuple<string,string>>, no shared resource deps), so
-	// it slots in after the sockets surface without outer-aliasing.
-	var envInst uint32
-	if hasEnv {
-		tEnv := c.typeRaw(WasiCliEnvironmentGetEnvironmentInstanceTypeBody())
-		envInst = c.importInstance("wasi:cli/environment@0.2.0", tEnv)
+	// Standalone CLI capability instances (now / env / args; exit /
+	// random / monotonic) — each its own standalone instance type, no
+	// shared resource deps, so they slot in after the sockets surface.
+	extraInst := make([]uint32, len(extras))
+	for i, mt := range extras {
+		extraInst[i] = c.importInstance(mt.InterfaceName, c.typeRaw(mt.InstanceTypeBody))
+	}
+	structInst := make([]uint32, len(structured))
+	for i, imp := range structured {
+		structInst[i] = c.importInstance(imp.InterfaceName, c.structuredType(imp))
 	}
 	// Optional CLI write streams (print / eprint logging), over the
 	// shared output-stream resource surfaced above.
@@ -129,7 +132,7 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	// tcp_send / tcp_recv operate on the accepted connection's streams.
 	// Track their slice positions so the io/streams arg can reference
 	// their trampoline placeholders.
-	idxBlockWrite, idxBlockRead, idxEnv := -1, -1, -1
+	idxBlockWrite, idxBlockRead := -1, -1
 	if hasStreamWrite {
 		idxBlockWrite = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockWriteName, params: composeBlockWriteParams})
@@ -138,11 +141,13 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		idxBlockRead = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true})
 	}
-	// get-environment: (ret_ptr) -> () lowering, list<tuple<…>> result →
-	// mem+realloc, like blocking-read.
-	if hasEnv {
-		idxEnv = len(mems)
-		mems = append(mems, memMethod{inst: envInst, name: "get-environment", params: composeOneI32Params, realloc: true})
+	// Standalone mem-trampoline extras (now / env / args) — each a
+	// (ret_ptr)->() lower over its own instance; env / args return lists
+	// so they need realloc. Track the first extra's slice position so
+	// the per-extra args below can find their placeholders.
+	extraMemStart := len(mems)
+	for i, mt := range extras {
+		mems = append(mems, memMethod{inst: extraInst[i], name: mt.FuncName, params: composeOneI32Params, realloc: mt.NeedsRealloc})
 	}
 	for i := range mems {
 		mems[i].tramp = c.coreModule(TrampolineModuleForParamsNoResult(mems[i].params))
@@ -209,10 +214,16 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		"wasi:io/streams@0.2.0",
 	}
 	argInsts := []uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg}
-	if idxEnv >= 0 {
-		envArg := c.coreInstOneFunc("get-environment", memTramp[idxEnv])
-		argNames = append(argNames, "wasi:cli/environment@0.2.0")
-		argInsts = append(argInsts, envArg)
+	// Standalone CLI extras (now / env / args) — each its own
+	// per-interface arg, placeholder in memTramp after the socket +
+	// stream methods.
+	extraNeedsRealloc := false
+	for i, mt := range extras {
+		argNames = append(argNames, mt.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(mt.FuncName, memTramp[extraMemStart+i]))
+		if mt.NeedsRealloc {
+			extraNeedsRealloc = true
+		}
 	}
 	// CLI write-stream getters (no-opts) for print / eprint logging.
 	if hasStdout {
@@ -225,13 +236,19 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
 		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
 	}
+	// No-opt structured extras (exit / random / monotonic).
+	for i, imp := range structured {
+		f := c.lowerNoOpts(c.aliasInstFunc(structInst[i], imp.FuncName))
+		argNames = append(argNames, imp.InterfaceName)
+		argInsts = append(argInsts, c.coreInstOneFunc(imp.FuncName, f))
+	}
 	userInst := c.instantiateArgs(userMod, argNames, argInsts)
 
 	// --- Phase F: alias memory (+ realloc for blocking-read's list
-	// result) + the trampoline tables. ---
+	// result or a list-returning extra) + the trampoline tables. ---
 	c.aliasMemory(userInst)
 	var reallocF uint32
-	if hasStreamRead || hasEnv {
+	if hasStreamRead || extraNeedsRealloc {
 		reallocF = c.aliasReallocFunc(userInst)
 	}
 	for i := range mems {

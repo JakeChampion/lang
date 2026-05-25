@@ -797,6 +797,93 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2SocketCliExtrasAdapterFree exercises the composer
+// unification: a TCP server and a UDP client that ALSO use the
+// standalone CLI capabilities (now() / env() / print()) compose
+// adapter-free, where before those mixes forced -wasi-adapter. Both run
+// under wasi:cli/run (`wasmtime run`), whose full CLI world grants
+// clocks / environment. The TCP side (listen+close + now+env+print)
+// runs to exit 0; the UDP side reads its target host from env, stamps
+// now(), and the datagram is received by a Go socket.
+func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	build := func(name, src string) string {
+		sp := filepath.Join(dir, name+".fern")
+		if err := os.WriteFile(sp, []byte(src), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		comp := filepath.Join(dir, name+".wasm")
+		if out, err := exec.Command(bin, "-target", "wasm", "-o", comp, sp).CombinedOutput(); err != nil {
+			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+		}
+		if out, err := exec.Command("wasm-tools", "validate", comp).CombinedOutput(); err != nil {
+			t.Fatalf("validate (%s): %v\n%s", name, err, out)
+		}
+		return comp
+	}
+
+	// TCP listen+close server that also stamps now(), reads env(), prints.
+	tcpProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	tcpPort := tcpProbe.Addr().(*net.TCPAddr).Port
+	tcpProbe.Close()
+	tcpComp := build("tcpx", `function main(): i32 {
+    print("starting");
+    var t: i64 = now_ns();
+    match (env("MODE")) { Some(_) => {}, None => {} }
+    var s: i32 = tcp_listen(`+itoa(tcpPort)+`);
+    if (s < 0) { return 1; }
+    tcp_close(s);
+    if (t > 0) { return 0; }
+    return 2;
+}`)
+	if out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "MODE=x", tcpComp).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run (tcp+now+env+print): %v\n%s", err, out)
+	}
+
+	// UDP client: target host from env, payload sent; datagram received.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
+	udpComp := build("udpx", `function main(): i32 {
+    var host: string = "127.0.0.1";
+    match (env("TARGET")) { Some(v) => { host = v; }, None => {} }
+    var t: i64 = now_ns();
+    if (udp_send(host, `+itoa(udpPort)+`, "telemetry") > 0 && t > 0) { return 0; }
+    return 1;
+}`)
+	if out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "TARGET=127.0.0.1", udpComp).CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run (udp+env+now): %v\n%s", err, out)
+	}
+	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read datagram: %v", err)
+	}
+	if got := string(buf[:n]); got != "telemetry" {
+		t.Fatalf("datagram = %q; want %q", got, "telemetry")
+	}
+}
+
 // itoa is a tiny strconv.Itoa shim — we don't import strconv
 // elsewhere in this file and the cost of pulling it in for one
 // call isn't worth it.
