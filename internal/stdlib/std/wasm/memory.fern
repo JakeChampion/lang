@@ -15,10 +15,12 @@
 // integer widths — float types have no narrow-load form because
 // IEEE-754 doesn't decompose that way.
 //
-// Bulk memory ops (memory.init, data.drop, memory.copy,
-// memory.fill — all under the 0xFC multi-byte opcode prefix) and
-// the saturating-truncate ops aren't included here; the
-// production wasm backend doesn't lean on them yet.
+// The bulk-memory ops the production backend actually emits —
+// memory.copy and memory.fill, both under the 0xFC multi-byte
+// opcode prefix — are covered at the bottom of this file. The
+// rest of the bulk-memory family (memory.init / data.drop) and
+// the saturating-truncate ops aren't included; the backend's
+// memcpy / memset helpers only reach for copy + fill.
 
 import "std/wasm/leb128";
 
@@ -153,5 +155,32 @@ pub function inst_memory_grow(buf: u8[]): u8[] {
     var out: u8[] = buf;
     out = out.push(64u8);   // 0x40
     out = out.push(0u8);    // reserved memidx
+    return out;
+}
+
+// ---- Bulk memory (0xFC prefix) -------------------------------
+//
+// memory.copy and memory.fill are encoded as the 0xFC prefix
+// followed by a uleb sub-opcode and one reserved memidx byte per
+// memory operand. Both sub-opcodes (10 / 11) fit a single uleb
+// byte. memory.copy pops (dst, src, len); memory.fill pops
+// (dst, val, len). The production backend emits these literally
+// as the byte sequences `0xFC 0x0A 0x00 0x00` / `0xFC 0x0B 0x00`
+// for its memcpy / memset runtime helpers.
+
+pub function inst_memory_copy(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(252u8);  // 0xFC prefix
+    out = out.push(10u8);   // 0x0A memory.copy sub-opcode
+    out = out.push(0u8);    // dst memidx (reserved)
+    out = out.push(0u8);    // src memidx (reserved)
+    return out;
+}
+
+pub function inst_memory_fill(buf: u8[]): u8[] {
+    var out: u8[] = buf;
+    out = out.push(252u8);  // 0xFC prefix
+    out = out.push(11u8);   // 0x0B memory.fill sub-opcode
+    out = out.push(0u8);    // memidx (reserved)
     return out;
 }

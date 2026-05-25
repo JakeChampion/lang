@@ -218,17 +218,21 @@ as an opt-in debug output behind `-emit-wat`.
   section that takes the section's logical input (lists of
   typeidxs, parallel name/kind/idx arrays for exports, pre-
   wrapped bodies for code, etc.) and emits the complete
-  `id + size + body` envelope. Covers type, function, memory,
-  export, start, code, and data sections plus the four
-  `export_{func,table,memory,global}` kind constants. Import and
-  element are intentionally skipped — imports carry a four-variant
-  union descriptor (func / table / mem / global) that warrants
-  its own helper module, and the existing wasm backend doesn't
-  exercise element segments. Tests
+  `id + size + body` envelope. Covers type, function, table,
+  memory, global, export, start, element, code, and data sections
+  plus the four `export_{func,table,memory,global}` kind constants.
+  Import is the one outlier kept in its own module — its descriptor
+  is a four-variant union (func / table / mem / global). Table +
+  element landed once `call_indirect` (closures / indirect dispatch
+  in the production backend) needed them: `encode_table_section`
+  writes one funcref table with limits, `encode_element_section`
+  writes active funcref segments (`offsets` + `funcidxs_per_seg`
+  parallel arrays) that initialise it. Tests
   (`TestWASMSections{Function, StartMemory, Export, TypeCode,
-  Data}`) cover empty-vector cases, multi-byte uleb fields,
-  flag=0 vs flag=1 memory limits, and a code section that wraps
-  an inst.put_function_body-produced body end-to-end.
+  Data, TableElement}`) cover empty-vector cases, multi-byte uleb
+  fields, flag=0 vs flag=1 memory limits, every byte of the table
+  + element envelopes, and a code section that wraps an
+  inst.put_function_body-produced body end-to-end.
 - **Import + global section composers shipped** in
   `internal/stdlib/std/wasm/imports.fern`. Imports needed their
   own module because the import descriptor is a four-variant
@@ -248,8 +252,9 @@ as an opt-in debug output behind `-emit-wat`.
   the caller populates a `Module` struct field-by-field
   (returning `module_new()` for an empty starting point), and
   build emits the preamble followed by every populated section in
-  spec-required order (type → import → function → memory → global
-  → export → start → code → data). Empty sections are skipped.
+  spec-required order (type → import → function → table → memory →
+  global → export → start → element → code → data). Empty sections
+  are skipped.
   Tests (`TestWASMModule{Empty, Minimal, SectionOrder}`) include
   the strongest test yet: TestWASMModuleMinimal builds a complete
   37-byte "function returning 42" module end-to-end and verifies
@@ -272,11 +277,15 @@ as an opt-in debug output behind `-emit-wat`.
   wiring step that routes through it. (The `wasm-tools parse`
   shell-out it was meant to replace is already gone — the Go-side
   `wasmbin` path retired it; the Lang-stdlib encoder would be a
-  second, pure-Lang path.) Saturating-truncate ops and bulk-memory
-  ops (both 0xFC-prefixed) are deliberately out of scope — the
-  production backend doesn't lean on them. Element section is
-  also deliberately deferred — the existing wasm backend doesn't
-  exercise table-element segments.
+  second, pure-Lang path.) The encoder now covers every construct
+  the production backend emits, including the table + element
+  sections and the `memory.copy` / `memory.fill` bulk-memory ops
+  (`inst_memory_copy` / `inst_memory_fill` in memory.fern; tests
+  `TestWASMMemoryBulk` + the `TestWASMModuleRunsMemory{Copy,Fill}`
+  / `TestWASMModuleRunsCallIndirect` run-under-wasmtime gates).
+  Still deliberately out of scope: the saturating-truncate ops and
+  the rest of the bulk-memory family (memory.init / data.drop) —
+  the backend uses only the trapping truncations and copy / fill.
 
 ---
 

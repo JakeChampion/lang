@@ -5663,7 +5663,6 @@ func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, std
 	return s, e, ec, dir
 }
 
-
 // `read_file` returns Ok(content) for a present file. The
 // program writes the content back to stdout so we can verify
 // both the read path and the type-erased Result unwrap.
@@ -6788,10 +6787,11 @@ function main(): i32 {
 // valtype constants — together.
 //
 // Reference bytes (16 total):
-//   00 61 73 6D 01 00 00 00          \0asm v1
-//   01 06                            section: type, size 6
-//   01                                  vec(functype) count = 1
-//   60 01 7F 01 7F                       functype: i32 -> i32
+//
+//	00 61 73 6D 01 00 00 00          \0asm v1
+//	01 06                            section: type, size 6
+//	01                                  vec(functype) count = 1
+//	60 01 7F 01 7F                       functype: i32 -> i32
 func TestWASMEncodeMinimalModule(t *testing.T) {
 	src := `import "std/wasm/encode";
 import "std/wasm/leb128";
@@ -7392,6 +7392,36 @@ function main(): i32 {
 	}
 }
 
+// TestWASMMemoryBulk covers the two 0xFC-prefixed bulk-memory ops
+// the production backend emits for its memcpy / memset helpers:
+// memory.copy (0xFC 0x0A + two reserved memidx bytes) and
+// memory.fill (0xFC 0x0B + one). These are the first multi-byte
+// opcodes in memory.fern, so the test walks every byte of each.
+func TestWASMMemoryBulk(t *testing.T) {
+	src := `import "std/wasm/memory";
+function main(): i32 {
+    var e: u8[] = [];
+
+    var cp: u8[] = memory.inst_memory_copy(e);
+    if (cp.len() != 4)  { return 1; }
+    if (cp[0] != 252u8) { return 2; }   // 0xFC prefix
+    if (cp[1] != 10u8)  { return 3; }   // 0x0A memory.copy
+    if (cp[2] != 0u8)   { return 4; }   // dst memidx
+    if (cp[3] != 0u8)   { return 5; }   // src memidx
+
+    var fl: u8[] = memory.inst_memory_fill(e);
+    if (fl.len() != 3)  { return 10; }
+    if (fl[0] != 252u8) { return 11; }  // 0xFC prefix
+    if (fl[1] != 11u8)  { return 12; }  // 0x0B memory.fill
+    if (fl[2] != 0u8)   { return 13; }  // memidx
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("memory bulk copy/fill: exit = %d, want 0", got)
+	}
+}
+
 // TestWASMConvertIntWidth covers integer-width conversion +
 // reinterpret. The reinterpret variants share the 0xBC-0xBF
 // neighbourhood with the convert ops; walking both catches a
@@ -7708,6 +7738,53 @@ function main(): i32 {
 }`
 	if got := runWasm(t, src); got != 0 {
 		t.Errorf("sections data: exit = %d, want 0", got)
+	}
+}
+
+// TestWASMSectionsTableElement covers the two sections that make
+// call_indirect usable: the table section (id 4 — one funcref
+// table with limits) and the element section (id 9 — an active
+// segment that initialises the table with funcidxs). Walks every
+// byte of each so a transposed limits flag or a missing offset-
+// expr terminator shows up precisely.
+func TestWASMSectionsTableElement(t *testing.T) {
+	src := `import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    var e: u8[] = [];
+
+    // Table: one funcref table, min 2, no max.
+    var tbl: u8[] = sections.encode_table_section(e, imports.reftype_funcref(), 2u32, 0 - 1);
+    // [id=4, size=4, count=1, reftype=0x70, flag=0, min=2]
+    if (tbl.len() != 6)  { return 1; }
+    if (tbl[0] != 4u8)   { return 2; }   // section_table id
+    if (tbl[1] != 4u8)   { return 3; }   // body size 4
+    if (tbl[2] != 1u8)   { return 4; }   // one table
+    if (tbl[3] != 112u8) { return 5; }   // funcref 0x70
+    if (tbl[4] != 0u8)   { return 6; }   // limits flag: no max
+    if (tbl[5] != 2u8)   { return 7; }   // min 2
+
+    // Element: one active segment at offset 0, funcidxs [0, 1].
+    var offs: i32[] = [0];
+    var fids: u32[][] = [[0u32, 1u32]];
+    var el: u8[] = sections.encode_element_section(e, offs, fids);
+    // [id=9, size=8, count=1, flag=0, 0x41, off=0, 0x0B, veclen=2, 0, 1]
+    if (el.len() != 10)  { return 20; }
+    if (el[0] != 9u8)    { return 21; }  // section_element id
+    if (el[1] != 8u8)    { return 22; }  // body size 8
+    if (el[2] != 1u8)    { return 23; }  // one segment
+    if (el[3] != 0u8)    { return 24; }  // flag 0: active, table 0
+    if (el[4] != 65u8)   { return 25; }  // 0x41 i32.const
+    if (el[5] != 0u8)    { return 26; }  // offset 0
+    if (el[6] != 11u8)   { return 27; }  // 0x0B end
+    if (el[7] != 2u8)    { return 28; }  // funcidx vec len 2
+    if (el[8] != 0u8)    { return 29; }  // funcidx 0
+    if (el[9] != 1u8)    { return 30; }  // funcidx 1
+
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("table/element sections: exit = %d, want 0", got)
 	}
 }
 
@@ -11486,17 +11563,17 @@ function main(): i32 {
 // WASI-style "import an interface, extract its function, lower
 // into core, instantiate core module" pipeline:
 //
-//   1. type section: instance type { exit(code: u32) }
-//   2. import section: wasi:cli/exit@0.2.0 (instance 0)
-//   3. alias section: alias instance 0's "exit" export as
-//      component-level func 0
-//   4. canon section: lower func 0 into core func 0
-//   5. core-instance section: wrap core func 0 as a
-//      `(export "exit" (func 0))` core instance (instance 0)
-//   6. core-module section: a core module that imports
-//      "wasi" "exit" : (i32) -> ()
-//   7. core-instance section: instantiate the core module
-//      passing instance 0 as the "wasi" arg
+//  1. type section: instance type { exit(code: u32) }
+//  2. import section: wasi:cli/exit@0.2.0 (instance 0)
+//  3. alias section: alias instance 0's "exit" export as
+//     component-level func 0
+//  4. canon section: lower func 0 into core func 0
+//  5. core-instance section: wrap core func 0 as a
+//     `(export "exit" (func 0))` core instance (instance 0)
+//  6. core-module section: a core module that imports
+//     "wasi" "exit" : (i32) -> ()
+//  7. core-instance section: instantiate the core module
+//     passing instance 0 as the "wasi" arg
 //
 // This is structurally exactly what `wasm-tools component new
 // --adapt` produces for a CLI-world component using only one WASI
@@ -12624,13 +12701,14 @@ function main(): i32 {
 //   - put_core_instance_section_instantiate_with_one_instance_arg
 //
 // The component's recipe:
-//   type 0    : (func (result u32))
-//   import 0  : "h" : (func 0)
-//   canon lower (func 0) -> core func 0
-//   core instance 0 = (export "f" (core func 0))   ; package the lower'd fn
-//   core module 0   : imports (host.f : () -> i32), exports "main"
-//                     that just calls the import
-//   core instance 1 = (instantiate $m (with "host" (instance 0)))
+//
+//	type 0    : (func (result u32))
+//	import 0  : "h" : (func 0)
+//	canon lower (func 0) -> core func 0
+//	core instance 0 = (export "f" (core func 0))   ; package the lower'd fn
+//	core module 0   : imports (host.f : () -> i32), exports "main"
+//	                  that just calls the import
+//	core instance 1 = (instantiate $m (with "host" (instance 0)))
 //
 // wasmtime won't *run* this (the host import isn't satisfied), but
 // `wasm-tools validate` accepts it and `wasm-tools print` shows
@@ -15020,6 +15098,179 @@ function main(): i32 {
 	out := strings.TrimSpace(runWasmModule(t, mod))
 	if !strings.Contains(out, "77") {
 		t.Errorf("wasmtime stdout = %q, want it to contain 77 (stored value)", out)
+	}
+}
+
+// TestWASMModuleRunsCallIndirect builds a module with a funcref
+// table + element segment and dispatches through it: main pushes
+// table index 1 and call_indirects type 0, which lands on func1
+// (returns 22). Proves the table section, the element section's
+// funcidx ordering, and call_indirect all line up end-to-end.
+func TestWASMModuleRunsCallIndirect(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/encode";
+import "std/wasm/sections";
+import "std/wasm/imports";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+
+    // One shared type: () -> i32 (both callees and main).
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+
+    // func0 / func1 are indirect-call targets; func2 is main.
+    m.function_typeidxs = [0u32, 0u32, 0u32];
+
+    // Funcref table holding both targets.
+    m.table_present = true;
+    m.table_reftype = imports.reftype_funcref();
+    m.table_min = 2u32;
+    m.table_max = 0 - 1;
+
+    // table[0] = func0, table[1] = func1.
+    m.elem_offsets = [0];
+    m.elem_funcidxs = [[0u32, 1u32]];
+
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [2u32];
+
+    // func0 -> 11, func1 -> 22.
+    var f0: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 11));
+    var f1: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 22));
+
+    // main: i32.const 1 ; call_indirect type 0 table 0 -> func1 -> 22.
+    var main_body: u8[] = inst.inst_i32_const([], 1);
+    main_body = inst.inst_call_indirect(main_body, 0u32, 0u32);
+    var f2: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
+
+    m.code_bodies = [f0, f1, f2];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < bytes.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "22") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 22 (table[1] via call_indirect)", out)
+	}
+}
+
+// TestWASMModuleRunsMemoryCopy seeds memory with a data segment,
+// memory.copies a 2-byte run to a fresh address, and reads back
+// the second copied byte. Exercises the 0xFC memory.copy op
+// end-to-end under wasmtime.
+func TestWASMModuleRunsMemoryCopy(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+    m.data_offsets = [0];
+    m.data_inits = [[5u8, 6u8, 7u8, 8u8]];
+
+    // memory.copy dst=16, src=0, len=2  -> bytes [5,6] land at 16,17.
+    var body: u8[] = inst.inst_i32_const([], 16);
+    body = inst.inst_i32_const(body, 0);
+    body = inst.inst_i32_const(body, 2);
+    body = memory.inst_memory_copy(body);
+    // Read back addr 17 -> 6.
+    body = inst.inst_i32_const(body, 17);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < bytes.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "6") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 6 (copied byte at 17)", out)
+	}
+}
+
+// TestWASMModuleRunsMemoryFill memory.fills a 3-byte run with the
+// value 9 then reads back a byte from the middle of the run.
+// Exercises the 0xFC memory.fill op end-to-end under wasmtime.
+func TestWASMModuleRunsMemoryFill(t *testing.T) {
+	src := `import "std/wasm/module";
+import "std/wasm/inst";
+import "std/wasm/memory";
+import "std/wasm/encode";
+import "std/wasm/sections";
+function main(): i32 {
+    var m: module.Module = module.module_new();
+    var p0: u8[] = [];
+    var r0: u8[] = [encode.valtype_i32()];
+    m.type_params = [p0];
+    m.type_results = [r0];
+    m.function_typeidxs = [0u32];
+    m.memory_present = true;
+    m.memory_min = 1u32;
+    m.memory_max = 0 - 1;
+    m.export_names = ["main"];
+    m.export_kinds = [sections.export_func()];
+    m.export_idxs = [0u32];
+
+    // memory.fill dst=8, val=9, len=3 -> addrs 8,9,10 = 9.
+    var body: u8[] = inst.inst_i32_const([], 8);
+    body = inst.inst_i32_const(body, 9);
+    body = inst.inst_i32_const(body, 3);
+    body = memory.inst_memory_fill(body);
+    // Read back addr 9 -> 9.
+    body = inst.inst_i32_const(body, 9);
+    body = memory.inst_i32_load8_u(body, 0u32, 0u32);
+    var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
+    m.code_bodies = [fn];
+    var bytes: u8[] = module.build(m);
+
+    var output: string = "";
+    var i: i32 = 0;
+    while (i < bytes.len()) {
+        if (i > 0) { output = output + " "; }
+        output = output + (bytes[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(output);
+    return 0;
+}`
+	mod := langProducedModuleBytes(t, src)
+	out := strings.TrimSpace(runWasmModule(t, mod))
+	if !strings.Contains(out, "9") {
+		t.Errorf("wasmtime stdout = %q, want it to contain 9 (filled byte at 9)", out)
 	}
 }
 

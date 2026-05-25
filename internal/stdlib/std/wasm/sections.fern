@@ -13,12 +13,13 @@
 // no more re-implementing the section-header / vec-length /
 // memarg / memtype / export-desc bookkeeping at each call site.
 //
-// Sections covered: type, function, memory, global (via a single-
-// const-global helper since that's all today's backend needs),
-// export, start, code, data. Import and element are deferred —
-// imports carry a four-variant union as the descriptor (func /
-// table / mem / global), and element segments aren't on the
-// existing wasm backend's hot path.
+// Sections covered: type, function, table, memory, global (via a
+// single-const-global helper since that's all today's backend
+// needs), export, start, element, code, data. Import lives in
+// imports.fern — its descriptor is a four-variant union (func /
+// table / mem / global) that warrants its own module. Table +
+// element are here because they're what `call_indirect` (closures
+// + indirect dispatch in the production backend) needs.
 
 import "std/wasm/leb128";
 import "std/wasm/encode";
@@ -78,6 +79,27 @@ pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
     return encode.put_section(buf, encode.section_function(), body);
 }
 
+// ---- Table section -------------------------------------------
+//
+// Body: vec(tabletype). Each tabletype is `reftype + limits` —
+// the same limits shape the memory section uses. wasm 1.0 caps a
+// module at one table, so this helper writes exactly one entry.
+// `reftype` is funcref (0x70) for the call_indirect dispatch
+// table; `max = -1` means "no maximum".
+pub function encode_table_section(buf: u8[], reftype: u8, min: u32, max: i32): u8[] {
+    var body: u8[] = leb128.uleb_u32([], 1u32);   // exactly one table
+    body = body.push(reftype);
+    if (max < 0) {
+        body = body.push(0u8);                    // flag: no max
+        body = leb128.uleb_u32(body, min);
+    } else {
+        body = body.push(1u8);                    // flag: with max
+        body = leb128.uleb_u32(body, min);
+        body = leb128.uleb_u32(body, max as u32);
+    }
+    return encode.put_section(buf, encode.section_table(), body);
+}
+
 // ---- Memory section ------------------------------------------
 //
 // Body: vec(memtype). Wasm 1.0 allows at most one memory, so
@@ -123,6 +145,40 @@ pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indi
 pub function encode_start_section(buf: u8[], funcidx: u32): u8[] {
     var body: u8[] = leb128.uleb_u32([], funcidx);
     return encode.put_section(buf, encode.section_start(), body);
+}
+
+// ---- Element section -----------------------------------------
+//
+// Body: vec(elem). Each segment here is the MVP "active, table 0,
+// funcref" kind (flag 0): a `0x00` flag, an offset expression
+// (`i32.const <off> ; end`), and a vec(funcidx) that initialises
+// the table starting at that offset. This is what populates the
+// call_indirect dispatch table — `funcidxs_per_seg[i][j]` becomes
+// table slot `offsets[i] + j`.
+//
+// `offsets` and `funcidxs_per_seg` are parallel arrays — one
+// offset and one funcidx list per segment.
+pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg: u32[][]): u8[] {
+    var n: i32 = offsets.len();
+    var body: u8[] = leb128.uleb_u32([], n as u32);
+    var i: i32 = 0;
+    while (i < n) {
+        body = leb128.uleb_u32(body, 0u32);          // flag 0: active, table 0, funcref
+        // Offset expression: i32.const <offset> ; end
+        body = body.push(65u8);                       // 0x41 i32.const
+        body = leb128.sleb_i32(body, offsets[i]);
+        body = body.push(11u8);                       // 0x0B end
+        // Init vec(funcidx).
+        var seg: u32[] = funcidxs_per_seg[i];
+        body = leb128.uleb_u32(body, seg.len() as u32);
+        var j: i32 = 0;
+        while (j < seg.len()) {
+            body = leb128.uleb_u32(body, seg[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return encode.put_section(buf, encode.section_element(), body);
 }
 
 // ---- Code section --------------------------------------------
