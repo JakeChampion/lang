@@ -15,12 +15,12 @@ import (
 )
 
 // TestSelfHostBootstrapsItself pipes self-host source files through
-// the asm-self-host driver and verifies each result assembles
-// cleanly. The driver now compiles its own lexer.fern (~40 KB) AND
-// parser.fern (~86 KB) end-to-end.
+// the asm-self-host driver and verifies each result assembles +
+// links cleanly. The driver now compiles its own COMPLETE source —
+// lexer.fern (~40 KB), parser.fern (~86 KB), and asm.fern (~294 KB,
+// the x86-64 emitter itself) — to gcc-assemblable, linkable asm.
 //
-// Two classes of wall used to block the bigger inputs, both now
-// fixed:
+// Three classes of wall used to block the bigger inputs, all fixed:
 //   1. The asm self-host's `s = s.out + text` output build was O(N²)
 //      — replaced on both backends by the amortised-O(1) global
 //      strbuf primitive (strbuf_reset / strbuf_append / strbuf_take);
@@ -33,10 +33,18 @@ import (
 //      and the surrounding loop spun, allocating until OOM. Since
 //      parser.fern is itself full of `lexer.*` qualified types and
 //      patterns, this blocked it from parsing its own source.
+//   3. The self-host emitter didn't implement the strbuf builtins, so
+//      a program that USES strbuf — asm.fern's own `write` does —
+//      linked with undefined `__fern_strbuf_*` references. The
+//      emitter now emits the strbuf runtime (a 16-byte-box string
+//      ABI) alongside the heap, so asm.fern self-compiles + links.
 //
-// asm.fern (~294 KB) is the next frontier: it now emits without OOM,
-// but the emitted asm doesn't gcc-assemble cleanly yet (a separate
-// emit-correctness gap) — so it's not in the probe list below.
+// The gate here is assemble + link, not execution — same bar the
+// lexer / parser probes are held to (their outputs aren't run
+// either). Running the self-compiled emitter (a true stage-2
+// bootstrap) is the next frontier: the linked asm.fern binary still
+// faults at runtime (heap sizing + emit-correctness), to be chased
+// in follow-ups.
 func TestSelfHostBootstrapsItself(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -82,7 +90,7 @@ func TestSelfHostBootstrapsItself(t *testing.T) {
 	// compiles its own lexer AND parser. asm.fern is NOT yet in this
 	// list: it emits without OOM but its output doesn't assemble
 	// cleanly yet (a separate emit-correctness gap — follow-up).
-	for _, name := range []string{"lexer.fern", "parser.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm.fern"} {
 		langSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
