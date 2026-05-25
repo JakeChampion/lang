@@ -847,9 +847,22 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
-	if helpers.set["__fern_reader_close_fd"] ||
-		helpers.set["__fern_writer_close"] {
-		in.add("wasi_fd_close")
+	if helpers.set["__fern_reader_close_fd"] {
+		if opts.Preview2WASI {
+			// The Reader holds an own<input-stream> handle; close drops it
+			// via canon resource.drop (the composer satisfies the import).
+			in.add("wasi_io_input_stream_drop")
+		} else {
+			in.add("wasi_fd_close")
+		}
+	}
+	if helpers.set["__fern_writer_close"] {
+		if opts.Preview2WASI {
+			// The Writer holds an own<output-stream> handle; close drops it.
+			in.add("wasi_io_output_stream_drop")
+		} else {
+			in.add("wasi_fd_close")
+		}
 	}
 
 	// TCP helpers. Each user-facing builtin (tcp_listen / tcp_accept /
@@ -1208,6 +1221,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,
 	"__fern_writer_write":        buildWriterWriteBodyP2,
+	"__fern_reader_close_fd":     buildReaderCloseFdBodyP2,
+	"__fern_writer_close":        buildWriterCloseBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.
