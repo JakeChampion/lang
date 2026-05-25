@@ -695,3 +695,129 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2HttpHandlerAdapterFree is TestWasmPreview2HttpHandler
+// without the preview-1 adapter: `-target wasi-http` (no -wasi-adapter)
+// composes the wasi:http/incoming-handler component natively through
+// the Go-side ComposeHttpHandler — importing wasi:http/types +
+// wasi:io/streams and exporting wasi:http/incoming-handler. It needs no
+// FERN_WASI_ADAPTER; a green run proves the whole http/types method
+// surface (request accessors, body read via consume+stream+blocking-read,
+// fields, outgoing-response build, outgoing-body write, response-outparam
+// set) lowers and runs under `wasmtime serve`.
+func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "router.fern")
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/hello") {
+        return http_response_ok("world");
+    }
+    if (req.method == "POST") {
+        return http_response_ok(req.body_string());
+    }
+    return http_response_text(404, "not found");
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "router.component.wasm")
+	emit := exec.Command(bin, "-target", "wasi-http", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasi-http (no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/hello")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /hello: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("/hello status = %d; want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "world" {
+		t.Errorf("/hello body = %q; want %q (stderr=%q)", string(body), "world", serr.String())
+	}
+
+	resp, err = client.Get("http://" + addr + "/missing")
+	if err != nil {
+		t.Fatalf("get /missing: %v", err)
+	}
+	if resp.StatusCode != 404 {
+		t.Errorf("/missing status = %d; want 404", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "not found" {
+		t.Errorf("/missing body = %q; want %q", string(body), "not found")
+	}
+
+	want := "echo me back"
+	resp, err = client.Post("http://"+addr+"/echo", "text/plain", strings.NewReader(want))
+	if err != nil {
+		t.Fatalf("post /echo: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("POST status = %d; want 200", resp.StatusCode)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != want {
+		t.Errorf("POST body echo = %q; want %q", string(body), want)
+	}
+}
+

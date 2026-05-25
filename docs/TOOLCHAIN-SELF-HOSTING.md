@@ -346,17 +346,18 @@ End-to-end exit code 42 demo (covered by
 
 #### What's NOT yet shipped
 
-- **`-target wasi-http` default-path wiring.** `-target wasm`
-  without `-wasi-adapter` now flows through the Go-side
-  preview-2 encoder when the program's imports are all
-  preview-2-migrated (wasi:cli/exit, wasi:random/random,
-  wasi:clocks/monotonic-clock); unsupported imports surface a
-  clear error pointing at `-wasi-adapter`. `-target wasi-http`
-  still requires the adapter — its imports
-  (`wasi:http/types` + `wasi:io/streams`) use list / record /
-  resource shapes the Go encoder doesn't cover yet. Migrating
-  the http path to no-adapter requires the canonical-ABI
-  list / resource pieces below.
+- **`-target wasm` / `-target wasi-http` default-path wiring.
+  Both shipped.** `-target wasm` without `-wasi-adapter` flows
+  through the Go-side preview-2 encoder when the program's
+  imports are all preview-2-migrated; unsupported imports
+  surface a clear error pointing at `-wasi-adapter`. `-target
+  wasi-http` without `-wasi-adapter` now composes the
+  `wasi:http/incoming-handler` component natively too (see the
+  "Native `wasi:http/incoming-handler`" entry under composition,
+  above) — the `wasi:http/types` + `wasi:io/streams` list /
+  record / resource shapes the Go encoder once couldn't cover
+  are all done. A handler that also prints / reads env / opens
+  files still falls back to `-wasi-adapter`.
 - **Preview-2 import migration.** `internal/codegen/wasmbin/wasi.go`
   still emits preview-1 imports (`fd_write`, `path_open`, etc.).
   Migrating each to its preview-2 equivalent lifts more programs
@@ -673,18 +674,40 @@ End-to-end exit code 42 demo (covered by
     `examples/wasm/echo_handler.fern` composes adapter-free and serves
     HTTP end-to-end on the env-supplied port — verified by a Go client
     round-trip (`TestCmdLangComponentWrapCliTcpServerWithEnv`).
+  - **Native `wasi:http/incoming-handler`. Shipped.** The stated
+    edge-HTTP use case now composes adapter-free: `fern -target
+    wasi-http -o handler.wasm src.fern` (no `-wasi-adapter`) emits a
+    component that imports `wasi:http/types` + `wasi:io/streams` and
+    EXPORTS `wasi:http/incoming-handler`, runnable under `wasmtime
+    serve`. The arc was four bricks: the http/types value types
+    (`method` / `scheme` / `header-error` / the 39-case `error-code`
+    variant + its payload records, #1364), the full `wasi:http/types`
+    instance type (seven resources + the fifteen method/constructor/
+    static decls the handler core imports, #1365), the
+    export-of-interface shape (the first in the codebase — lift the
+    core `handle(own<incoming-request>, own<response-outparam>)` and
+    export the interface, #1367), then `ComposeHttpHandler` + the
+    adapter-free `-target wasi-http` driver routing. Method lowerings
+    span every kind: no-opts scalar (headers / constructors /
+    set-status-code), memory trampolines (consume / stream / body /
+    write / append / response-outparam.set), memory+realloc (method /
+    path-with-query / fields.entries / outgoing-body.finish /
+    blocking-read — the host returns variable-length data into guest
+    memory), and five canon `resource.drop`s. Verified end-to-end: a
+    routing handler serves GET / 404 / POST-echo under `wasmtime serve`
+    (`TestWasmPreview2HttpHandlerAdapterFree`). A handler that also
+    prints / reads env / opens files still needs `-wasi-adapter` (those
+    mix in CLI-stream imports the http composer doesn't lower yet); the
+    driver detects the extra imports and says so.
   - **Still to do (genuinely niche / large):**
     - Mixing TCP with CLI-stream stdout (a server that also prints /
       exits) — the TCP composer surfaces sockets/io + `get-environment`,
-      but not the print/stdin/file stream side.
+      but not the print/stdin/file stream side. The same gap blocks an
+      `incoming-handler` that prints.
     - UDP (`wasi:sockets/udp`).
-    - `wasi:http/incoming-handler` via the Go encoder — the stated
-      edge-HTTP use case, still on `-wasi-adapter`. A large arc (the
-      http request/response/headers/body resources + the
-      incoming-handler *export* shape).
-      is still preview-1 only — preview-2 has no fd-append flag, so
-      it needs `append-via-stream` (or an explicit seek-to-end
-      before write-via-stream).
+    - The file-append open-chain is still preview-1 only — preview-2
+      has no fd-append flag, so it needs `append-via-stream` (or an
+      explicit seek-to-end before write-via-stream).
   - **Default-path driver wiring for `-target wasm`.** Shipped
     in #1204. `-target wasm` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)

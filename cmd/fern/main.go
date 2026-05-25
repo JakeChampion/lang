@@ -574,6 +574,31 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			}
 			return 0, nil
 		}
+		// `-target wasi-http` without `-wasi-adapter`: compose the
+		// wasi:http/incoming-handler component natively, the same Go-side
+		// path the CLI and TCP targets use. Works when the handler's
+		// core imports are confined to the composable set (wasi:http/types
+		// + wasi:io/streams); a handler that also prints / reads env /
+		// opens files still needs the adapter (those would mix in
+		// CLI-stream imports ComposeHttpHandler doesn't lower yet).
+		if target == "wasi-http" && wasiAdapter == "" {
+			core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+				HttpHandler:        true,
+				Preview2WASI:       true,
+				ForceMemorySection: true,
+			})
+			if err != nil {
+				return 1, err
+			}
+			if extra := httpHandlerUnsupportedImports(core); len(extra) > 0 {
+				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(extra, ", "))
+			}
+			comp := component.ComposeHttpHandler(core, "wasi:http/incoming-handler@0.2.0#handle")
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
 		if wasiAdapter == "" {
 			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
 		}
@@ -1025,6 +1050,49 @@ func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv bool) {
 		}
 	}
 	return hasRead, hasWrite, hasEnv
+}
+
+// httpHandlerComposableImports is the exact import set ComposeHttpHandler
+// lowers: the wasi:http/types method surface (+ resource-drops) and the
+// request/response body's wasi:io/streams ops. A handler core confined
+// to these composes adapter-free; anything else (print, env, files)
+// mixes in CLI-stream imports the http composer doesn't handle yet.
+var httpHandlerComposableImports = map[[2]string]bool{
+	{"wasi:http/types@0.2.0", "[method]incoming-request.method"}:          true,
+	{"wasi:http/types@0.2.0", "[method]incoming-request.path-with-query"}: true,
+	{"wasi:http/types@0.2.0", "[method]incoming-request.headers"}:         true,
+	{"wasi:http/types@0.2.0", "[method]incoming-request.consume"}:         true,
+	{"wasi:http/types@0.2.0", "[resource-drop]incoming-request"}:          true,
+	{"wasi:http/types@0.2.0", "[method]incoming-body.stream"}:             true,
+	{"wasi:http/types@0.2.0", "[static]incoming-body.finish"}:             true,
+	{"wasi:http/types@0.2.0", "[resource-drop]future-trailers"}:           true,
+	{"wasi:http/types@0.2.0", "[constructor]fields"}:                      true,
+	{"wasi:http/types@0.2.0", "[method]fields.entries"}:                   true,
+	{"wasi:http/types@0.2.0", "[method]fields.append"}:                    true,
+	{"wasi:http/types@0.2.0", "[resource-drop]fields"}:                    true,
+	{"wasi:http/types@0.2.0", "[constructor]outgoing-response"}:           true,
+	{"wasi:http/types@0.2.0", "[method]outgoing-response.set-status-code"}: true,
+	{"wasi:http/types@0.2.0", "[method]outgoing-response.body"}:           true,
+	{"wasi:http/types@0.2.0", "[method]outgoing-body.write"}:              true,
+	{"wasi:http/types@0.2.0", "[static]outgoing-body.finish"}:             true,
+	{"wasi:http/types@0.2.0", "[static]response-outparam.set"}:            true,
+	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
+	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
+	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:                    true,
+	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:                   true,
+}
+
+// httpHandlerUnsupportedImports returns the core's imports that fall
+// outside httpHandlerComposableImports — the ones that would block the
+// adapter-free wasi:http path. Empty means the handler composes natively.
+func httpHandlerUnsupportedImports(bin []byte) []string {
+	var extra []string
+	for _, p := range coreModuleImportPairs(bin) {
+		if !httpHandlerComposableImports[[2]string{p.module, p.name}] {
+			extra = append(extra, p.module+"."+p.name)
+		}
+	}
+	return extra
 }
 
 func usesPreview2TcpServer(bin []byte) bool {
