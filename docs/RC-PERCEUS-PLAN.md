@@ -1308,18 +1308,24 @@ Backend-agnostic (it's in `lowerFunc`). Covered by `move_on_return_test`
 gate confirms the elision is observationally invisible.
 
 **Move-on-alias (DONE).** Sibling slice: `var y = x` / `y = x` where
-the source `x` is an owned rc local read EXACTLY once (its single AST
-occurrence is the alias RHS) is dead afterward, so the alias transfer
-inc and `x`'s exit-sweep dec cancel. `computeMovedLocals` finds these
-via an Ident-occurrence count (occ==1 ⇒ one read, no reassignment, no
-capture — sound regardless of control flow), the alias skips the inc,
-and the sweep excludes the moved local. Removing a balanced inc+dec
-pair can't change the net rc, so it's safe; the occ==1 guard is what
-guarantees no live read is stranded. Composes with move-on-return:
-`var x = […]; var y = x; return y` now carries zero rc traffic.
-Covered by `TestMoveOnAlias{ElidesIncForSingleUseLocal,
-KeepsIncWhenReadAgain}`. Still to do: the general redundant-pair pass
-(multi-use last-use via real liveness) and Phase 5 drop-reuse.
+the source `x` is an owned rc local whose alias is its LAST occurrence
+is dead afterward, so the alias transfer inc and `x`'s exit-sweep dec
+cancel. `computeMovedLocals` indexes every Ident in pre-order and moves
+the alias iff its read of `x` is `x`'s max-index occurrence — covering
+multi-use locals (`var n = x[0]; var y = x`), not just single-use, and
+ruling out any later read OR reassignment (a `var x` definition is not
+an Ident node, so the max-index occurrence also being the alias means
+nothing touches `x` afterward). Two dominance guards keep the global
+sweep-exclusion leak-free: the alias must be a TOP-LEVEL statement (not
+nested in a branch/loop that could skip it) and no `return` may precede
+it at the top level — so `x` is moved on every path to an exit. Aliases
+inside control flow keep their inc. Removing a balanced inc+dec pair
+can't change the net rc (safe); the last-occurrence + dominance guards
+prove no live read is stranded and nothing leaks. Composes with
+move-on-return: `var x = […]; var y = x; return y` carries zero rc
+traffic. Covered by `TestMoveOnAlias{ElidesIncForSingleUseLocal,
+MovesAtLastUseEvenIfMultiUse, KeepsIncForBranchedAlias,
+KeepsIncWhenReadAgain}`. Still to do: Phase 5 drop-reuse.
 
 ### Phase 5: Drop reuse + borrowed params
 
