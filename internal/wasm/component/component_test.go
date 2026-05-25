@@ -1063,6 +1063,50 @@ func TestWasiHttpValueTypesInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
+// TestBuildHttpIncomingHandlerComponent_Validates composes a minimal
+// wasi:http/incoming-handler component from a stub core module that
+// exports `handle` (core sig (i32,i32)->()), and confirms wasm-tools
+// validates the export-of-interface shape: the component imports
+// wasi:http/types and EXPORTS wasi:http/incoming-handler, whose `handle`
+// func references the imported incoming-request / response-outparam
+// resources. This isolates the novel export-of-interface mechanics from
+// the (separate) http/types method lowering.
+func TestBuildHttpIncomingHandlerComponent_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	// Stub core module: one func type (i32,i32)->(), one empty func,
+	// exported as "handle". Imports nothing — it just receives the two
+	// resource handles and returns.
+	stub := []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // header
+		0x01, 0x06, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x00, // type: func (i32,i32)->()
+		0x03, 0x02, 0x01, 0x00, // func: 1 func, type 0
+		0x07, 0x0a, 0x01, 0x06, 'h', 'a', 'n', 'd', 'l', 'e', 0x00, 0x00, // export "handle" func 0
+		0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b, // code: 1 func, empty body
+	}
+	comp := component.BuildHttpIncomingHandlerComponent(stub, "handle")
+	dir := t.TempDir()
+	p := filepath.Join(dir, "handler.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"wasi:http/incoming-handler@0.2.0", "wasi:http/types@0.2.0", "handle",
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestWasiHttpTypesInstanceTypeBody_Validates composes the full
 // wasi:http/types instance type — io/error + io/streams (for the
 // input-stream / output-stream the body methods hand back) surfaced
