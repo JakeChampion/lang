@@ -525,6 +525,26 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             mi = mi + 1;
                         }
                     }
+                    // Method call on a struct (or otherwise non-
+                    // primitive) receiver: the coarse receiver tag
+                    // ("struct") loses the struct name, so resolve by
+                    // method name alone — find any function with this
+                    // name and a non-empty receiver type, return its
+                    // result tag. First match wins; method names are
+                    // effectively unique in the self-host sources.
+                    // Without this, `(obj.method()).len()` /
+                    // `obj.method()[i]` mis-dispatch (the receiver
+                    // infers "unknown"); parser.fern's struct-literal
+                    // look-ahead `(look.peek_ident()).len()` is
+                    // exactly this shape, so the self-hosted parser
+                    // mis-parsed every struct literal without it.
+                    var mj: i32 = 0;
+                    while (mj < s.funcs.len()) {
+                        if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {
+                            return ret_tag_of(s.funcs[mj].ret_type);
+                        }
+                        mj = mj + 1;
+                    }
                     return "unknown";
                 },
                 _ => { return "unknown"; }

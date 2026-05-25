@@ -124,6 +124,15 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		{"if", "function main(): i32 { var x: i32 = 5; if (x > 3) { return 1; } return 0; }", 1},
 		{"while", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", 10},
 		{"recursion", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
+		{"string_len", "function main(): i32 { var s: string = \"hello\"; return s.len(); }", 5},
+		{"array_index", "function main(): i32 { var a: i32[] = [10, 20, 30]; return a[2]; }", 30},
+		// Struct field access, methods that read fields, and union
+		// match — the features the compiler's OWN source is built
+		// from. These exercised the method-result / struct-field type
+		// inference path in asm.fern.
+		{"struct_field", "function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.x + p.y; } struct P { x: i32, y: i32 }", 7},
+		{"method_reads_fields", "struct Pt { x: i32, y: i32 } function (p: Pt) sum(): i32 { return p.x + p.y; } function main(): i32 { var p: Pt = Pt { x: 30, y: 12 }; return p.sum(); }", 42},
+		{"union_match", "struct A { v: i32 } struct B { v: i32 } type U = A | B; function f(u: U): i32 { match (u) { A(a) => { return a.v; }, B(b) => { return b.v + 100; } } return 0 - 1; } function main(): i32 { var u: U = B { v: 5 }; return f(u); }", 105},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
