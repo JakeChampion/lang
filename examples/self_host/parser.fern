@@ -373,6 +373,18 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
     return ExprResult { par: p, expr: base };
 }
 
+// parse_expr_from_text re-lexes + parses an f-string interpolant's
+// raw text into an Expr. The lexer already isolated the interpolant
+// (balanced braces, inner string literals skipped), so a fresh
+// tokenize + parse_expr round-trip recovers the AST. Mirrors the Go
+// parser's parseExprFromText.
+function parse_expr_from_text(text: string): Expr {
+    var toks: lexer.Token[] = lexer.tokenize(text);
+    var sub: Par = Par { toks: toks, pos: 0 };
+    var r: ExprResult = parse_expr(sub);
+    return r.expr;
+}
+
 // parse_primary: number, ident (which may extend to call), string,
 // bool, parenthesised expr, unknown otherwise.
 function parse_primary(p: Par): ExprResult {
@@ -550,12 +562,33 @@ function parse_primary(p: Par): ExprResult {
         },
         lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; },
         lexer.TokError(x) => { return ExprResult { par: p, expr: e_unknown("lex error: " + x.msg) }; },
-        lexer.TokFString(_) => {
-            // f-string sub-parsing (each interpolant Expr text →
-            // ast.Expr) is a follow-up; advance past the token so the
-            // surrounding loop recovers rather than spinning.
+        lexer.TokFString(f) => {
             p = p.advance();
-            return ExprResult { par: p, expr: e_unknown("fstring (unsupported in parser port)") };
+            // Desugar to a `+`-chain, mirroring the Go checker's
+            // FString lowering: literal parts → string literals,
+            // interpolant parts → `(<sub-parsed expr>).to_string()`,
+            // folded left-to-right. An empty f-string desugars to "".
+            var built: Expr = e_string("");
+            var has: boolean = false;
+            var i: i32 = 0;
+            while (i < f.parts.len()) {
+                var part: lexer.FStringPart = f.parts[i];
+                var piece: Expr = e_string(part.lit);
+                if (part.is_expr) {
+                    var no_args: Expr[] = [];
+                    piece = e_call(e_field_access(parse_expr_from_text(part.expr), "to_string"), no_args);
+                }
+                if (!has) {
+                    built = piece;
+                    has = true;
+                } else {
+                    built = e_binary("+", built, piece);
+                }
+                i = i + 1;
+            }
+            // Allow postfix chains on the f-string value (`f"...".len()`),
+            // consistent with the plain string-literal arm.
+            return parse_postfix(p, built);
         }
     }
     return ExprResult { par: p, expr: e_unknown("primary") };
@@ -1875,6 +1908,66 @@ function main(): i32 {
             }
         },
         _ => { return 1076; }
+    }
+
+    // f-string desugar: `return f"x={x}";` lowers to
+    //   "x=" + (x).to_string()
+    // i.e. ExprBinary("+", ExprString("x="),
+    //        ExprCall{ callee: ExprFieldAccess{ obj: ExprIdent("x"),
+    //                                            field: "to_string" } }).
+    var srcFs: string = "return f\"x={x}\";";
+    var progFs: Stmt[] = parse_program(lexer.tokenize(srcFs));
+    match (progFs[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprBinary(b) => {
+                    if (b.op != "+") { return 1100; }
+                    match (b.left) {
+                        ExprString(s) => { if (s.value != "x=") { return 1101; } },
+                        _ => { return 1102; }
+                    }
+                    match (b.right) {
+                        ExprCall(call) => {
+                            match (call.callee) {
+                                ExprFieldAccess(fa) => {
+                                    if (fa.field != "to_string") { return 1103; }
+                                    match (fa.obj) {
+                                        ExprIdent(id) => { if (id.name != "x") { return 1104; } },
+                                        _ => { return 1105; }
+                                    }
+                                },
+                                _ => { return 1106; }
+                            }
+                        },
+                        _ => { return 1107; }
+                    }
+                },
+                _ => { return 1108; }
+            }
+        },
+        _ => { return 1109; }
+    }
+
+    // Empty f-string desugars to the empty string literal.
+    match (parse_program(lexer.tokenize("return f\"\";"))[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprString(s) => { if (s.value != "") { return 1110; } },
+                _ => { return 1111; }
+            }
+        },
+        _ => { return 1112; }
+    }
+
+    // Literal-only f-string desugars to a single string literal.
+    match (parse_program(lexer.tokenize("return f\"hi\";"))[0]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprString(s) => { if (s.value != "hi") { return 1113; } },
+                _ => { return 1114; }
+            }
+        },
+        _ => { return 1115; }
     }
 
     return 0;
