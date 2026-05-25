@@ -88,6 +88,48 @@ function main(): i32 { return f()[0]; }`)
 	}
 }
 
+// General last-use: a local used MORE than once still moves when its
+// LAST occurrence is a top-level alias (here `x[0]` reads x, then the
+// alias is x's final use). No __fern_rc_inc should remain.
+func TestMoveOnAliasMovesAtLastUseEvenIfMultiUse(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32[] {
+    var x: i32[] = [1, 2, 3];
+    var n: i32 = x[0];
+    var y: i32[] = x;
+    return y;
+}
+function main(): i32 { return f()[0]; }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("multi-use local whose last use is a top-level alias should move (0 incs), got %d", got)
+	}
+}
+
+// Dominance guard: an alias inside a branch does NOT move even when it
+// is the local's last occurrence — on the not-taken path x is still
+// live and must be swept, so the inc is kept.
+func TestMoveOnAliasKeepsIncForBranchedAlias(t *testing.T) {
+	ip := lowerForTest(t, `function f(c: boolean): i32 {
+    var x: i32[] = [1, 2, 3];
+    if (c) {
+        var y: i32[] = x;
+        return y[0];
+    }
+    return 0;
+}
+function main(): i32 { return f(true); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got == 0 {
+		t.Errorf("branched alias must keep its inc (not dominate the exit), got 0")
+	}
+}
+
 // A local READ more than once is NOT moved — its alias keeps the inc,
 // since the later read needs the value live.
 func TestMoveOnAliasKeepsIncWhenReadAgain(t *testing.T) {
