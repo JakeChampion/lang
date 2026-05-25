@@ -304,6 +304,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMapDrop {
 		g.emitMapDropRuntime()
 	}
+	if g.usesBoxFree {
+		g.emitBoxFreeRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -911,6 +914,38 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_map_drop")
+	g.line(".ltorg")
+}
+
+// emitBoxFreeRuntime emits `__fern_box_free(data, size) -> data` — the
+// Phase 3 struct/enum box reclamation helper (arm64 mirror). The IR
+// pre-gates the call on rc==1 and has already dropped the box's
+// rc-tracked fields/payloads, so this just returns the box (base =
+// data - 8 rc header, freed size = size + 8) to the freelist and
+// returns data (the uniform-result shape the IR OpDrop relies on).
+// NULL / low-address guards keep a stray call safe. data is held in
+// x19 across the __fern_free call.
+func (g *generator) emitBoxFreeRuntime() {
+	g.line("")
+	g.line(".global __fern_box_free")
+	g.typeDirective("__fern_box_free")
+	g.label("__fern_box_free")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = data (default return)
+	g.emit("cbz x19, .Lboxfree_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Lboxfree_ret")
+	g.emit("add x1, x1, #8") // size + 8 rc header (arg1)
+	g.emit("sub x0, x19, #8") // base = data - 8 (arg0)
+	g.emit("bl __fern_free")
+	g.label(".Lboxfree_ret")
+	g.emit("mov x0, x19")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_box_free")
 	g.line(".ltorg")
 }
 
@@ -4818,6 +4853,10 @@ type generator struct {
 	// reclamation handler that frees the buf + handle at rc==1.
 	// Pulls in __fern_free when the flag is on.
 	usesMapDrop bool
+	// usesBoxFree gates `__fern_box_free` — the Phase 3 struct/enum
+	// box reclamation helper `(data, size) -> data`. Pulls in
+	// __fern_free.
+	usesBoxFree bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6837,6 +6876,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 				g.usesFree = true
 				g.usesAlloc = true
 			}
+		case "__fern_box_free":
+			g.usesBoxFree = true
+			g.usesFree = true
+			g.usesAlloc = true
 		case "__slice_make":
 			target = "__fern_slice_make"
 			g.usesSliceMake = true

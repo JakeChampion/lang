@@ -448,6 +448,52 @@ function main(): i32 {
     return (got - 3675) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Struct-box reclamation: each mk() owns two structs (one with
+		// an rc-tracked array field, one all-scalar), freed at the
+		// function's exit — fields dropped then the box returned to the
+		// freelist. 200 build/free cycles churn the size classes; a
+		// corrupted reuse or over-release drifts the checksum.
+		// per mk(seed): (a+b) + xs[2] + n = (2*seed+1) + (seed+2) + seed
+		//   = 4*seed + 3.  sum_{0..199} (4k+3) = 4*19900 + 600 = 80200.
+		name: "struct_box_churn_free",
+		src: `struct Pair { a: i32, b: i32 }
+struct Holder { xs: i32[], n: i32 }
+function mk(seed: i32): i32 {
+    var p: Pair = Pair { a: seed, b: seed + 1 };
+    var h: Holder = Holder { xs: [seed, seed + 1, seed + 2], n: seed };
+    return p.a + p.b + h.xs[2] + h.n;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 80200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Returned struct: make_holder builds an owned struct and
+		// returns it. The struct return-inc (needsRcIncOnAlias) must
+		// protect it so make_holder's exit drop does NOT free the box
+		// out from under the caller. per k: xs[1] + n = (k+1) + k =
+		// 2k+1.  sum_{0..49} (2k+1) = 2*1225 + 50 = 2500.
+		name: "struct_returned_not_freed",
+		src: `struct Holder { xs: i32[], n: i32 }
+function make_holder(k: i32): Holder {
+    var h: Holder = Holder { xs: [k, k + 1], n: k };
+    return h;
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var h: Holder = make_holder(k);
+        got = got + h.xs[1] + h.n;
+        k = k + 1;
+    }
+    return (got - 2500) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

@@ -417,6 +417,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 						needs.add("__free")
 						needs.add("__fern_alloc")
 					}
+				case "__fern_box_free":
+					needs.add("__fern_box_free")
+					needs.add("__free")
+					needs.add("__fern_alloc")
 				case "__memcpy":
 					needs.add("__memcpy")
 				case "__memset":
@@ -838,6 +842,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMapDropBody,
+	},
+	"__fern_box_free": {
+		// (data, size) → data. Phase 3 struct/enum box reclamation;
+		// the IR pre-gates on rc==1, so this just frees base = data-8
+		// (size+8) and returns data. See buildBoxFreeBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBoxFreeBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1693,6 +1705,46 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildBoxFreeBody — (data, size) → data. Phase 3 struct/enum box
+// reclamation (wasm mirror). The IR pre-gates the call on rc==1 and
+// has already dropped the box's rc-tracked fields/payloads, so this
+// returns the box (base = data - 8 rc header, freed size = size + 8)
+// to the freelist and returns data — the uniform-result shape the IR
+// OpDrop relies on (a direct void __free call can't provide it on
+// wasm). NULL / low-address guards keep a stray call safe.
+//
+// Locals: 0=data, 1=size (params).
+func buildBoxFreeBody(helperIdxs map[string]uint32) []byte {
+	free := helperIdxs["__free"]
+	var body []byte
+	// null guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// low-address guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// __free(base = data - 8, size = size + 8)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body) // base
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body) // size + 8
+	body = inst.InstCall(body, free)
+	// return data
+	body = inst.InstLocalGet(body, 0)
+	return inst.PutFunctionBody(nil, nil, body)
 }
 
 // buildAllocBoxBody assembles wasm bytes for
