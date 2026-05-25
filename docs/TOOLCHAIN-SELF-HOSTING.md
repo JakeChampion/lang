@@ -21,10 +21,10 @@ Linux + Darwin rows are unchanged.
 
 | Target          | Driver fn                | External tool(s)                  | What it does                                  |
 |-----------------|--------------------------|-----------------------------------|-----------------------------------------------|
-| `arm64-linux`   | `link` @ `cmd/fern/main.go:528`        | `aarch64-linux-gnu-gcc` (→ `as` + `ld`) | Assemble `.s`, link static ELF                |
-| `x86_64-linux`  | `link` @ `cmd/fern/main.go:528`        | `x86_64-linux-gnu-gcc` (→ `as` + `ld`)  | Same, for x86-64                              |
-| `arm64-darwin`  | `linkDarwin` @ `cmd/fern/main.go:460`  | `clang` (+ `lld` on Linux hosts)        | Assemble `.s`, link Mach-O, ad-hoc codesign   |
-| `wasm`          | `emitPreview2ComponentFromCoreBytes` @ `cmd/fern/main.go:651` | `wasm-tools component new --adapt` | Splice preview-1 → preview-2 adapter into a Component-Model envelope around the (already-binary) core module |
+| `arm64-linux`   | `link` @ `cmd/fern/main.go:797`        | `aarch64-linux-gnu-gcc` (→ `as` + `ld`) | Assemble `.s`, link static ELF                |
+| `x86_64-linux`  | `link` @ `cmd/fern/main.go:797`        | `x86_64-linux-gnu-gcc` (→ `as` + `ld`)  | Same, for x86-64                              |
+| `arm64-darwin`  | `linkDarwin` @ `cmd/fern/main.go:736`  | `clang` (+ `lld` on Linux hosts)        | Assemble `.s`, link Mach-O, ad-hoc codesign   |
+| `wasm`          | `emitPreview2ComponentFromCoreBytes` @ `cmd/fern/main.go:830` (shell-out at `:851`) | `wasm-tools component new --adapt` | Splice preview-1 → preview-2 adapter into a Component-Model envelope around the (already-binary) core module |
 
 So the "replace clang / lld / wasm-tools" framing in the prior chat
 undersold the work: the Linux backends also depend on an external
@@ -124,9 +124,13 @@ intermediate) but the production driver stops feeding it to
 
 ### Driver wiring
 
-Replace the `wasm-tools parse prog.wat -o prog.wasm` call at
-`cmd/fern/main.go:604` with a direct call to the new encoder.
-Keep WAT emission as an opt-in debug output behind `-emit-wat`.
+Replace the `wasm-tools parse prog.wat -o prog.wasm` call with a
+direct call to the new encoder. (As of the Go-side baseline, this
+shell-out is already gone — `internal/codegen/wasmbin` emits core
+binary bytes straight from IR, so there's no `wasm-tools parse`
+call left in the driver to delete. The Lang-stdlib encoder would
+become a second, pure-Lang path alongside it.) Keep WAT emission
+as an opt-in debug output behind `-emit-wat`.
 
 ### Exit criteria
 
@@ -265,8 +269,10 @@ Keep WAT emission as an opt-in debug output behind `-emit-wat`.
   vector.
 - Remaining Phase 1 work: the IR-walking entry point that turns
   a codegen IR program into a populated Module, and the driver-
-  wiring step that deletes the `wasm-tools parse` call at
-  `cmd/fern/main.go:604`. Saturating-truncate ops and bulk-memory
+  wiring step that routes through it. (The `wasm-tools parse`
+  shell-out it was meant to replace is already gone — the Go-side
+  `wasmbin` path retired it; the Lang-stdlib encoder would be a
+  second, pure-Lang path.) Saturating-truncate ops and bulk-memory
   ops (both 0xFC-prefixed) are deliberately out of scope — the
   production backend doesn't lean on them. Element section is
   also deliberately deferred — the existing wasm backend doesn't
@@ -776,11 +782,14 @@ End-to-end exit code 42 demo (covered by
 
 
 Scope: replace `wasm-tools component embed` and `wasm-tools component
-new --adapt …` (lines 608 and 613 of `cmd/fern/main.go`) with a Lang
-implementation. As of 2026-05-20, `component embed` is *already*
-replaced on the Go side (`internal/wasm/componenttype.Embed`); the
-last remaining external call is `component new --adapt` at
-`cmd/fern/main.go:651` inside `emitPreview2ComponentFromCoreBytes`.
+new --adapt …` with a Lang implementation. As of 2026-05-20,
+`component embed` is *already* replaced on the Go side
+(`internal/wasm/componenttype.Embed`); the last remaining external
+call is `component new --adapt` at `cmd/fern/main.go:851` inside
+`emitPreview2ComponentFromCoreBytes` (reached only on the
+`-wasi-adapter` fallback path — the default `-target wasm` /
+`wasi-http` routes now compose natively via `internal/wasm/component`
+with no shell-out).
 Phase 2's job is to take that last call out.
 
 ### Direction: skip the adapter entirely (preview-2 native)
@@ -865,7 +874,9 @@ revisit then.
 
 ### Driver wiring
 
-Replace lines 581–619 of `cmd/fern/main.go` with a single call:
+Replace the component-emission block of `cmd/fern/main.go` (the
+`emitPreview2ComponentFromCoreBytes` path around `:830`–`:857`) with
+a single call:
 
 ```
 let core = wasm.encode(ir);
