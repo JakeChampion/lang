@@ -320,15 +320,12 @@ func TestWasiFilesystemTypesReadViaStreamInstanceTypeBody_Validates(t *testing.T
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	// io/error (instance 0) → error top-level type 1.
 	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")
-	// io/streams (instance 1) → input-stream top-level type 3.
 	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadInstanceTypeBody(1))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")
-	// filesystem/types read-via-stream, referencing input-stream (type 3).
 	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesReadViaStreamInstanceTypeBody(3))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
 	dir := t.TempDir()
@@ -344,6 +341,43 @@ func TestWasiFilesystemTypesReadViaStreamInstanceTypeBody_Validates(t *testing.T
 		t.Fatalf("print failed: %v\n%s", err, out)
 	}
 	for _, want := range []string{"read-via-stream", "descriptor", "error-code", "input-stream"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestWasiFilesystemTypesReadWritePathInstanceTypeBody_Validates composes
+// the combined read+write descriptor instance type (both via-stream
+// directions over input + output stream) and confirms wasm-tools accepts
+// it — the shape a read_file + write_file program needs.
+func TestWasiFilesystemTypesReadWritePathInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())          // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                   // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                           // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1)) // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                 // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                   // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                    // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesReadWritePathInstanceTypeBody(4, 3)) // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 5)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "fsrw.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"read-via-stream", "write-via-stream", "descriptor", "input-stream", "output-stream"} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Errorf("expected %q in printed component, got:\n%s", want, out)
 		}

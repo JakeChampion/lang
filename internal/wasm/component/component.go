@@ -1640,6 +1640,87 @@ func WasiFilesystemTypesReadPathInstanceTypeBody(outerInputStreamTypeidx uint32)
 	return body
 }
 
+// WasiFilesystemTypesReadWritePathInstanceTypeBody is the combined
+// read+write `wasi:filesystem/types@0.2.0` instance type — descriptor +
+// open-at + BOTH read-via-stream (over input-stream) AND write-via-stream
+// (over output-stream). It's what a program that reads one file and
+// writes another (read_file + write_file in one program) needs: the real
+// WIT interface carries every direction, so a single import can expose
+// both. The caller surfaces input-stream + output-stream (from
+// io/streams) and passes their type indices.
+func WasiFilesystemTypesReadWritePathInstanceTypeBody(inT, outT uint32) []byte {
+	var decls []byte
+	idx, declCount := uint32(0), uint32(0)
+	emit := func(b []byte) { decls = append(decls, b...); declCount++ }
+	def := func(b []byte) uint32 {
+		emit(append([]byte{0x01}, b...))
+		i := idx
+		idx++
+		return i
+	}
+	sub := func(name string) uint32 {
+		emit(ExportSubResourceDecl(name))
+		i := idx
+		idx++
+		return i
+	}
+	aliasExport := func(outer uint32, name string) uint32 {
+		emit(OuterAliasTypeDecl(1, outer))
+		idx++
+		emit(ExportTypeEqDecl(name, idx-1))
+		e := idx
+		idx++
+		return e
+	}
+	defExport := func(b []byte, name string) uint32 {
+		emit(append([]byte{0x01}, b...))
+		idx++
+		emit(ExportTypeEqDecl(name, idx-1))
+		e := idx
+		idx++
+		return e
+	}
+	funcExport := func(fn []byte, name string) {
+		emit(fn)
+		idx++
+		export := append([]byte{0x04, 0x00, byte(len(name))}, name...)
+		emit(append(export, 0x01, byte(idx-1)))
+	}
+
+	desc := sub("descriptor")
+	inS := aliasExport(inT, "input-stream")
+	outS := aliasExport(outT, "output-stream")
+	errC := defExport(InnerTypeEnum(WasiFilesystemErrorCodeNames), "error-code")
+	pathFlags := defExport(InnerTypeFlags([]string{"symlink-follow"}), "path-flags")
+	openFlags := defExport(InnerTypeFlags([]string{"create", "directory", "exclusive", "truncate"}), "open-flags")
+	descFlags := defExport(InnerTypeFlags([]string{
+		"read", "write", "file-integrity-sync", "data-integrity-sync",
+		"requested-write-sync", "mutate-directory",
+	}), "descriptor-flags")
+	ownDesc := def([]byte{0x69, byte(desc)})
+	ownIn := def([]byte{0x69, byte(inS)})
+	ownOut := def([]byte{0x69, byte(outS)})
+	bDesc := def([]byte{0x68, byte(desc)})
+	rDesc := def(InnerTypeResultOkErr(ownDesc, errC))
+	rIn := def(InnerTypeResultOkErr(ownIn, errC))
+	rOut := def(InnerTypeResultOkErr(ownOut, errC))
+
+	funcExport(tcpMethodFuncDecl("open-at",
+		[]string{"self", "path-flags", "path", "open-flags", "flags"},
+		[]byte{byte(bDesc), byte(pathFlags), CValtypeString, byte(openFlags), byte(descFlags)}, byte(rDesc)),
+		"[method]descriptor.open-at")
+	funcExport(tcpMethodFuncDecl("read-via-stream",
+		[]string{"self", "offset"}, []byte{byte(bDesc), CValtypeU64}, byte(rIn)),
+		"[method]descriptor.read-via-stream")
+	funcExport(tcpMethodFuncDecl("write-via-stream",
+		[]string{"self", "offset"}, []byte{byte(bDesc), CValtypeU64}, byte(rOut)),
+		"[method]descriptor.write-via-stream")
+
+	body := []byte{0x01, 0x42}
+	body = leb128.UlebU64(body, uint64(declCount))
+	return append(body, decls...)
+}
+
 // WasiFilesystemTypesWritePathInstanceTypeBody is the write-side
 // counterpart of WasiFilesystemTypesReadPathInstanceTypeBody — the
 // single wasi:filesystem/types instance type the file-write wrap
