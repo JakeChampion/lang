@@ -796,6 +796,34 @@ func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 	return body
 }
 
+// WasiSocketsTcpCreateSocketInstanceTypeBody returns the type-section
+// body for `wasi:sockets/tcp-create-socket@0.2.0`:
+// `create-tcp-socket(address-family: ip-address-family) ->
+// result<own<tcp-socket>, error-code>`. It outer-aliases
+// ip-address-family + error-code (from sockets/network) and
+// tcp-socket (from sockets/tcp); the caller surfaces those three at
+// the top level and passes their type indices.
+//
+// Decls: 0 alias ip-address-family, 1 alias error-code, 2 alias
+// tcp-socket, 3 own<tcp-socket>, 4 result<own,error-code>, 5 func, 6
+// export "create-tcp-socket".
+func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSocketT uint32) []byte {
+	body := []byte{0x01, 0x42, 0x07} // 7 decls
+	body = append(body, OuterAliasTypeDecl(1, ipAddrFamilyT)...) // 0
+	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
+	body = append(body, OuterAliasTypeDecl(1, tcpSocketT)...)    // 2
+	body = append(body, 0x01, 0x69, 0x02)                        // 3: own<tcp-socket=2>
+	body = append(body, 0x01)                                    // 4: result<own=3, error-code=1>
+	body = append(body, InnerTypeResultOkErr(3, 1)...)
+	// 5: create-tcp-socket(address-family: ip-address-family=0) -> result 4
+	body = append(body, tcpMethodFuncDecl("create-tcp-socket", []string{"address-family"}, []byte{0x00}, 0x04)...)
+	// 6: export "create-tcp-socket" (func is type 5)
+	body = append(body, 0x04, 0x00, byte(len("create-tcp-socket")))
+	body = append(body, "create-tcp-socket"...)
+	body = append(body, 0x01, 0x05)
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
