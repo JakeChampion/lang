@@ -1499,6 +1499,18 @@ func (b *builder) emitRcDecLocalsAtExit() {
 			decValueOnStack(t)
 			return
 		}
+		// Phase 3 step-4: a plain array (primitive elements — i32[],
+		// u8[], …) frees its buffer at the last reference when the
+		// freelist is on. __fern_arr_dec carries the same guards as
+		// __fern_rc_dec, so a never-written array slot (NULL / stack
+		// garbage) is passed through. Flag-off keeps the plain dec.
+		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		// Phase 3 step 3: a user struct with pointer-shaped
 		// rc-tracked fields drops those fields on its LAST
 		// reference before dec'ing the box — balancing the
@@ -6246,6 +6258,17 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled {
+				// Phase 3 step-4: free the OLD array buffer at rc==0.
+				// On a push copy-grow the old buffer's pointer elements
+				// were transferred to the new buffer (no inc), so freeing
+				// the buffer — not walking elements — is correct; the
+				// in-place push (rc bumped to 2) dec's to 1 and doesn't
+				// free. This is the O(N²)→O(N) push-loop reclamation.
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+				b.emit(Op{Kind: OpDrop})
 			} else {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
@@ -6563,6 +6586,27 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// localArrayType returns the ArrayType of a param / local named
+// `name` if it is array-typed. Used by the Phase 3 step-4
+// dec-on-overwrite to route array targets through __fern_arr_dec
+// (which frees the old buffer at rc==0) with the right element
+// stride, while struct / enum / closure targets keep the plain dec.
+func localArrayType(name string, b *builder) (ast.ArrayType, bool) {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			at, ok := p.Type.(ast.ArrayType)
+			return at, ok
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			at, ok := v.Type.(ast.ArrayType)
+			return at, ok
+		}
+	}
+	return ast.ArrayType{}, false
 }
 
 // outerRootIdent resolves the root local-ident of an outer

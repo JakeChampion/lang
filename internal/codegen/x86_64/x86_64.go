@@ -209,6 +209,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesFree {
 		g.emitFreeRuntime()
 	}
+	if g.usesArrDec {
+		g.emitArrDecRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -463,6 +466,10 @@ type generator struct {
 	// usesFree gates `__fern_free` — the Phase 3 step-4 freelist
 	// return path. Pulls in __fern_alloc (shares the freelist BSS).
 	usesFree bool
+	// usesArrDec gates `__fern_arr_dec` — the size-aware array dec
+	// that frees the buffer at rc==0 (plain-array scope-exit +
+	// array dec-on-overwrite). Pulls in __fern_free.
+	usesArrDec bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -512,6 +519,10 @@ func (g *generator) recordUse(target string) {
 	case "__alloc":
 		g.usesAlloc = true
 	case "__free":
+		g.usesFree = true
+		g.usesAlloc = true
+	case "__fern_arr_dec":
+		g.usesArrDec = true
 		g.usesFree = true
 		g.usesAlloc = true
 	case "__slice_make":
@@ -2737,6 +2748,65 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.line(".size __fern_free, .-__fern_free")
+}
+
+// emitArrDecRuntime emits `__fern_arr_dec(data: i64, stride: i64)`
+// — the Phase 3 step-4 size-aware array dec. Decrements the array's
+// rc and, on the last reference (rc==1), returns the BUFFER to the
+// freelist (it does NOT walk elements — plain-array elements aren't
+// rc-tracked, and on a push copy-grow the old buffer's pointer
+// elements were transferred to the new buffer; the rc-tracked-
+// element scope-exit case goes through __fern_drop_arr_ptr, which
+// walks then frees). base = data - headerBytes, headerBytes =
+// max(16, stride), size = headerBytes + cap*stride (cap at
+// data-12). Same null / low-address / sentinel / underflow guards
+// as __fern_rc_dec. Only emitted/used when the flag is on. The
+// return value is discarded by the caller's OpDrop.
+//
+// System V: rdi = data, rsi = stride.
+func (g *generator) emitArrDecRuntime() {
+	g.line("")
+	g.line(".globl __fern_arr_dec")
+	g.line(".type __fern_arr_dec, @function")
+	g.label("__fern_arr_dec")
+	g.emit("push rbp") // 16-align for the __fern_free call
+	g.emit("mov rbp, rsp")
+	g.emit("mov rax, rdi") // default return = data
+	g.emit("test rdi, rdi")
+	g.emit("jz .Larrdec_ret")
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Larrdec_ret")
+	g.emit("mov ecx, dword ptr [rdi - 8]") // rc
+	g.emit("test ecx, ecx")
+	g.emit("js .Larrdec_ret") // static sentinel
+	g.emit("cmp ecx, 0")
+	g.emit("jg .Larrdec_pos")
+	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
+	g.emit("jmp .Larrdec_dec")
+	g.label(".Larrdec_pos")
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Larrdec_dec")
+	// rc == 1 → free the buffer.
+	g.emit("mov r8, rsi") // stride
+	g.emit("cmp r8, 16")
+	g.emit("jae .Larrdec_hdr")
+	g.emit("mov r8, 16")
+	g.label(".Larrdec_hdr")
+	g.emit("mov ecx, dword ptr [rdi - 12]") // cap (zero-extended)
+	g.emit("mov rax, rcx")
+	g.emit("imul rax, rsi") // cap * stride
+	g.emit("add rax, r8")   // + headerBytes = size
+	g.emit("sub rdi, r8")   // data - headerBytes = base (arg1)
+	g.emit("mov rsi, rax")  // size (arg2)
+	g.emit("call __fern_free")
+	g.emit("jmp .Larrdec_ret")
+	g.label(".Larrdec_dec")
+	g.emit("sub ecx, 1")
+	g.emit("mov dword ptr [rdi - 8], ecx")
+	g.label(".Larrdec_ret")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_arr_dec, .-__fern_arr_dec")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
