@@ -162,6 +162,56 @@ func TestX86_64FreelistReuse(t *testing.T) {
 	}
 }
 
+// Wasm mirror of TestX86_64FreelistReuse. Sets ast.RcFreeEnabled
+// around runWasm (buildComponent reads it at emit time; wasm
+// codegen doesn't take CodegenMu, and this test isn't parallel).
+// SKIPs without wasmtime (rides CI). Uses the auto-prelude (no
+// core/no_prelude import) to dodge the wasm harness's
+// no_prelude output-parsing quirk.
+func TestWASMFreelistReuse(t *testing.T) {
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = false }()
+
+	reuse := `function main(): i32 {
+    var a: usize = __alloc(64);
+    __free(a, 64);
+    var b: usize = __alloc(64);
+    if (a == b) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, reuse); got != 0 {
+		t.Errorf("same-size reuse: got %d, want 0 (freed block should be reused)", got)
+	}
+
+	wrongClass := `function main(): i32 {
+    var a: usize = __alloc(64);
+    __free(a, 64);
+    var b: usize = __alloc(32);
+    if (a == b) { return 1; }
+    return 0;
+}`
+	if got := runWasm(t, wrongClass); got != 0 {
+		t.Errorf("wrong-class reuse: got %d, want 0 (32-byte alloc must not reuse a 64-byte free)", got)
+	}
+
+	lifo := `function main(): i32 {
+    var a: usize = __alloc(48);
+    var b: usize = __alloc(48);
+    __free(a, 48);
+    __free(b, 48);
+    var c: usize = __alloc(48);
+    var d: usize = __alloc(48);
+    if (c == b) {
+        if (d == a) { return 0; }
+        return 1;
+    }
+    return 2;
+}`
+	if got := runWasm(t, lifo); got != 0 {
+		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", got)
+	}
+}
+
 // Arm64 mirror of TestX86_64FreelistReuse. SKIPs without an
 // aarch64 toolchain (rides CI).
 func TestArm64FreelistReuse(t *testing.T) {

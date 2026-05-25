@@ -12,12 +12,23 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
+
+// freelistHeadsAddr is the base of the Phase 3 step-4 segregated
+// freelist: 128 i32 heads, one per 16-byte size class (16..2048),
+// occupying [256, 768). It lives in the always-free reserved window
+// [96, 1024) — the named low-memory scratch tops out at 92
+// (stderrHandleAddr) and the bump cursor floor is the string-pool
+// end, which never falls below stringStart=1024. Linear memory is
+// zero-initialised, so every class starts empty. Only consulted
+// when ast.RcFreeEnabled; the flag-off allocator never touches it.
+const freelistHeadsAddr = 256
 
 // memInst* short aliases keep the buildAllocBody assembly readable
 // without each line repeating the package qualifier. Alignment 2
@@ -383,6 +394,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__alloc", "__alloc_u8":
 					needs.add("__fern_alloc")
 					needs.add(op.Str)
+				case "__free":
+					needs.add("__free")
 				case "__memcpy":
 					needs.add("__memcpy")
 				case "__memset":
@@ -777,6 +790,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildAliasAllocBody,
+	},
+	"__free": {
+		// (base, size) → (). Phase 3 step-4 freelist return path.
+		// No-op unless ast.RcFreeEnabled. See buildFreeBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildFreeBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1258,11 +1278,66 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	// alloc) is bounded and the no-free arena means it doesn't
 	// fragment over time.
 	body = inst.InstLocalGet(body, 0) // $size
-	body = inst.InstI32Const(body, 3)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, -4)
+	if ast.RcFreeEnabled {
+		// Round to the freelist's 16-byte class granularity so a
+		// freed block's size class matches a same-logical-size
+		// alloc. (Flag-off keeps the cheaper 4-byte rounding.)
+		body = inst.InstI32Const(body, 15)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -16)
+	} else {
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+	}
 	body = numeric.InstI32And(body)
 	body = inst.InstLocalSet(body, 0)
+	if ast.RcFreeEnabled {
+		// Phase 3 step-4: reuse a freed block of the same size class
+		// before bumping. $size (local 0) is the 16-byte-rounded
+		// request; classes cover 16..2048.
+		//   if 16 <= size <= 2048:
+		//     headAddr = freelistHeadsAddr + ((size>>4)-1)*4
+		//     head = mem[headAddr]
+		//     if head != 0: mem[headAddr] = mem[head]; return head
+		// Locals 4 = headAddr, 5 = head (declared below).
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 2048)
+		body = numeric.InstI32LeU(body)
+		body = numeric.InstI32And(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// headAddr = freelistHeadsAddr + ((size>>4)-1)*4
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32ShrU(body)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Mul(body)
+			body = inst.InstI32Const(body, freelistHeadsAddr)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalTee(body, 4) // $headAddr
+			body = memInstI32Load(body)
+			body = inst.InstLocalTee(body, 5) // $head
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				// mem[headAddr] = mem[head]   (pop: heads[idx]=next)
+				body = inst.InstLocalGet(body, 4)
+				body = inst.InstLocalGet(body, 5)
+				body = memInstI32Load(body)
+				body = memInstI32Store(body)
+				// return head
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstReturn(body)
+			}
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+	}
 	// end = ptr + size
 	body = inst.InstLocalGet(body, 1) // $ptr
 	body = inst.InstLocalGet(body, 0) // $size
@@ -1292,9 +1367,71 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = memInstI32Store(body)
 	// return ptr
 	body = inst.InstLocalGet(body, 1) // $ptr
-	// Locals declaration: three i32 scratch slots (ptr, end, need)
-	// after the single i32 param.
-	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	// Locals: ptr, end, need — plus headAddr, head for the
+	// flag-on freelist pop.
+	nLocals := uint32(3)
+	if ast.RcFreeEnabled {
+		nLocals = 5
+	}
+	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildFreeBody assembles wasm bytes for __fern_free(base, size) —
+// the Phase 3 step-4 freelist return path (wasm mirror of the
+// native helpers). When the freelist is enabled it pushes the
+// size-byte block at base onto its 16-byte size class's intrusive
+// freelist (the successor pointer lives in the block's first 4
+// bytes). Blocks outside the 16..2048 class range stay in the bump
+// region. When the freelist is disabled it's an empty no-op body so
+// a stray __free in a non-step-4 build is harmless.
+//
+// Signature: (param $base i32) (param $size i32). One i32 local
+// ($headAddr) after the two params.
+func buildFreeBody(_ map[string]uint32) []byte {
+	var body []byte
+	if ast.RcFreeEnabled {
+		// size = (size + 15) & -16
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 15)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -16)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, 1)
+		// if 16 <= size <= 2048
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 2048)
+		body = numeric.InstI32LeU(body)
+		body = numeric.InstI32And(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// headAddr = freelistHeadsAddr + ((size>>4)-1)*4
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32ShrU(body)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Mul(body)
+			body = inst.InstI32Const(body, freelistHeadsAddr)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 2) // $headAddr
+			// mem[base] = mem[headAddr]   (base.next = old head)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 2)
+			body = memInstI32Load(body)
+			body = memInstI32Store(body)
+			// mem[headAddr] = base   (heads[idx] = base)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstLocalGet(body, 0)
+			body = memInstI32Store(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
