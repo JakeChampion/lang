@@ -1651,6 +1651,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			} else if _, isUser := b.info.Structs[t.Name]; isUser {
 				elig[v.Name] = true
 			}
+		case ast.EnumType:
+			// An owned enum frees its box when its layout is uniform
+			// (emitDec gates on uniformEnumDropLoads + uniformEnumBoxSize;
+			// non-uniform / generic enums keep the plain box dec). The
+			// eligibility just grants permission — the same borrow-aware
+			// taint as arrays/structs.
+			elig[v.Name] = true
 		}
 	}
 	return elig
@@ -1854,7 +1861,44 @@ func (b *builder) emitRcDecLocalsAtExit() {
 		// reports 0 over-releases. Per-tag dispatch + type-arg
 		// substitution are a later slice.
 		if et, ok := t.(ast.EnumType); ok {
-			if ed, edOk := b.info.Enums[et.Name]; edOk {
+			ed, edOk := b.info.Enums[et.Name]
+			// Phase 3 enum-box reclamation: an OWNED enum returns its
+			// box to the freelist on the last reference (rc==1) after
+			// dropping its payloads — but only when the box size is
+			// statically known (uniformEnumBoxSize) AND the droppable
+			// payloads are uniform (uniformEnumDropLoads), since the
+			// drop emits no tag switch. The is_unique gate filters out
+			// payloadless static sentinels (rc high-bit), so
+			// __fern_box_free only ever sees a real rc==1 box.
+			if edOk && ast.RcFreeEnabled && eligible {
+				loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
+				size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
+				if loadsOk && sizeOk {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					for _, ld := range loads {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						if ld.off != 0 {
+							b.emit(Op{Kind: OpConstI32, I32: ld.off})
+							b.emit(Op{Kind: OpAdd})
+						}
+						b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+						decValueOnStack(ld.typ, false)
+					}
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpConstI32, I32: size})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+					b.emit(Op{Kind: OpDrop})
+					b.emit(Op{Kind: OpElse})
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					b.emit(Op{Kind: OpEnd})
+					return
+				}
+			}
+			if edOk {
 				if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
@@ -2047,6 +2091,35 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 		return nil, false
 	}
 	return want, true
+}
+
+// uniformEnumBoxSize reports the heap-box payload size shared by every
+// payload-carrying variant of an enum, IFF they all agree. An enum box
+// is alloc'd per-variant as `payloadLayout size + rcHeaderBytes`, so
+// freeing it at drop needs a statically-known size — only possible
+// when the variants don't disagree (e.g. a union of single-pointer
+// variants all size to the same box). Returns (size, false) when
+// variants disagree or none carry a payload; such enums keep leaking
+// their box (safe under the rc==1 gate). Pairs with
+// uniformEnumDropLoads: an enum frees its box only when BOTH agree.
+func uniformEnumBoxSize(ed *ast.EnumDecl, ptrW int) (int32, bool) {
+	var size int32
+	have := false
+	for _, v := range ed.Variants {
+		if len(v.Payloads) == 0 {
+			continue // payloadless ⇒ static sentinel, no heap box
+		}
+		_, sz := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+		if !have {
+			size, have = sz, true
+		} else if sz != size {
+			return 0, false
+		}
+	}
+	if !have {
+		return 0, false
+	}
+	return size, true
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {
