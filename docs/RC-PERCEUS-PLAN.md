@@ -1135,6 +1135,18 @@ Phase 3 CANNOT start with the freelist — it must start by
    fold `__rc_underflow_count()` into the result, so any over-release
    in the combined drop paths trips the detector.
 
+   **Widening slice — map growth buffer (DONE).** `__map_grow` doubles
+   the kv buffer and re-hashes, leaving the old buffer leaked. It now
+   `__free`s the old buffer after copying: the entries' key/value
+   pointers are copied into the new buffer (the keys/values themselves
+   are untouched), the handle is repointed, and `__map_set_impl` runs
+   `__map_cow_inplace` first so the map is uniquely owned — nothing
+   else aliases the old buffer. A map built incrementally (query_parse,
+   json object parsing) no longer leaks each intermediate buffer.
+   Covered by `rc_correctness`'s `map_growth_buffer_free` (100 inserts
+   → several doublings), run free-on on all three backends. (This is a
+   pure-Fern stdlib change, so it's backend-agnostic.)
+
    **What's left (larger design efforts, not yet done).** Map entry
    keys/values need full retain semantics — inc-on-store AND
    inc-on-get — because the borrow model returns get-results
