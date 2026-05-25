@@ -1048,11 +1048,11 @@ Phase 3 CANNOT start with the freelist — it must start by
    three backends in CI and (b) explicit owner sign-off. The
    pre-step-5 no-free arena stays the default; a handful of tests pin
    it via save/restore. What LEAKS (safe — no over-release):
-   borrowed/borrowed-derived buffers, non-uniform / generic enum boxes
-   (JsonValue, Option/Result over scalars), closure boxes, nested
-   struct/enum fields (one level), and map entry keys/values. (Owned
-   top-level arrays, maps, struct boxes, and uniform-layout enum boxes
-   now free — see the widening slices below.)
+   borrowed/borrowed-derived buffers, generic enum boxes (Option/Result
+   over scalar payloads), closure boxes, nested struct/enum fields (one
+   level), and map entry keys/values. (Owned top-level arrays, maps,
+   struct boxes, and enum boxes — uniform and non-uniform — now free;
+   see the widening slices below.)
 
    **Widening slice — map structural reclamation (DONE).** A Map is a
    runtime handle (StructType "Map") whose rc already balances (it
@@ -1109,6 +1109,20 @@ Phase 3 CANNOT start with the freelist — it must start by
    (200 build/free cycles) and `enum_returned_not_freed`, run free-on
    on all three backends. Payloads still drop one level (array payloads
    flat-dec, like struct fields).
+
+   **Widening slice — non-uniform enum boxes (DONE).** Enums whose
+   payload-carrying variants disagree on droppable layout or box size
+   (e.g. JsonValue, or `I(i32) | A(i32[])`) now free via a per-tag
+   dispatch: at rc==1, read the tag at `[data+0]`, switch to the
+   matching variant, drop that variant's droppable payloads, and free
+   with that variant's exact box size (`enumVariantDropPlan`). The tag
+   is stashed in a scratch local so later switch arms never read the
+   (possibly freed) box. Bails to the plain box dec for generic
+   ParamType payloads (unknown size / drop-kind — Option/Result over
+   scalars still leak, safe). The uniform path stays the branchless
+   fast-path; this is its fallback. Covered by `rc_correctness`'s
+   `enum_nonuniform_box_free` (200 cycles churning two distinctly-sized
+   boxes), run free-on on all three backends.
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire

@@ -1897,6 +1897,47 @@ func (b *builder) emitRcDecLocalsAtExit() {
 					b.emit(Op{Kind: OpEnd})
 					return
 				}
+				// Non-uniform enum (e.g. JsonValue): a tag switch over
+				// the real box (rc==1) drops each variant's payloads and
+				// frees with that variant's exact box size. The tag is
+				// stashed in a scratch local so later arms read it from
+				// the stack, never from the (possibly freed) box.
+				if plan, ok := enumVariantDropPlan(ed, b.ptrW); ok {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					tagSlot := b.allocSlot()
+					b.locals[fmt.Sprintf("__enum_drop_tag_%d", tagSlot)] = tagSlot
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpLoad}) // tag at [data+0]
+					b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+					for _, vd := range plan {
+						b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+						b.emit(Op{Kind: OpConstI32, I32: int32(vd.tag)})
+						b.emit(Op{Kind: OpEq})
+						b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+						for _, ld := range vd.loads {
+							b.emit(Op{Kind: OpLoadLocal, I32: slot})
+							if ld.off != 0 {
+								b.emit(Op{Kind: OpConstI32, I32: ld.off})
+								b.emit(Op{Kind: OpAdd})
+							}
+							b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+							decValueOnStack(ld.typ, false)
+						}
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						b.emit(Op{Kind: OpConstI32, I32: vd.size})
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+						b.emit(Op{Kind: OpDrop})
+						b.emit(Op{Kind: OpEnd})
+					}
+					b.emit(Op{Kind: OpElse})
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					b.emit(Op{Kind: OpEnd})
+					return
+				}
 			}
 			if edOk {
 				if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
@@ -2120,6 +2161,62 @@ func uniformEnumBoxSize(ed *ast.EnumDecl, ptrW int) (int32, bool) {
 		return 0, false
 	}
 	return size, true
+}
+
+// variantDrop is the per-variant drop plan for the non-uniform enum
+// box reclamation path: the runtime tag that selects this variant, the
+// droppable payload loads, and the heap-box payload size to free.
+type variantDrop struct {
+	tag   int
+	loads []enumDropLoad
+	size  int32
+}
+
+// enumVariantDropPlan returns a per-variant drop plan for an enum whose
+// payload-carrying variants DON'T share a uniform layout (so the
+// uniform branchless path doesn't apply). emitDec emits a tag switch
+// over these: each real box (rc==1) reads its tag, drops that variant's
+// droppable payloads, and frees with that variant's exact box size.
+// Payloadless variants are static sentinels (never rc==1 boxes), so
+// they're skipped. Bails (false) if any variant carries a generic
+// ParamType payload — its drop-kind / size isn't statically known, so
+// the enum keeps leaking its box (safe). Mirrors uniformEnumDropLoads'
+// dropKind classification.
+func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
+	dropKind := func(t ast.Type) (int, bool) {
+		if _, isParam := t.(ast.ParamType); isParam {
+			return 0, false
+		}
+		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) {
+			return 1, true // recursive array drop
+		}
+		if arrElemIsRcTracked(t) {
+			return 2, true // flat dec (struct / enum / closure)
+		}
+		return 0, false // scalar — nothing to drop
+	}
+	var plan []variantDrop
+	for i, v := range ed.Variants {
+		if len(v.Payloads) == 0 {
+			continue // payloadless ⇒ static sentinel, no heap box
+		}
+		offsets, size := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+		var loads []enumDropLoad
+		for j, pt := range v.Payloads {
+			if _, isParam := pt.(ast.ParamType); isParam {
+				return nil, false // generic payload — can't size/drop safely
+			}
+			if _, ok := dropKind(pt); !ok {
+				continue
+			}
+			loads = append(loads, enumDropLoad{off: offsets[j], typ: pt})
+		}
+		plan = append(plan, variantDrop{tag: i, loads: loads, size: size})
+	}
+	if len(plan) == 0 {
+		return nil, false
+	}
+	return plan, true
 }
 
 func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {

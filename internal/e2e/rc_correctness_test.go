@@ -543,6 +543,30 @@ function main(): i32 {
     return (got - 1275) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Non-uniform enum: I(i32) and A(i32[]) differ in droppable
+		// layout AND box size, so reclamation needs the per-tag size
+		// dispatch (the JsonValue shape). Churns both distinctly-sized
+		// boxes; a wrong-size free or over-release drifts the checksum.
+		// v=A => xs[1]=seed+1; w=I => +seed; got=2*seed+1;
+		// sum_{0..199}(2k+1) = 2*19900 + 200 = 40000.
+		name: "enum_nonuniform_box_free",
+		src: `enum V { I(i32), A(i32[]) }
+function mk(seed: i32): i32 {
+    var v: V = A([seed, seed + 1]);
+    var w: V = I(seed);
+    var got: i32 = 0;
+    match (v) { I(n) => { got = n; }, A(xs) => { got = xs[1]; } }
+    match (w) { I(n) => { got = got + n; }, A(xs) => { got = got + xs[0]; } }
+    return got;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
