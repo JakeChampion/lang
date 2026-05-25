@@ -275,26 +275,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	needInputStream := hasStdin || hasFileRead || useBlockRead || opts.DropInputStream || hasFileReadWrite
 	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite || opts.DropOutputStream || hasFileReadWrite
 	needStreams := needInputStream || needOutputStream
-	hasMemTramp := len(opts.MemTramp) > 0
-	// memory backs every trampoline lower (block read/write, the file
-	// open-chain, the mem-trampoline imports); the no-opt getter /
-	// structured lowers don't need it.
-	needMemory := useBlockRead || useBlockWrite || hasFile || hasMemTramp
-	// list-returning lowers realloc: blocking-read, get-directories
-	// (hasFile), and the list-returning mem-trampoline imports.
-	needRealloc := useBlockRead || hasFile
-	for _, mt := range opts.MemTramp {
-		if mt.NeedsRealloc {
-			needRealloc = true
-		}
-	}
 	// Which descriptor stream method the file open-chain uses, and its
-	// core-import signature (append-via-stream takes no offset). For the
-	// read+write mode, viaName is read-via-stream and via2Name is the
-	// parallel write-via-stream (same (self, offset, ret_ptr) shape).
+	// core-import signature (append-via-stream takes no offset).
 	viaName := composeReadViaName
 	viaParams := composeReadViaParams
-	via2Name := composeWriteViaName // only used when hasFileReadWrite
 	switch {
 	case hasFileAppend:
 		viaName = composeAppendViaName
@@ -303,362 +287,85 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		viaName = composeWriteViaName
 	}
 
-	c := &p2composer{buf: PutComponentHeader(nil)}
+	g := newGComposer()
 
-	// --- Phase A: imported instances + shared-type aliases. ---
-	var streamsInst uint32
-	var tOut, tIn uint32
+	// Surface the shared types (dependency-ordered, idempotent). io/streams
+	// is requested with the full direction union up front so the later
+	// filesystem / cli-write / stdin surfacing finds it already fixed.
 	if needStreams {
-		tErr := c.typeRaw(WasiIoErrorInstanceTypeBody())
-		errInst := c.importInstance("wasi:io/error@0.2.0", tErr)
-		tErrAlias := c.aliasType(errInst, "error")
-
-		var streamsBody []byte
-		switch {
-		case needOutputStream && needInputStream:
-			streamsBody = WasiIoStreamsReadWriteInstanceTypeBody(tErrAlias)
-		case needOutputStream:
-			streamsBody = WasiIoStreamsInstanceTypeBody(tErrAlias)
-		default:
-			streamsBody = WasiIoStreamsReadInstanceTypeBody(tErrAlias)
-		}
-		tStreams := c.typeRaw(streamsBody)
-		streamsInst = c.importInstance("wasi:io/streams@0.2.0", tStreams)
-		if needOutputStream {
-			tOut = c.aliasType(streamsInst, "output-stream")
-		}
-		if needInputStream {
-			tIn = c.aliasType(streamsInst, "input-stream")
-		}
+		g.ensureIoStreams(needInputStream, needOutputStream)
 	}
-
-	// Filesystem open path: import wasi:filesystem/types (read or
-	// write body, referencing input-stream / output-stream) then
-	// wasi:filesystem/preopens (referencing the descriptor that types
-	// exports). Emitted right after io/streams so the stream aliases
-	// (tIn / tOut) are in scope.
-	var fsTypesInst, preopensInst uint32
 	if hasFile {
-		var fsBody []byte
 		switch {
 		case hasFileReadWrite:
-			fsBody = WasiFilesystemTypesReadWritePathInstanceTypeBody(tIn, tOut)
+			g.ensureFilesystem(gFsReadWrite)
 		case hasFileAppend:
-			fsBody = WasiFilesystemTypesAppendPathInstanceTypeBody(tOut)
+			g.ensureFilesystem(gFsAppend)
 		case hasFileWrite:
-			fsBody = WasiFilesystemTypesWritePathInstanceTypeBody(tOut)
+			g.ensureFilesystem(gFsWrite)
 		default:
-			fsBody = WasiFilesystemTypesReadPathInstanceTypeBody(tIn)
+			g.ensureFilesystem(gFsRead)
 		}
-		tFsTypes := c.typeRaw(fsBody)
-		fsTypesInst = c.importInstance("wasi:filesystem/types@0.2.0", tFsTypes)
-		tDesc := c.aliasType(fsTypesInst, "descriptor")
-		tPreopens := c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc))
-		preopensInst = c.importInstance("wasi:filesystem/preopens@0.2.0", tPreopens)
 	}
-
-	var cliWInst, cliRInst uint32
 	var cliWInterface string
 	if hasWriteGetter {
-		var body []byte
 		if opts.WriteGetter == "get-stderr" {
-			body = WasiCliStderrInstanceTypeBody(tOut)
 			cliWInterface = "wasi:cli/stderr@0.2.0"
 		} else {
-			body = WasiCliStdoutInstanceTypeBody(tOut)
 			cliWInterface = "wasi:cli/stdout@0.2.0"
 		}
-		tCliW := c.typeRaw(body)
-		cliWInst = c.importInstance(cliWInterface, tCliW)
+		g.ensureCliWrite(cliWInterface, opts.WriteGetter)
 	}
 	if hasStdin {
-		tCliR := c.typeRaw(WasiCliStdinInstanceTypeBody(tIn))
-		cliRInst = c.importInstance("wasi:cli/stdin@0.2.0", tCliR)
+		g.ensureCliStdin()
+	}
+	for _, imp := range opts.Structured {
+		g.importStructured(imp)
+	}
+	for _, mt := range opts.MemTramp {
+		g.importStandalone(mt.InterfaceName, mt.InstanceTypeBody)
 	}
 
-	structInst := make([]uint32, len(opts.Structured))
-	for i, imp := range opts.Structured {
-		ti := c.structuredType(imp)
-		structInst[i] = c.importInstance(imp.InterfaceName, ti)
+	// Declare the lowerings.
+	if hasWriteGetter {
+		g.add(gImport{iface: cliWInterface, name: opts.WriteGetter, kind: gNoOpt})
 	}
-
-	// Standalone mem-trampoline imports (wall-clock / args / env):
-	// each carries its own self-contained instance type.
-	mtInst := make([]uint32, len(opts.MemTramp))
-	for i, mt := range opts.MemTramp {
-		ti := c.typeRaw(mt.InstanceTypeBody)
-		mtInst[i] = c.importInstance(mt.InterfaceName, ti)
+	if hasStdin {
+		g.add(gImport{iface: "wasi:cli/stdin@0.2.0", name: "get-stdin", kind: gNoOpt})
 	}
-
-	// --- Phase B: core modules (user + trampoline/fixup pairs). ---
-	userMod := c.coreModule(coreBytes)
-	var trampWMod, fixupWMod, trampRMod, fixupRMod uint32
-	var trampDirsMod, fixupDirsMod, trampOpenMod, fixupOpenMod, trampViaMod, fixupViaMod uint32
-	var trampVia2Mod, fixupVia2Mod uint32 // write-via-stream, read+write mode only
-	if useBlockWrite {
-		trampWMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockWriteParams))
-		fixupWMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockWriteParams))
+	for _, imp := range opts.Structured {
+		g.add(gImport{iface: imp.InterfaceName, name: imp.FuncName, kind: gNoOpt})
 	}
-	if useBlockRead {
-		trampRMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockReadParams))
-		fixupRMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockReadParams))
+	for _, mt := range opts.MemTramp {
+		kind := gMem
+		if mt.NeedsRealloc {
+			kind = gMemRealloc
+		}
+		g.add(gImport{iface: mt.InterfaceName, name: mt.FuncName, kind: kind, params: composeOneI32Params})
 	}
 	if hasFile {
-		trampDirsMod = c.coreModule(TrampolineModuleForParamsNoResult(composeGetDirsParams))
-		fixupDirsMod = c.coreModule(FixupModuleForParamsNoResult(composeGetDirsParams))
-		trampOpenMod = c.coreModule(TrampolineModuleForParamsNoResult(composeOpenAtParams))
-		fixupOpenMod = c.coreModule(FixupModuleForParamsNoResult(composeOpenAtParams))
-		// read-via-stream and write-via-stream share the (self, offset,
-		// ret_ptr) shape.
-		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(viaParams))
-		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(viaParams))
+		g.add(
+			gImport{iface: "wasi:filesystem/preopens@0.2.0", name: composeGetDirsName, kind: gMemRealloc, params: composeGetDirsParams},
+			gImport{iface: "wasi:filesystem/types@0.2.0", name: composeOpenAtName, kind: gMem, params: composeOpenAtParams},
+			gImport{iface: "wasi:filesystem/types@0.2.0", name: viaName, kind: gMem, params: viaParams},
+		)
 		if hasFileReadWrite {
 			// write-via-stream shares read-via's (self, offset, ret_ptr).
-			trampVia2Mod = c.coreModule(TrampolineModuleForParamsNoResult(composeReadViaParams))
-			fixupVia2Mod = c.coreModule(FixupModuleForParamsNoResult(composeReadViaParams))
+			g.add(gImport{iface: "wasi:filesystem/types@0.2.0", name: composeWriteViaName, kind: gMem, params: composeReadViaParams})
 		}
-	}
-	// One 1-i32 trampoline + fixup per mem-trampoline import.
-	mtTrampMod := make([]uint32, len(opts.MemTramp))
-	mtFixupMod := make([]uint32, len(opts.MemTramp))
-	for i := range opts.MemTramp {
-		mtTrampMod[i] = c.coreModule(TrampolineModuleForParamsNoResult(composeOneI32Params))
-		mtFixupMod[i] = c.coreModule(FixupModuleForParamsNoResult(composeOneI32Params))
-	}
-
-	// --- Phase C: instantiate trampolines. ---
-	var trampWInst, trampRInst uint32
-	var trampDirsInst, trampOpenInst, trampViaInst, trampVia2Inst uint32
-	if useBlockWrite {
-		trampWInst = c.instantiate(trampWMod)
-	}
-	if useBlockRead {
-		trampRInst = c.instantiate(trampRMod)
-	}
-	if hasFile {
-		trampDirsInst = c.instantiate(trampDirsMod)
-		trampOpenInst = c.instantiate(trampOpenMod)
-		trampViaInst = c.instantiate(trampViaMod)
-		if hasFileReadWrite {
-			trampVia2Inst = c.instantiate(trampVia2Mod)
-		}
-	}
-	mtTrampInst := make([]uint32, len(opts.MemTramp))
-	for i := range opts.MemTramp {
-		mtTrampInst[i] = c.instantiate(mtTrampMod[i])
-	}
-
-	// --- Phase D: no-memory lowers + arg-instance packaging. ---
-	// User-module instantiation args, keyed by import module name.
-	var argNames []string
-	var argInsts []uint32
-
-	if hasWriteGetter {
-		cf := c.aliasInstFunc(cliWInst, opts.WriteGetter)
-		coreF := c.lowerNoOpts(cf)
-		wrap := c.coreInstOneFunc(opts.WriteGetter, coreF)
-		argNames = append(argNames, cliWInterface)
-		argInsts = append(argInsts, wrap)
-	}
-	if hasStdin {
-		cf := c.aliasInstFunc(cliRInst, "get-stdin")
-		coreF := c.lowerNoOpts(cf)
-		wrap := c.coreInstOneFunc("get-stdin", coreF)
-		argNames = append(argNames, "wasi:cli/stdin@0.2.0")
-		argInsts = append(argInsts, wrap)
-	}
-	for i, imp := range opts.Structured {
-		cf := c.aliasInstFunc(structInst[i], imp.FuncName)
-		coreF := c.lowerNoOpts(cf)
-		wrap := c.coreInstOneFunc(imp.FuncName, coreF)
-		argNames = append(argNames, imp.CoreImportModule)
-		argInsts = append(argInsts, wrap)
-	}
-
-	// Mem-trampoline args package each import's trampoline placeholder
-	// under its interface name (fixed up after user inst).
-	for i, mt := range opts.MemTramp {
-		tf := c.aliasCoreFunc(mtTrampInst[i], "0")
-		wrap := c.coreInstOneFunc(mt.FuncName, tf)
-		argNames = append(argNames, mt.InterfaceName)
-		argInsts = append(argInsts, wrap)
-	}
-
-	// Filesystem args package the open-chain trampoline placeholders:
-	// preopens {get-directories} and filesystem/types
-	// {open-at, read|write-via-stream} (all fixed up after user inst).
-	if hasFile {
-		dirsTramp := c.aliasCoreFunc(trampDirsInst, "0")
-		preopensArg := c.coreInstOneFunc(composeGetDirsName, dirsTramp)
-		argNames = append(argNames, "wasi:filesystem/preopens@0.2.0")
-		argInsts = append(argInsts, preopensArg)
-
-		openTramp := c.aliasCoreFunc(trampOpenInst, "0")
-		viaTramp := c.aliasCoreFunc(trampViaInst, "0")
-		typesExports := []CoreInstanceExport{
-			{Name: composeOpenAtName, Sort: CoreSortFunc, Idx: openTramp},
-			{Name: viaName, Sort: CoreSortFunc, Idx: viaTramp},
-		}
-		if hasFileReadWrite {
-			via2Tramp := c.aliasCoreFunc(trampVia2Inst, "0")
-			typesExports = append(typesExports, CoreInstanceExport{Name: via2Name, Sort: CoreSortFunc, Idx: via2Tramp})
-		}
-		typesArg := c.coreInstExports(typesExports)
-		argNames = append(argNames, "wasi:filesystem/types@0.2.0")
-		argInsts = append(argInsts, typesArg)
-	}
-
-	// io/streams arg packages the trampoline placeholder funcs for
-	// whichever stream methods the user imports (fixed up after user
-	// inst). Only passed when a method is actually used — a bare
-	// open_reader/open_writer imports io/streams only for the
-	// input/output-stream *type* (referenced by read/write-via-stream's
-	// result), not any io/streams function, so it gets no arg here.
-	if useBlockWrite || useBlockRead || opts.DropInputStream || opts.DropOutputStream {
-		var exports []CoreInstanceExport
-		if useBlockWrite {
-			tf := c.aliasCoreFunc(trampWInst, "0")
-			exports = append(exports, CoreInstanceExport{Name: composeBlockWriteName, Sort: CoreSortFunc, Idx: tf})
-		}
-		if useBlockRead {
-			tf := c.aliasCoreFunc(trampRInst, "0")
-			exports = append(exports, CoreInstanceExport{Name: composeBlockReadName, Sort: CoreSortFunc, Idx: tf})
-		}
-		// Reader/Writer close → canon resource.drop on the stream handle.
-		// No memory / trampoline needed, so lower it directly here.
-		if opts.DropInputStream {
-			df := c.resourceDrop(tIn)
-			exports = append(exports, CoreInstanceExport{Name: "[resource-drop]input-stream", Sort: CoreSortFunc, Idx: df})
-		}
-		if opts.DropOutputStream {
-			df := c.resourceDrop(tOut)
-			exports = append(exports, CoreInstanceExport{Name: "[resource-drop]output-stream", Sort: CoreSortFunc, Idx: df})
-		}
-		streamsArg := c.coreInstExports(exports)
-		argNames = append(argNames, "wasi:io/streams@0.2.0")
-		argInsts = append(argInsts, streamsArg)
-	}
-
-	// --- Phase E: instantiate the user module. ---
-	userInst := c.instantiateArgs(userMod, argNames, argInsts)
-
-	// --- Phase F: alias memory / realloc / trampoline tables. ---
-	var reallocFunc, tableW, tableR uint32
-	var tableDirs, tableOpen, tableVia, tableVia2 uint32
-	if needMemory {
-		c.aliasMemory(userInst)
-	}
-	// blocking-read + get-directories + args/env return lists → their
-	// canon-lower needs realloc.
-	if needRealloc {
-		reallocFunc = c.aliasReallocFunc(userInst)
 	}
 	if useBlockWrite {
-		tableW = c.aliasTable(trampWInst)
+		g.add(gImport{iface: "wasi:io/streams@0.2.0", name: composeBlockWriteName, kind: gMem, params: composeBlockWriteParams})
 	}
 	if useBlockRead {
-		tableR = c.aliasTable(trampRInst)
+		g.add(gImport{iface: "wasi:io/streams@0.2.0", name: composeBlockReadName, kind: gMemRealloc, params: composeBlockReadParams})
 	}
-	if hasFile {
-		tableDirs = c.aliasTable(trampDirsInst)
-		tableOpen = c.aliasTable(trampOpenInst)
-		tableVia = c.aliasTable(trampViaInst)
-		if hasFileReadWrite {
-			tableVia2 = c.aliasTable(trampVia2Inst)
-		}
+	if opts.DropInputStream {
+		g.add(gImport{iface: "wasi:io/streams@0.2.0", name: "[resource-drop]input-stream", kind: gDrop, resourceT: g.surfaced["input-stream"]})
 	}
-	mtTable := make([]uint32, len(opts.MemTramp))
-	for i := range opts.MemTramp {
-		mtTable[i] = c.aliasTable(mtTrampInst[i])
+	if opts.DropOutputStream {
+		g.add(gImport{iface: "wasi:io/streams@0.2.0", name: "[resource-drop]output-stream", kind: gDrop, resourceT: g.surfaced["output-stream"]})
 	}
 
-	// --- Phase G: memory-dependent lowers. ---
-	var writeCoreF, readCoreF uint32
-	var dirsCoreF, openCoreF, viaCoreF, via2CoreF uint32
-	if useBlockWrite {
-		cf := c.aliasInstFunc(streamsInst, composeBlockWriteName)
-		writeCoreF = c.lowerMem(cf)
-	}
-	if useBlockRead {
-		cf := c.aliasInstFunc(streamsInst, composeBlockReadName)
-		readCoreF = c.lowerMemRealloc(cf, reallocFunc)
-	}
-	if hasFile {
-		// get-directories returns a list → realloc; open-at +
-		// read/write-via-stream need memory only.
-		cfDirs := c.aliasInstFunc(preopensInst, composeGetDirsName)
-		dirsCoreF = c.lowerMemRealloc(cfDirs, reallocFunc)
-		cfOpen := c.aliasInstFunc(fsTypesInst, composeOpenAtName)
-		openCoreF = c.lowerMem(cfOpen)
-		cfVia := c.aliasInstFunc(fsTypesInst, viaName)
-		viaCoreF = c.lowerMem(cfVia)
-		if hasFileReadWrite {
-			cfVia2 := c.aliasInstFunc(fsTypesInst, via2Name)
-			via2CoreF = c.lowerMem(cfVia2)
-		}
-	}
-	mtCoreF := make([]uint32, len(opts.MemTramp))
-	for i, mt := range opts.MemTramp {
-		cf := c.aliasInstFunc(mtInst[i], mt.FuncName)
-		if mt.NeedsRealloc {
-			mtCoreF[i] = c.lowerMemRealloc(cf, reallocFunc)
-		} else {
-			mtCoreF[i] = c.lowerMem(cf)
-		}
-	}
-
-	// --- Phase H: fixups (install lowered funcs into tramp tables). ---
-	fixup := func(mod, table, fn uint32) {
-		arg := c.coreInstExports([]CoreInstanceExport{
-			{Name: "$imports", Sort: CoreSortTable, Idx: table},
-			{Name: "0", Sort: CoreSortFunc, Idx: fn},
-		})
-		c.instantiateArgs(mod, []string{""}, []uint32{arg})
-	}
-	if useBlockWrite {
-		fixup(fixupWMod, tableW, writeCoreF)
-	}
-	if useBlockRead {
-		fixup(fixupRMod, tableR, readCoreF)
-	}
-	if hasFile {
-		fixup(fixupDirsMod, tableDirs, dirsCoreF)
-		fixup(fixupOpenMod, tableOpen, openCoreF)
-		fixup(fixupViaMod, tableVia, viaCoreF)
-		if hasFileReadWrite {
-			fixup(fixupVia2Mod, tableVia2, via2CoreF)
-		}
-	}
-	for i := range opts.MemTramp {
-		fixup(mtFixupMod[i], mtTable[i], mtCoreF[i])
-	}
-
-	// --- Phase I: lift + export tail. ---
-	runCoreF := c.aliasCoreFunc(userInst, coreExportName)
-	if opts.ExportName != "" {
-		// Export mode: lift the run func as a plain u32-returning
-		// component func exported under ExportName (the non-cli
-		// `-component-wrap` shape, callable via `--invoke <name>()`).
-		funcType := c.nType
-		c.buf = PutTypeSectionOneFunc(c.buf, nil, nil, CValtypeU32)
-		c.nType++
-		c.buf = PutCanonSectionLiftNoOpts(c.buf, runCoreF, funcType)
-		liftedCFunc := c.nCFunc
-		c.nCFunc++
-		c.buf = PutExportSectionOneFunc(c.buf, opts.ExportName, liftedCFunc)
-		return c.buf
-	}
-	// wasi:cli/run tail: lift main()'s i32 → result<_,_>, package + export run.
-	resultType := c.nType
-	c.buf = PutTypeSectionResultEmptyAndUnitFuncReturningResult(c.buf, resultType)
-	c.nType += 2 // result type + unit-func-returning-result type
-	funcType := resultType + 1
-	c.buf = PutCanonSectionLiftNoOpts(c.buf, runCoreF, funcType)
-	liftedCFunc := c.nCFunc
-	c.nCFunc++
-	c.buf = PutInstanceSectionOnePackagedFunc(c.buf, "run", liftedCFunc)
-	runInst := c.nInst
-	c.nInst++
-	c.buf = PutExportSectionOneInstance(c.buf, "wasi:cli/run@0.2.0", runInst)
-	return c.buf
+	return g.finish(coreBytes, coreExportName, opts.ExportName)
 }
