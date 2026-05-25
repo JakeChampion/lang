@@ -546,7 +546,17 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             var at: string = infer_expr_type(sl.array, s);
             return at;
         },
-        parser.ExprFieldAccess(_) => { return "unknown"; },
+        parser.ExprFieldAccess(fa) => {
+            // Bare struct-field read (`x.s`): map the declared field
+            // type to a tag so `x.s[i]` and `x.s.len()` dispatch on
+            // the right container kind. The emit side resolves the
+            // field offset by runtime shape, but infer needs the
+            // static type — without this `x.s` was "unknown", so
+            // `x.s[i]` mis-took the array path and `x.s.len()`
+            // misfired (fatal for any struct with a string / array
+            // field, e.g. the lexer's `Lex { src: string, … }`).
+            return field_type_tag(fa.field, s);
+        },
         parser.ExprUnknown(_) => { return "unknown"; }
     }
     return "unknown";
@@ -566,6 +576,31 @@ function ret_tag_of(name: string): string {
         // Trailing `]` → other `T[]` shapes (struct[] etc.)
         // or Map[..]. Treat as plain array.
         return "array";
+    }
+    return "unknown";
+}
+
+// field_type_tag infers the type tag of a struct-field read (`x.s`)
+// by finding a struct decl that declares a field of that name and
+// mapping its declared type. The emit side dispatches field reads by
+// runtime shape so it never needs the static struct, but infer does
+// — without this, `x.s` came back "unknown", so `x.s[i]` mis-took
+// the array path and `x.s.len()` misfired (fatal for any struct with
+// a string / array field, e.g. the lexer's `Lex { src: string, … }`).
+// First match wins; field names are effectively unique per type in
+// the self-host sources.
+function field_type_tag(field: string, s: EmitState): string {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        var sd: parser.StructDecl = s.struct_decls[di];
+        var fi: i32 = 0;
+        while (fi < sd.fields.len()) {
+            if (sd.fields[fi].name == field) {
+                return ret_tag_of(sd.fields[fi].type_name);
+            }
+            fi = fi + 1;
+        }
+        di = di + 1;
     }
     return "unknown";
 }
