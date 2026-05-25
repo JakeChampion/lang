@@ -3556,12 +3556,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(a.elements[ai], s);
                 ai = ai + 1;
             }
-            var a_bytes: i32 = (n_elems + 1) * 8;
+            // Layout with a hidden capacity word: alloc
+            // [cap, len, e0, …] at base B and return B+8, so readers
+            // see the classic [len@0, e_i@(i+1)*8] layout while
+            // __fern_arr_push finds cap at -8 and can grow
+            // geometrically. cap = len for a literal (first push
+            // reallocs, then doubles).
+            var a_bytes: i32 = (n_elems + 2) * 8;
             s = s.write("    movq $" + i32_to_string(a_bytes) + ", %rdi\n");
             s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
             s = s.write("    movq $" + i32_to_string(n_elems) + ", %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");
+            s = s.write("    movq %rcx, (%rax)\n");   // cap at base
+            s = s.write("    addq $8, %rax\n");       // shift to returned ptr (base+8)
+            s = s.write("    movq %rcx, (%rax)\n");   // len at base+8
             var aj: i32 = n_elems - 1;
             while (aj >= 0) {
                 s = s.write("    popq %rcx\n");
@@ -5621,18 +5629,21 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    incq %rbx\n");
         s = s.write("    jmp .Lsplit_cl\n");
         s = s.write(".Lsplit_count_done:\n");
-        // Allocate array: 8 (len) + (count+1)*8 bytes.
+        // Allocate array: 16 (cap + len words) + (count+1)*8 bytes.
         s = s.write("    movq -24(%rbp), %rax\n");
         s = s.write("    incq %rax\n");
         s = s.write("    shlq $3, %rax\n");
-        s = s.write("    addq $8, %rax\n");
+        s = s.write("    addq $16, %rax\n");
         s = s.write("    movq %rax, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, -32(%rbp)\n");
-        // Store length at offset 0.
+        // cap at base, shift to base+8, store returned ptr + len
+        // (hidden-cap layout; see __fern_arr_push).
         s = s.write("    movq -24(%rbp), %rcx\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    incq %rcx\n");              // len = count + 1
+        s = s.write("    movq %rcx, (%rax)\n");      // cap
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %rax, -32(%rbp)\n");   // returned arr ptr (base+8)
+        s = s.write("    movq %rcx, (%rax)\n");      // len
         s = s.write("    movq $0, -40(%rbp)\n");     // write_idx
         s = s.write("    movq $0, -48(%rbp)\n");     // seg_start
         // Second pass: walk haystack, emit segments.
@@ -5888,9 +5899,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ret\n");
     }
     // __fern_arr_push: append an 8-byte payload to an array.
-    // %rdi = src arr ptr ([len: 8, e0: 8, e1: 8, …]),
-    // %rsi = value to append (i32 or string-box ptr).
-    // Returns a fresh array in %rax — never mutates input.
+    // %rdi = arr ptr (returned form, [len@0, e_i@(i+1)*8]; capacity
+    // hidden at -8), %rsi = value. Amortised O(1): if len < cap,
+    // mutate in place and return the same pointer; otherwise alloc a
+    // doubled buffer ([cap, len, …] at base B, returned B+8), copy,
+    // and return the new pointer. Replaces the old fresh-copy-every-
+    // push runtime, which was O(N²) and exhausted the heap when the
+    // self-hosted compiler tokenised its own ~100k-token source.
     if (s.needs_arr_push) {
         s = s.write("__fern_arr_push:\n");
         s = s.write("    pushq %rbp\n");
@@ -5899,36 +5914,55 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    pushq %r13\n");
         s = s.write("    pushq %r14\n");
         s = s.write("    pushq %r15\n");
-        s = s.write("    movq %rdi, %r12\n");        // src arr ptr
+        s = s.write("    movq %rdi, %r12\n");        // arr ptr
         s = s.write("    movq %rsi, %r13\n");        // value
-        s = s.write("    movq (%r12), %r14\n");      // old length
-        // alloc bytes = (old_len + 2) * 8
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    addq $2, %rdi\n");
-        s = s.write("    shlq $3, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r15\n");        // dst arr ptr
-        // new length = old + 1
+        s = s.write("    movq (%r12), %r14\n");      // len
+        s = s.write("    movq -8(%r12), %r15\n");    // cap (hidden at -8)
+        s = s.write("    cmpq %r15, %r14\n");
+        s = s.write("    jge .Larr_push_grow\n");    // len >= cap → grow
+        // In place: store value at slot (len+1), bump len, return arr.
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    incq %rcx\n");
-        s = s.write("    movq %rcx, (%r15)\n");
-        // copy old elements: i from 0 to old_len, dst[i+1] = src[i+1]
-        s = s.write("    movq $0, %rcx\n");          // i
-        s = s.write(".Larr_push_loop:\n");
-        s = s.write("    cmpq %r14, %rcx\n");
-        s = s.write("    jge .Larr_push_done\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq (%r12,%rdx,8), %rax\n");
-        s = s.write("    movq %rax, (%r15,%rdx,8)\n");
+        s = s.write("    movq %r13, (%r12,%rcx,8)\n");
+        s = s.write("    incq %r14\n");
+        s = s.write("    movq %r14, (%r12)\n");
+        s = s.write("    movq %r12, %rax\n");
+        s = s.write("    jmp .Larr_push_ret\n");
+        s = s.write(".Larr_push_grow:\n");
+        // newcap = cap == 0 ? 4 : cap * 2.
+        s = s.write("    movq %r15, %rcx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    jne .Larr_push_dbl\n");
+        s = s.write("    movq $4, %rcx\n");
+        s = s.write("    jmp .Larr_push_cap\n");
+        s = s.write(".Larr_push_dbl:\n");
+        s = s.write("    shlq $1, %rcx\n");
+        s = s.write(".Larr_push_cap:\n");
+        s = s.write("    movq %rcx, %r15\n");        // r15 = newcap
+        s = s.write("    addq $2, %rcx\n");
+        s = s.write("    shlq $3, %rcx\n");
+        s = s.write("    movq %rcx, %rdi\n");
+        s = s.write("    call __fern_alloc\n");      // base in %rax
+        s = s.write("    movq %r15, (%rax)\n");      // cap at base
+        s = s.write("    addq $8, %rax\n");          // returned ptr = base+8
+        s = s.write("    movq %r14, %rcx\n");
         s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Larr_push_loop\n");
-        s = s.write(".Larr_push_done:\n");
-        // store new element at (old_len + 1) * 8
-        s = s.write("    movq %r14, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq %r13, (%r15,%rdx,8)\n");
-        s = s.write("    movq %r15, %rax\n");
+        s = s.write("    movq %rcx, (%rax)\n");      // new len = old+1
+        // Copy old elements (slots 1..len) from old arr to new.
+        s = s.write("    movq $1, %rcx\n");
+        s = s.write(".Larr_push_copy:\n");
+        s = s.write("    cmpq %r14, %rcx\n");
+        s = s.write("    jg .Larr_push_copy_done\n");
+        s = s.write("    movq (%r12,%rcx,8), %rdx\n");
+        s = s.write("    movq %rdx, (%rax,%rcx,8)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Larr_push_copy\n");
+        s = s.write(".Larr_push_copy_done:\n");
+        // Store the new value at slot (len+1).
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    movq %r13, (%rax,%rcx,8)\n");
+        s = s.write(".Larr_push_ret:\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
@@ -5955,13 +5989,15 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rdx, %r14\n");      // end
         s = s.write("    movq %r14, %r15\n");
         s = s.write("    subq %r13, %r15\n");      // new len = end - start
-        // alloc (new_len + 1) * 8 bytes
+        // alloc (new_len + 2) * 8 bytes (extra word for the hidden cap)
         s = s.write("    movq %r15, %rdi\n");
-        s = s.write("    incq %rdi\n");
+        s = s.write("    addq $2, %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        // write new len at offset 0
-        s = s.write("    movq %r15, (%rax)\n");
+        // cap at base, then shift to base+8 and write len (see __fern_arr_push)
+        s = s.write("    movq %r15, (%rax)\n");     // cap
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %r15, (%rax)\n");     // len
         // copy: for i in 0..new_len, dst[i+1] = src[start + i + 1]
         s = s.write("    movq $0, %rcx\n");
         s = s.write(".Larr_slice_loop:\n");
@@ -5999,16 +6035,18 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rsi, %r13\n");      // arr B
         s = s.write("    movq (%r12), %r14\n");    // a_len
         s = s.write("    movq (%r13), %r15\n");    // b_len
-        // alloc (a_len + b_len + 1) * 8
+        // alloc (a_len + b_len + 2) * 8 (extra word for the hidden cap)
         s = s.write("    movq %r14, %rdi\n");
         s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    incq %rdi\n");
+        s = s.write("    addq $2, %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        // new len at offset 0
+        // cap at base, shift to base+8, then len (see __fern_arr_push)
         s = s.write("    movq %r14, %rcx\n");
         s = s.write("    addq %r15, %rcx\n");
-        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq %rcx, (%rax)\n");     // cap
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %rcx, (%rax)\n");     // len
         // copy A
         s = s.write("    movq $0, %rcx\n");
         s = s.write(".Larr_concat_a:\n");
@@ -6054,10 +6092,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rdi, %r12\n");      // src
         s = s.write("    movq (%r12), %r13\n");    // len
         s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    incq %rdi\n");
+        s = s.write("    addq $2, %rdi\n");        // +cap word
         s = s.write("    shlq $3, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r13, (%rax)\n");    // cap
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %r13, (%rax)\n");    // len
         s = s.write("    movq $0, %rcx\n");        // i
         s = s.write(".Larr_rev_loop:\n");
         s = s.write("    cmpq %r13, %rcx\n");
@@ -6245,13 +6285,15 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    pushq %r15\n");
         s = s.write("    movq (%rdi), %r12\n");      // src data
         s = s.write("    movq 8(%rdi), %r13\n");     // src len
-        // alloc (len + 1) * 8
+        // alloc (len + 2) * 8 (extra word for the hidden cap)
         s = s.write("    movq %r13, %rdi\n");
-        s = s.write("    incq %rdi\n");
+        s = s.write("    addq $2, %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r14\n");        // arr
-        s = s.write("    movq %r13, (%r14)\n");
+        s = s.write("    movq %rax, %r14\n");        // arr base
+        s = s.write("    movq %r13, (%r14)\n");      // cap
+        s = s.write("    addq $8, %r14\n");          // shift to base+8
+        s = s.write("    movq %r13, (%r14)\n");      // len
         s = s.write("    movq $0, %r15\n");          // i
         s = s.write(".Lbytes_loop:\n");
         s = s.write("    cmpq %r13, %r15\n");
@@ -6287,12 +6329,14 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rdi, %r12\n");       // src box
         s = s.write("    movq (%r12), %r13\n");     // src data
         s = s.write("    movq 8(%r12), %r14\n");    // src len
-        // alloc array (len + 1) * 8
+        // alloc array (len + 2) * 8 (extra word for the hidden cap)
         s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    incq %rdi\n");
+        s = s.write("    addq $2, %rdi\n");
         s = s.write("    shlq $3, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r15\n");       // arr
+        s = s.write("    movq %rax, %r15\n");       // arr base
+        s = s.write("    movq %r14, (%r15)\n");     // cap
+        s = s.write("    addq $8, %r15\n");         // shift to base+8
         s = s.write("    movq %r14, (%r15)\n");     // arr.len
         s = s.write("    movq $0, -40(%rbp)\n");    // i
         s = s.write(".Lchars_loop:\n");
