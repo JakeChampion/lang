@@ -12,6 +12,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
@@ -9095,6 +9098,151 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 }`)
 	if err := exec.Command("wasmtime", "run", "-S", "inherit-network", srv).Run(); err != nil {
 		t.Errorf("tcp listen+close: wasmtime run failed (want exit 0): %v", err)
+	}
+}
+
+// TestCmdLangComponentWrapCliTcpServerWithEnv drives a TCP echo server
+// whose listen port comes from the PORT environment variable — the
+// HTTP-over-TCP handler shape (the synthesised `main()` calls
+// `__port_from_env` → `env()` → wasi:cli/environment.get-environment).
+// This mixes wasi:sockets with wasi:cli/environment, which neither the
+// pure-TCP nor the CLI-stream composer handled before: the TCP composer
+// now optionally surfaces get-environment (mem+realloc, like
+// blocking-read). The whole thing composes adapter-free; the test runs
+// it end-to-end (wasmtime serves, a Go client connects and round-trips
+// a payload) with PORT supplied via `--env`, proving the env-driven port
+// actually drives the bind.
+func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+
+	// Pick a free ephemeral port — open a :0 listener, capture the
+	// kernel-assigned port, close before the guest binds. Tiny race,
+	// localhost-only, short-lived (same approach as TestWasmPreview2TcpEcho).
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "envecho.fern")
+	// port_from_env mirrors std/tcp's __port_from_env: read PORT via
+	// env() (→ get-environment), parse the digits, fall back to 8080.
+	// Sending the port through env (rather than hardcoding) is the whole
+	// point — it forces the get-environment import alongside sockets.
+	src := `function port_from_env(): i32 {
+    match (env("PORT")) {
+        Some(s) => {
+            var n: i32 = 0;
+            var i: i32 = 0;
+            while (i < s.len()) {
+                var b: i32 = s[i];
+                if (b < 48 || b > 57) { return 8080; }
+                n = n * 10 + (b - 48);
+                i = i + 1;
+            }
+            if (i == 0) { return 8080; }
+            return n;
+        },
+        None => { return 8080; }
+    }
+}
+
+function main(): i32 {
+    var sock = tcp_listen(port_from_env());
+    if (sock < 0) { return 1; }
+    var conn = tcp_accept(sock);
+    if (conn < 0) { return 2; }
+    var msg = tcp_recv(conn, 1024);
+    var sent = tcp_send(conn, msg);
+    if (sent < 0) { return 3; }
+    tcp_close(conn);
+    tcp_close(sock);
+    return 0;
+}`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "envecho.wasm")
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("fern -component-wrap-cli (env+tcp) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	for _, want := range []string{
+		"wasi:cli/environment@0.2.0", "wasi:sockets/tcp@0.2.0",
+		"input-stream.blocking-read", "output-stream.blocking-write-and-flush",
+		"wasi:cli/run@0.2.0",
+	} {
+		if !bytes.Contains(printOut, []byte(want)) {
+			t.Errorf("expected %q in component, got:\n%s", want, printOut)
+		}
+	}
+
+	// Spawn the server with PORT supplied via --env. If get-environment
+	// didn't work the guest would fall back to 8080 and the dial below
+	// (to the env-supplied port) would time out — so a successful
+	// round-trip proves the env path drives the bind.
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT="+strconv.Itoa(port), compPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime run start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	deadline := time.Now().Add(5 * time.Second)
+	var conn net.Conn
+	for {
+		conn, err = net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer conn.Close()
+
+	want := "ping-from-env\n"
+	if _, err := conn.Write([]byte(want)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if cw, ok := conn.(*net.TCPConn); ok {
+		cw.CloseWrite()
+	}
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("echo = %q; want %q (stderr=%q)", string(got), want, serr.String())
+	}
+	if err := run.Wait(); err != nil {
+		t.Fatalf("wasmtime exit: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
 	}
 }
 

@@ -42,8 +42,12 @@ func repeatI32(n int) []byte {
 // preview-2 TCP/sockets surface into a wasi:cli/run component.
 // hasStreamRead / hasStreamWrite add the connection's
 // input-stream.blocking-read / output-stream.blocking-write-and-flush
-// (tcp_recv / tcp_send) — full read/write echo servers.
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool, coreExportName string) []byte {
+// (tcp_recv / tcp_send) — full read/write echo servers. hasEnv adds
+// wasi:cli/environment.get-environment — an HTTP-over-TCP handler that
+// reads its listen port from the PORT env var (the synthesised
+// `main()` calls `__port_from_env`, which lowers to `env()` →
+// get-environment) composes adapter-free.
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasEnv bool, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -78,6 +82,15 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool
 	tCreate := c.typeRaw(WasiSocketsTcpCreateSocketInstanceTypeBody(tIpFam, tErrCode, tTcpSocket))
 	createInst := c.importInstance("wasi:sockets/tcp-create-socket@0.2.0", tCreate)
 
+	// wasi:cli/environment.get-environment is a standalone instance type
+	// (returns list<tuple<string,string>>, no shared resource deps), so
+	// it slots in after the sockets surface without outer-aliasing.
+	var envInst uint32
+	if hasEnv {
+		tEnv := c.typeRaw(WasiCliEnvironmentGetEnvironmentInstanceTypeBody())
+		envInst = c.importInstance("wasi:cli/environment@0.2.0", tEnv)
+	}
+
 	// --- Phase B: core modules (user + a trampoline/fixup pair per
 	// memory-lowered method). ---
 	userMod := c.coreModule(coreBytes)
@@ -103,7 +116,7 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool
 	// tcp_send / tcp_recv operate on the accepted connection's streams.
 	// Track their slice positions so the io/streams arg can reference
 	// their trampoline placeholders.
-	idxBlockWrite, idxBlockRead := -1, -1
+	idxBlockWrite, idxBlockRead, idxEnv := -1, -1, -1
 	if hasStreamWrite {
 		idxBlockWrite = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockWriteName, params: composeBlockWriteParams})
@@ -111,6 +124,12 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool
 	if hasStreamRead {
 		idxBlockRead = len(mems)
 		mems = append(mems, memMethod{inst: streamsInst, name: composeBlockReadName, params: composeBlockReadParams, realloc: true})
+	}
+	// get-environment: (ret_ptr) -> () lowering, list<tuple<…>> result →
+	// mem+realloc, like blocking-read.
+	if hasEnv {
+		idxEnv = len(mems)
+		mems = append(mems, memMethod{inst: envInst, name: "get-environment", params: composeOneI32Params, realloc: true})
 	}
 	for i := range mems {
 		mems[i].tramp = c.coreModule(TrampolineModuleForParamsNoResult(mems[i].params))
@@ -169,21 +188,26 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite bool
 	streamsArg := c.coreInstExports(streamsExports)
 
 	// --- Phase E: instantiate the user module. ---
-	userInst := c.instantiateArgs(userMod,
-		[]string{
-			"wasi:sockets/instance-network@0.2.0",
-			"wasi:sockets/tcp-create-socket@0.2.0",
-			"wasi:sockets/tcp@0.2.0",
-			"wasi:io/poll@0.2.0",
-			"wasi:io/streams@0.2.0",
-		},
-		[]uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg})
+	argNames := []string{
+		"wasi:sockets/instance-network@0.2.0",
+		"wasi:sockets/tcp-create-socket@0.2.0",
+		"wasi:sockets/tcp@0.2.0",
+		"wasi:io/poll@0.2.0",
+		"wasi:io/streams@0.2.0",
+	}
+	argInsts := []uint32{instNetArg, createArg, tcpArg, pollArg, streamsArg}
+	if idxEnv >= 0 {
+		envArg := c.coreInstOneFunc("get-environment", memTramp[idxEnv])
+		argNames = append(argNames, "wasi:cli/environment@0.2.0")
+		argInsts = append(argInsts, envArg)
+	}
+	userInst := c.instantiateArgs(userMod, argNames, argInsts)
 
 	// --- Phase F: alias memory (+ realloc for blocking-read's list
 	// result) + the trampoline tables. ---
 	c.aliasMemory(userInst)
 	var reallocF uint32
-	if hasStreamRead {
+	if hasStreamRead || hasEnv {
 		reallocF = c.aliasReallocFunc(userInst)
 	}
 	for i := range mems {

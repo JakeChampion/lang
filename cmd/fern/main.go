@@ -946,8 +946,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		hasRead, hasWrite := tcpStreamUsage(bin)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, "_lang_run"), nil
+		hasRead, hasWrite, hasEnv := tcpStreamUsage(bin)
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasEnv, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
@@ -1004,23 +1004,27 @@ var preview2TcpServerImports = map[[2]string]bool{
 	// tcp_recv / tcp_send (read/write the accepted connection).
 	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
 	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
+	// env() — an HTTP-over-TCP handler reads its listen port from PORT
+	// (the synthesised main → __port_from_env → env() → get-environment).
+	{"wasi:cli/environment@0.2.0", "get-environment"}: true,
 }
 
 // tcpStreamUsage reports whether a TCP program reads (tcp_recv →
-// input-stream.blocking-read) and/or writes (tcp_send →
-// output-stream.blocking-write-and-flush) the connection.
-func tcpStreamUsage(bin []byte) (hasRead, hasWrite bool) {
+// input-stream.blocking-read), writes (tcp_send →
+// output-stream.blocking-write-and-flush), and/or reads the
+// environment (env() → wasi:cli/environment.get-environment).
+func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv bool) {
 	for _, p := range coreModuleImportPairs(bin) {
-		if p.module == "wasi:io/streams@0.2.0" {
-			switch p.name {
-			case "[method]input-stream.blocking-read":
-				hasRead = true
-			case "[method]output-stream.blocking-write-and-flush":
-				hasWrite = true
-			}
+		switch {
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
+			hasRead = true
+		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush":
+			hasWrite = true
+		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
+			hasEnv = true
 		}
 	}
-	return hasRead, hasWrite
+	return hasRead, hasWrite, hasEnv
 }
 
 func usesPreview2TcpServer(bin []byte) bool {

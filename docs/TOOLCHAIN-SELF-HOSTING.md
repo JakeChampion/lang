@@ -662,9 +662,21 @@ End-to-end exit code 42 demo (covered by
     routing (#1358) and recv/send stream methods (#1359). New
     machinery: `resource.drop` (TCP's four `[resource-drop]` imports)
     and record/variant/tuple type encoders.
+  - **TCP + env mixing. Shipped.** An HTTP-over-TCP handler reads its
+    listen port from `PORT` (the synthesised `main()` →
+    `__port_from_env` → `env()` → `wasi:cli/environment::get-environment`),
+    so it mixes `wasi:sockets` with `wasi:cli/environment` — a shape
+    neither composer handled before. `ComposeTcpServerCliRun` now
+    optionally surfaces `get-environment` (lowered mem+realloc, like
+    `blocking-read`, since it returns `list<tuple<string,string>>`) and
+    `usesPreview2TcpServer` admits it alongside the sockets set.
+    `examples/wasm/echo_handler.fern` composes adapter-free and serves
+    HTTP end-to-end on the env-supplied port — verified by a Go client
+    round-trip (`TestCmdLangComponentWrapCliTcpServerWithEnv`).
   - **Still to do (genuinely niche / large):**
-    - Mixing TCP with CLI-stream (a server that also prints / exits) —
-      the TCP composer requires the sockets/io import set only.
+    - Mixing TCP with CLI-stream stdout (a server that also prints /
+      exits) — the TCP composer surfaces sockets/io + `get-environment`,
+      but not the print/stdin/file stream side.
     - UDP (`wasi:sockets/udp`).
     - `wasi:http/incoming-handler` via the Go encoder — the stated
       edge-HTTP use case, still on `-wasi-adapter`. A large arc (the
