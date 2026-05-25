@@ -1054,6 +1054,23 @@ Phase 3 CANNOT start with the freelist — it must start by
      (struct / enum / closure / map box free) onto this base until
      the array over-releases are all closed — more free sites = more
      UAF surface.
+   - **UAF detector (LANDED, x86_64) + root-cause-#2 lead.**
+     `ast.RcFreeDebug` (set alongside `RcFreeEnabled`) turns the
+     freelist into a use-after-free detector: the array free sites
+     poison the freed block's rc word with `ast.RcPoison` and
+     quarantine it (no recycle — `__fern_alloc` keeps bumping), and
+     `__fern_rc_inc` / `__fern_rc_dec` `ud2`-trap the instant they
+     touch a poisoned block (a stale reference to an over-released
+     buffer). Running the self-host VM under gdb in this mode traps
+     in `parser.parse_module`'s entry: it inc's a freed array —
+     `Par { toks: toks }` on the borrowed `toks: Token[]` that
+     `run_source` passes as `parse_module(lexer.tokenize(src))`. So
+     root cause #2 is an over-release of a borrowed TEMPORARY array
+     argument: the `tokenize(...)` result (rc=1, never bound to a
+     local) is freed while `parse_module` still borrows it. The
+     detector is the tool to finish the diagnosis; the fix (correct
+     borrowed-temp-argument lifetime) is the next step and the
+     remaining flip blocker.
 
 #### Resolved design decisions (from Open Questions)
 
