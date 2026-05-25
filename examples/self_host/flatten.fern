@@ -430,6 +430,62 @@ pub function mangle_module(mod: parser.Module, prefix: string): parser.Module {
 
 // =================== VALIDATION ====================
 
+// LoadedModule pairs an imported module's local name with its parsed
+// AST. The bundler mangles each one to `name__*` before merging.
+pub struct LoadedModule { name: string, mod: parser.Module }
+
+function append_funcs(into: parser.FuncDecl[], more: parser.FuncDecl[]): parser.FuncDecl[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    return into;
+}
+function append_structs(into: parser.StructDecl[], more: parser.StructDecl[]): parser.StructDecl[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    return into;
+}
+function append_aliases(into: parser.TypeAlias[], more: parser.TypeAlias[]): parser.TypeAlias[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.push(more[i]); i = i + 1; }
+    return into;
+}
+
+// bundle merges an entry module with its imported modules into one
+// flat Module the asm emitter can lower directly. Each import is
+// mangled (`name__*`, brick 2) — which also renames its own `main`
+// to `name__main`, so it can't collide with the entry's `main`. The
+// entry is qualified-flattened (brick 1) so its `name.X` references
+// resolve to the mangled decls. Decl lists are concatenated; the
+// entry's top-level statements are kept (imports run no top stmts in
+// the compiler's module layout). This is the final brick: after it,
+// a multi-module program — the compiler itself — lowers to a single
+// namespace and self-compiles.
+pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Module {
+    var funcs: parser.FuncDecl[] = [];
+    var structs: parser.StructDecl[] = [];
+    var aliases: parser.TypeAlias[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name);
+        funcs = append_funcs(funcs, m.funcs);
+        structs = append_structs(structs, m.structs);
+        aliases = append_aliases(aliases, m.aliases);
+        i = i + 1;
+    }
+    var e: parser.Module = flatten_qualified(entry);
+    funcs = append_funcs(funcs, e.funcs);
+    structs = append_structs(structs, e.structs);
+    aliases = append_aliases(aliases, e.aliases);
+    var no_imports: parser.Import[] = [];
+    return parser.Module {
+        funcs: funcs,
+        structs: structs,
+        aliases: aliases,
+        imports: no_imports,
+        top_stmts: e.top_stmts
+    };
+}
+
 function flatten_source(src: string): parser.Module {
     return flatten_qualified(parser.parse_module(lexer.tokenize(src)));
 }
@@ -582,6 +638,39 @@ function main(): i32 {
     if (rewrite_type_name("Map[string, i32]", ctx) != "Map[string, i32]") { return 93; }
     if (rewrite_type_name("i32", ctx) != "i32") { return 94; }
     if (rewrite_type_name("other.Thing", ctx) != "other.Thing") { return 95; }
+
+    // --- Brick 3: bundle (merge entry + mangled imports) ---
+    var amod: parser.Module = parser.parse_module(lexer.tokenize(
+        "pub function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return 0; }"));
+    var emod: parser.Module = parser.parse_module(lexer.tokenize(
+        "import \"./a\"; function main(): i32 { return a.add(2, 3); }"));
+    var loaded: LoadedModule[] = [];
+    loaded = loaded.push(LoadedModule { name: "a", mod: amod });
+    var merged: parser.Module = bundle(emod, loaded);
+
+    // a.add → a__add; a's own main → a__main (mangled, no collision);
+    // entry's main kept. So merged funcs: a__add, a__main, main.
+    if (merged.imports.len() != 0) { return 100; }
+    if (merged.funcs.len() != 3) { return 101; }
+    if (merged.funcs[0].name != "a__add") { return 102; }
+    if (merged.funcs[1].name != "a__main") { return 103; }
+    if (merged.funcs[2].name != "main") { return 104; }
+    // Entry main's body: `return a__add(2, 3);` — qualified call
+    // flattened to the bare mangled name that a__add now provides.
+    match (merged.funcs[2].body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(id) => { if (id.name != "a__add") { return 105; } },
+                        _ => { return 106; }
+                    }
+                },
+                _ => { return 107; }
+            }
+        },
+        _ => { return 108; }
+    }
 
     return 0;
 }
