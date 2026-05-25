@@ -1292,6 +1292,12 @@ type builder struct {
 	// dec instead. Computed once by computeFreeEligible. See
 	// docs/RC-PERCEUS-PLAN.md (the borrow⇄free resolution).
 	freeEligible map[string]bool
+	// movedLocals[name] is true for an owned rc local that is read
+	// exactly once (its single occurrence is the RHS of a `y = x`
+	// alias) — so it's dead after the alias. The alias skips its
+	// transfer inc and the exit sweep skips its dec (a net-zero pair;
+	// Phase 4 move-on-alias). Computed by computeMovedLocals.
+	movedLocals map[string]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
@@ -1715,6 +1721,56 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 	return false
 }
 
+// computeMovedLocals finds owned rc locals that are read EXACTLY ONCE
+// in the whole function body, where that single read is the RHS of a
+// `var y = x` / `y = x` alias. Such an x is dead after the alias (one
+// occurrence ⇒ no later read, no reassignment, no closure capture), so
+// the alias's transfer inc and x's exit-sweep dec cancel: emitting
+// neither hands x's reference to y with no rc traffic (Phase 4
+// move-on-alias). Removing a balanced inc+dec pair can't change the
+// net rc, so it's safe regardless of x's borrow-ness; occ==1 is what
+// guarantees no live read is stranded. The Ident count is taken over
+// the AST: a `var x` definition isn't an Ident node, so occ[x] counts
+// reads plus any assign-target writes — occ[x]==1 therefore means one
+// read and no reassignment.
+func (b *builder) computeMovedLocals() map[string]bool {
+	occ := map[string]int{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			occ[id.Name]++
+		}
+		return true
+	})
+	moved := map[string]bool{}
+	consider := func(rhs ast.Expr) {
+		if id, ok := rhs.(*ast.Ident); ok && occ[id.Name] == 1 && b.isOwnedRcLocal(id.Name) {
+			moved[id.Name] = true
+		}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.Var:
+			if s.Init != nil {
+				consider(s.Init)
+			}
+		case *ast.Assign:
+			if _, ok := s.Target.(*ast.Ident); ok {
+				consider(s.Value)
+			}
+		}
+		return true
+	})
+	return moved
+}
+
+// isMovedAliasRHS reports whether `e` is a bare reference to a local
+// the move analysis proved single-use — its alias should skip the
+// transfer inc (the matching exit-sweep dec is skipped too).
+func (b *builder) isMovedAliasRHS(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && b.movedLocals[id.Name]
+}
+
 // emitRcDecLocalsAtExitExcept is emitRcDecLocalsAtExit but skips the
 // dec for one named local. The Return lowering uses this for the
 // move-on-return optimization: when a function returns a bare
@@ -2063,6 +2119,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// without an inc, so it must NOT be dec'd here.
 		seen[exclude] = true
 	}
+	// Move-on-alias: locals consumed by a single-use alias were never
+	// inc'd (the transfer moved the reference to the alias target), so
+	// they must NOT be dec'd here either.
+	for name := range b.movedLocals {
+		seen[name] = true
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue
@@ -2289,6 +2351,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
 	b.freeEligible = b.computeFreeEligible()
+	b.movedLocals = b.computeMovedLocals()
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
 	// default; the IR sets it to 1 when the Defer statement
@@ -3443,7 +3506,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// __fern_rc_inc returns the input pointer so it splices
 		// into the expression chain without a temp local.
 		// See docs/RC-PERCEUS-PLAN.md "Reference-creation sites".
-		if needsRcIncOnAlias(n.Init, b) {
+		// Move-on-alias: skip the transfer inc when the RHS is a
+		// single-use owned local (computeMovedLocals) — the reference
+		// moves to this binding and the source is excluded from the
+		// exit sweep, so the inc/dec pair is elided.
+		if needsRcIncOnAlias(n.Init, b) && !b.isMovedAliasRHS(n.Init) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
@@ -6747,8 +6814,9 @@ func (b *builder) assign(n *ast.Assign) error {
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
-		// new binding needs its own rc.
-		if needsRcIncOnAlias(n.Value, b) {
+		// new binding needs its own rc. Move-on-alias skips the inc
+		// for a single-use owned source (see the Var path).
+		if needsRcIncOnAlias(n.Value, b) && !b.isMovedAliasRHS(n.Value) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		}
 		// Phase 1d-vi: dec the old value of `y` before

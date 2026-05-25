@@ -1305,9 +1305,21 @@ per rc-returning function). Excludes params (borrowed — never swept,
 so the inc has no dec to cancel) and closures (different drop path).
 Backend-agnostic (it's in `lowerFunc`). Covered by `move_on_return_test`
 (fires for owned locals, keeps the inc for params); the differential
-gate confirms the elision is observationally invisible. Still to do:
-move-on-alias (`y = x` where `x` is dead after — needs liveness) and
-the general redundant-pair pass.
+gate confirms the elision is observationally invisible.
+
+**Move-on-alias (DONE).** Sibling slice: `var y = x` / `y = x` where
+the source `x` is an owned rc local read EXACTLY once (its single AST
+occurrence is the alias RHS) is dead afterward, so the alias transfer
+inc and `x`'s exit-sweep dec cancel. `computeMovedLocals` finds these
+via an Ident-occurrence count (occ==1 ⇒ one read, no reassignment, no
+capture — sound regardless of control flow), the alias skips the inc,
+and the sweep excludes the moved local. Removing a balanced inc+dec
+pair can't change the net rc, so it's safe; the occ==1 guard is what
+guarantees no live read is stranded. Composes with move-on-return:
+`var x = […]; var y = x; return y` now carries zero rc traffic.
+Covered by `TestMoveOnAlias{ElidesIncForSingleUseLocal,
+KeepsIncWhenReadAgain}`. Still to do: the general redundant-pair pass
+(multi-use last-use via real liveness) and Phase 5 drop-reuse.
 
 ### Phase 5: Drop reuse + borrowed params
 

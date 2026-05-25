@@ -69,6 +69,43 @@ function main(): i32 { return f()[0]; }`)
 	}
 }
 
+// Move-on-alias: `var y = x; return y` where x is read only once (the
+// alias) elides the alias inc too — combined with move-on-return the
+// whole pass-through carries zero rc traffic (no __fern_rc_inc).
+func TestMoveOnAliasElidesIncForSingleUseLocal(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32[] {
+    var x: i32[] = [1, 2, 3];
+    var y: i32[] = x;
+    return y;
+}
+function main(): i32 { return f()[0]; }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("single-use alias + return should emit no __fern_rc_inc, got %d", got)
+	}
+}
+
+// A local READ more than once is NOT moved — its alias keeps the inc,
+// since the later read needs the value live.
+func TestMoveOnAliasKeepsIncWhenReadAgain(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32 {
+    var x: i32[] = [1, 2, 3];
+    var y: i32[] = x;
+    return x[0] + y[0];
+}
+function main(): i32 { return f(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got == 0 {
+		t.Errorf("alias of a multi-use local must keep its inc, got 0")
+	}
+}
+
 // Returning a borrowed PARAM still needs the transfer inc — the exit
 // sweep does NOT dec params, so there's no dec to cancel against.
 func TestMoveOnReturnKeepsIncForParam(t *testing.T) {
