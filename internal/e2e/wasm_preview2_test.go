@@ -695,6 +695,108 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2HttpHandlerLoggingAdapterFree composes an adapter-free
+// wasi:http handler that also print()s — exercising TCP/http + CLI-stream
+// mixing. ComposeHttpHandler surfaces wasi:cli/stdout.get-stdout and
+// reuses the body's output-stream.blocking-write-and-flush lowering for
+// the log write. A successful 200 from a print-ing handler proves the
+// stdout path is wired (a broken stdout handle would trap mid-request);
+// the component is also checked to import wasi:cli/stdout, and the log
+// line is verified in wasmtime's captured stdout.
+func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "logger.fern")
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    print(f"LOGLINE {req.method} {req.path}");
+    return http_response_ok("logged");
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "logger.component.wasm")
+	emit := exec.Command(bin, "-target", "wasi-http", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasi-http (logging, no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit failed: %v\n%s", err, wit)
+	}
+	if !bytes.Contains(wit, []byte("wasi:cli/stdout")) {
+		t.Errorf("expected wasi:cli/stdout import in the logging handler, got:\n%s", wit)
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/ping")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /ping: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("/ping status = %d; want 200 (stderr=%q)", resp.StatusCode, serr.String())
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "logged" {
+		t.Errorf("/ping body = %q; want %q", string(body), "logged")
+	}
+	// The print() lands on wasmtime serve's captured stdout (prefixed
+	// per-stream). Give it a moment to flush, then confirm the log line.
+	time.Sleep(200 * time.Millisecond)
+	if !bytes.Contains(sout.Bytes(), []byte("LOGLINE GET /ping")) {
+		t.Errorf("expected log line in server stdout, got:\n%s", sout.String())
+	}
+}
+
 // TestWasmPreview2HttpHandlerAdapterFree is TestWasmPreview2HttpHandler
 // without the preview-1 adapter: `-target wasi-http` (no -wasi-adapter)
 // composes the wasi:http/incoming-handler component natively through

@@ -451,17 +451,6 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: nil,
 	},
-	"wasi_io_blocking_write_and_flush": {
-		// (handle, ptr, len, retptr) → (). Writes `len` bytes from
-		// `ptr` and flushes. retptr holds result<_, stream-error>
-		// (disc byte @ +0). Wasmtime enforces a 4 KiB per-call cap
-		// — callers loop.
-		module:  "wasi:io/streams@0.2.0",
-		name:    "[method]output-stream.blocking-write-and-flush",
-		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
-		results: nil,
-	},
-
 	// ---- wasi:http imports for the wasi:http/incoming-handler
 	// wrapper. The wrapper marshals canonical-ABI incoming-request
 	// → user's HttpRequest, calls handle(), then streams the
@@ -890,7 +879,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_blocking_read")
 	}
 	if helpers.set["__fern_tcp_send"] {
-		in.add("wasi_io_blocking_write_and_flush")
+		in.add("wasi_blocking_write_and_flush_p2")
 	}
 	if helpers.set["__fern_tcp_close"] {
 		in.add("wasi_sockets_tcp_socket_drop")
@@ -923,7 +912,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_http_outgoing_body_finish")
 		in.add("wasi_http_response_outparam_set")
 		in.add("wasi_io_blocking_read")
-		in.add("wasi_io_blocking_write_and_flush")
+		in.add("wasi_blocking_write_and_flush_p2")
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
 	}

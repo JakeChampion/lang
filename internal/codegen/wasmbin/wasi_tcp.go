@@ -478,7 +478,7 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 //	9: $chunk     — bytes to write this iteration (≤ 4096)
 func buildTcpSendBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	blockingWrite := idxs["wasi_io_blocking_write_and_flush"]
+	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
 	var body []byte
 

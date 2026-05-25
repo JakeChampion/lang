@@ -695,15 +695,24 @@ End-to-end exit code 42 demo (covered by
     blocking-read — the host returns variable-length data into guest
     memory), and five canon `resource.drop`s. Verified end-to-end: a
     routing handler serves GET / 404 / POST-echo under `wasmtime serve`
-    (`TestWasmPreview2HttpHandlerAdapterFree`). A handler that also
-    prints / reads env / opens files still needs `-wasi-adapter` (those
-    mix in CLI-stream imports the http composer doesn't lower yet); the
-    driver detects the extra imports and says so.
+    (`TestWasmPreview2HttpHandlerAdapterFree`).
+  - **HTTP handler + stdout/stderr logging. Shipped.** A handler that
+    also `print`s / `eprint`s for request logging composes adapter-free:
+    `ComposeHttpHandler` optionally surfaces `wasi:cli/stdout`.get-stdout
+    / `wasi:cli/stderr`.get-stderr (no-opts getters) and reuses the
+    response body's `output-stream.blocking-write-and-flush` lowering for
+    the log write. (Fixed a latent dup found on the way: print and the
+    http/tcp body write registered two distinct import symbols for the
+    same `blocking-write-and-flush`, which produced a duplicate core
+    import once both were used; unified to one symbol.) Verified
+    end-to-end — a print-ing handler serves a 200 and the log line lands
+    on wasmtime's stdout (`TestWasmPreview2HttpHandlerLoggingAdapterFree`).
+    A handler that reads env / opens files still needs `-wasi-adapter`;
+    the driver detects the extra imports and says so.
   - **Still to do (genuinely niche / large):**
-    - Mixing TCP with CLI-stream stdout (a server that also prints /
-      exits) — the TCP composer surfaces sockets/io + `get-environment`,
-      but not the print/stdin/file stream side. The same gap blocks an
-      `incoming-handler` that prints.
+    - Mixing TCP servers with CLI-stream stdout (a TCP server that also
+      prints) — the http handler now surfaces stdout/stderr, but the TCP
+      composer doesn't yet (the same getter wiring would port over).
     - UDP (`wasi:sockets/udp`).
     - The file-append open-chain is still preview-1 only — preview-2
       has no fd-append flag, so it needs `append-via-stream` (or an

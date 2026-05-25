@@ -123,7 +123,13 @@ var httpOutparamSetParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7
 //     (result<list<u8>>).
 //   - canon resource.drop: incoming-request, fields, future-trailers,
 //     input-stream, output-stream.
-func ComposeHttpHandler(coreBytes []byte, coreExportName string) []byte {
+//
+// hasStdout / hasStderr add wasi:cli/stdout.get-stdout /
+// wasi:cli/stderr.get-stderr (no-opts, () -> own<output-stream>) so a
+// handler that also print()s / eprint()s for request logging composes
+// adapter-free — the print's output-stream.blocking-write-and-flush is
+// the same lowering the response body already uses.
+func ComposeHttpHandler(coreBytes []byte, hasStdout, hasStderr bool, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing. ---
@@ -142,6 +148,17 @@ func ComposeHttpHandler(coreBytes []byte, coreExportName string) []byte {
 	tFields := c.aliasType(httpInst, "fields")
 	tFutTrail := c.aliasType(httpInst, "future-trailers")
 	tOutparam := c.aliasType(httpInst, "response-outparam")
+
+	// Optional CLI write streams (print / eprint logging). Each is a
+	// get-{stdout,stderr}() -> own<output-stream> over the shared
+	// output-stream resource.
+	var stdoutInst, stderrInst uint32
+	if hasStdout {
+		stdoutInst = c.importInstance("wasi:cli/stdout@0.2.0", c.typeRaw(WasiCliStdoutInstanceTypeBody(tOut)))
+	}
+	if hasStderr {
+		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
+	}
 
 	// --- Phase B: core module + trampoline/fixup pair per mem method. ---
 	userMod := c.coreModule(coreBytes)
@@ -235,11 +252,23 @@ func ComposeHttpHandler(coreBytes []byte, coreExportName string) []byte {
 		{Name: "[resource-drop]input-stream", Sort: CoreSortFunc, Idx: coreFuncs["[resource-drop]input-stream"]},
 		{Name: "[resource-drop]output-stream", Sort: CoreSortFunc, Idx: coreFuncs["[resource-drop]output-stream"]},
 	})
+	// CLI write-stream getters (no-opts) + their per-interface arg
+	// instances.
+	argNames := []string{"wasi:http/types@0.2.0", "wasi:io/streams@0.2.0"}
+	argInsts := []uint32{httpArg, streamsArg}
+	if hasStdout {
+		f := c.lowerNoOpts(c.aliasInstFunc(stdoutInst, "get-stdout"))
+		argNames = append(argNames, "wasi:cli/stdout@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stdout", f))
+	}
+	if hasStderr {
+		f := c.lowerNoOpts(c.aliasInstFunc(stderrInst, "get-stderr"))
+		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
+	}
 
 	// --- Phase E: instantiate the user module. ---
-	userInst := c.instantiateArgs(userMod,
-		[]string{"wasi:http/types@0.2.0", "wasi:io/streams@0.2.0"},
-		[]uint32{httpArg, streamsArg})
+	userInst := c.instantiateArgs(userMod, argNames, argInsts)
 
 	// --- Phase F: alias memory + realloc + trampoline tables. ---
 	c.aliasMemory(userInst)
