@@ -34,6 +34,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 	conv "github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/imports"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/leb128"
 	mem "github.com/jakechampion/lang/internal/wasm/memory"
@@ -11353,12 +11354,14 @@ func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
 // driver use either implementation interchangeably — and a
 // regression alarm if one is updated without the other.
 func TestWASMComponentGoLangByteEquivalence(t *testing.T) {
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		t.Skip("wasm-tools not on PATH")
-	}
-
-	// Build the same component from the Lang side first. This is
-	// the same shape as TestWASMComponentWasiHelperBuildsValid.
+	// Build the same WASI-imported component on both sides and
+	// assert the produced bytes are IDENTICAL — the component-level
+	// analogue of TestWASMCoreEncoderGoLangByteEquivalence. No
+	// wasm-tools needed: byte-equality is strictly stronger than a
+	// `wasm-tools print` text comparison (identical bytes ⟹
+	// identical print), and a separate test
+	// (TestWASMComponentWasiHelperBuildsValid) already validates the
+	// component is well-formed.
 	src := `import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/encode";
@@ -11405,50 +11408,18 @@ function main(): i32 {
 		langBytes = append(langBytes, byte(n))
 	}
 
-	// To compare against the Go side, the SAME core bytes need
-	// to be fed in. The Lang program emitted both the core bytes
-	// AND wrapped them in one shot; the wrap output is what we
-	// have. The Go side requires the core bytes as input, so the
-	// shapes differ: this test instead checks that the Lang
-	// version's component preamble + last-instance-section bytes
-	// match the Go version's same regions for a hand-rolled core
-	// module of the same shape.
-	//
-	// A stricter "feed identical core bytes into both and compare
-	// the wrapped output" requires either (a) Lang exposing its
-	// internal core_bytes via stdout, or (b) the Go side accepting
-	// the wrapped bytes and extracting the core. Both are heavier
-	// than needed for this regression guard. Here we just confirm
-	// the produced component is the same SHAPE — same section
-	// IDs in the same order, same overall byte length within a
-	// small margin.
-	//
-	// (When the two encoders ever drift in non-structural ways
-	// the wasm-tools-print comparison below catches it.)
-	dir := t.TempDir()
-	langPath := filepath.Join(dir, "fern.wasm")
-	if err := os.WriteFile(langPath, langBytes, 0o644); err != nil {
-		t.Fatalf("write lang: %v", err)
-	}
-	langWat, err := exec.Command("wasm-tools", "print", langPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasm-tools print lang: %v\n%s", err, langWat)
-	}
-
-	// The Go-side equivalent. helloCoreModule (defined in the
-	// component package's tests) is structurally identical to the
-	// Lang program's core module above. We can't import that
-	// helper across packages without exporting it; reproduce the
-	// same byte shape here.
-	goCore := []byte{
-		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-		0x01, 0x05, 0x01, 0x60, 0x01, 0x7f, 0x00,
-		0x02, 0x12,
-		0x01,
-		0x09, 'w', 'a', 's', 'i', '-', 'e', 'x', 'i', 't',
-		0x04, 'e', 'x', 'i', 't',
-		0x00, 0x00,
-	}
+	// Build the identical component on the Go side. The core module
+	// goes through the production encoder (mod.Build) with the same
+	// inputs the Lang program used — byte-equal by
+	// TestWASMCoreEncoderGoLangByteEquivalence — then the same wrap.
+	goMod := mod.New()
+	goMod.TypeParams = [][]byte{{encode.ValtypeI32}} // type 0: (i32) -> ()
+	goMod.TypeResults = [][]byte{{}}
+	goMod.ImportModules = []string{"wasi-exit"}
+	goMod.ImportNames = []string{"exit"}
+	goMod.ImportKinds = []byte{imports.ImportFunc}
+	goMod.ImportDescs = [][]byte{imports.ImportDescFunc(0)}
+	goCore := mod.Build(goMod)
 	goBytes := component.WrapWasiImported(goCore, []component.WasiImport{
 		{
 			InterfaceName:    "wasi:cli/exit@0.2.0",
@@ -11458,17 +11429,9 @@ function main(): i32 {
 			CoreImportModule: "wasi-exit",
 		},
 	})
-	goPath := filepath.Join(dir, "go.wasm")
-	if err := os.WriteFile(goPath, goBytes, 0o644); err != nil {
-		t.Fatalf("write go: %v", err)
-	}
-	goWat, err := exec.Command("wasm-tools", "print", goPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("wasm-tools print go: %v\n%s", err, goWat)
-	}
 
-	if string(langWat) != string(goWat) {
-		t.Errorf("Lang vs Go wasm-tools print disagree.\n---LANG---\n%s\n---GO---\n%s", langWat, goWat)
+	if !bytes.Equal(langBytes, goBytes) {
+		t.Fatalf("Lang vs Go component bytes differ:\n  lang (%d): % x\n  go   (%d): % x", len(langBytes), langBytes, len(goBytes), goBytes)
 	}
 }
 
