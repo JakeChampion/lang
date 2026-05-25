@@ -22,7 +22,8 @@
 //   +0   cap     : i32 — bucket count, power-of-2, ≥ 4
 //   +4   len     : i32 — live entry count
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
-//   +12  valKind : i32 — 0 = i32-scalar, 1 = pointer-shaped
+//   +12  valKind : i32 — 0 = i32-scalar, 1 = non-array
+//        pointer, 2 = array(plain elems), 3 = array(rc elems)
 //   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
 //   +16+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
 //                                      (8 on wasm32, 16 on arm64)
@@ -412,7 +413,9 @@ pub function __map_values_impl(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var valKind: i32 = __load_i32(buf + 12);
     var ptrW: i32 = __ptr_width();
-    if (valKind == 1) {
+    // valKind != 0 == pointer-shaped (1 = string/struct/enum,
+    // 2/3 = array values); all take the pointer-column path.
+    if (valKind != 0) {
         return __map_string_column(m, ptrW);
     }
     return __map_column(m, ptrW, 4);
