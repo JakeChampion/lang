@@ -549,7 +549,14 @@ function parse_primary(p: Par): ExprResult {
             return ExprResult { par: p, expr: e_unknown("punct:" + x.text) };
         },
         lexer.TokEof(_) => { return ExprResult { par: p, expr: e_unknown("eof") }; },
-        lexer.TokError(x) => { return ExprResult { par: p, expr: e_unknown("lex error: " + x.msg) }; }
+        lexer.TokError(x) => { return ExprResult { par: p, expr: e_unknown("lex error: " + x.msg) }; },
+        lexer.TokFString(_) => {
+            // f-string sub-parsing (each interpolant Expr text →
+            // ast.Expr) is a follow-up; advance past the token so the
+            // surrounding loop recovers rather than spinning.
+            p = p.advance();
+            return ExprResult { par: p, expr: e_unknown("fstring (unsupported in parser port)") };
+        }
     }
     return ExprResult { par: p, expr: e_unknown("primary") };
 }

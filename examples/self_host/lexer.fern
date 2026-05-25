@@ -18,10 +18,18 @@
 // `0x`, unexpected character) instead of the old EOF-as-error
 // sentinel.
 //
-// Still out of scope (the Go lexer covers them; deferred to a
-// follow-up port): f-strings (`f"..."` → FParts) and the
-// separate comment list (skip_trivia drops comments here rather
-// than accumulating them).
+// f-strings (`f"..."`) now lex here too: a single TokFString
+// whose `parts` hold the alternating literal / interpolant
+// pieces (`{{` / `}}` escape literal braces; standard escapes
+// apply in the literal portions; `{...}` interpolants pass
+// through verbatim, with inner string literals skipped during
+// the brace-matching scan). The PARSER side — sub-parsing each
+// interpolant Expr text into an ast.Expr — is still a follow-up;
+// parser.fern surfaces a TokFString as an unknown expr for now.
+//
+// Still out of scope (the Go lexer covers it; deferred to a
+// follow-up port): the separate comment list (skip_trivia drops
+// comments here rather than accumulating them).
 //
 // Goal: validate that the language can express the lexer's logic
 // end-to-end without resorting to Go-side workarounds. The Go
@@ -43,7 +51,15 @@ pub struct TokString { value: string, line: i32, col: i32 }
 // consumers already fall through these via their `_` match arms.
 pub struct TokError { msg: string, line: i32, col: i32 }
 
-pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString | TokError;
+// FStringPart is one piece of an f-string. Exactly one of the two
+// payload fields is meaningful, selected by `is_expr`: a literal
+// segment (escapes already processed) when false, or the raw
+// interpolant expression text (the parser sub-parses it) when
+// true. Mirrors `lexer.FStringPart` in the Go lexer.
+pub struct FStringPart { lit: string, expr: string, is_expr: boolean }
+pub struct TokFString { parts: FStringPart[], line: i32, col: i32 }
+
+pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString | TokError | TokFString;
 
 // is_digit / is_alpha / is_alnum — byte-level classifiers,
 // matching the Go lexer's `unicode.IsDigit` / `IsLetter` on the
@@ -205,6 +221,23 @@ pub function number_tok(text: string, suffix: string, is_float: boolean, line: i
 }
 pub function error_tok(msg: string, line: i32, col: i32): Token {
     return TokError { msg: msg, line: line, col: col };
+}
+pub function fstring_tok(parts: FStringPart[], line: i32, col: i32): Token {
+    return TokFString { parts: parts, line: line, col: col };
+}
+
+// is_blank_range — true if every byte of s is ASCII whitespace
+// (or s is empty). Stands in for `strings.TrimSpace(x) == ""` in
+// the f-string empty-interpolant check; written by hand so the
+// lexer keeps to built-ins and resolves under no_prelude (the
+// parser imports this module that way).
+function is_blank_range(s: string): boolean {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (!is_space(s[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // is_error_tok / has_error — predicates over the Token union used
@@ -372,6 +405,131 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
     return NumResult { lex: l, tok: string_tok(out, start_line, start_col) };
 }
 
+// scan_fstring consumes the body of an f-string. `l` is positioned
+// at the opening `"` (the leading `f` is already consumed). It
+// returns a TokFString whose parts alternate literal segments with
+// raw interpolant-expression text, mirroring the Go lexer's
+// scanFString:
+//
+//   f"hi {x + 1}!"  → [Lit "hi ", Expr "x + 1", Lit "!"]
+//   f"{count}"      → [Expr "count"]
+//   f"plain"        → [Lit "plain"]
+//   f""             → []
+//
+// `{{` / `}}` escape literal braces; standard escapes apply in the
+// literal portions; inside `{...}` the bytes pass through verbatim
+// (with nested braces tracked and inner string literals skipped so
+// their quotes / braces don't break the boundary scan). All the
+// failure shapes surface a TokError.
+function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
+    l = l.advance();   // opening "
+    var lit: string = "";
+    var have_lit: boolean = false;
+    var parts: FStringPart[] = [];
+    while (!l.at_end()) {
+        var c: i32 = l.peek_byte();
+        if (c == 34) {   // closing "
+            l = l.advance();
+            if (have_lit) {
+                parts = parts.push(FStringPart { lit: lit, expr: "", is_expr: false });
+            }
+            return NumResult { lex: l, tok: fstring_tok(parts, start_line, start_col) };
+        }
+        if (c == 10) {
+            return NumResult { lex: l, tok: error_tok("newline inside f-string literal", start_line, start_col) };
+        }
+        if (c == 92) {   // backslash escape (literal portion only)
+            l = l.advance();
+            if (l.at_end()) {
+                return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
+            }
+            var esc: i32 = l.peek_byte();
+            l = l.advance();
+            if (esc == 110) { lit = lit + "\n"; have_lit = true; }
+            else if (esc == 116) { lit = lit + "\t"; have_lit = true; }
+            else if (esc == 114) { lit = lit + "\r"; have_lit = true; }
+            else if (esc == 48) { lit = lit + "\0"; have_lit = true; }
+            else if (esc == 34) { lit = lit + "\""; have_lit = true; }
+            else if (esc == 92) { lit = lit + "\\"; have_lit = true; }
+            else {
+                return NumResult { lex: l, tok: error_tok("unknown escape in f-string", start_line, start_col) };
+            }
+            continue;
+        }
+        if (c == 123) {   // {
+            if (l.i + 1 < l.n && l.src[l.i + 1] == 123) {   // {{ → literal {
+                lit = lit + "{";
+                have_lit = true;
+                l = l.advance();
+                l = l.advance();
+                continue;
+            }
+            l = l.advance();   // opening {
+            if (have_lit) {   // flush the literal accumulated so far
+                parts = parts.push(FStringPart { lit: lit, expr: "", is_expr: false });
+                lit = "";
+                have_lit = false;
+            }
+            // Find the matching `}` at brace-depth 0. Nested braces
+            // bump the depth; a string literal inside the interpolant
+            // is skipped wholesale so its quotes / braces don't move
+            // the boundary.
+            var expr_start: i32 = l.i;
+            var depth: i32 = 1;
+            while (!l.at_end() && depth > 0) {
+                var d: i32 = l.peek_byte();
+                if (d == 123) {
+                    depth = depth + 1;
+                } else if (d == 125) {
+                    depth = depth - 1;
+                    if (depth == 0) { break; }
+                } else if (d == 10) {
+                    return NumResult { lex: l, tok: error_tok("newline inside f-string interpolation", start_line, start_col) };
+                } else if (d == 34) {
+                    l = l.advance();   // opening "
+                    while (!l.at_end() && l.peek_byte() != 34) {
+                        if (l.peek_byte() == 92 && l.i + 1 < l.n) {
+                            l = l.advance();   // skip escaped char
+                        }
+                        l = l.advance();
+                    }
+                    if (l.at_end()) {
+                        return NumResult { lex: l, tok: error_tok("unterminated string inside f-string interpolation", start_line, start_col) };
+                    }
+                    // l now at the closing `"`; the advance below consumes it.
+                }
+                if (depth > 0) {
+                    l = l.advance();
+                }
+            }
+            if (depth != 0) {
+                return NumResult { lex: l, tok: error_tok("unterminated `{` in f-string", start_line, start_col) };
+            }
+            var expr_text: string = l.src[expr_start:l.i];
+            l = l.advance();   // closing }
+            if (is_blank_range(expr_text)) {
+                return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
+            }
+            parts = parts.push(FStringPart { lit: "", expr: expr_text, is_expr: true });
+            continue;
+        }
+        if (c == 125) {   // }
+            if (l.i + 1 < l.n && l.src[l.i + 1] == 125) {   // }} → literal }
+                lit = lit + "}";
+                have_lit = true;
+                l = l.advance();
+                l = l.advance();
+                continue;
+            }
+            return NumResult { lex: l, tok: error_tok("unmatched `}` in f-string (use `}}` for a literal `}`)", start_line, start_col) };
+        }
+        lit = lit + l.src[l.i:l.i + 1];
+        have_lit = true;
+        l = l.advance();
+    }
+    return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
+}
+
 // tokenize is the top-level entrypoint. Mirrors the Go lexer's
 // `Tokenize` — produces a Token[] slice terminated by TokEof.
 pub function tokenize(src: string): Token[] {
@@ -390,6 +548,18 @@ pub function tokenize(src: string): Token[] {
         var start_line: i32 = l.line;
         var start_col: i32 = l.col;
         var b: i32 = l.peek_byte();
+        // f-string `f"..."` — checked before the identifier path so
+        // the leading `f` isn't scooped up as an ident. Mirrors the
+        // Go lexer's first-branch f-string detection.
+        if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == 34) {
+            l = l.advance();   // consume `f`
+            var rf = scan_fstring(l, start_line, start_col);
+            l = rf.lex;
+            out = out.push(rf.tok);
+            if (is_error_tok(rf.tok)) { return out; }
+            after_dot = false;
+            continue;
+        }
         if (is_digit(b)) {
             var rn = scan_number(l, after_dot, start_line, start_col);
             l = rn.lex;
@@ -734,6 +904,92 @@ function test_unknown_char(): i32 {
     return 0;
 }
 
+// check_part — assert one FStringPart matches the expected kind +
+// text. `want_expr` selects which payload field to compare.
+function check_part(p: FStringPart, want_expr: boolean, want_text: string): boolean {
+    if (p.is_expr != want_expr) { return false; }
+    if (want_expr) { return p.expr == want_text; }
+    return p.lit == want_text;
+}
+
+// test_fstring — the f-string parts split + brace-escape + escape-
+// sequence + nested-string handling, plus the four error shapes.
+// Mirrors the Go lexer's TestFStringParts / TestFStringErrors.
+function test_fstring(): i32 {
+    // f"" → no parts.
+    var t0: Token[] = tokenize("f\"\"");
+    if (t0.len() != 2) { return 2000; }
+    match (t0[0]) {
+        TokFString(f) => { if (f.parts.len() != 0) { return 2001; } },
+        _ => { return 2002; }
+    }
+    // f"plain" → [Lit "plain"].
+    var t1: Token[] = tokenize("f\"plain\"");
+    match (t1[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 1) { return 2010; }
+            if (!check_part(f.parts[0], false, "plain")) { return 2011; }
+        },
+        _ => { return 2012; }
+    }
+    // f"a{x}b" → [Lit "a", Expr "x", Lit "b"].
+    var t2: Token[] = tokenize("f\"a{x}b\"");
+    match (t2[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 3) { return 2020; }
+            if (!check_part(f.parts[0], false, "a")) { return 2021; }
+            if (!check_part(f.parts[1], true, "x")) { return 2022; }
+            if (!check_part(f.parts[2], false, "b")) { return 2023; }
+        },
+        _ => { return 2024; }
+    }
+    // f"{{lit}}" → [Lit "{lit}"] (brace escapes).
+    var t3: Token[] = tokenize("f\"{{lit}}\"");
+    match (t3[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 1) { return 2030; }
+            if (!check_part(f.parts[0], false, "{lit}")) { return 2031; }
+        },
+        _ => { return 2032; }
+    }
+    // f"k={"x"}" → [Lit "k=", Expr "\"x\""] (inner string skipped
+    // during the brace-matching scan).
+    var t4: Token[] = tokenize("f\"k={\"x\"}\"");
+    match (t4[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 2) { return 2040; }
+            if (!check_part(f.parts[0], false, "k=")) { return 2041; }
+            if (!check_part(f.parts[1], true, "\"x\"")) { return 2042; }
+        },
+        _ => { return 2043; }
+    }
+    // f"sum {a + b}" → [Lit "sum ", Expr "a + b"].
+    var t5: Token[] = tokenize("f\"sum {a + b}\"");
+    match (t5[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 2) { return 2050; }
+            if (!check_part(f.parts[0], false, "sum ")) { return 2051; }
+            if (!check_part(f.parts[1], true, "a + b")) { return 2052; }
+        },
+        _ => { return 2053; }
+    }
+    // f"hi\nthere" → [Lit "hi\nthere"] (escape in literal segment).
+    var t6: Token[] = tokenize("f\"hi\\nthere\"");
+    match (t6[0]) {
+        TokFString(f) => {
+            if (f.parts.len() != 1) { return 2060; }
+            if (!check_part(f.parts[0], false, "hi\nthere")) { return 2061; }
+        },
+        _ => { return 2062; }
+    }
+    // Error shapes: unterminated, newline inside, bare `}`, empty `{}`.
+    if (!has_error(tokenize("f\"unterminated"))) { return 2070; }
+    if (!has_error(tokenize("f\"with\nnewline\""))) { return 2071; }
+    if (!has_error(tokenize("f\"bare}brace\""))) { return 2072; }
+    if (!has_error(tokenize("f\"empty{}\""))) { return 2073; }
+    return 0;
+}
+
 // main runs every feature test in sequence and returns the first
 // non-zero code. Exit code 0 means the lang lexer port matches the
 // Go lexer across mixed tokens, hex / scientific literals, the
@@ -751,5 +1007,6 @@ function main(): i32 {
     c = test_hex_needs_digits();   if (c != 0) { return c; }
     c = test_string_errors();      if (c != 0) { return c; }
     c = test_unknown_char();       if (c != 0) { return c; }
+    c = test_fstring();            if (c != 0) { return c; }
     return 0;
 }
