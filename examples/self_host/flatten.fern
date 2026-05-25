@@ -1,0 +1,417 @@
+// examples/self_host/flatten.fern — module-flattening for the
+// self-host pipeline. Ports the qualified-name rewriting half of
+// internal/modload: a cross-module reference `mod.name` is rewritten
+// to the flat mangled name `mod__name`, so a multi-module program
+// (the compiler itself!) can be lowered to a single flat namespace
+// the asm emitter understands.
+//
+// This is brick 1 of the module-flattening effort: the REFERENCE
+// rewriter (rewrite every `mod.X` ref → `mod__X`), driven by the
+// import set of a module. Brick 2 (a follow-up) adds the other half
+// — loading each imported module, mangling its `pub` decls to
+// `mod__name`, and merging everything into one Module — at which
+// point `parser.parse_module(lexer.tokenize(src))` inside asm.fern
+// resolves to real flat functions instead of the unresolved
+// qualified calls that fault the stage-2 self-compile today.
+//
+// no_prelude file: string handling is hand-rolled over the byte
+// builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
+// self-host sources.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+
+// first_dot returns the byte index of the first '.' in s, or -1.
+function first_dot(s: string): i32 {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 46) { return i; }   // '.'
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// is_modname reports whether `name` is one of the imported module
+// names — i.e. whether `name.X` should be treated as a qualified
+// cross-module reference rather than a struct/tuple field access.
+function is_modname(name: string, modnames: string[]): boolean {
+    var i: i32 = 0;
+    while (i < modnames.len()) {
+        if (modnames[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// basename strips a leading directory + `./` from an import path,
+// yielding the module name: "./lexer" → "lexer", "std/i32" → "i32".
+function basename(path: string): string {
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < path.len()) {
+        if (path[i] == 47) { start = i + 1; }   // '/'
+        i = i + 1;
+    }
+    return path[start:path.len()];
+}
+
+// mod_names derives the imported-module name set from a module's
+// import list.
+pub function mod_names(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.imports.len()) {
+        out = out.push(basename(mod.imports[i].path));
+        i = i + 1;
+    }
+    return out;
+}
+
+// rewrite_type_name rewrites a qualified type spelling: `mod.Name`
+// → `mod__Name` when `mod` is an imported module. The array suffix
+// rides along: `lexer.Token[]` → `lexer__Token[]`. Unqualified
+// names and generics (`Map[string, i32]`) pass through untouched.
+pub function rewrite_type_name(tn: string, modnames: string[]): string {
+    var dot: i32 = first_dot(tn);
+    if (dot < 0) { return tn; }
+    var prefix: string = tn[0:dot];
+    if (!is_modname(prefix, modnames)) { return tn; }
+    var rest: string = tn[dot + 1:tn.len()];
+    return prefix + "__" + rest;
+}
+
+// rewrite_pattern rewrites a match-arm pattern's qualified variant
+// type name (`lexer.TokNumber` → `lexer__TokNumber`); wildcards and
+// unqualified variants are unchanged.
+function rewrite_pattern(p: parser.Pattern, modnames: string[]): parser.Pattern {
+    match (p) {
+        parser.PatVariant(pv) => {
+            return parser.PatVariant {
+                type_name: rewrite_type_name(pv.type_name, modnames),
+                binding: pv.binding
+            };
+        },
+        _ => { return p; }
+    }
+    return p;
+}
+
+// rewrite_expr rewrites every qualified reference inside an
+// expression. The load-bearing case is ExprFieldAccess whose base
+// is an imported-module ident — `mod.field` becomes a bare
+// `mod__field` ident (a flat function/value reference). A field
+// access on a plain value (`p.x`, `t.0`) is left alone and its base
+// is recursed into.
+pub function rewrite_expr(e: parser.Expr, modnames: string[]): parser.Expr {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(id) => {
+                    if (is_modname(id.name, modnames)) {
+                        return parser.ExprIdent { name: id.name + "__" + fa.field };
+                    }
+                },
+                _ => { }
+            }
+            return parser.ExprFieldAccess {
+                obj: rewrite_expr(fa.obj, modnames),
+                field: fa.field
+            };
+        },
+        parser.ExprCall(c) => {
+            var args: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                args = args.push(rewrite_expr(c.args[i], modnames));
+                i = i + 1;
+            }
+            return parser.ExprCall { callee: rewrite_expr(c.callee, modnames), args: args };
+        },
+        parser.ExprBinary(b) => {
+            return parser.ExprBinary {
+                op: b.op,
+                left: rewrite_expr(b.left, modnames),
+                right: rewrite_expr(b.right, modnames)
+            };
+        },
+        parser.ExprUnary(u) => {
+            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, modnames) };
+        },
+        parser.ExprIndex(x) => {
+            return parser.ExprIndex {
+                array: rewrite_expr(x.array, modnames),
+                index: rewrite_expr(x.index, modnames)
+            };
+        },
+        parser.ExprSlice(sl) => {
+            return parser.ExprSlice {
+                array: rewrite_expr(sl.array, modnames),
+                start: rewrite_expr(sl.start, modnames),
+                end: rewrite_expr(sl.end, modnames)
+            };
+        },
+        parser.ExprTuple(t) => {
+            var elems: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                elems = elems.push(rewrite_expr(t.elements[i], modnames));
+                i = i + 1;
+            }
+            return parser.ExprTuple { elements: elems };
+        },
+        parser.ExprArray(a) => {
+            var elems: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                elems = elems.push(rewrite_expr(a.elements[i], modnames));
+                i = i + 1;
+            }
+            return parser.ExprArray { elements: elems };
+        },
+        parser.ExprStructLit(slit) => {
+            var fvs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < slit.field_values.len()) {
+                fvs = fvs.push(rewrite_expr(slit.field_values[i], modnames));
+                i = i + 1;
+            }
+            return parser.ExprStructLit {
+                type_name: rewrite_type_name(slit.type_name, modnames),
+                field_names: slit.field_names,
+                field_values: fvs
+            };
+        },
+        parser.ExprLambda(lm) => {
+            return parser.ExprLambda {
+                params: lm.params,
+                ret_type: rewrite_type_name(lm.ret_type, modnames),
+                body: rewrite_block(lm.body, modnames)
+            };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// rewrite_block rewrites every statement in a block.
+pub function rewrite_block(stmts: parser.Stmt[], modnames: string[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.push(rewrite_stmt(stmts[i], modnames));
+        i = i + 1;
+    }
+    return out;
+}
+
+function rewrite_stmt(st: parser.Stmt, modnames: string[]): parser.Stmt {
+    match (st) {
+        parser.StmtVar(v) => {
+            return parser.StmtVar {
+                name: v.name,
+                type_name: rewrite_type_name(v.type_name, modnames),
+                init: rewrite_expr(v.init, modnames)
+            };
+        },
+        parser.StmtReturn(r) => {
+            return parser.StmtReturn { value: rewrite_expr(r.value, modnames) };
+        },
+        parser.StmtExpr(x) => {
+            return parser.StmtExpr { value: rewrite_expr(x.value, modnames) };
+        },
+        parser.StmtAssign(a) => {
+            return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, modnames) };
+        },
+        parser.StmtIf(f) => {
+            return parser.StmtIf {
+                cond: rewrite_expr(f.cond, modnames),
+                then_body: rewrite_block(f.then_body, modnames),
+                else_body: rewrite_block(f.else_body, modnames)
+            };
+        },
+        parser.StmtWhile(w) => {
+            return parser.StmtWhile { cond: rewrite_expr(w.cond, modnames), body: rewrite_block(w.body, modnames) };
+        },
+        parser.StmtFor(f) => {
+            return parser.StmtFor {
+                var_name: f.var_name,
+                iter: rewrite_expr(f.iter, modnames),
+                body: rewrite_block(f.body, modnames)
+            };
+        },
+        parser.StmtMatch(m) => {
+            var arms: parser.MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                arms = arms.push(parser.MatchArm {
+                    pattern: rewrite_pattern(m.arms[i].pattern, modnames),
+                    body: rewrite_block(m.arms[i].body, modnames)
+                });
+                i = i + 1;
+            }
+            return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, modnames), arms: arms };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// rewrite_params rewrites each param's qualified type spelling.
+function rewrite_params(params: parser.ParamDecl[], modnames: string[]): parser.ParamDecl[] {
+    var out: parser.ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < params.len()) {
+        out = out.push(parser.ParamDecl {
+            name: params[i].name,
+            type_name: rewrite_type_name(params[i].type_name, modnames)
+        });
+        i = i + 1;
+    }
+    return out;
+}
+
+// rewrite_struct_fields rewrites each field's qualified type.
+function rewrite_struct_fields(fields: parser.StructFieldDecl[], modnames: string[]): parser.StructFieldDecl[] {
+    var out: parser.StructFieldDecl[] = [];
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        out = out.push(parser.StructFieldDecl {
+            name: fields[i].name,
+            type_name: rewrite_type_name(fields[i].type_name, modnames)
+        });
+        i = i + 1;
+    }
+    return out;
+}
+
+// flatten_qualified rewrites every qualified `mod.X` reference in a
+// module (call/type/pattern/field positions) to the flat `mod__X`
+// form, using the module's own import set as the module-name set.
+// Decl merging + mangling of the imported modules' bodies is brick 2.
+pub function flatten_qualified(mod: parser.Module): parser.Module {
+    var modnames: string[] = mod_names(mod);
+    var funcs: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        funcs = funcs.push(parser.FuncDecl {
+            name: fd.name,
+            receiver_name: fd.receiver_name,
+            receiver_type: rewrite_type_name(fd.receiver_type, modnames),
+            params: rewrite_params(fd.params, modnames),
+            ret_type: rewrite_type_name(fd.ret_type, modnames),
+            body: rewrite_block(fd.body, modnames)
+        });
+        i = i + 1;
+    }
+    var structs: parser.StructDecl[] = [];
+    var j: i32 = 0;
+    while (j < mod.structs.len()) {
+        structs = structs.push(parser.StructDecl {
+            name: mod.structs[j].name,
+            fields: rewrite_struct_fields(mod.structs[j].fields, modnames)
+        });
+        j = j + 1;
+    }
+    return parser.Module {
+        funcs: funcs,
+        structs: structs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: rewrite_block(mod.top_stmts, modnames)
+    };
+}
+
+// =================== VALIDATION ====================
+
+function flatten_source(src: string): parser.Module {
+    return flatten_qualified(parser.parse_module(lexer.tokenize(src)));
+}
+
+function main(): i32 {
+    // A module that imports ./lexer and references it three ways:
+    // a qualified type (`lexer.Token`), a qualified call
+    // (`lexer.tokenize`), and a qualified variant pattern
+    // (`lexer.TokNumber`). After flattening, each should read as the
+    // flat `lexer__*` form.
+    var src: string =
+        "import \"./lexer\";"
+        + " function f(): i32 {"
+        + "   var t: lexer.Token = lexer.tokenize(\"x\");"
+        + "   match (t) { lexer.TokNumber(n) => { return 1; }, _ => { return 0; } }"
+        + "   return 0;"
+        + " }";
+    var mod: parser.Module = flatten_source(src);
+    if (mod.funcs.len() != 1) { return 1; }
+    var body: parser.Stmt[] = mod.funcs[0].body;
+    if (body.len() != 3) { return 2; }
+
+    // Stmt 0: var t: lexer__Token = lexer__tokenize("x");
+    match (body[0]) {
+        parser.StmtVar(v) => {
+            if (v.type_name != "lexer__Token") { return 10; }
+            match (v.init) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(id) => { if (id.name != "lexer__tokenize") { return 11; } },
+                        _ => { return 12; }
+                    }
+                },
+                _ => { return 13; }
+            }
+        },
+        _ => { return 14; }
+    }
+
+    // Stmt 1: the match — arm 0 pattern type_name flattened.
+    match (body[1]) {
+        parser.StmtMatch(m) => {
+            if (m.arms.len() != 2) { return 20; }
+            match (m.arms[0].pattern) {
+                parser.PatVariant(pv) => {
+                    if (pv.type_name != "lexer__TokNumber") { return 21; }
+                    if (pv.binding != "n") { return 22; }
+                },
+                _ => { return 23; }
+            }
+            match (m.arms[1].pattern) {
+                parser.PatWildcard(_) => { },
+                _ => { return 24; }
+            }
+        },
+        _ => { return 25; }
+    }
+
+    // Negative: a plain struct/tuple field access is NOT a module
+    // ref and must survive untouched. `p.x` stays an ExprFieldAccess
+    // with base ident "p" (p is not an imported module).
+    var mod2: parser.Module = flatten_source(
+        "import \"./lexer\"; function g(): i32 { return p.x; }");
+    match (mod2.funcs[0].body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "x") { return 30; }
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => { if (id.name != "p") { return 31; } },
+                        _ => { return 32; }
+                    }
+                },
+                _ => { return 33; }
+            }
+        },
+        _ => { return 34; }
+    }
+
+    // rewrite_type_name spot-checks: array suffix rides along; a
+    // non-imported prefix is left alone.
+    var mn: string[] = [];
+    mn = mn.push("lexer");
+    if (rewrite_type_name("lexer.Token[]", mn) != "lexer__Token[]") { return 40; }
+    if (rewrite_type_name("Map[string, i32]", mn) != "Map[string, i32]") { return 41; }
+    if (rewrite_type_name("other.Thing", mn) != "other.Thing") { return 42; }
+    if (rewrite_type_name("i32", mn) != "i32") { return 43; }
+
+    return 0;
+}
