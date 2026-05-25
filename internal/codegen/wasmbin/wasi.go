@@ -935,6 +935,15 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 		}
 	}
+	// Preview-2 stdio Writers (stdout() / stderr()) hold the cached
+	// output-stream handle from get-stdout / get-stderr, so importing
+	// either getter is gated on the matching constructor being present.
+	if opts.Preview2WASI && helpers.set["__fern_stdout"] {
+		in.add("wasi_get_stdout_p2")
+	}
+	if opts.Preview2WASI && helpers.set["__fern_stderr"] {
+		in.add("wasi_get_stderr_p2")
+	}
 	if helpers.set["__fern_reader_close_fd"] {
 		if opts.Preview2WASI {
 			// The Reader holds an own<input-stream> handle; close drops it
@@ -1325,6 +1334,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_writer_write":        buildWriterWriteBodyP2,
 	"__fern_reader_close_fd":     buildReaderCloseFdBodyP2,
 	"__fern_writer_close":        buildWriterCloseBodyP2,
+	"__fern_stdout":              buildStdoutBodyP2,
+	"__fern_stderr":              buildStderrBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.

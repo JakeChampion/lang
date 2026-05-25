@@ -713,7 +713,31 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		case len(mainResults) == 0:
 			body = inst.InstI32Const(body, 0)
 		case len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32:
-			// main's i32 stays on the stack as our return.
+			// PrintMainResult routes main's i32 through int_to_string +
+			// __fern_print (so e2e tests can observe it over stdout, the
+			// same as the _start path) and returns 0 — preview-2's
+			// wasi:cli/run only surfaces ok/err, not the value. Falls back
+			// to passing main's i32 through as the run result when no
+			// int_to_string variant survived tree-shake.
+			if opts.PrintMainResult {
+				intToStrName := ""
+				if _, ok := funcIdx["int_to_string"]; ok {
+					intToStrName = "int_to_string"
+				} else if _, ok := funcIdx["int__int_to_string"]; ok {
+					intToStrName = "int__int_to_string"
+				}
+				if intToStrName != "" {
+					body = inst.InstCall(body, funcIdx[intToStrName])
+					printIdx, ok := funcIdx["__fern_print"]
+					if !ok {
+						return nil, fmt.Errorf("wasmbin: PrintMainResult: __fern_print helper not registered (scanRuntimeHelpers gap)")
+					}
+					body = inst.InstCall(body, printIdx)
+					body = inst.InstI32Const(body, 0)
+				}
+				// else: main's i32 stays on the stack as our return.
+			}
+			// else: main's i32 stays on the stack as our return.
 		default:
 			return nil, fmt.Errorf("wasmbin: SynthCliRun: `main` must return void or i32, got %v", mainResults)
 		}

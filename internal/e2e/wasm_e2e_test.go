@@ -31,7 +31,6 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/wasm/component"
-	"github.com/jakechampion/lang/internal/wasm/componenttype"
 	conv "github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/imports"
@@ -63,21 +62,11 @@ func skipIfPreview2Missing(t *testing.T) {
 			preview2Err = errors.New("preview-2 toolchain not exercised on windows")
 			return
 		}
-		if _, err := exec.LookPath("wasm-tools"); err != nil {
-			preview2Err = errors.New("wasm-tools not on PATH")
-			return
-		}
+		// Components are composed natively in-process (component.Compose),
+		// so the only external dependency left is wasmtime to run them —
+		// no wasm-tools, no preview-1 adapter.
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			preview2Err = errors.New("wasmtime not on PATH")
-			return
-		}
-		adapter := os.Getenv("FERN_WASI_ADAPTER")
-		if adapter == "" {
-			preview2Err = errors.New("FERN_WASI_ADAPTER not set (CI sets this)")
-			return
-		}
-		if _, err := os.Stat(adapter); err != nil {
-			preview2Err = err
 			return
 		}
 	})
@@ -153,7 +142,8 @@ func buildComponent(t *testing.T, src string) string {
 	}
 	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 		ForceMemorySection: true,
-		SynthStart:         true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
 		PrintMainResult:    true,
 	})
 	if err != nil {
@@ -194,7 +184,8 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 	}
 	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 		ForceMemorySection: true,
-		SynthStart:         true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
 		PrintMainResult:    true,
 	})
 	if err != nil {
@@ -203,28 +194,23 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 	return finishComponentFromCoreBytes(t, bin)
 }
 
-// finishComponentFromCoreBytes embeds the component-type custom
-// section directly (via internal/wasm/componenttype.Embed) and
-// runs `wasm-tools component new` to compose with the WASI
-// preview-1 adapter. Used by buildComponent / buildComponentMulti
-// to wrap the wasmbin-produced binary core module.
+// finishComponentFromCoreBytes composes the wasmbin-produced core
+// module into a wasi:cli/run component natively, the same path the fern
+// CLI takes (component.ClassifyCore → component.Compose) — no
+// wasm-tools, no preview-1 adapter. The core must have been built with
+// Preview2WASI + SynthCliRun so it exports `_lang_run` and imports the
+// preview-2 WASI shapes the classifier recognises.
 func finishComponentFromCoreBytes(t *testing.T, core []byte) string {
 	t.Helper()
+	req, unsupported := component.ClassifyCore(core)
+	if len(unsupported) > 0 {
+		t.Fatalf("core module has imports the composer can't place: %v", unsupported)
+	}
+	comp := component.Compose(core, req, "_lang_run")
 	dir := t.TempDir()
-	embeddedBytes, err := componenttype.Embed(core, "fern")
-	if err != nil {
-		t.Fatalf("componenttype.Embed: %v", err)
-	}
-	embeddedPath := filepath.Join(dir, "prog.embedded.wasm")
-	if err := os.WriteFile(embeddedPath, embeddedBytes, 0o644); err != nil {
-		t.Fatalf("write embedded: %v", err)
-	}
 	componentPath := filepath.Join(dir, "prog.component.wasm")
-	if out, err := exec.Command("wasm-tools", "component", "new",
-		"--adapt", "wasi_snapshot_preview1="+os.Getenv("FERN_WASI_ADAPTER"),
-		embeddedPath, "-o", componentPath,
-	).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
+	if err := os.WriteFile(componentPath, comp, 0o644); err != nil {
+		t.Fatalf("write component: %v", err)
 	}
 	return componentPath
 }

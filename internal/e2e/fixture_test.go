@@ -304,7 +304,8 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	info, prog := loadCheckMono(t, mainPath)
 	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 		ForceMemorySection: true,
-		SynthStart:         true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
 		PrintMainResult:    true,
 	})
 	if err != nil {
