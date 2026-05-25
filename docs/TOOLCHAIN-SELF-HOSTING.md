@@ -639,18 +639,37 @@ End-to-end exit code 42 demo (covered by
     default route through one shared `buildPreview2CliRunComponent`
     (#1342) — which also fixed `-target wasm` erroring on
     print/read_file/etc. despite the docs claiming equivalence.
-    `ComposePreview2CliRun` is now the **sole** adapter-free cli/run
-    component-builder; only `WrapWasiImportedWithExport` (the non-cli
-    `-component-wrap` export shape) and TCP remain bespoke.
-  - **Still to do (low-value tail):**
-    - Fold the non-cli `WrapWasiImportedWithExport` export shape and
-      TCP into the composer for total unification — modest cleanup, no
-      new capability.
-    - The bare `open_reader` / `open_writer`-with-no-read/write gap
-      (the 3-call open chain, no blocking-read/-write) still needs the
-      adapter — the composer requires the via-stream method to pair
-      with its stream method.
-    - `open_appender` (CREATE without TRUNCATE + append semantics)
+    `ComposePreview2CliRun` is now the sole adapter-free cli/run
+    component-builder, and the non-cli `-component-wrap` export shape
+    folds through it too via an `ExportName` tail (#1347, deleting
+    `WrapWasiImportedWithExport`). The `open_appender` append-via-stream
+    path (#1346) and the bare `open_reader`/`open_writer`-without-use
+    gap (#1345) are also shipped.
+  - **TCP servers. Shipped (own composer).** `tcp_listen` /
+    `tcp_accept` / `tcp_recv` / `tcp_send` / `tcp_close` compose to a
+    preview-2 component with no `-wasi-adapter` and run on wasmtime's
+    host sockets — verified end-to-end (an echo server bounces a
+    client's bytes back). TCP imports the whole `wasi:sockets` +
+    `wasi:io/poll` surface and nothing CLI-stream, so it has a
+    dedicated `ComposeTcpServerCliRun` (reusing the p2composer index
+    tracker) rather than a dimension on the general composer. The arc
+    was eight bricks: the canon `resource.drop` lowering (#1349), the
+    `wasi:io/poll` type (#1350), the record/tuple defvaltype encoders
+    (#1351), the `wasi:sockets/network` type with the full
+    `ip-socket-address` variant (#1352), `instance-network` (#1353),
+    the `wasi:sockets/tcp` type with the tcp-socket resource + six
+    methods (#1355), `tcp-create-socket` (#1356), then the composer +
+    routing (#1358) and recv/send stream methods (#1359). New
+    machinery: `resource.drop` (TCP's four `[resource-drop]` imports)
+    and record/variant/tuple type encoders.
+  - **Still to do (genuinely niche / large):**
+    - Mixing TCP with CLI-stream (a server that also prints / exits) —
+      the TCP composer requires the sockets/io import set only.
+    - UDP (`wasi:sockets/udp`).
+    - `wasi:http/incoming-handler` via the Go encoder — the stated
+      edge-HTTP use case, still on `-wasi-adapter`. A large arc (the
+      http request/response/headers/body resources + the
+      incoming-handler *export* shape).
       is still preview-1 only — preview-2 has no fd-append flag, so
       it needs `append-via-stream` (or an explicit seek-to-end
       before write-via-stream).
