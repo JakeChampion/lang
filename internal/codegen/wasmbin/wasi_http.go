@@ -93,7 +93,7 @@ func buildBytesToLangStringBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 2)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 
 	// return ($buf, host_len).
 	body = inst.InstLocalGet(body, 2)
@@ -448,7 +448,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 					body = inst.InstLocalGet(body, 16)
 					body = inst.InstLocalGet(body, 13)
 					body = inst.InstLocalGet(body, 15)
-					body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+					body = memory.InstMemoryCopy(body)
 					body = inst.InstLocalGet(body, 16)
 					body = inst.InstLocalSet(body, 13)
 					body = inst.InstBr(body, 0)
@@ -462,7 +462,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 				body = numeric.InstI32Add(body)
 				body = inst.InstLocalGet(body, 11)
 				body = inst.InstLocalGet(body, 12)
-				body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+				body = memory.InstMemoryCopy(body)
 				body = inst.InstLocalGet(body, 15)
 				body = inst.InstLocalGet(body, 12)
 				body = numeric.InstI32Add(body)

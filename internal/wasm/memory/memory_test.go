@@ -69,6 +69,19 @@ func TestSizeGrow(t *testing.T) {
 	}
 }
 
+// TestBulkMemory pins the 0xFC-prefixed copy / fill encoders to the
+// exact byte sequences the backend's memcpy / memset helpers (and
+// the std/wasm Lang mirror) emit: copy carries two reserved memidx
+// bytes, fill one.
+func TestBulkMemory(t *testing.T) {
+	if got := memory.InstMemoryCopy(nil); !bytes.Equal(got, []byte{0xFC, 0x0A, 0x00, 0x00}) {
+		t.Errorf("memory.copy: got % x", got)
+	}
+	if got := memory.InstMemoryFill(nil); !bytes.Equal(got, []byte{0xFC, 0x0B, 0x00}) {
+		t.Errorf("memory.fill: got % x", got)
+	}
+}
+
 // TestMemargMultiByteOffset confirms that a larger offset goes
 // through the uleb path correctly (e.g. 128 = 2 bytes).
 func TestMemargMultiByteOffset(t *testing.T) {

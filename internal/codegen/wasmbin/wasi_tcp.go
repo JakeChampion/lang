@@ -435,7 +435,7 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 6)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 5)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 
 	// Return ($strbuf, $n) as a heap-form string pair (top bit of
 	// len clear, since $n is bounded by max which is a positive

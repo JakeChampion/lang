@@ -14,9 +14,10 @@
 // Narrow load/store variants (load8_s, store16, etc.) only exist
 // for the integer widths — IEEE-754 doesn't decompose that way.
 //
-// Bulk memory ops (memory.init / data.drop / memory.copy /
-// memory.fill — all under the 0xFC multi-byte prefix) aren't
-// included; the production wasm backend doesn't lean on them yet.
+// The 0xFC-prefixed bulk-memory ops the backend's memcpy / memset
+// helpers use — memory.copy and memory.fill — are at the bottom of
+// this file. The rest of that family (memory.init / data.drop) is
+// still excluded; the backend doesn't reach for it.
 package memory
 
 import "github.com/jakechampion/lang/internal/wasm/leb128"
@@ -117,3 +118,18 @@ func InstI64Store32(buf []byte, align, offset uint32) []byte {
 
 func InstMemorySize(buf []byte) []byte { return append(buf, 0x3f, 0x00) }
 func InstMemoryGrow(buf []byte) []byte { return append(buf, 0x40, 0x00) }
+
+// ---- Bulk memory (0xFC prefix) ----
+//
+// memory.copy and memory.fill are the 0xFC prefix + a uleb
+// sub-opcode + one reserved memidx byte per memory operand. Both
+// sub-opcodes (10 / 11) fit a single uleb byte. memory.copy pops
+// (dst, src, len); memory.fill pops (dst, val, len). The backend's
+// memcpy / memset runtime helpers reach for these.
+//
+// The rest of the bulk-memory family (memory.init / data.drop) and
+// the saturating-truncate ops stay out — the backend uses only
+// copy + fill here and the trapping truncations in convert.
+
+func InstMemoryCopy(buf []byte) []byte { return append(buf, 0xFC, 0x0A, 0x00, 0x00) }
+func InstMemoryFill(buf []byte) []byte { return append(buf, 0xFC, 0x0B, 0x00) }
