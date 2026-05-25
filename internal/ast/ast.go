@@ -384,30 +384,33 @@ func UseTwoWordStrings(ptrW int) bool {
 // which `CodegenMu` enforces.
 var TwoWordOverride bool
 
-// RcFreeEnabled gates the Phase 3 freelist allocator. When true,
-// codegen emits a segregated freelist: `__fern_free` returns a block
-// to its size class and `__fern_alloc` reuses a class's freelist
-// before bumping, and the array dec sites (__fern_drop_arr_ptr /
-// __fern_arr_dec) return OWNED array buffers to it at rc==0. When
-// false (the DEFAULT, pending the flip), `__fern_alloc` is a pure
-// bump cursor and `__fern_free` is a no-op — the leak-forever arena.
+// RcFreeEnabled gates the Phase 3 freelist allocator. When true (the
+// DEFAULT, as of step 5), codegen emits a segregated freelist:
+// `__fern_free` returns a block to its size class and `__fern_alloc`
+// reuses a class's freelist before bumping, and the array dec sites
+// (__fern_drop_arr_ptr / __fern_arr_dec) return OWNED array buffers
+// to it at rc==0. When false, `__fern_alloc` is a pure bump cursor
+// and `__fern_free` is a no-op — the pre-step-5 leak-forever arena.
 //
-// STILL OFF BY DEFAULT, but both over-release classes are now closed:
-//   - borrowed-IN: the borrow-aware analysis (computeFreeEligible)
-//     excludes params + anything derived from them.
+// FLIPPED ON. Both over-release classes are closed by the borrow-aware
+// analysis (computeFreeEligible):
+//   - borrowed-IN: excludes params + anything derived from them.
 //   - ESCAPE-OUT: a local that escapes into a container retained
 //     WITHOUT an inc — `map.set` / MapLit values, pushed array
 //     elements, enum-constructor payloads, index / field / capture
-//     assignment targets — is tainted by the same analysis so the
-//     owner never frees out from under the container. (StructLit /
-//     TupleLit construction inc their stored values, so escaping
-//     through those is already safe.)
+//     assignment targets — is tainted so the owner never frees out
+//     from under the container. (StructLit / TupleLit construction inc
+//     their stored values, so escaping through those is already safe.)
 // rc_correctness's escape_array_into_* entries cover each sink free-on
-// on all three backends. The flip waits on (a) that corpus green
-// corpus-wide on all backends in CI and (b) explicit owner sign-off.
-// Toggled on per-Emit by the flag-on tests (save/restore,
-// CodegenMu-guarded).
-var RcFreeEnabled = false
+// on all three backends; the differential gate
+// (Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree) asserts free-on ==
+// free-off byte-for-byte. The flip landed after that corpus + gate went
+// green corpus-wide on all backends in CI plus owner sign-off. A
+// handful of tests pin the OFF arena via save/restore for differential
+// baselines. What LEAKS (safe — no over-release): borrowed /
+// borrowed-derived buffers, struct / enum / closure / map boxes,
+// struct/enum array fields.
+var RcFreeEnabled = true
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
