@@ -1048,8 +1048,24 @@ Phase 3 CANNOT start with the freelist — it must start by
    three backends in CI and (b) explicit owner sign-off. The
    pre-step-5 no-free arena stays the default; a handful of tests pin
    it via save/restore. What LEAKS (safe — no over-release):
-   borrowed/borrowed-derived buffers, struct / enum / closure / map
-   boxes, struct/enum array fields.
+   borrowed/borrowed-derived buffers, struct / enum / closure boxes,
+   struct/enum array fields, and map entry keys/values.
+
+   **Widening slice — map structural reclamation (DONE).** A Map is a
+   runtime handle (StructType "Map") whose rc already balances (it
+   inc's as a struct in needsRcIncOnAlias). `__fern_map_drop(m)` — the
+   Map analogue of `__fern_arr_dec`, on all three backends — returns
+   the handle's storage to the freelist at the last reference (rc==1):
+   first the buf (buckets+entries, size = 16 + cap*(4+entryStride),
+   cap at [buf+0]), then the 16-byte handle cell. `computeFreeEligible`
+   now marks owned Map locals eligible (same borrow-aware taint as
+   arrays); `emitDec` routes eligible Map locals through the helper.
+   Entry keys/values keep their existing accounting (they leak) — a
+   follow-up converts `map.set` to retain-on-store so array-typed
+   values can be freed too. Returned maps stay safe via the struct
+   return-inc (the drop only frees at rc==1). Covered by
+   `rc_correctness`'s `map_owned_churn_free` (50 build/free cycles) and
+   `map_returned_not_freed`, run free-on on all three backends.
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire

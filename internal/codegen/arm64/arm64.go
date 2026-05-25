@@ -301,6 +301,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrDec {
 		g.emitArrDecRuntime()
 	}
+	if g.usesMapDrop {
+		g.emitMapDropRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -627,7 +630,7 @@ func (g *generator) emitDataSections() {
 		g.line(`	.quad 0`)
 		g.line(`	.quad 0`)
 	}
-	if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec {
+	if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec || g.usesMapDrop {
 		// Phase 3 rc-underflow detector counter. __fern_rc_dec
 		// bumps it when asked to decrement an rc already <= 0;
 		// __fern_rc_underflow_count reads it back. i32 in the low
@@ -845,6 +848,69 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.sizeDirective("__fern_arr_dec")
+	g.line(".ltorg")
+}
+
+// emitMapDropRuntime emits `__fern_map_drop(m) -> m` — the Phase 3
+// map reclamation handler (arm64 mirror of the x86_64 helper). A Map
+// handle `m` has its rc at [m-8] and its buf pointer at [m+0]. On the
+// last reference (rc==1) the handle's storage returns to the freelist:
+// the buf (size = 16 + cap*(4+entryStride), cap at [buf+0],
+// entryStride = 2*ptrW = 16) then the 16-byte handle cell (base =
+// m-8). Entry keys/values are NOT walked — their accounting is
+// untouched (they leak, as before). On rc>1 the handle is dec'd. Same
+// null / low-address / sentinel / underflow guards as __fern_arr_dec.
+// m is held in x19 (callee-saved) across the two __fern_free calls.
+func (g *generator) emitMapDropRuntime() {
+	g.line("")
+	g.line(".global __fern_map_drop")
+	g.typeDirective("__fern_map_drop")
+	g.label("__fern_map_drop")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = m
+	g.emit("cbz x19, .Lmapdrop_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Lmapdrop_ret")
+	g.emit("ldur w1, [x19, #-8]") // rc
+	g.emit("tbnz w1, #31, .Lmapdrop_ret")
+	g.emit("cmp w1, #0")
+	g.emit("b.gt .Lmapdrop_pos")
+	g.adrpAdd("x2", "__fern_rc_underflow")
+	g.emit("ldr w3, [x2]")
+	g.emit("add w3, w3, #1")
+	g.emit("str w3, [x2]")
+	g.emit("b .Lmapdrop_dec")
+	g.label(".Lmapdrop_pos")
+	g.emit("cmp w1, #1")
+	g.emit("b.ne .Lmapdrop_dec")
+	// rc == 1 → free buf then the handle cell.
+	g.emit("ldr x4, [x19]") // buf
+	g.emit("cbz x4, .Lmapdrop_freehandle")
+	g.emit("cmp x4, #0x10000")
+	g.emit("b.lo .Lmapdrop_freehandle")
+	g.emit("ldr w5, [x4]")    // cap (zero-extended)
+	g.emit("mov x6, #20")     // 4 + entryStride(16)
+	g.emit("mul x5, x5, x6")  // cap * 20
+	g.emit("add x1, x5, #16") // + 16-byte header = size (arg1)
+	g.emit("mov x0, x4")      // base = buf (arg0)
+	g.emit("bl __fern_free")
+	g.label(".Lmapdrop_freehandle")
+	g.emit("sub x0, x19, #8") // handle base = m - 8
+	g.emit("mov x1, #16")     // handle size
+	g.emit("bl __fern_free")
+	g.emit("b .Lmapdrop_ret")
+	g.label(".Lmapdrop_dec")
+	g.emit("ldur w1, [x19, #-8]")
+	g.emit("sub w1, w1, #1")
+	g.emit("stur w1, [x19, #-8]")
+	g.label(".Lmapdrop_ret")
+	g.emit("mov x0, x19")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_map_drop")
 	g.line(".ltorg")
 }
 
@@ -4748,6 +4814,10 @@ type generator struct {
 	// usesArrDec gates `__fern_arr_dec` — the size-aware array dec
 	// that frees the buffer at rc==0. Pulls in __fern_free.
 	usesArrDec bool
+	// usesMapDrop gates `__fern_map_drop` — the Phase 3 map
+	// reclamation handler that frees the buf + handle at rc==1.
+	// Pulls in __fern_free when the flag is on.
+	usesMapDrop bool
 	// usesPuts / usesWrite / usesPutchar pull in the stdout
 	// builtins:
 	//   print(s)   → __fern_puts    (string + newline, two write()s)
@@ -6761,6 +6831,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArrDec = true
 			g.usesFree = true
 			g.usesAlloc = true
+		case "__fern_map_drop":
+			g.usesMapDrop = true
+			if ast.RcFreeEnabled {
+				g.usesFree = true
+				g.usesAlloc = true
+			}
 		case "__slice_make":
 			target = "__fern_slice_make"
 			g.usesSliceMake = true

@@ -401,6 +401,53 @@ function main(): i32 {
     return (b.items[0] - 7000) + (b.items[3] - 7003) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Map reclamation: each build() owns its map, which is freed
+		// (buf + handle returned to the freelist) at the function's
+		// exit. 50 build/free cycles churn the same size classes — a
+		// corrupted reuse or over-release would drift the checksum.
+		// sum_{k=0..49} (16k + 120) = 16*1225 + 6000 = 25600.
+		name: "map_owned_churn_free",
+		src: `function build(seed: i32): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < 16) { m = m.set(i, seed + i); i = i + 1; }
+    var sum: i32 = 0;
+    var j: i32 = 0;
+    while (j < 16) { sum = sum + m.get_or(j, -1); j = j + 1; }
+    return sum;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) { total = total + build(k); k = k + 1; }
+    return (total - 25600) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Returned map: make_map builds an owned map and returns it.
+		// The return-inc (maps inc as structs in needsRcIncOnAlias)
+		// must protect it so make_map's exit drop does NOT free the
+		// buf/handle out from under the caller. sum_{k=0..49}(k+2k) =
+		// 3*1225 = 3675.
+		name: "map_returned_not_freed",
+		src: `function make_map(n: i32): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.set(1, n);
+    m = m.set(2, n * 2);
+    return m;
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var m: Map[i32, i32] = make_map(k);
+        got = got + m.get_or(1, -1) + m.get_or(2, -1);
+        k = k + 1;
+    }
+    return (got - 3675) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
