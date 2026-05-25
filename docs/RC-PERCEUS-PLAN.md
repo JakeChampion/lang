@@ -1048,10 +1048,11 @@ Phase 3 CANNOT start with the freelist — it must start by
    three backends in CI and (b) explicit owner sign-off. The
    pre-step-5 no-free arena stays the default; a handful of tests pin
    it via save/restore. What LEAKS (safe — no over-release):
-   borrowed/borrowed-derived buffers, enum / closure boxes, nested
+   borrowed/borrowed-derived buffers, non-uniform / generic enum boxes
+   (JsonValue, Option/Result over scalars), closure boxes, nested
    struct/enum fields (one level), and map entry keys/values. (Owned
-   top-level arrays, maps, and struct boxes now free — see the
-   widening slices below.)
+   top-level arrays, maps, struct boxes, and uniform-layout enum boxes
+   now free — see the widening slices below.)
 
    **Widening slice — map structural reclamation (DONE).** A Map is a
    runtime handle (StructType "Map") whose rc already balances (it
@@ -1088,6 +1089,26 @@ Phase 3 CANNOT start with the freelist — it must start by
    existing struct-heavy corpus entries, run free-on on all three
    backends. The same `__fern_box_free` will reclaim enum boxes next
    (per-variant size from the tag).
+
+   **Widening slice — enum-box reclamation (DONE).** An owned enum
+   reuses `__fern_box_free` to return its box at the last reference,
+   gated on a STATIC box size: an enum box is alloc'd per-variant
+   (`payloadLayout size + 8`), so freeing needs every payload-carrying
+   variant to agree on size. `uniformEnumBoxSize` checks that, and the
+   existing `uniformEnumDropLoads` already requires a uniform droppable
+   layout (the drop emits no tag switch); `emitDec` frees only when
+   BOTH hold (e.g. a union of single-pointer variants, or
+   `A(i32[]) | B(i32[])`). Non-uniform (`JsonValue`) and generic
+   (`Option`/`Result` over scalars) enums keep the plain box dec and
+   leak as before. The `__fern_rc_is_unique` gate filters out
+   payloadless static sentinels (their rc high-bit reads non-unique),
+   so `__fern_box_free` only ever sees a real rc==1 box.
+   `computeFreeEligible` marks owned enum locals eligible (same
+   borrow-aware taint; returns protected by the enum return-inc +
+   rc==1 gate). Covered by `rc_correctness`'s `enum_box_churn_free`
+   (200 build/free cycles) and `enum_returned_not_freed`, run free-on
+   on all three backends. Payloads still drop one level (array payloads
+   flat-dec, like struct fields).
 
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire

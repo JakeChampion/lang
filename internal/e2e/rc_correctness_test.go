@@ -494,6 +494,55 @@ function main(): i32 {
     return (got - 2500) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Enum-box reclamation: a uniform enum (both variants carry one
+		// i32[], so the box size + droppable layout are static) frees
+		// its box at the last reference. 200 build/free cycles churn
+		// the box size class; a corrupted reuse or over-release drifts
+		// the checksum. mk(seed)=seed+2; sum_{0..199}(k+2)=19900+400.
+		name: "enum_box_churn_free",
+		src: `enum Wrap { A(i32[]), B(i32[]) }
+function mk(seed: i32): i32 {
+    var w: Wrap = A([seed, seed + 1, seed + 2]);
+    var got: i32 = 0;
+    match (w) {
+        A(xs) => { got = xs[2]; },
+        B(xs) => { got = xs[0]; }
+    }
+    return got;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20300) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Returned enum: make_w builds an owned enum and returns it.
+		// The enum return-inc (needsRcIncOnAlias) must protect it so
+		// make_w's exit drop does NOT free the box out from under the
+		// caller. xs[1] = k+1; sum_{0..49}(k+1) = 1225 + 50 = 1275.
+		name: "enum_returned_not_freed",
+		src: `enum Wrap { A(i32[]), B(i32[]) }
+function make_w(k: i32): Wrap {
+    var w: Wrap = A([k, k + 1, k + 2]);
+    return w;
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var w: Wrap = make_w(k);
+        match (w) {
+            A(xs) => { got = got + xs[1]; },
+            B(xs) => { got = got + xs[0]; }
+        }
+        k = k + 1;
+    }
+    return (got - 1275) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
