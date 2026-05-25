@@ -1744,7 +1744,7 @@ func buildBoxFreeBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstCall(body, free)
 	// return data
 	body = inst.InstLocalGet(body, 0)
-	return inst.PutFunctionBody(nil, nil, body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildAllocBoxBody assembles wasm bytes for
