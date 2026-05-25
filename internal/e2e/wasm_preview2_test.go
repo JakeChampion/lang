@@ -1630,9 +1630,9 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 		t.Fatalf("status=%d body=%q; want 200 \"clock-ok\" (stderr=%q)", resp.StatusCode, string(body), serr.String())
 	}
 
-	// env() is not granted by the proxy world, so an env-using handler
-	// must still route to the adapter (clear rejection, not a component
-	// that fails at serve-link time).
+	// env() is not granted by the wasi:http/proxy world `wasmtime serve`
+	// runs, so an env-using handler must be rejected with a clear message
+	// (rather than composing a component that fails at serve-link time).
 	envSrc := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (env("X")) { Some(_) => {}, None => {} }
     return http_response_ok("e");
@@ -1645,8 +1645,8 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 	out, err := exec.Command(bin, "-target", "wasi-http", "-o", filepath.Join(dir, "env.wasm"), envPath).CombinedOutput()
 	if err == nil {
 		t.Errorf("expected env handler to reject (proxy world has no environment), but it composed")
-	} else if !bytes.Contains(out, []byte("wasi:cli/environment")) || !bytes.Contains(out, []byte("-wasi-adapter")) {
-		t.Errorf("expected an environment / -wasi-adapter rejection, got:\n%s", out)
+	} else if !bytes.Contains(out, []byte("env")) || !bytes.Contains(out, []byte("proxy world")) {
+		t.Errorf("expected an env / proxy-world rejection, got:\n%s", out)
 	}
 }
 

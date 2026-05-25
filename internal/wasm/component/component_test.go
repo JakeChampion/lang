@@ -948,6 +948,35 @@ func TestWasiCliEnvironmentGetEnvironmentInstanceTypeBody_Validates(t *testing.T
 	}
 }
 
+// TestWasiCliEnvironmentArgsAndEnvInstanceTypeBody_Validates composes
+// the combined args+env instance type as a single import and confirms
+// wasm-tools accepts it + both function names appear.
+func TestWasiCliEnvironmentArgsAndEnvInstanceTypeBody_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiCliEnvironmentArgsAndEnvInstanceTypeBody())
+	buf = component.PutImportSectionOneInstance(buf, "wasi:cli/environment@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "argsenv.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"get-arguments", "get-environment", "tuple", "list string"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestInnerTypeEnum_Bytes pins a small enum defvaltype.
 func TestInnerTypeEnum_Bytes(t *testing.T) {
 	got := component.InnerTypeEnum([]string{"a", "bc"})

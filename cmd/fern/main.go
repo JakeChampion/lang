@@ -590,11 +590,18 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if err != nil {
 				return 1, err
 			}
-			hasStdout, hasStderr, extras, structured, unsupported := httpHandlerCapabilities(core)
+			req, unsupported := classifyComposeRequest(core)
 			if len(unsupported) > 0 {
 				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(unsupported, ", "))
 			}
-			comp := component.ComposeHttpHandler(core, hasStdout, hasStderr, extras, structured, "wasi:http/incoming-handler@0.2.0#handle")
+			// The wasi:http/proxy world `wasmtime serve` runs grants
+			// clocks + random but NOT wasi:cli/environment or filesystem,
+			// so a handler that reads env / args / files / stdin can't run
+			// there regardless of the adapter.
+			if req.Args || req.Env || req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite {
+				return 1, fmt.Errorf("-target wasi-http: a handler can't use env / args / files / stdin — the http proxy world doesn't grant them")
+			}
+			comp := component.Compose(core, req, "wasi:http/incoming-handler@0.2.0#handle")
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
@@ -950,6 +957,112 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 	return buildPreview2Component(prog, info, bin, "")
 }
 
+// classifyComposeRequest walks a core module's preview-2 imports and
+// fills a component.ComposeRequest — the single description the unified
+// composer (component.Compose) consumes. Every recognised import maps to
+// a request field (CLI stdio, io/streams methods + drops, the filesystem
+// open-chain, TCP / UDP / HTTP method surfaces, the standalone clock /
+// args / env capabilities, and the structured exit/random/monotonic
+// no-opts). Anything unrecognised is returned in unsupported so the
+// caller can surface a clear error. Because the request fields are
+// independent, ANY mix composes — sockets + files, stdout + stderr,
+// args + env, an HTTP handler that logs, etc.
+func classifyComposeRequest(bin []byte) (component.ComposeRequest, []string) {
+	var req component.ComposeRequest
+	var unsupported []string
+	var getDirs, openAt, readVia, writeVia, appendVia bool
+	for _, p := range coreModuleImportPairs(bin) {
+		m, n := p.module, p.name
+		switch {
+		case m == "wasi:cli/stdout@0.2.0" && n == "get-stdout":
+			req.Stdout = true
+		case m == "wasi:cli/stderr@0.2.0" && n == "get-stderr":
+			req.Stderr = true
+		case m == "wasi:cli/stdin@0.2.0" && n == "get-stdin":
+			req.Stdin = true
+		case m == "wasi:io/streams@0.2.0" && n == "[method]output-stream.blocking-write-and-flush":
+			req.BlockWrite = true
+		case m == "wasi:io/streams@0.2.0" && n == "[method]input-stream.blocking-read":
+			req.BlockRead = true
+		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]input-stream":
+			req.DropInput = true
+		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]output-stream":
+			req.DropOutput = true
+		case m == "wasi:filesystem/preopens@0.2.0" && n == "get-directories":
+			getDirs = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.open-at":
+			openAt = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-via-stream":
+			readVia = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.write-via-stream":
+			writeVia = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.append-via-stream":
+			appendVia = true
+		case m == "wasi:clocks/wall-clock@0.2.0" && n == "now":
+			req.WallNow = true
+		case m == "wasi:cli/environment@0.2.0" && n == "get-arguments":
+			req.Args = true
+		case m == "wasi:cli/environment@0.2.0" && n == "get-environment":
+			req.Env = true
+		case strings.HasPrefix(m, "wasi:sockets/tcp"):
+			req.Tcp = true // wasi:sockets/tcp@ + tcp-create-socket@
+		case strings.HasPrefix(m, "wasi:sockets/udp"):
+			req.Udp = true
+		case m == "wasi:sockets/instance-network@0.2.0":
+			// consumed by the TCP / UDP shape; accepted implicitly
+		case m == "wasi:io/poll@0.2.0":
+			// consumed by the TCP shape; accepted implicitly
+		case m == "wasi:http/types@0.2.0":
+			req.Http = true
+		default:
+			if spec, ok := knownPreview2Imports[[2]string{m, n}]; ok {
+				req.Structured = append(req.Structured, component.WasiImport{
+					InterfaceName:    spec.interfaceName,
+					FuncName:         n,
+					ParamNames:       spec.paramNames,
+					ParamValtypes:    spec.paramValtypes,
+					CoreImportModule: spec.coreImportModule,
+					InnerTypes:       spec.innerTypes,
+					ResultValtypes:   spec.resultValtypes,
+				})
+			} else {
+				unsupported = append(unsupported, m+"."+n)
+			}
+		}
+	}
+	// Resolve the filesystem open-chain into a single descriptor mode (or
+	// the combined read+write). An incomplete chain or an unrepresentable
+	// combination (append mixed with read/write — the filesystem/types
+	// instance type is single-direction or combined read+write) is
+	// unsupported.
+	if getDirs || openAt || readVia || writeVia || appendVia {
+		switch {
+		case getDirs && openAt && readVia && !writeVia && !appendVia:
+			req.FileRead = true
+		case getDirs && openAt && writeVia && !readVia && !appendVia:
+			req.FileWrite = true
+		case getDirs && openAt && appendVia && !readVia && !writeVia:
+			req.FileAppend = true
+		case getDirs && openAt && readVia && writeVia && !appendVia:
+			req.FileReadWrite = true
+		default:
+			unsupported = append(unsupported, "wasi:filesystem (incomplete or unsupported open-chain combination)")
+		}
+	}
+	return req, unsupported
+}
+
+// composeRequestEmpty reports whether the request carries no preview-2
+// imports at all — an import-free program that routes to the plain
+// cli/run (or lifted-export) builder rather than the composer.
+func composeRequestEmpty(req component.ComposeRequest) bool {
+	return !req.Stdout && !req.Stderr && !req.Stdin &&
+		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
+		!req.FileRead && !req.FileWrite && !req.FileAppend && !req.FileReadWrite &&
+		!req.Tcp && !req.Udp && !req.Http &&
+		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
+}
+
 // buildPreview2Component is buildPreview2CliRunComponent generalised
 // over the lift tail: exportName == "" produces the wasi:cli/run
 // shape; a non-empty exportName lifts the run func as a u32-returning
@@ -958,12 +1071,22 @@ func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []b
 // share the composer for every recognised import shape and fall back
 // to the matching import-free builder.
 func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, exportName string) ([]byte, error) {
-	// TCP servers (wasi:sockets) are a self-contained shape with their
-	// own composer — always the wasi:cli/run lift (a server isn't an
-	// --invoke export). The socket methods write fixed-size results
-	// through caller retptrs, so the module needs memory exported
-	// (ForceMemorySection); no realloc (no list returns).
-	if usesPreview2TcpServer(bin) {
+	req, unsupported := classifyComposeRequest(bin)
+	if len(unsupported) > 0 {
+		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter for now.", len(unsupported), strings.Join(unsupported, ", "))
+	}
+	if composeRequestEmpty(req) {
+		if exportName != "" {
+			return component.BuildLiftedExportComponent(bin, "_lang_run", exportName, nil, nil, component.CValtypeU32), nil
+		}
+		return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
+	}
+	// Sockets (TCP server / UDP client) always lift wasi:cli/run (a server
+	// isn't an --invoke export) and need memory exported (the socket
+	// methods write results through caller retptrs). Build with
+	// ForceMemorySection; the engine composes the union (sockets + any
+	// stdio / files / clocks the program also uses).
+	if req.Tcp || req.Udp {
 		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			Preview2WASI:       true,
@@ -972,15 +1095,15 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		hasRead, hasWrite := tcpStreamUsage(bin)
-		fRead, fWrite, fAppend := tcpFileMode(bin)
-		extras, structured, hasStdout, hasStderr, hasStdin, _ := socketCliExtras(bin, preview2TcpServerImports)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, hasStdin, fRead, fWrite, fAppend, extras, structured, "_lang_run"), nil
+		return component.Compose(rb, req, "_lang_run"), nil
 	}
-	// UDP clients (udp_send) are likewise a self-contained sockets shape
-	// with their own composer + the wasi:cli/run lift. Memory-only lowers
-	// (retptr results / a list param the host reads) — no realloc.
-	if usesPreview2UdpClient(bin) {
+	// CLI-stream / filesystem / clock family. The read side, the file
+	// open-chain, and the list-returning args/env imports allocate
+	// through cabi_realloc, so rebuild with ForceMemorySection when any
+	// is present.
+	req.ExportName = exportName
+	b := bin
+	if req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.Args || req.Env {
 		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			Preview2WASI:       true,
@@ -989,488 +1112,9 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		extras, structured, hasStdout, hasStderr, _, _ := socketCliExtras(bin, preview2UdpClientImports)
-		return component.ComposeUdpClientCliRun(rb, hasStdout, hasStderr, extras, structured, "_lang_run"), nil
+		b = rb
 	}
-	if opts, ok := classifyComposeCliStream(bin); ok {
-		opts.ExportName = exportName
-		needsRealloc := opts.ReadStdin || opts.FileRead || opts.FileWrite || opts.FileAppend || opts.FileReadWrite
-		for _, mt := range opts.MemTramp {
-			if mt.NeedsRealloc {
-				needsRealloc = true
-			}
-		}
-		b := bin
-		if needsRealloc {
-			rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-				ForceMemorySection: true,
-				Preview2WASI:       true,
-				SynthCliRun:        true,
-			})
-			if err != nil {
-				return nil, err
-			}
-			b = rb
-		}
-		return component.ComposePreview2CliRun(b, opts, "_lang_run"), nil
-	}
-	// classifyComposeCliStream already accepts every known import; if it
-	// declined, the module is either import-free or carries something we
-	// can't place.
-	if _, unknown := classifyPreview2Imports(bin); len(unknown) > 0 {
-		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter for now.", len(unknown), strings.Join(unknown, ", "))
-	}
-	if exportName != "" {
-		return component.BuildLiftedExportComponent(bin, "_lang_run", exportName, nil, nil, component.CValtypeU32), nil
-	}
-	return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
-}
-
-// preview2TcpServerImports is the exact import set a listen/accept/close
-// TCP server pulls in (no recv/send — those add blocking-read/-write,
-// not yet composed). usesPreview2TcpServer reports whether every import
-// is in this set and at least one wasi:sockets import is present.
-var preview2TcpServerImports = map[[2]string]bool{
-	{"wasi:sockets/instance-network@0.2.0", "instance-network"}:   true,
-	{"wasi:sockets/tcp-create-socket@0.2.0", "create-tcp-socket"}: true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-bind"}:    true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.finish-bind"}:   true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.start-listen"}:  true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.finish-listen"}: true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.accept"}:        true,
-	{"wasi:sockets/tcp@0.2.0", "[method]tcp-socket.subscribe"}:     true,
-	{"wasi:sockets/tcp@0.2.0", "[resource-drop]tcp-socket"}:        true,
-	{"wasi:io/poll@0.2.0", "[method]pollable.block"}:               true,
-	{"wasi:io/poll@0.2.0", "[resource-drop]pollable"}:              true,
-	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:       true,
-	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:      true,
-	// tcp_recv / tcp_send (read/write the accepted connection).
-	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
-	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
-}
-
-// standaloneCliCapImports are the self-contained CLI capabilities (no
-// shared resource deps) any cli/run-shaped composer (TCP / UDP) can fold
-// in alongside its sockets surface via socketCliExtras: now / env / args
-// (mem trampolines) and exit / random / monotonic (no-opt structured).
-// A cli/run program runs under `wasmtime run`, whose full CLI world
-// grants all of these. stdout/stderr are handled separately (they need
-// the io/streams output-stream, which TCP already imports but UDP does
-// not), so they're not in this set.
-var standaloneCliCapImports = map[[2]string]bool{
-	{"wasi:clocks/wall-clock@0.2.0", "now"}:           true,
-	{"wasi:cli/environment@0.2.0", "get-environment"}: true,
-	{"wasi:cli/environment@0.2.0", "get-arguments"}:   true,
-	{"wasi:cli/exit@0.2.0", "exit"}:                   true,
-	{"wasi:random/random@0.2.0", "get-random-u64"}:    true,
-	{"wasi:clocks/monotonic-clock@0.2.0", "now"}:      true,
-}
-
-// socketCliExtras classifies a socket program's NON-socket imports (those
-// not in socketSet) into the standalone CLI capabilities ComposeTcp/Udp
-// fold in: stdout/stderr/stdin getters (flags), now/env/args (MemTramp
-// extras), exit/random/monotonic (Structured no-opts). Anything else
-// (files) lands in unsupported and forces the adapter.
-func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []component.MemTrampImport, structured []component.WasiImport, hasStdout, hasStderr, hasStdin bool, unsupported []string) {
-	for _, p := range coreModuleImportPairs(bin) {
-		key := [2]string{p.module, p.name}
-		if socketSet[key] {
-			continue
-		}
-		switch {
-		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
-			hasStdout = true
-		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
-			hasStderr = true
-		case p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin":
-			hasStdin = true
-		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
-			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(), InterfaceName: "wasi:clocks/wall-clock@0.2.0", FuncName: "now"})
-		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
-			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody(), InterfaceName: "wasi:cli/environment@0.2.0", FuncName: "get-environment", NeedsRealloc: true})
-		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments":
-			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiCliEnvironmentArgsInstanceTypeBody(), InterfaceName: "wasi:cli/environment@0.2.0", FuncName: "get-arguments", NeedsRealloc: true})
-		default:
-			if spec, ok := knownPreview2Imports[key]; ok {
-				structured = append(structured, component.WasiImport{InterfaceName: spec.interfaceName, FuncName: p.name, ParamNames: spec.paramNames, ParamValtypes: spec.paramValtypes, CoreImportModule: spec.coreImportModule, InnerTypes: spec.innerTypes, ResultValtypes: spec.resultValtypes})
-			} else {
-				unsupported = append(unsupported, p.module+"."+p.name)
-			}
-		}
-	}
-	return extras, structured, hasStdout, hasStderr, hasStdin, unsupported
-}
-
-// tcpStreamUsage reports whether a TCP server's core reads (tcp_recv →
-// input-stream.blocking-read) and/or writes (tcp_send / print →
-// output-stream.blocking-write-and-flush) a connection.
-func tcpStreamUsage(bin []byte) (hasRead, hasWrite bool) {
-	for _, p := range coreModuleImportPairs(bin) {
-		switch {
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
-			hasRead = true
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush":
-			hasWrite = true
-		}
-	}
-	return hasRead, hasWrite
-}
-
-// httpHandlerComposableImports is the exact import set ComposeHttpHandler
-// lowers: the wasi:http/types method surface (+ resource-drops) and the
-// request/response body's wasi:io/streams ops. A handler core confined
-// to these composes adapter-free; anything else (print, env, files)
-// mixes in CLI-stream imports the http composer doesn't handle yet.
-var httpHandlerComposableImports = map[[2]string]bool{
-	{"wasi:http/types@0.2.0", "[method]incoming-request.method"}:          true,
-	{"wasi:http/types@0.2.0", "[method]incoming-request.path-with-query"}: true,
-	{"wasi:http/types@0.2.0", "[method]incoming-request.headers"}:         true,
-	{"wasi:http/types@0.2.0", "[method]incoming-request.consume"}:         true,
-	{"wasi:http/types@0.2.0", "[resource-drop]incoming-request"}:          true,
-	{"wasi:http/types@0.2.0", "[method]incoming-body.stream"}:             true,
-	{"wasi:http/types@0.2.0", "[static]incoming-body.finish"}:             true,
-	{"wasi:http/types@0.2.0", "[resource-drop]future-trailers"}:           true,
-	{"wasi:http/types@0.2.0", "[constructor]fields"}:                      true,
-	{"wasi:http/types@0.2.0", "[method]fields.entries"}:                   true,
-	{"wasi:http/types@0.2.0", "[method]fields.append"}:                    true,
-	{"wasi:http/types@0.2.0", "[resource-drop]fields"}:                    true,
-	{"wasi:http/types@0.2.0", "[constructor]outgoing-response"}:           true,
-	{"wasi:http/types@0.2.0", "[method]outgoing-response.set-status-code"}: true,
-	{"wasi:http/types@0.2.0", "[method]outgoing-response.body"}:           true,
-	{"wasi:http/types@0.2.0", "[method]outgoing-body.write"}:              true,
-	{"wasi:http/types@0.2.0", "[static]outgoing-body.finish"}:             true,
-	{"wasi:http/types@0.2.0", "[static]response-outparam.set"}:            true,
-	{"wasi:io/streams@0.2.0", "[method]input-stream.blocking-read"}:             true,
-	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
-	{"wasi:io/streams@0.2.0", "[resource-drop]input-stream"}:                    true,
-	{"wasi:io/streams@0.2.0", "[resource-drop]output-stream"}:                   true,
-	// print / eprint logging — the write stream shares the body's
-	// blocking-write-and-flush lowering, so only the getter is extra.
-	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
-	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
-}
-
-// httpHandlerCapabilities classifies a handler core's imports for the
-// adapter-free wasi:http path: the http/types + io/streams base set
-// (handled by the composer core) is skipped; stdout/stderr getters set
-// the flags; the standalone CLI capabilities (now / env / args as
-// MemTramp, exit / random / monotonic as Structured no-opts) are
-// collected for ComposeHttpHandler; anything else (files, stdin) lands
-// in unsupported and forces the adapter. This is the same capability
-// set the CLI-stream composer handles — shared here so an HTTP handler
-// can log, stamp a timestamp, read config, etc., adapter-free.
-func httpHandlerCapabilities(bin []byte) (hasStdout, hasStderr bool, extras []component.MemTrampImport, structured []component.WasiImport, unsupported []string) {
-	for _, p := range coreModuleImportPairs(bin) {
-		key := [2]string{p.module, p.name}
-		switch {
-		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
-			hasStdout = true
-		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
-			hasStderr = true
-		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
-			// now() — timestamps in handlers. wasi:clocks is granted by
-			// the wasi:http/proxy world `wasmtime serve` runs. env() /
-			// args() / files are deliberately NOT classified as extras:
-			// the proxy world doesn't grant wasi:cli/environment or
-			// filesystem, so those still route to -wasi-adapter.
-			extras = append(extras, component.MemTrampImport{
-				InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(),
-				InterfaceName:    "wasi:clocks/wall-clock@0.2.0",
-				FuncName:         "now",
-			})
-		default:
-			if httpHandlerComposableImports[key] {
-				continue // http/types + io/streams base — composer core handles it
-			}
-			if spec, ok := knownPreview2Imports[key]; ok {
-				structured = append(structured, component.WasiImport{
-					InterfaceName:    spec.interfaceName,
-					FuncName:         p.name,
-					ParamNames:       spec.paramNames,
-					ParamValtypes:    spec.paramValtypes,
-					CoreImportModule: spec.coreImportModule,
-					InnerTypes:       spec.innerTypes,
-					ResultValtypes:   spec.resultValtypes,
-				})
-			} else {
-				unsupported = append(unsupported, p.module+"."+p.name)
-			}
-		}
-	}
-	return hasStdout, hasStderr, extras, structured, unsupported
-}
-
-// tcpServerStdioImports are the print/eprint write-stream getters the TCP
-// composer also accepts (TCP already imports io/streams for the
-// connection, so the getter is the only extra). UDP can't (no io/streams).
-var tcpServerStdioImports = map[[2]string]bool{
-	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
-	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
-	{"wasi:cli/stdin@0.2.0", "get-stdin"}:   true,
-}
-
-// tcpServerFileImports are the filesystem open-chain the TCP composer
-// also accepts (static file server / access logs / uploads): the
-// blocking-read/write on the file's stream reuses tcp's io/streams
-// lowering, so only the preopens + descriptor open/via methods are
-// extra. The three via-stream directions are mutually exclusive (the
-// filesystem/types instance type is single-direction).
-var tcpServerFileImports = map[[2]string]bool{
-	{"wasi:filesystem/preopens@0.2.0", "get-directories"}:                   true,
-	{"wasi:filesystem/types@0.2.0", "[method]descriptor.open-at"}:           true,
-	{"wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream"}:   true,
-	{"wasi:filesystem/types@0.2.0", "[method]descriptor.write-via-stream"}:  true,
-	{"wasi:filesystem/types@0.2.0", "[method]descriptor.append-via-stream"}: true,
-}
-
-func usesPreview2TcpServer(bin []byte) bool {
-	sawSocket := false
-	for _, p := range coreModuleImportPairs(bin) {
-		key := [2]string{p.module, p.name}
-		if !preview2TcpServerImports[key] && !standaloneCliCapImports[key] && !tcpServerStdioImports[key] && !tcpServerFileImports[key] {
-			return false
-		}
-		if strings.HasPrefix(p.module, "wasi:sockets/") {
-			sawSocket = true
-		}
-	}
-	// Two file directions at once exceed the single-direction
-	// filesystem/types instance type — don't claim it (it falls through
-	// to the adapter rejection).
-	r, w, a := tcpFileMode(bin)
-	if b2i(r)+b2i(w)+b2i(a) > 1 {
-		return false
-	}
-	return sawSocket
-}
-
-func b2i(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// tcpFileMode reports which single filesystem direction a TCP server's
-// core imports (read_file / write_file / open_appender), by the
-// descriptor via-stream method present.
-func tcpFileMode(bin []byte) (read, write, appnd bool) {
-	for _, p := range coreModuleImportPairs(bin) {
-		if p.module != "wasi:filesystem/types@0.2.0" {
-			continue
-		}
-		switch p.name {
-		case "[method]descriptor.read-via-stream":
-			read = true
-		case "[method]descriptor.write-via-stream":
-			write = true
-		case "[method]descriptor.append-via-stream":
-			appnd = true
-		}
-	}
-	return read, write, appnd
-}
-
-// preview2UdpClientImports is the exact import set a send-only udp_send
-// program pulls in. usesPreview2UdpClient reports whether every import
-// is in this set and at least one wasi:sockets/udp import is present.
-var preview2UdpClientImports = map[[2]string]bool{
-	{"wasi:sockets/instance-network@0.2.0", "instance-network"}:   true,
-	{"wasi:sockets/udp-create-socket@0.2.0", "create-udp-socket"}: true,
-	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.start-bind"}:                     true,
-	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.finish-bind"}:                    true,
-	{"wasi:sockets/udp@0.2.0", "[method]udp-socket.stream"}:                         true,
-	{"wasi:sockets/udp@0.2.0", "[method]outgoing-datagram-stream.check-send"}:       true,
-	{"wasi:sockets/udp@0.2.0", "[method]outgoing-datagram-stream.send"}:             true,
-	{"wasi:sockets/udp@0.2.0", "[resource-drop]udp-socket"}:                         true,
-	{"wasi:sockets/udp@0.2.0", "[resource-drop]incoming-datagram-stream"}:           true,
-	{"wasi:sockets/udp@0.2.0", "[resource-drop]outgoing-datagram-stream"}:           true,
-}
-
-// udpClientStdioImports are the print/eprint write surface a UDP client
-// can also pull in. Unlike TCP (which already imports io/streams for the
-// connection), UDP brings io/streams in fresh for the stdout/stderr
-// stream, so the blocking-write method is part of the set too.
-var udpClientStdioImports = map[[2]string]bool{
-	{"wasi:cli/stdout@0.2.0", "get-stdout"}:                                     true,
-	{"wasi:cli/stderr@0.2.0", "get-stderr"}:                                     true,
-	{"wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush"}: true,
-}
-
-func usesPreview2UdpClient(bin []byte) bool {
-	sawUdp := false
-	for _, p := range coreModuleImportPairs(bin) {
-		key := [2]string{p.module, p.name}
-		if !preview2UdpClientImports[key] && !standaloneCliCapImports[key] && !udpClientStdioImports[key] {
-			return false
-		}
-		if strings.HasPrefix(p.module, "wasi:sockets/udp") {
-			sawUdp = true
-		}
-	}
-	return sawUdp
-}
-
-func classifyComposeCliStream(bin []byte) (component.ComposeOpts, bool) {
-	var opts component.ComposeOpts
-	var getStdout, getStderr, getStdin, blockWrite, blockRead bool
-	var getDirs, openAt, readVia, writeVia, appendVia bool
-	var wallNow, getArgs, getEnv bool
-	var dropInput, dropOutput bool
-	for _, p := range coreModuleImportPairs(bin) {
-		switch {
-		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
-			getStdout = true
-		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
-			getStderr = true
-		case p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin":
-			getStdin = true
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]output-stream.blocking-write-and-flush":
-			blockWrite = true
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
-			blockRead = true
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[resource-drop]input-stream":
-			dropInput = true
-		case p.module == "wasi:io/streams@0.2.0" && p.name == "[resource-drop]output-stream":
-			dropOutput = true
-		case p.module == "wasi:filesystem/preopens@0.2.0" && p.name == "get-directories":
-			getDirs = true
-		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.open-at":
-			openAt = true
-		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.read-via-stream":
-			readVia = true
-		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.write-via-stream":
-			writeVia = true
-		case p.module == "wasi:filesystem/types@0.2.0" && p.name == "[method]descriptor.append-via-stream":
-			appendVia = true
-		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
-			wallNow = true
-		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-arguments":
-			getArgs = true
-		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
-			getEnv = true
-		default:
-			spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
-			if !ok {
-				return component.ComposeOpts{}, false
-			}
-			opts.Structured = append(opts.Structured, component.WasiImport{
-				InterfaceName:    spec.interfaceName,
-				FuncName:         p.name,
-				ParamNames:       spec.paramNames,
-				ParamValtypes:    spec.paramValtypes,
-				CoreImportModule: spec.coreImportModule,
-				InnerTypes:       spec.innerTypes,
-				ResultValtypes:   spec.resultValtypes,
-			})
-		}
-	}
-	if getStdout && getStderr {
-		return component.ComposeOpts{}, false // single write stream only
-	}
-	// The filesystem open-chain (shared get-directories + open-at, plus
-	// descriptor stream method(s)) must be complete. A single direction
-	// (read-, write-, or append-via-stream) uses the matching
-	// single-direction instance type; read+write together uses the
-	// combined body. (append + read, or append + write, isn't supported —
-	// append shares the write-side but the combined body is read+write.)
-	fsAny := getDirs || openAt || readVia || writeVia || appendVia
-	fileRead := getDirs && openAt && readVia && !writeVia && !appendVia
-	fileWrite := getDirs && openAt && writeVia && !readVia && !appendVia
-	fileAppend := getDirs && openAt && appendVia && !readVia && !writeVia
-	fileReadWrite := getDirs && openAt && readVia && writeVia && !appendVia
-	if fsAny && !(fileRead || fileWrite || fileAppend || fileReadWrite) {
-		return component.ComposeOpts{}, false
-	}
-	// blocking-write backs print/eprint and the file write/append-chain;
-	// blocking-read backs stdin reads and the file read-chain. The
-	// method can't appear without a producer that yields a stream to
-	// it, but a producer *without* the method is fine — a bare
-	// open_reader/open_writer opens a handle and never reads/writes.
-	writeGetter := getStdout || getStderr
-	if blockWrite && !(writeGetter || fileWrite || fileAppend || fileReadWrite) {
-		return component.ComposeOpts{}, false
-	}
-	if blockRead && !(getStdin || fileRead || fileReadWrite) {
-		return component.ComposeOpts{}, false
-	}
-	if getStdout {
-		opts.WriteGetter = "get-stdout"
-	} else if getStderr {
-		opts.WriteGetter = "get-stderr"
-	}
-	opts.ReadStdin = getStdin
-	opts.FileRead = fileRead
-	opts.FileWrite = fileWrite
-	opts.FileAppend = fileAppend
-	opts.FileReadWrite = fileReadWrite
-	opts.ReadStream = blockRead
-	opts.WriteStream = blockWrite
-	opts.DropInputStream = dropInput
-	opts.DropOutputStream = dropOutput
-	// Mem-trampoline imports (wall-clock now / args / env). args and
-	// env share the wasi:cli/environment interface, so they can't both
-	// be imported as separate instances — reject that combination.
-	if getArgs && getEnv {
-		return component.ComposeOpts{}, false
-	}
-	if wallNow {
-		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
-			InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(),
-			InterfaceName:    "wasi:clocks/wall-clock@0.2.0",
-			FuncName:         "now",
-		})
-	}
-	if getArgs {
-		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
-			InstanceTypeBody: component.WasiCliEnvironmentArgsInstanceTypeBody(),
-			InterfaceName:    "wasi:cli/environment@0.2.0",
-			FuncName:         "get-arguments",
-			NeedsRealloc:     true,
-		})
-	}
-	if getEnv {
-		opts.MemTramp = append(opts.MemTramp, component.MemTrampImport{
-			InstanceTypeBody: component.WasiCliEnvironmentGetEnvironmentInstanceTypeBody(),
-			InterfaceName:    "wasi:cli/environment@0.2.0",
-			FuncName:         "get-environment",
-			NeedsRealloc:     true,
-		})
-	}
-	// Claim any shape with at least one import (stream / file /
-	// mem-trampoline / structured). Only a truly import-free program
-	// falls through — to BuildWasiCliRunComponent.
-	if opts.WriteGetter == "" && !opts.ReadStdin && !opts.FileRead && !opts.FileWrite && !opts.FileAppend && !opts.FileReadWrite && len(opts.MemTramp) == 0 && len(opts.Structured) == 0 {
-		return component.ComposeOpts{}, false
-	}
-	return opts, true
-}
-
-// classifyPreview2Imports walks the core module's import section and
-// bucketises each: known structured imports become component.WasiImport
-// entries; anything else is returned as
-// an "module.name" string so the driver can surface a clear error.
-func classifyPreview2Imports(bin []byte) ([]component.WasiImport, []string) {
-	pairs := coreModuleImportPairs(bin)
-	var wasi []component.WasiImport
-	var unknown []string
-	for _, p := range pairs {
-		spec, ok := knownPreview2Imports[[2]string{p.module, p.name}]
-		if !ok {
-			unknown = append(unknown, p.module+"."+p.name)
-			continue
-		}
-		wasi = append(wasi, component.WasiImport{
-			InterfaceName:    spec.interfaceName,
-			FuncName:         p.name,
-			ParamNames:       spec.paramNames,
-			ParamValtypes:    spec.paramValtypes,
-			CoreImportModule: spec.coreImportModule,
-			InnerTypes:       spec.innerTypes,
-			ResultValtypes:   spec.resultValtypes,
-		})
-	}
-	return wasi, unknown
+	return component.Compose(b, req, "_lang_run"), nil
 }
 
 // coreModuleImport is one (module, name) pair from the import
