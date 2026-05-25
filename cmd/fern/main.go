@@ -53,7 +53,6 @@ import (
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/wasm/component"
-	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
 // absPath returns the canonical absolute form of p, or p itself if
@@ -112,8 +111,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	wasiAdapter := flag.String("wasi-adapter", "", "path to the wasi_snapshot_preview1.command.wasm adapter (required for -target wasm; see docs/WASI-PREVIEW2.md)")
-	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin and no -wasi-adapter: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out). Lifts main() as a component-level u32-returning export. Supports programs with no WASI imports or with the migrated preview-2 imports (wasi:cli/exit, wasi:random/random, wasi:clocks/monotonic-clock); unrecognised imports surface a clear error.")
+	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
@@ -226,7 +224,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-component-wrap and -component-wrap-cli are mutually exclusive")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *wasiAdapter, *componentWrap, *componentWrapCli, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *componentWrap, *componentWrapCli, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -400,7 +398,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapter string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt bool, qemu string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, formatLoadError(err, srcs, srcPath)
@@ -456,84 +454,51 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 	}
 
 	if target == "wasm-bin" {
-		// Binary backend (internal/codegen/wasmbin) — produces
-		// wasm core module bytes directly, no `wasm-tools parse`
-		// shell-out.
-		//
-		// Output mode:
-		//   - no `-wasi-adapter`: write the raw core module to
-		//     outPath. Runnable via `wasmtime run --invoke <fn>`.
-		//   - `-wasi-adapter PATH`: wrap in a preview-2 component
-		//     matching the `fern` world, composing with the
-		//     adapter. Runnable via `wasmtime run` and deployable
-		//     to any preview-2 host.
+		// Binary backend (internal/codegen/wasmbin) — produces wasm core
+		// module bytes directly. Output mode:
+		//   - default: write the raw core module to outPath (runnable via
+		//     `wasmtime run --invoke <fn>`).
+		//   - -component-wrap / -component-wrap-cli: wrap the core as a
+		//     self-contained preview-2 component via internal/wasm/component
+		//     (no wasm-tools, no preview-1 adapter).
 		if outPath == "" {
 			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
 		}
-		// Pre-wrap mode forces the memory section so the WASI
-		// preview-1 adapter's env::memory import is satisfied
-		// during `wasm-tools component new`. Component-wrap mode
-		// instead opts in to the preview-2 import migration so
-		// the Go-side wrapper can route those imports through
-		// `wasi:cli/exit@0.2.0` etc. without involving the
-		// preview-1 adapter.
 		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-			ForceMemorySection: wasiAdapter != "",
-			SynthStart:         wasiAdapter != "",
-			Preview2WASI:       componentWrap || componentWrapCli,
-			SynthCliRun:        componentWrap || componentWrapCli,
+			Preview2WASI: componentWrap || componentWrapCli,
+			SynthCliRun:  componentWrap || componentWrapCli,
 		})
 		if err != nil {
 			return 1, err
 		}
-		if wasiAdapter == "" {
-			if componentWrap {
-				// Wrap the core module as a preview-2 component via the
-				// Go-side encoder (no wasm-tools, no adapter), lifting the
-				// run func as a component-level u32-returning export named
-				// "main" (callable via `wasmtime run --invoke main()`).
-				// Same composer as -component-wrap-cli, only the lift tail
-				// differs (named u32 export vs wasi:cli/run). `_lang_run`
-				// is the SynthCliRun wrapper normalising main's signature
-				// to `() -> i32`.
-				comp, err := buildPreview2Component(prog, info, bin, "main")
-				if err != nil {
-					return 1, fmt.Errorf("-component-wrap %w", err)
-				}
-				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-					return 1, err
-				}
-				return 0, nil
+		if componentWrap {
+			// Lift the run func as a component-level u32-returning export
+			// named "main" (callable via `wasmtime run --invoke main()`).
+			// `_lang_run` is the SynthCliRun wrapper normalising main's
+			// signature to `() -> i32`.
+			comp, err := buildPreview2Component(prog, info, bin, "main")
+			if err != nil {
+				return 1, fmt.Errorf("-component-wrap %w", err)
 			}
-			if componentWrapCli {
-				// Wrap as a wasi:cli/run-exporting component so the
-				// produced binary runs under plain `wasmtime run` (no
-				// --invoke). Routing, in order:
-				//
-				// buildPreview2CliRunComponent composes any recognised
-				// CLI-stream / filesystem-open / wall-clock-args-env /
-				// structured shape (or a bare cli/run for an import-free
-				// program) and errors on imports it can't place.
-				//
-				// The cli-run lift consumes a `() -> i32` core
-				// export. wasmbin's SynthCliRun has already emitted
-				// `_lang_run` as the normalised entry — main with
-				// any signature (void / i32) flows through it.
-				comp, err := buildPreview2CliRunComponent(prog, info, bin)
-				if err != nil {
-					return 1, fmt.Errorf("-component-wrap-cli %w", err)
-				}
-				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-					return 1, err
-				}
-				return 0, nil
-			}
-			if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
 			return 0, nil
 		}
-		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, "fern"); err != nil {
+		if componentWrapCli {
+			// Emit the wasi:cli/run@0.2.0 export shape so the component runs
+			// under plain `wasmtime run` (no --invoke). Composes any
+			// recognised import shape and errors on imports it can't place.
+			comp, err := buildPreview2CliRunComponent(prog, info, bin)
+			if err != nil {
+				return 1, fmt.Errorf("-component-wrap-cli %w", err)
+			}
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
+		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -547,17 +512,11 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 		if outPath == "" {
 			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
 		}
-		// `-target wasm` without `-wasi-adapter` flows through the
-		// Go-side preview-2 encoder (no `wasm-tools component new`
-		// shell-out). Equivalent to `-target wasm-bin
-		// -component-wrap-cli` but exposed as the friendlier
-		// default. The path only works when the program's imports
-		// are all preview-2-migrated (see knownPreview2Imports);
-		// anything else gets a clear "use -wasi-adapter" error.
-		// `-target wasi-http` still requires the adapter — its
-		// imports use list / record / resource shapes the Go
-		// encoder doesn't cover yet.
-		if target == "wasm" && wasiAdapter == "" {
+		// `-target wasm` composes a wasi:cli/run component natively via the
+		// Go-side preview-2 encoder (no wasm-tools, no preview-1 adapter).
+		// The path composes any mix of the migrated preview-2 imports;
+		// anything else surfaces a clear error.
+		if target == "wasm" {
 			bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 				Preview2WASI: true,
 				SynthCliRun:  true,
@@ -567,64 +526,35 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			}
 			comp, err := buildPreview2CliRunComponent(prog, info, bin)
 			if err != nil {
-				return 1, fmt.Errorf("-target wasm without -wasi-adapter %w", err)
+				return 1, fmt.Errorf("-target wasm %w", err)
 			}
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
 			return 0, nil
 		}
-		// `-target wasi-http` without `-wasi-adapter`: compose the
-		// wasi:http/incoming-handler component natively, the same Go-side
-		// path the CLI and TCP targets use. Works when the handler's
-		// core imports are confined to the composable set (wasi:http/types
-		// + wasi:io/streams); a handler that also prints / reads env /
-		// opens files still needs the adapter (those would mix in
-		// CLI-stream imports ComposeHttpHandler doesn't lower yet).
-		if target == "wasi-http" && wasiAdapter == "" {
-			core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-				HttpHandler:        true,
-				Preview2WASI:       true,
-				ForceMemorySection: true,
-			})
-			if err != nil {
-				return 1, err
-			}
-			req, unsupported := classifyComposeRequest(core)
-			if len(unsupported) > 0 {
-				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(unsupported, ", "))
-			}
-			// The wasi:http/proxy world `wasmtime serve` runs grants
-			// clocks + random but NOT wasi:cli/environment or filesystem,
-			// so a handler that reads env / args / files / stdin can't run
-			// there regardless of the adapter.
-			if req.Args || req.Env || req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite {
-				return 1, fmt.Errorf("-target wasi-http: a handler can't use env / args / files / stdin — the http proxy world doesn't grant them")
-			}
-			comp := component.Compose(core, req, "wasi:http/incoming-handler@0.2.0#handle")
-			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-				return 1, err
-			}
-			return 0, nil
-		}
-		if wasiAdapter == "" {
-			return 1, fmt.Errorf("-target %s requires -wasi-adapter PATH (see docs/WASI-PREVIEW2.md)", target)
-		}
-		opts := wasmbin.BuildOptions{
+		// `-target wasi-http` composes the wasi:http/incoming-handler
+		// component natively, the same Go-side path the CLI target uses.
+		core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			HttpHandler:        true,
+			Preview2WASI:       true,
 			ForceMemorySection: true,
-			SynthStart:         true,
-		}
-		world := "fern"
-		if target == "wasi-http" {
-			opts.HttpHandler = true
-			opts.SynthStart = false // empty `_start` stub emitted by the HttpHandler branch
-			world = "http"
-		}
-		bin, err := wasmbin.BuildWithOptions(prog, info, opts)
+		})
 		if err != nil {
 			return 1, err
 		}
-		if err := emitPreview2ComponentFromCoreBytes(bin, outPath, wasiAdapter, world); err != nil {
+		req, unsupported := classifyComposeRequest(core)
+		if len(unsupported) > 0 {
+			return 1, fmt.Errorf("-target wasi-http can't compose a handler that imports %s yet — remove the source that pulls them in", strings.Join(unsupported, ", "))
+		}
+		// The wasi:http/proxy world `wasmtime serve` runs grants clocks +
+		// random but NOT wasi:cli/environment or filesystem, so a handler
+		// that reads env / args / files / stdin can't run there.
+		if req.Args || req.Env || req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite {
+			return 1, fmt.Errorf("-target wasi-http: a handler can't use env / args / files / stdin — the http proxy world doesn't grant them")
+		}
+		comp := component.Compose(core, req, "wasi:http/incoming-handler@0.2.0#handle")
+		if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 			return 1, err
 		}
 		return 0, nil
@@ -825,40 +755,6 @@ func link(asm, outPath, cc string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		keep = true
 		return fmt.Errorf("%s failed: %w\n%s\n(temporary assembly retained at %s)", cc, err, out, asmPath)
-	}
-	return nil
-}
-
-// emitPreview2ComponentFromCoreBytes takes already-binary core wasm
-// bytes (e.g. from wasmbin.Build) and runs steps 3+4 of the
-// pipeline. wasm-tools parse is unnecessary because the input is
-// already binary. wasm-tools component new is still required for
-// the adapter composition step.
-func emitPreview2ComponentFromCoreBytes(coreBytes []byte, outPath, adapterPath, world string) error {
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		return fmt.Errorf("wasm-tools not found on PATH (install from https://github.com/bytecodealliance/wasm-tools): %w", err)
-	}
-	if _, err := os.Stat(adapterPath); err != nil {
-		return fmt.Errorf("wasi-preview1-component-adapter not readable at %q: %w", adapterPath, err)
-	}
-	tmpDir, err := os.MkdirTemp("", "fern-component-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	embeddedBytes, err := componenttype.Embed(coreBytes, world)
-	if err != nil {
-		return fmt.Errorf("embed component-type section: %w", err)
-	}
-	embeddedPath := filepath.Join(tmpDir, "prog.embedded.wasm")
-	if err := os.WriteFile(embeddedPath, embeddedBytes, 0o644); err != nil {
-		return fmt.Errorf("write embedded module: %w", err)
-	}
-	if out, err := exec.Command("wasm-tools", "component", "new",
-		"--adapt", "wasi_snapshot_preview1="+adapterPath,
-		embeddedPath, "-o", outPath).CombinedOutput(); err != nil {
-		return fmt.Errorf("wasm-tools component new failed: %w\n%s", err, out)
 	}
 	return nil
 }
@@ -1073,7 +969,7 @@ func composeRequestEmpty(req component.ComposeRequest) bool {
 func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, exportName string) ([]byte, error) {
 	req, unsupported := classifyComposeRequest(bin)
 	if len(unsupported) > 0 {
-		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Either remove the source that pulls them in or use -wasi-adapter for now.", len(unsupported), strings.Join(unsupported, ", "))
+		return nil, fmt.Errorf("can't wrap a core module with unrecognised imports yet (saw %d): %s. Remove the source that pulls them in.", len(unsupported), strings.Join(unsupported, ", "))
 	}
 	if composeRequestEmpty(req) {
 		if exportName != "" {

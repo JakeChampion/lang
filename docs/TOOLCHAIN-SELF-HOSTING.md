@@ -1,5 +1,16 @@
 # Toolchain self-hosting plan
 
+> **Update — the wasm `wasm-tools` shell-out is gone.** `-target wasm`
+> and `-target wasi-http` now compose Component Model components natively
+> in Go (`internal/wasm/component`), and the `-wasi-adapter` flag +
+> `emitPreview2ComponentFromCoreBytes` (`wasm-tools component new --adapt`)
+> have been deleted from the driver. A single classifier
+> (`classifyComposeRequest`) feeds one composer (`component.Compose`) that
+> handles any mix of the migrated preview-2 imports. What remains of the
+> "Current shell-outs" map below is the native-codegen story (clang / lld
+> for the ELF/Mach-O targets) and the test-only `wasm-tools` validation in
+> the e2e suite; the wasm toolchain itself no longer needs them.
+
 Goal: eliminate every external compiler / assembler / linker / wasm
 helper the driver currently shells out to, replacing each with a
 Lang-native implementation. After all phases land, building a Lang
