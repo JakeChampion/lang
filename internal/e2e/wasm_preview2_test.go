@@ -1073,6 +1073,117 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2HttpHandlerClockAdapterFree exercises an HTTP handler
+// that also uses now() / monotonic_ns() / random — the standalone CLI
+// capabilities the wasi:http/proxy world `wasmtime serve` grants
+// (wasi:clocks + wasi:random). ComposeHttpHandler lowers them via the
+// shared MemTramp / Structured path, so a handler that stamps a
+// timestamp composes adapter-free and serves. (env() / files are NOT
+// granted by the proxy world, so they still route to -wasi-adapter —
+// covered by the rejection check at the end.) Also a regression guard
+// for the alloc 8-byte alignment fix: now()'s record has a u64 field
+// whose retptr traps if only 4-aligned.
+func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "clock.fern")
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var t: i64 = now_ns();
+    var m: i64 = monotonic_ns();
+    var r: i32 = random_i32();
+    if (t > 0) { return http_response_ok("clock-ok"); }
+    return http_response_ok("no-clock");
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "clock.component.wasm")
+	if out, err := exec.Command(bin, "-target", "wasi-http", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasi-http (clock handler, no adapter): %v\n%s", err, out)
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
+	}
+	if !bytes.Contains(wit, []byte("wasi:clocks")) {
+		t.Errorf("expected wasi:clocks import, got:\n%s", wit)
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial: %v\nstderr:\n%s", err, serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "clock-ok" {
+		t.Fatalf("status=%d body=%q; want 200 \"clock-ok\" (stderr=%q)", resp.StatusCode, string(body), serr.String())
+	}
+
+	// env() is not granted by the proxy world, so an env-using handler
+	// must still route to the adapter (clear rejection, not a component
+	// that fails at serve-link time).
+	envSrc := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    match (env("X")) { Some(_) => {}, None => {} }
+    return http_response_ok("e");
+}
+`
+	envPath := filepath.Join(dir, "env.fern")
+	if err := os.WriteFile(envPath, []byte(envSrc), 0o644); err != nil {
+		t.Fatalf("write env src: %v", err)
+	}
+	out, err := exec.Command(bin, "-target", "wasi-http", "-o", filepath.Join(dir, "env.wasm"), envPath).CombinedOutput()
+	if err == nil {
+		t.Errorf("expected env handler to reject (proxy world has no environment), but it composed")
+	} else if !bytes.Contains(out, []byte("wasi:cli/environment")) || !bytes.Contains(out, []byte("-wasi-adapter")) {
+		t.Errorf("expected an environment / -wasi-adapter rejection, got:\n%s", out)
+	}
+}
+
 // TestWasmPreview2HttpHandlerAdapterFree is TestWasmPreview2HttpHandler
 // without the preview-1 adapter: `-target wasi-http` (no -wasi-adapter)
 // composes the wasi:http/incoming-handler component natively through

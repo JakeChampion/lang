@@ -590,11 +590,11 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, wasiAdapt
 			if err != nil {
 				return 1, err
 			}
-			if extra := httpHandlerUnsupportedImports(core); len(extra) > 0 {
-				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(extra, ", "))
+			hasStdout, hasStderr, extras, structured, unsupported := httpHandlerCapabilities(core)
+			if len(unsupported) > 0 {
+				return 1, fmt.Errorf("-target wasi-http without -wasi-adapter can't compose a handler that also imports %s yet — remove the source that pulls them in or use -wasi-adapter for now", strings.Join(unsupported, ", "))
 			}
-			hasStdout, hasStderr := httpHandlerWriteStreams(core)
-			comp := component.ComposeHttpHandler(core, hasStdout, hasStderr, "wasi:http/incoming-handler@0.2.0#handle")
+			comp := component.ComposeHttpHandler(core, hasStdout, hasStderr, extras, structured, "wasi:http/incoming-handler@0.2.0#handle")
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
@@ -1110,32 +1110,54 @@ var httpHandlerComposableImports = map[[2]string]bool{
 	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
 }
 
-// httpHandlerUnsupportedImports returns the core's imports that fall
-// outside httpHandlerComposableImports — the ones that would block the
-// adapter-free wasi:http path. Empty means the handler composes natively.
-func httpHandlerUnsupportedImports(bin []byte) []string {
-	var extra []string
+// httpHandlerCapabilities classifies a handler core's imports for the
+// adapter-free wasi:http path: the http/types + io/streams base set
+// (handled by the composer core) is skipped; stdout/stderr getters set
+// the flags; the standalone CLI capabilities (now / env / args as
+// MemTramp, exit / random / monotonic as Structured no-opts) are
+// collected for ComposeHttpHandler; anything else (files, stdin) lands
+// in unsupported and forces the adapter. This is the same capability
+// set the CLI-stream composer handles — shared here so an HTTP handler
+// can log, stamp a timestamp, read config, etc., adapter-free.
+func httpHandlerCapabilities(bin []byte) (hasStdout, hasStderr bool, extras []component.MemTrampImport, structured []component.WasiImport, unsupported []string) {
 	for _, p := range coreModuleImportPairs(bin) {
-		if !httpHandlerComposableImports[[2]string{p.module, p.name}] {
-			extra = append(extra, p.module+"."+p.name)
-		}
-	}
-	return extra
-}
-
-// httpHandlerWriteStreams reports whether the handler core imports the
-// stdout / stderr getters (print / eprint), so ComposeHttpHandler can
-// surface wasi:cli/stdout / wasi:cli/stderr.
-func httpHandlerWriteStreams(bin []byte) (hasStdout, hasStderr bool) {
-	for _, p := range coreModuleImportPairs(bin) {
+		key := [2]string{p.module, p.name}
 		switch {
 		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
 			hasStdout = true
 		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
 			hasStderr = true
+		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
+			// now() — timestamps in handlers. wasi:clocks is granted by
+			// the wasi:http/proxy world `wasmtime serve` runs. env() /
+			// args() / files are deliberately NOT classified as extras:
+			// the proxy world doesn't grant wasi:cli/environment or
+			// filesystem, so those still route to -wasi-adapter.
+			extras = append(extras, component.MemTrampImport{
+				InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(),
+				InterfaceName:    "wasi:clocks/wall-clock@0.2.0",
+				FuncName:         "now",
+			})
+		default:
+			if httpHandlerComposableImports[key] {
+				continue // http/types + io/streams base — composer core handles it
+			}
+			if spec, ok := knownPreview2Imports[key]; ok {
+				structured = append(structured, component.WasiImport{
+					InterfaceName:    spec.interfaceName,
+					FuncName:         p.name,
+					ParamNames:       spec.paramNames,
+					ParamValtypes:    spec.paramValtypes,
+					CoreImportModule: spec.coreImportModule,
+					InnerTypes:       spec.innerTypes,
+					ResultValtypes:   spec.resultValtypes,
+				})
+			} else {
+				unsupported = append(unsupported, p.module+"."+p.name)
+			}
 		}
 	}
-	return hasStdout, hasStderr
+	return hasStdout, hasStderr, extras, structured, unsupported
 }
 
 func usesPreview2TcpServer(bin []byte) bool {
