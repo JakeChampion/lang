@@ -1004,8 +1004,14 @@ Phase 3 CANNOT start with the freelist — it must start by
    free+reuse is sound. Green on x86_64 locally; arm64 + wasm ride
    CI. The flip itself stays gated on a corpus-wide-green detector on
    all backends + explicit owner sign-off.
-5. **Enable + verify. — escape-out class CLOSED; flip pending CI +
-   sign-off.** The first flip (`RcFreeEnabled = true`) passed the
+5. **Enable + verify. — DONE; flipped on by default.** Both
+   over-release classes are closed and `RcFreeEnabled` now defaults to
+   `true` (landed after the escape corpus + differential gate went
+   green corpus-wide on all three backends in CI, a local x86 flip
+   probe over the whole e2e suite incl. the self-host VM passed
+   flag-on, and owner sign-off). History below.
+
+   The first flip (`RcFreeEnabled = true`) passed the
    whole x86_64 + interp suite, the fixture differential gate, and the
    self-host VM under `RcFreeDebug` — but CI then caught two wasm-only
    tests (`TestWASMQueryParse` exit 3, `TestWASMJsonParse` exit 40)
