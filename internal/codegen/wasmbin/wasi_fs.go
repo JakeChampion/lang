@@ -400,7 +400,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 		// memory.copy(new_buf, buf, cur)
 		body = inst.InstLocalGet(body, 5) // src = buf
 		body = inst.InstLocalGet(body, 7) // n   = cur
-		body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy (src=0, dst=0)
+		body = memory.InstMemoryCopy(body)
 
 		// buf = new_buf; buf_size = new_size
 		body = inst.InstLocalGet(body, 9)
@@ -424,7 +424,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 11) // $strbuf
 	body = inst.InstLocalGet(body, 5)  // buf
 	body = inst.InstLocalGet(body, 7)  // cur
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy (src=0, dst=0)
+	body = memory.InstMemoryCopy(body)
 
 	// Build Ok(string) — 16 bytes: tag=0 @ 0, data @ +8, len @ +12.
 	body = inst.InstI32Const(body, 16)
@@ -599,7 +599,7 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 13)
 			body = inst.InstLocalGet(body, 8)
 			body = inst.InstLocalGet(body, 10)
-			body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+			body = memory.InstMemoryCopy(body)
 			body = inst.InstLocalGet(body, 13)
 			body = inst.InstLocalSet(body, 8)
 			body = inst.InstBr(body, 0)
@@ -612,7 +612,7 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, 11)
 		body = inst.InstLocalGet(body, 12)
-		body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+		body = memory.InstMemoryCopy(body)
 		// acc_cur += chunk_len
 		body = inst.InstLocalGet(body, 10)
 		body = inst.InstLocalGet(body, 12)
@@ -630,7 +630,7 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 11) // reuse $chunk_ptr as $strbuf
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 10)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 	// Build Ok(string): box(16) tag=0 @0, data @+8, len @+12.
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, allocBox)
@@ -2078,7 +2078,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalTee(body, 7)
 			body = inst.InstLocalGet(body, 3)
 			body = inst.InstLocalGet(body, 5)
-			body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+			body = memory.InstMemoryCopy(body)
 			body = inst.InstLocalGet(body, 7)
 			body = inst.InstLocalSet(body, 3)
 			body = inst.InstLocalGet(body, 8)
@@ -2129,7 +2129,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 5)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 
 	// Build Some(string): 16 bytes, tag=0, padding, data@8, len@12.
 	body = inst.InstI32Const(body, 16)
@@ -2228,7 +2228,7 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstLocalTee(body, 7)
 			body = inst.InstLocalGet(body, 3)
 			body = inst.InstLocalGet(body, 5)
-			body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+			body = memory.InstMemoryCopy(body)
 			body = inst.InstLocalGet(body, 7)
 			body = inst.InstLocalSet(body, 3)
 			body = inst.InstLocalGet(body, 8)
@@ -2277,7 +2277,7 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 5)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 10)

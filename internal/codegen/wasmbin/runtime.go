@@ -2621,7 +2621,7 @@ func buildMemcpyBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // dst
 	body = inst.InstLocalGet(body, 1) // src
 	body = inst.InstLocalGet(body, 2) // n
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+	body = memory.InstMemoryCopy(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -2632,7 +2632,7 @@ func buildMemsetBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // dst
 	body = inst.InstLocalGet(body, 1) // b
 	body = inst.InstLocalGet(body, 2) // n
-	body = append(body, 0xFC, 0x0B, 0x00)
+	body = memory.InstMemoryFill(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
@@ -2896,7 +2896,7 @@ func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 	// return ($out, $bLen)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 1)
@@ -3054,7 +3054,7 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 5)
-	body = append(body, 0xFC, 0x0A, 0x00, 0x00) // memory.copy
+	body = memory.InstMemoryCopy(body)
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
@@ -3129,7 +3129,7 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 4)
 			body = inst.InstLocalGet(body, 0)
 			body = inst.InstLocalGet(body, 2)
-			body = append(body, 0xFC, 0x0A, 0x00, 0x00)
+			body = memory.InstMemoryCopy(body)
 			// $buf = $newbuf; $cap *= 2
 			body = inst.InstLocalGet(body, 4)
 			body = inst.InstLocalSet(body, 0)
