@@ -261,6 +261,146 @@ function main(): i32 {
     return (v.len() - 3) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Escape into a map value: an owned array built inside a
+		// helper escapes via `m.set` (retained without an inc under
+		// the borrow model), so it must NOT be freed at the helper's
+		// exit. The churn loop reclaims same-size blocks — if `arr`
+		// were wrongly freed, a junk array would reuse its block and
+		// corrupt the value the map still points at. Mirrors
+		// std/url's __query_pair, the case that blocked the flip.
+		name: "escape_array_into_map_value",
+		src: `function add_pair(m: Map[i32, i32[]], k: i32) {
+    var arr: i32[] = [k * 10, k * 10 + 1];
+    m.set(k, arr);
+}
+function main(): i32 {
+    var m: Map[i32, i32[]] = map_new(8);
+    add_pair(m, 7);
+    var c: i32 = 0;
+    while (c < 64) {
+        var junk: i32[] = [c, c];
+        c = c + junk.len();
+    }
+    var v: i32[] = m.get_or(7, []);
+    return (v.len() - 2) + (v[0] - 70) + (v[1] - 71) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escape into a struct field: an owned array stored in a
+		// returned struct escapes the helper; freeing it at exit
+		// would strand the field. Churn forces reuse of a freed block.
+		name: "escape_array_into_struct_field",
+		src: `struct Box { items: i32[] }
+function mk(n: i32): Box {
+    var arr: i32[] = [n, n + 1, n + 2];
+    return Box { items: arr };
+}
+function main(): i32 {
+    var b: Box = mk(5);
+    var c: i32 = 0;
+    while (c < 90) {
+        var junk: i32[] = [c, c, c];
+        c = c + junk.len();
+    }
+    return (b.items.len() - 3) + (b.items[2] - 7) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escape into an enum payload (variant constructor arg):
+		// the json `JArray(inner)` shape. emitEnumNew stores the
+		// payload WITHOUT an inc (unlike StructLit), so an owned
+		// array passed in escapes uncounted into the box and must
+		// not be freed at the helper's exit. The churn loop both
+		// reclaims same-size blocks and accumulates a distinctive
+		// value so a reused-block corruption reads back wrong.
+		name: "escape_array_into_enum_payload",
+		src: `enum Wrap { Arr(i32[]), Empty }
+function mk(n: i32): Wrap {
+    var arr: i32[] = [n, n + 1, n + 2, n + 3];
+    return Arr(arr);
+}
+function main(): i32 {
+    var w: Wrap = mk(1000);
+    var c: i32 = 0;
+    while (c < 300) {
+        var junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (w) {
+        Arr(a) => { got = (a.len() - 4) + (a[0] - 1000) + (a[3] - 1003); },
+        Empty => { got = 100; }
+    }
+    return got + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escape into a pushed array element: emitArrayPush stores
+		// the element without an inc, so an owned inner array
+		// pushed into a grid escapes uncounted and must survive the
+		// helper's exit. Churn forces reuse of any freed block.
+		name: "escape_array_into_pushed_element",
+		src: `function add_row(grid: i32[][], n: i32): i32[][] {
+    var row: i32[] = [n, n + 1, n + 2, n + 3];
+    return grid.push(row);
+}
+function main(): i32 {
+    var grid: i32[][] = [];
+    grid = add_row(grid, 5000);
+    var c: i32 = 0;
+    while (c < 300) {
+        var junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    if (grid.len() != 1) { return 90; }
+    var r: i32[] = grid[0];
+    return (r.len() - 4) + (r[0] - 5000) + (r[3] - 5003) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escape into an array element via index-assign
+		// (`grid[i] = row`): the store retains the value without an
+		// inc, so the owned inner array must survive the helper's
+		// exit. Churn forces reuse of any freed block.
+		name: "escape_array_into_index_assign",
+		src: `function fill(grid: i32[][], n: i32) {
+    var row: i32[] = [n, n + 1, n + 2, n + 3];
+    grid[0] = row;
+}
+function main(): i32 {
+    var grid: i32[][] = [[0, 0, 0, 0]];
+    fill(grid, 6000);
+    var c: i32 = 0;
+    while (c < 300) {
+        var junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    var r: i32[] = grid[0];
+    return (r[0] - 6000) + (r[3] - 6003) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Escape into a struct field via field-assign
+		// (`b.items = arr`): the store retains the value without an
+		// inc, so the owned array must survive the helper's exit.
+		name: "escape_array_into_field_assign",
+		src: `struct Box { items: i32[] }
+function fill(b: Box, n: i32) {
+    var arr: i32[] = [n, n + 1, n + 2, n + 3];
+    b.items = arr;
+}
+function main(): i32 {
+    var b: Box = Box { items: [0, 0, 0, 0] };
+    fill(b, 7000);
+    var c: i32 = 0;
+    while (c < 300) {
+        var junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    return (b.items[0] - 7000) + (b.items[3] - 7003) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

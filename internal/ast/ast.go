@@ -384,26 +384,29 @@ func UseTwoWordStrings(ptrW int) bool {
 // which `CodegenMu` enforces.
 var TwoWordOverride bool
 
-// RcFreeEnabled gates the Phase 3 freelist allocator. When true (the
-// DEFAULT, as of step 5), codegen emits a segregated freelist:
-// `__fern_free` returns a block to its size class and `__fern_alloc`
-// reuses a class's freelist before bumping, and the array dec sites
-// (__fern_drop_arr_ptr / __fern_arr_dec) return OWNED array buffers
-// to it at rc==0. When false, `__fern_alloc` is a pure bump cursor
-// and `__fern_free` is a no-op — the pre-step-5 leak-forever arena.
+// RcFreeEnabled gates the Phase 3 freelist allocator. When true,
+// codegen emits a segregated freelist: `__fern_free` returns a block
+// to its size class and `__fern_alloc` reuses a class's freelist
+// before bumping, and the array dec sites (__fern_drop_arr_ptr /
+// __fern_arr_dec) return OWNED array buffers to it at rc==0. When
+// false (the DEFAULT, pending the flip), `__fern_alloc` is a pure
+// bump cursor and `__fern_free` is a no-op — the leak-forever arena.
 //
-// STILL OFF BY DEFAULT. The borrow-aware analysis closed the
-// borrowed-IN over-release class, and the x86 suite + self-host VM
-// are clean free-on — but the wasm-only TestWASMQueryParse /
-// TestWASMJsonParse (not in the differential gate, so the flip probe
-// missed them) fail free-on on BOTH backends. Root cause: the dual
-// ESCAPE-OUT class. `map.set` transfers its `string[]` value into
-// the map WITHOUT an inc (like array push), so an "owned" array
-// local that escapes into a map is then freed at scope-exit while
-// the map still references it — a free-then-reuse value corruption.
-// The flip waits on consuming-call handling (inc on map.set values /
-// array-element stores, or an escape analysis). Toggled on per-Emit
-// by the flag-on tests (save/restore, CodegenMu-guarded).
+// STILL OFF BY DEFAULT, but both over-release classes are now closed:
+//   - borrowed-IN: the borrow-aware analysis (computeFreeEligible)
+//     excludes params + anything derived from them.
+//   - ESCAPE-OUT: a local that escapes into a container retained
+//     WITHOUT an inc — `map.set` / MapLit values, pushed array
+//     elements, enum-constructor payloads, index / field / capture
+//     assignment targets — is tainted by the same analysis so the
+//     owner never frees out from under the container. (StructLit /
+//     TupleLit construction inc their stored values, so escaping
+//     through those is already safe.)
+// rc_correctness's escape_array_into_* entries cover each sink free-on
+// on all three backends. The flip waits on (a) that corpus green
+// corpus-wide on all backends in CI and (b) explicit owner sign-off.
+// Toggled on per-Emit by the flag-on tests (save/restore,
+// CodegenMu-guarded).
 var RcFreeEnabled = false
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
