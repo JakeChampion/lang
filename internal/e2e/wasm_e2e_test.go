@@ -9059,16 +9059,16 @@ function main(): i32 {
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// TCP mixed with a file read isn't composable — the TCP composer
-	// Reading AND writing files in one program needs both descriptor
-	// stream directions at once, but the wasi:filesystem/types instance
-	// type carries a single direction — a fundamental single-direction
-	// limit — so -component-wrap must reject it. (Each direction, and
-	// sockets + file-read, compose on their own; this picks a
-	// combination that still falls through.)
+	// read + append in one program isn't composable: read needs
+	// read-via-stream and append needs append-via-stream, but the
+	// combined filesystem/types body is read+write (read-via +
+	// write-via), not read+append — so neither a single-direction body
+	// nor the combined one matches, and -component-wrap must reject it.
+	// (read-only, write-only, append-only, and read+write each compose;
+	// this picks a combination that still falls through.)
 	src := []byte(`function main(): i32 {
     match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
-    match (write_file("b", "x")) { Some(e) => {}, None => {} }
+    match (open_appender("b")) { Ok(w) => { w.close(); }, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -11142,16 +11142,15 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// Reading AND writing files in one program needs both descriptor
-	// stream directions at once, but the wasi:filesystem/types instance
-	// type carries a single direction, so neither path claims it and the
-	// driver must reject with the adapter hint. (Earlier still-unsupported
-	// combos — args, tcp_recv, tcp+print, tcp+clock, tcp+file-read — each
-	// became supported as the composer grew; read+write files is the
-	// current gap.)
+	// read + append in one program isn't composable: the combined
+	// filesystem/types body is read+write, not read+append, so neither
+	// path claims it and the driver must reject with the adapter hint.
+	// (Earlier still-unsupported combos — args, tcp_recv, tcp+print,
+	// tcp+clock, tcp+file-read, read+write files — each became supported
+	// as the composer grew; read+append is the current gap.)
 	src := []byte(`function main(): i32 {
     match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
-    match (write_file("b", "x")) { Some(e) => {}, None => {} }
+    match (open_appender("b")) { Ok(w) => { w.close(); }, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {

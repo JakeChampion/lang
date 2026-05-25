@@ -47,7 +47,11 @@ type ComposeOpts struct {
 	FileRead    bool
 	FileWrite   bool
 	FileAppend  bool
-	ReadStream  bool
+	// FileReadWrite is read AND write of files in one program (the
+	// combined-direction filesystem/types instance type). Distinct from
+	// the single-direction FileRead / FileWrite / FileAppend.
+	FileReadWrite bool
+	ReadStream    bool
 	WriteStream bool
 	// DropInputStream / DropOutputStream record that the core imports
 	// wasi:io/streams.[resource-drop]{input,output}-stream — a file /
@@ -250,10 +254,15 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	hasFileRead := opts.FileRead
 	hasFileWrite := opts.FileWrite
 	hasFileAppend := opts.FileAppend
+	// FileReadWrite is read AND write of files in one program — the
+	// combined-direction filesystem/types instance type (open-at +
+	// read-via-stream AND write-via-stream). It's a distinct mode from
+	// the single-direction FileRead / FileWrite / FileAppend.
+	hasFileReadWrite := opts.FileReadWrite
 	// write_file and open_appender share the write-side open-chain
 	// (output-stream); they differ only in the via-stream method.
 	writeSideFile := hasFileWrite || hasFileAppend
-	hasFile := hasFileRead || writeSideFile
+	hasFile := hasFileRead || writeSideFile || hasFileReadWrite
 	// useBlock{Read,Write} = the user module actually imports the
 	// stream method. need{Input,Output}Stream = io/streams must
 	// declare + alias the resource because *some* producer
@@ -263,8 +272,8 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	// read/written) compose without the blocking method.
 	useBlockRead := opts.ReadStream
 	useBlockWrite := opts.WriteStream
-	needInputStream := hasStdin || hasFileRead || useBlockRead || opts.DropInputStream
-	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite || opts.DropOutputStream
+	needInputStream := hasStdin || hasFileRead || useBlockRead || opts.DropInputStream || hasFileReadWrite
+	needOutputStream := hasWriteGetter || writeSideFile || useBlockWrite || opts.DropOutputStream || hasFileReadWrite
 	needStreams := needInputStream || needOutputStream
 	hasMemTramp := len(opts.MemTramp) > 0
 	// memory backs every trampoline lower (block read/write, the file
@@ -280,9 +289,12 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		}
 	}
 	// Which descriptor stream method the file open-chain uses, and its
-	// core-import signature (append-via-stream takes no offset).
+	// core-import signature (append-via-stream takes no offset). For the
+	// read+write mode, viaName is read-via-stream and via2Name is the
+	// parallel write-via-stream (same (self, offset, ret_ptr) shape).
 	viaName := composeReadViaName
 	viaParams := composeReadViaParams
+	via2Name := composeWriteViaName // only used when hasFileReadWrite
 	switch {
 	case hasFileAppend:
 		viaName = composeAppendViaName
@@ -329,6 +341,8 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	if hasFile {
 		var fsBody []byte
 		switch {
+		case hasFileReadWrite:
+			fsBody = WasiFilesystemTypesReadWritePathInstanceTypeBody(tIn, tOut)
 		case hasFileAppend:
 			fsBody = WasiFilesystemTypesAppendPathInstanceTypeBody(tOut)
 		case hasFileWrite:
@@ -380,6 +394,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 	userMod := c.coreModule(coreBytes)
 	var trampWMod, fixupWMod, trampRMod, fixupRMod uint32
 	var trampDirsMod, fixupDirsMod, trampOpenMod, fixupOpenMod, trampViaMod, fixupViaMod uint32
+	var trampVia2Mod, fixupVia2Mod uint32 // write-via-stream, read+write mode only
 	if useBlockWrite {
 		trampWMod = c.coreModule(TrampolineModuleForParamsNoResult(composeBlockWriteParams))
 		fixupWMod = c.coreModule(FixupModuleForParamsNoResult(composeBlockWriteParams))
@@ -397,6 +412,11 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		// ret_ptr) shape.
 		trampViaMod = c.coreModule(TrampolineModuleForParamsNoResult(viaParams))
 		fixupViaMod = c.coreModule(FixupModuleForParamsNoResult(viaParams))
+		if hasFileReadWrite {
+			// write-via-stream shares read-via's (self, offset, ret_ptr).
+			trampVia2Mod = c.coreModule(TrampolineModuleForParamsNoResult(composeReadViaParams))
+			fixupVia2Mod = c.coreModule(FixupModuleForParamsNoResult(composeReadViaParams))
+		}
 	}
 	// One 1-i32 trampoline + fixup per mem-trampoline import.
 	mtTrampMod := make([]uint32, len(opts.MemTramp))
@@ -408,7 +428,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 	// --- Phase C: instantiate trampolines. ---
 	var trampWInst, trampRInst uint32
-	var trampDirsInst, trampOpenInst, trampViaInst uint32
+	var trampDirsInst, trampOpenInst, trampViaInst, trampVia2Inst uint32
 	if useBlockWrite {
 		trampWInst = c.instantiate(trampWMod)
 	}
@@ -419,6 +439,9 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		trampDirsInst = c.instantiate(trampDirsMod)
 		trampOpenInst = c.instantiate(trampOpenMod)
 		trampViaInst = c.instantiate(trampViaMod)
+		if hasFileReadWrite {
+			trampVia2Inst = c.instantiate(trampVia2Mod)
+		}
 	}
 	mtTrampInst := make([]uint32, len(opts.MemTramp))
 	for i := range opts.MemTramp {
@@ -472,10 +495,15 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 		openTramp := c.aliasCoreFunc(trampOpenInst, "0")
 		viaTramp := c.aliasCoreFunc(trampViaInst, "0")
-		typesArg := c.coreInstExports([]CoreInstanceExport{
+		typesExports := []CoreInstanceExport{
 			{Name: composeOpenAtName, Sort: CoreSortFunc, Idx: openTramp},
 			{Name: viaName, Sort: CoreSortFunc, Idx: viaTramp},
-		})
+		}
+		if hasFileReadWrite {
+			via2Tramp := c.aliasCoreFunc(trampVia2Inst, "0")
+			typesExports = append(typesExports, CoreInstanceExport{Name: via2Name, Sort: CoreSortFunc, Idx: via2Tramp})
+		}
+		typesArg := c.coreInstExports(typesExports)
 		argNames = append(argNames, "wasi:filesystem/types@0.2.0")
 		argInsts = append(argInsts, typesArg)
 	}
@@ -516,7 +544,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 	// --- Phase F: alias memory / realloc / trampoline tables. ---
 	var reallocFunc, tableW, tableR uint32
-	var tableDirs, tableOpen, tableVia uint32
+	var tableDirs, tableOpen, tableVia, tableVia2 uint32
 	if needMemory {
 		c.aliasMemory(userInst)
 	}
@@ -535,6 +563,9 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		tableDirs = c.aliasTable(trampDirsInst)
 		tableOpen = c.aliasTable(trampOpenInst)
 		tableVia = c.aliasTable(trampViaInst)
+		if hasFileReadWrite {
+			tableVia2 = c.aliasTable(trampVia2Inst)
+		}
 	}
 	mtTable := make([]uint32, len(opts.MemTramp))
 	for i := range opts.MemTramp {
@@ -543,7 +574,7 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 
 	// --- Phase G: memory-dependent lowers. ---
 	var writeCoreF, readCoreF uint32
-	var dirsCoreF, openCoreF, viaCoreF uint32
+	var dirsCoreF, openCoreF, viaCoreF, via2CoreF uint32
 	if useBlockWrite {
 		cf := c.aliasInstFunc(streamsInst, composeBlockWriteName)
 		writeCoreF = c.lowerMem(cf)
@@ -561,6 +592,10 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		openCoreF = c.lowerMem(cfOpen)
 		cfVia := c.aliasInstFunc(fsTypesInst, viaName)
 		viaCoreF = c.lowerMem(cfVia)
+		if hasFileReadWrite {
+			cfVia2 := c.aliasInstFunc(fsTypesInst, via2Name)
+			via2CoreF = c.lowerMem(cfVia2)
+		}
 	}
 	mtCoreF := make([]uint32, len(opts.MemTramp))
 	for i, mt := range opts.MemTramp {
@@ -590,6 +625,9 @@ func ComposePreview2CliRun(coreBytes []byte, opts ComposeOpts, coreExportName st
 		fixup(fixupDirsMod, tableDirs, dirsCoreF)
 		fixup(fixupOpenMod, tableOpen, openCoreF)
 		fixup(fixupViaMod, tableVia, viaCoreF)
+		if hasFileReadWrite {
+			fixup(fixupVia2Mod, tableVia2, via2CoreF)
+		}
 	}
 	for i := range opts.MemTramp {
 		fixup(mtFixupMod[i], mtTable[i], mtCoreF[i])
