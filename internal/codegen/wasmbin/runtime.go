@@ -1258,6 +1258,32 @@ const allocCursorAddr = 40
 // memory state. 64 matches the WAT path's floor.
 const allocMinStart = 64
 
+// rcLowAddrGuard is the address floor __fern_rc_inc uses to skip
+// static closure cells (which live in the reserved window
+// [closuresBase=96, 1024) and have no rc header at [ptr-8]) without
+// skipping real heap objects. The bump cursor is seeded at
+// max(allocMinStart, end-of-string-pool) and the string pool starts
+// at stringStart=1024, so every heap allocation lands at >= 1024 —
+// the closures window is exactly [96, 1024).
+//
+// __fern_rc_inc previously used 0x10000 (64 KiB), carried over from a
+// WASI memory layout whose heap sat above 64 KiB. On the native
+// preview-2 layout (heap at ~1024) that silently skipped EVERY
+// increment, so an aliasing `var y = x` never bumped x's refcount and
+// `y.set(...)` mutated x in place (copy-on-write read the stale rc==1
+// and took the mutate-in-place fast path). The increment side is safe
+// to enable on its own — an inc never frees.
+//
+// The dec-side helpers (__fern_rc_dec / __fern_arr_dec / __fern_map_dec
+// and the reclamation paths) still use the 0x10000 floor: lowering
+// theirs would activate freeing + Phase-3 freelist reuse on the native
+// layout, which warrants its own change with dedicated
+// use-after-free / double-free coverage. Enabling inc alone leaves the
+// freelist empty (no dec fires → nothing is freed → alloc stays a pure
+// bump), so this fix carries no reuse risk; the cow helper's own inline
+// dec keeps the copy-on-write accounting bounded.
+const rcLowAddrGuard = 1024
+
 // rcUnderflowAddr is a 4-byte counter in the reserved low-memory
 // gap (mem[44..64], between the bump cursor at 40 and the first
 // allocation at 64). Phase 3 step 1: the rc-underflow detector.
@@ -2180,13 +2206,13 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// Defensive low-address guard, mirroring buildRcDecBody. The
-	// static OpConstFunc closure cells live in the reserved
-	// sub-64-KiB window (closuresBase..1024); rc-tracking FuncType
-	// locals would otherwise inc one of those cells and read
-	// scratch / cell bytes at [ptr-8]. Heap closures (alloc_rc1)
-	// sit above 0x10000 on the WASI layout and still get tracked.
+	// static OpConstFunc closure cells live in the reserved window
+	// [closuresBase=96, 1024); rc-tracking FuncType locals would
+	// otherwise inc one of those cells and read scratch / cell bytes
+	// at [ptr-8]. Heap objects (alloc / alloc_rc1) sit at >= 1024 and
+	// still get tracked. See rcLowAddrGuard.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
