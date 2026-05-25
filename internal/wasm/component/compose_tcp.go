@@ -46,8 +46,12 @@ func repeatI32(n int) []byte {
 // wasi:cli/environment.get-environment — an HTTP-over-TCP handler that
 // reads its listen port from the PORT env var (the synthesised
 // `main()` calls `__port_from_env`, which lowers to `env()` →
-// get-environment) composes adapter-free.
-func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasEnv bool, coreExportName string) []byte {
+// get-environment) composes adapter-free. hasStdout / hasStderr add
+// wasi:cli/stdout.get-stdout / wasi:cli/stderr.get-stderr so a server
+// that print()s / eprint()s for logging composes too (the write reuses
+// the connection's output-stream.blocking-write-and-flush lowering,
+// which tcpStreamUsage already detects since print imports it).
+func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, hasEnv, hasStdout, hasStderr bool, coreExportName string) []byte {
 	c := &p2composer{buf: PutComponentHeader(nil)}
 
 	// --- Phase A: imports + shared-type surfacing (dependency order). ---
@@ -89,6 +93,15 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 	if hasEnv {
 		tEnv := c.typeRaw(WasiCliEnvironmentGetEnvironmentInstanceTypeBody())
 		envInst = c.importInstance("wasi:cli/environment@0.2.0", tEnv)
+	}
+	// Optional CLI write streams (print / eprint logging), over the
+	// shared output-stream resource surfaced above.
+	var stdoutInst, stderrInst uint32
+	if hasStdout {
+		stdoutInst = c.importInstance("wasi:cli/stdout@0.2.0", c.typeRaw(WasiCliStdoutInstanceTypeBody(tOut)))
+	}
+	if hasStderr {
+		stderrInst = c.importInstance("wasi:cli/stderr@0.2.0", c.typeRaw(WasiCliStderrInstanceTypeBody(tOut)))
 	}
 
 	// --- Phase B: core modules (user + a trampoline/fixup pair per
@@ -200,6 +213,17 @@ func ComposeTcpServerCliRun(coreBytes []byte, hasStreamRead, hasStreamWrite, has
 		envArg := c.coreInstOneFunc("get-environment", memTramp[idxEnv])
 		argNames = append(argNames, "wasi:cli/environment@0.2.0")
 		argInsts = append(argInsts, envArg)
+	}
+	// CLI write-stream getters (no-opts) for print / eprint logging.
+	if hasStdout {
+		f := c.lowerNoOpts(c.aliasInstFunc(stdoutInst, "get-stdout"))
+		argNames = append(argNames, "wasi:cli/stdout@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stdout", f))
+	}
+	if hasStderr {
+		f := c.lowerNoOpts(c.aliasInstFunc(stderrInst, "get-stderr"))
+		argNames = append(argNames, "wasi:cli/stderr@0.2.0")
+		argInsts = append(argInsts, c.coreInstOneFunc("get-stderr", f))
 	}
 	userInst := c.instantiateArgs(userMod, argNames, argInsts)
 

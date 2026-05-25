@@ -972,8 +972,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		hasRead, hasWrite, hasEnv := tcpStreamUsage(bin)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasEnv, "_lang_run"), nil
+		hasRead, hasWrite, hasEnv, hasStdout, hasStderr := tcpStreamUsage(bin)
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasEnv, hasStdout, hasStderr, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
 		opts.ExportName = exportName
@@ -1033,13 +1033,18 @@ var preview2TcpServerImports = map[[2]string]bool{
 	// env() — an HTTP-over-TCP handler reads its listen port from PORT
 	// (the synthesised main → __port_from_env → env() → get-environment).
 	{"wasi:cli/environment@0.2.0", "get-environment"}: true,
+	// print / eprint logging — the write stream shares tcp_send's
+	// blocking-write-and-flush lowering, so only the getter is extra.
+	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
+	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
 }
 
-// tcpStreamUsage reports whether a TCP program reads (tcp_recv →
-// input-stream.blocking-read), writes (tcp_send →
-// output-stream.blocking-write-and-flush), and/or reads the
-// environment (env() → wasi:cli/environment.get-environment).
-func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv bool) {
+// tcpStreamUsage reports which optional capabilities a TCP server's
+// core imports: reads (tcp_recv → input-stream.blocking-read), writes
+// (tcp_send / print → output-stream.blocking-write-and-flush), env
+// (env() → wasi:cli/environment.get-environment), and stdout / stderr
+// (print / eprint → wasi:cli/{stdout,stderr}.get-{stdout,stderr}).
+func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv, hasStdout, hasStderr bool) {
 	for _, p := range coreModuleImportPairs(bin) {
 		switch {
 		case p.module == "wasi:io/streams@0.2.0" && p.name == "[method]input-stream.blocking-read":
@@ -1048,9 +1053,13 @@ func tcpStreamUsage(bin []byte) (hasRead, hasWrite, hasEnv bool) {
 			hasWrite = true
 		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
 			hasEnv = true
+		case p.module == "wasi:cli/stdout@0.2.0" && p.name == "get-stdout":
+			hasStdout = true
+		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
+			hasStderr = true
 		}
 	}
-	return hasRead, hasWrite, hasEnv
+	return hasRead, hasWrite, hasEnv, hasStdout, hasStderr
 }
 
 // httpHandlerComposableImports is the exact import set ComposeHttpHandler

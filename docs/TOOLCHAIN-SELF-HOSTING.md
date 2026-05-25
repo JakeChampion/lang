@@ -709,10 +709,16 @@ End-to-end exit code 42 demo (covered by
     on wasmtime's stdout (`TestWasmPreview2HttpHandlerLoggingAdapterFree`).
     A handler that reads env / opens files still needs `-wasi-adapter`;
     the driver detects the extra imports and says so.
+  - **TCP server + stdout/stderr logging. Shipped.** The same getter
+    wiring ported to `ComposeTcpServerCliRun`: a `tcp_serve` server (or
+    any TCP listen/accept/recv/send program) that also `print`s /
+    `eprint`s composes adapter-free, surfacing `wasi:cli/stdout` /
+    `wasi:cli/stderr` and reusing `tcp_send`'s
+    `output-stream.blocking-write-and-flush` lowering for the log write.
+    Verified end-to-end — a TCP echo server logs to stdout and
+    round-trips a payload to a Go client
+    (`TestWasmPreview2TcpServerStdoutAdapterFree`).
   - **Still to do (genuinely niche / large):**
-    - Mixing TCP servers with CLI-stream stdout (a TCP server that also
-      prints) — the http handler now surfaces stdout/stderr, but the TCP
-      composer doesn't yet (the same getter wiring would port over).
     - UDP (`wasi:sockets/udp`).
     - The file-append open-chain is still preview-1 only — preview-2
       has no fd-append flag, so it needs `append-via-stream` (or an
