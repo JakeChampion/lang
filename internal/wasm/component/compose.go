@@ -5,20 +5,7 @@ package component
 // exactly once per emit — the fragile arithmetic) and the core-import
 // signature constants the trampolines mirror. The unified composer
 // (compose_unified.go) and the general engine (compose_general.go) build
-// on this; MemTrampImport / WasiImport describe individual imports.
-
-// MemTrampImport is a self-contained single-function import whose
-// canon-lower needs memory (and optionally realloc) — the
-// wall-clock now / args get-arguments / env get-environment shape.
-// Unlike Structured (no-memory) imports it needs a 1-i32 trampoline
-// + fixup; unlike the stream / file imports it has no shared
-// resource-type dependencies, so its instance type stands alone.
-type MemTrampImport struct {
-	InstanceTypeBody []byte // standalone instance type (one func export)
-	InterfaceName    string // import name + user-module arg name
-	FuncName         string // aliased func + core-instance export name
-	NeedsRealloc     bool   // list-returning funcs (args/env) need realloc
-}
+// on this; WasiImport describes an individual structured import.
 
 // blockWriteParams / blockReadParams are the core import signatures
 // the trampolines mirror: blocking-write-and-flush lowers to
