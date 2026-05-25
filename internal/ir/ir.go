@@ -2855,6 +2855,37 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		}
+		// Return-transfer inc: when the returned value ALIASES an
+		// rc-tracked local (or a field / element of one), the
+		// caller becomes a new owner — but the value is still on
+		// the operand stack while emitRcDecLocalsAtExit drops that
+		// same local below. Without this inc the exit sweep would
+		// dec the escaping value's rc (and, with the freelist on,
+		// FREE the very buffer being returned — a use-after-free,
+		// e.g. `lexer.tokenize` returning its `ts: Token[]` local).
+		// Inc here so the sweep's dec nets the rc to the caller's
+		// reference. __fern_rc_inc returns its argument, so the
+		// value stays on the stack for OpReturn. Fresh return
+		// values (call results / literals) aren't locals, so the
+		// sweep never touches them — needsRcIncOnAlias filters to
+		// exactly the alias case. (Under the old no-free arena this
+		// drift was masked; it also fixes the symmetric latent
+		// underflow where the caller later dec'd a value the callee
+		// had already dec'd to 0.)
+		if needsRcIncOnAlias(n.Value, b) {
+			// Closures (FuncType) are excluded: the exit sweep dec's
+			// a closure local with the plain rc_dec, which never
+			// frees (only the array dec sites — drop_arr_ptr /
+			// arr_dec — return buffers to the freelist), so a
+			// returned closure can't be use-after-freed and needs no
+			// transfer inc. Excluding them also keeps the
+			// closure-factory shape that the defunctionalise pass
+			// pattern-matches intact. When closure-box free lands,
+			// the inc + a defunc update come together.
+			if _, isFunc := b.exprType(n.Value).(*ast.FuncType); !isFunc {
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			}
+		}
 		b.emitRcDecLocalsAtExit()
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
