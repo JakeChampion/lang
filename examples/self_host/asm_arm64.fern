@@ -2312,6 +2312,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
+            // Built-in `None` — empty Option. Heap box [tag=1 @0].
+            // See the Some(x) constructor + StmtMatch Some/None arms.
+            if (id.name == "None") {
+                s = s.write("    mov x0, #16\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    mov x1, #1\n");
+                s = s.write("    str x1, [x0]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             s = s.write("    // unresolved ident: " + id.name + "\n");
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [sp, #-16]!\n");
@@ -2338,6 +2349,29 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
+                    // Reader.read_chunk(n) — read up to n bytes from
+                    // the receiver fd; Some(string) on a non-empty
+                    // read, None at EOF. Receiver is a Reader (fd).
+                    if (fa.field == "read_chunk" && c.args.len() == 1) {
+                        s = emit_expr(fa.obj, s);
+                        s = emit_expr(c.args[0], s);
+                        s = s.write("    ldr x1, [sp], #16\n");   // n
+                        s = s.write("    ldr x0, [sp], #16\n");   // fd
+                        s = s.write("    bl __fern_reader_read_chunk\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        return s;
+                    }
+                    // Reader.close() — close the receiver fd; always
+                    // returns None (the IoError arm is unused here).
+                    if (fa.field == "close" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");   // fd
+                        s = s.write("    bl __fern_reader_close\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        return s;
+                    }
                     // Primitive-receiver fast path: see
                     // asm.fern for rationale.
                     var prim_recv: string = infer_expr_type(fa.obj, s);
@@ -3106,6 +3140,27 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    bl __fern_read_all_stdin\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_str_read_line();
+                return s;
+            }
+            // stdin() — returns a Reader (its fd; 0 for stdin).
+            // read_chunk / close take the fd value directly.
+            if (name == "stdin" && c.args.len() == 0) {
+                s = s.write("    mov x0, #0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            // Some(x) — wrap a payload in an Option. Heap box
+            // [tag=0 @0, payload @8]; the matching None has tag 1.
+            if (name == "Some" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    mov x0, #16\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    ldr x1, [sp], #16\n");   // payload
+                s = s.write("    mov x2, #0\n");
+                s = s.write("    str x2, [x0]\n");         // tag = Some
+                s = s.write("    str x1, [x0, #8]\n");     // payload
+                s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
             // i32_to_string(n) — decimal text → string box.
@@ -3939,6 +3994,24 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
+                        if (pv.type_name == "Some" || pv.type_name == "None") {
+                            // Built-in Option: discriminate on the i32
+                            // tag at offset 0 (Some=0 / None=1), not the
+                            // struct shape pointer. Some binds its
+                            // PAYLOAD (offset 8), not the box.
+                            s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+                            s = s.write("    ldr x1, [x0]\n");
+                            var want: i32 = 0;
+                            if (pv.type_name == "None") { want = 1; }
+                            s = s.write("    cmp x1, #" + i32_to_string(want) + "\n");
+                            s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                            if (pv.binding.len() > 0 && pv.binding != "_") {
+                                s = s.write("    ldr x1, [x0, #8]\n");   // payload
+                                s = s.bind_local(pv.binding);
+                                var pbind_off: i32 = s.lookup_local(pv.binding);
+                                s = s.write("    str x1, [x29, #" + i32_to_string(pbind_off) + "]\n");
+                            }
+                        } else {
                         s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
                         s = s.write("    ldr x1, [x0]\n");
                         var nameLit: StringLitOut = add_string_lit(s, pv.type_name);
@@ -3951,6 +4024,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                             s = s.bind_local(pv.binding);
                             var bind_off: i32 = s.lookup_local(pv.binding);
                             s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
+                        }
                         }
                     },
                     parser.PatWildcard(_) => { }
@@ -5248,6 +5322,70 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
+
+        // __fern_reader_read_chunk(x0 = fd, x1 = n) → Option[string].
+        // Reads up to n bytes; Some(string) on a non-empty read — an
+        // Option box [tag=0, strbox@8] wrapping a {data@0, len@8}
+        // string box — and None (box [tag=1]) at EOF (read ≤ 0).
+        s = s.write(".globl __fern_reader_read_chunk\n");
+        s = s.write(".type __fern_reader_read_chunk, %function\n");
+        s = s.write("__fern_reader_read_chunk:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // fd
+        s = s.write("    mov x20, x1\n");           // n
+        s = s.write("    mov x0, x20\n");           // alloc n data bytes
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x21, x0\n");           // data ptr
+        s = s.write("    mov x0, x19\n");           // read(fd, data, n)
+        s = s.write("    mov x1, x21\n");
+        s = s.write("    mov x2, x20\n");
+        s = s.write("    mov x8, #63\n");           // sys_read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Larrc_none\n");
+        s = s.write("    mov x22, x0\n");           // bytes_read
+        s = s.write("    mov x0, #16\n");           // string box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");         // data@0
+        s = s.write("    str x22, [x0, #8]\n");     // len@8
+        s = s.write("    mov x21, x0\n");           // strbox
+        s = s.write("    mov x0, #16\n");           // Some box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0]\n");          // tag = Some
+        s = s.write("    str x21, [x0, #8]\n");     // payload
+        s = s.write("    b .Larrc_ret\n");
+        s = s.write(".Larrc_none:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");          // tag = None
+        s = s.write(".Larrc_ret:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_reader_read_chunk, .-__fern_reader_read_chunk\n");
+
+        // __fern_reader_close(x0 = fd) → Option[IoError]. Closes the
+        // fd and always returns None (error arm unused by read_all_stdin).
+        s = s.write(".globl __fern_reader_close\n");
+        s = s.write(".type __fern_reader_close, %function\n");
+        s = s.write("__fern_reader_close:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    mov x8, #57\n");           // sys_close(fd)
+        s = s.write("    svc #0\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");          // None
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
     }
     // Command-line args. Mirror of asm.fern.
     if (s.needs_args) {
