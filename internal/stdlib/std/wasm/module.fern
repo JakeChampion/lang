@@ -13,10 +13,6 @@
 // the order: type, import, function, table, memory, global,
 // export, start, element, code, data. `build` emits them in that
 // order, skipping any section whose input is empty.
-//
-// Table and element sections aren't covered here; the existing
-// wasm backend doesn't exercise them, and section IDs 4 and 9
-// stay unused in the produced module without breaking parseability.
 
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -42,6 +38,14 @@ pub struct Module {
     // function, in declaration order.
     function_typeidxs: u32[],
 
+    // Table section. wasm 1.0 caps tables at 1; `table_present`
+    // gates a single funcref table for call_indirect dispatch.
+    // `table_max = -1` means "no maximum".
+    table_present: boolean,
+    table_reftype: u8,
+    table_min: u32,
+    table_max: i32,
+
     // Memory section. wasm 1.0 caps memories at 1, so a single
     // optional limits record is enough.
     memory_present: boolean,
@@ -61,6 +65,12 @@ pub struct Module {
     // Start section
     has_start: boolean,
     start_funcidx: u32,
+
+    // Element section — active funcref segments that initialise
+    // the table for call_indirect. Parallel arrays: one offset and
+    // one funcidx list per segment.
+    elem_offsets: i32[],
+    elem_funcidxs: u32[][],
 
     // Code section — one pre-wrapped function body
     // (from inst.put_function_body) per typeidx in function_typeidxs.
@@ -82,6 +92,10 @@ pub function module_new(): Module {
         import_kinds: [],
         import_descs: [],
         function_typeidxs: [],
+        table_present: false,
+        table_reftype: 112u8,
+        table_min: 0u32,
+        table_max: 0 - 1,
         memory_present: false,
         memory_min: 0u32,
         memory_max: 0 - 1,
@@ -93,6 +107,8 @@ pub function module_new(): Module {
         export_idxs: [],
         has_start: false,
         start_funcidx: 0u32,
+        elem_offsets: [],
+        elem_funcidxs: [],
         code_bodies: [],
         data_offsets: [],
         data_inits: [],
@@ -117,7 +133,9 @@ pub function build(m: Module): u8[] {
         bytes = sections.encode_function_section(bytes, m.function_typeidxs);
     }
 
-    // Table section (id 4) — intentionally skipped; no input.
+    if (m.table_present) {
+        bytes = sections.encode_table_section(bytes, m.table_reftype, m.table_min, m.table_max);
+    }
 
     if (m.memory_present) {
         bytes = sections.encode_memory_section(bytes, m.memory_min, m.memory_max);
@@ -135,7 +153,9 @@ pub function build(m: Module): u8[] {
         bytes = sections.encode_start_section(bytes, m.start_funcidx);
     }
 
-    // Element section (id 9) — intentionally skipped; no input.
+    if (m.elem_offsets.len() > 0) {
+        bytes = sections.encode_element_section(bytes, m.elem_offsets, m.elem_funcidxs);
+    }
 
     if (m.code_bodies.len() > 0) {
         bytes = sections.encode_code_section(bytes, m.code_bodies);
