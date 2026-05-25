@@ -974,8 +974,8 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		}
 		hasRead, hasWrite := tcpStreamUsage(bin)
 		fRead, fWrite, fAppend := tcpFileMode(bin)
-		extras, structured, hasStdout, hasStderr, _ := socketCliExtras(bin, preview2TcpServerImports)
-		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, fRead, fWrite, fAppend, extras, structured, "_lang_run"), nil
+		extras, structured, hasStdout, hasStderr, hasStdin, _ := socketCliExtras(bin, preview2TcpServerImports)
+		return component.ComposeTcpServerCliRun(rb, hasRead, hasWrite, hasStdout, hasStderr, hasStdin, fRead, fWrite, fAppend, extras, structured, "_lang_run"), nil
 	}
 	// UDP clients (udp_send) are likewise a self-contained sockets shape
 	// with their own composer + the wasi:cli/run lift. Memory-only lowers
@@ -989,7 +989,7 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		if err != nil {
 			return nil, err
 		}
-		extras, structured, hasStdout, hasStderr, _ := socketCliExtras(bin, preview2UdpClientImports)
+		extras, structured, hasStdout, hasStderr, _, _ := socketCliExtras(bin, preview2UdpClientImports)
 		return component.ComposeUdpClientCliRun(rb, hasStdout, hasStderr, extras, structured, "_lang_run"), nil
 	}
 	if opts, ok := classifyComposeCliStream(bin); ok {
@@ -1068,10 +1068,10 @@ var standaloneCliCapImports = map[[2]string]bool{
 
 // socketCliExtras classifies a socket program's NON-socket imports (those
 // not in socketSet) into the standalone CLI capabilities ComposeTcp/Udp
-// fold in: stdout/stderr getters (flags), now/env/args (MemTramp extras),
-// exit/random/monotonic (Structured no-opts). Anything else (files,
-// stdin) lands in unsupported and forces the adapter.
-func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []component.MemTrampImport, structured []component.WasiImport, hasStdout, hasStderr bool, unsupported []string) {
+// fold in: stdout/stderr/stdin getters (flags), now/env/args (MemTramp
+// extras), exit/random/monotonic (Structured no-opts). Anything else
+// (files) lands in unsupported and forces the adapter.
+func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []component.MemTrampImport, structured []component.WasiImport, hasStdout, hasStderr, hasStdin bool, unsupported []string) {
 	for _, p := range coreModuleImportPairs(bin) {
 		key := [2]string{p.module, p.name}
 		if socketSet[key] {
@@ -1082,6 +1082,8 @@ func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []compone
 			hasStdout = true
 		case p.module == "wasi:cli/stderr@0.2.0" && p.name == "get-stderr":
 			hasStderr = true
+		case p.module == "wasi:cli/stdin@0.2.0" && p.name == "get-stdin":
+			hasStdin = true
 		case p.module == "wasi:clocks/wall-clock@0.2.0" && p.name == "now":
 			extras = append(extras, component.MemTrampImport{InstanceTypeBody: component.WasiClocksWallClockInstanceTypeBody(), InterfaceName: "wasi:clocks/wall-clock@0.2.0", FuncName: "now"})
 		case p.module == "wasi:cli/environment@0.2.0" && p.name == "get-environment":
@@ -1096,7 +1098,7 @@ func socketCliExtras(bin []byte, socketSet map[[2]string]bool) (extras []compone
 			}
 		}
 	}
-	return extras, structured, hasStdout, hasStderr, unsupported
+	return extras, structured, hasStdout, hasStderr, hasStdin, unsupported
 }
 
 // tcpStreamUsage reports whether a TCP server's core reads (tcp_recv →
@@ -1204,6 +1206,7 @@ func httpHandlerCapabilities(bin []byte) (hasStdout, hasStderr bool, extras []co
 var tcpServerStdioImports = map[[2]string]bool{
 	{"wasi:cli/stdout@0.2.0", "get-stdout"}: true,
 	{"wasi:cli/stderr@0.2.0", "get-stderr"}: true,
+	{"wasi:cli/stdin@0.2.0", "get-stdin"}:   true,
 }
 
 // tcpServerFileImports are the filesystem open-chain the TCP composer
