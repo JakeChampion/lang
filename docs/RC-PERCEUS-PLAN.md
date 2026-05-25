@@ -1124,6 +1124,28 @@ Phase 3 CANNOT start with the freelist — it must start by
    `enum_nonuniform_box_free` (200 cycles churning two distinctly-sized
    boxes), run free-on on all three backends.
 
+   **End-to-end lock-in — stdlib hot paths under free.** Two
+   `rc_correctness` entries run real prelude code free-on across all
+   three backends so the box-reclamation family is exercised together
+   on the use-case shapes (not just synthetic churns):
+   `stdlib_query_parse_roundtrip` (std/url → `Map[string, string[]]`:
+   map-structural free + the escape-out path + string[] values) and
+   `stdlib_json_roundtrip` (std/json `json_parse`/`json_encode` →
+   `JsonValue`: non-uniform enum box free + nested Map/array). Both
+   fold `__rc_underflow_count()` into the result, so any over-release
+   in the combined drop paths trips the detector.
+
+   **What's left (larger design efforts, not yet done).** Map entry
+   keys/values need full retain semantics — inc-on-store AND
+   inc-on-get — because the borrow model returns get-results
+   uncounted, so the map can't know a value isn't still borrowed when
+   it drops (freeing it would UAF the borrow). Closure env blocks need
+   per-closure drop glue (the FuncType drop site doesn't know which
+   hoisted closure / capture set the slot holds, so neither the box
+   size nor the capture types are statically available). Both are
+   bigger than the box-family slices and reopen over-release risk;
+   they're deferred.
+
    **Flip-readiness gate — LANDED (the step-5 differential).**
    `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` run the entire
    data-driven fixture corpus (`testdata/cases`, ~82 runnable
