@@ -209,7 +209,8 @@ const (
 	gFsRead gFsMode = iota
 	gFsWrite
 	gFsAppend
-	gFsReadWrite // read AND write of files in one program (combined descriptor)
+	gFsReadWrite        // read AND write of files in one program (combined descriptor)
+	gFsReadWriteAppend  // read, write AND append in one program (all three via-stream methods)
 )
 
 // ensureFilesystem imports wasi:filesystem/types (one descriptor direction)
@@ -223,6 +224,9 @@ func (g *gComposer) ensureFilesystem(mode gFsMode) {
 	case gFsReadWrite:
 		g.ensureIoStreams(true, true)
 		body = WasiFilesystemTypesReadWritePathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])
+	case gFsReadWriteAppend:
+		g.ensureIoStreams(true, true)
+		body = WasiFilesystemTypesReadWriteAppendPathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])
 	case gFsAppend:
 		g.ensureIoStreams(false, true)
 		body = WasiFilesystemTypesAppendPathInstanceTypeBody(g.surfaced["output-stream"])

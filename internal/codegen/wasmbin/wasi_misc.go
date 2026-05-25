@@ -216,3 +216,49 @@ func buildFixedFdWriterBody(idxs map[string]uint32, fd int32) []byte {
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
+
+// buildStdoutBodyP2 / buildStderrBodyP2 are the preview-2 stdio Writer
+// constructors. Unlike preview-1 (where the Writer's field is the raw
+// fd 1/2 that fd_write consumes), preview-2 has no fds: the Writer must
+// hold the output-stream resource HANDLE returned by
+// wasi:cli/stdout::get-stdout (resp. get-stderr), the same cached handle
+// print / write / eprint use. Storing the raw 1/2 here is what produced
+// "unknown handle index 1/2" — those literals were passed to
+// blocking-write-and-flush as resource handles. The shared cache
+// (stdout/stderrHandleAddr, guarded by stdout/stderrInitAddr) makes the
+// one-time get-* call idempotent across all stdio paths.
+func buildStdoutBodyP2(idxs map[string]uint32) []byte {
+	return buildCachedHandleWriterBodyP2(idxs, idxs["wasi_get_stdout_p2"], stdoutInitAddr, stdoutHandleAddr)
+}
+
+func buildStderrBodyP2(idxs map[string]uint32) []byte {
+	return buildCachedHandleWriterBodyP2(idxs, idxs["wasi_get_stderr_p2"], stderrInitAddr, stderrHandleAddr)
+}
+
+func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr, handleAddr int32) []byte {
+	alloc := idxs["__fern_alloc"]
+	var body []byte
+	// If !init: mem[handleAddr] = get-*(); mem[initAddr] = 1.
+	body = inst.InstI32Const(body, initAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, handleAddr)
+	body = inst.InstCall(body, get)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, initAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	// w = alloc(4); mem[w] = mem[handleAddr]; return w.
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, handleAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}

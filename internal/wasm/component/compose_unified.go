@@ -25,8 +25,9 @@ type ComposeRequest struct {
 	DropInput, DropOutput bool
 
 	// Filesystem open-chain (mutually exclusive single descriptor mode,
-	// or the combined read+write).
-	FileRead, FileWrite, FileAppend, FileReadWrite bool
+	// the combined read+write, or read+write+append for a program that
+	// mixes all three open modes in one run).
+	FileRead, FileWrite, FileAppend, FileReadWrite, FileReadWriteAppend bool
 
 	// Socket / HTTP method surfaces.
 	Tcp  bool // TCP server (listen/accept/close)
@@ -51,9 +52,9 @@ type ComposeRequest struct {
 // halves of wasi:io/streams surfaced.
 func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	needIn = r.Stdin || r.BlockRead || r.DropInput ||
-		r.FileRead || r.FileReadWrite || r.Tcp || r.Http
+		r.FileRead || r.FileReadWrite || r.FileReadWriteAppend || r.Tcp || r.Http
 	needOut = r.Stdout || r.Stderr || r.BlockWrite || r.DropOutput ||
-		r.FileWrite || r.FileAppend || r.FileReadWrite || r.Tcp || r.Http
+		r.FileWrite || r.FileAppend || r.FileReadWrite || r.FileReadWriteAppend || r.Tcp || r.Http
 	return needIn, needOut
 }
 
@@ -94,10 +95,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureFilesystem(gFsWrite)
 	case req.FileReadWrite:
 		g.ensureFilesystem(gFsReadWrite)
+	case req.FileReadWriteAppend:
+		g.ensureFilesystem(gFsReadWriteAppend)
 	case req.FileRead:
 		g.ensureFilesystem(gFsRead)
 	}
-	hasFile := req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite
+	hasFile := req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.FileReadWriteAppend
 
 	// CLI stdio + standalone capabilities.
 	if req.Stdout {
@@ -186,8 +189,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: "wasi:filesystem/types@0.2.0", name: composeOpenAtName, kind: gMem, params: composeOpenAtParams},
 			gImport{iface: "wasi:filesystem/types@0.2.0", name: viaName, kind: gMem, params: viaParams},
 		)
-		if req.FileReadWrite {
+		if req.FileReadWrite || req.FileReadWriteAppend {
 			g.add(gImport{iface: "wasi:filesystem/types@0.2.0", name: composeWriteViaName, kind: gMem, params: composeReadViaParams})
+		}
+		if req.FileReadWriteAppend {
+			g.add(gImport{iface: "wasi:filesystem/types@0.2.0", name: composeAppendViaName, kind: gMem, params: composeAppendViaParams})
 		}
 	}
 
