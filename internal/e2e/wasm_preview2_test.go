@@ -729,6 +729,74 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2UdpSendAdapterFree drives the send-only UDP path:
+// `udp_send(host, port, data)` composed adapter-free (`-target wasm`,
+// no -wasi-adapter) through ComposeUdpClientCliRun. A Go net.ListenPacket
+// UDP socket stands in for the agent; the guest creates a socket, binds
+// an ephemeral port, connects to the listener, sends one datagram, and
+// exits 0. The test then reads the datagram off the socket and checks
+// its bytes — proving the create → bind → stream → send → drop pipeline
+// runs end-to-end on wasmtime's host sockets.
+func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "send.fern")
+	src := "function main(): i32 {\n" +
+		"    var n: i32 = udp_send(\"127.0.0.1\", " + itoa(port) + ", \"ping-from-fern\");\n" +
+		"    if (n > 0) { return 0; }\n" +
+		"    return 1;\n" +
+		"}\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "send.component.wasm")
+	emit := exec.Command(bin, "-target", "wasm", "-o", componentPath, srcPath)
+	if out, err := emit.CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (udp_send, no adapter): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+
+	// Run the client (synchronous: sends one datagram, exits 0).
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", componentPath)
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("wasmtime run (udp client): %v\n%s", err, out)
+	}
+
+	// The datagram is buffered on the socket; read it back.
+	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read datagram: %v", err)
+	}
+	if got := string(buf[:n]); got != "ping-from-fern" {
+		t.Fatalf("datagram = %q; want %q", got, "ping-from-fern")
+	}
+}
+
 // itoa is a tiny strconv.Itoa shim — we don't import strconv
 // elsewhere in this file and the cost of pulling it in for one
 // call isn't worth it.
