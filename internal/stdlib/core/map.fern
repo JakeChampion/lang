@@ -229,6 +229,19 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
     return __map_lookup(m, k) != (0 - 1);
 }
 
+// __map_retain_val bumps the rc of a pointer-shaped value that
+// map_drop will later free (valKind 2/3 = array values), so a
+// value handed out via get / get_or / values / iter co-owns its
+// storage and survives the map's drop (the read side of
+// map-value reclamation). A no-op for scalar (0) and non-array
+// pointer (1) values, which map_drop does not yet reclaim.
+function __map_retain_val(buf: usize, v: usize): usize {
+    if (__load_i32(buf + 12) >= 2) {
+        return __fern_rc_inc(v);
+    }
+    return v;
+}
+
 pub function __map_get_impl(m: usize, k: usize): Option[usize] {
     var idx: i32 = __map_lookup(m, k);
     if (idx == 0 - 1) { return None; }
@@ -237,7 +250,7 @@ pub function __map_get_impl(m: usize, k: usize): Option[usize] {
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + 16 + cap * 4;
-    return Some(__load_ptr(entriesBase + idx * entryStride + ptrW));
+    return Some(__map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW)));
 }
 
 pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
@@ -248,7 +261,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + 16 + cap * 4;
-    return __load_ptr(entriesBase + idx * entryStride + ptrW);
+    return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
 }
 
 // __map_grow doubles the kv buffer's capacity and re-hashes
@@ -404,7 +417,7 @@ pub function __map_keys_impl(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var keyKind: i32 = __load_i32(buf + 8);
     if (keyKind == 1) {
-        return __map_string_column(m, 0);
+        return __map_string_column(m, 0, 0);
     }
     return __map_column(m, 0, 4);
 }
@@ -415,8 +428,12 @@ pub function __map_values_impl(m: usize): usize {
     var ptrW: i32 = __ptr_width();
     // valKind != 0 == pointer-shaped (1 = string/struct/enum,
     // 2/3 = array values); all take the pointer-column path.
+    // Array values (>= 2) are retained per element so the
+    // snapshot co-owns storage map_drop will free.
     if (valKind != 0) {
-        return __map_string_column(m, ptrW);
+        var retain: i32 = 0;
+        if (valKind >= 2) { retain = 1; }
+        return __map_string_column(m, ptrW, retain);
     }
     return __map_column(m, ptrW, 4);
 }
@@ -430,7 +447,7 @@ pub function __map_values_impl(m: usize): usize {
 // a growing `string[]`. Per-element stride is whatever the
 // IR computes for `string[]` on this target (8 bytes on
 // wasm32, 16 on flipped arm64, 8 on legacy native).
-pub function __map_string_column(m: usize, kvOffset: i32): usize {
+pub function __map_string_column(m: usize, kvOffset: i32, retainVals: i32): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
@@ -441,11 +458,51 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
     var i: i32 = 0;
     while (i < len_) {
         var cellPtr: usize = __load_ptr(entriesBase + i * entryStride + kvOffset);
+        // Array values (valKind 2/3) handed out via values() must
+        // co-own their storage so map_drop's free doesn't strand
+        // the snapshot's element pointers.
+        if (retainVals == 1) { cellPtr = __fern_rc_inc(cellPtr); }
         var s: string = cellPtr as string;
         out = out.push(s);
         i = i + 1;
     }
     return out as usize;
+}
+
+// __map_drop_values frees the array-typed value column when a Map
+// is dropped at its LAST reference. The IR emits a call to this
+// just before the (unchanged, 1-arg) __fern_map_drop, so it
+// guards on the handle rc itself (at [m-8]): only the last
+// reference (rc==1) frees the values — a shared map (rc>1) or a
+// static-sentinel handle (negative rc) leaves them untouched,
+// matching __fern_map_drop's own rc==1 free of the buf+handle.
+// valKind 2 = array of plain elements (arr_dec frees the buffer);
+// valKind 3 = array of rc-tracked elements (drop_arr_ptr recurses
+// one level then frees). valStride is the value element stride the
+// IR computed from V. valKind 0/1 (scalar / non-array pointer)
+// leave the column alone — those values still leak. Each value's
+// rc was bumped on store (inc-on-set) and on every read
+// (inc-on-get), so this dec is the balancing release.
+pub function __map_drop_values(m: usize, valStride: i32) {
+    if (__load_i32(m - 8) != 1) { return; }
+    var buf: usize = __load_ptr(m);
+    var vk: i32 = __load_i32(buf + 12);
+    if (vk < 2) { return; }
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + 16 + cap * 4;
+    var i: i32 = 0;
+    while (i < len_) {
+        var v: usize = __load_ptr(entriesBase + i * entryStride + ptrW);
+        if (vk == 3) {
+            __fern_drop_arr_ptr(v, valStride);
+        } else {
+            __fern_arr_dec(v, valStride);
+        }
+        i = i + 1;
+    }
 }
 
 pub function __map_delete_impl(m: usize, k: usize): boolean {
@@ -552,7 +609,7 @@ pub function __mapiter_key_impl(it: usize): usize {
 }
 
 pub function __mapiter_value_impl(it: usize): usize {
-    return __load_ptr(__mapiter_entry_addr(it) + __ptr_width());
+    return __map_retain_val(__load_ptr(it), __load_ptr(__mapiter_entry_addr(it) + __ptr_width()));
 }
 
 pub function __mapiter_advance_impl(it: usize) {
