@@ -11134,17 +11134,16 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	}
 }
 
-// TestCmdLangTargetWasmNoAdapterRejectsUnsupported confirms the
-// no-adapter `-target wasm` path surfaces a clear error when the
-// program pulls in a combination the Go-side composer can't place yet
-// (here TCP mixed with print — sockets + CLI-stream don't compose
-// together) — pointing the user at -wasi-adapter as the workaround.
-func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
+// TestCmdLangTargetWasmRejectsUnsupported confirms `-target wasm`
+// surfaces a clear error when the program pulls in a combination the
+// Go-side composer can't place yet (here read + append files — the
+// combined filesystem/types body is read+write, not read+append).
+func TestCmdLangTargetWasmRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "needs_adapter.fern")
+	srcPath := filepath.Join(dir, "unsupported.fern")
 	// read + append in one program isn't composable: the combined
 	// filesystem/types body is read+write, not read+append, so neither
-	// path claims it and the driver must reject with the adapter hint.
+	// path claims it and the driver must reject.
 	// (Earlier still-unsupported combos — args, tcp_recv, tcp+print,
 	// tcp+clock, tcp+file-read, read+write files — each became supported
 	// as the composer grew; read+append is the current gap.)
@@ -11156,7 +11155,7 @@ func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	compPath := filepath.Join(dir, "needs_adapter.wasm")
+	compPath := filepath.Join(dir, "unsupported.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
 		"-target", "wasm",
 		"-o", compPath, srcPath)
@@ -11165,8 +11164,8 @@ func TestCmdLangTargetWasmNoAdapterRejectsUnsupported(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected unsupported-imports rejection, got success: %s", out)
 	}
-	if !strings.Contains(string(out), "unrecognised imports") || !strings.Contains(string(out), "-wasi-adapter") {
-		t.Errorf("expected unrecognised-imports / -wasi-adapter hint in error, got:\n%s", out)
+	if !strings.Contains(string(out), "unrecognised imports") {
+		t.Errorf("expected unrecognised-imports error, got:\n%s", out)
 	}
 }
 

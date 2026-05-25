@@ -32,13 +32,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.fern")
@@ -73,7 +66,6 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	componentPath := filepath.Join(dir, "hello.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)
@@ -127,13 +119,6 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
@@ -162,7 +147,6 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)
@@ -207,13 +191,6 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fs.fern")
@@ -250,7 +227,6 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 	componentPath := filepath.Join(dir, "fs.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)
@@ -460,13 +436,6 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rwf.fern")
@@ -506,7 +475,6 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	componentPath := filepath.Join(dir, "rwf.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)
@@ -559,13 +527,6 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	// Pick a free port — open a listener on :0, capture the
 	// kernel-assigned port, close before the guest tries to
@@ -613,7 +574,6 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	componentPath := filepath.Join(dir, "echo.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasm",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)
@@ -1309,13 +1269,6 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
 	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER not set; skipping preview-2 e2e (CI sets this)")
-	}
-	if _, err := os.Stat(adapter); err != nil {
-		t.Skipf("adapter %q not readable: %v", adapter, err)
-	}
 
 	// Pick a free port. wasmtime serve's --addr binds eagerly
 	// without retrying, so we hand it a kernel-assigned ephemeral
@@ -1353,7 +1306,6 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	componentPath := filepath.Join(dir, "router.component.wasm")
 	emit := exec.Command(bin,
 		"-target", "wasi-http",
-		"-wasi-adapter", adapter,
 		"-o", componentPath,
 		srcPath,
 	)

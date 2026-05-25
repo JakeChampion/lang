@@ -1,5 +1,18 @@
 # WASI Preview 2 migration plan
 
+> **Status (complete).** The migration is done: `fern -target wasm` and
+> `-target wasi-http` compose Component Model components **natively** in
+> Go (`internal/wasm/component`), with no `wasm-tools` shell-out and no
+> preview-1 adapter. The `-wasi-adapter` flag and the
+> `wasm-tools component new --adapt` step have been removed from the
+> toolchain. Any mix of the migrated preview-2 imports composes through
+> one unified path (`classifyComposeRequest` → `component.Compose`).
+> The preview-1 import shape survives only as the bare `-target wasm-bin`
+> raw-core escape hatch (runnable directly under `wasmtime run`) and in
+> the e2e test infrastructure (`buildComponent`), which still drives
+> `wasm-tools --adapt` to cross-check the core module. The sections below
+> are the original plan, kept for history.
+
 ## Goal
 
 Move the WASM backend from WASI Preview 1 (the legacy core-module
