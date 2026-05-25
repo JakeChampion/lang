@@ -972,11 +972,25 @@ Phase 3 CANNOT start with the freelist — it must start by
    string-pool end, which never falls below `stringStart = 1024`.
    wasm allocations round to 16 (matching the natives' class
    granularity) only when the flag is on; flag-off keeps the 4-byte
-   rounding, so the default wasm module is byte-identical. NOT yet
-   wired into the rc dec sites (rc_dec / the drop helpers still don't
-   free); that wiring is the next slice — the push-loop reclamation
-   win. The flip itself stays gated on a corpus-wide-green detector
-   on all backends + explicit owner sign-off.
+   rounding, so the default wasm module is byte-identical.
+
+   **First dec-site wiring — `__fern_drop_arr_ptr` tail-free (all
+   backends).** Flag-on, after the drop walks + dec's an array's
+   elements, on the last reference (rc==1) it returns the buffer to
+   the freelist (`__free(base, size)`; base = data - headerBytes,
+   size = headerBytes + cap*stride) instead of dec'ing to 0. So
+   rc-tracked-element array buffers (`Foo[]`, `i32[][]`, …) are
+   reclaimed at scope exit. Validated flag-on by
+   `Test{X86_64,Arm64,WASM}ArrayDropFree`: a 50-cycle build/drop
+   churn through a helper (each buffer freed + reused) plus the
+   ENTIRE rc-correctness corpus re-run with free actually happening
+   — the use-after-free net. All 20 corpus programs + the churn stay
+   value-correct with 0 over-releases on x86_64 locally; arm64 + wasm
+   ride CI. Still NOT wired: plain-array (`i32[]`) dec + the
+   dec-on-overwrite site (the push-loop old-buffer free) — those need
+   a size-aware `__fern_arr_dec` and are the next slice. The flip
+   itself stays gated on a corpus-wide-green detector on all backends
+   + explicit owner sign-off.
 5. **Enable + verify.** Flip the flag on, run the entire e2e suite
    under the detector with identical exit codes/stdout/stderr, plus
    the rc-correctness fuzzer (random nested values).

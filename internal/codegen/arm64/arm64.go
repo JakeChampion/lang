@@ -1212,6 +1212,28 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("add x22, x22, #1")
 	g.emit("b .Ldrop_loop")
 	g.label(".Ldrop_decarr")
+	if ast.RcFreeEnabled {
+		// Phase 3 step-4: on the last reference (rc==1) the elements
+		// have been dec'd above, so return the buffer to the
+		// freelist. headerBytes = max(16, stride); base = ptr -
+		// headerBytes; size = headerBytes + cap*stride (cap at
+		// ptr-12). rc reloaded (the element walk's __fern_rc_dec
+		// calls preserve x19/x20 but not w-temps).
+		g.emit("ldur w2, [x19, #-8]") // rc
+		g.emit("cmp w2, #1")
+		g.emit("b.ne .Ldrop_plaindec")
+		g.emit("mov x3, #16")
+		g.emit("cmp x20, #16")
+		g.emit("csel x3, x20, x3, hi") // headerBytes = max(16, stride)
+		g.emit("ldur w4, [x19, #-12]") // cap
+		g.emit("mul x1, x4, x20")      // cap * stride
+		g.emit("add x1, x1, x3")       // + headerBytes = size (arg2)
+		g.emit("sub x0, x19, x3")      // base = ptr - headerBytes (arg1)
+		g.emit("bl __fern_free")
+		g.emit("mov x0, x19") // return ptr
+		g.emit("b .Ldrop_done")
+		g.label(".Ldrop_plaindec")
+	}
 	// Dec the array itself; __fern_rc_dec returns the ptr in x0.
 	g.emit("mov x0, x19")
 	g.emit("bl __fern_rc_dec")
@@ -6660,6 +6682,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_drop_arr_ptr":
 			g.usesDropArrPtr = true
 			g.usesRcDec = true
+			if ast.RcFreeEnabled {
+				g.usesFree = true
+				g.usesAlloc = true
+			}
 		case "__fern_rc_is_unique":
 			g.usesRcIsUnique = true
 		case "__fern_strcat":

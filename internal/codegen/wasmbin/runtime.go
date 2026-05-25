@@ -415,6 +415,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
+					if ast.RcFreeEnabled {
+						// Flag-on, the drop frees the buffer at rc==1.
+						needs.add("__free")
+						needs.add("__fern_alloc")
+					}
 				case "__fern_rc_is_unique":
 					needs.add("__fern_rc_is_unique")
 				case "__fern_rc_underflow_count":
@@ -2314,11 +2319,66 @@ func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
 		body = inst.InstEnd(body) // block
 	}
 	body = inst.InstEnd(body) // if rc==1
+	nLocals := uint32(2)
+	if ast.RcFreeEnabled {
+		nLocals = 4 // + headerBytes (4), cap (5)
+		// Phase 3 step-4: on the last reference (rc==1) the elements
+		// have been dec'd above, so return the buffer to the
+		// freelist; otherwise just dec. headerBytes = max(16, stride);
+		// base = ptr - headerBytes; size = headerBytes + cap*stride
+		// (cap at ptr-12).
+		free := helperIdxs["__free"]
+		// rc == 1 ?
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// headerBytes = max(16, stride) → local 4
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 16)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 16)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstSelect(body)
+			body = inst.InstLocalSet(body, 4)
+			// cap = mem[ptr-12] → local 5
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstI32Const(body, 12)
+			body = numeric.InstI32Sub(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 5)
+			// __free(base = ptr - headerBytes, size = headerBytes + cap*stride)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 4)
+			body = numeric.InstI32Sub(body) // base (arg1)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body) // size (arg2)
+			body = inst.InstCall(body, free)
+		}
+		body = inst.InstElse(body)
+		{
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstCall(body, rcdec)
+			body = inst.InstDrop(body)
+		}
+		body = inst.InstEnd(body)
+		// result = ptr
+		body = inst.InstLocalGet(body, 0)
+		locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
 	// Dec the array itself; __fern_rc_dec returns the ptr, which
 	// becomes this helper's return value.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, rcdec)
-	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

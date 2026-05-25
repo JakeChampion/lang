@@ -502,6 +502,11 @@ func (g *generator) recordUse(target string) {
 	case "__fern_drop_arr_ptr":
 		g.usesDropArrPtr = true
 		g.usesRcDec = true
+		if ast.RcFreeEnabled {
+			// Flag-on, the drop frees the buffer at rc==1.
+			g.usesFree = true
+			g.usesAlloc = true
+		}
 	case "__fern_rc_is_unique":
 		g.usesRcIsUnique = true
 	case "__alloc":
@@ -3179,6 +3184,33 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("inc r13")
 	g.emit("jmp .Ldrop_loop")
 	g.label(".Ldrop_decarr")
+	if ast.RcFreeEnabled {
+		// Phase 3 step-4: on the last reference (rc==1) the array's
+		// elements have been dec'd above, so return the buffer to
+		// the freelist instead of just dec'ing to 0. base = data -
+		// headerBytes; headerBytes = max(16, stride); size =
+		// headerBytes + cap*stride (cap at data-12). rc reloaded —
+		// the element-walk's __fern_rc_dec calls clobbered ecx.
+		g.emit("mov ecx, dword ptr [rbx - 8]")
+		g.emit("cmp ecx, 1")
+		g.emit("jne .Ldrop_plaindec")
+		g.emit("mov r8, r14") // stride
+		g.emit("cmp r8, 16")
+		g.emit("jae .Ldrop_hdr")
+		g.emit("mov r8, 16")
+		g.label(".Ldrop_hdr")
+		g.emit("mov ecx, dword ptr [rbx - 12]") // cap (zero-extended)
+		g.emit("mov rax, rcx")
+		g.emit("imul rax, r14") // cap * stride
+		g.emit("add rax, r8")   // + headerBytes = size
+		g.emit("mov rsi, rax")  // arg2 = size
+		g.emit("mov rdi, rbx")
+		g.emit("sub rdi, r8") // arg1 = base = data - headerBytes
+		g.emit("call __fern_free")
+		g.emit("mov rax, rbx") // return ptr (matches contract)
+		g.emit("jmp .Ldrop_done")
+		g.label(".Ldrop_plaindec")
+	}
 	// Dec the array itself; __fern_rc_dec returns the ptr in rax.
 	g.emit("mov rdi, rbx")
 	g.emit("call __fern_rc_dec")
