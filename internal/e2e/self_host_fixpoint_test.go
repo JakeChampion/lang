@@ -25,16 +25,12 @@ import (
 //	stage 2: mmc compiles its own source bundle → gen2.
 //	stage 3: gen2 compiles its own source bundle → gen3.
 //
-// gen2 and gen3 are asserted BYTE-IDENTICAL — the self-hosted compiler
-// reproduces itself exactly, the gold-standard bootstrap fixpoint. As
-// a sanity check the produced compiler also compiles a separate
-// 2-module program to a binary that exits 42.
-//
-// (mmc itself differs from gen2 by one trailing byte: mmc is emitted
-// by the Go-built bundle_run, whose stdlib io.read_all_stdin / print
-// differ by a trailing newline from the self-hosted driver's
-// read_all_stdin builtin. From gen2 onward everything is self-hosted,
-// so gen2 == gen3.)
+// mmc, gen2, and gen3 are all asserted BYTE-IDENTICAL — the Go-built
+// bootstrap compiler and the self-hosted compiler produce exactly the
+// same output, and the self-hosted compiler reproduces itself: the
+// gold-standard bootstrap fixpoint. As a sanity check the produced
+// compiler also compiles a separate 2-module program to a binary that
+// exits 42.
 func TestSelfHostFixpoint(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -107,11 +103,15 @@ func TestSelfHostFixpoint(t *testing.T) {
 		t.Fatal("stage 3: gen2 emitted 0 bytes compiling its own source")
 	}
 
-	// Convergence: gen2 and gen3 must be byte-identical.
+	// Fixpoint: the Go-bootstrapped compiler (mmc) and both
+	// self-hosted generations must be byte-identical.
+	if !bytes.Equal(mmcAsm, gen2Asm) {
+		t.Fatalf("stage-1 fixpoint broken: mmc=%d bytes, gen2=%d bytes", len(mmcAsm), len(gen2Asm))
+	}
 	if !bytes.Equal(gen2Asm, gen3Asm) {
 		t.Fatalf("fixpoint not convergent: gen2=%d bytes, gen3=%d bytes", len(gen2Asm), len(gen3Asm))
 	}
-	t.Logf("convergent self-hosting fixpoint: gen2 == gen3 (%d bytes)", len(gen2Asm))
+	t.Logf("byte-identical self-hosting fixpoint: mmc == gen2 == gen3 (%d bytes)", len(gen2Asm))
 
 	// Sanity: gen2 is a working compiler — compile a 2-module program.
 	prog2 := "///MODULE a\n" +

@@ -3106,7 +3106,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
-            if (name == "print" && c.args.len() == 1) {
+            // `write(s)` is `print(s)` without a trailing newline. The
+            // self-host print runtime already omits the newline, so
+            // write and print share the same lowering here; the Go
+            // backend distinguishes them (print = puts, with newline),
+            // so the bootstrap driver uses `write` to keep the
+            // self-hosted output byte-identical to the Go-built one.
+            if ((name == "print" || name == "write") && c.args.len() == 1) {
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
@@ -4731,7 +4737,10 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ret\n");
     }
     // __fern_print_str: %rdi = string box ptr. Loads box.data
-    // and box.len, issues a write(1, ptr, len).
+    // and box.len, issues a write(1, ptr, len). (No trailing
+    // newline — `write` is the no-newline output builtin; the Go
+    // backend's `print` does add one, so the bootstrap driver uses
+    // `write` to keep the self-hosted output byte-identical.)
     if (s.needs_str_print) {
         s = s.write("__fern_print_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
