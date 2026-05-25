@@ -714,6 +714,88 @@ func WasiSocketsInstanceNetworkInstanceTypeBody(outerNetworkTypeidx uint32) []by
 	return body
 }
 
+// tcpMethodFuncDecl builds an instance-type func decl + its export.
+// params is a flat list of (name, valtype) pairs; resultTypeidx is the
+// single anonymous result. Returns the bytes for `0x01 0x40 ... +
+// export`.
+func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte, resultTypeidx byte) []byte {
+	out := []byte{0x01, 0x40}
+	out = leb128.UlebU64(out, uint64(len(paramNames)))
+	for i, n := range paramNames {
+		out = leb128.UlebU64(out, uint64(len(n)))
+		out = append(out, n...)
+		out = append(out, paramValtypes[i])
+	}
+	out = append(out, 0x00, resultTypeidx) // single anonymous result
+	return out
+}
+
+// WasiSocketsTcpInstanceTypeBody returns the type-section body for
+// `wasi:sockets/tcp@0.2.0` — the `tcp-socket` resource plus the six
+// methods a listening server uses: start-bind / finish-bind /
+// start-listen / finish-listen / accept / subscribe. It outer-aliases
+// network / error-code / ip-socket-address (from sockets/network),
+// input-stream / output-stream (from io/streams), and pollable (from
+// io/poll); the caller must have surfaced those six at the top level
+// (PutAliasSectionInstanceExportType) and passes their type indices.
+//
+// accept returns result<tuple<own<tcp-socket>, own<input-stream>,
+// own<output-stream>>, error-code>; subscribe returns own<pollable>;
+// the bind/listen methods return result<_, error-code>.
+//
+// Inner type indices: 0-5 the six outer aliases, 6 tcp-socket
+// resource, 7 borrow<tcp-socket>, 8 borrow<network>, 9
+// result<_,error-code>, 10-13 own<tcp-socket|input|output|pollable>,
+// 14 tuple<10,11,12>, 15 result<14,error-code>, then 16/18/20/22/24/26
+// the method functypes (each followed by its export). 28 decls.
+func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
+	exportMethod := func(body []byte, name string, funcTypeidx byte) []byte {
+		body = append(body, 0x04, 0x00, byte(len(name)))
+		body = append(body, name...)
+		return append(body, 0x01, funcTypeidx)
+	}
+	body := []byte{0x01, 0x42, 0x1c} // 28 decls
+	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
+	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
+	body = append(body, OuterAliasTypeDecl(1, ipSockAddrT)...)   // 2
+	body = append(body, OuterAliasTypeDecl(1, inputStreamT)...)  // 3
+	body = append(body, OuterAliasTypeDecl(1, outputStreamT)...) // 4
+	body = append(body, OuterAliasTypeDecl(1, pollableT)...)     // 5
+	body = append(body, ExportSubResourceDecl("tcp-socket")...)  // 6
+	body = append(body, 0x01, 0x68, 0x06)                        // 7: borrow<tcp-socket>
+	body = append(body, 0x01, 0x68, 0x00)                        // 8: borrow<network>
+	body = append(body, 0x01)                                    // 9: result<_, error-code=1>
+	body = append(body, InnerTypeResultErr(1)...)
+	body = append(body, 0x01, 0x69, 0x06) // 10: own<tcp-socket>
+	body = append(body, 0x01, 0x69, 0x03) // 11: own<input-stream>
+	body = append(body, 0x01, 0x69, 0x04) // 12: own<output-stream>
+	body = append(body, 0x01, 0x69, 0x05) // 13: own<pollable>
+	body = append(body, 0x01)             // 14: tuple<own tcp-socket, own input, own output>
+	body = append(body, InnerTypeTuple([]byte{0x0a, 0x0b, 0x0c})...)
+	body = append(body, 0x01) // 15: result<tuple=14, error-code=1>
+	body = append(body, InnerTypeResultOkErr(14, 1)...)
+	// 16: start-bind(self: borrow 7, network: borrow 8, local-address: ip-sock-addr 2) -> result 9
+	body = append(body, tcpMethodFuncDecl("start-bind",
+		[]string{"self", "network", "local-address"}, []byte{0x07, 0x08, 0x02}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.start-bind", 0x10)
+	// 17: finish-bind(self) -> result 9  (func exports don't consume a type index)
+	body = append(body, tcpMethodFuncDecl("finish-bind", []string{"self"}, []byte{0x07}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.finish-bind", 0x11)
+	// 18: start-listen(self) -> result 9
+	body = append(body, tcpMethodFuncDecl("start-listen", []string{"self"}, []byte{0x07}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.start-listen", 0x12)
+	// 19: finish-listen(self) -> result 9
+	body = append(body, tcpMethodFuncDecl("finish-listen", []string{"self"}, []byte{0x07}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.finish-listen", 0x13)
+	// 20: accept(self) -> result 15
+	body = append(body, tcpMethodFuncDecl("accept", []string{"self"}, []byte{0x07}, 0x0f)...)
+	body = exportMethod(body, "[method]tcp-socket.accept", 0x14)
+	// 21: subscribe(self) -> own<pollable> 13
+	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x07}, 0x0d)...)
+	body = exportMethod(body, "[method]tcp-socket.subscribe", 0x15)
+	return body
+}
+
 // WasiFilesystemTypesDescriptorInstanceTypeBody returns the
 // type-section body for a minimal `wasi:filesystem/types@0.2.0`
 // instance type that declares just the `descriptor` resource —
