@@ -212,6 +212,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrDec {
 		g.emitArrDecRuntime()
 	}
+	if g.usesMapDrop {
+		g.emitMapDropRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -470,6 +473,10 @@ type generator struct {
 	// that frees the buffer at rc==0 (plain-array scope-exit +
 	// array dec-on-overwrite). Pulls in __fern_free.
 	usesArrDec bool
+	// usesMapDrop gates `__fern_map_drop` — the Phase 3 map
+	// reclamation handler that frees the buf + handle at rc==1
+	// (Map scope-exit). Pulls in __fern_free when the flag is on.
+	usesMapDrop bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -525,6 +532,12 @@ func (g *generator) recordUse(target string) {
 		g.usesArrDec = true
 		g.usesFree = true
 		g.usesAlloc = true
+	case "__fern_map_drop":
+		g.usesMapDrop = true
+		if ast.RcFreeEnabled {
+			g.usesFree = true
+			g.usesAlloc = true
+		}
 	case "__slice_make":
 		g.usesSliceMake = true
 		g.usesAlloc = true
@@ -2583,7 +2596,7 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_read_line_buf")
 			g.line("\t.space 4096")
 		}
-		if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec {
+		if g.usesRcDec || g.usesRcUnderflowCount || g.usesArrDec || g.usesMapDrop {
 			// Phase 3 rc-underflow detector counter (i32 in the
 			// low word). __fern_rc_dec bumps it on an over-release;
 			// __fern_rc_underflow_count reads it back.
@@ -2813,6 +2826,83 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_arr_dec, .-__fern_arr_dec")
+}
+
+// emitMapDropRuntime emits `__fern_map_drop(m) -> m` — the Phase 3
+// map reclamation handler, the Map analogue of __fern_arr_dec. A Map
+// handle `m` is a heap cell whose rc lives at [m-8] and whose buf
+// pointer (the buckets+entries buffer) lives at [m+0]. On the LAST
+// reference (rc==1) the handle's storage is returned to the freelist:
+// first the buf (size = 16 + cap*(4+entryStride), cap at [buf+0],
+// entryStride = 2*ptrW = 16 on x86-64), then the 16-byte handle cell
+// itself (base = m-8). Entry KEYS / VALUES are NOT walked here — their
+// rc accounting is untouched, so they leak exactly as before (a
+// follow-up slice converts map.set to retain-on-store and frees
+// array-typed values). On rc>1 the handle is just dec'd. Same null /
+// low-address / sentinel / underflow guards as __fern_arr_dec; only
+// emitted/used when the flag is on. The return value is discarded by
+// the caller's OpDrop.
+//
+// System V: rdi = m. Returns m in rax.
+func (g *generator) emitMapDropRuntime() {
+	g.line("")
+	g.line(".globl __fern_map_drop")
+	g.line(".type __fern_map_drop, @function")
+	g.label("__fern_map_drop")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")     // 16-byte alignment padding for the __fern_free calls
+	g.emit("mov rbx, rdi") // rbx = m (callee-save across __fern_free)
+	g.emit("mov rax, rdi") // default return = m
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lmapdrop_ret")
+	g.emit("cmp rdi, 0x10000")
+	g.emit("jb .Lmapdrop_ret")
+	g.emit("mov ecx, dword ptr [rbx - 8]") // handle rc
+	g.emit("test ecx, ecx")
+	g.emit("js .Lmapdrop_ret") // static sentinel
+	g.emit("cmp ecx, 0")
+	g.emit("jg .Lmapdrop_pos")
+	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
+	g.emit("jmp .Lmapdrop_dec")
+	g.label(".Lmapdrop_pos")
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Lmapdrop_dec")
+	// rc == 1 → free buf, then the handle cell.
+	if ast.RcFreeDebug {
+		// Quarantine: poison the handle rc and DON'T recycle, so any
+		// stale reference's later rc op traps.
+		g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
+		g.emit("jmp .Lmapdrop_ret")
+	}
+	g.emit("mov rdx, [rbx]") // buf = load_ptr(m)
+	g.emit("test rdx, rdx")
+	g.emit("jz .Lmapdrop_freehandle")
+	g.emit("cmp rdx, 0x10000")
+	g.emit("jb .Lmapdrop_freehandle")
+	g.emit("mov ecx, dword ptr [rdx]") // cap (zero-extended)
+	g.emit("imul rcx, rcx, 20")        // cap * (4 + entryStride=16)
+	g.emit("add rcx, 16")              // + 16-byte header = size
+	g.emit("mov rsi, rcx")             // size (arg2)
+	g.emit("mov rdi, rdx")             // base = buf (arg1)
+	g.emit("call __fern_free")
+	g.label(".Lmapdrop_freehandle")
+	g.emit("mov rdi, rbx")
+	g.emit("sub rdi, 8")  // handle alloc base = m - 8
+	g.emit("mov esi, 16") // handle size = 16
+	g.emit("call __fern_free")
+	g.emit("mov rax, rbx")
+	g.emit("jmp .Lmapdrop_ret")
+	g.label(".Lmapdrop_dec")
+	g.emit("sub ecx, 1")
+	g.emit("mov dword ptr [rbx - 8], ecx")
+	g.label(".Lmapdrop_ret")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_map_drop, .-__fern_map_drop")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:

@@ -1634,8 +1634,20 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	}
 	elig := map[string]bool{}
 	for _, v := range b.info.Locals[b.fn] {
-		if _, isArr := v.Type.(ast.ArrayType); isArr && !tainted[v.Name] {
+		if tainted[v.Name] {
+			continue
+		}
+		switch t := v.Type.(type) {
+		case ast.ArrayType:
 			elig[v.Name] = true
+		case ast.StructType:
+			// A Map local (runtime handle, StructType "Map") is owned
+			// when untainted, so its buf + handle may be freed at the
+			// last reference. Other StructType locals are user structs
+			// whose box never frees yet (rc_dec leak) — not eligible.
+			if t.Name == "Map" {
+				elig[v.Name] = true
+			}
 		}
 	}
 	return elig
@@ -1720,6 +1732,20 @@ func (b *builder) emitRcDecLocalsAtExit() {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		// Phase 3 map reclamation: an OWNED Map local returns its buf
+		// + handle to the freelist at the last reference (rc==1) via
+		// __fern_map_drop. Entry keys/values keep their existing
+		// accounting (they leak — a follow-up converts map.set to
+		// retain-on-store and frees array-typed values). Ineligible
+		// (borrowed-derived) maps and flag-off builds fall through to
+		// the plain box dec. The helper carries the same guards as
+		// __fern_arr_dec.
+		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
