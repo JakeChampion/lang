@@ -411,6 +411,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
+                    if (id.name == "read_all_stdin") { return "string"; }
                     if (id.name == "i32_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
@@ -3258,6 +3259,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_read_line();
                 return s;
             }
+            // read_all_stdin() — read fd 0 to EOF into one string box.
+            // Unlike read_line (one 256-byte read), this loops until
+            // the read syscall returns 0, so it can pull in a whole
+            // multi-line source (blank lines and all) — required for
+            // feeding the compiler its own source. Piggybacks the
+            // read_line needs-flag for runtime emission + heap.
+            if (name == "read_all_stdin" && c.args.len() == 0) {
+                s = s.write("    call __fern_read_all_stdin\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_str_read_line();
+                return s;
+            }
             // i32_to_string(n) — convert an i32 to its decimal
             // string box. Useful for composing numeric output
             // into a larger message: `"answer: " + i32_to_string(n)`.
@@ -4899,6 +4912,42 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
+        // __fern_read_all_stdin: no args. Allocates a large buffer,
+        // loops sys_read(fd=0, …) appending until EOF (read → 0),
+        // then returns a 16-byte box `[data_ptr, total_len]`. The
+        // buffer is sized to hold a whole compiler-source bundle.
+        s = s.write("__fern_read_all_stdin:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %r12\n");        // total bytes
+        s = s.write("    pushq %r13\n");        // buf base
+        s = s.write("    pushq %r14\n");        // current write ptr
+        s = s.write("    movq $33554432, %rdi\n");   // 32 MiB read buffer
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq %rax, %r14\n");
+        s = s.write("    movq $0, %r12\n");
+        s = s.write(".Lras_loop:\n");
+        s = s.write("    movq $0, %rax\n");      // sys_read
+        s = s.write("    movq $0, %rdi\n");      // fd 0
+        s = s.write("    movq %r14, %rsi\n");    // dst = write ptr
+        s = s.write("    movq $1048576, %rdx\n");// up to 1 MiB per read
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lras_done\n");     // 0 = EOF, <0 = error
+        s = s.write("    addq %rax, %r12\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    jmp .Lras_loop\n");
+        s = s.write(".Lras_done:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    leave\n");
+        s = s.write("    ret\n");
     }
     // __fern_i32_to_string: %rdi = i32 value. Converts to
     // decimal text on the heap and returns a 16-byte string
@@ -5702,7 +5751,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip 1048576\n");
+        s = s.write("__fern_heap: .skip 268435456\n");   // 256 MiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
