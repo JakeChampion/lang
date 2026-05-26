@@ -420,15 +420,6 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type, ptrW int) ([]Op, int, b
 	return out, contRetIdx - ifIdx + 1, true
 }
 
-// returnBlockType maps the function's declared return type to the
-// matching block result type. Used by flatten + the multi-return
-// inliner; kept as a small helper next to the blocktype-emitting
-// passes. i64 / f64 / f32 surface their wider block types so the
-// wrapper's signature matches the wat side.
-func returnBlockType(t ast.Type) int32 {
-	return returnBlockTypeFor(t, 4)
-}
-
 // returnBlockTypeFor is the ptrW-aware variant. On wasm32
 // (ptrW=4) string-typed returns surface as `BlockTypeStringPair`
 // so the inliner's wrapper block / function-result clause matches

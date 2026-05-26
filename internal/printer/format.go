@@ -151,19 +151,6 @@ func (f *formatter) drainAll(depth int) {
 	}
 }
 
-// drainBeforeLine flushes comments whose line is strictly less than
-// `line`, at the given depth. Used inside blocks to catch comments
-// that sit between the last statement and the closing brace.
-func (f *formatter) drainBeforeLine(line, depth int) {
-	for f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
-		f.indent(depth)
-		f.b.WriteString("//")
-		f.b.WriteString(f.comments[f.ci].Text)
-		f.b.WriteByte('\n')
-		f.ci++
-	}
-}
-
 // indent writes n levels of two-space indentation.
 func (f *formatter) indent(n int) {
 	for i := 0; i < n; i++ {

@@ -1772,14 +1772,6 @@ func (i *Interp) Register(fn *ast.FuncDecl) { i.Funcs[fn.Name] = fn }
 // once per top-level enum after parsing.
 func (i *Interp) RegisterEnum(ed *ast.EnumDecl) { i.Enums[ed.Name] = ed }
 
-// findVariant returns the owning enum and variant index for an
-// unqualified variant name. Tracking lookups on demand keeps
-// Interp.RegisterEnum cheap; the cost only shows up at evaluation
-// of variant constructors and match arms.
-func (i *Interp) findVariant(name string) (*ast.EnumDecl, int, bool) {
-	return i.findVariantOn(name, "")
-}
-
 // findVariantOn restricts the lookup to a specific enum when
 // `enumName` is non-empty. Used by the qualified-variant paths
 // (`Color.Red` Ident / Call sites) so the lookup is deterministic

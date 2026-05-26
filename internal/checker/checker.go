@@ -2749,10 +2749,6 @@ func assignable(dst, src ast.Type) bool {
 	return false
 }
 
-func (c *checker) errf(pos ast.Position, format string, args ...any) {
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile()})
-}
-
 // errfCode is the code-stamping sibling of errf — assigns a
 // stable error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4)
 // to the emission. Codes line up with the per-code catalogue
@@ -5422,12 +5418,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return nil
 	}
 	return nil
-}
-
-func (c *checker) requireNumber(p ast.Position, t ast.Type, op string) {
-	if t != nil && !ast.Equal(t, ast.NumberType{}) {
-		c.errfCode(p, "E009", "operator %q requires i32, got %s", op, t)
-	}
 }
 
 // requireInteger matches any integer type — i32, i64, eventually

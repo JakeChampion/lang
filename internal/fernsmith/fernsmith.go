@@ -240,12 +240,6 @@ const (
 // ProfileFree allows them.
 func (p Profile) floatsAllowed() bool { return p == ProfileFree }
 
-// runnable reports whether the current profile is producing
-// code that has to run identically across every backend (no
-// stdout differences, no Inf/NaN edges). Today equivalent to
-// the deterministic-across-backends invariant.
-func (p Profile) runnable() bool { return p == ProfileRunnable }
-
 // Generator emits source text directly while tracking an in-scope
 // set of typed identifiers. Each expression production picks
 // operands whose types match the context so the result type-checks

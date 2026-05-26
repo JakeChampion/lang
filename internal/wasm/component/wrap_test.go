@@ -10,26 +10,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/wasm/component"
-	"github.com/jakechampion/lang/internal/wasm/leb128"
 )
-
-// coreSecLeb appends a core-wasm section with a proper uleb size
-// (handles bodies ≥ 128 bytes).
-func coreSecLeb(buf []byte, id byte, body []byte) []byte {
-	buf = append(buf, id)
-	buf = leb128.UlebU64(buf, uint64(len(body)))
-	return append(buf, body...)
-}
-
-// coreImport appends one import entry: module + name + func typeidx.
-func coreImport(buf []byte, module, name string, typeidx byte) []byte {
-	buf = append(buf, byte(len(module)))
-	buf = append(buf, module...)
-	buf = append(buf, byte(len(name)))
-	buf = append(buf, name...)
-	buf = append(buf, 0x00, typeidx) // importdesc func, typeidx
-	return buf
-}
 
 // helloCoreModule returns the bytes of a tiny core wasm module
 // that imports a host function `(import "wasi-exit" "exit"
@@ -241,58 +222,6 @@ func TestBuildWasiCliRunComponent_RunsUnderWasmtime(t *testing.T) {
 	// the component. _run returns 0 → result::ok → exit 0.
 	if out, err := exec.Command("wasmtime", "run", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasmtime run failed: %v\n%s", err, out)
-	}
-}
-
-// exitMainCoreModule returns the bytes of a tiny core wasm module
-// that both imports `wasi-exit::exit(i32) -> ()` AND exports
-// `main() -> i32`. The exported `main` does:
-//
-//	i32.const 99
-//	call exit         ; conceptually never returns
-//	i32.const 42      ; dead code for the validator
-//	end
-//
-// This exercises both the import-wiring path AND the export-lifting
-// path of WrapWasiImported: when wasmtime --invokes main,
-// the embedded core dispatches into the host-provided exit handler.
-func exitMainCoreModule() []byte {
-	return []byte{
-		// magic + version 1
-		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-		// type section (id 1), size 9; body:
-		//   vec(2) functypes
-		//   type 0: 0x60 vec(1) [i32] vec(0) []      ; (param i32) -> ()
-		//   type 1: 0x60 vec(0) []     vec(1) [i32]  ; () -> (result i32)
-		0x01, 0x09, 0x02,
-		0x60, 0x01, 0x7f, 0x00,
-		0x60, 0x00, 0x01, 0x7f,
-		// import section (id 2), size 18; body:
-		//   vec(1)
-		//   module "wasi-exit" (len 9), name "exit" (len 4),
-		//   kind=func (0x00), typeidx 0
-		0x02, 0x12,
-		0x01,
-		0x09, 'w', 'a', 's', 'i', '-', 'e', 'x', 'i', 't',
-		0x04, 'e', 'x', 'i', 't',
-		0x00, 0x00,
-		// function section (id 3), size 2; body:
-		//   vec(1) typeidxs = [1]
-		0x03, 0x02, 0x01, 0x01,
-		// export section (id 7), size 8; body:
-		//   vec(1) exports
-		//   name "main" (len 4), kind=func, funcidx 1
-		//   (the imported exit is funcidx 0, so our defined main
-		//    sits at funcidx 1 after the import-shift)
-		0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x01,
-		// code section (id 10), size 10; body:
-		//   vec(1) bodies
-		//   body length 8: vec(0) locals,
-		//     i32.const 99 (0x41 0x63), call 0 (0x10 0x00),
-		//     i32.const 42 (0x41 0x2a), end (0x0b)
-		0x0a, 0x0a,
-		0x01, 0x08, 0x00,
-		0x41, 0x63, 0x10, 0x00, 0x41, 0x2a, 0x0b,
 	}
 }
 

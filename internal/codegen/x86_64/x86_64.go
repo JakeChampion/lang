@@ -2021,45 +2021,6 @@ func (g *generator) emitStrDataPtr(dstReg, srcReg, scratchMem string) {
 	g.label(fmt.Sprintf(".Lstrdata_done_%d", id))
 }
 
-// emitStrInlinePack builds an inline-tagged string in dstReg from
-// `len` data bytes pointed to by `srcReg` and a 32-bit length in
-// `lenReg32`. Caller guarantees `1 <= length <= 7`; length 0 stays
-// on the heap-sentinel path. Performs an unaligned 8-byte load to
-// scoop up the data bytes at once (over-reads beyond the end of
-// the source if length < 7, but heap allocations are page-padded
-// so the over-read is safe in practice; masks the irrelevant high
-// bytes back to zero).
-//
-// Layout produced (low → high):
-//
-//	byte 0:    (length << 1) | 1
-//	bytes 1..length: data
-//	bytes (length+1)..7: zero
-//
-// Clobbers a temp 64-bit register `tempReg` distinct from dstReg /
-// srcReg / lenReg32's containing 64-bit reg.
-func (g *generator) emitStrInlinePack(dstReg, srcReg, lenReg32, tempReg string) {
-	// dstReg = 8-byte unaligned load from srcReg.
-	g.emit(fmt.Sprintf("mov %s, [%s]", dstReg, srcReg))
-	// Build the byte mask in tempReg = (1 << (lenReg32 * 8)) - 1.
-	// We can't shift by a 64-bit count from a 32-bit reg directly,
-	// so we go through rcx (the x86 shift-by-CL convention).
-	g.emit(fmt.Sprintf("mov ecx, %s", lenReg32))
-	g.emit("shl ecx, 3") // ecx = length * 8 (bits to keep)
-	g.emit(fmt.Sprintf("mov %s, 1", tempReg))
-	g.emit(fmt.Sprintf("shl %s, cl", tempReg))
-	g.emit(fmt.Sprintf("sub %s, 1", tempReg)) // tempReg = (1 << (length*8)) - 1
-	g.emit(fmt.Sprintf("and %s, %s", dstReg, tempReg))
-	// dstReg now holds the `length` data bytes in the low (length*8)
-	// bits; shift up by 8 to make room for the tag-and-length byte.
-	g.emit(fmt.Sprintf("shl %s, 8", dstReg))
-	// tempReg = (length << 1) | 1 — the tag+length byte.
-	g.emit(fmt.Sprintf("mov %s, %s", reg32(tempReg), lenReg32))
-	g.emit(fmt.Sprintf("shl %s, 1", reg32(tempReg)))
-	g.emit(fmt.Sprintf("or %s, 1", reg32(tempReg)))
-	g.emit(fmt.Sprintf("or %s, %s", dstReg, tempReg))
-}
-
 // emitStrLenStore writes the i32 length in srcReg to the 4-byte
 // little-endian length prefix at `[dstReg - 4]`, where dstReg is
 // the new string's *data pointer* (one past the prefix). Inverse

@@ -35,12 +35,6 @@
 
 package ir
 
-// LiveFunctions is shorthand for LiveFunctionsWithAliases with
-// no codegen aliases.
-func LiveFunctions(prog *Program, keepAlive ...string) map[string]bool {
-	return LiveFunctionsWithAliases(prog, nil, keepAlive...)
-}
-
 // LiveFunctionsWithAliases returns the set of function names
 // reachable from the program's entry points (main / handle)
 // plus the `keepAlive` extras, following OpCallDirect /

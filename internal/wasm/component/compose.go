@@ -111,13 +111,6 @@ func (c *p2composer) lowerMemRealloc(cfuncIdx, realloc uint32) uint32 {
 	return idx
 }
 
-func (c *p2composer) coreInstOneFunc(name string, coreFuncIdx uint32) uint32 {
-	c.buf = PutCoreInstanceSectionFromOneFuncExport(c.buf, name, coreFuncIdx)
-	idx := c.nCoreInst
-	c.nCoreInst++
-	return idx
-}
-
 func (c *p2composer) coreInstExports(exports []CoreInstanceExport) uint32 {
 	c.buf = PutCoreInstanceSectionFromExports(c.buf, exports)
 	idx := c.nCoreInst
