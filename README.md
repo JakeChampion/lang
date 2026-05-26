@@ -48,10 +48,9 @@ qemu-aarch64 factorial
 #   ships unchanged; copy to a Mac to run):
 ./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
 
-# WASM (preview-2 component)
-./fern -target wasm -wasi-adapter $FERN_WASI_ADAPTER \
-    -o factorial.wasm examples/factorial.fern
-wasmtime run factorial.wasm
+# WASM (self-contained preview-2 component, no external adapter)
+./fern -target wasm-bin -component-wrap -o factorial.wasm examples/factorial.fern
+wasmtime run --invoke 'main()' factorial.wasm   # prints 720
 
 # Formatter
 ./fern -fmt examples/factorial.fern        # writes idiomatic source to stdout

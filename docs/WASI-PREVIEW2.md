@@ -8,10 +8,13 @@
 > toolchain. Any mix of the migrated preview-2 imports composes through
 > one unified path (`classifyComposeRequest` → `component.Compose`).
 > The preview-1 import shape survives only as the bare `-target wasm-bin`
-> raw-core escape hatch (runnable directly under `wasmtime run`) and in
-> the e2e test infrastructure (`buildComponent`), which still drives
-> `wasm-tools --adapt` to cross-check the core module. The sections below
-> are the original plan, kept for history.
+> raw-core escape hatch (runnable directly under `wasmtime run`). The e2e
+> test infrastructure (`buildComponent`) now composes natively in-process
+> too (`component.Compose`), so the suite's only external dependency is
+> `wasmtime` to run the components — no `wasm-tools --adapt`, no preview-1
+> adapter; a handful of preview-2 tests still shell out to `wasm-tools
+> print` purely to inspect the composed output. The sections below are the
+> original plan, kept for history.
 
 ## Goal
 

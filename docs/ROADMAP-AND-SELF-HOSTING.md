@@ -315,42 +315,31 @@ arguments are different — `-nostdlib -lSystem` — because
 Apple's ld64 requires the libSystem.dylib stub for dynamic
 linkage, even when we link nothing FROM libSystem.
 
-### wasm-tools
+### wasm-tools *(no longer a toolchain dependency)*
 
-**Used at**: `cmd/fern/main.go:381-415` (three subprocess
-calls in sequence).
+**Historical.** The wasm backend used to shell out to
+`wasm-tools` in three subprocess calls (`parse` →
+`component embed` → `component new --adapt
+wasi_snapshot_preview1=ADAPTER`) to turn the emitted core
+module into a **Component Model** artifact — the shape
+edge-function runtimes (`wasmtime serve`, Fastly Compute,
+Cloudflare workerd, etc.) consume.
 
-The wasm backend's job is to emit a **Component Model**
-artifact, not a bare core module — that's what edge-function
-runtimes (`wasmtime serve`, Fastly Compute, Cloudflare
-workerd, etc.) consume. The pipeline:
-
-1. **`wasm-tools parse`** — lowers our text WAT into a
-   binary core wasm module (the `.wasm` you'd run with
-   `wasmtime run`). Same job as `wat2wasm`.
-2. **`wasm-tools component embed`** — annotates the binary
-   module with a Component Type section, derived from the
-   `.wit` interface description (embedded in the lang binary
-   via Go's `embed` — see `cmd/fern/main.go:355-362`). This
-   tells downstream tooling "this module implements the
-   `lang` world / the `http` world".
-3. **`wasm-tools component new --adapt
-   wasi_snapshot_preview1=ADAPTER`** — wraps the annotated
-   core module into a real Component Model component,
-   adapting any preview-1 imports the module makes (via the
-   wasi-preview2 adapter shim) into preview-2 imports. The
-   result is a `.component.wasm` file that any preview-2
-   host can load.
-
-Without wasm-tools, the wasm target would stop at
-`prog.wat`. Writing the parse + component-embed pipeline
-ourselves would mean re-implementing the binary wasm
-encoder, the Component Type encoder, and the
-preview1-to-preview2 adapter — easily 10K+ lines of work,
-and the format is still evolving (the Component Model
-proposal isn't finalised). Shelling out to the upstream
-tool is the standard practice; every wasm component
-producer (rust-cargo-component, JCO, py2wasm, …) does this.
+That pipeline is gone. The "10K+ lines of work" this section
+once argued against — a native binary wasm encoder, the
+Component Type encoder, and the preview-1 → preview-2 adapter
+— now lives in-tree under `internal/wasm/*` (`encode`,
+`componenttype`, `component`, plus the `leb128` / `sections`
+/ `inst` / `imports` / `memory` / … building blocks).
+`fern -target wasm` / `-target wasi-http` compose components
+natively in Go (`component.ClassifyCore` → `component.Compose`,
+see `cmd/fern/main.go`), with no `wasm-tools` shell-out and no
+preview-1 adapter. The only external process the toolchain
+still spawns is the linker (and qemu under `--run`) — building
+and running wasm output needs neither `wasm-tools` nor the
+adapter. A handful of e2e tests still call `wasm-tools print`
+to inspect a composed component, but that's a test-only
+convenience, not a build dependency.
 
 ### Why a self-hosted compiler needs process spawning
 
