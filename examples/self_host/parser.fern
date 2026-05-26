@@ -1021,6 +1021,22 @@ function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
     if (base.len() == 0) {
+        // Tuple type `(T1, T2, …)`. The self-host stores types
+        // coarsely, so consume the balanced parens and return a
+        // placeholder "tuple" rather than the precise shape. Without
+        // this the leading `(` is left on the cursor and the decl
+        // loop spins (OOM). std/string's split_at / split_once use
+        // `(string, string)` and `Option[(string, string)]`.
+        if (p.peek_punct() == "(") {
+            var td: i32 = 0;
+            while (!p.at_end()) {
+                var tpk: string = p.peek_punct();
+                if (tpk == "(") { td = td + 1; p = p.advance(); continue; }
+                if (tpk == ")") { td = td - 1; p = p.advance(); if (td == 0) { break; } continue; }
+                p = p.advance();
+            }
+            return TypeNameResult { par: p, name: "tuple" };
+        }
         return TypeNameResult { par: p, name: "" };
     }
     p = p.advance();
@@ -1055,6 +1071,10 @@ function parse_type_name(p: Par): TypeNameResult {
         if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); continue; }
         if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); continue; }
         if (pk == ",") { inner = inner + ", "; p = p.advance(); continue; }
+        // Tuple types nested inside a generic arg, e.g.
+        // `Option[(string, string)]` — pass parens through verbatim.
+        if (pk == "(") { inner = inner + "("; p = p.advance(); continue; }
+        if (pk == ")") { inner = inner + ")"; p = p.advance(); continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }
