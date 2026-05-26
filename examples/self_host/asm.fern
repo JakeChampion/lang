@@ -496,8 +496,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
                     if (is_map(rt) && fa.field == "iter") {
-                        if (rt.len() >= 4 && rt[0:4] == "map:") { return "mapiter:" + rt[4:rt.len()]; }
-                        return "mapiter:unknown";
+                        return "mapiter:" + map_value_part(rt);
                     }
                     if (is_mapiter(rt) && fa.field == "has_next") { return "bool"; }
                     if (is_mapiter(rt) && fa.field == "key") { return "string"; }
@@ -660,9 +659,7 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                     if (fa.field == "read_chunk") { return "string"; }
                     if (fa.field == "get") {
                         var rt: string = infer_expr_type(fa.obj, s);
-                        if (rt.len() >= 4 && rt[0:4] == "map:") {
-                            return rt[4 : rt.len()];
-                        }
+                        if (is_map(rt)) { return map_value_part(rt); }
                     }
                     // `arr.min()` / `arr.max()` on an i32 array →
                     // Option[i32]; the payload is i32.
@@ -697,7 +694,11 @@ function ret_tag_of(name: string): string {
     if (name.len() >= 4 && name[0:4] == "Map[") {
         // Carry the value type into the tag ("map:<value-tag>") so
         // `m.get(k)` payloads infer correctly (e.g. string[] → array
-        // push/len rather than the string default).
+        // push/len rather than the string default). i32-keyed maps
+        // tag as "mapI:<V>" so dispatch picks integer key comparison.
+        if (generic_key_tag(name, 4) == "i32") {
+            return "mapI:" + generic_value_tag(name, 4);
+        }
         return "map:" + generic_value_tag(name, 4);
     }
     if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
@@ -709,17 +710,47 @@ function ret_tag_of(name: string): string {
     return "unknown";
 }
 
+// generic_key_tag extracts the key-type tag from a `Map[K, V]` type
+// name (the part before the first ", "); `start` is past the `[`.
+function generic_key_tag(name: string, start: i32): string {
+    if (name.len() <= start + 1) { return "unknown"; }
+    var inner: string = name[start : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ret_tag_of(inner[0 : i]);
+        }
+        i = i + 1;
+    }
+    return "unknown";
+}
+
 // is_mapiter reports whether a tag denotes a Map iterator
 // ("mapiter:<value-tag>"). Distinct from is_map, which excludes it.
 function is_mapiter(t: string): boolean {
     return t.len() >= 8 && t[0:8] == "mapiter:";
 }
 
-// is_map reports whether a type tag denotes a Map ("map" or
-// "map:<value-tag>"). Excludes "mapiter:" (the iterator tag), which
-// also begins "map".
+// is_map reports whether a type tag denotes a Map: "map",
+// "map:<V>" (string key), or "mapI:<V>" (i32 key). Excludes
+// "mapiter:" (the iterator tag).
 function is_map(t: string): boolean {
-    return t == "map" || (t.len() >= 4 && t[0:4] == "map:");
+    return t == "map" || (t.len() >= 4 && t[0:4] == "map:")
+        || (t.len() >= 5 && t[0:5] == "mapI:");
+}
+
+// map_key_is_i32 reports whether a Map tag denotes integer keys
+// ("mapI:<V>") — selects integer key comparison in dispatch.
+function map_key_is_i32(t: string): boolean {
+    return t.len() >= 5 && t[0:5] == "mapI:";
+}
+
+// map_value_part returns the value-type tag carried by a Map tag,
+// handling both the "map:<V>" and "mapI:<V>" forms.
+function map_value_part(t: string): string {
+    if (t.len() >= 5 && t[0:5] == "mapI:") { return t[5 : t.len()]; }
+    if (t.len() >= 4 && t[0:4] == "map:") { return t[4 : t.len()]; }
+    return "unknown";
 }
 
 // is_enum_variant reports whether `name` is a payload-bearing enum
@@ -2814,12 +2845,15 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // (mutated) map; get → Option[V]; has → bool;
                     // len → i32.
                     if (is_map(prim_recv) && fa.field == "set" && c.args.len() == 2) {
+                        var kk_set: string = "0";
+                        if (map_key_is_i32(prim_recv)) { kk_set = "1"; }
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = emit_expr(c.args[1], s);
                         s = s.write("    popq %rdx\n");   // v
                         s = s.write("    popq %rsi\n");   // k
                         s = s.write("    popq %rdi\n");   // mapbox
+                        s = s.write("    movq $" + kk_set + ", %rcx\n");   // keykind
                         s = s.write("    call __fern_map_set\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_heap();
@@ -2828,10 +2862,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         return s;
                     }
                     if (is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
+                        var kk_get: string = "0";
+                        if (map_key_is_i32(prim_recv)) { kk_get = "1"; }
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");   // k
                         s = s.write("    popq %rdi\n");   // mapbox
+                        s = s.write("    movq $" + kk_get + ", %rdx\n");   // keykind
                         s = s.write("    call __fern_map_get\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_heap();
@@ -2839,10 +2876,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         return s;
                     }
                     if (is_map(prim_recv) && fa.field == "has" && c.args.len() == 1) {
+                        var kk_has: string = "0";
+                        if (map_key_is_i32(prim_recv)) { kk_has = "1"; }
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");   // k
                         s = s.write("    popq %rdi\n");   // mapbox
+                        s = s.write("    movq $" + kk_has + ", %rdx\n");   // keykind
                         s = s.write("    call __fern_map_has\n");
                         s = s.write("    pushq %rax\n");
                         s = s.mark_str_eq();
@@ -7166,7 +7206,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rdx, %r14\n");          // val
         s = s.write("    movq (%r12), %r15\n");        // keys arr
         s = s.write("    movq $0, %rbx\n");            // i
-        s = s.write(".Lms_loop:\n");
+        s = s.write("    testq %rcx, %rcx\n");          // keykind (1 = i32)
+        s = s.write("    jnz .Lms_loop_i32\n");
+        s = s.write(".Lms_loop:\n");                    // string-key loop
         s = s.write("    movq (%r15), %rax\n");        // keys.len
         s = s.write("    cmpq %rax, %rbx\n");
         s = s.write("    jge .Lms_append\n");
@@ -7179,6 +7221,17 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jnz .Lms_found\n");
         s = s.write("    incq %rbx\n");
         s = s.write("    jmp .Lms_loop\n");
+        s = s.write(".Lms_loop_i32:\n");                // i32-key loop
+        s = s.write("    movq (%r15), %rax\n");
+        s = s.write("    cmpq %rax, %rbx\n");
+        s = s.write("    jge .Lms_append\n");
+        s = s.write("    movq %rbx, %rax\n");
+        s = s.write("    incq %rax\n");
+        s = s.write("    movq (%r15,%rax,8), %rax\n");   // keys[i+1]
+        s = s.write("    cmpq %r13, %rax\n");
+        s = s.write("    je .Lms_found\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lms_loop_i32\n");
         s = s.write(".Lms_found:\n");
         s = s.write("    movq 8(%r12), %rax\n");        // values arr
         s = s.write("    movq %rbx, %rdx\n");
@@ -7220,7 +7273,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rsi, %r13\n");          // key
         s = s.write("    movq (%r12), %r15\n");        // keys arr
         s = s.write("    movq $0, %rbx\n");
-        s = s.write(".Lmg_loop:\n");
+        s = s.write("    testq %rdx, %rdx\n");          // keykind (1 = i32)
+        s = s.write("    jnz .Lmg_loop_i32\n");
+        s = s.write(".Lmg_loop:\n");                    // string-key loop
         s = s.write("    movq (%r15), %rax\n");
         s = s.write("    cmpq %rax, %rbx\n");
         s = s.write("    jge .Lmg_none\n");
@@ -7233,6 +7288,17 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jnz .Lmg_found\n");
         s = s.write("    incq %rbx\n");
         s = s.write("    jmp .Lmg_loop\n");
+        s = s.write(".Lmg_loop_i32:\n");                // i32-key loop
+        s = s.write("    movq (%r15), %rax\n");
+        s = s.write("    cmpq %rax, %rbx\n");
+        s = s.write("    jge .Lmg_none\n");
+        s = s.write("    movq %rbx, %rax\n");
+        s = s.write("    incq %rax\n");
+        s = s.write("    movq (%r15,%rax,8), %rax\n");
+        s = s.write("    cmpq %r13, %rax\n");
+        s = s.write("    je .Lmg_found\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lmg_loop_i32\n");
         s = s.write(".Lmg_found:\n");
         s = s.write("    movq 8(%r12), %rax\n");        // values arr
         s = s.write("    movq %rbx, %rdx\n");
@@ -7270,7 +7336,9 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    movq %rsi, %r13\n");
         s = s.write("    movq (%r12), %r15\n");
         s = s.write("    movq $0, %rbx\n");
-        s = s.write(".Lmh_loop:\n");
+        s = s.write("    testq %rdx, %rdx\n");          // keykind (1 = i32)
+        s = s.write("    jnz .Lmh_loop_i32\n");
+        s = s.write(".Lmh_loop:\n");                    // string-key loop
         s = s.write("    movq (%r15), %rax\n");
         s = s.write("    cmpq %rax, %rbx\n");
         s = s.write("    jge .Lmh_no\n");
@@ -7283,6 +7351,17 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    jnz .Lmh_yes\n");
         s = s.write("    incq %rbx\n");
         s = s.write("    jmp .Lmh_loop\n");
+        s = s.write(".Lmh_loop_i32:\n");                // i32-key loop
+        s = s.write("    movq (%r15), %rax\n");
+        s = s.write("    cmpq %rax, %rbx\n");
+        s = s.write("    jge .Lmh_no\n");
+        s = s.write("    movq %rbx, %rax\n");
+        s = s.write("    incq %rax\n");
+        s = s.write("    movq (%r15,%rax,8), %rax\n");
+        s = s.write("    cmpq %r13, %rax\n");
+        s = s.write("    je .Lmh_yes\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lmh_loop_i32\n");
         s = s.write(".Lmh_yes:\n");
         s = s.write("    movq $1, %rax\n");
         s = s.write("    jmp .Lmh_ret\n");
