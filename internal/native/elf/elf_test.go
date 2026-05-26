@@ -234,6 +234,34 @@ func TestCallRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledTextRunsUnderQemu is the full text→bytes→ELF→run gate:
+// a complete program written as GAS assembly text is assembled by
+// arm64.Assemble, wrapped in an ELF, and run under qemu. The loop
+// counts x0 up to 42 (cmp/b.eq forward, b backward), proving the
+// text parser, encoders, label resolution, and ELF writer all line up.
+func TestAssembledTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x0, #0\n" + // acc
+		"\tmov x1, #42\n" + // counter
+		"loop:\n" +
+		"\tcmp x1, #0\n" +
+		"\tb.eq done\n" +
+		"\tadd x0, x0, #1\n" +
+		"\tsub x1, x1, #1\n" +
+		"\tb loop\n" +
+		"done:\n" +
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
