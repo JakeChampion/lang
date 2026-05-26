@@ -1627,3 +1627,24 @@ func TestLowerTupleBoxReclaim(t *testing.T) {
 		t.Errorf("expected tuple box reclamation to be rc==1 gated:\n%s", p)
 	}
 }
+
+// TestLowerTupleDestructureArrayReclaim verifies the dup-on-projection +
+// deep-drop path: destructuring a tuple of arrays must inc each extracted
+// array (so the binding owns it), the tuple drop must deep-drop its array
+// elements, and the owned bindings must free their buffers — all three
+// surface as runtime calls in the lowered body.
+func TestLowerTupleDestructureArrayReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var (a, b) = ([1, 2], [3, 4]);
+    return a[0] + b[1];
+}`, 8)
+	if !callsDirect(p, "build", "__fern_rc_inc") {
+		t.Errorf("expected dup-on-projection (__fern_rc_inc) for extracted array elements:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_box_free") {
+		t.Errorf("expected the tuple box to be reclaimed via __fern_box_free:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_arr_dec") {
+		t.Errorf("expected destructured array bindings to free their buffers via __fern_arr_dec:\n%s", p)
+	}
+}

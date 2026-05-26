@@ -1710,7 +1710,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			escape(s.Then)
 			escape(s.Else)
 		case *ast.Destructure:
-			markBindings(s.Names)
+			// Destructure bindings are NOT tainted: the lowering dups
+			// (rc_inc) each extracted pointer-shaped element, so the
+			// binding becomes a counted OWNER and reclaims through its own
+			// type's machinery at scope exit (array → arr_dec, struct →
+			// __drop_struct_, …). The matching dec is the tuple's
+			// deep-drop. Match / IfLet / LetElse bindings stay tainted —
+			// they alias enum payloads with no projection dup.
 		case *ast.Match:
 			for _, arm := range s.Arms {
 				markBindings(arm.Bindings)
@@ -2133,21 +2139,33 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
-		// Tuple reclamation: an OWNED tuple local returns its box to the
-		// freelist on the last reference (rc==1), mirroring the struct
-		// box path. The box was alloc'd as `tupleElemLayout size + 8` rc
-		// header, so __fern_box_free frees base = data-8, size+8. Only
-		// the BOX is reclaimed here — elements keep their own rc and are
-		// freed wherever they're owned (a tuple deep-drop of element
-		// buffers is a later slice; flat-dec'ing them here would strand
-		// references that destructuring / field reads hand out without
-		// an inc). Ineligible (borrowed / escaped) tuples and flag-off
-		// builds fall through to the plain box dec below.
+		// Tuple reclamation: an OWNED tuple local drops its pointer-shaped
+		// elements then returns its box to the freelist on the last
+		// reference (rc==1), mirroring the struct box path. The box was
+		// alloc'd as `tupleElemLayout size + 8` rc header, so
+		// __fern_box_free frees base = data-8, size+8. Each element drop
+		// is_unique-gates internally (dropStructField), so a shared
+		// element only dec's; the per-element dec balances the dup the
+		// projection sites (destructure / field read / return) emit when
+		// they hand the element out. Ineligible (borrowed / escaped)
+		// tuples and flag-off builds fall through to the plain box dec.
 		if tt, ok := t.(ast.TupleType); ok && ast.RcFreeEnabled && eligible {
-			_, size := tupleElemLayout(tt.Elems, b.ptrW)
+			offs, size := tupleElemLayout(tt.Elems, b.ptrW)
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			for i, et := range tt.Elems {
+				if !arrElemIsRcTracked(et) {
+					continue
+				}
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				if offs[i] != 0 {
+					b.emit(Op{Kind: OpConstI32, I32: offs[i]})
+					b.emit(Op{Kind: OpAdd})
+				}
+				b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+				dropStructField(et)
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpConstI32, I32: size})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
@@ -2547,7 +2565,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 // Primitive elements (i32 etc.) are not pointers, so no drop.
 func arrElemIsRcTracked(elem ast.Type) bool {
 	switch elem.(type) {
-	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType:
+	case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
 		return true
 	}
 	return false
@@ -4492,6 +4510,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(payloadLoadOpFor(tup.Elems[i], b.ptrW))
+			// Dup-on-projection: a pointer-shaped element is extracted by
+			// reference (the load copies the box's stored pointer without
+			// an inc). The binding now co-owns it alongside the tuple box,
+			// so bump the rc — the binding (an owned, untainted rc local)
+			// will dec/free it at scope exit, balanced by the tuple's
+			// deep-drop dec of the same element. Without the dup the
+			// binding and the tuple's drop would both release one
+			// reference for a single count (double free / underflow).
+			if arrElemIsRcTracked(tup.Elems[i]) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			}
 			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
 		}
 	case *ast.ExprStmt:

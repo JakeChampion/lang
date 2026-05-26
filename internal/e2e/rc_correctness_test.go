@@ -392,12 +392,12 @@ function main(): i32 {
 	},
 	{
 		// Destructure-of-arrays that ESCAPES: `var (a, b) = (...)` extracts
-		// element ARRAY pointers from the tuple box WITHOUT an inc, then
-		// the box frees at mk's exit. Box reclamation is box-ONLY (never
-		// deep-frees element buffers), so the returned `a` buffer stays
-		// valid after the box is freed — the precise guarantee that lets
-		// destructuring hand out element pointers safely. A deep-free of
-		// elements here would strand `a` (UAF / corrupt checksum / reuse).
+		// element ARRAY pointers from the tuple box; dup-on-projection
+		// gives `a` its own counted reference. `return a` takes
+		// move-on-return (no inc, sweep-excluded), and the tuple's
+		// deep-drop only dec's arrA (rc 2→1, not free) — so the returned
+		// buffer stays valid for the caller. Without the dup, the tuple
+		// deep-drop would free arrA out from under the return (UAF).
 		// a = [10, 20]; r[1] = 20; sum_{0..99} 20 = 2000.
 		name: "tuple_destructure_array_escapes",
 		src: `function mk(): i32[] {
@@ -454,6 +454,27 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 200) { total = total + mk(k); k = k + 1; }
     return (total - 60300) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Destructured ARRAY bindings reclaim their buffers. `var (a, b) =
+		// ([..], [..])` extracts two array pointers; dup-on-projection
+		// makes a/b owned array locals that arr_dec-free their buffers at
+		// scope exit, while the tuple's deep-drop dec's its own element
+		// refs + frees the box. Previously the bindings were tainted and
+		// leaked every buffer. Churned 200x — a leak would grow the heap
+		// and a miscount would drift the underflow detector. a[1] = k+1,
+		// b[2] = k+4; sum_{0..199}(2k+5) = 2*19900 + 1000 = 40800.
+		name: "tuple_destructure_arrays_reclaim_churn",
+		src: `function mk(k: i32): i32 {
+    var (a, b) = ([k, k + 1], [k + 2, k + 3, k + 4]);
+    return a[1] + b[2];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { total = total + mk(i); i = i + 1; }
+    return (total - 40800) + __rc_underflow_count();
 }`,
 	},
 	{
