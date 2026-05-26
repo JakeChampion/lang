@@ -152,6 +152,40 @@ func TestShiftRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestStackRoundTripRunsUnderQemu exercises the frame + word load/store
+// path: set up a frame (STP pre-index), store 42 to the stack, clobber
+// the register, reload it (STR/LDR), tear the frame down (LDP
+// post-index), and exit with the reloaded value.
+func TestStackRoundTripRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		var c []byte
+		c = arm64.Put(c, arm64.STPpre(29, 30, 31, -16)) // stp x29,x30,[sp,#-16]!
+		c = arm64.Put(c, arm64.MOVZ(0, 42, 0))
+		c = arm64.Put(c, arm64.STRimm(0, 31, 8))        // str x0, [sp, #8]
+		c = arm64.Put(c, arm64.MOVZ(0, 0, 0))           // clobber x0
+		c = arm64.Put(c, arm64.LDRimm(0, 31, 8))        // ldr x0, [sp, #8]
+		c = arm64.Put(c, arm64.LDPpost(29, 30, 31, 16)) // ldp x29,x30,[sp],#16
+		c = arm64.Put(c, arm64.MOVZ(8, 93, 0))
+		return arm64.Put(c, arm64.SVC(0))
+	})
+}
+
+// TestByteRoundTripRunsUnderQemu exercises STRB/LDRB: store the byte 42
+// to the stack and read it back zero-extended, then exit with it.
+func TestByteRoundTripRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		var c []byte
+		c = arm64.Put(c, arm64.STPpre(29, 30, 31, -16))
+		c = arm64.Put(c, arm64.MOVZ(0, 42, 0))
+		c = arm64.Put(c, arm64.STRBimm(0, 31, 8)) // strb w0, [sp, #8]
+		c = arm64.Put(c, arm64.MOVZ(0, 0, 0))
+		c = arm64.Put(c, arm64.LDRBimm(0, 31, 8)) // ldrb w0, [sp, #8]
+		c = arm64.Put(c, arm64.LDPpost(29, 30, 31, 16))
+		c = arm64.Put(c, arm64.MOVZ(8, 93, 0))
+		return arm64.Put(c, arm64.SVC(0))
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
