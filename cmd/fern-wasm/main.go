@@ -50,13 +50,13 @@
 //       world:  string,        // the world that was composed
 //       error:  string | null, // parse / check / compose failure
 //   }
-//     Compiles src to a Component Model binary the page can hand to
-//     jco (transpile + instantiate) to run a real Fern-built
-//     component in-browser. Worlds: "wasm" (a wasi:cli/run
-//     component) and "wasi-http" (a wasi:http/incoming-handler
-//     component). Bytes come back base64-encoded so they survive
-//     the syscall/js boundary as a plain string; the page decodes
-//     with atob into a Uint8Array.
+//     Compiles src to a Component Model binary — the same bytes
+//     `fern -target wasm` / `-target wasi-http` write — so the page
+//     can offer it for download and local `wasmtime` / jco runs.
+//     Worlds: "wasm" (a wasi:cli/run component) and "wasi-http" (a
+//     wasi:http/incoming-handler component). Bytes come back
+//     base64-encoded so they survive the syscall/js boundary as a
+//     plain string; the page decodes with atob into a Uint8Array.
 //
 // State is fresh per call for fernInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has

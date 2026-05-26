@@ -1053,18 +1053,18 @@ runBtn.addEventListener("click", runOnce);
 // Ctrl/Cmd+Enter to run is registered as a CodeMirror keymap entry
 // below so it composes correctly with the editor's own key handling.
 
-// ---- Build & run a WebAssembly Component ----
+// ---- Build a WebAssembly Component ----
 //
 // `fernCompileComponent(src, world)` returns the base64 of a real
 // Component Model binary (the same bytes `fern -target wasm` /
-// `-target wasi-http` write). We decode it, offer a download, and
-// then try to run it in-browser via jco (./component-runner.js,
-// which pulls jco + the preview2 WASI shim from a CDN on demand).
+// `-target wasi-http` write). We decode it and offer a download plus
+// the exact command to run it locally.
 //
-// The in-browser run is a progressive enhancement: if the CDN is
-// unreachable or the world isn't runnable client-side yet, we fall
-// back to showing the bytes + the exact CLI command to run it
-// locally, so the feature still does something useful offline.
+// Note: we intentionally do NOT transpile/run the component in the
+// browser. jco's `transpile` depends on Node's `fs`, which throws
+// (as an unhandled rejection) under a browser CDN shim — running a
+// component client-side needs jco's transpile step done ahead of
+// time (in Node / at build time), which is a follow-up.
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -1084,9 +1084,10 @@ function offerDownload(bytes, world) {
     '<a class="dl-link" download="' + name + '" href="' + url + '">⬇ ' +
     name + "</a> · " + bytes.length + " bytes · run locally: <code>" +
     cmd + "</code>";
+  return cmd;
 }
 
-async function buildComponentOnce() {
+function buildComponentOnce() {
   if (typeof globalThis.fernCompileComponent !== "function") {
     outEl.textContent = "(runtime not ready)";
     return;
@@ -1096,38 +1097,27 @@ async function buildComponentOnce() {
   buildComponentBtn.textContent = "Building…";
   outEl.textContent = "compiling to a " + world + " component…";
   metaEl.textContent = "";
-  try {
-    const result = globalThis.fernCompileComponent(getSrc(), world);
-    if (result.error) {
-      outEl.textContent = "[component error]\n" + result.error;
-      return;
-    }
-    const bytes = b64ToBytes(result.wasm);
-    offerDownload(bytes, world);
-    outEl.textContent = "running component via jco…";
+  // Defer to the event loop so the disabled state + label paint
+  // before the synchronous wasm call blocks.
+  setTimeout(() => {
     try {
-      const { runComponent } = await import("./component-runner.js");
-      const run = await runComponent(bytes, world);
-      let body = run.stdout || "";
-      if (run.status !== undefined) {
-        body += (body ? "\n" : "") + "[http " + run.status + "]\n" + (run.body || "");
+      const result = globalThis.fernCompileComponent(getSrc(), world);
+      if (result.error) {
+        outEl.textContent = "[component error]\n" + result.error;
+        return;
       }
-      outEl.textContent = body || "(component produced no output)";
-    } catch (e) {
-      // jco unavailable (offline / CDN blocked) or world not yet
-      // runnable in-browser. The download + command are already
-      // shown; explain why the in-browser run didn't happen.
+      const bytes = b64ToBytes(result.wasm);
+      const cmd = offerDownload(bytes, world);
       outEl.textContent =
-        "Built a " + world + " component (" + bytes.length +
-        " bytes). In-browser run via jco is unavailable here:\n" + e +
-        "\n\nUse the download above and run it with the shown command.";
+        "Built a " + world + " component (" + bytes.length + " bytes).\n" +
+        "Download it above, then run:\n\n  " + cmd;
+    } catch (e) {
+      outEl.textContent = "JS error: " + e;
+    } finally {
+      buildComponentBtn.disabled = false;
+      buildComponentBtn.textContent = "Build component";
     }
-  } catch (e) {
-    outEl.textContent = "JS error: " + e;
-  } finally {
-    buildComponentBtn.disabled = false;
-    buildComponentBtn.textContent = "Build component";
-  }
+  }, 0);
 }
 
 buildComponentBtn.addEventListener("click", buildComponentOnce);
