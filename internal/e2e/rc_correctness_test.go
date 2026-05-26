@@ -1215,6 +1215,51 @@ function main(): i32 {
     return (acc - 200) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — UNIFORM union with struct payloads.
+		// VInt | VArr both carry a struct ptr at the same offset, so the
+		// drop used to take the branchless uniform path and flat-dec the
+		// variant struct box (leak). It now steers to the tag-dispatch
+		// variant-plan path (enumHasStructPayload), whose Leaf-style arm
+		// deep-drops the exact payload type via __drop_struct_<T>.
+		// sum_{i=0..99}(i+1) = 5050.
+		name: "uniform_union_struct_payload_churn_free",
+		src: `struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var x: Value = mk(i);
+        match (x) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Uniform union whose struct payload ESCAPES (returned): the
+		// enum is tainted (not free-eligible), so the variant struct
+		// payload must NOT be deep-freed; the caller still holds it.
+		name: "uniform_union_struct_escapes",
+		src: `struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function mk(n: i32): Value { return VArr { v: [n, n + 1, n + 2] }; }
+function main(): i32 {
+    var x: Value = mk(9);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (x) { VInt(a) => { got = a.v[1]; }, VArr(b) => { got = b.v[2]; } }
+    return (got - 11) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

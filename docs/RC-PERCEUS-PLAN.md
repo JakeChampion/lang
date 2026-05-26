@@ -956,10 +956,14 @@ Phase 3 CANNOT start with the freelist — it must start by
      __drop_struct_ / __drop_arr_struct_) instead of flat-dec'ing them;
      the thunk only runs when every capture was inc'd at MakeEnv, so it
      stays balanced. Enum / nested-closure captures keep the flat dec.
-   - **Remaining:** uniform-union struct payloads (would need per-arm
-     tag dispatch instead of the branchless uniform path) + generic-enum
-     type-arg substitution; enum / closure captures; map keys /
-     non-array map values; the dec-on-overwrite site (entangled —
+     A further follow-up steers an eligible enum WITH a concrete-struct
+     payload away from the branchless uniform path (which can only
+     flat-dec a single static payload type) to the tag-dispatch
+     variant-plan path (`enumHasStructPayload`), so uniform unions like
+     `Value = VInt | VArr` deep-drop each variant's exact struct box.
+   - **Remaining:** generic-enum type-arg substitution; enum-payload /
+     nested-closure captures; map keys / non-array map values; the
+     dec-on-overwrite site (entangled —
      `push`'s copy path transfers element ownership without an inc, so
      routing array overwrite through the drop would double-release;
      needs a per-method ownership audit or a self-push exclusion first).
