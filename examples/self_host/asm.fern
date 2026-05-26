@@ -2432,9 +2432,25 @@ function count_locals(body: parser.Stmt[]): i32 {
     return n;
 }
 
+// name_has_comma reports whether a (possibly comma-encoded) binding
+// name holds two names — `var (a,b)` tuple destructuring and
+// `for (k,v)` map iteration encode their pair as "a,b".
+function name_has_comma(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function count_locals_in_stmt(stmt: parser.Stmt): i32 {
     match (stmt) {
-        parser.StmtVar(_) => { return 1; },
+        parser.StmtVar(v) => {
+            // `var (a,b) = …` binds two locals; a plain var binds one.
+            if (name_has_comma(v.name)) { return 2; }
+            return 1;
+        },
         parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
         parser.StmtWhile(w) => { return count_locals(w.body); },
         parser.StmtMatch(m) => {
@@ -2456,9 +2472,10 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
             return n;
         },
         parser.StmtFor(f) => {
-            // +1 for the synthetic array-pointer slot, +1 for
-            // the loop counter, +1 for the bound element var,
-            // + body locals.
+            // `for (k,v) in m` binds 4 synthetic/user locals (map ptr,
+            // index, k, v); a plain `for x in arr` binds 3 (array ptr,
+            // index, element).
+            if (name_has_comma(f.var_name)) { return 4 + count_locals(f.body); }
             return 3 + count_locals(f.body);
         },
         _ => { return 0; }
@@ -5246,6 +5263,29 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             return s;
         },
         parser.StmtVar(v) => {
+            // `var (a, b) = E` tuple destructuring (name encoded "a,b"):
+            // eval the tuple box, bind a = box[0], b = box[8].
+            var tdc: i32 = 0 - 1;
+            var tdci: i32 = 0;
+            while (tdci < v.name.len()) {
+                if (v.name[tdci] == 44 && tdc < 0) { tdc = tdci; }
+                tdci = tdci + 1;
+            }
+            if (tdc >= 0) {
+                var tda: string = v.name[0 : tdc];
+                var tdb: string = v.name[tdc + 1 : v.name.len()];
+                s = emit_expr(v.init, s);
+                s = s.write("    popq %rax\n");          // tuple box
+                s = s.bind_local_typed(tda, "i32");
+                var tda_off: i32 = s.lookup_local(tda);
+                s = s.write("    movq (%rax), %rcx\n");  // box.0
+                s = s.write("    movq %rcx, " + i32_to_string(tda_off) + "(%rbp)\n");
+                s = s.bind_local_typed(tdb, "i32");
+                var tdb_off: i32 = s.lookup_local(tdb);
+                s = s.write("    movq 8(%rax), %rcx\n"); // box.1
+                s = s.write("    movq %rcx, " + i32_to_string(tdb_off) + "(%rbp)\n");
+                return s;
+            }
             // Compile init, then pop to the new local's slot.
             // Infer init's type so the local carries it (used
             // by string-aware dispatch in ExprBinary / len /
