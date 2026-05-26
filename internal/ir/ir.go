@@ -726,7 +726,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// MakeEnv). emitDec dispatches owned closure drops to these.
 	if ast.RcFreeEnabled {
 		for name, caps := range closureCaps {
-			thunk := genClosureDropThunk(name, caps, ptrW)
+			thunk := genClosureDropThunk(name, caps, ptrW, info)
 			if thunk == nil {
 				continue
 			}
@@ -2457,7 +2457,7 @@ func hasRcCapture(caps []ast.Param) bool {
 // rc-tracked captures (the generic helper already handles those).
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
-func genClosureDropThunk(name string, caps []ast.Param, ptrW int) *Func {
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info) *Func {
 	if !hasRcCapture(caps) {
 		return nil
 	}
@@ -2470,21 +2470,40 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int) *Func {
 	for _, c := range caps {
 		slot := irCaptureSlotSize(c.Type, ptrW)
 		if arrElemIsRcTracked(c.Type) {
+			// Load the capture pointer from [env+off]. The thunk only
+			// runs when every rc-tracked capture was inc'd at MakeEnv
+			// (emitDec's closureTarget gate), and inside the env's
+			// is_unique branch, so the captures are this closure's
+			// exclusively-owned references — safe to deep-free. The
+			// per-value drop fns is_unique-gate again, so a shared
+			// capture only dec's.
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
 				Op{Kind: OpConstI32, I32: off},
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr})
-			if at, ok := c.Type.(ast.ArrayType); ok {
-				helper := "__fern_arr_dec"
-				if arrElemIsRcTracked(at.Elem) {
-					helper = "__fern_drop_arr_ptr"
+			if at, isArr := c.Type.(ast.ArrayType); isArr {
+				if drop, ok := arrElemStructDropName(at.Elem, info); ok {
+					// Array of concrete structs: deep-drop each element
+					// box + the buffer (Stage B loop).
+					ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
+				} else {
+					helper := "__fern_arr_dec"
+					if arrElemIsRcTracked(at.Elem) {
+						helper = "__fern_drop_arr_ptr"
+					}
+					ops = append(ops,
+						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
+						Op{Kind: OpCallDirect, Str: helper, I32: 2})
 				}
-				ops = append(ops,
-					Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
-					Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			} else if drop, ok := dropFnNameFor(c.Type, info); ok {
+				// Concrete-struct capture: free its box + nested struct
+				// fields (childless structs too).
+				ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
 			} else {
-				// struct / enum / closure capture: flat one-level dec.
+				// enum / closure capture: flat one-level dec (a union's
+				// variant type isn't statically known; nested closures
+				// keep the env-only drop).
 				ops = append(ops, Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			}
 			ops = append(ops, Op{Kind: OpDrop})
