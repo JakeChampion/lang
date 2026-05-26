@@ -215,3 +215,33 @@ remaining runtime deps.
 
 **Risk.** Unknown until diagnosed; the prior 137s were single clean
 parser gaps.
+
+---
+
+## Parity gaps (post-fixpoint audit)
+
+After items 1–6 + the module follow-ups landed, a full audit (all 32
+stdlib modules + 96 e2e feature cases probed through the self-host
+compiler) surfaced the remaining gaps between the self-host compiler and
+the Go front-end. Excluding probe artifacts (cases that `import` stdlib
+won't link when only `main.fern` is bundled; `err_*` checker
+negative-tests that don't apply to the emit-only path), they are, in
+planned order:
+
+- ✅ **Array-literal inference + `min`/`max` semantics.** `var a =
+  [1,2,3]` now infers `array_i32` (was generic `array`, so `.sum()`
+  mis-dispatched); `arr.min()`/`max()` now return `Option[i32]`
+  (Some/None) instead of a raw i32 — matching the reference
+  (`self_host_array_methods_test.go`).
+- ⬜ **`if let`** pattern sugar.
+- ⬜ **`switch` / `case`.**
+- ⬜ **i32-keyed maps** (the Map runtime is currently string-keyed only).
+- ⬜ **Function types `(T) => R`** → higher-order functions.
+- ⬜ **Closures** (capturing nested functions returned as values).
+- ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.
+- ⬜ **Generics** (monomorphisation).
+- ⬜ stdlib **`std/test` / `std/fuzz` / `std/tcp`** (depend on the above).
+
+Aside (Go backend, separate subsystem): the Go *native* backend
+mishandles compound assignment to a struct field (`a.v += n`) — fixed in
+the parser (PR allowing FieldAccess lvalues in the compound path).
