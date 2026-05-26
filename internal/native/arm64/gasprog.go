@@ -16,9 +16,15 @@ import (
 // Supported in .rodata: .byte/.2byte/.4byte/.8byte (and the .hword/
 // .word/.quad/etc. aliases), .ascii/.asciz/.string, and .balign/.align.
 // Writable/zero-init sections (.data/.bss) are not handled yet.
+const (
+	secText = iota
+	secRodata
+	secIgnore // a section we don't materialise (e.g. .note.GNU-stack)
+)
+
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
 	a := NewAssembler()
-	inText := true
+	sec := secText
 	for lineno, raw := range strings.Split(src, "\n") {
 		line := stripComment(raw)
 		for {
@@ -26,9 +32,10 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 			if !ok {
 				break
 			}
-			if inText {
+			switch sec {
+			case secText:
 				a.TextLabel(label)
-			} else {
+			case secRodata:
 				a.RodataLabel(label)
 			}
 			line = strings.TrimSpace(rest)
@@ -37,55 +44,61 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 			continue
 		}
 		if strings.HasPrefix(line, ".") {
-			switched, nowText, derr := handleProgDirective(a, line, inText)
+			newSec, derr := handleProgDirective(a, line, sec)
 			if derr != nil {
 				return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
 			}
-			if switched {
-				inText = nowText
-			}
+			sec = newSec
 			continue
 		}
-		if !inText {
-			return nil, nil, fmt.Errorf("line %d: instruction %q outside .text", lineno+1, line)
-		}
-		if derr := assembleProgInsn(a, line); derr != nil {
-			return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
+		switch sec {
+		case secText:
+			if derr := assembleProgInsn(a, line); derr != nil {
+				return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
+			}
+		case secRodata:
+			return nil, nil, fmt.Errorf("line %d: %q: unexpected non-directive in .rodata", lineno+1, strings.TrimSpace(raw))
+		case secIgnore:
+			// dropped
 		}
 	}
 	return a.BytesProgram(textVAddr)
 }
 
 // handleProgDirective handles section switches and .rodata data
-// directives. Returns (switchedSection, nowInText, err).
-func handleProgDirective(a *Assembler, line string, inText bool) (bool, bool, error) {
+// directives. Returns the section in effect after the directive.
+func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 	fields := strings.Fields(line)
 	d := fields[0]
 	switch d {
 	case ".text":
-		return true, true, nil
+		return secText, nil
 	case ".rodata":
-		return true, false, nil
+		return secRodata, nil
 	case ".section":
-		// e.g. ".section .rodata" / ".section .text" (optional flags).
+		// e.g. ".section .rodata" / ".section .text" / ".section
+		// .note.GNU-stack,...". Anything else we don't materialise.
 		arg := ""
 		if len(fields) > 1 {
 			arg = fields[1]
 		}
-		if strings.Contains(arg, ".text") {
-			return true, true, nil
+		switch {
+		case strings.Contains(arg, ".text"):
+			return secText, nil
+		case strings.Contains(arg, ".rodata"):
+			return secRodata, nil
+		default:
+			return secIgnore, nil
 		}
-		if strings.Contains(arg, ".rodata") {
-			return true, false, nil
-		}
-		return false, inText, fmt.Errorf("unsupported section %q", arg)
 	}
-	// In .text, the rest are harmless no-ops (handled like Assemble).
-	if inText {
-		return false, inText, handleDirective(line)
+	switch sec {
+	case secText:
+		return secText, handleDirective(line)
+	case secRodata:
+		return secRodata, appendRodataDirective(a, d, strings.TrimSpace(strings.TrimPrefix(line, d)))
+	default: // secIgnore: drop directives too
+		return secIgnore, nil
 	}
-	// In .rodata, parse data directives.
-	return false, inText, appendRodataDirective(a, d, strings.TrimSpace(strings.TrimPrefix(line, d)))
 }
 
 func appendRodataDirective(a *Assembler, d, rest string) error {
@@ -113,12 +126,14 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 		if err != nil {
 			return fmt.Errorf("bad alignment %q", rest)
 		}
-		if d == ".p2align" {
+		// On AArch64, .align and .p2align take a power-of-two exponent
+		// (".align 2" => align to 4 bytes); .balign takes a byte count.
+		if d != ".balign" {
 			n = 1 << n
 		}
 		a.AlignRodata(n)
 		return nil
-	case ".text", ".arch", ".global", ".globl", ".type", ".size":
+	case ".arch", ".global", ".globl", ".type", ".size", ".ltorg":
 		return nil
 	default:
 		return fmt.Errorf("unsupported .rodata directive %q", d)

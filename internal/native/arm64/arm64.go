@@ -363,6 +363,12 @@ func UDIV(rd, rn, rm uint32) uint32 {
 	return 0x9AC00800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// SDIV encodes `sdiv Xd, Xn, Xm` — signed divide.
+// Encoding: base 0x9AC00C00 | Rm<<16 | Rn<<5 | Rd.
+func SDIV(rd, rn, rm uint32) uint32 {
+	return 0x9AC00C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // MSUB encodes `msub Xd, Xn, Xm, Xa` — Xd = Xa - Xn*Xm (the building
 // block for the modulo idiom: `udiv q,a,b; msub r,q,b,a`).
 // Encoding: base 0x9B008000 | Rm<<16 | Ra<<10 | Rn<<5 | Rd.
@@ -478,6 +484,25 @@ func ADRP(rd uint32, pageDelta int32) uint32 {
 	immlo := imm & 0x3
 	immhi := (imm >> 2) & 0x7ffff
 	return 0x90000000 | (immlo << 29) | (immhi << 5) | (rd & regMask)
+}
+
+// ---- Single-register pre/post-indexed loads/stores ----
+//
+// The writeback forms used for stack pushes/pops: `str Xt, [Xn, #o]!`
+// (pre-index) and `ldr Xt, [Xn], #o` (post-index). Signed 9-bit
+// unscaled offset, like LDUR/STUR, but with the index/writeback bits.
+
+func STRpre(rt, rn uint32, off int32) uint32 {
+	return 0xF8000C00 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func STRpost(rt, rn uint32, off int32) uint32 {
+	return 0xF8000400 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LDRpre(rt, rn uint32, off int32) uint32 {
+	return 0xF8400C00 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LDRpost(rt, rn uint32, off int32) uint32 {
+	return 0xF8400400 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.

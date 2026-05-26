@@ -76,12 +76,14 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tfcvt d0, s1\n\tfcvt s0, d1\n\tscvtf s0, x1\n\tfcvtzs x0, s1\n\tucvtf d0, x1\n\tfcvtzu x0, d1\n",
 		"csel_div_extras": "" +
 			"\tcsel x0, x1, x2, eq\n\tcsel x3, x4, x5, lt\n\tcset x0, ne\n\tcset x7, ge\n" +
-			"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
+			"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tsdiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
 		"memory": "" +
 			"\tldr x0, [x1]\n\tldr x0, [x1, #16]\n\tstr x2, [x3, #8]\n" +
 			"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",
 		"frame_pair": "" +
 			"\tstp x29, x30, [sp, #-16]!\n\tldp x29, x30, [sp], #16\n",
+		"indexed_and_mov_sp": "" +
+			"\tstr x0, [sp, #-16]!\n\tldr x0, [sp], #16\n\tstr x1, [x2, #8]!\n\tldr x3, [x4], #-8\n\tmov sp, x29\n\tmov x0, sp\n",
 		"signed_loads": "" +
 			"\tldrsb x0, [x1]\n\tldrsb w0, [x1, #1]\n\tldrsh x0, [x1, #2]\n\tldrsh w0, [x1, #2]\n\tldrsw x0, [x1, #4]\n",
 		"unscaled": "" +

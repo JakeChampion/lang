@@ -92,7 +92,8 @@ func handleDirective(line string) error {
 	d := strings.Fields(line)[0]
 	switch d {
 	case ".text", ".arch", ".global", ".globl", ".type", ".size",
-		".align", ".p2align", ".balign", ".cfi_startproc", ".cfi_endproc":
+		".align", ".p2align", ".balign", ".cfi_startproc", ".cfi_endproc",
+		".ltorg":
 		return nil
 	default:
 		return fmt.Errorf("unsupported directive %q", d)
@@ -119,7 +120,7 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub":
 		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul", "udiv":
+	case "and", "orr", "eor", "mul", "udiv", "sdiv":
 		return asm3Reg(a, mnem, ops)
 	case "csel":
 		return asmCsel(a, ops)
@@ -223,6 +224,12 @@ func asmMov(a *Assembler, ops []string) error {
 	rm, err := parseReg(ops[1])
 	if err != nil {
 		return err
+	}
+	// `mov` to/from sp is the `add Rd, Rn, #0` alias (ORR can't encode
+	// the stack pointer); plain reg-reg mov is the ORR/MOVreg alias.
+	if rd == 31 || rm == 31 {
+		a.Emit(clearSF(ADDimm(rd, rm, 0, false), is32(ops[0])))
+		return nil
 	}
 	a.Emit(clearSF(MOVreg(rd, rm), is32(ops[0])))
 	return nil
@@ -330,6 +337,8 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(clearSF(MUL(rd, rn, rm), w))
 	case "udiv":
 		a.Emit(clearSF(UDIV(rd, rn, rm), w))
+	case "sdiv":
+		a.Emit(clearSF(SDIV(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -492,10 +501,38 @@ func asmExtend(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
-// asmLoadStore handles the single-register unsigned-offset loads and
-// stores: `<op> Rt, [Xn{, #imm}]`. Pre/post-index single forms aren't
-// encoded yet, so they error rather than miscompile.
+// asmLoadStore handles the single-register loads and stores. For ldr/
+// str it supports the unsigned scaled-offset form plus pre-index
+// (`[Xn, #o]!`) and post-index (`[Xn], #o`) writeback (signed imm9).
+// The narrow forms (ldrb/strb/ldrh/strh) stay unsigned-offset only.
 func asmLoadStore(a *Assembler, mnem string, ops []string) error {
+	is64LdrStr := mnem == "ldr" || mnem == "str"
+
+	// Post-index: `<op> Rt, [Xn], #imm` (3 operands).
+	if is64LdrStr && len(ops) == 3 {
+		rt, err := parseReg(ops[0])
+		if err != nil {
+			return err
+		}
+		m, err := parseMem(ops[1])
+		if err != nil {
+			return err
+		}
+		if m.pre || m.off != 0 {
+			return fmt.Errorf("%s post-index base must be plain [Xn]", mnem)
+		}
+		off, err := parseImm(ops[2])
+		if err != nil {
+			return err
+		}
+		if mnem == "ldr" {
+			a.Emit(LDRpost(rt, m.base, int32(off)))
+		} else {
+			a.Emit(STRpost(rt, m.base, int32(off)))
+		}
+		return nil
+	}
+
 	if len(ops) != 2 {
 		return fmt.Errorf("%s expects a register and a memory operand", mnem)
 	}
@@ -507,9 +544,20 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Pre-index writeback: `<op> Rt, [Xn, #imm]!` (ldr/str only).
 	if m.pre {
-		return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
+		if !is64LdrStr {
+			return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
+		}
+		if mnem == "ldr" {
+			a.Emit(LDRpre(rt, m.base, int32(m.off)))
+		} else {
+			a.Emit(STRpre(rt, m.base, int32(m.off)))
+		}
+		return nil
 	}
+
 	if m.off < 0 {
 		return fmt.Errorf("%s negative offset needs the unscaled (ldur) form, not supported yet", mnem)
 	}
