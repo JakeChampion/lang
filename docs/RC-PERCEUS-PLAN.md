@@ -967,13 +967,24 @@ Phase 3 CANNOT start with the freelist — it must start by
      __map_drop_values + __fern_map_drop (both self-guard on the map's
      own rc==1) instead of flat-dec'ing the handle, freeing the whole
      map structure on the owner's last reference.
-   - **Remaining:** generic-enum type-arg substitution; enum-payload /
-     nested-closure captures; the map's own struct-typed VALUE column
-     (the runtime is type-erased — needs a value-drop fn pointer; array
-     values already reclaim); the dec-on-overwrite site (entangled —
-     `push`'s copy path transfers element ownership without an inc, so
-     routing array overwrite through the drop would double-release;
-     needs a per-method ownership audit or a self-push exclusion first).
+     A further follow-up reclaims GENERIC enums with a struct payload
+     (Option[Item] / Result[Item, E]): the eligible enum drop
+     substitutes the type args (et.Args) into the generic decl's
+     ParamType payloads (substituteEnumDecl + resolveTypeParam),
+     reproducing the concrete payloads emitEnumNew sized the box from,
+     then deep-drops via the variant-plan path. Adopted ONLY when the
+     substituted decl exposes a struct payload — that proves a
+     heap-boxed (non-pair-form) instantiation, so scalar Option[i32]
+     (pair-form, no box) is left on the flat path untouched.
+   - **Remaining:** enum-payload / nested-closure captures; generic
+     enums whose payload is array-of-struct or a nested ParamType (the
+     bare-ParamType struct case is done); the map's own struct-typed
+     VALUE column (the runtime is type-erased — needs a value-drop fn
+     pointer; array values already reclaim); the dec-on-overwrite site
+     (entangled — `push`'s copy path transfers element ownership without
+     an inc, so routing array overwrite through the drop would
+     double-release; needs a per-method ownership audit or a self-push
+     exclusion first).
    - **rc-correctness corpus — LANDED (the step-4 go/no-go net).**
      `Test{X86_64,Arm64,WASM}RcCorrectnessCorpus` (`rc_correctness_test.go`)
      run a shared table of ~12 nested-value programs — array of
