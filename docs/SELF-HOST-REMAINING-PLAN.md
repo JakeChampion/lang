@@ -246,6 +246,10 @@ planned order:
   dispatch passes a key-kind flag and the runtime takes an integer
   (`==`) key-compare path instead of `__fern_str_eq`
   (`self_host_map_i32_test.go`).
+- ✅ **Map literals** `Map { k: v, … }` — parsed (in a `parse_map_lit`
+  helper) into a chained `map_new[_i32](n).set(k,v)…` desugar; integer
+  vs string keys picked from the first key (`self_host_map_literal_test.go`).
+- ⬜ **`for (k,v) in m`** destructuring iteration + **`.keys()`** snapshot.
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
 - ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.
