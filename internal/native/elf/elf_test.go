@@ -304,6 +304,25 @@ func TestAssembledShiftImmTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledDivTextRunsUnderQemu exercises udiv end-to-end:
+// 84 / 2 = 42, assembled from text and run.
+func TestAssembledDivTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x1, #84\n" +
+		"\tmov x2, #2\n" +
+		"\tudiv x0, x1, x2\n" + // 84 / 2 = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

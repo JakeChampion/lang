@@ -272,6 +272,47 @@ func SXTB(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 7) }
 func SXTH(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 15) }
 func SXTW(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 31) }
 
+// CSEL encodes `csel Xd, Xn, Xm, <cond>` — Xd = cond ? Xn : Xm.
+// Encoding: base 0x9A800000 | Rm<<16 | cond<<12 | Rn<<5 | Rd.
+func CSEL(rd, rn, rm, cond uint32) uint32 {
+	return 0x9A800000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// CSET encodes `cset Xd, <cond>` — Xd = cond ? 1 : 0. It's the
+// CSINC Xd, XZR, XZR, invert(cond) alias (the condition is inverted
+// because CSINC increments the "else" path).
+// Encoding: base 0x9A800400 | 31<<16 | (cond^1)<<12 | 31<<5 | Rd.
+func CSET(rd, cond uint32) uint32 {
+	return 0x9A800400 | (31 << 16) | (((cond ^ 1) & 0xf) << 12) | (31 << 5) | (rd & regMask)
+}
+
+// CMN encodes `cmn Xn, Xm` — compare-negative (ADDS XZR, Xn, Xm):
+// set flags from Xn + Xm, discard the sum.
+// Encoding: base 0xAB000000 | Rm<<16 | Rn<<5 | 31.
+func CMN(rn, rm uint32) uint32 {
+	return 0xAB000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | 31
+}
+
+// NEG encodes `neg Xd, Xm` — negate (SUB Xd, XZR, Xm).
+// Encoding: base 0xCB000000 | Rm<<16 | 31<<5 | Rd.
+func NEG(rd, rm uint32) uint32 {
+	return 0xCB000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
+}
+
+// UDIV encodes `udiv Xd, Xn, Xm` — unsigned divide (Xn / Xm; division
+// by zero yields 0, per the architecture).
+// Encoding: base 0x9AC00800 | Rm<<16 | Rn<<5 | Rd.
+func UDIV(rd, rn, rm uint32) uint32 {
+	return 0x9AC00800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// MSUB encodes `msub Xd, Xn, Xm, Xa` — Xd = Xa - Xn*Xm (the building
+// block for the modulo idiom: `udiv q,a,b; msub r,q,b,a`).
+// Encoding: base 0x9B008000 | Rm<<16 | Ra<<10 | Rn<<5 | Rd.
+func MSUB(rd, rn, rm, ra uint32) uint32 {
+	return 0x9B008000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.

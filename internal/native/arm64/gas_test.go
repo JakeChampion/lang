@@ -64,6 +64,9 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tlsl x0, x1, #4\n\tlsr x0, x1, #4\n\tasr x0, x1, #4\n\tlsl x2, x3, #1\n\tsxtb x0, w1\n\tsxth x0, w1\n\tsxtw x0, w1\n",
 		"compare": "" +
 			"\tcmp x1, x2\n\tcmp x1, #5\n",
+		"csel_div_extras": "" +
+			"\tcsel x0, x1, x2, eq\n\tcsel x3, x4, x5, lt\n\tcset x0, ne\n\tcset x7, ge\n" +
+			"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
 		"memory": "" +
 			"\tldr x0, [x1]\n\tldr x0, [x1, #16]\n\tstr x2, [x3, #8]\n" +
 			"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",

@@ -119,8 +119,18 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub":
 		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul":
+	case "and", "orr", "eor", "mul", "udiv":
 		return asm3Reg(a, mnem, ops)
+	case "csel":
+		return asmCsel(a, ops)
+	case "cset":
+		return asmCset(a, ops)
+	case "cmn":
+		return asm2Reg(a, ops, CMN)
+	case "neg":
+		return asm2Reg(a, ops, NEG)
+	case "msub":
+		return asmMsub(a, ops)
 	case "lsl", "lsr", "asr":
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
@@ -292,7 +302,94 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(EORreg(rd, rn, rm))
 	case "mul":
 		a.Emit(MUL(rd, rn, rm))
+	case "udiv":
+		a.Emit(UDIV(rd, rn, rm))
 	}
+	return nil
+}
+
+// asm2Reg handles two-register ops where both operands are registers
+// and the encoder takes (a, b) — used by cmn (Xn, Xm) and neg (Xd, Xm).
+func asm2Reg(a *Assembler, ops []string, enc func(x, y uint32) uint32) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("expects 2 register operands")
+	}
+	x, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	y, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(enc(x, y))
+	return nil
+}
+
+// asmCsel handles `csel Xd, Xn, Xm, <cond>`.
+func asmCsel(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("csel expects Xd, Xn, Xm, cond")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	cond, ok := condCodes[ops[3]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[3])
+	}
+	a.Emit(CSEL(rd, rn, rm, cond))
+	return nil
+}
+
+// asmCset handles `cset Xd, <cond>`.
+func asmCset(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("cset expects Xd, cond")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	cond, ok := condCodes[ops[1]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[1])
+	}
+	a.Emit(CSET(rd, cond))
+	return nil
+}
+
+// asmMsub handles `msub Xd, Xn, Xm, Xa`.
+func asmMsub(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("msub expects Xd, Xn, Xm, Xa")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	ra, err := parseReg(ops[3])
+	if err != nil {
+		return err
+	}
+	a.Emit(MSUB(rd, rn, rm, ra))
 	return nil
 }
 
