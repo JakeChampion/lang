@@ -76,10 +76,15 @@ as `string[]` — `existing.push(val)` / `.len()` dispatch to the array
 runtime instead of mis-typing as a string. Verified by
 `self_host_url_test.go` (x86 + CI-gated arm64): `url_parse`,
 `query_parse` over `Map[string, string[]]` with duplicate keys.
-`std/json` is still blocked — it needs the auto-injected `JsonValue`
-enum, Rust-style `enum`-declaration parsing + call-style constructors,
-Map iteration (`.iter()`/`.keys()`/`.values()`), and `std/string`
-(packed-u8), none of which the self-host compiler has yet.
+`std/json` is still blocked, but one of its prerequisites now exists:
+Rust-style `enum Name { V1, V2(T) }` declarations + call-style
+constructors (`JString(x)`) + payload-binding matches are implemented on
+both backends (each variant lowers to a synthesized struct with a
+`__ev` marker field; see `parse_enum_decl` and `is_enum_variant`,
+covered by `self_host_enum_test.go`). Remaining `std/json` blockers: the
+auto-injected `JsonValue` enum (the self-host compiler does no prelude
+injection), Map iteration (`.iter()`/`.keys()`/`.values()`), and
+`std/string` (packed-u8).
 
 **Blocker.** Both need a hash-map: `map_new`, `map_get`/`get_or`,
 `map_set`, `map_has`, `map_delete`, `map_len`, `map_keys`, `map_values`.

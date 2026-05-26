@@ -1259,6 +1259,51 @@ function parse_type_alias(p: Par): TypeAliasResult {
     return TypeAliasResult { par: p, alias: TypeAlias { name: name, variants: variants } };
 }
 
+// parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), … }`
+// starting from the `enum` keyword. Each variant is lowered to a
+// StructDecl: a payload-bearing variant `V2(T)` becomes a struct with
+// a single marker field `__ev` of the payload type; a no-payload
+// variant `V1` becomes a zero-field struct. The marker field is how
+// the emitter tells an enum variant (bind the payload at offset 8)
+// from a `type X = A|B` union member (bind the whole struct). Only the
+// first payload of a multi-payload variant is bound; extras are
+// consumed. The enum's own name isn't recorded — variant names are
+// global, as with the existing union machinery.
+pub struct EnumResult { par: Par, variants: StructDecl[] }
+
+function parse_enum_decl(p: Par): EnumResult {
+    p = p.advance();  // consume `enum`
+    var out: StructDecl[] = [];
+    var name: string = p.peek_ident();
+    if (name.len() == 0) { return EnumResult { par: p, variants: out }; }
+    p = p.advance();
+    if (p.peek_punct() != "{") { return EnumResult { par: p, variants: out }; }
+    p = p.advance();
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        var vname: string = p.peek_ident();
+        if (vname.len() == 0) { break; }
+        p = p.advance();
+        var fields: StructFieldDecl[] = [];
+        if (p.peek_punct() == "(") {
+            p = p.advance();
+            var tr: TypeNameResult = parse_type_name(p);
+            p = tr.par;
+            fields = fields.push(StructFieldDecl { name: "__ev", type_name: tr.name });
+            while (p.peek_punct() == ",") {
+                p = p.advance();
+                var tr2: TypeNameResult = parse_type_name(p);
+                p = tr2.par;
+            }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+        }
+        out = out.push(StructDecl { name: vname, fields: fields });
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return EnumResult { par: p, variants: out };
+}
+
 // parse_import consumes `import "path";` starting from the
 // `import` keyword. The path string is captured verbatim; the
 // trailing semicolon is consumed when present. Malformed input
@@ -1336,6 +1381,16 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var tr: TypeAliasResult = parse_type_alias(p);
             p = tr.par;
             aliases = aliases.push(tr.alias);
+            continue;
+        }
+        if (kw == "enum") {
+            var enr: EnumResult = parse_enum_decl(p);
+            p = enr.par;
+            var ei: i32 = 0;
+            while (ei < enr.variants.len()) {
+                structs = structs.push(enr.variants[ei]);
+                ei = ei + 1;
+            }
             continue;
         }
         if (kw == "const") {
