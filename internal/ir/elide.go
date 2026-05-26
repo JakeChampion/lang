@@ -305,10 +305,12 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	//     pipe env_ptr (a plain i32) through the slot chain.
 	dropped := map[int]bool{}
 	mcToEnv := map[int]bool{}
+	elidedSlot := map[int32]bool{}
 	for slot := range candidates {
 		if failed[slot] || !hasRootInChain[slot] {
 			continue
 		}
+		elidedSlot[slot] = true
 		for _, w := range writers[slot] {
 			if w.makeClosureIdx >= 0 {
 				mcToEnv[w.makeClosureIdx] = true
@@ -320,6 +322,24 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				dropped[r.canonDropIdxs[1]] = true
 				dropped[r.canonDropIdxs[2]] = true
 			}
+		}
+	}
+
+	// A per-closure __closure_drop_<name> thunk reads captures at
+	// [env+offset], so it's only correct when the closure is a BARE
+	// ENV — i.e. the slot was elided above. For a closure that did
+	// NOT elide (e.g. never called, so no canonical reader to confirm
+	// elidability) the slot still holds a {fn, env} PAIR; downgrade
+	// its thunk drop to the generic, pair-safe __fern_closure_drop so
+	// the thunk doesn't deref the pair's fn field. Captures of such
+	// (rare) closures leak, which is safe.
+	for i := 0; i+1 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind != OpLoadLocal || elidedSlot[fn.Ops[i].I32] {
+			continue
+		}
+		n := fn.Ops[i+1]
+		if n.Kind == OpCallDirect && strings.HasPrefix(n.Str, "__closure_drop_") {
+			fn.Ops[i+1].Str = "__fern_closure_drop"
 		}
 	}
 
