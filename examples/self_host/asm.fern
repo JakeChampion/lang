@@ -350,7 +350,7 @@ function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
 //   "fn", "unknown".
 function infer_expr_type(e: parser.Expr, s: EmitState): string {
     match (e) {
-        parser.ExprNumber(_) => { return "i32"; },
+        parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
         parser.ExprBool(_) => { return "bool"; },
         parser.ExprString(_) => { return "string"; },
         parser.ExprArray(a) => {
@@ -388,16 +388,23 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
                 return "bool";
             }
-            if (b.op == "+") {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 var lt: string = infer_expr_type(b.left, s);
                 var rt: string = infer_expr_type(b.right, s);
                 if (lt == "string" || rt == "string") { return "string"; }
+                if (lt == "f64" || rt == "f64") { return "f64"; }
                 return "i32";
             }
             return "i32";
         },
         parser.ExprUnary(u) => {
             if (u.op == "!") { return "bool"; }
+            if (u.op == "-") { return infer_expr_type(u.operand, s); }
+            if (u.op.len() >= 3 && u.op[0:3] == "as_") {
+                var ct: string = u.op[3:u.op.len()];
+                if (ct == "f64" || ct == "f32" || ct == "float") { return "f64"; }
+                return "i32";
+            }
             return "i32";
         },
         parser.ExprCall(c) => {
@@ -590,7 +597,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
 // the infer_expr_type tag values. Unknown shapes (struct
 // names, generics, etc.) fall through to "unknown".
 function ret_tag_of(name: string): string {
-    if (name == "i32" || name == "f64" || name == "f32") { return "i32"; }
+    if (name == "i32") { return "i32"; }
+    if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }
     if (name == "string[]") { return "array_string"; }
@@ -2235,6 +2243,21 @@ function count_locals_in_stmt(stmt: parser.Stmt): i32 {
 function emit_expr(e: parser.Expr, s: EmitState): EmitState {
     match (e) {
         parser.ExprNumber(n) => {
+            if (n.is_float) {
+                // Float literal: GAS converts the decimal text to an
+                // IEEE-754 double in .rodata; load its bits and push
+                // them (floats flow through the rt-stack as their
+                // 8-byte bit pattern, like every other value).
+                var fl: LabelOut = fresh_label(s);
+                s = fl.state;
+                s = s.write("    .section .rodata\n");
+                s = s.write(fl.name + ": .double " + n.text + "\n");
+                s = s.write("    .text\n");
+                s = s.write("    movsd " + fl.name + "(%rip), %xmm0\n");
+                s = s.write("    movq %xmm0, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             s = s.write("    movq $" + n.text + ", %rax\n");
             s = s.write("    pushq %rax\n");
             return s;
@@ -2333,6 +2356,45 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
+            // Float (f64) arithmetic + comparison. Operands flow as
+            // 8-byte bit patterns; load into xmm regs and operate.
+            // Arithmetic pushes the result bits; comparison pushes a
+            // 0/1 i32. Detected when either operand infers as f64.
+            var is_flt: boolean = infer_expr_type(b.left, s) == "f64" || infer_expr_type(b.right, s) == "f64";
+            if (is_flt && (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/")) {
+                s = emit_expr(b.left, s);
+                s = emit_expr(b.right, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq %rax, %xmm1\n");   // rhs
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq %rax, %xmm0\n");   // lhs
+                if (b.op == "+") { s = s.write("    addsd %xmm1, %xmm0\n"); }
+                else if (b.op == "-") { s = s.write("    subsd %xmm1, %xmm0\n"); }
+                else if (b.op == "*") { s = s.write("    mulsd %xmm1, %xmm0\n"); }
+                else { s = s.write("    divsd %xmm1, %xmm0\n"); }
+                s = s.write("    movq %xmm0, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            if (is_flt && (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "==" || b.op == "!=")) {
+                s = emit_expr(b.left, s);
+                s = emit_expr(b.right, s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq %rax, %xmm1\n");   // rhs
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq %rax, %xmm0\n");   // lhs
+                s = s.write("    ucomisd %xmm1, %xmm0\n");
+                s = s.write("    movq $0, %rax\n");
+                if (b.op == "<") { s = s.write("    setb %al\n"); }
+                else if (b.op == "<=") { s = s.write("    setbe %al\n"); }
+                else if (b.op == ">") { s = s.write("    seta %al\n"); }
+                else if (b.op == ">=") { s = s.write("    setae %al\n"); }
+                else if (b.op == "==") { s = s.write("    sete %al\n"); }
+                else { s = s.write("    setne %al\n"); }
+                s = s.write("    movzbq %al, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             s = emit_expr(b.left, s);
             s = emit_expr(b.right, s);
             s = s.write("    popq %rcx\n");        // rhs
@@ -2390,7 +2452,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (u.op == "-") {
                 s = emit_expr(u.operand, s);
                 s = s.write("    popq %rax\n");
-                s = s.write("    negq %rax\n");
+                if (infer_expr_type(u.operand, s) == "f64") {
+                    // Float negation: flip the IEEE-754 sign bit (63).
+                    s = s.write("    movabsq $-9223372036854775808, %rcx\n");
+                    s = s.write("    xorq %rcx, %rax\n");
+                } else {
+                    s = s.write("    negq %rax\n");
+                }
                 s = s.write("    pushq %rax\n");
                 return s;
             }
@@ -2412,14 +2480,32 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // target width; i64/u64/usize and anything else are no-ops.
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ty: string = u.op[3:u.op.len()];
+                var src_ty: string = infer_expr_type(u.operand, s);
+                var to_float: boolean = ty == "f64" || ty == "f32" || ty == "float";
                 s = emit_expr(u.operand, s);
                 s = s.write("    popq %rax\n");
-                if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
-                else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
-                else if (ty == "u32") { s = s.write("    movl %eax, %eax\n"); }
-                else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
-                else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
-                else if (ty == "i32") { s = s.write("    movslq %eax, %rax\n"); }
+                if (to_float) {
+                    // → float. From int: cvtsi2sd. From float: no-op.
+                    if (src_ty != "f64") {
+                        s = s.write("    cvtsi2sd %rax, %xmm0\n");
+                        s = s.write("    movq %xmm0, %rax\n");
+                    }
+                } else if (src_ty == "f64") {
+                    // float → int: truncate toward zero, then width-mask.
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    cvttsd2si %xmm0, %rax\n");
+                    if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
+                    else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
+                    else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
+                    else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
+                } else {
+                    if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
+                    else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
+                    else if (ty == "u32") { s = s.write("    movl %eax, %eax\n"); }
+                    else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
+                    else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
+                    else if (ty == "i32") { s = s.write("    movslq %eax, %rax\n"); }
+                }
                 s = s.write("    pushq %rax\n");
                 return s;
             }
