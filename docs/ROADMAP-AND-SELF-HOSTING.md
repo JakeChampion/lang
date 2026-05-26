@@ -143,27 +143,46 @@ to a byte-identical compiler**. The bootstrap chain
 
 ```
 stage 0  Go compiler builds bundle_run (the multi-module driver)
-stage 1  bundle_run bundles lexer+parser+asm+flatten+driver  -> mmc
-stage 2  mmc compiles its own source                         -> gen2
-stage 3  gen2 compiles its own source                        -> gen3
+stage 1  bundle_run bundles lexer+parser+asm+flatten+io+driver -> mmc
+stage 2  mmc compiles its own source                           -> gen2
+stage 3  gen2 compiles its own source                          -> gen3
 ```
 
-`gen2` and `gen3` are **byte-identical** (~3.6 MB of asm), and `gen2`
-also compiles independent programs (e.g. a 2-module `a.add(19,23)`)
-to working binaries. `mmc` differs from `gen2` only by one trailing
-newline (the Go-built `bundle_run`'s `print` vs the self-host
-emitter's), so the convergence point is stage 2.
+`mmc`, `gen2`, and `gen3` are all **byte-identical** (~3.67 MB of
+asm) — the Go-bootstrapped and self-hosted compilers produce exactly
+the same output, and the self-hosted compiler reproduces itself.
+`gen2` also compiles independent programs (e.g. a 2-module
+`a.add(19,23)`) to working binaries. The earlier one-trailing-newline
+gap between `mmc` and `gen2` (Go `print` = puts vs the self-host
+emitter) was closed by adding a no-newline `write` builtin and
+switching the driver to it, so the convergence is now total from
+stage 1.
+
+The same fixpoint holds on **ARM64** (`TestSelfHostFixpointArm64`,
+CI-gated under qemu-aarch64): the Fern-authored `asm_arm64.fern`
+emitter reproduces itself byte-for-byte too.
+
+The driver no longer relies on any compiler-injected I/O shortcut:
+the bundle carries the **unmodified** `internal/stdlib/std/io.fern`,
+and the self-hosted compiler reads its own stdin through the real
+`std/io.read_all_stdin` (`stdin` + `Reader.read_chunk` + `Some`/`None`
++ `match`). Both emitters lower that Reader / Option machinery
+(`__fern_reader_read_chunk` / `__fern_reader_close`, Option boxes
+`[tag@0, payload@8]`, tag-discriminated `match` with payload binding).
 
 The walls cleared to get here (all in `examples/self_host/`, gated by
 `internal/e2e/self_host_*_test.go`): O(N²) output build → `strbuf`;
 parser non-advance runaways on qualified names
 (`parse_type_name` / `parse_pattern`) and qualified struct literals;
 `strbuf` + `read_all_stdin` builtins + a 256 MiB heap in the emitter;
+the no-newline `write` builtin (stage-1 byte-identity);
 struct-field-read and method-call-result type inference; module
-flattening (qualified-ref rewrite + own-decl mangling + bundle); and
+flattening (qualified-ref rewrite + own-decl mangling + bundle);
 amortised-O(1) array `push` (geometric growth with a hidden capacity
-word). The original "minimal fix … ~1-2 weeks" / "6-9 weeks" estimates
-below are superseded by this result.
+word); the ARM64 emitter brought to self-hosting parity; and the
+Reader / Option lowering on both backends (so the fixpoint compiles
+the real `std/io`). The original "minimal fix … ~1-2 weeks" /
+"6-9 weeks" estimates below are superseded by this result.
 
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
