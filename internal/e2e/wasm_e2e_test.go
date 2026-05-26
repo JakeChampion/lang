@@ -43,16 +43,11 @@ import (
 )
 
 // preview2 tool discovery: cached across the whole test run since
-// the answers don't change. preview2Setup and witDirSetup hold the
-// memoised lookup state; callers go through skipIfPreview2Missing
-// + witRoot.
+// the answers don't change. preview2Setup holds the memoised
+// lookup state; callers go through skipIfPreview2Missing.
 var (
 	preview2Once sync.Once
 	preview2Err  error
-
-	witOnce sync.Once
-	witDir  string
-	witErr  error
 )
 
 func skipIfPreview2Missing(t *testing.T) {
@@ -73,33 +68,6 @@ func skipIfPreview2Missing(t *testing.T) {
 	if preview2Err != nil {
 		t.Skipf("preview-2 prerequisites missing: %v", preview2Err)
 	}
-}
-
-// witRoot locates the `cmd/fern/wit` tree on disk by walking up
-// from the current working directory. wasm-tools resolves WIT
-// imports through a real filesystem path, so we can't ship the
-// tree as `embed.FS` from this package.
-func witRoot(t *testing.T) string {
-	t.Helper()
-	witOnce.Do(func() {
-		cwd, err := os.Getwd()
-		if err != nil {
-			witErr = err
-			return
-		}
-		for d := cwd; d != "/" && d != "."; d = filepath.Dir(d) {
-			cand := filepath.Join(d, "cmd", "fern", "wit")
-			if _, err := os.Stat(filepath.Join(cand, "fern.wit")); err == nil {
-				witDir = cand
-				return
-			}
-		}
-		witErr = errors.New("cmd/fern/wit not found above " + cwd)
-	})
-	if witErr != nil {
-		t.Fatal(witErr)
-	}
-	return witDir
 }
 
 // runOpts bundles the per-call wasmtime knobs. Empty defaults run

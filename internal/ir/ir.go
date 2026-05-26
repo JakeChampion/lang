@@ -7642,15 +7642,6 @@ func pairPayloadWidth(t ast.Type) int {
 	return 0
 }
 
-// payloadStoreOp returns the IR Op that stores a value of the
-// given payload type to a heap slot — paired with payloadLoadOp
-// for the symmetric load. Pointer-shaped payloads emit
-// `Width: WidthPtr` so the backend picks 4-byte (wasm32) or
-// 8-byte (arm64) stores per its native heap-pointer width.
-func payloadStoreOp(t ast.Type) Op {
-	return payloadStoreOpFor(t, 4)
-}
-
 // payloadStoreOpFor is the ptrW-aware variant. Returns
 // `Width: WidthString` for string types on wasm32 (ptrW=4) so
 // the wasm OpStore handler fans out to two i32.store calls; on
@@ -7683,21 +7674,6 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 	return Op{Kind: OpStore}
 }
 
-// arrayElemStoreOp picks the right store op for an array
-// element of type `t`, using element stride to dispatch:
-//   - 1-byte (u8 / i8 / bool)            → i32.store8
-//   - 2-byte (u16 / i16)                 → i32.store16
-//   - 4-byte (i32 / u32 / f32)           → i32.store / f32.store
-//   - 8-byte (i64 / u64 / f64)           → i64.store / f64.store
-//   - pointer (string / array / struct /
-//     enum / slice / tuple / closure)    → OpStore Width:WidthPtr
-//     (4-byte on wasm32, 8-byte on arm64)
-//
-// Pairs with the symmetric read in array-indexing lowering.
-func arrayElemStoreOp(t ast.Type) Op {
-	return arrayElemStoreOpFor(t, 4)
-}
-
 // arrayElemStoreOpFor is the ptrW-aware variant. Strings on
 // wasm32 (ptrW=4) return `Width: WidthString` for two-word
 // element stores; on natives they fall back to WidthPtr.
@@ -7728,10 +7704,6 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 		return Op{Kind: OpStore, Width: 64}
 	}
 	return Op{Kind: OpStore}
-}
-
-func payloadLoadOp(t ast.Type) Op {
-	return payloadLoadOpFor(t, 4)
 }
 
 // payloadLoadOpFor is the ptrW-aware variant of payloadLoadOp.
@@ -8517,20 +8489,6 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
 	return nil
-}
-
-// emitWideMapGet lowers `m.get(k)` when V needs boxing — wide
-// scalar (i64 / u64 / f64) on every target, or string V on
-// wasm32. The wat helper returns an `Option<i32>` (4-byte
-// payload = the boxed cell pointer). We translate that to a
-// fresh `Option<V>` heap-box with the user-expected payload
-// shape so the surrounding match / let-binding sees the
-// substituted V type. Variant indices: Some = 0, None = 1
-// (the auto-injected order in checker.builtinEnumDecls). K is
-// also boxed when it's a string on wasm32.
-func (b *builder) emitWideMapGet(n *ast.Call, kType, vType ast.Type) error {
-	boxV := isWideScalar(vType) || isStringForBoxing(vType, b.ptrW)
-	return b.emitMapGetRebox(n, kType, vType, boxV)
 }
 
 // emitMapGetRebox lowers `m.get(k)` by reboxing the helper's

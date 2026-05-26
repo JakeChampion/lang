@@ -5788,20 +5788,6 @@ func (g *generator) emitStrDataPtr2W(dstX, dataX, lenX string, scratchOff int) {
 	g.label(doneLbl)
 }
 
-// emitStrEmpty2W is the two-word-ABI counterpart of
-// emitStrEmpty. Sets `(dataX, lenX)` to the canonical empty-
-// string pair: dataX = 0 (no inline bytes), lenX = inline-flag
-// bit only (length 0, no inline bytes). This is the
-// same representation `fernstring.PackInlineNative([])`
-// produces and matches the wasm32 empty-string pair
-// (with bit 63 instead of bit 31).
-//
-// Dead today; live after the arm64 flip.
-func (g *generator) emitStrEmpty2W(dataX, lenX string) {
-	g.emit("mov %s, xzr", dataX)
-	g.emit("movz %s, #0x8000, lsl #48", lenX)
-}
-
 // emitArrayLen loads the i32 length of the length-prefixed array
 // whose data pointer lives in srcX into dstW. Today this is a
 // 4-byte little-endian load from `[srcX - 4]`. Centralised seam

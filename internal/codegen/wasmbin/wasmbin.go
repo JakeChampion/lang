@@ -2077,36 +2077,6 @@ func closureMakeSites(fn *ir.Func, funcByName map[string]*ir.Func, base uint32) 
 	return sites, scratchValtypes, nil
 }
 
-// maxClosureCaptures returns the highest op.I32 (capture count)
-// across every OpMakeClosure / OpMakeEnv in fn. Used to gate
-// scratch-slot allocation; the actual layout comes from
-// closureMakeSites.
-func maxClosureCaptures(fn *ir.Func) int {
-	max := 0
-	for _, op := range fn.Ops {
-		switch op.Kind {
-		case ir.OpMakeClosure, ir.OpMakeEnv:
-			if int(op.I32) > max {
-				max = int(op.I32)
-			}
-		}
-	}
-	return max
-}
-
-// fnNeedsClosureMakeScratch reports whether fn has any
-// OpMakeClosure / OpMakeEnv. Used to gate scratch-slot allocation
-// for the env_ptr + pair_ptr + N capture stash.
-func fnNeedsClosureMakeScratch(fn *ir.Func) bool {
-	for _, op := range fn.Ops {
-		switch op.Kind {
-		case ir.OpMakeClosure, ir.OpMakeEnv:
-			return true
-		}
-	}
-	return false
-}
-
 // emitClosureMakeAlloc handles the common alloc-and-store body of
 // OpMakeEnv / OpMakeClosure. Pops captures (in reverse), allocs
 // env_size bytes, stores each capture at its type-aware offset,
