@@ -242,7 +242,10 @@ planned order:
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
-- ⬜ **i32-keyed maps** (the Map runtime is currently string-keyed only).
+- ✅ **i32-keyed maps** — `Map[i32, V]` tags as `mapI:<V>`; the
+  dispatch passes a key-kind flag and the runtime takes an integer
+  (`==`) key-compare path instead of `__fern_str_eq`
+  (`self_host_map_i32_test.go`).
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
 - ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.
