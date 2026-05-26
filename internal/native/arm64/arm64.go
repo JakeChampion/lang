@@ -465,6 +465,21 @@ func FCVTZSS(rd, rn uint32) uint32 { return 0x9E380000 | ((rn & regMask) << 5) |
 func UCVTF(rd, rn uint32) uint32  { return 0x9E630000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FCVTZU(rd, rn uint32) uint32 { return 0x9E790000 | ((rn & regMask) << 5) | (rd & regMask) }
 
+// ADRP encodes `adrp Xd, <target>` — form the PC-relative page address
+// of a symbol: Xd = (PC & ~0xfff) + (pageDelta << 12). pageDelta is the
+// signed 21-bit difference, in 4 KiB pages, between the target's page
+// and the instruction's page. Pair with an `add Xd, Xd, #:lo12:sym`
+// (ADDimm with the low 12 bits) to materialise the full address.
+//
+// Encoding: op=1 immlo(2) 10000 immhi(19) Rd
+// → base 0x90000000 | immlo<<29 | immhi<<5 | Rd.
+func ADRP(rd uint32, pageDelta int32) uint32 {
+	imm := uint32(pageDelta)
+	immlo := imm & 0x3
+	immhi := (imm >> 2) & 0x7ffff
+	return 0x90000000 | (immlo << 29) | (immhi << 5) | (rd & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.
