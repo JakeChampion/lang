@@ -183,3 +183,52 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 		}
 	})
 }
+
+// TestSelfHostArgsArm64 gives the ARM64 emitter's args() → string[]
+// runtime CI coverage (the x86 side is exercised by the file-driver
+// test). The self-hosted ARM64 compiler builds a program that returns
+// args().len(); run under qemu-aarch64 with extra arguments, its exit
+// code must equal argc.
+func TestSelfHostArgsArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_run.fern"))
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
+
+	argcSrc := "function main(): i32 { return args().len(); }\n"
+	progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(argcSrc))
+	if len(progAsm) == 0 {
+		t.Fatal("self-host arm64 compiler emitted 0 bytes for the args program")
+	}
+	progBin := buildBin(t, arm64gcc, dir, "argc", string(progAsm))
+
+	cmd := runArm64Bin(qemu, progBin, "one", "two", "three")
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 4 { // argv[0] + 3 args
+		t.Errorf("args().len() returned %d, want 4 (argv0 + 3)", code)
+	}
+}

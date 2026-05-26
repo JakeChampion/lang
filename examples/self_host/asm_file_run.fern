@@ -1,0 +1,36 @@
+// examples/self_host/asm_file_run.fern — file-driven self-host
+// compiler driver. Unlike asm_run.fern (which reads source from
+// stdin), this takes a path on the command line, reads that file
+// with read_file, and prints the x86-64 assembly for it.
+//
+//     $ asm_file_run prog.fern > prog.s
+//
+// Uses only features both the Go backend and the self-hosted
+// emitter support — args() for argv, read_file → Result for the
+// file, match Ok/Err — so the same driver builds with either
+// compiler. The companion of asm_run.fern for the "compile a
+// source FILE" CLI shape, a step toward import-driven file loading.
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+import "./asm";
+
+function main(): i32 {
+    var a: string[] = args();
+    if (a.len() < 2) {
+        eprint("usage: asm_file_run <file.fern>\n");
+        return 2;
+    }
+    match (read_file(a[1])) {
+        Ok(src) => {
+            write(asm.emit_module(parser.parse_module(lexer.tokenize(src))));
+            return 0;
+        },
+        Err(e) => {
+            eprint("asm_file_run: could not read file\n");
+            return 1;
+        },
+    }
+    return 3;
+}
