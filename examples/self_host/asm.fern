@@ -491,9 +491,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // we can find a single FuncDecl that
                     // matches name + receiver_type).
                     var rt: string = infer_expr_type(fa.obj, s);
-                    if (rt == "map" && fa.field == "set") { return "map"; }
-                    if (rt == "map" && fa.field == "has") { return "bool"; }
-                    if (rt == "map" && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "set") { return rt; }
+                    if (is_map(rt) && fa.field == "has") { return "bool"; }
+                    if (is_map(rt) && fa.field == "len") { return "i32"; }
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
@@ -645,6 +645,12 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "read_chunk") { return "string"; }
+                    if (fa.field == "get") {
+                        var rt: string = infer_expr_type(fa.obj, s);
+                        if (rt.len() >= 4 && rt[0:4] == "map:") {
+                            return rt[4 : rt.len()];
+                        }
+                    }
                     return "unknown";
                 },
                 _ => { return "unknown"; }
@@ -666,11 +672,40 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
-    if (name.len() >= 3 && name[0:3] == "Map") { return "map"; }
+    if (name.len() >= 4 && name[0:4] == "Map[") {
+        // Carry the value type into the tag ("map:<value-tag>") so
+        // `m.get(k)` payloads infer correctly (e.g. string[] → array
+        // push/len rather than the string default).
+        return "map:" + map_value_tag(name);
+    }
+    if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
     if (name.len() > 0 && name[name.len() - 1] == 93) {
         // Trailing `]` → other `T[]` shapes (struct[] etc.)
         // or Map[..]. Treat as plain array.
         return "array";
+    }
+    return "unknown";
+}
+
+// is_map reports whether a type tag denotes a Map ("map" or
+// "map:<value-tag>"). Used wherever map method dispatch keys off the
+// receiver tag.
+function is_map(t: string): boolean {
+    return t.len() >= 3 && t[0:3] == "map";
+}
+
+// map_value_tag extracts the value-type tag from a `Map[K, V]` type
+// name, e.g. "Map[string, string[]]" → "array_string". Splits at the
+// first ", " (the K/V separator); everything after is the value type.
+function map_value_tag(name: string): string {
+    if (name.len() < 5) { return "unknown"; }
+    var inner: string = name[4 : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ret_tag_of(inner[i + 2 : inner.len()]);
+        }
+        i = i + 1;
     }
     return "unknown";
 }
@@ -2696,7 +2731,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Map methods (string-keyed). set returns the
                     // (mutated) map; get → Option[V]; has → bool;
                     // len → i32.
-                    if (prim_recv == "map" && fa.field == "set" && c.args.len() == 2) {
+                    if (is_map(prim_recv) && fa.field == "set" && c.args.len() == 2) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = emit_expr(c.args[1], s);
@@ -2710,7 +2745,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_arr_push();
                         return s;
                     }
-                    if (prim_recv == "map" && fa.field == "get" && c.args.len() == 1) {
+                    if (is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");   // k
@@ -2721,7 +2756,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_str_eq();
                         return s;
                     }
-                    if (prim_recv == "map" && fa.field == "has" && c.args.len() == 1) {
+                    if (is_map(prim_recv) && fa.field == "has" && c.args.len() == 1) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");   // k
@@ -2731,7 +2766,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_str_eq();
                         return s;
                     }
-                    if (prim_recv == "map" && fa.field == "len" && c.args.len() == 0) {
+                    if (is_map(prim_recv) && fa.field == "len" && c.args.len() == 0) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rax\n");
                         s = s.write("    movq (%rax), %rax\n");   // keys arr
