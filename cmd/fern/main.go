@@ -47,11 +47,13 @@ import (
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/monomorph"
+	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
+	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
+	"github.com/jakechampion/lang/internal/ssa"
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
@@ -108,6 +110,7 @@ func main() {
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
 	cc := flag.String("cc", "", "linker invoked when -o or --run is set; defaults to aarch64-linux-gnu-gcc for arm64 Linux, clang for arm64-darwin, x86_64-linux-gnu-gcc for x86-64")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
+	native := flag.Bool("native", false, "with -target arm64: assemble and link the binary in-process via the pure-Go native backend (internal/native), with no external assembler or linker. Experimental; covers the integer/float/memory/control-flow instruction surface the code generator emits. Falls back with a clear error on any unsupported instruction.")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
@@ -224,7 +227,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-component-wrap and -component-wrap-cli are mutually exclusive")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *qemu, *componentWrap, *componentWrapCli, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -398,7 +401,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt bool, qemu string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
 	prog, srcs, err := modload.Load(srcPath)
 	if err != nil {
 		return 1, formatLoadError(err, srcs, srcPath)
@@ -607,7 +610,14 @@ func run(srcPath, outPath, target, cc string, runIt bool, qemu string, component
 			os.Remove(cleanupBin)
 		}
 	}()
-	if darwin {
+	if native {
+		if target != "arm64" {
+			return 1, fmt.Errorf("-native is only supported with -target arm64 (got %q)", target)
+		}
+		if err := linkNative(asm, binPath); err != nil {
+			return 1, err
+		}
+	} else if darwin {
 		if err := linkDarwin(asm, binPath, cc); err != nil {
 			return 1, err
 		}
@@ -731,6 +741,22 @@ func linkDarwin(asm, outPath, cc string) error {
 // our own `_start`, syscall wrappers, allocator, and memcpy /
 // strcmp / strlen, so the resulting binary contains only language
 // code + direct svc 0 syscalls.
+// linkNative assembles and links arm64 assembly into a static ELF
+// executable entirely in-process, with no external assembler or linker
+// (the pure-Go internal/native backend). Unsupported instructions
+// surface as an error rather than a miscompile.
+func linkNative(asm, outPath string) error {
+	text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	bin := nativeelf.StaticExecutableData(text, rodata)
+	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
 func link(asm, outPath, cc string) error {
 	if _, err := exec.LookPath(cc); err != nil {
 		return fmt.Errorf("cross-compiler %q not found on PATH (override with -cc): %w", cc, err)
