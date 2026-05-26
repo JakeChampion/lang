@@ -473,8 +473,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper")) {
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper" || fa.field == "gcd" || fa.field == "lcm")) {
                         return "i32";
+                    }
+                    if (rt == "i32" && fa.field == "to_ascii_string") {
+                        return "string";
                     }
                     if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
                         return "bool";
@@ -2699,6 +2702,26 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    pushq %rax\n");
                             return s;
                         }
+                        if (fa.field == "gcd" && c.args.len() == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");   // other
+                            s = s.write("    popq %rdi\n");   // n
+                            s = s.write("    call __fern_i32_gcd\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_heap();
+                            return s;
+                        }
+                        if (fa.field == "lcm" && c.args.len() == 1) {
+                            s = emit_expr(fa.obj, s);
+                            s = emit_expr(c.args[0], s);
+                            s = s.write("    popq %rsi\n");   // other
+                            s = s.write("    popq %rdi\n");   // n
+                            s = s.write("    call __fern_i32_lcm\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_heap();
+                            return s;
+                        }
                         if (fa.field == "max" && c.args.len() == 1) {
                             s = emit_expr(fa.obj, s);
                             s = emit_expr(c.args[0], s);
@@ -2909,6 +2932,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    leaq -32(%rax), %rdx\n");
                             s = s.write("    cmovbe %rdx, %rax\n");  // → b-32
                             s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        // to_ascii_string() — a 1-byte string from the
+                        // byte value (no range check; callers pass valid
+                        // bytes). Allocs 1 data byte + a {data,len} box.
+                        if (fa.field == "to_ascii_string" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rcx\n");          // byte
+                            s = s.write("    movq $1, %rdi\n");
+                            s = s.write("    call __fern_alloc\n");
+                            s = s.write("    movb %cl, (%rax)\n");
+                            s = s.write("    movq %rax, %rdx\n");    // data ptr
+                            s = s.write("    movq $16, %rdi\n");
+                            s = s.write("    call __fern_alloc\n");
+                            s = s.write("    movq %rdx, (%rax)\n");  // data@0
+                            s = s.write("    movq $1, 8(%rax)\n");   // len@8
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_heap();
                             return s;
                         }
                     }
@@ -6435,6 +6476,68 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_random_bytes, .-__fern_random_bytes\n");
+
+        // __fern_i32_gcd(%rdi = n, %rsi = other) → gcd(|n|, |other|)
+        // by Euclid. Mirrors std/i32.gcd.
+        s = s.write(".globl __fern_i32_gcd\n");
+        s = s.write(".type __fern_i32_gcd, @function\n");
+        s = s.write("__fern_i32_gcd:\n");
+        s = s.write("    movq %rdi, %rax\n");        // a = |n|
+        s = s.write("    movq %rax, %rdx\n");
+        s = s.write("    negq %rdx\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    cmovl %rdx, %rax\n");
+        s = s.write("    movq %rsi, %rcx\n");        // b = |other|
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    negq %rdx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    cmovl %rdx, %rcx\n");
+        s = s.write(".Lgcd_loop:\n");
+        s = s.write("    testq %rcx, %rcx\n");
+        s = s.write("    je .Lgcd_done\n");
+        s = s.write("    movq %rcx, %r8\n");          // t = b
+        s = s.write("    cqto\n");
+        s = s.write("    idivq %rcx\n");              // rdx = a % b
+        s = s.write("    movq %r8, %rax\n");          // a = t
+        s = s.write("    movq %rdx, %rcx\n");         // b = a%b
+        s = s.write("    jmp .Lgcd_loop\n");
+        s = s.write(".Lgcd_done:\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_i32_gcd, .-__fern_i32_gcd\n");
+
+        // __fern_i32_lcm(%rdi = n, %rsi = other) → lcm. Mirrors
+        // std/i32.lcm: 0 if either is 0, else |n/gcd| * |other|.
+        s = s.write(".globl __fern_i32_lcm\n");
+        s = s.write(".type __fern_i32_lcm, @function\n");
+        s = s.write("__fern_i32_lcm:\n");
+        s = s.write("    testq %rdi, %rdi\n");
+        s = s.write("    je .Llcm_zero\n");
+        s = s.write("    testq %rsi, %rsi\n");
+        s = s.write("    je .Llcm_zero\n");
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    call __fern_i32_gcd\n");      // rax = g
+        s = s.write("    movq %rax, %rcx\n");          // g
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    movq %rdi, %rax\n");          // n / g
+        s = s.write("    cqto\n");
+        s = s.write("    idivq %rcx\n");
+        s = s.write("    movq %rax, %rdx\n");          // |n/g|
+        s = s.write("    negq %rdx\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    cmovl %rdx, %rax\n");
+        s = s.write("    movq %rsi, %rcx\n");          // |other|
+        s = s.write("    movq %rcx, %rdx\n");
+        s = s.write("    negq %rdx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    cmovl %rdx, %rcx\n");
+        s = s.write("    imulq %rcx, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Llcm_zero:\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_i32_lcm, .-__fern_i32_lcm\n");
 
         // Global string-builder primitive — the amortised-O(1)
         // output accumulator (strbuf_reset / strbuf_append /
