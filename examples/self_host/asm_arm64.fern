@@ -2566,6 +2566,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprUnary(u) => {
+            // `expr?` try operator — see asm.fern.
+            if (u.op == "try_") {
+                s = emit_expr(u.operand, s);
+                s = s.write("    ldr x0, [sp], #16\n");   // option/result box
+                s = s.write("    ldr x1, [x0]\n");        // tag (0 = Some/Ok)
+                var tlbl: LabelOut = fresh_label(s);
+                s = tlbl.state;
+                s = s.write("    cbz x1, " + tlbl.name + "\n");
+                // None/Err: return the box (already in x0) from the fn.
+                s = s.write("    mov sp, x29\n");
+                s = s.write("    ldp x29, x30, [sp], #16\n");
+                s = s.write("    ret\n");
+                s = s.write(tlbl.name + ":\n");
+                s = s.write("    ldr x0, [x0, #8]\n");     // payload
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             if (u.op == "-") {
                 s = emit_expr(u.operand, s);
                 s = s.write("    ldr x0, [sp], #16\n");

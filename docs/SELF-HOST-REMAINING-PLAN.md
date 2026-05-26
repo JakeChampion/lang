@@ -263,7 +263,11 @@ planned order:
   follow-up.
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
-- ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.
+- ⬜ **Tuple destructuring** (`var (a, b) = …`) — see PR #1520.
+- ✅ **`?` try operator** — `expr?` desugars (parser) to the unary op
+  "try_"; the emitter unwraps a Some/Ok payload or early-returns the
+  None/Err box from the enclosing function
+  (`self_host_try_op_test.go`).
 - ⬜ **Generics** (monomorphisation).
 - ⬜ stdlib **`std/test` / `std/fuzz` / `std/tcp`** (depend on the above).
 

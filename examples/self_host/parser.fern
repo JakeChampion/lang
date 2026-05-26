@@ -490,6 +490,13 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             if (tyname.len() == 0) { tyname = p.peek_keyword(); }
             if (tyname.len() > 0) { p = p.advance(); }
             base = e_unary("as_" + tyname, base);
+        } else if (p.peek_punct() == "?") {
+            // `expr?` try operator. Desugar to the unary op `try_`
+            // (operand = base); the emitter unwraps a Some/Ok payload
+            // or early-returns the None/Err box from the enclosing
+            // (Option/Result-returning) function.
+            p = p.advance();
+            base = e_unary("try_", base);
         } else {
             break;
         }
