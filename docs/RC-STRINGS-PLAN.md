@@ -5,9 +5,11 @@ reclamation system, the way arrays / structs / enums / closures /
 tuples / Map values already are.
 
 Date: 2026-05-26.
-Status: design, not implementation. **Gated on the SSO two-word ABI
-flip** (see "Prerequisite" below) — do not start the reclamation
-wiring until that lands.
+Status: design, not implementation. **NOT blocked on SSO** (the active
+wasm backend already uses the two-word form; see "Prerequisite
+(revised)"). The real prerequisites are a uniform heap-string rc header
++ static-literal sentinel, per backend — self-contained and shippable
+wasm-first.
 
 ## Why
 
@@ -49,68 +51,83 @@ high-bit-sentinel) is insufficient: it cannot see the inline flag, and
 the inline form's "pointer" is actually packed bytes that must never be
 dereferenced.
 
-### 2. The string ABI is mid-migration (SSO)
+### 2. The string ABI is heterogeneous across backends
 
-`docs/SSO-PLAN.md` is an in-progress, multi-PR migration of the string
-representation. Current state:
+`docs/SSO-PLAN.md` describes an in-progress SSO migration, but it is
+**stale** with respect to the active backends. Actual current state
+(surveyed 2026-05-26):
 
-- **wasm**: shipped the *single-i32 tiny-SSO* form (PRs #351–#362):
-  3-byte inline cap, top-bit flag, else a heap pointer to a
-  length-prefixed buffer. The **two-word `(data, len)` ABI flip
-  (cap 3 → 7) is "remaining work" item #1.**
-- **natives (x86-64 / arm64)**: not SSO'd — `string` is a single
-  pointer to a `[len:4][bytes]` buffer. SSO is "remaining work" #2.
-- Heap-string allocation paths differ (interned literals in the data
-  segment with a length prefix; `__str_concat` results; `__fern_alloc_rc1`
-  blocks for some carriers) — there is **no single, stable heap-string
-  layout with a guaranteed rc header** today.
+- **wasm (`internal/codegen/wasmbin`, the ACTIVE wasm backend — `cmd/fern`
+  and the e2e suite both route through it)**: `string` is already
+  **two-word `(data, len)`**. e.g. `__str_concat` is
+  `(a_data, a_len, b_data, b_len) → (data, len)`. The inline (tiny-SSO)
+  flag rides `len`'s top bit. So the "two-word flip" the SSO doc lists as
+  remaining work is, for wasmbin, **done**. BUT heap results are
+  allocated via bare `__fern_alloc` (`buildStrConcatBody`) — **no rc
+  header**.
+- **natives (x86-64 / arm64)**: `string` is a **single pointer** to a
+  length-prefixed buffer (`__fern_strcat(a, b)` — one arg per string).
+  Some string-producing helpers already alloc via `__fern_alloc_rc1`
+  (rc header present), others don't — **rc-header presence is not
+  uniform**.
 
-Wiring reclamation into this moving target would (a) have to handle the
-transitional tiny-SSO form, (b) be redone after the two-word flip, and
-(c) risk conflicting with the active SSO PRs. The dec also fundamentally
-needs `len` on the stack to read the inline flag cheaply — which is
-precisely what the two-word ABI delivers.
+So the representation differs by backend (two-word wasm vs single-ptr
+native) and the rc header is missing or inconsistent. The string drop
+emission therefore can't be purely target-agnostic IR the way the rest
+of the rc arc is — it needs a representation-aware helper per backend
+(like the existing `WidthString` drop marker that already fans a string
+drop into two slots on wasm).
 
-## Prerequisite
+## Prerequisite (revised)
 
-**SSO "remaining work" #1 (two-word ABI flip) on a backend, then #2
-(native SSO).** After the flip:
+**NOT blocked on SSO** — the original gating ("wait for the two-word
+flip") was based on the stale SSO doc; wasm already has the two-word
+form, and natives don't have an inline form at all (so their dec doesn't
+need a second word). The actual prerequisites are smaller and
+self-contained:
 
-- `string` is two words `(data, len)` on the operand stack; the inline
-  flag is `len.top_bit` — readable without a heap load.
-- Heap form has a **single stable layout**: `data` → raw bytes, length
-  on the stack (the 4-byte prefix is gone per SSO Step 10 cleanup).
-- This is the natural point to give heap strings a uniform rc header
-  (rc at `data - 8`, mirroring arrays/structs) in the same PR that
-  removes the length prefix.
+1. **Uniform rc header on heap strings**, per backend: change every
+   heap-string allocation path (`__str_concat`, `__str_slice`,
+   `string_from_bytes`, `int_to_string`, …) to alloc through the
+   rc-headered allocator (`__fern_alloc_rc1` exists; wasmbin's bare
+   `__fern_alloc` paths switch to it), so `data-8` always holds a real
+   rc. Length readers keep reading their existing offset.
+2. **Static-literal sentinel header**: `OpConstStr` emits interned
+   literals with a `0x80000000` rc-sentinel header (like enum
+   sentinels), so `__fern_rc_inc/dec` short-circuit on them rather than
+   relying on a fragile low-address guard.
 
-Reclamation slices below assume this end-state. They can begin once the
-flip lands on the **wasm** backend (reclamation can ship wasm-first, like
-the original rc arc effectively validated wasm + x86 with arm64 via CI).
+These are per-backend runtime/codegen changes (wasm + x86-64 + arm64),
+self-contained and shippable one backend at a time (reclamation can go
+wasm-first, as the original rc arc effectively did). Once a backend has
+(1) + (2), the reclamation slices below apply.
 
-## Design (post-flip)
+## Design
 
-### Heap-string rc header
+### Heap-string rc header (prerequisite 1)
 
 `__str_concat` / `__str_slice` / `string_from_bytes` / `int_to_string`
-and friends allocate heap strings through a shared allocator that lays
-out `[rc:4|pad:4 | bytes...]` with `data = base + 8`, rc=1 at `data-8`
-— identical to the array/struct convention so `__fern_rc_inc` /
-`__fern_box_free` work unchanged. Static literals keep their
-data-segment offset (no rc header) and are distinguished by address
-range; inline strings carry no pointer at all.
+and friends allocate heap strings through the rc-headered allocator
+(`__fern_alloc_rc1`) so `data-8` holds rc=1 — identical to the
+array/struct convention so `__fern_rc_inc` / `__fern_box_free` work
+unchanged. Length readers keep their existing offset. Static literals
+carry a `0x80000000` sentinel header (prerequisite 2); inline strings
+(wasm) carry no pointer at all.
 
 ### The string dec helper
 
-A new `__fern_str_dec(data, len)` (two-word) that:
+A representation-aware `__fern_str_dec` (two-word `(data, len)` on wasm;
+single `(ptr)` on natives — natives have no inline form):
 
-1. `if IsInline(len) return;` — inline: no heap, nothing to free.
-2. `if data < heap_base return;` — static literal / low-address: immortal.
-3. else `__fern_box_free`-style dec/free of the heap buffer at `data-8`.
+1. wasm only: `if IsInline(len) return;` — inline: no heap, nothing to
+   free.
+2. `__fern_rc_dec`/`box_free` of the heap buffer at `data-8`; the
+   sentinel header makes static literals a no-op, so no fragile
+   address-range guard is needed.
 
-`__fern_str_inc(data, len)` is the retain mirror (skips inline + static).
-Both are pure runtime helpers; the IR emits them in place of the
-single-pointer `__fern_rc_inc` / `dec` for string-typed values.
+`__fern_str_inc` is the retain mirror. The IR emits these in place of
+the plain `__fern_rc_inc` / `dec` for string-typed values; the existing
+`WidthString` drop marker already carries the wasm two-slot fan-out.
 
 ### Predicate wiring (mirrors the merged rc arc)
 
@@ -181,19 +198,22 @@ differential fuzz and `__rc_underflow_count` guard.
 - **Dereferencing an inline string** → reads garbage as a pointer.
   Mitigation: the inline-flag check is the FIRST thing `__fern_str_*`
   does; an ir test that an inline-form local skips the heap path.
-- **Two-slot sweep accounting** — the string occupies two operand
-  slots; the dec sweep, move analysis, and `seen`-dedup must treat the
-  pair atomically (the `WidthString` marker already exists for this on
-  the drop side). This is the fiddliest part and why it's gated on the
-  two-word flip (which forces every string slot to be a pair uniformly).
-- **Migration conflict** — starting before the SSO flip means redoing
-  the work; coordinate so the rc header lands IN the flip PR.
+- **Two-slot sweep accounting (wasm)** — a wasm string occupies two
+  operand slots; the dec sweep, move analysis, and `seen`-dedup must
+  treat the pair atomically (the `WidthString` marker already exists for
+  this on the drop side). Natives stay single-slot. This per-backend
+  shape difference is the fiddliest part.
+- **Heterogeneous heap-string allocators** — prerequisite 1 must catch
+  EVERY heap-string-producing path on EACH backend; a missed path leaves
+  a header-less buffer that the dec misreads. Audit `__str_concat`,
+  `__str_slice`, `string_from_bytes`, `int_to_string`, byte/HTTP
+  marshaling, etc., per backend.
 
 ## What this doc IS / IS NOT
 
-- IS: the sequencing + design for string reclamation, gated on SSO.
-- IS NOT: a claim it can ship before the two-word ABI flip, nor a
-  scope estimate for any single slice (each has its own, ~8 slices
-  above).
+- IS: the sequencing + design for string reclamation, on the CURRENT
+  (heterogeneous, per-backend) string ABI — not blocked on SSO.
+- IS NOT: a scope estimate for any single slice (each has its own; ~8
+  reclamation slices above, atop the 2 per-backend prerequisites).
 
 https://claude.ai/code/session_01Vrwb6rXeWdQ9jBLH34TSaQ
