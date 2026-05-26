@@ -453,7 +453,10 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "map_new") { return "map"; }
                     if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
                             || id.name == "__floor_f64" || id.name == "__ceil_f64"
-                            || id.name == "__trunc_f64" || id.name == "__round_f64") {
+                            || id.name == "__trunc_f64" || id.name == "__round_f64"
+                            || id.name == "__sin_f64" || id.name == "__cos_f64"
+                            || id.name == "__exp_f64" || id.name == "__log_f64"
+                            || id.name == "__pow_f64") {
                         return "f64";
                     }
                     if (id.name == "str_split") { return "array_string"; }
@@ -3787,6 +3790,77 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = s.write("    roundsd $3, %xmm0, %xmm0\n");
                     s = s.write("    movq %xmm0, %rax\n");
                 }
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            // f64 transcendentals — the x87 FPU computes these directly
+            // (no libm, hardware-accurate). The value is moved through a
+            // stack slot (x87 loads from memory, not xmm). exp(x) =
+            // 2^(x·log2 e) via f2xm1 + fscale; log(x) = ln2·log2(x) via
+            // fyl2x.
+            if ((name == "__sin_f64" || name == "__cos_f64"
+                    || name == "__exp_f64" || name == "__log_f64") && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    subq $8, %rsp\n");
+                s = s.write("    movq %rax, (%rsp)\n");
+                if (name == "__sin_f64") {
+                    s = s.write("    fldl (%rsp)\n");
+                    s = s.write("    fsin\n");
+                    s = s.write("    fstpl (%rsp)\n");
+                } else if (name == "__cos_f64") {
+                    s = s.write("    fldl (%rsp)\n");
+                    s = s.write("    fcos\n");
+                    s = s.write("    fstpl (%rsp)\n");
+                } else if (name == "__log_f64") {
+                    s = s.write("    fldln2\n");
+                    s = s.write("    fldl (%rsp)\n");
+                    s = s.write("    fyl2x\n");
+                    s = s.write("    fstpl (%rsp)\n");
+                } else {
+                    s = s.write("    fldl2e\n");
+                    s = s.write("    fmull (%rsp)\n");      // t = x*log2(e)
+                    s = s.write("    fld %st(0)\n");
+                    s = s.write("    frndint\n");           // n = round(t)
+                    s = s.write("    fsubr %st, %st(1)\n"); // st1 = t - n = f (GAS fsubr)
+                    s = s.write("    fxch %st(1)\n");        // st0=f, st1=n
+                    s = s.write("    f2xm1\n");              // 2^f - 1
+                    s = s.write("    fld1\n");
+                    s = s.write("    faddp\n");              // 2^f
+                    s = s.write("    fscale\n");             // 2^f * 2^n
+                    s = s.write("    fstp %st(1)\n");
+                    s = s.write("    fstpl (%rsp)\n");
+                }
+                s = s.write("    movq (%rsp), %rax\n");
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            // pow(x, y) = x^y = 2^(y·log2 x) (x > 0). fyl2x then the
+            // f2xm1 + fscale 2^t reconstruction.
+            if (name == "__pow_f64" && c.args.len() == 2) {
+                s = emit_expr(c.args[0], s);   // x
+                s = emit_expr(c.args[1], s);   // y
+                s = s.write("    popq %rcx\n");        // y
+                s = s.write("    popq %rax\n");        // x
+                s = s.write("    subq $16, %rsp\n");
+                s = s.write("    movq %rax, (%rsp)\n");   // x
+                s = s.write("    movq %rcx, 8(%rsp)\n");  // y
+                s = s.write("    fldl 8(%rsp)\n");        // st0 = y
+                s = s.write("    fldl (%rsp)\n");          // st0 = x, st1 = y
+                s = s.write("    fyl2x\n");                // t = y*log2(x)
+                s = s.write("    fld %st(0)\n");
+                s = s.write("    frndint\n");              // n = round(t)
+                s = s.write("    fsubr %st, %st(1)\n");    // st1 = t - n = f (GAS fsubr)
+                s = s.write("    fxch %st(1)\n");
+                s = s.write("    f2xm1\n");
+                s = s.write("    fld1\n");
+                s = s.write("    faddp\n");
+                s = s.write("    fscale\n");
+                s = s.write("    fstp %st(1)\n");
+                s = s.write("    fstpl (%rsp)\n");
+                s = s.write("    movq (%rsp), %rax\n");
+                s = s.write("    addq $16, %rsp\n");
                 s = s.write("    pushq %rax\n");
                 return s;
             }
