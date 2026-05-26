@@ -2037,6 +2037,20 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
+		if at, ok := t.(ast.ArrayType); ok {
+			if name, ok := arrElemStructDropName(at.Elem, b.info); ok {
+				// Array-of-struct field (e.g. struct Grid { rows:
+				// Row[] }): deep-drop each element box + the buffer via
+				// the Stage B loop, instead of the flat dec that leaked
+				// them. The fn is_unique-gates the array, so a shared one
+				// only dec's. Plain-elem arrays fall through to the flat
+				// dec below (their buffer reclamation is the top-level
+				// local path's job).
+				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+				b.emit(Op{Kind: OpDrop})
+				return
+			}
+		}
 		decValueOnStack(t, false)
 	}
 	emitDec := func(slot int32, t ast.Type, eligible bool, name string) {
@@ -2749,6 +2763,15 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: name, I32: 1},
 			Op{Kind: OpDrop})
+	}
+	if at, ok := t.(ast.ArrayType); ok {
+		if name, ok := arrElemStructDropName(at.Elem, info); ok {
+			// Array-of-struct field: deep-drop elements + buffer via the
+			// Stage B loop (is_unique-gated), instead of the flat dec.
+			return append(ops,
+				Op{Kind: OpCallDirect, Str: name, I32: 1},
+				Op{Kind: OpDrop})
+		}
 	}
 	return append(ops,
 		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
