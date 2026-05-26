@@ -142,15 +142,19 @@ both the passing and failing path — the failure-reporting
 contract (predicate name in the message, actual + expected
 both quoted) is the runner's most regression-prone surface.
 
-Known limitation: a user program that explicitly does
-`import "std/foo";` for a stdlib module that transitively
-imports another stdlib module (e.g. `std/json` → `std/i32`)
-hits a pre-existing module-loader bug where bare-name method
-dispatch (`(n).to_string()`) goes through the wrong copy and
-the interpreter reports "cast from interp.Array to i32 not
-supported". The auto-prelude path is unaffected because every
-stdlib module is loaded flat-namespace by the prelude
-injector; that's why std/test was added to the prelude. If
-you find yourself debugging "to_string returns an Array"
-this is the bug — work around by removing the explicit
-import (rely on the auto-prelude) or by inlining the helper.
+Module loading: every stdlib module is loaded flat-namespace
+by the prelude injector, and the injected decls dedupe against
+`ast.Program.LoadedStdlibPaths` (see `internal/prelude/prelude.fern`)
+so a user program that explicitly `import`s a stdlib module
+already pulled in by the prelude doesn't get a duplicate copy
+or a "method redeclared" error. That dedupe also closed an
+older bug where an explicit `import "std/foo";` of a module
+that transitively imports another (e.g. `std/json` → `core/int`)
+sent bare-name method dispatch (`(n).to_string()`) through the
+mangled `int__int_to_string` name and crashed the interpreter
+with "cast from interp.Array to i32 not supported". It's fixed
+and guarded by `TestInterpScriptInteropIntToStringViaMangling`
+(`internal/e2e/interp_script_test.go`), which exercises the
+explicit-import, transitive-import, qualified-call, and
+auto-prelude shapes — extend it if you touch the mangling /
+alias path.
