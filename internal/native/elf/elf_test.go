@@ -186,6 +186,54 @@ func TestByteRoundTripRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestLoopRunsUnderQemu is the control-flow gate: a countdown loop
+// that increments an accumulator 42 times exercises CBZ (forward
+// branch), B (backward branch), and the assembler's two-pass label
+// resolution in both directions — then exits with the accumulator.
+//
+//	x0 = 0 (acc) ; x1 = 42 (counter)
+//	loop: cbz x1, done ; x0++ ; x1-- ; b loop
+//	done: exit(x0)
+func TestLoopRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		a := arm64.NewAssembler()
+		a.Emit(arm64.MOVZ(0, 0, 0))  // x0 = 0
+		a.Emit(arm64.MOVZ(1, 42, 0)) // x1 = 42
+		a.Label("loop")
+		a.CBZ(1, "done")
+		a.Emit(arm64.ADDimm(0, 0, 1, false)) // x0 += 1
+		a.Emit(arm64.SUBimm(1, 1, 1, false)) // x1 -= 1
+		a.B("loop")
+		a.Label("done")
+		a.Emit(arm64.MOVZ(8, 93, 0))
+		a.Emit(arm64.SVC(0))
+		code, err := a.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
+// TestCallRunsUnderQemu exercises BL/RET: main calls a subroutine
+// that sets x0=42 and returns (via x30), then main exits with x0.
+func TestCallRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		a := arm64.NewAssembler()
+		a.BL("setval")               // call setval (links return addr in x30)
+		a.Emit(arm64.MOVZ(8, 93, 0)) // (on return) x8 = __NR_exit
+		a.Emit(arm64.SVC(0))         // exit(x0)
+		a.Label("setval")
+		a.Emit(arm64.MOVZ(0, 42, 0)) // x0 = 42
+		a.Emit(arm64.RET(30))        // return to x30
+		code, err := a.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

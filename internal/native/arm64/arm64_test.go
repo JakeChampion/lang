@@ -55,6 +55,8 @@ func TestEncodings(t *testing.T) {
 		{"strh w0, [x1, #2]", arm64.STRHimm(0, 1, 2), 0x79000420},
 		{"stp x29,x30,[sp,#-16]!", arm64.STPpre(29, 30, 31, -16), 0xa9bf7bfd},
 		{"ldp x29,x30,[sp],#16", arm64.LDPpost(29, 30, 31, 16), 0xa8c17bfd},
+		{"br x0", arm64.BR(0), 0xd61f0000},
+		{"blr x1", arm64.BLR(1), 0xd63f0020},
 		{"svc #0", arm64.SVC(0), 0xd4000001},
 		{"ret (x30)", arm64.RET(30), 0xd65f03c0},
 	}
