@@ -63,6 +63,7 @@ type branchKind int
 const (
 	branchImm26 branchKind = iota // b / bl: 26-bit offset in bits[25:0]
 	branchImm19                   // b.cond / cbz / cbnz: 19-bit offset in bits[23:5]
+	branchImm14                   // tbz / tbnz: 14-bit offset in bits[18:5]
 )
 
 type fixup struct {
@@ -182,6 +183,25 @@ func (a *Assembler) CBNZ(rt uint32, label string) {
 	a.branch(0xB5000000|(rt&regMask), label, branchImm19)
 }
 
+// TBZ emits `tbz Rt, #bit, label` — branch if bit `bit` of Rt is 0.
+// TBNZ is the branch-if-set form. The 6-bit position splits across
+// bit 31 (b5) and bits 23:19 (b40); the 14-bit offset is filled by the
+// fixup pass.
+func (a *Assembler) TBZ(rt, bit uint32, label string) {
+	a.testBranch(0x36000000, rt, bit, label)
+}
+
+// TBNZ emits `tbnz Rt, #bit, label`.
+func (a *Assembler) TBNZ(rt, bit uint32, label string) {
+	a.testBranch(0x37000000, rt, bit, label)
+}
+
+func (a *Assembler) testBranch(base, rt, bit uint32, label string) {
+	b5 := (bit >> 5) & 1
+	b40 := bit & 0x1f
+	a.branch(base|(b5<<31)|(b40<<19)|(rt&regMask), label, branchImm14)
+}
+
 func (a *Assembler) branch(base uint32, label string, kind branchKind) {
 	a.fixups = append(a.fixups, fixup{at: len(a.insns), label: label, kind: kind})
 	a.insns = append(a.insns, base)
@@ -205,6 +225,8 @@ func (a *Assembler) Bytes() ([]byte, error) {
 			a.insns[f.at] |= off & 0x03ffffff
 		case branchImm19:
 			a.insns[f.at] |= (off & 0x7ffff) << 5
+		case branchImm14:
+			a.insns[f.at] |= (off & 0x3fff) << 5
 		}
 	}
 	var buf []byte
@@ -256,6 +278,8 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 			a.insns[f.at] |= off & 0x03ffffff
 		case branchImm19:
 			a.insns[f.at] |= (off & 0x7ffff) << 5
+		case branchImm14:
+			a.insns[f.at] |= (off & 0x3fff) << 5
 		}
 	}
 

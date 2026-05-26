@@ -90,6 +90,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tldur x0, [x1, #-8]\n\tstur x0, [x1, #-8]\n\tldur x2, [x3, #15]\n\tstur x4, [x5]\n\tldurb w0, [x1, #-1]\n\tsturb w0, [x1, #-1]\n",
 		"branch_regs": "" +
 			"\tbr x0\n\tblr x1\n\tret\n\tsvc #0\n",
+		"test_branches": "" +
+			"\tmov x0, #1\nlt0:\n\ttbz x0, #0, lt1\n\ttbnz x1, #63, lt0\n\ttbz w2, #5, lt1\nlt1:\n\tret\n",
 		"labels_and_branches": "" +
 			"loop:\n\tcmp x0, #0\n\tb.eq done\n\tsub x0, x0, #1\n\tcbnz x0, loop\n\tb loop\ndone:\n\tbeq loop\n\tret\n",
 	}

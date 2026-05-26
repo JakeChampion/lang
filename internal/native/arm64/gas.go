@@ -172,6 +172,10 @@ func assembleInsn(a *Assembler, line string) error {
 		return regLabel(a, ops, a.CBZ)
 	case "cbnz":
 		return regLabel(a, ops, a.CBNZ)
+	case "tbz":
+		return asmTestBranch(a, ops, a.TBZ)
+	case "tbnz":
+		return asmTestBranch(a, ops, a.TBNZ)
 	case "br":
 		return oneReg(ops, func(r uint32) { a.Emit(BR(r)) })
 	case "blr":
@@ -973,6 +977,23 @@ func oneReg(ops []string, f func(uint32)) error {
 		return err
 	}
 	f(r)
+	return nil
+}
+
+// asmTestBranch handles tbz/tbnz: `<op> Rt, #bit, label`.
+func asmTestBranch(a *Assembler, ops []string, f func(rt, bit uint32, label string)) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("expects a register, a bit, and a label")
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	bit, err := parseImm(ops[1])
+	if err != nil {
+		return err
+	}
+	f(rt, uint32(bit), ops[2])
 	return nil
 }
 

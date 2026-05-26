@@ -485,6 +485,29 @@ func TestAssembledDataTextRunsUnderQemu(t *testing.T) {
 	}
 }
 
+// TestAssembledTestBranchRunsUnderQemu exercises tbz/tbnz end-to-end:
+// bit 0 of x0 is set, so `tbz x0, #0` does NOT branch, falling through
+// to set the result to 42.
+func TestAssembledTestBranchRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x0, #1\n" + // bit 0 set
+		"\tmov x1, #99\n" +
+		"\ttbz x0, #0, skip\n" + // bit 0 is 1 -> not taken
+		"\tmov x1, #42\n" +
+		"skip:\n" +
+		"\tmov x0, x1\n" +
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
