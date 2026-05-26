@@ -197,14 +197,14 @@ func asmMov(a *Assembler, ops []string) error {
 		if imm < 0 || imm > 0xffff {
 			return fmt.Errorf("mov #%d out of movz range (use movz/movk)", imm)
 		}
-		a.Emit(MOVZ(rd, uint16(imm), 0))
+		a.Emit(clearSF(MOVZ(rd, uint16(imm), 0), is32(ops[0])))
 		return nil
 	}
 	rm, err := parseReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(MOVreg(rd, rm))
+	a.Emit(clearSF(MOVreg(rd, rm), is32(ops[0])))
 	return nil
 }
 
@@ -227,10 +227,11 @@ func asmMoveWide(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
 	if mnem == "movz" {
-		a.Emit(MOVZ(rd, uint16(imm), shift))
+		a.Emit(clearSF(MOVZ(rd, uint16(imm), shift), w))
 	} else {
-		a.Emit(MOVK(rd, uint16(imm), shift))
+		a.Emit(clearSF(MOVK(rd, uint16(imm), shift), w))
 	}
 	return nil
 }
@@ -260,10 +261,11 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 		if sh != 0 && sh != 12 {
 			return fmt.Errorf("%s immediate shift must be 0 or 12", mnem)
 		}
+		w := is32(ops[0])
 		if mnem == "add" {
-			a.Emit(ADDimm(rd, rn, uint16(imm), shift12))
+			a.Emit(clearSF(ADDimm(rd, rn, uint16(imm), shift12), w))
 		} else {
-			a.Emit(SUBimm(rd, rn, uint16(imm), shift12))
+			a.Emit(clearSF(SUBimm(rd, rn, uint16(imm), shift12), w))
 		}
 		return nil
 	}
@@ -271,10 +273,11 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
 	if mnem == "add" {
-		a.Emit(ADDreg(rd, rn, rm))
+		a.Emit(clearSF(ADDreg(rd, rn, rm), w))
 	} else {
-		a.Emit(SUBreg(rd, rn, rm))
+		a.Emit(clearSF(SUBreg(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -295,17 +298,18 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
 	switch mnem {
 	case "and":
-		a.Emit(ANDreg(rd, rn, rm))
+		a.Emit(clearSF(ANDreg(rd, rn, rm), w))
 	case "orr":
-		a.Emit(ORRreg(rd, rn, rm))
+		a.Emit(clearSF(ORRreg(rd, rn, rm), w))
 	case "eor":
-		a.Emit(EORreg(rd, rn, rm))
+		a.Emit(clearSF(EORreg(rd, rn, rm), w))
 	case "mul":
-		a.Emit(MUL(rd, rn, rm))
+		a.Emit(clearSF(MUL(rd, rn, rm), w))
 	case "udiv":
-		a.Emit(UDIV(rd, rn, rm))
+		a.Emit(clearSF(UDIV(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -324,7 +328,7 @@ func asm2Reg(a *Assembler, ops []string, enc func(x, y uint32) uint32) error {
 	if err != nil {
 		return err
 	}
-	a.Emit(enc(x, y))
+	a.Emit(clearSF(enc(x, y), is32(ops[0])))
 	return nil
 }
 
@@ -349,7 +353,7 @@ func asmCsel(a *Assembler, ops []string) error {
 	if !ok {
 		return fmt.Errorf("bad condition %q", ops[3])
 	}
-	a.Emit(CSEL(rd, rn, rm, cond))
+	a.Emit(clearSF(CSEL(rd, rn, rm, cond), is32(ops[0])))
 	return nil
 }
 
@@ -366,7 +370,7 @@ func asmCset(a *Assembler, ops []string) error {
 	if !ok {
 		return fmt.Errorf("bad condition %q", ops[1])
 	}
-	a.Emit(CSET(rd, cond))
+	a.Emit(clearSF(CSET(rd, cond), is32(ops[0])))
 	return nil
 }
 
@@ -391,7 +395,7 @@ func asmMsub(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	a.Emit(MSUB(rd, rn, rm, ra))
+	a.Emit(clearSF(MSUB(rd, rn, rm, ra), is32(ops[0])))
 	return nil
 }
 
@@ -410,6 +414,9 @@ func asmShift(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	if strings.HasPrefix(ops[2], "#") {
+		if is32(ops[0]) {
+			return fmt.Errorf("32-bit immediate shift not supported yet")
+		}
 		imm, err := parseImm(ops[2])
 		if err != nil {
 			return err
@@ -429,13 +436,14 @@ func asmShift(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
 	switch mnem {
 	case "lsl":
-		a.Emit(LSLV(rd, rn, rm))
+		a.Emit(clearSF(LSLV(rd, rn, rm), w))
 	case "lsr":
-		a.Emit(LSRV(rd, rn, rm))
+		a.Emit(clearSF(LSRV(rd, rn, rm), w))
 	case "asr":
-		a.Emit(ASRV(rd, rn, rm))
+		a.Emit(clearSF(ASRV(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -595,19 +603,20 @@ func asmCmp(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
 	if strings.HasPrefix(ops[1], "#") {
 		imm, err := parseImm(ops[1])
 		if err != nil {
 			return err
 		}
-		a.Emit(CMPimm(rn, uint16(imm), false))
+		a.Emit(clearSF(CMPimm(rn, uint16(imm), false), w))
 		return nil
 	}
 	rm, err := parseReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(CMPreg(rn, rm))
+	a.Emit(clearSF(CMPreg(rn, rm), w))
 	return nil
 }
 
@@ -734,6 +743,24 @@ func parseShiftField(ops []string, i int, kind string) (uint32, error) {
 		return 0, err
 	}
 	return uint32(n), nil
+}
+
+// is32 reports whether an operand names a 32-bit (w) register. For
+// the data-processing ALU ops the 32-bit encoding is identical to the
+// 64-bit one with the sf bit (bit 31) cleared, so the parser detects
+// width from the operands and applies clearSF.
+func is32(operand string) bool {
+	s := strings.TrimSpace(operand)
+	return len(s) > 0 && s[0] == 'w'
+}
+
+// clearSF drops the sf bit to turn a 64-bit ALU encoding into its
+// 32-bit form, when w32 is set.
+func clearSF(insn uint32, w32 bool) uint32 {
+	if w32 {
+		return insn &^ (1 << 31)
+	}
+	return insn
 }
 
 // parseReg parses x0..x30, plus sp/xzr/wzr and the w-aliases (which
