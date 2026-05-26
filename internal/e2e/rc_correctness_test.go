@@ -585,6 +585,30 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map with GENERIC-ENUM values (Map[K, Option[Item]], valKind 4 via
+		// dropFnNameFor's generic path). The boxed instantiation reclaims
+		// through __drop_map_via___drop_enum_Option_LB_Item_RB_ → the
+		// mangled generic-enum drop (box + Item payload + xs buffer) at the
+		// map's last reference, retained on set/get. Churned 200x. it.xs[1]
+		// = seed+1; sum_{0..199}(k+1) = 20100.
+		name: "map_generic_enum_values_churn_free",
+		src: `struct Item { xs: i32[] }
+function mk(seed: i32): i32 {
+    var m: Map[i32, Option[Item]] = map_new(8);
+    m = m.set(seed, Some(Item { xs: [seed, seed + 1] }));
+    var o: Option[Item] = m.get_or(seed, None);
+    var got: i32 = 0;
+    match (o) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
+    return got;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a map value: an owned array built inside a
 		// helper escapes via `m.set` (retained without an inc under
 		// the borrow model), so it must NOT be freed at the helper's
