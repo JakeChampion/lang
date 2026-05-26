@@ -131,6 +131,18 @@ func assembleInsn(a *Assembler, line string) error {
 		return asm2Reg(a, ops, NEG)
 	case "msub":
 		return asmMsub(a, ops)
+	case "fadd", "fsub", "fmul", "fdiv":
+		return asmFloat3(a, mnem, ops)
+	case "fneg":
+		return asmFloat2(a, ops, FNEG)
+	case "fcmp":
+		return asmFcmp(a, ops)
+	case "fmov":
+		return asmFmov(a, ops)
+	case "scvtf":
+		return asmFloat2Mixed(a, ops, SCVTF, true) // Dd <- Xn
+	case "fcvtzs":
+		return asmFloat2Mixed(a, ops, FCVTZS, false) // Xd <- Dn
 	case "lsl", "lsr", "asr":
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
@@ -592,6 +604,158 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 		}
 		a.Emit(LDPpost(rt, rt2, m.base, int32(off)))
 	}
+	return nil
+}
+
+// isFReg reports whether an operand names a d-register.
+func isFReg(operand string) bool {
+	s := strings.TrimSpace(operand)
+	return len(s) > 0 && s[0] == 'd'
+}
+
+// parseFReg parses a d0..d31 floating-point register.
+func parseFReg(s string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == 'd' {
+		n, err := strconv.Atoi(s[1:])
+		if err == nil && n >= 0 && n <= 31 {
+			return uint32(n), nil
+		}
+	}
+	return 0, fmt.Errorf("bad fp register %q", s)
+}
+
+// asmFloat3 handles fadd/fsub/fmul/fdiv Dd, Dn, Dm.
+func asmFloat3(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects 3 fp registers", mnem)
+	}
+	rd, err := parseFReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseFReg(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, err := parseFReg(ops[2])
+	if err != nil {
+		return err
+	}
+	switch mnem {
+	case "fadd":
+		a.Emit(FADD(rd, rn, rm))
+	case "fsub":
+		a.Emit(FSUB(rd, rn, rm))
+	case "fmul":
+		a.Emit(FMUL(rd, rn, rm))
+	case "fdiv":
+		a.Emit(FDIV(rd, rn, rm))
+	}
+	return nil
+}
+
+// asmFloat2 handles a two-d-register op (fneg).
+func asmFloat2(a *Assembler, ops []string, enc func(rd, rn uint32) uint32) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("expects 2 fp registers")
+	}
+	rd, err := parseFReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseFReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(enc(rd, rn))
+	return nil
+}
+
+// asmFcmp handles fcmp Dn, Dm.
+func asmFcmp(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("fcmp expects 2 fp registers")
+	}
+	rn, err := parseFReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rm, err := parseFReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(FCMP(rn, rm))
+	return nil
+}
+
+// asmFmov handles the three fmov forms: Dd,Dn / Dd,Xn / Xd,Dn.
+func asmFmov(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("fmov expects 2 operands")
+	}
+	dstF, srcF := isFReg(ops[0]), isFReg(ops[1])
+	switch {
+	case dstF && srcF: // fmov Dd, Dn
+		rd, err := parseFReg(ops[0])
+		if err != nil {
+			return err
+		}
+		rn, err := parseFReg(ops[1])
+		if err != nil {
+			return err
+		}
+		a.Emit(FMOV(rd, rn))
+	case dstF && !srcF: // fmov Dd, Xn
+		rd, err := parseFReg(ops[0])
+		if err != nil {
+			return err
+		}
+		rn, err := parseReg(ops[1])
+		if err != nil {
+			return err
+		}
+		a.Emit(FMOVfromGPR(rd, rn))
+	case !dstF && srcF: // fmov Xd, Dn
+		rd, err := parseReg(ops[0])
+		if err != nil {
+			return err
+		}
+		rn, err := parseFReg(ops[1])
+		if err != nil {
+			return err
+		}
+		a.Emit(FMOVtoGPR(rd, rn))
+	default:
+		return fmt.Errorf("fmov between two GPRs not supported")
+	}
+	return nil
+}
+
+// asmFloat2Mixed handles a conversion with one fp and one general
+// register: scvtf Dd,Xn (fpDst) and fcvtzs Xd,Dn (!fpDst).
+func asmFloat2Mixed(a *Assembler, ops []string, enc func(rd, rn uint32) uint32, fpDst bool) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("expects 2 operands")
+	}
+	var rd, rn uint32
+	var err error
+	if fpDst {
+		if rd, err = parseFReg(ops[0]); err != nil {
+			return err
+		}
+		if rn, err = parseReg(ops[1]); err != nil {
+			return err
+		}
+	} else {
+		if rd, err = parseReg(ops[0]); err != nil {
+			return err
+		}
+		if rn, err = parseFReg(ops[1]); err != nil {
+			return err
+		}
+	}
+	a.Emit(enc(rd, rn))
 	return nil
 }
 

@@ -340,6 +340,62 @@ func MSUB(rd, rn, rm, ra uint32) uint32 {
 	return 0x9B008000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// ---- Floating-point (double-precision) ----
+//
+// FP registers d0..d31 share the 5-bit register field with the general
+// registers. These are the ftype=01 (double) data-processing forms plus
+// the int<->float conversions the backend needs for f64.
+
+// FADD/FSUB/FMUL/FDIV Dd, Dn, Dm — double-precision arithmetic.
+func FADD(rd, rn, rm uint32) uint32 {
+	return 0x1E602800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FSUB(rd, rn, rm uint32) uint32 {
+	return 0x1E603800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMUL(rd, rn, rm uint32) uint32 {
+	return 0x1E600800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FDIV(rd, rn, rm uint32) uint32 {
+	return 0x1E601800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FNEG Dd, Dn — negate.
+func FNEG(rd, rn uint32) uint32 {
+	return 0x1E614000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FCMP Dn, Dm — compare and set the FP condition flags.
+func FCMP(rn, rm uint32) uint32 {
+	return 0x1E602000 | ((rm & regMask) << 16) | ((rn & regMask) << 5)
+}
+
+// FMOV Dd, Dn — register move (double).
+func FMOV(rd, rn uint32) uint32 {
+	return 0x1E604000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FMOVfromGPR Dd, Xn — copy the raw 64 bits of Xn into Dd.
+func FMOVfromGPR(rd, rn uint32) uint32 {
+	return 0x9E670000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FMOVtoGPR Xd, Dn — copy the raw 64 bits of Dn into Xd.
+func FMOVtoGPR(rd, rn uint32) uint32 {
+	return 0x9E660000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SCVTF Dd, Xn — convert signed 64-bit integer to double.
+func SCVTF(rd, rn uint32) uint32 {
+	return 0x9E620000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FCVTZS Xd, Dn — convert double to signed 64-bit integer (truncate
+// toward zero).
+func FCVTZS(rd, rn uint32) uint32 {
+	return 0x9E780000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.
