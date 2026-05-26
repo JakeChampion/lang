@@ -108,6 +108,6 @@ function main(): i32 {
     // `write` (no trailing newline) rather than `print`, so output is
     // byte-identical whether this driver is built by the Go compiler
     // or self-hosted — see the print/write note in asm.fern.
-    write(asm.emit_module(merged));
+    write(asm.emit_module(parser.module_with_builtins(merged)));
     return 0;
 }

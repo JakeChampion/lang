@@ -85,6 +85,6 @@ function main(): i32 {
     var entry: parser.Module = parser.parse_module(lexer.tokenize(secs.sources[count - 1]));
 
     var merged: parser.Module = flatten.bundle(entry, loaded);
-    write(asm_arm64.emit_module(merged));
+    write(asm_arm64.emit_module(parser.module_with_builtins(merged)));
     return 0;
 }

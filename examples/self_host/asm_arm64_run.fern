@@ -16,7 +16,7 @@ import "./asm_arm64";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var emitted: string = asm_arm64.emit_module(mod);
+    var emitted: string = asm_arm64.emit_module(parser.module_with_builtins(mod));
     print(emitted);
     return 0;
 }

@@ -24,7 +24,7 @@ function main(): i32 {
     }
     match (read_file(a[1])) {
         Ok(src) => {
-            write(asm.emit_module(parser.parse_module(lexer.tokenize(src))));
+            write(asm.emit_module(parser.module_with_builtins(parser.parse_module(lexer.tokenize(src)))));
             return 0;
         },
         Err(e) => {
