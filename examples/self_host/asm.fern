@@ -3312,6 +3312,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_read_line();
                 return s;
             }
+            // read_file(path) — read the whole named file. Returns
+            // Result[string, IoError]: Ok(contents) on success,
+            // Err(_) on any I/O error. Matches the full language's
+            // signature so `match read_file(p) { Ok(s) =>, Err(_) => }`
+            // compiles the same here as under the Go backend.
+            if (name == "read_file" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __fern_read_file\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
             // stdin() — returns a Reader. In this emitter a Reader
             // is just its fd (0 for stdin); read_chunk / close take
             // the fd value directly. No heap box, no by-reference
@@ -4328,20 +4341,26 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
-                        if (pv.type_name == "Some" || pv.type_name == "None") {
-                            // Built-in Option: discriminate on the
-                            // i32 tag at offset 0 (Some=0 / None=1),
-                            // not the struct shape pointer. Some binds
-                            // its PAYLOAD (offset 8), not the box.
+                        if (pv.type_name == "Some" || pv.type_name == "None"
+                                || pv.type_name == "Ok" || pv.type_name == "Err") {
+                            // Built-in Option / Result: discriminate on
+                            // the i32 tag at offset 0 (Some/Ok=0,
+                            // None/Err=1), not the struct shape pointer.
+                            // The non-empty variant (Some/Ok) binds its
+                            // PAYLOAD (offset 8), not the box.
                             s = s.write("    movq " + i32_to_string(scrut_off) + "(%rbp), %rax\n");
                             s = s.write("    movq (%rax), %rcx\n");
                             var want: i32 = 0;
-                            if (pv.type_name == "None") { want = 1; }
+                            if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
                             s = s.write("    cmpq $" + i32_to_string(want) + ", %rcx\n");
                             s = s.write("    jne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 s = s.write("    movq 8(%rax), %rcx\n");   // payload
-                                s = s.bind_local(pv.binding);
+                                // The only Option/Result producers here
+                                // (read_chunk → Some, read_file → Ok) carry
+                                // string payloads, so bind the payload as a
+                                // string for print / concat dispatch.
+                                s = s.bind_local_typed(pv.binding, "string");
                                 var pbind_off: i32 = s.lookup_local(pv.binding);
                                 s = s.write("    movq %rcx, " + i32_to_string(pbind_off) + "(%rbp)\n");
                             }
@@ -5938,6 +5957,96 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
+
+        // __fern_read_file(%rdi = path string box) → Result[string,
+        // IoError]: an Option-shaped box [tag@0, payload@8] with
+        // tag=0 Ok(string contents) on success, tag=1 Err(_) on any
+        // I/O error (payload 0 — the IoError detail isn't modelled in
+        // this emitter; sensible callers use Err(_)). Copies the path
+        // into a NUL-terminated buffer (the {data,len} box isn't
+        // NUL-terminated), openat(AT_FDCWD, path, O_RDONLY), reads to
+        // EOF into a 64 MiB buffer, closes. Linux x86-64 syscalls:
+        // openat=257, read=0, close=3.
+        s = s.write(".globl __fern_read_file\n");
+        s = s.write(".type __fern_read_file, @function\n");
+        s = s.write("__fern_read_file:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // path data ptr / write ptr
+        s = s.write("    pushq %r12\n");           // fd
+        s = s.write("    pushq %r13\n");           // pathz / buf base
+        s = s.write("    pushq %r14\n");           // total
+        s = s.write("    pushq %r15\n");           // path len
+        // NUL-terminate the path: copy len bytes into a len+1 buffer.
+        s = s.write("    movq (%rdi), %rbx\n");     // path data ptr
+        s = s.write("    movq 8(%rdi), %r15\n");    // path len
+        s = s.write("    leaq 1(%r15), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");       // pathz
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrdf_copy:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    jge .Lrdf_copydone\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrdf_copy\n");
+        s = s.write(".Lrdf_copydone:\n");
+        s = s.write("    movb $0, (%r13,%r15,1)\n"); // NUL terminator
+        // openat(AT_FDCWD=-100, pathz, O_RDONLY=0, 0)
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $257, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    js .Lrdf_err\n");
+        s = s.write("    movq %rax, %r12\n");       // fd
+        s = s.write("    movq $67108864, %rdi\n");  // 64 MiB buffer
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");       // buf base
+        s = s.write("    movq %rax, %rbx\n");       // write ptr
+        s = s.write("    movq $0, %r14\n");         // total
+        s = s.write(".Lrdf_rdloop:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $1048576, %rdx\n");   // up to 1 MiB per read
+        s = s.write("    movq $0, %rax\n");         // sys_read
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lrdf_rddone\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    addq %rax, %rbx\n");
+        s = s.write("    jmp .Lrdf_rdloop\n");
+        s = s.write(".Lrdf_rddone:\n");
+        s = s.write("    movq %r12, %rdi\n");       // close(fd)
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq $16, %rdi\n");        // string box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");     // data@0
+        s = s.write("    movq %r14, 8(%rax)\n");    // len@8
+        s = s.write("    movq %rax, %r13\n");       // strbox
+        s = s.write("    movq $16, %rdi\n");        // Result Ok box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");       // tag = Ok
+        s = s.write("    movq %r13, 8(%rax)\n");    // payload = string
+        s = s.write("    jmp .Lrdf_ret\n");
+        s = s.write(".Lrdf_err:\n");
+        s = s.write("    movq $16, %rdi\n");        // Result Err box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");       // tag = Err
+        s = s.write("    movq $0, 8(%rax)\n");      // payload (unused)
+        s = s.write(".Lrdf_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_read_file, .-__fern_read_file\n");
 
         // Global string-builder primitive — the amortised-O(1)
         // output accumulator (strbuf_reset / strbuf_append /

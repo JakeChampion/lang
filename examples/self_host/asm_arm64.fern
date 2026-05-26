@@ -3142,6 +3142,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_str_read_line();
                 return s;
             }
+            // read_file(path) — read the whole named file. Returns
+            // Result[string, IoError]: Ok(contents) / Err(_). Matches
+            // the full language's signature (see asm.fern).
+            if (name == "read_file" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_read_file\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
             // stdin() — returns a Reader (its fd; 0 for stdin).
             // read_chunk / close take the fd value directly.
             if (name == "stdin" && c.args.len() == 0) {
@@ -3994,20 +4005,25 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
-                        if (pv.type_name == "Some" || pv.type_name == "None") {
-                            // Built-in Option: discriminate on the i32
-                            // tag at offset 0 (Some=0 / None=1), not the
-                            // struct shape pointer. Some binds its
+                        if (pv.type_name == "Some" || pv.type_name == "None"
+                                || pv.type_name == "Ok" || pv.type_name == "Err") {
+                            // Built-in Option / Result: discriminate on
+                            // the i32 tag at offset 0 (Some/Ok=0,
+                            // None/Err=1), not the struct shape pointer.
+                            // The non-empty variant (Some/Ok) binds its
                             // PAYLOAD (offset 8), not the box.
                             s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
                             s = s.write("    ldr x1, [x0]\n");
                             var want: i32 = 0;
-                            if (pv.type_name == "None") { want = 1; }
+                            if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
                             s = s.write("    cmp x1, #" + i32_to_string(want) + "\n");
                             s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 s = s.write("    ldr x1, [x0, #8]\n");   // payload
-                                s = s.bind_local(pv.binding);
+                                // read_chunk → Some / read_file → Ok carry
+                                // string payloads; bind as string for
+                                // print / concat dispatch.
+                                s = s.bind_local_typed(pv.binding, "string");
                                 var pbind_off: i32 = s.lookup_local(pv.binding);
                                 s = s.write("    str x1, [x29, #" + i32_to_string(pbind_off) + "]\n");
                             }
@@ -5386,6 +5402,93 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
+
+        // __fern_read_file(x0 = path string box) → Result[string,
+        // IoError]: [tag@0, payload@8] with tag=0 Ok(contents) on
+        // success, tag=1 Err(_) on any I/O error (payload 0). Copies
+        // the path to a NUL-terminated buffer, openat(AT_FDCWD, path,
+        // O_RDONLY), reads to EOF into a 64 MiB buffer, closes.
+        // Linux aarch64 syscalls: openat=56, read=63, close=57.
+        s = s.write(".globl __fern_read_file\n");
+        s = s.write(".type __fern_read_file, %function\n");
+        s = s.write("__fern_read_file:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // path box
+        s = s.write("    ldr x20, [x19]\n");        // path data ptr
+        s = s.write("    ldr x21, [x19, #8]\n");    // path len
+        s = s.write("    add x0, x21, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x22, x0\n");           // pathz
+        s = s.write("    mov x9, #0\n");
+        s = s.write(".Lrdf_copy:\n");
+        s = s.write("    cmp x9, x21\n");
+        s = s.write("    b.ge .Lrdf_copydone\n");
+        s = s.write("    ldrb w10, [x20, x9]\n");
+        s = s.write("    strb w10, [x22, x9]\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lrdf_copy\n");
+        s = s.write(".Lrdf_copydone:\n");
+        s = s.write("    mov w10, #0\n");
+        s = s.write("    strb w10, [x22, x21]\n");  // NUL terminator
+        // openat(AT_FDCWD=-100, pathz, O_RDONLY=0, 0)
+        s = s.write("    mov x0, #-100\n");
+        s = s.write("    mov x1, x22\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x3, #0\n");
+        s = s.write("    mov x8, #56\n");           // sys_openat
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Lrdf_err\n");
+        s = s.write("    mov x23, x0\n");           // fd
+        s = s.write("    ldr x0, =67108864\n");     // 64 MiB buffer
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x24, x0\n");           // buf base
+        s = s.write("    mov x20, x0\n");           // write ptr
+        s = s.write("    mov x21, #0\n");           // total
+        s = s.write(".Lrdf_rdloop:\n");
+        s = s.write("    mov x0, x23\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    ldr x2, =1048576\n");      // up to 1 MiB per read
+        s = s.write("    mov x8, #63\n");           // sys_read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Lrdf_rddone\n");
+        s = s.write("    add x21, x21, x0\n");
+        s = s.write("    add x20, x20, x0\n");
+        s = s.write("    b .Lrdf_rdloop\n");
+        s = s.write(".Lrdf_rddone:\n");
+        s = s.write("    mov x0, x23\n");           // close(fd)
+        s = s.write("    mov x8, #57\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    mov x0, #16\n");           // string box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x24, [x0]\n");         // data@0
+        s = s.write("    str x21, [x0, #8]\n");     // len@8
+        s = s.write("    mov x24, x0\n");           // strbox
+        s = s.write("    mov x0, #16\n");           // Result Ok box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0]\n");          // tag = Ok
+        s = s.write("    str x24, [x0, #8]\n");     // payload = string
+        s = s.write("    b .Lrdf_ret\n");
+        s = s.write(".Lrdf_err:\n");
+        s = s.write("    mov x0, #16\n");           // Result Err box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");          // tag = Err
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0, #8]\n");      // payload (unused)
+        s = s.write(".Lrdf_ret:\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_read_file, .-__fern_read_file\n");
     }
     // Command-line args. Mirror of asm.fern.
     if (s.needs_args) {
