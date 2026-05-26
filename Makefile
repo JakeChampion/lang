@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet clean examples run-% fmt fmt-check
+.PHONY: all build test vet deadcode clean examples run-% fmt fmt-check
 
 all: build test
 
@@ -21,6 +21,11 @@ test:
 
 vet:
 	go vet ./...
+
+# Fail on unreachable functions not listed in the allowlist. See
+# tools/deadcode_gate.sh and tools/deadcode-allowlist.txt.
+deadcode:
+	./tools/deadcode_gate.sh
 
 # Compile every example to arm64 Linux assembly and (if the
 # cross-compiler is present) link to a static arm64 binary.
