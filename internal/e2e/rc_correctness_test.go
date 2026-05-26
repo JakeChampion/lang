@@ -132,6 +132,41 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Stage 3: closure capturing an ARRAY, churned 100x. The
+		// per-closure drop thunk frees the captured array (arr_dec) at
+		// each closure's death so the freelist recycles; the counter
+		// must stay 0 (the array was inc'd once on capture, dropped
+		// once on closure death). acc = sum_{i=0..99}(i+2) = 5150.
+		name: "closure_array_capture_churn",
+		src: `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var xs: i32[] = [i, i + 1, i + 2];
+        var f = function (d: i32): i32 { return xs[2] + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 5150) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Stage 3 safety: a NESTED closure captures the outer array via
+		// a CaptureRef (not inc'd at MakeEnv), so its drop must fall
+		// back to the generic env-only path — the per-closure thunk's
+		// unconditional capture-drop would over-release it. outer(0) →
+		// inner(1) → xs[2] + 0 + 1 = 31. Counter must stay 0.
+		name: "closure_nested_capture",
+		src: `function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var outer = function (a: i32): i32 {
+        var inner = function (b: i32): i32 { return xs[2] + a + b; };
+        return inner(1);
+    };
+    return (outer(0) - 31) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Map with string keys/values: build, read, drop.
 		name: "map_string_kv",
 		src: `function main(): i32 {

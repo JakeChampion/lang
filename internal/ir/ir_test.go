@@ -266,8 +266,12 @@ func TestLowerClosureValueRcTracked(t *testing.T) {
 	if got := countCallDirect(fn.Ops, "__fern_rc_inc"); got < 1 {
 		t.Errorf("live closure alias `b = a` must emit __fern_rc_inc, got %d:\n%s", got, prog)
 	}
-	if got := countCallDirect(fn.Ops, "__fern_rc_dec"); got < 1 {
-		t.Errorf("closure locals must be dec'd at exit, got %d __fern_rc_dec:\n%s", got, prog)
+	// Owned closure locals are reclaimed at exit via __fern_closure_drop
+	// (this closure captures only a scalar, so the generic env-free
+	// helper, not a per-closure thunk). Stages 2-3 replaced the old
+	// flat __fern_rc_dec drop for FuncType locals.
+	if got := countCallDirect(fn.Ops, "__fern_closure_drop"); got < 1 {
+		t.Errorf("closure locals must be reclaimed at exit, got %d __fern_closure_drop:\n%s", got, prog)
 	}
 }
 
