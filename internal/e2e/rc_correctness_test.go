@@ -1498,6 +1498,63 @@ function main(): i32 {
     return (b.data[2] - 9) + (b.data.len() - 3) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — enum with an ARRAY payload now frees
+		// the array buffer. Widening the enum drop gate from
+		// "struct payload" to "pointer-shaped payload" steers an
+		// array-payload enum to the tag-dispatch variant-plan, whose arm
+		// drops the i32[] via __fern_arr_dec (frees the buffer) instead
+		// of the flat dec the uniform path used. Generic Option[i32[]],
+		// churned. sum_{0..99}(i+1) = 5050.
+		name: "option_array_payload_churn_free",
+		src: `function mk(n: i32): Option[i32[]] { return Some([n, n + 1]); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Option[i32[]] = mk(i);
+        match (o) { Some(a) => { acc = acc + a[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Uniform union with array payloads (E = A(i32[]) | B(i32[])):
+		// previously the branchless uniform path flat-dec'd and leaked
+		// the array buffer; now it steers to variant-plan and frees it
+		// per tag-guarded arm. Churned.
+		name: "uniform_enum_array_payload_churn_free",
+		src: `enum E { A(i32[]), B(i32[]) }
+function mk(n: i32): E { return A([n, n + 1]); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var e: E = mk(i);
+        match (e) { A(a) => { acc = acc + a[1]; }, B(b) => { acc = acc + b[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Option[array] that ESCAPES (returned): the box + array must
+		// survive the constructor. Churn forces same-size reuse.
+		name: "option_array_payload_escapes",
+		src: `function mk(n: i32): Option[i32[]] { return Some([n, n + 1, n + 2]); }
+function main(): i32 {
+    var o: Option[i32[]] = mk(7);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (o) { Some(a) => { got = a[2]; }, None => { got = 0; } }
+    return (got - 9) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
