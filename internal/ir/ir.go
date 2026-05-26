@@ -2192,7 +2192,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if edOk && ast.RcFreeEnabled && eligible {
 				loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
 				size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
-				if loadsOk && sizeOk {
+				// The branchless uniform path can only flat-dec its
+				// payloads (it uses one static payload type, but a union's
+				// variants differ at the shared offset). When a payload is
+				// a CONCRETE struct that could be deep-dropped, skip it and
+				// take the tag-dispatch (variant-plan) path below instead,
+				// where each arm knows its exact type and recurses through
+				// __drop_struct_<T> (Stage C). Uniform stays for array /
+				// other payloads, which flat-dec under both paths anyway.
+				if loadsOk && sizeOk && !enumHasStructPayload(ed, b.info) {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -2544,6 +2552,22 @@ func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
 		return "", false
 	}
 	return "__drop_struct_" + v.Name, true
+}
+
+// enumHasStructPayload reports whether any variant of ed carries a
+// concrete-struct payload that dropFnNameFor would deep-drop. Used to
+// steer such enums away from the branchless uniform drop path (which
+// can only flat-dec a payload) toward the tag-dispatch variant-plan
+// path, where each arm's exact payload type is known.
+func enumHasStructPayload(ed *ast.EnumDecl, info *checker.Info) bool {
+	for _, v := range ed.Variants {
+		for _, pt := range v.Payloads {
+			if _, ok := dropFnNameFor(pt, info); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // arrElemStructDropName returns the __drop_arr_struct_<Elem> function
