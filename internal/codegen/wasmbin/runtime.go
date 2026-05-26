@@ -497,10 +497,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// the sum of the two operand lengths, then
 				// copies bytes one-at-a-time via the SSO-
 				// aware byte fetch. Returns the new (data,
-				// len) pair as a heap-form string.
+				// len) pair as a heap-form string. The buffer
+				// carries an rc=1 header (__fern_alloc_rc1) so
+				// owned string locals can reclaim it.
 				needs.add("__fern_str_len")
 				needs.add("__fern_str_byte")
-				needs.add("__fern_alloc")
+				needs.add("__fern_alloc") // __fern_alloc_rc1 calls it
+				needs.add("__fern_alloc_rc1")
 				needs.add("__str_concat")
 			}
 		}
@@ -2096,7 +2099,10 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 func buildStrConcatBody(idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
-	alloc := idxs["__fern_alloc"]
+	// rc=1-headered buffer (data = base+8) so an owned string local
+	// reclaims it at its last reference; the byte-copy loops below write
+	// to this returned data pointer unchanged.
+	alloc := idxs["__fern_alloc_rc1"]
 	var body []byte
 	// la = __fern_str_len(a)
 	body = inst.InstLocalGet(body, 0)
