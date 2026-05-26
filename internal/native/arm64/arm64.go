@@ -172,6 +172,66 @@ func MUL(rd, rn, rm uint32) uint32 {
 	return 0x9B000000 | ((rm & regMask) << 16) | (31 << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// ---- Loads / stores (unsigned scaled offset) ----
+//
+// `byteOffset` is the offset in bytes; each encoder scales it by the
+// access size to the 12-bit immediate the instruction carries, so the
+// caller passes natural byte offsets (0, 8, 16, … for 64-bit; 0, 1, 2,
+// … for byte). The offset must be a multiple of the access size and
+// fit the scaled 12-bit field.
+
+// LDRimm: `ldr Xt, [Xn, #byteOffset]` (64-bit, scale 8).
+// Encoding: base 0xF9400000 | (byteOffset/8)<<10 | Rn<<5 | Rt.
+func LDRimm(rt, rn, byteOffset uint32) uint32 {
+	return 0xF9400000 | (((byteOffset / 8) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STRimm: `str Xt, [Xn, #byteOffset]` (64-bit, scale 8).
+func STRimm(rt, rn, byteOffset uint32) uint32 {
+	return 0xF9000000 | (((byteOffset / 8) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDRBimm: `ldrb Wt, [Xn, #byteOffset]` (byte, zero-extend, scale 1).
+func LDRBimm(rt, rn, byteOffset uint32) uint32 {
+	return 0x39400000 | ((byteOffset & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STRBimm: `strb Wt, [Xn, #byteOffset]` (byte, scale 1).
+func STRBimm(rt, rn, byteOffset uint32) uint32 {
+	return 0x39000000 | ((byteOffset & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDRHimm: `ldrh Wt, [Xn, #byteOffset]` (halfword, zero-extend, scale 2).
+func LDRHimm(rt, rn, byteOffset uint32) uint32 {
+	return 0x79400000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STRHimm: `strh Wt, [Xn, #byteOffset]` (halfword, scale 2).
+func STRHimm(rt, rn, byteOffset uint32) uint32 {
+	return 0x79000000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// ---- Load/store pair, pre/post-indexed ----
+//
+// The frame prologue/epilogue idiom. byteOffset is a signed multiple
+// of 8; it is scaled to the 7-bit immediate. STPpre writes the new
+// base back BEFORE the access (`[Xn, #off]!`); LDPpost updates it
+// AFTER (`[Xn], #off`).
+
+// STPpre: `stp Xt, Xt2, [Xn, #byteOffset]!` (64-bit, pre-index).
+// Encoding: base 0xA9800000 | imm7<<15 | Rt2<<10 | Rn<<5 | Rt.
+func STPpre(rt, rt2, rn uint32, byteOffset int32) uint32 {
+	imm7 := uint32(byteOffset/8) & 0x7f
+	return 0xA9800000 | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDPpost: `ldp Xt, Xt2, [Xn], #byteOffset` (64-bit, post-index).
+// Encoding: base 0xA8C00000 | imm7<<15 | Rt2<<10 | Rn<<5 | Rt.
+func LDPpost(rt, rt2, rn uint32, byteOffset int32) uint32 {
+	imm7 := uint32(byteOffset/8) & 0x7f
+	return 0xA8C00000 | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.
