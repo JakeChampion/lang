@@ -232,6 +232,46 @@ func LDPpost(rt, rt2, rn uint32, byteOffset int32) uint32 {
 	return 0xA8C00000 | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
+// ubfmX / sbfmX are the 64-bit bitfield-move base encoders (N=1). The
+// immediate shifts and sign-extends below are all aliases of these.
+//
+// Encoding: sf=1 opc 100110 N immr(6) imms(6) Rn Rd; opc=10/N=1 → UBFM
+// (base 0xD3400000), opc=00/N=1 → SBFM (base 0x93400000).
+func ubfmX(rd, rn, immr, imms uint32) uint32 {
+	return 0xD3400000 | ((immr & 0x3f) << 16) | ((imms & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func sbfmX(rd, rn, immr, imms uint32) uint32 {
+	return 0x93400000 | ((immr & 0x3f) << 16) | ((imms & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// LSLimm / LSRimm / ASRimm encode the 64-bit immediate shifts
+// `<op> Xd, Xn, #shift` (shift in 1..63), the UBFM/SBFM aliases:
+//
+//	lsl #s = ubfm Xd, Xn, #(-s mod 64), #(63-s)
+//	lsr #s = ubfm Xd, Xn, #s, #63
+//	asr #s = sbfm Xd, Xn, #s, #63
+func LSLimm(rd, rn, shift uint32) uint32 {
+	shift &= 0x3f
+	return ubfmX(rd, rn, (64-shift)&0x3f, 63-shift)
+}
+
+func LSRimm(rd, rn, shift uint32) uint32 {
+	shift &= 0x3f
+	return ubfmX(rd, rn, shift, 63)
+}
+
+func ASRimm(rd, rn, shift uint32) uint32 {
+	shift &= 0x3f
+	return sbfmX(rd, rn, shift, 63)
+}
+
+// SXTB / SXTH / SXTW encode `sxt<b|h|w> Xd, Wn` — sign-extend the low
+// 8 / 16 / 32 bits of Wn into the 64-bit Xd (SBFM aliases with immr=0).
+func SXTB(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 7) }
+func SXTH(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 15) }
+func SXTW(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 31) }
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.

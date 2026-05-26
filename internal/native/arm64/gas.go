@@ -119,8 +119,12 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub":
 		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul", "lsl", "lsr", "asr":
+	case "and", "orr", "eor", "mul":
 		return asm3Reg(a, mnem, ops)
+	case "lsl", "lsr", "asr":
+		return asmShift(a, mnem, ops)
+	case "sxtb", "sxth", "sxtw":
+		return asmExtend(a, mnem, ops)
 	case "cmp":
 		return asmCmp(a, ops)
 	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
@@ -288,12 +292,75 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(EORreg(rd, rn, rm))
 	case "mul":
 		a.Emit(MUL(rd, rn, rm))
+	}
+	return nil
+}
+
+// asmShift handles lsl/lsr/asr in both the register-variable form
+// (`<op> Xd, Xn, Xm`) and the immediate form (`<op> Xd, Xn, #shift`).
+func asmShift(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects 3 operands", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(ops[2], "#") {
+		imm, err := parseImm(ops[2])
+		if err != nil {
+			return err
+		}
+		sh := uint32(imm)
+		switch mnem {
+		case "lsl":
+			a.Emit(LSLimm(rd, rn, sh))
+		case "lsr":
+			a.Emit(LSRimm(rd, rn, sh))
+		case "asr":
+			a.Emit(ASRimm(rd, rn, sh))
+		}
+		return nil
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	switch mnem {
 	case "lsl":
 		a.Emit(LSLV(rd, rn, rm))
 	case "lsr":
 		a.Emit(LSRV(rd, rn, rm))
 	case "asr":
 		a.Emit(ASRV(rd, rn, rm))
+	}
+	return nil
+}
+
+// asmExtend handles the sign-extends `sxt<b|h|w> Xd, Wn`.
+func asmExtend(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects 2 operands", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	switch mnem {
+	case "sxtb":
+		a.Emit(SXTB(rd, rn))
+	case "sxth":
+		a.Emit(SXTH(rd, rn))
+	case "sxtw":
+		a.Emit(SXTW(rd, rn))
 	}
 	return nil
 }
