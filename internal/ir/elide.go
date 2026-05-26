@@ -46,6 +46,8 @@
 
 package ir
 
+import "strings"
+
 // ElideClosurePair drops dead closure-pair allocations in each
 // function. Programs without OpMakeClosure are unchanged in O(N)
 // walk time. Designed to run after Defunctionalise (which
@@ -199,13 +201,19 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_rc_dec" {
 				continue
 			}
-			// Benign closure drop: OpLoadLocal slot; OpCallDirect
-			// __fern_closure_drop. Same as the rc_dec exit-sweep skip
-			// — the closure-env reclamation handler consumes the
+			// Benign closure drop: OpLoadLocal slot; OpCallDirect to
+			// the generic __fern_closure_drop OR a per-closure
+			// __closure_drop_<name> thunk (Stage 3). Same as the
+			// rc_dec exit-sweep skip — the handler consumes the
 			// pointer and its result is dropped, so the value doesn't
-			// escape and the slot stays elision-eligible.
+			// escape and the slot stays elision-eligible. Crucially,
+			// keeping the slot elision-eligible turns the closure into
+			// a BARE ENV (no pair), which is exactly what the thunk
+			// assumes when it reads captures at [env+offset].
 			if !r.canonicalOk && !r.aliasOk && i+1 < len(fn.Ops) &&
-				fn.Ops[i+1].Kind == OpCallDirect && fn.Ops[i+1].Str == "__fern_closure_drop" {
+				fn.Ops[i+1].Kind == OpCallDirect &&
+				(fn.Ops[i+1].Str == "__fern_closure_drop" ||
+					strings.HasPrefix(fn.Ops[i+1].Str, "__closure_drop_")) {
 				continue
 			}
 			if !r.canonicalOk && !r.aliasOk {

@@ -702,13 +702,48 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// directly. Captured here so callers know to consume two
 	// stack values from a OpCallDirectPair instead of one.
 	pairForm := findPairFormFuncs(prog, info, ptrW)
+	// Per-closure capture lists (closureconv stamps Captures on each
+	// hoisted FuncDecl). Threaded into lowering so emitDec can route a
+	// closure local's drop to its per-closure __closure_drop_<name>
+	// thunk, and so the post-pass below knows which thunks to emit.
+	closureCaps := map[string][]ast.Param{}
+	for _, fn := range prog.Funcs {
+		if len(fn.Captures) > 0 {
+			closureCaps[fn.Name] = fn.Captures
+		}
+	}
 	out := &Program{PairForm: pairForm, PtrW: ptrW}
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps)
 		if err != nil {
 			return nil, err
 		}
 		out.Funcs = append(out.Funcs, f)
+	}
+	// Closure reclamation Stage 3: emit a per-closure
+	// __closure_drop_<name> thunk for every closure with rc-tracked
+	// captures (arrays/structs/enums/closures — the ones inc'd at
+	// MakeEnv). emitDec dispatches owned closure drops to these.
+	if ast.RcFreeEnabled {
+		for name, caps := range closureCaps {
+			thunk := genClosureDropThunk(name, caps, ptrW)
+			if thunk == nil {
+				continue
+			}
+			// Codegen pairs prog.Funcs[i] (AST) with ip.Funcs[i] (IR)
+			// by index and emits from the IR ops, so append a stub AST
+			// decl in lockstep (same index) for the synthetic thunk —
+			// it carries the name/params the prologue needs; the body
+			// is unused (emission reads the IR Func's ops).
+			stub := &ast.FuncDecl{
+				Name:       thunk.Name,
+				Params:     thunk.Params,
+				ReturnType: thunk.ReturnType,
+				Body:       &ast.Block{},
+			}
+			prog.Funcs = append(prog.Funcs, stub)
+			out.Funcs = append(out.Funcs, thunk)
+		}
 	}
 	return out, nil
 }
@@ -1291,6 +1326,17 @@ type builder struct {
 	// dec instead. Computed once by computeFreeEligible. See
 	// docs/RC-PERCEUS-PLAN.md (the borrow⇄free resolution).
 	freeEligible map[string]bool
+	// closureTarget[localName] = the hoisted closure FuncName a
+	// FuncType local was assigned via `var f = MakeClosure{...}`.
+	// Lets emitDec dispatch a closure's drop to the per-closure
+	// __closure_drop_<name> thunk (which frees the captured pointer
+	// targets), falling back to the generic __fern_closure_drop for
+	// locals with no single known closure source.
+	closureTarget map[string]string
+	// closureCaps[closureName] = that closure's capture list, used to
+	// decide whether a closure has a __closure_drop_<name> thunk
+	// (rc-tracked captures present) worth dispatching to.
+	closureCaps map[string][]ast.Param
 	// movedLocals[name] is true for an owned rc local whose LAST
 	// occurrence is a top-level alias that always executes (Phase 4
 	// move-on-alias): the alias skips its transfer inc and the exit
@@ -1687,6 +1733,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	switch x := e.(type) {
 	case *ast.ArrayLit:
 		return false
+	case *ast.MakeClosure:
+		// A freshly-built closure (rc=1), like an array literal — it
+		// owns its env, not an alias of a borrowed value. Owned, so the
+		// FuncType local is eligible to free its env/captures at the
+		// last reference (closure reclamation Stages 2-3). Escapes are
+		// still caught: a returned closure takes move-on-return, and one
+		// stored into a container is escape-tainted at the sink.
+		return false
 	case *ast.Ident:
 		return tainted[x.Name]
 	case *ast.FieldAccess, *ast.Index, *ast.SliceExpr:
@@ -1852,7 +1906,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
-	emitDec := func(slot int32, t ast.Type, eligible bool) {
+	emitDec := func(slot int32, t ast.Type, eligible bool, name string) {
 		// `eligible` is the borrow-aware verdict for THIS local: true
 		// only when it's a proven-OWNED array (computeFreeEligible).
 		// Arrays of pointer-shaped rc-tracked elements route through
@@ -2101,16 +2155,24 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			return
 		}
 		// Closure reclamation: an OWNED FuncType local frees its env /
-		// pair rc1 block at the last reference (rc==1) via
-		// __fern_closure_drop (reads the payload size stashed at
-		// data-4 → box_free, else dec). Single load+call so
-		// ElideClosurePair's reader still recognises the drop as
-		// benign. Ineligible (borrowed / escaping) closures and
-		// flag-off builds fall through to the plain dec; captured
-		// pointer targets still leak (a later slice).
+		// pair rc1 block at the last reference (rc==1). When the local
+		// has a single known closure source with rc-tracked captures
+		// (closureTarget), dispatch to that closure's
+		// __closure_drop_<name> thunk, which ALSO frees the captured
+		// pointer targets before freeing the env (Stage 3). Otherwise
+		// the generic __fern_closure_drop frees just the env (Stage 2;
+		// captures leak). Either way a single load+call keeps
+		// ElideClosurePair's reader recognising the drop as benign.
+		// Ineligible (borrowed / escaping) closures and flag-off
+		// builds fall through to the plain dec.
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
+			dropFn := "__fern_closure_drop"
+			tgt := b.closureTarget[name]
+			if tgt != "" && hasRcCapture(b.closureCaps[tgt]) {
+				dropFn = "__closure_drop_" + tgt
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_closure_drop", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: dropFn, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -2203,7 +2265,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if !ok {
 			continue
 		}
-		emitDec(slot, v.Type, b.freeEligible[v.Name])
+		emitDec(slot, v.Type, b.freeEligible[v.Name], v.Name)
 	}
 }
 
@@ -2221,6 +2283,91 @@ func arrElemIsRcTracked(elem ast.Type) bool {
 		return true
 	}
 	return false
+}
+
+// irCaptureSlotSize mirrors closureconv.captureSlotSize: the env
+// slot footprint of a capture (8 for wide scalars, ptrW for
+// pointers, 2*ptrW for two-word strings, 4 otherwise). Kept in
+// sync so the drop thunk reads captures at the same offsets the
+// env was written with.
+func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+		return int32(2 * ptrW)
+	}
+	if ast.ElemSizeBytesFor(t, ptrW) == 8 {
+		return 8
+	}
+	if ast.IsPointerType(t) {
+		return int32(ptrW)
+	}
+	return 4
+}
+
+// hasRcCapture reports whether any capture is rc-tracked (i.e. was
+// inc'd at MakeEnv and so needs dropping when the closure dies).
+func hasRcCapture(caps []ast.Param) bool {
+	for _, c := range caps {
+		if arrElemIsRcTracked(c.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// genClosureDropThunk builds the per-closure __closure_drop_<name>
+// function: at the closure's last reference (rc==1) it drops each
+// rc-tracked capture — arrays free their buffer (arr_dec /
+// drop_arr_ptr), struct/enum/closure captures flat-dec one level
+// (consistent with decValueOnStack) — then frees the env block via
+// the generic __fern_closure_drop. Returns nil for closures with no
+// rc-tracked captures (the generic helper already handles those).
+// The thunk's env is a plain param (slot 0), not a closure-pair
+// local, so re-loading it freely doesn't perturb ElideClosurePair.
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int) *Func {
+	if !hasRcCapture(caps) {
+		return nil
+	}
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+	}
+	off := int32(0)
+	for _, c := range caps {
+		slot := irCaptureSlotSize(c.Type, ptrW)
+		if arrElemIsRcTracked(c.Type) {
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthPtr})
+			if at, ok := c.Type.(ast.ArrayType); ok {
+				helper := "__fern_arr_dec"
+				if arrElemIsRcTracked(at.Elem) {
+					helper = "__fern_drop_arr_ptr"
+				}
+				ops = append(ops,
+					Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
+					Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			} else {
+				// struct / enum / closure capture: flat one-level dec.
+				ops = append(ops, Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			}
+			ops = append(ops, Op{Kind: OpDrop})
+		}
+		off += slot
+	}
+	ops = append(ops,
+		Op{Kind: OpEnd},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpCallDirect, Str: "__fern_closure_drop", I32: 1},
+		Op{Kind: OpReturn})
+	return &Func{
+		Name:       "__closure_drop_" + name,
+		Params:     []ast.Param{{Name: "__cdenv", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        ops,
+	}
 }
 
 // enumDropLoad is one pointer-shaped payload slot the enum drop
@@ -2383,7 +2530,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -2399,6 +2546,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		scratchType: map[int32]ast.Type{},
 		ptrW:        ptrW,
 		pairForm:    pairForm,
+		closureCaps: closureCaps,
 		thisIsPair:  pairForm[fn.Name],
 	}
 	if b.thisIsPair {
@@ -2419,6 +2567,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.freeEligible = b.computeFreeEligible()
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
+	b.closureTarget = map[string]string{}
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
 	// default; the IR sets it to 1 when the Defer statement
@@ -3552,6 +3701,25 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.emit(Op{Kind: OpCallDirect, Str: "arena_restore", I32: 1})
 		return nil
 	case *ast.Var:
+		if mc, ok := n.Init.(*ast.MakeClosure); ok {
+			// Single known closure source for this FuncType local —
+			// emitDec can drop its captures via the per-closure thunk,
+			// but ONLY if every rc-tracked capture here was actually
+			// inc'd at MakeEnv (needsRcIncOnAlias). A capture that
+			// wasn't (e.g. a nested closure's CaptureRef capture) would
+			// be over-released by the thunk's unconditional drop, so
+			// such closures fall back to the generic env-only drop.
+			thunkSafe := true
+			for _, capExpr := range mc.Captures {
+				if arrElemIsRcTracked(b.exprType(capExpr)) && !needsRcIncOnAlias(capExpr, b) {
+					thunkSafe = false
+					break
+				}
+			}
+			if thunkSafe {
+				b.closureTarget[n.Name] = mc.FuncName
+			}
+		}
 		if err := b.expr(n.Init); err != nil {
 			return err
 		}
