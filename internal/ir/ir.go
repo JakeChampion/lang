@@ -2218,7 +2218,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// generic __map_drop_values (kind 2/3). Both free the buf +
 			// handle via the trailing __fern_map_drop.
 			dropValues := "__map_drop_values"
-			if name, ok := mapValDropName(st, b.info); ok {
+			if name, ok := mapValDropName(st, b.info, b.genEnumDrops); ok {
 				dropValues = name
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -2969,11 +2969,11 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // and the per-value drop it calls — from the name alone, no type lookup.
 // The map's drop routes here instead of the generic __map_drop_values
 // (which only reclaims array values). Mirrors mapValHasDrop's domain.
-func mapValDropName(st ast.StructType, info *checker.Info) (string, bool) {
+func mapValDropName(st ast.StructType, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) (string, bool) {
 	if st.Name != "Map" || len(st.Args) < 2 {
 		return "", false
 	}
-	perVal, ok := mapValHasDrop(st.Args[1], info)
+	perVal, ok := mapValHasDrop(st.Args[1], info, genEnumDrops)
 	if !ok {
 		return "", false
 	}
@@ -5865,7 +5865,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
-		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info)})
+		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info, b.genEnumDrops)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
@@ -7281,7 +7281,7 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 // overwrite-dec in __map_set_impl; readers mask the low byte
 // (kind != 0 == pointer-shaped) since map_new stores the packed
 // mapValTag (kind | stride<<8), not the bare kind.
-func mapValKindTag(t ast.Type, info *checker.Info) int32 {
+func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) int32 {
 	if at, ok := t.(ast.ArrayType); ok {
 		if arrElemIsRcTracked(at.Elem) {
 			return 3
@@ -7296,7 +7296,7 @@ func mapValKindTag(t ast.Type, info *checker.Info) int32 {
 	// retain (here) and drop (routing) never disagree. Other pointers
 	// (string / generic-enum / tuple / slice / runtime handles) fall
 	// through to the non-reclaimed pointer kind (1).
-	if _, ok := mapValHasDrop(t, info); ok {
+	if _, ok := mapValHasDrop(t, info, genEnumDrops); ok {
 		return 4
 	}
 	if ast.IsPointerType(t) {
@@ -7313,35 +7313,25 @@ func mapValKindTag(t ast.Type, info *checker.Info) int32 {
 // drop in a __drop_map_via_<drop> column walk), keeping the retained set
 // and the reclaimed set identical. Generic-enum instantiations (Args) and
 // runtime handle structs are excluded — they stay non-reclaimed (kind 1).
-func mapValHasDrop(v ast.Type, info *checker.Info) (string, bool) {
-	switch t := v.(type) {
-	case ast.StructType:
-		if t.Name != "Map" {
-			if _, ok := info.Structs[t.Name]; ok {
-				return "__drop_struct_" + t.Name, true
-			}
-		}
-	case ast.EnumType:
-		if len(t.Args) == 0 {
-			if ed, ok := info.Enums[t.Name]; ok && enumNeedsDrop(ed) {
-				return "__drop_enum_" + t.Name, true
-			}
-		}
-	case ast.ArrayType:
-		// Array-of-CONCRETE-struct value (Map[K, Item[]]): each value
-		// array deep-drops its element boxes + buffer via the generated
-		// __drop_arr_struct_<Elem> loop, rather than the shallow
-		// drop_arr_ptr __map_drop_values uses for kind 3 (which frees the
-		// buffer but leaks the element struct boxes). Only reached from
-		// routing — mapValKindTag short-circuits arrays to kind 2/3 (whose
-		// `>= 2` retain still applies), so this changes the DROP, not the
-		// retain. Array-of-plain / array-of-array / array-of-enum return
-		// false and keep __map_drop_values.
-		if name, ok := arrElemStructDropName(t.Elem, info); ok {
-			return name, true
-		}
+func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) (string, bool) {
+	// Array-of-CONCRETE-struct value (Map[K, Item[]]): each value array
+	// deep-drops its element boxes + buffer via the generated
+	// __drop_arr_struct_<Elem> loop, rather than the shallow drop_arr_ptr
+	// __map_drop_values uses for kind 3 (which frees the buffer but leaks
+	// the element struct boxes). Only reached from routing — mapValKindTag
+	// short-circuits arrays to kind 2/3 (whose `>= 2` retain still
+	// applies), so this changes the DROP, not the retain. Other arrays
+	// (plain / nested / enum-elem) keep __map_drop_values.
+	if at, ok := v.(ast.ArrayType); ok {
+		return arrElemStructDropName(at.Elem, info)
 	}
-	return "", false
+	// Every other value with a generated recursive drop — concrete user
+	// struct (__drop_struct_<V>), concrete enum (__drop_enum_<V>), or a
+	// heap-boxed generic-enum instantiation (__drop_enum_<mangled>, recorded
+	// in genEnumDrops) — routes through dropFnNameFor, the same dispatch
+	// the struct/enum field drops use. Strings / tuples / slices / runtime
+	// handles / pair-form generic enums read false and stay non-reclaimed.
+	return dropFnNameFor(v, info, genEnumDrops)
 }
 
 // mapValTag is what map_new actually stores at buf+12: the low
@@ -7352,8 +7342,8 @@ func mapValHasDrop(v ast.Type, info *checker.Info) (string, bool) {
 // stride = tag >> 8) so the runtime can arr_dec / drop_arr_ptr a
 // value without the IR threading the stride through every set /
 // drop call. Non-array kinds (0/1) carry no stride.
-func mapValTag(t ast.Type, ptrW int, info *checker.Info) int32 {
-	kind := mapValKindTag(t, info)
+func mapValTag(t ast.Type, ptrW int, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) int32 {
+	kind := mapValKindTag(t, info, genEnumDrops)
 	if kind >= 2 {
 		if at, ok := t.(ast.ArrayType); ok {
 			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
@@ -7815,7 +7805,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-reads the same pointer. Runs before the wide/generic
 	// dispatch so both set lowerings are covered uniformly.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 &&
-		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info) >= 2 &&
+		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops) >= 2 &&
 		needsRcIncOnAlias(n.Args[2], b) {
 		if err := b.expr(n.Args[2]); err != nil {
 			return err
@@ -7906,7 +7896,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
-			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info)
+			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info, b.genEnumDrops)
 		}
 		b.emit(Op{Kind: OpConstI32, I32: keyKind})
 		b.emit(Op{Kind: OpConstI32, I32: valKind})

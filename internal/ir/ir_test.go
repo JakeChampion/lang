@@ -1721,3 +1721,26 @@ function build(): i32 {
 		t.Errorf("expected __drop_arr_struct_Item to recurse into __drop_struct_Item:\n%s", p)
 	}
 }
+
+// TestLowerMapGenericEnumValueReclaim verifies a heap-boxed generic-enum
+// instantiation as a map value (Map[K, Option[Item]]) reclaims through the
+// same __drop_map_via_<drop> walk, with the per-value drop being the
+// mangled generic-enum drop (dropFnNameFor's generic path).
+func TestLowerMapGenericEnumValueReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Item { xs: i32[] }
+function build(): i32 {
+    var m: Map[i32, Option[Item]] = map_new(8);
+    m = m.set(1, Some(Item { xs: [1, 2] }));
+    return 0;
+}`, 8)
+	const loop = "__drop_map_via___drop_enum_Option_LB_Item_RB_"
+	if !funcExists(p, loop) {
+		t.Fatalf("expected generated %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, "build", loop) {
+		t.Errorf("expected map local drop to route through %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, loop, "__drop_enum_Option_LB_Item_RB_") {
+		t.Errorf("expected %s to deep-drop values via the generic-enum drop:\n%s", loop, p)
+	}
+}
