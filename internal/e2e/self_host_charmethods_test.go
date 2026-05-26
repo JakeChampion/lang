@@ -23,6 +23,10 @@ var charMethodCases = []struct {
 	{"is_alpha-upper", "function main(): i32 { var c: i32 = 90; if (c.is_alpha() && c.is_upper() && !c.is_lower()) { return 1; } return 0; }", 1},
 	{"is_hex-alnum", "function main(): i32 { var c: i32 = 102; if (c.is_hex_digit() && c.is_alnum()) { return 1; } return 0; }", 1},
 	{"punct-neither", "function main(): i32 { var c: i32 = 35; if (c.is_alnum() || c.is_hex_digit()) { return 1; } return 0; }", 0},
+	{"gcd", "function main(): i32 { var a: i32 = 12; return a.gcd(18); }", 6},
+	{"lcm", "function main(): i32 { var a: i32 = 4; return a.lcm(6); }", 12},
+	{"gcd-neg", "function main(): i32 { var a: i32 = 0 - 12; return a.gcd(8); }", 4},
+	{"to_ascii_string", "function main(): i32 { var c: i32 = 65; return c.to_ascii_string()[0]; }", 65},
 }
 
 // TestSelfHostCharMethodsX86_64 compiles the char-method programs with
