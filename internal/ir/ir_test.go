@@ -1650,7 +1650,7 @@ func TestLowerTupleDestructureArrayReclaim(t *testing.T) {
 }
 
 // TestLowerMapStructValueReclaim verifies a Map[K, ConcreteStruct] routes
-// its drop through the generated __drop_map_struct_<V> loop, which
+// its drop through the generated __drop_map_via_<drop> column walk, which
 // deep-drops each value via __drop_struct_<V> — rather than the generic
 // __map_drop_values (which only reclaims array values).
 func TestLowerMapStructValueReclaim(t *testing.T) {
@@ -1660,13 +1660,38 @@ function build(): i32 {
     m = m.set(1, Item { xs: [1, 2] });
     return 0;
 }`, 8)
-	if !funcExists(p, "__drop_map_struct_Item") {
-		t.Fatalf("expected generated __drop_map_struct_Item:\n%s", p)
+	const loop = "__drop_map_via___drop_struct_Item"
+	if !funcExists(p, loop) {
+		t.Fatalf("expected generated %s:\n%s", loop, p)
 	}
-	if !callsDirect(p, "build", "__drop_map_struct_Item") {
-		t.Errorf("expected map local drop to route through __drop_map_struct_Item:\n%s", p)
+	if !callsDirect(p, "build", loop) {
+		t.Errorf("expected map local drop to route through %s:\n%s", loop, p)
 	}
-	if !callsDirect(p, "__drop_map_struct_Item", "__drop_struct_Item") {
-		t.Errorf("expected __drop_map_struct_Item to deep-drop values via __drop_struct_Item:\n%s", p)
+	if !callsDirect(p, loop, "__drop_struct_Item") {
+		t.Errorf("expected %s to deep-drop values via __drop_struct_Item:\n%s", loop, p)
+	}
+}
+
+// TestLowerMapEnumValueReclaim verifies the generalization to enum values:
+// a Map[K, ConcreteEnum] deep-drops each value via __drop_enum_<V> through
+// the same __drop_map_via_<drop> column walk.
+func TestLowerMapEnumValueReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct VI { v: i32[] }
+struct VA { v: i32[] }
+type Value = VI | VA;
+function build(): i32 {
+    var m: Map[i32, Value] = map_new(8);
+    m = m.set(1, VI { v: [1, 2] });
+    return 0;
+}`, 8)
+	const loop = "__drop_map_via___drop_enum_Value"
+	if !funcExists(p, loop) {
+		t.Fatalf("expected generated %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, "build", loop) {
+		t.Errorf("expected map local drop to route through %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, loop, "__drop_enum_Value") {
+		t.Errorf("expected %s to deep-drop values via __drop_enum_Value:\n%s", loop, p)
 	}
 }

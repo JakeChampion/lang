@@ -781,7 +781,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
-					strings.HasPrefix(op.Str, "__drop_map_struct_") ||
+					strings.HasPrefix(op.Str, "__drop_map_via_") ||
 					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
@@ -799,13 +799,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
-			} else if v := strings.TrimPrefix(name, "__drop_map_struct_"); v != name {
-				// Struct-valued map drop loop; its body calls
-				// __drop_struct_<V>, which this worklist then generates.
-				if _, ok := info.Structs[v]; !ok {
-					continue // routing only names value structs it verified exist
-				}
-				fn = genMapStructDropFn(v, ptrW)
+			} else if perVal := strings.TrimPrefix(name, "__drop_map_via_"); perVal != name {
+				// Map value-column drop loop; its body calls the embedded
+				// per-value drop (__drop_struct_<V> / __drop_enum_<V>), which
+				// this worklist then generates from enqueueCalls below.
+				// Routing only names a perVal it verified is generatable
+				// (mapValHasDrop).
+				fn = genMapValDropFn(perVal, ptrW)
 			} else if en := strings.TrimPrefix(name, "__drop_enum_"); en != name {
 				ed, ok := info.Enums[en]
 				if !ok {
@@ -2213,12 +2213,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// derived) maps and flag-off builds fall through to the plain
 		// box dec.
 		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
-			// Struct-valued maps deep-drop each value via the generated
-			// __drop_map_struct_<V> loop; array-valued maps use the generic
-			// __map_drop_values (kind 2/3). Both free the buf + handle via
-			// the trailing __fern_map_drop.
+			// Struct/enum-valued maps deep-drop each value via the generated
+			// __drop_map_via_<perValueDrop> loop; array-valued maps use the
+			// generic __map_drop_values (kind 2/3). Both free the buf +
+			// handle via the trailing __fern_map_drop.
 			dropValues := "__map_drop_values"
-			if name, ok := mapStructValDropName(st, b.info); ok {
+			if name, ok := mapValDropName(st, b.info); ok {
 				dropValues = name
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -2962,39 +2962,35 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 	}
 }
 
-// mapStructValDropName returns the __drop_map_struct_<V> function name for
-// a Map whose VALUE type is a concrete user struct, plus whether one
-// applies. The map's drop routes to this generated loop (deep-dropping
-// each live struct value via __drop_struct_<V>) instead of the generic
-// __map_drop_values, which only reclaims array values. The value type is
-// statically exact (Map[K, V]'s second type arg), so a type-specific
-// per-value drop is safe. Non-struct values (arrays / scalars / string /
-// enum / tuple / nested Map) return ("", false).
-func mapStructValDropName(st ast.StructType, info *checker.Info) (string, bool) {
+// mapValDropName returns the column-walk drop function name for a Map
+// whose VALUE type has a generated recursive drop (concrete struct or
+// enum), plus whether one applies. The name embeds the per-value drop fn
+// (__drop_map_via_<perValueDrop>), so the worklist regenerates the loop —
+// and the per-value drop it calls — from the name alone, no type lookup.
+// The map's drop routes here instead of the generic __map_drop_values
+// (which only reclaims array values). Mirrors mapValHasDrop's domain.
+func mapValDropName(st ast.StructType, info *checker.Info) (string, bool) {
 	if st.Name != "Map" || len(st.Args) < 2 {
 		return "", false
 	}
-	v, ok := st.Args[1].(ast.StructType)
-	if !ok || v.Name == "Map" {
+	perVal, ok := mapValHasDrop(st.Args[1], info)
+	if !ok {
 		return "", false
 	}
-	if _, isUser := info.Structs[v.Name]; !isUser {
-		return "", false
-	}
-	return "__drop_map_struct_" + v.Name, true
+	return "__drop_map_via_" + perVal, true
 }
 
-// genMapStructDropFn builds __drop_map_struct_<V>(m): on the map's last
-// reference (rc==1, guarded by __fern_rc_is_unique on the handle) it
-// walks the value column and deep-drops each live struct value through
-// __drop_struct_<V> (which is_unique-gates per value, so a value shared
-// via an outstanding get/values borrow only dec's). The buf + handle are
-// freed separately by the trailing __fern_map_drop the caller emits.
-// Mirrors __map_drop_values' iteration: cap@buf+0, len@buf+4, entries at
-// buf+16+cap*4, value at entry+ptrW with entryStride = 2*ptrW. Returns m
-// so the caller's OpDrop pops a real value. Slots: 0=m (param),
-// 1=buf, 2=len, 3=i, 4=entriesBase (scratch).
-func genMapStructDropFn(valName string, ptrW int) *Func {
+// genMapValDropFn builds __drop_map_via_<perValueDrop>(m): on the map's
+// last reference (rc==1, guarded by __fern_rc_is_unique on the handle) it
+// walks the value column and deep-drops each live value through
+// perValueDrop (__drop_struct_<V> / __drop_enum_<V>, which is_unique-gate
+// per value, so a value shared via an outstanding get/values borrow only
+// dec's). The buf + handle are freed separately by the trailing
+// __fern_map_drop the caller emits. Mirrors __map_drop_values' iteration:
+// cap@buf+0, len@buf+4, entries at buf+16+cap*4, value at entry+ptrW with
+// entryStride = 2*ptrW. Returns m so the caller's OpDrop pops a real
+// value. Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase (scratch).
+func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 	pw := int32(ptrW)
 	entryStride := 2 * pw
 	ops := []Op{
@@ -3040,7 +3036,7 @@ func genMapStructDropFn(valName string, ptrW int) *Func {
 		{Kind: OpConstI32, I32: pw},
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
-		{Kind: OpCallDirect, Str: "__drop_struct_" + valName, I32: 1},
+		{Kind: OpCallDirect, Str: perValueDrop, I32: 1},
 		{Kind: OpDrop},
 		// i = i + 1; continue.
 		{Kind: OpLoadLocal, I32: 3},
@@ -3055,7 +3051,7 @@ func genMapStructDropFn(valName string, ptrW int) *Func {
 		{Kind: OpReturn},
 	}
 	return &Func{
-		Name:         "__drop_map_struct_" + valName,
+		Name:         "__drop_map_via_" + perValueDrop,
 		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
@@ -7292,21 +7288,47 @@ func mapValKindTag(t ast.Type, info *checker.Info) int32 {
 		}
 		return 2
 	}
-	// Concrete USER struct values (4): deep-droppable via the generated
-	// __drop_map_struct_<T> at the map's last reference, and retained on
-	// set / get / values / iter through the same `kind >= 2` machinery as
-	// arrays. Runtime handle structs (Map / Reader / Writer / MapIter)
-	// have no StructDecl — they fall through to the non-reclaimed pointer
-	// kind (1), as do string / enum / tuple / slice values.
-	if st, ok := t.(ast.StructType); ok && st.Name != "Map" {
-		if _, isUser := info.Structs[st.Name]; isUser {
-			return 4
-		}
+	// Pointer values with a generated deep-drop (concrete user struct or
+	// concrete enum) tag as kind 4: deep-dropped via the generated
+	// __drop_map_via_<drop> loop at the map's last reference, and retained
+	// on set / get / values / iter through the same `kind >= 2` machinery
+	// as arrays. The kind-4 set is exactly mapValHasDrop's domain, so
+	// retain (here) and drop (routing) never disagree. Other pointers
+	// (string / generic-enum / tuple / slice / runtime handles) fall
+	// through to the non-reclaimed pointer kind (1).
+	if _, ok := mapValHasDrop(t, info); ok {
+		return 4
 	}
 	if ast.IsPointerType(t) {
 		return 1
 	}
 	return 0
+}
+
+// mapValHasDrop reports the per-VALUE drop function for a map whose value
+// type has a generated recursive drop — a concrete user struct
+// (__drop_struct_<V>) or a concrete enum (__drop_enum_<V>) — plus whether
+// one applies. Shared by mapValKindTag (which tags such values kind 4 so
+// they're retained) and the map drop routing (which wraps the per-value
+// drop in a __drop_map_via_<drop> column walk), keeping the retained set
+// and the reclaimed set identical. Generic-enum instantiations (Args) and
+// runtime handle structs are excluded — they stay non-reclaimed (kind 1).
+func mapValHasDrop(v ast.Type, info *checker.Info) (string, bool) {
+	switch t := v.(type) {
+	case ast.StructType:
+		if t.Name != "Map" {
+			if _, ok := info.Structs[t.Name]; ok {
+				return "__drop_struct_" + t.Name, true
+			}
+		}
+	case ast.EnumType:
+		if len(t.Args) == 0 {
+			if ed, ok := info.Enums[t.Name]; ok && enumNeedsDrop(ed) {
+				return "__drop_enum_" + t.Name, true
+			}
+		}
+	}
+	return "", false
 }
 
 // mapValTag is what map_new actually stores at buf+12: the low
