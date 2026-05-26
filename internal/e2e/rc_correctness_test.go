@@ -1090,6 +1090,52 @@ function main(): i32 {
     return (acc - 10100) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation Stage C — non-uniform enum with a
+		// struct payload, churned. The eligible enum drop's tag-dispatch
+		// (variant-plan) arm knows the exact payload type, so the Leaf
+		// arm recurses through __drop_struct_Item (freeing the Item box
+		// + its array) instead of flat-dec'ing the payload. Reachable
+		// now that composite-literal RHS (Item{...} fed to the Leaf
+		// constructor) is free-eligible. sum_{i=0..99}(i+1) = 5050.
+		name: "nonuniform_enum_struct_payload_churn_free",
+		src: `struct Item { tags: i32[] }
+enum Node { Leaf(Item), Branch(i32) }
+function mk(n: i32): Node { return Leaf(Item { tags: [n, n + 1] }); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var nd: Node = mk(i);
+        match (nd) { Leaf(it) => { acc = acc + it.tags[1]; }, Branch(b) => { acc = acc + b; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage C — enum carrying a struct
+		// payload that ESCAPES (pushed into an array): the enum is
+		// tainted (not free-eligible), so its struct payload must NOT be
+		// deep-freed; the array still references it after the local is
+		// swept. Churn forces same-size reuse that would corrupt a
+		// strayed read.
+		name: "enum_struct_payload_escapes",
+		src: `struct Item { tags: i32[] }
+enum Node { Leaf(Item), Branch(i32) }
+function main(): i32 {
+    var keep: Node[] = [];
+    keep = keep.push(Leaf(Item { tags: [5, 6] }));
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (keep[0]) { Leaf(it) => { got = it.tags[1]; }, Branch(b) => { got = b; } }
+    return (got - 6) + (keep.len() - 1) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
