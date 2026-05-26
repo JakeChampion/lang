@@ -494,6 +494,13 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "iter") {
+                        if (rt.len() >= 4 && rt[0:4] == "map:") { return "mapiter:" + rt[4:rt.len()]; }
+                        return "mapiter:unknown";
+                    }
+                    if (is_mapiter(rt) && fa.field == "has_next") { return "bool"; }
+                    if (is_mapiter(rt) && fa.field == "key") { return "string"; }
+                    if (is_mapiter(rt) && fa.field == "value") { return rt[8:rt.len()]; }
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
@@ -672,11 +679,15 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
+    if (name.len() >= 8 && name[0:8] == "MapIter[") {
+        // MapIter[K, V] → "mapiter:<value-tag>" so `.value()` infers V.
+        return "mapiter:" + generic_value_tag(name, 8);
+    }
     if (name.len() >= 4 && name[0:4] == "Map[") {
         // Carry the value type into the tag ("map:<value-tag>") so
         // `m.get(k)` payloads infer correctly (e.g. string[] → array
         // push/len rather than the string default).
-        return "map:" + map_value_tag(name);
+        return "map:" + generic_value_tag(name, 4);
     }
     if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
     if (name.len() > 0 && name[name.len() - 1] == 93) {
@@ -687,11 +698,17 @@ function ret_tag_of(name: string): string {
     return "unknown";
 }
 
+// is_mapiter reports whether a tag denotes a Map iterator
+// ("mapiter:<value-tag>"). Distinct from is_map, which excludes it.
+function is_mapiter(t: string): boolean {
+    return t.len() >= 8 && t[0:8] == "mapiter:";
+}
+
 // is_map reports whether a type tag denotes a Map ("map" or
-// "map:<value-tag>"). Used wherever map method dispatch keys off the
-// receiver tag.
+// "map:<value-tag>"). Excludes "mapiter:" (the iterator tag), which
+// also begins "map".
 function is_map(t: string): boolean {
-    return t.len() >= 3 && t[0:3] == "map";
+    return t == "map" || (t.len() >= 4 && t[0:4] == "map:");
 }
 
 // is_enum_variant reports whether `name` is a payload-bearing enum
@@ -732,12 +749,13 @@ function is_unit_variant(name: string, s: EmitState): boolean {
     return false;
 }
 
-// map_value_tag extracts the value-type tag from a `Map[K, V]` type
-// name, e.g. "Map[string, string[]]" → "array_string". Splits at the
-// first ", " (the K/V separator); everything after is the value type.
-function map_value_tag(name: string): string {
-    if (name.len() < 5) { return "unknown"; }
-    var inner: string = name[4 : name.len() - 1];
+// generic_value_tag extracts the value-type tag from a `Map[K, V]` /
+// `MapIter[K, V]` type name, e.g. "Map[string, string[]]" →
+// "array_string". `start` is the index past the opening `[`. Splits at
+// the first ", " (the K/V separator); everything after is the value.
+function generic_value_tag(name: string, start: i32): string {
+    if (name.len() <= start + 1) { return "unknown"; }
+    var inner: string = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == 44 && inner[i + 1] == 32) {
@@ -2828,6 +2846,66 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_heap();
                         s = s.mark_str_eq();
                         s = s.mark_arr_push();
+                        return s;
+                    }
+                    // Map iteration. m.iter() → a 16-byte iterator box
+                    // [map_ptr @0, cursor @8]; has_next / key / value /
+                    // advance read or bump the cursor over the parallel
+                    // keys[] / values[] arrays.
+                    if (is_map(prim_recv) && fa.field == "iter" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);                 // map ptr
+                        s = s.write("    movq $16, %rdi\n");
+                        s = s.write("    call __fern_alloc\n");
+                        s = s.mark_heap();
+                        s = s.write("    popq %rcx\n");           // map ptr
+                        s = s.write("    movq %rcx, (%rax)\n");   // map @0
+                        s = s.write("    movq $0, 8(%rax)\n");    // cursor @8
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "has_next" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");           // iter
+                        s = s.write("    movq 8(%rax), %rcx\n");  // cursor
+                        s = s.write("    movq (%rax), %rdx\n");   // map
+                        s = s.write("    movq (%rdx), %rdx\n");   // keys arr
+                        s = s.write("    movq (%rdx), %rdx\n");   // keys.len
+                        s = s.write("    cmpq %rdx, %rcx\n");
+                        s = s.write("    movq $0, %rax\n");
+                        s = s.write("    setl %al\n");
+                        s = s.write("    movzbq %al, %rax\n");
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "key" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");
+                        s = s.write("    movq 8(%rax), %rcx\n");  // cursor
+                        s = s.write("    movq (%rax), %rdx\n");   // map
+                        s = s.write("    movq (%rdx), %rdx\n");   // keys arr
+                        s = s.write("    incq %rcx\n");
+                        s = s.write("    movq (%rdx,%rcx,8), %rax\n");  // keys[cursor+1]
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "value" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");
+                        s = s.write("    movq 8(%rax), %rcx\n");  // cursor
+                        s = s.write("    movq (%rax), %rdx\n");   // map
+                        s = s.write("    movq 8(%rdx), %rdx\n");  // values arr
+                        s = s.write("    incq %rcx\n");
+                        s = s.write("    movq (%rdx,%rcx,8), %rax\n");  // values[cursor+1]
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "advance" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");           // iter
+                        s = s.write("    movq 8(%rax), %rcx\n");  // cursor
+                        s = s.write("    incq %rcx\n");
+                        s = s.write("    movq %rcx, 8(%rax)\n");
+                        s = s.write("    pushq $0\n");            // dummy result
                         return s;
                     }
                     // Built-in `.len()` on string / array values.

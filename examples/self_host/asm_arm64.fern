@@ -1398,20 +1398,28 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
+    if (name.len() >= 8 && name[0:8] == "MapIter[") {
+        return "mapiter:" + generic_value_tag(name, 8);
+    }
     if (name.len() >= 4 && name[0:4] == "Map[") {
         // Carry the value type into the tag ("map:<value-tag>") so
         // `m.get(k)` payloads infer correctly (e.g. string[] → array
         // push/len rather than the string default).
-        return "map:" + map_value_tag(name);
+        return "map:" + generic_value_tag(name, 4);
     }
     if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
     if (name.len() > 0 && name[name.len() - 1] == 93) { return "array"; }
     return "unknown";
 }
 
-// is_map — see asm.fern. Reports whether a tag denotes a Map.
+// is_map — see asm.fern. Excludes "mapiter:" (the iterator tag).
 function is_map(t: string): boolean {
-    return t.len() >= 3 && t[0:3] == "map";
+    return t == "map" || (t.len() >= 4 && t[0:4] == "map:");
+}
+
+// is_mapiter — see asm.fern.
+function is_mapiter(t: string): boolean {
+    return t.len() >= 8 && t[0:8] == "mapiter:";
 }
 
 // is_enum_variant / is_unit_variant — see asm.fern. A payload-bearing
@@ -1445,11 +1453,11 @@ function is_unit_variant(name: string, s: EmitState): boolean {
     return false;
 }
 
-// map_value_tag — see asm.fern. Extracts the value-type tag from a
-// `Map[K, V]` type name.
-function map_value_tag(name: string): string {
-    if (name.len() < 5) { return "unknown"; }
-    var inner: string = name[4 : name.len() - 1];
+// generic_value_tag — see asm.fern. Extracts the value-type tag from a
+// `Map[K, V]` / `MapIter[K, V]` type name; `start` is past the `[`.
+function generic_value_tag(name: string, start: i32): string {
+    if (name.len() <= start + 1) { return "unknown"; }
+    var inner: string = name[start : name.len() - 1];
     var i: i32 = 0;
     while (i + 1 < inner.len()) {
         if (inner[i] == 44 && inner[i + 1] == 32) {
@@ -1625,6 +1633,13 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "iter") {
+                        if (rt.len() >= 4 && rt[0:4] == "map:") { return "mapiter:" + rt[4:rt.len()]; }
+                        return "mapiter:unknown";
+                    }
+                    if (is_mapiter(rt) && fa.field == "has_next") { return "bool"; }
+                    if (is_mapiter(rt) && fa.field == "key") { return "string"; }
+                    if (is_mapiter(rt) && fa.field == "value") { return rt[8:rt.len()]; }
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
@@ -2726,6 +2741,64 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_heap();
                         s = s.mark_str_eq();
                         s = s.mark_arr_push();
+                        return s;
+                    }
+                    // Map iteration — mirror of asm.fern. Iterator box
+                    // [map_ptr @0, cursor @8] over the parallel arrays.
+                    if (is_map(prim_recv) && fa.field == "iter" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);                 // map ptr
+                        s = s.write("    mov x0, #16\n");
+                        s = s.write("    bl __fern_alloc\n");
+                        s = s.mark_heap();
+                        s = s.write("    ldr x1, [sp], #16\n");   // map ptr
+                        s = s.write("    str x1, [x0]\n");        // map @0
+                        s = s.write("    mov x1, #0\n");
+                        s = s.write("    str x1, [x0, #8]\n");    // cursor @8
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "has_next" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");   // iter
+                        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+                        s = s.write("    ldr x2, [x0]\n");        // map
+                        s = s.write("    ldr x2, [x2]\n");        // keys arr
+                        s = s.write("    ldr x2, [x2]\n");        // keys.len
+                        s = s.write("    cmp x1, x2\n");
+                        s = s.write("    cset x0, lt\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "key" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+                        s = s.write("    ldr x2, [x0]\n");        // map
+                        s = s.write("    ldr x2, [x2]\n");        // keys arr
+                        s = s.write("    add x1, x1, #1\n");
+                        s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // keys[cursor+1]
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "value" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+                        s = s.write("    ldr x2, [x0]\n");        // map
+                        s = s.write("    ldr x2, [x2, #8]\n");    // values arr
+                        s = s.write("    add x1, x1, #1\n");
+                        s = s.write("    ldr x0, [x2, x1, lsl #3]\n");  // values[cursor+1]
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (is_mapiter(prim_recv) && fa.field == "advance" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");   // iter
+                        s = s.write("    ldr x1, [x0, #8]\n");    // cursor
+                        s = s.write("    add x1, x1, #1\n");
+                        s = s.write("    str x1, [x0, #8]\n");
+                        s = s.write("    mov x0, #0\n");
+                        s = s.write("    str x0, [sp, #-16]!\n"); // dummy result
                         return s;
                     }
                     // Built-in `.to_string()` on i32 and string —
