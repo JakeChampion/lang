@@ -71,16 +71,18 @@ func TestSelfHostFixpointArm64(t *testing.T) {
 	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
 
 	// The compiler's own source as a marked multi-module bundle.
-	// The driver module is bundle_run_arm64 with std/io swapped
-	// for the read_all_stdin builtin (the emitter can't lower
-	// std/io's Reader).
+	// The driver module is bundle_run_arm64 with its `import
+	// "std/io"` retargeted to the bundled `io` module below — so the
+	// self-hosted compiler reads its stdin through the REAL
+	// std/io.read_all_stdin (Reader + read_chunk + Some/None + match),
+	// not a builtin shortcut.
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
 	asmSrc, _ := os.ReadFile("../../examples/self_host/asm_arm64.fern")
 	flattenSrc, _ := os.ReadFile("../../examples/self_host/flatten.fern")
+	ioSrc, _ := os.ReadFile("../../internal/stdlib/std/io.fern")
 	bundleRun, _ := os.ReadFile("../../examples/self_host/bundle_run_arm64.fern")
-	driverMod := strings.ReplaceAll(string(bundleRun), "import \"std/io\";", "")
-	driverMod = strings.ReplaceAll(driverMod, "io.read_all_stdin()", "read_all_stdin()")
+	driverMod := strings.ReplaceAll(string(bundleRun), "import \"std/io\";", "import \"./io\";")
 
 	var srcBundle bytes.Buffer
 	srcBundle.WriteString("///MODULE lexer\n")
@@ -91,6 +93,8 @@ func TestSelfHostFixpointArm64(t *testing.T) {
 	srcBundle.Write(asmSrc)
 	srcBundle.WriteString("\n///MODULE flatten\n")
 	srcBundle.Write(flattenSrc)
+	srcBundle.WriteString("\n///MODULE io\n")
+	srcBundle.Write(ioSrc)
 	srcBundle.WriteString("\n///MODULE main\n")
 	srcBundle.WriteString(driverMod)
 	bundleBytes := srcBundle.Bytes()
