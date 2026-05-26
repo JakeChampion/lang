@@ -1414,6 +1414,37 @@ function is_map(t: string): boolean {
     return t.len() >= 3 && t[0:3] == "map";
 }
 
+// is_enum_variant / is_unit_variant — see asm.fern. A payload-bearing
+// enum variant is a synthesized struct with the marker field "__ev"; a
+// no-payload variant is a zero-field struct.
+function is_enum_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            var sd: parser.StructDecl = s.struct_decls[di];
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == "__ev") { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
+function is_unit_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            return s.struct_decls[di].fields.len() == 0;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
 // map_value_tag — see asm.fern. Extracts the value-type tag from a
 // `Map[K, V]` type name.
 function map_value_tag(name: string): string {
@@ -2580,6 +2611,20 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 cfi = cfi + 1;
             }
+            // Bare ident naming a zero-field struct: no-payload enum
+            // variant (`JNull`). Construct [shape_ptr]. See asm.fern.
+            if (is_unit_variant(id.name, s)) {
+                s = s.write("    mov x0, #8\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                var uvLit: StringLitOut = add_string_lit(s, id.name);
+                s = uvLit.state;
+                s = s.write("    adrp x1, .S" + i32_to_string(uvLit.idx) + "\n");
+                s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(uvLit.idx) + "\n");
+                s = s.write("    str x1, [x0]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             s = s.write("    // unresolved ident: " + id.name + "\n");
             s = s.write("    mov x0, #0\n");
             s = s.write("    str x0, [sp, #-16]!\n");
@@ -3735,6 +3780,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
+            // Enum variant constructor with payload: `Circle(x)`. Heap
+            // box [shape_ptr @0, payload @8] — see asm.fern.
+            if (is_enum_variant(name, s) && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    mov x0, #16\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    ldr x1, [sp], #16\n");   // payload
+                var evLit: StringLitOut = add_string_lit(s, name);
+                s = evLit.state;
+                s = s.write("    adrp x2, .S" + i32_to_string(evLit.idx) + "\n");
+                s = s.write("    add x2, x2, :lo12:.S" + i32_to_string(evLit.idx) + "\n");
+                s = s.write("    str x2, [x0]\n");         // shape ptr
+                s = s.write("    str x1, [x0, #8]\n");     // payload
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             // i32_to_string(n) — decimal text → string box.
             if (name == "i32_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
@@ -4598,11 +4660,20 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         s = s.write("    cmp x1, x2\n");
                         s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
                         if (pv.binding.len() > 0 && pv.binding != "_") {
-                            // Type the binding with the variant's struct
-                            // name so a field read resolves within it.
-                            s = s.bind_local_typed(pv.binding, pv.type_name);
-                            var bind_off: i32 = s.lookup_local(pv.binding);
-                            s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
+                            if (is_enum_variant(pv.type_name, s)) {
+                                // Enum variant `Circle(r)`: bind the
+                                // payload at offset 8 (typed via "__ev").
+                                s = s.write("    ldr x1, [x0, #8]\n");
+                                s = s.bind_local_typed(pv.binding, field_type_tag_in(pv.type_name, "__ev", s));
+                                var ev_off: i32 = s.lookup_local(pv.binding);
+                                s = s.write("    str x1, [x29, #" + i32_to_string(ev_off) + "]\n");
+                            } else {
+                                // `type X = A|B` member: bind whole struct,
+                                // typed so a field read resolves within it.
+                                s = s.bind_local_typed(pv.binding, pv.type_name);
+                                var bind_off: i32 = s.lookup_local(pv.binding);
+                                s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
+                            }
                         }
                         }
                     },

@@ -694,6 +694,44 @@ function is_map(t: string): boolean {
     return t.len() >= 3 && t[0:3] == "map";
 }
 
+// is_enum_variant reports whether `name` is a payload-bearing enum
+// variant — a synthesized struct carrying the marker field "__ev"
+// (see parser.fern parse_enum_decl). Such variants construct/match
+// with a single payload at offset 8 rather than binding the whole
+// struct (the `type X = A|B` union-member behaviour).
+function is_enum_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            var sd: parser.StructDecl = s.struct_decls[di];
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == "__ev") { return true; }
+                fi = fi + 1;
+            }
+            return false;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
+// is_unit_variant reports whether `name` is a registered zero-field
+// struct — i.e. a no-payload enum variant (`JNull`). Used to construct
+// the variant value from a bare identifier. (`type X = A|B` members are
+// always real multi-field structs, so a zero-field struct only arises
+// from an enum no-payload variant.)
+function is_unit_variant(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) {
+            return s.struct_decls[di].fields.len() == 0;
+        }
+        di = di + 1;
+    }
+    return false;
+}
+
 // map_value_tag extracts the value-type tag from a `Map[K, V]` type
 // name, e.g. "Map[string, string[]]" → "array_string". Splits at the
 // first ", " (the K/V separator); everything after is the value type.
@@ -2660,6 +2698,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 cfi = cfi + 1;
             }
+            // A bare ident naming a zero-field struct is a no-payload
+            // enum variant (`JNull`). Construct [shape_ptr] — an 8-byte
+            // box holding the interned variant name, so the match's
+            // shape-pointer compare identifies it.
+            if (is_unit_variant(id.name, s)) {
+                s = s.write("    movq $8, %rdi\n");
+                s = s.write("    call __fern_alloc\n");
+                s = s.mark_heap();
+                var uvLit: StringLitOut = add_string_lit(s, id.name);
+                s = uvLit.state;
+                s = s.write("    leaq .S" + i32_to_string(uvLit.idx) + "(%rip), %rcx\n");
+                s = s.write("    movq %rcx, (%rax)\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             s = s.write("    # unresolved ident: " + id.name + "\n");
             s = s.write("    pushq $0\n");
             return s;
@@ -3982,6 +4035,26 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
+            // Enum variant constructor with a payload: `Circle(x)` where
+            // `Circle` is a synthesized variant struct (has the marker
+            // field "__ev"). Heap box [shape_ptr @0, payload @8] — the
+            // shape ptr is the interned variant name, matching the
+            // struct-literal layout so the match's shape-pointer compare
+            // works; the payload binds at offset 8 (like Some).
+            if (is_enum_variant(name, s) && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    movq $16, %rdi\n");
+                s = s.write("    call __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    popq %rcx\n");          // payload
+                var evLit: StringLitOut = add_string_lit(s, name);
+                s = evLit.state;
+                s = s.write("    leaq .S" + i32_to_string(evLit.idx) + "(%rip), %rdx\n");
+                s = s.write("    movq %rdx, (%rax)\n");  // shape ptr
+                s = s.write("    movq %rcx, 8(%rax)\n"); // payload
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // i32_to_string(n) — convert an i32 to its decimal
             // string box. Useful for composing numeric output
             // into a larger message: `"answer: " + i32_to_string(n)`.
@@ -5006,15 +5079,24 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         s = s.write("    leaq .S" + i32_to_string(nameLit.idx) + "(%rip), %rdx\n");
                         s = s.write("    cmpq %rdx, %rcx\n");
                         s = s.write("    jne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
-                        // Match: bind variable if non-empty, typed with
-                        // the variant's struct name so a field read on
-                        // it (`VString(s) => s.v`) resolves within that
-                        // struct rather than the first struct with a
-                        // matching field name.
                         if (pv.binding.len() > 0 && pv.binding != "_") {
-                            s = s.bind_local_typed(pv.binding, pv.type_name);
-                            var bind_off: i32 = s.lookup_local(pv.binding);
-                            s = s.write("    movq %rax, " + i32_to_string(bind_off) + "(%rbp)\n");
+                            if (is_enum_variant(pv.type_name, s)) {
+                                // Enum variant `Circle(r)`: bind the
+                                // PAYLOAD at offset 8 (typed via the
+                                // "__ev" marker field), not the box.
+                                s = s.write("    movq 8(%rax), %rcx\n");
+                                s = s.bind_local_typed(pv.binding, field_type_tag_in(pv.type_name, "__ev", s));
+                                var ev_off: i32 = s.lookup_local(pv.binding);
+                                s = s.write("    movq %rcx, " + i32_to_string(ev_off) + "(%rbp)\n");
+                            } else {
+                                // `type X = A|B` union member: bind the
+                                // whole struct, typed with the variant's
+                                // struct name so a field read (`VString(s)
+                                // => s.v`) resolves within that struct.
+                                s = s.bind_local_typed(pv.binding, pv.type_name);
+                                var bind_off: i32 = s.lookup_local(pv.binding);
+                                s = s.write("    movq %rax, " + i32_to_string(bind_off) + "(%rbp)\n");
+                            }
                         }
                         }
                     },
