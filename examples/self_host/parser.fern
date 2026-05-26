@@ -302,6 +302,51 @@ function (p: Par) peek_ident(): string {
 struct ExprResult { par: Par, expr: Expr }
 struct StmtResult { par: Par, stmt: Stmt }
 
+// parse_map_lit parses a map literal `Map { k0: v0, k1: v1, … }` (the
+// cursor is on the opening `{`) and desugars it to a chained
+// `map_new[_i32](n).set(k0,v0).set(k1,v1)…` — set returns the map, so
+// the whole thing is one expression. map_new_i32 when the first key is
+// a number literal (integer keys), else map_new (string keys), so the
+// chained .set dispatch picks the right key compare.
+function parse_map_lit(p: Par): ExprResult {
+    p = p.advance();   // consume `{`
+    var mlk: Expr[] = [];
+    var mlv: Expr[] = [];
+    if (p.peek_punct() != "}") {
+        while (true) {
+            var mke: ExprResult = parse_expr(p);
+            p = mke.par;
+            if (p.peek_punct() == ":") { p = p.advance(); }
+            var mve: ExprResult = parse_expr(p);
+            p = mve.par;
+            mlk = mlk.push(mke.expr);
+            mlv = mlv.push(mve.expr);
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    var ctor: string = "map_new";
+    if (mlk.len() > 0) {
+        match (mlk[0]) {
+            ExprNumber(_) => { ctor = "map_new_i32"; },
+            _ => { }
+        }
+    }
+    var cargs: Expr[] = [];
+    cargs = cargs.push(e_number("8", "", false));
+    var mbase: Expr = e_call(e_ident(ctor), cargs);
+    var mpi: i32 = 0;
+    while (mpi < mlk.len()) {
+        var sargs: Expr[] = [];
+        sargs = sargs.push(mlk[mpi]);
+        sargs = sargs.push(mlv[mpi]);
+        mbase = e_call(e_field_access(mbase, "set"), sargs);
+        mpi = mpi + 1;
+    }
+    return parse_postfix(p, mbase);
+}
+
 // parse_struct_lit_body parses `{ f: v, … }` (the cursor is on the
 // opening `{`) and returns an ExprStructLit with the given
 // type_name. Shared by the bare-ident struct literal in
@@ -529,6 +574,12 @@ function parse_primary(p: Par): ExprResult {
         lexer.TokIdent(x) => {
             p = p.advance();
             var base: Expr = e_ident(x.name);
+            // Map literal `Map { k0: v0, … }` — parsed in a helper
+            // (kept out of this arm so it stays small enough for the
+            // backend's branch-displacement limits).
+            if (x.name == "Map" && p.peek_punct() == "{") {
+                return parse_map_lit(p);
+            }
             // Struct literal: `Name { f: v, g: w }`. Only valid
             // when the base is still a bare ident (the struct
             // type's name). Consumes the whole construct;
