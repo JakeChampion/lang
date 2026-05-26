@@ -270,11 +270,20 @@ planned order:
   call convention with no param shifting and no per-function
   trampolines — the plain function simply ignores the box
   (`self_host_higher_order_test.go`).
-- ⬜ **Closures** (capturing nested functions returned as values). The
-  always-boxed `function(…)` lambda form already captures + is callable
-  (covered above); remaining: the arrow-lambda value syntax
-  `(x) => …` and returning a capturing closure across a `(T) => R`
-  return type.
+- ✅ **Closures** (capturing nested functions returned as values).
+  The always-boxed `function(…)` lambda form captures locals
+  (single + multiple, i32 + string), is callable, can be returned
+  across a `(T) => R` return type, and curries
+  (`self_host_closures_test.go`). A 0-arg function passed by name
+  (`run(work)` where `run`'s param is `() => R`) is indistinguishable
+  from a const at the bare-ident site — both desugar to a 0-param
+  function — so the function-value-vs-call decision is made at the
+  **call site**: if the callee's param at that index is fn-typed and
+  the argument is a bare ident naming a function, it lowers to a
+  function-value box rather than a call (`callee_param_is_fn` /
+  `arg_fn_value_name`). NB: Fern has no arrow-lambda *value* syntax
+  `(x) => …` — `=>` only spells function types and match arms; lambda
+  values are always the `function(…)` form.
 - ✅ **Tuple destructuring** (`var (a, b) = …`) — parser encodes the
   names as "a,b"; the emitter binds a = tuple.0, b = tuple.1
   (`self_host_tuple_destructure_test.go`). Also fixed `count_locals` to

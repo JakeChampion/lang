@@ -2383,6 +2383,66 @@ function escape_for_ascii(s: string): string {
 
 // =================== ASM EMITTER ====================
 
+// emit_fn_value emits a 1-slot closure box [&__fn_name] for a function
+// referenced by name as a value. Shared by ExprIdent (params>0) and the
+// call-arg path (a fn-typed param of any arity — including a 0-arg
+// `() => R`, which can't be distinguished from a const at the ident
+// site, so the boxing decision is made at the call site instead).
+function emit_fn_value(name: string, s: EmitState): EmitState {
+    s = s.write("    mov x0, #8\n");
+    s = s.write("    bl __fern_alloc\n");
+    s = s.mark_heap();
+    s = s.write("    adrp x1, __fn_" + sanitize_label(name) + "\n");
+    s = s.write("    add x1, x1, :lo12:__fn_" + sanitize_label(name) + "\n");
+    s = s.write("    str x1, [x0]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    return s;
+}
+
+// is_value_fn_name reports whether name is a receiver-less function.
+function is_value_fn_name(s: EmitState, name: string): boolean {
+    var fi: i32 = 0;
+    while (fi < s.funcs.len()) {
+        if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// callee_param_is_fn reports whether the named receiver-less function's
+// param at idx has a function type ("fn").
+function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
+    var fi: i32 = 0;
+    while (fi < s.funcs.len()) {
+        if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
+            if (idx < s.funcs[fi].params.len()) {
+                return s.funcs[fi].params[idx].type_name == "fn";
+            }
+            return false;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// arg_fn_value_name returns the function name to box for a call argument
+// when the callee's param at idx is fn-typed and the arg is a bare ident
+// naming a function; otherwise "". This makes a 0-arg function passed by
+// name (e.g. `bench(name, n, my_workload)`) lower to a function value
+// rather than a call.
+function arg_fn_value_name(arg: parser.Expr, callee: string, idx: i32, s: EmitState): string {
+    match (arg) {
+        parser.ExprIdent(id) => {
+            if (callee_param_is_fn(s, callee, idx) && is_value_fn_name(s, id.name)) {
+                return id.name;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 function emit_expr(e: parser.Expr, s: EmitState): EmitState {
     match (e) {
         parser.ExprNumber(n) => {
@@ -2706,14 +2766,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var fvi: i32 = 0;
             while (fvi < s.funcs.len()) {
                 if (s.funcs[fvi].name == id.name && s.funcs[fvi].receiver_type.len() == 0 && s.funcs[fvi].params.len() > 0) {
-                    s = s.write("    mov x0, #8\n");
-                    s = s.write("    bl __fern_alloc\n");
-                    s = s.mark_heap();
-                    s = s.write("    adrp x1, __fn_" + sanitize_label(id.name) + "\n");
-                    s = s.write("    add x1, x1, :lo12:__fn_" + sanitize_label(id.name) + "\n");
-                    s = s.write("    str x1, [x0]\n");
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    return s;
+                    return emit_fn_value(id.name, s);
                 }
                 fvi = fvi + 1;
             }
@@ -4235,7 +4288,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             var i: i32 = c.args.len() - 1;
             while (i >= 0) {
-                s = emit_expr(c.args[i], s);
+                var fvn: string = arg_fn_value_name(c.args[i], name, i, s);
+                if (fvn.len() > 0) { s = emit_fn_value(fvn, s); }
+                else { s = emit_expr(c.args[i], s); }
                 i = i - 1;
             }
             s = s.write("    bl __fn_" + sanitize_label(name) + "\n");
