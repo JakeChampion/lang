@@ -1695,3 +1695,29 @@ function build(): i32 {
 		t.Errorf("expected %s to deep-drop values via __drop_enum_Value:\n%s", loop, p)
 	}
 }
+
+// TestLowerMapArrayOfStructValueReclaim verifies a Map[K, Item[]] deep-
+// drops each value array's element boxes + buffer via __drop_arr_struct_<Elem>
+// (through __drop_map_via_<drop>), rather than the shallow drop_arr_ptr
+// that __map_drop_values uses for kind 3 (which leaks the element boxes).
+func TestLowerMapArrayOfStructValueReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Item { xs: i32[] }
+function build(): i32 {
+    var m: Map[i32, Item[]] = map_new(8);
+    m = m.set(1, [Item { xs: [1, 2] }]);
+    return 0;
+}`, 8)
+	const loop = "__drop_map_via___drop_arr_struct_Item"
+	if !funcExists(p, loop) {
+		t.Fatalf("expected generated %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, "build", loop) {
+		t.Errorf("expected map local drop to route through %s:\n%s", loop, p)
+	}
+	if !callsDirect(p, loop, "__drop_arr_struct_Item") {
+		t.Errorf("expected %s to deep-drop each value array via __drop_arr_struct_Item:\n%s", loop, p)
+	}
+	if !callsDirect(p, "__drop_arr_struct_Item", "__drop_struct_Item") {
+		t.Errorf("expected __drop_arr_struct_Item to recurse into __drop_struct_Item:\n%s", p)
+	}
+}

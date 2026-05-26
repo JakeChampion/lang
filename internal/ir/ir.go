@@ -7327,6 +7327,19 @@ func mapValHasDrop(v ast.Type, info *checker.Info) (string, bool) {
 				return "__drop_enum_" + t.Name, true
 			}
 		}
+	case ast.ArrayType:
+		// Array-of-CONCRETE-struct value (Map[K, Item[]]): each value
+		// array deep-drops its element boxes + buffer via the generated
+		// __drop_arr_struct_<Elem> loop, rather than the shallow
+		// drop_arr_ptr __map_drop_values uses for kind 3 (which frees the
+		// buffer but leaks the element struct boxes). Only reached from
+		// routing — mapValKindTag short-circuits arrays to kind 2/3 (whose
+		// `>= 2` retain still applies), so this changes the DROP, not the
+		// retain. Array-of-plain / array-of-array / array-of-enum return
+		// false and keep __map_drop_values.
+		if name, ok := arrElemStructDropName(t.Elem, info); ok {
+			return name, true
+		}
 	}
 	return "", false
 }
