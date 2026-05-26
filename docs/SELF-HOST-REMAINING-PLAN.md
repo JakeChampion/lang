@@ -79,7 +79,7 @@ parser's type representation and `infer_expr_type`.
 
 ---
 
-## Item 3 — `std/url` ✅ + `std/json` ⬜ → Map runtime
+## Item 3 — `std/url` ✅ + `std/json` ✅ → Map runtime
 
 **Status.** `std/url` full-links on both backends. The Map runtime is
 now on x86-64 **and** arm64 (`__fern_map_new`/`set`/`get`/`has`), and the
@@ -89,17 +89,26 @@ as `string[]` — `existing.push(val)` / `.len()` dispatch to the array
 runtime instead of mis-typing as a string. Verified by
 `self_host_url_test.go` (x86 + CI-gated arm64): `url_parse`,
 `query_parse` over `Map[string, string[]]` with duplicate keys.
-`std/json` is still blocked, but two of its prerequisites now exist:
-(1) Rust-style `enum Name { V1, V2(T) }` declarations + call-style
-constructors (`JString(x)`) + payload-binding matches (each variant
-lowers to a synthesized struct with a `__ev` marker field; see
-`parse_enum_decl` / `is_enum_variant`, covered by
-`self_host_enum_test.go`); and (2) Map iteration — `m.iter()` →
-`MapIter[K,V]` with `.has_next()`/`.key()`/`.value()`/`.advance()` over
-the parallel keys[]/values[] arrays (`self_host_map_iter_test.go`).
-Remaining `std/json` blocker: the auto-injected `JsonValue` enum (the
-self-host compiler does no prelude injection). `std/string` now links
-(see Item 2).
+`std/json` now round-trips on both backends (parse / encode / typed
+get, incl. nested objects + arrays) — see `self_host_json_test.go`. Four
+capabilities landed to get there: (1) Rust-style `enum` declarations +
+call-style constructors + payload-binding matches (`self_host_enum_test.go`);
+(2) Map iteration — `m.iter()` → `MapIter[K,V]` with
+`.has_next()`/`.key()`/`.value()`/`.advance()` (`self_host_map_iter_test.go`);
+(3) `std/string` linking (Item 2); and (4) **struct field assignment**
+(`obj.field = v`) — the recursive descent parser mutates `p.pos` /
+`p.error`, which was previously a silent no-op (the lvalue fell to a
+StmtUnknown). Field assignment desugars to `__set_field(obj, "field",
+v)`, shape-dispatched to the field slot like a field read
+(`self_host_field_assign_test.go`). The self-host has no prelude
+injection, so the json test bundle declares the `JsonValue` enum
+explicitly ahead of `std/json` (a real program would rely on the Go
+checker's auto-injection).
+
+Aside: found a Go *native* backend bug while testing — compound
+assignment to a struct field (`a.v += 35`) yields a wrong result
+(plain field-assign and compound-on-locals are fine). The self-host
+handles it correctly. Separate subsystem; flagged, not fixed here.
 
 **Blocker.** Both need a hash-map: `map_new`, `map_get`/`get_or`,
 `map_set`, `map_has`, `map_delete`, `map_len`, `map_keys`, `map_values`.
