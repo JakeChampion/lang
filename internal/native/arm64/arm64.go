@@ -426,6 +426,45 @@ func FCVTZS(rd, rn uint32) uint32 {
 	return 0x9E780000 | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// ---- Floating-point (single-precision) + remaining conversions ----
+//
+// Single-precision (S-register) forms are ftype=00 — the double forms
+// with bit 22 cleared. Plus fcvt precision converts and the unsigned
+// int<->float conversions.
+
+// FADDS/FSUBS/FMULS/FDIVS Sd, Sn, Sm — single-precision arithmetic.
+func FADDS(rd, rn, rm uint32) uint32 {
+	return 0x1E202800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FSUBS(rd, rn, rm uint32) uint32 {
+	return 0x1E203800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMULS(rd, rn, rm uint32) uint32 {
+	return 0x1E200800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FDIVS(rd, rn, rm uint32) uint32 {
+	return 0x1E201800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FNEGS Sd, Sn / FCMPS Sn, Sm / FMOVS Sd, Sn — single-precision.
+func FNEGS(rd, rn uint32) uint32 { return 0x1E214000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FCMPS(rn, rm uint32) uint32 { return 0x1E202000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) }
+func FMOVS(rd, rn uint32) uint32 { return 0x1E204000 | ((rn & regMask) << 5) | (rd & regMask) }
+
+// FCVTStoD Dd, Sn — widen single to double; FCVTDtoS Sd, Dn — narrow.
+func FCVTStoD(rd, rn uint32) uint32 { return 0x1E22C000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FCVTDtoS(rd, rn uint32) uint32 { return 0x1E624000 | ((rn & regMask) << 5) | (rd & regMask) }
+
+// SCVTFS Sd, Xn — signed int -> single; FCVTZSS Xd, Sn — single ->
+// signed int (truncate).
+func SCVTFS(rd, rn uint32) uint32  { return 0x9E220000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FCVTZSS(rd, rn uint32) uint32 { return 0x9E380000 | ((rn & regMask) << 5) | (rd & regMask) }
+
+// UCVTF Dd, Xn — unsigned int -> double; FCVTZU Xd, Dn — double ->
+// unsigned int (truncate).
+func UCVTF(rd, rn uint32) uint32  { return 0x9E630000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FCVTZU(rd, rn uint32) uint32 { return 0x9E790000 | ((rn & regMask) << 5) | (rd & regMask) }
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.

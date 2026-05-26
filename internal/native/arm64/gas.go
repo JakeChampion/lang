@@ -134,15 +134,21 @@ func assembleInsn(a *Assembler, line string) error {
 	case "fadd", "fsub", "fmul", "fdiv":
 		return asmFloat3(a, mnem, ops)
 	case "fneg":
-		return asmFloat2(a, ops, FNEG)
+		return asmFNeg(a, ops)
 	case "fcmp":
 		return asmFcmp(a, ops)
 	case "fmov":
 		return asmFmov(a, ops)
+	case "fcvt":
+		return asmFcvt(a, ops)
 	case "scvtf":
-		return asmFloat2Mixed(a, ops, SCVTF, true) // Dd <- Xn
+		return asmScvtf(a, ops)
 	case "fcvtzs":
-		return asmFloat2Mixed(a, ops, FCVTZS, false) // Xd <- Dn
+		return asmFcvtToInt(a, ops, FCVTZS, FCVTZSS)
+	case "ucvtf":
+		return asmUcvtf(a, ops)
+	case "fcvtzu":
+		return asmFcvtToInt(a, ops, FCVTZU, nil)
 	case "lsl", "lsr", "asr":
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
@@ -644,108 +650,124 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 }
 
 // isFReg reports whether an operand names a d-register.
+// isFReg reports whether an operand names a floating-point register
+// (d-double or s-single).
 func isFReg(operand string) bool {
 	s := strings.TrimSpace(operand)
-	return len(s) > 0 && s[0] == 'd'
+	return len(s) > 0 && (s[0] == 'd' || s[0] == 's')
 }
 
-// parseFReg parses a d0..d31 floating-point register.
-func parseFReg(s string) (uint32, error) {
+// parseVReg parses a d0..d31 or s0..s31 register, returning the number
+// and whether it is single-precision (s).
+func parseVReg(s string) (reg uint32, single bool, err error) {
 	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == 'd' {
-		n, err := strconv.Atoi(s[1:])
-		if err == nil && n >= 0 && n <= 31 {
-			return uint32(n), nil
+	if len(s) >= 2 && (s[0] == 'd' || s[0] == 's') {
+		n, e := strconv.Atoi(s[1:])
+		if e == nil && n >= 0 && n <= 31 {
+			return uint32(n), s[0] == 's', nil
 		}
 	}
-	return 0, fmt.Errorf("bad fp register %q", s)
+	return 0, false, fmt.Errorf("bad fp register %q", s)
 }
 
-// asmFloat3 handles fadd/fsub/fmul/fdiv Dd, Dn, Dm.
+// asmFloat3 handles fadd/fsub/fmul/fdiv in both precisions; the
+// destination register's width selects single vs double.
 func asmFloat3(a *Assembler, mnem string, ops []string) error {
 	if len(ops) != 3 {
 		return fmt.Errorf("%s expects 3 fp registers", mnem)
 	}
-	rd, err := parseFReg(ops[0])
+	rd, single, err := parseVReg(ops[0])
 	if err != nil {
 		return err
 	}
-	rn, err := parseFReg(ops[1])
+	rn, _, err := parseVReg(ops[1])
 	if err != nil {
 		return err
 	}
-	rm, err := parseFReg(ops[2])
+	rm, _, err := parseVReg(ops[2])
 	if err != nil {
 		return err
 	}
-	switch mnem {
-	case "fadd":
-		a.Emit(FADD(rd, rn, rm))
-	case "fsub":
-		a.Emit(FSUB(rd, rn, rm))
-	case "fmul":
-		a.Emit(FMUL(rd, rn, rm))
-	case "fdiv":
-		a.Emit(FDIV(rd, rn, rm))
+	dbl := map[string]func(a, b, c uint32) uint32{"fadd": FADD, "fsub": FSUB, "fmul": FMUL, "fdiv": FDIV}
+	sgl := map[string]func(a, b, c uint32) uint32{"fadd": FADDS, "fsub": FSUBS, "fmul": FMULS, "fdiv": FDIVS}
+	if single {
+		a.Emit(sgl[mnem](rd, rn, rm))
+	} else {
+		a.Emit(dbl[mnem](rd, rn, rm))
 	}
 	return nil
 }
 
-// asmFloat2 handles a two-d-register op (fneg).
-func asmFloat2(a *Assembler, ops []string, enc func(rd, rn uint32) uint32) error {
+// asmFNeg handles fneg Dd,Dn / Sd,Sn.
+func asmFNeg(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
-		return fmt.Errorf("expects 2 fp registers")
+		return fmt.Errorf("fneg expects 2 fp registers")
 	}
-	rd, err := parseFReg(ops[0])
+	rd, single, err := parseVReg(ops[0])
 	if err != nil {
 		return err
 	}
-	rn, err := parseFReg(ops[1])
+	rn, _, err := parseVReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(enc(rd, rn))
+	if single {
+		a.Emit(FNEGS(rd, rn))
+	} else {
+		a.Emit(FNEG(rd, rn))
+	}
 	return nil
 }
 
-// asmFcmp handles fcmp Dn, Dm.
+// asmFcmp handles fcmp Dn,Dm / Sn,Sm.
 func asmFcmp(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("fcmp expects 2 fp registers")
 	}
-	rn, err := parseFReg(ops[0])
+	rn, single, err := parseVReg(ops[0])
 	if err != nil {
 		return err
 	}
-	rm, err := parseFReg(ops[1])
+	rm, _, err := parseVReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(FCMP(rn, rm))
+	if single {
+		a.Emit(FCMPS(rn, rm))
+	} else {
+		a.Emit(FCMP(rn, rm))
+	}
 	return nil
 }
 
-// asmFmov handles the three fmov forms: Dd,Dn / Dd,Xn / Xd,Dn.
+// asmFmov handles fmov Dd,Dn / Sd,Sn (fp-fp) and the d<->x bit moves.
 func asmFmov(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("fmov expects 2 operands")
 	}
 	dstF, srcF := isFReg(ops[0]), isFReg(ops[1])
 	switch {
-	case dstF && srcF: // fmov Dd, Dn
-		rd, err := parseFReg(ops[0])
+	case dstF && srcF: // fmov Dd,Dn or Sd,Sn
+		rd, single, err := parseVReg(ops[0])
 		if err != nil {
 			return err
 		}
-		rn, err := parseFReg(ops[1])
+		rn, _, err := parseVReg(ops[1])
 		if err != nil {
 			return err
 		}
-		a.Emit(FMOV(rd, rn))
+		if single {
+			a.Emit(FMOVS(rd, rn))
+		} else {
+			a.Emit(FMOV(rd, rn))
+		}
 	case dstF && !srcF: // fmov Dd, Xn
-		rd, err := parseFReg(ops[0])
+		rd, single, err := parseVReg(ops[0])
 		if err != nil {
 			return err
+		}
+		if single {
+			return fmt.Errorf("fmov Sd, Wn not supported yet")
 		}
 		rn, err := parseReg(ops[1])
 		if err != nil {
@@ -757,9 +779,12 @@ func asmFmov(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
-		rn, err := parseFReg(ops[1])
+		rn, single, err := parseVReg(ops[1])
 		if err != nil {
 			return err
+		}
+		if single {
+			return fmt.Errorf("fmov Wd, Sn not supported yet")
 		}
 		a.Emit(FMOVtoGPR(rd, rn))
 	default:
@@ -768,30 +793,93 @@ func asmFmov(a *Assembler, ops []string) error {
 	return nil
 }
 
-// asmFloat2Mixed handles a conversion with one fp and one general
-// register: scvtf Dd,Xn (fpDst) and fcvtzs Xd,Dn (!fpDst).
-func asmFloat2Mixed(a *Assembler, ops []string, enc func(rd, rn uint32) uint32, fpDst bool) error {
+// asmFcvt handles the precision converts fcvt Dd,Sn and fcvt Sd,Dn.
+func asmFcvt(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("fcvt expects 2 fp registers")
+	}
+	rd, dstSingle, err := parseVReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, srcSingle, err := parseVReg(ops[1])
+	if err != nil {
+		return err
+	}
+	switch {
+	case !dstSingle && srcSingle: // fcvt Dd, Sn
+		a.Emit(FCVTStoD(rd, rn))
+	case dstSingle && !srcSingle: // fcvt Sd, Dn
+		a.Emit(FCVTDtoS(rd, rn))
+	default:
+		return fmt.Errorf("fcvt operands must differ in precision")
+	}
+	return nil
+}
+
+// asmScvtf handles scvtf Dd,Xn / Sd,Xn (signed int -> float).
+func asmScvtf(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("scvtf expects 2 operands")
+	}
+	rd, single, err := parseVReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if single {
+		a.Emit(SCVTFS(rd, rn))
+	} else {
+		a.Emit(SCVTF(rd, rn))
+	}
+	return nil
+}
+
+// asmUcvtf handles ucvtf Dd,Xn (unsigned int -> double).
+func asmUcvtf(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("ucvtf expects 2 operands")
+	}
+	rd, single, err := parseVReg(ops[0])
+	if err != nil {
+		return err
+	}
+	if single {
+		return fmt.Errorf("ucvtf Sd, Xn not supported yet")
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(UCVTF(rd, rn))
+	return nil
+}
+
+// asmFcvtToInt handles fcvtzs/fcvtzu Xd, Dn|Sn (float -> int, trunc).
+// encS is the single-source encoder (nil if unsupported).
+func asmFcvtToInt(a *Assembler, ops []string, encD, encS func(rd, rn uint32) uint32) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("expects 2 operands")
 	}
-	var rd, rn uint32
-	var err error
-	if fpDst {
-		if rd, err = parseFReg(ops[0]); err != nil {
-			return err
-		}
-		if rn, err = parseReg(ops[1]); err != nil {
-			return err
-		}
-	} else {
-		if rd, err = parseReg(ops[0]); err != nil {
-			return err
-		}
-		if rn, err = parseFReg(ops[1]); err != nil {
-			return err
-		}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
 	}
-	a.Emit(enc(rd, rn))
+	rn, single, err := parseVReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if single {
+		if encS == nil {
+			return fmt.Errorf("single-precision source not supported yet")
+		}
+		a.Emit(encS(rd, rn))
+	} else {
+		a.Emit(encD(rd, rn))
+	}
 	return nil
 }
 
