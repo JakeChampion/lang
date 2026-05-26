@@ -39,6 +39,35 @@ func TestAssembleProgramRodata(t *testing.T) {
 	}
 }
 
+// TestAssembleProgramLiteralPool checks that `ldr Xt, =value` places
+// the value in a pool at .ltorg and resolves the load's PC-relative
+// offset. textVAddr 0x400078 is 8-aligned, so with the ldr at index 0
+// and ret at index 1 the 8-byte literal lands at index 2 (offset 8):
+// imm19 = 8/4 = 2 → ldr encoding 0x58000040, then the value words.
+func TestAssembleProgramLiteralPool(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tldr x0, =0x1122334455667788\n" +
+		"\tret\n" +
+		"\t.ltorg\n"
+	text, _, err := arm64.AssembleProgram(src, 0x400078)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(text) != 16 {
+		t.Fatalf("text = %d bytes, want 16", len(text))
+	}
+	u32 := func(off int) uint32 {
+		return uint32(text[off]) | uint32(text[off+1])<<8 | uint32(text[off+2])<<16 | uint32(text[off+3])<<24
+	}
+	if got := u32(0); got != 0x58000040 {
+		t.Errorf("ldr-literal = %#08x, want 0x58000040", got)
+	}
+	if lo, hi := u32(8), u32(12); lo != 0x55667788 || hi != 0x11223344 {
+		t.Errorf("pool value = %#08x%08x, want 0x1122334455667788", hi, lo)
+	}
+}
+
 // TestAssembleProgramUndefinedSymbol surfaces a reference to a missing
 // symbol as an error.
 func TestAssembleProgramUndefinedSymbol(t *testing.T) {
