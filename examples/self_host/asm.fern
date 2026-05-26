@@ -6078,7 +6078,21 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    js .Lrdf_err\n");
         s = s.write("    movq %rax, %r12\n");       // fd
-        s = s.write("    movq $67108864, %rdi\n");  // 64 MiB buffer
+        // Size the file via lseek so we allocate exactly what's
+        // needed (a fixed buffer would exhaust the heap when a driver
+        // read_file's several modules). lseek=8, SEEK_END=2, SEEK_SET=0.
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $2, %rdx\n");
+        s = s.write("    movq $8, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq %rax, %r14\n");        // file size
+        s = s.write("    movq %r12, %rdi\n");        // rewind to start
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $8, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq %r14, %rdi\n");        // alloc exactly size bytes
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r13\n");       // buf base
         s = s.write("    movq %rax, %rbx\n");       // write ptr
