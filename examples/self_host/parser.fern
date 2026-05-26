@@ -1348,6 +1348,20 @@ function parse_func_decl(p: Par): FuncResult {
         return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
+    // Optional generic type parameters: `name[T]`, `name[T, U]`. The
+    // self-host ABI is a uniform 8-byte stack slot for every value
+    // (i32, ptr, …), so one emitted body is correct for every
+    // instantiation without cloning — type params are simply erased.
+    // Consume + discard the `[…]` so the param list parses.
+    if (p.peek_punct() == "[") {
+        var gd: i32 = 0;
+        while (!p.at_end()) {
+            var gpk: string = p.peek_punct();
+            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
+            if (gpk == "]") { gd = gd - 1; p = p.advance(); if (gd == 0) { break; } continue; }
+            p = p.advance();
+        }
+    }
     if (p.peek_punct() != "(") {
         return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
     }
@@ -1414,6 +1428,18 @@ function parse_struct_decl(p: Par): StructResult {
         return StructResult { par: p, decl: StructDecl { name: "", fields: empty } };
     }
     p = p.advance();
+    // Optional generic type parameters: `struct Box[T] { … }`. Erased
+    // like function type params — the field layout is the same uniform
+    // 8-byte-slot shape for every instantiation. Consume + discard.
+    if (p.peek_punct() == "[") {
+        var gd: i32 = 0;
+        while (!p.at_end()) {
+            var gpk: string = p.peek_punct();
+            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
+            if (gpk == "]") { gd = gd - 1; p = p.advance(); if (gd == 0) { break; } continue; }
+            p = p.advance();
+        }
+    }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
         return StructResult { par: p, decl: StructDecl { name: name, fields: empty } };

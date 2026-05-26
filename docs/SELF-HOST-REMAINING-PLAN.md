@@ -292,8 +292,26 @@ planned order:
   "try_"; the emitter unwraps a Some/Ok payload or early-returns the
   None/Err box from the enclosing function
   (`self_host_try_op_test.go`).
-- ⬜ **Generics** (monomorphisation).
-- ⬜ stdlib **`std/test` / `std/fuzz` / `std/tcp`** (depend on the above).
+- ✅ **Generics** — by type **erasure**, not monomorphisation. The
+  self-host ABI is a uniform 8-byte stack slot for every value (i32,
+  ptr, …), so one emitted body / field layout is correct for every
+  instantiation; the parser consumes + discards the `[…]`
+  type-parameter list on `function name[T](…)` and `struct Name[T]
+  { … }` declarations. Covers generic functions (`id[T]`,
+  `fst[A, B]`), generic structs (`Box[T]`, `Pair[A, B]`), and a single
+  generic body used at multiple concrete types in one program — the
+  two upstream parity cases (`generic_id`, `generic_box`) plus
+  multi-param + mixed-instantiation (`self_host_generics_test.go`).
+  Lives entirely in the shared parser, so both backends benefit with
+  no emitter change. **Known erasure boundary:** calling a
+  type-specific method on a value whose concrete type is known only
+  via an instantiation (e.g. `Box { val: "hi" }` then `b.val.len()`)
+  mis-dispatches, because the erased field type tag is `"unknown"`.
+  Truly parametric code can't call type-specific methods on `T`
+  anyway, and the parity cases don't hit it; tracking per-
+  instantiation field types is a follow-up if a real program needs it.
+- ⬜ stdlib **`std/test` / `std/fuzz` / `std/tcp`** (no user generics
+  of their own; gated on remaining stdlib-link work).
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in
