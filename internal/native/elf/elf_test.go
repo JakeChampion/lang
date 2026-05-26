@@ -128,6 +128,59 @@ func TestArithmeticRunsUnderQemu(t *testing.T) {
 	}
 }
 
+// TestMulRunsUnderQemu exercises MUL end-to-end: 6 * 7 = 42, exit.
+func TestMulRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		var c []byte
+		c = arm64.Put(c, arm64.MOVZ(1, 7, 0))
+		c = arm64.Put(c, arm64.MOVZ(2, 6, 0))
+		c = arm64.Put(c, arm64.MUL(0, 1, 2)) // x0 = 7 * 6 = 42
+		c = arm64.Put(c, arm64.MOVZ(8, 93, 0))
+		return arm64.Put(c, arm64.SVC(0))
+	})
+}
+
+// TestShiftRunsUnderQemu exercises the variable shift LSLV: 21 << 1 = 42.
+func TestShiftRunsUnderQemu(t *testing.T) {
+	runExpectExit(t, 42, func() []byte {
+		var c []byte
+		c = arm64.Put(c, arm64.MOVZ(1, 21, 0))
+		c = arm64.Put(c, arm64.MOVZ(2, 1, 0))
+		c = arm64.Put(c, arm64.LSLV(0, 1, 2)) // x0 = 21 << 1 = 42
+		c = arm64.Put(c, arm64.MOVZ(8, 93, 0))
+		return arm64.Put(c, arm64.SVC(0))
+	})
+}
+
+// runExpectExit builds an ELF from the instructions returned by gen,
+// runs it under qemu-aarch64, and asserts the process exit code.
+func runExpectExit(t *testing.T, want int, gen func() []byte) {
+	t.Helper()
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
+			t.Skip("qemu-aarch64 not on PATH")
+		}
+	}
+	bin := elf.StaticExecutable(gen())
+	path := filepath.Join(t.TempDir(), "prog")
+	if err := os.WriteFile(path, bin, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	err = exec.Command(qemu, path).Run()
+	got := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run failed (not an exit code): %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != want {
+		t.Fatalf("exit code = %d, want %d", got, want)
+	}
+}
+
 func u16(b []byte, off int) uint16 {
 	return uint16(b[off]) | uint16(b[off+1])<<8
 }

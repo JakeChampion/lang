@@ -104,6 +104,74 @@ func MOVreg(rd, rm uint32) uint32 {
 	return 0xAA000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
 }
 
+// ANDreg / ORRreg / EORreg encode the 64-bit logical shifted-register
+// ops `<op> Xd, Xn, Xm` with a zero shift. (MOVreg above is the
+// Rn=XZR special case of ORRreg.)
+//
+// Encoding: sf=1 opc 01010 shift=00 0 Rm imm6=0 Rn Rd. opc selects
+// the op: AND=00→0x8A, ORR=01→0xAA, EOR=10→0xCA.
+func ANDreg(rd, rn, rm uint32) uint32 {
+	return 0x8A000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func ORRreg(rd, rn, rm uint32) uint32 {
+	return 0xAA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func EORreg(rd, rn, rm uint32) uint32 {
+	return 0xCA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// LSLV / LSRV / ASRV encode the 64-bit variable (register) shifts
+// `<op> Xd, Xn, Xm`: shift Xn by the low 6 bits of Xm. These are the
+// data-processing-2-source forms (the assembler spells them lsl/lsr/asr
+// when the third operand is a register).
+//
+// Encoding: sf=1 0 0 11010110 Rm 0010 op2 Rn Rd, op2 = LSL=00 / LSR=01
+// / ASR=10 → base 0x9AC02000 | (op2<<10) | Rm<<16 | Rn<<5 | Rd.
+func LSLV(rd, rn, rm uint32) uint32 {
+	return 0x9AC02000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func LSRV(rd, rn, rm uint32) uint32 {
+	return 0x9AC02400 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func ASRV(rd, rn, rm uint32) uint32 {
+	return 0x9AC02800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// CMPreg encodes `cmp Xn, Xm` — the SUBS XZR, Xn, Xm alias: subtract
+// and set the condition flags, discarding the result.
+//
+// Encoding: SUBS shifted-register 64-bit with Rd=XZR(31)
+// → base 0xEB000000 | Rm<<16 | Rn<<5 | 31.
+func CMPreg(rn, rm uint32) uint32 {
+	return 0xEB000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | 31
+}
+
+// CMPimm encodes `cmp Xn, #imm12{, lsl #12}` — the SUBS XZR, Xn, #imm
+// alias.
+//
+// Encoding: SUBS immediate 64-bit with Rd=XZR(31)
+// → base 0xF1000000 | sh<<22 | imm12<<10 | Rn<<5 | 31.
+func CMPimm(rn uint32, imm12 uint16, shift12 bool) uint32 {
+	var sh uint32
+	if shift12 {
+		sh = 1
+	}
+	return 0xF1000000 | (sh << 22) | ((uint32(imm12) & 0xfff) << 10) | ((rn & regMask) << 5) | 31
+}
+
+// MUL encodes `mul Xd, Xn, Xm` — the MADD Xd, Xn, Xm, XZR alias
+// (multiply with no accumulate).
+//
+// Encoding: MADD 64-bit with Ra=XZR(31)
+// → base 0x9B000000 | Rm<<16 | 31<<10 | Rn<<5 | Rd.
+func MUL(rd, rn, rm uint32) uint32 {
+	return 0x9B000000 | ((rm & regMask) << 16) | (31 << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.
