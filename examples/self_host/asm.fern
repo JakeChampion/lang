@@ -4119,6 +4119,50 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq $0\n");
                 return s;
             }
+            // __set_field(obj, "field", val) — the desugar of
+            // `obj.field = val`. Mirrors the field-READ shape dispatch:
+            // for each struct decl declaring `field`, compare obj's
+            // shape ptr and store val at the field's slot (idx+1)*8.
+            if (name == "__set_field" && c.args.len() == 3) {
+                var sf_field: string = "";
+                match (c.args[1]) {
+                    parser.ExprString(sv) => { sf_field = sv.value; },
+                    _ => { }
+                }
+                s = emit_expr(c.args[0], s);   // obj
+                s = emit_expr(c.args[2], s);   // val
+                s = s.write("    popq %rdx\n");        // val
+                s = s.write("    popq %rax\n");        // obj ptr
+                var sf_end: LabelOut = fresh_label(s);
+                s = sf_end.state;
+                var sfdi: i32 = 0;
+                while (sfdi < s.struct_decls.len()) {
+                    var sfsd: parser.StructDecl = s.struct_decls[sfdi];
+                    var sffi: i32 = 0;
+                    var sf_found: i32 = 0 - 1;
+                    while (sffi < sfsd.fields.len()) {
+                        if (sfsd.fields[sffi].name == sf_field) { sf_found = sffi; }
+                        sffi = sffi + 1;
+                    }
+                    if (sf_found >= 0) {
+                        var sf_next: LabelOut = fresh_label(s);
+                        s = sf_next.state;
+                        var sf_lit: StringLitOut = add_string_lit(s, sfsd.name);
+                        s = sf_lit.state;
+                        s = s.write("    movq (%rax), %rcx\n");
+                        s = s.write("    leaq .S" + i32_to_string(sf_lit.idx) + "(%rip), %r8\n");
+                        s = s.write("    cmpq %r8, %rcx\n");
+                        s = s.write("    jne " + sf_next.name + "\n");
+                        s = s.write("    movq %rdx, " + i32_to_string((sf_found + 1) * 8) + "(%rax)\n");
+                        s = s.write("    jmp " + sf_end.name + "\n");
+                        s = s.write(sf_next.name + ":\n");
+                    }
+                    sfdi = sfdi + 1;
+                }
+                s = s.write(sf_end.name + ":\n");
+                s = s.write("    pushq $0\n");
+                return s;
+            }
             // stdin() — returns a Reader. In this emitter a Reader
             // is just its fd (0 for stdin); read_chunk / close take
             // the fd value directly. No heap box, no by-reference
