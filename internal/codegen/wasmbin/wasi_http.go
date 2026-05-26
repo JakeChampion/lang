@@ -727,11 +727,14 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalSet(body, 36)
-		// length lives at names + 4 (the length prefix the lang
-		// runtime stamps on each string[]).
+		// length lives at names - 4. A Fern string[] is a growable
+		// array: the stored pointer is the element-data base, with
+		// cap @ base-12, rc @ base-8, len @ base-4 (see
+		// buildArrPushGrowBody in runtime.go). Elements start at
+		// base+0, 8 bytes each (string = (data, len)).
 		body = inst.InstLocalGet(body, 35)
 		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
+		body = numeric.InstI32Sub(body)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalSet(body, 37)
 		body = inst.InstI32Const(body, 0)
@@ -743,38 +746,54 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 37)
 			body = numeric.InstI32GeS(body)
 			body = inst.InstBrIf(body, 1)
-			// name_addr = names + 8 + i*8
+			// name_addr = names + i*8 (data @ +0, len @ +4)
 			body = inst.InstLocalGet(body, 35)
-			body = inst.InstI32Const(body, 8)
-			body = numeric.InstI32Add(body)
 			body = inst.InstLocalGet(body, 38)
 			body = inst.InstI32Const(body, 8)
 			body = numeric.InstI32Mul(body)
 			body = numeric.InstI32Add(body)
 			body = inst.InstLocalSet(body, 39)
-			// value_addr = values + 8 + i*8
+			// value_addr = values + i*8
 			body = inst.InstLocalGet(body, 36)
-			body = inst.InstI32Const(body, 8)
-			body = numeric.InstI32Add(body)
 			body = inst.InstLocalGet(body, 38)
 			body = inst.InstI32Const(body, 8)
 			body = numeric.InstI32Mul(body)
 			body = numeric.InstI32Add(body)
 			body = inst.InstLocalSet(body, 40)
-			// fields.append(headers, name_data, name_len, value_data, value_len, retptr)
+			// The user's header name/value are Fern strings, which
+			// may be SSO-inline (high bit set on len) — their
+			// (data, len) words aren't a contiguous byte buffer. The
+			// canonical-ABI fields.append wants real (ptr, byte_len)
+			// for both the field-name string and the field-value
+			// list<u8>, so normalize each into a heap buffer first
+			// (same SSO-safe copy the response body uses below).
+			// Scratch locals 3..16 are dead by this point (request
+			// marshalling is done; body_data/body_len in 7/8 must be
+			// preserved for the body write, so we avoid those).
+			body = inst.InstLocalGet(body, 39)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 3) // name_data
+			body = inst.InstLocalGet(body, 39)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 4) // name_len
+			body = emitStrNormalize(body, idxs, 3, 4, 5, 6, 9) // → buf 5, byteLen 6
+			body = inst.InstLocalGet(body, 40)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 10) // value_data
+			body = inst.InstLocalGet(body, 40)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 11) // value_len
+			body = emitStrNormalize(body, idxs, 10, 11, 12, 13, 14) // → buf 12, byteLen 13
+			// fields.append(headers, name_buf, name_byteLen, value_buf, value_byteLen, retptr)
 			body = inst.InstLocalGet(body, 21) // headers handle
-			body = inst.InstLocalGet(body, 39)
-			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalGet(body, 39)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body)
-			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalGet(body, 40)
-			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalGet(body, 40)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body)
-			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 12)
+			body = inst.InstLocalGet(body, 13)
 			body = inst.InstLocalGet(body, 2)
 			body = inst.InstCall(body, fieldsAppend)
 			// i++

@@ -142,6 +142,38 @@ test("Run (wasm) reports compile errors instead of output", async ({
   });
 });
 
+test("Run (wasm) runs an http handler and shows the response", async ({
+  page,
+}) => {
+  await gotoReady(page);
+  // The http example flips the world to wasi-http and reveals the
+  // request editor (default path /hello). Run (wasm) compiles the
+  // handler and drives the request through web/wasi-http-shim.js.
+  await page.locator("#example").selectOption("http");
+  await expect(page.locator("#httpReq")).toBeVisible();
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toContainText("hello, world", {
+    timeout: 15_000,
+  });
+  // Status chip + the handler-set response header surface in meta.
+  await expect(page.locator("#meta")).toContainText("HTTP");
+  await expect(page.locator("#meta .exit-ok")).toBeVisible();
+  await expect(page.locator("#meta .resp-headers")).toContainText("x-served-by");
+});
+
+test("Run (wasm) http handler echoes a POST body", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("http");
+  await expect(page.locator("#httpReq")).toBeVisible();
+  await page.locator("#httpMethod").selectOption("POST");
+  await page.locator("#httpPath").fill("/echo");
+  await page.locator("#httpBody").fill("ping from playwright");
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toContainText("ping from playwright", {
+    timeout: 15_000,
+  });
+});
+
 test("Build component compiles the default source to a downloadable component", async ({
   page,
 }) => {

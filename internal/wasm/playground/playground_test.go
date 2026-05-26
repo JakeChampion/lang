@@ -175,6 +175,43 @@ func TestCompileCoreWasmRunsUnderWasmtime(t *testing.T) {
 	}
 }
 
+func TestCompileHttpHandlerCoreStructure(t *testing.T) {
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  return http_response_ok("hi");
+}`
+	bin, err := CompileHttpHandlerCore(src)
+	if err != nil {
+		t.Fatalf("CompileHttpHandlerCore: %v", err)
+	}
+	if !bytes.HasPrefix(bin, coreHeader) {
+		t.Fatalf("output is not a core module: first 8 bytes = % x", bin[:min(8, len(bin))])
+	}
+	// The browser host (web/wasi-http-shim.js) calls these exact
+	// exports by name, so a rename should fail loudly here.
+	for _, want := range []string{
+		"wasi:http/incoming-handler@0.2.0#handle",
+		"cabi_realloc",
+		"memory",
+	} {
+		if !bytes.Contains(bin, []byte(want)) {
+			t.Errorf("core module missing expected export %q", want)
+		}
+	}
+}
+
+func TestCompileHttpHandlerCoreRejectsNonHandler(t *testing.T) {
+	// A program without the `handle` signature still compiles to a
+	// module, but it won't carry the handler export. Parse errors
+	// stay diag-formatted, matching the other compile entry points.
+	_, err := CompileHttpHandlerCore(`function handle(req: HttpRequest, plat: Platform): HttpResponse { return `)
+	if err == nil {
+		t.Fatal("expected a parse error")
+	}
+	if !strings.Contains(err.Error(), "<playground>") {
+		t.Fatalf("parse error should be diag-formatted, got: %v", err)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

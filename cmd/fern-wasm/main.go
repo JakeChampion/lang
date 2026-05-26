@@ -70,6 +70,20 @@
 //     backend (not the AST interpreter) in-browser. Base64-encoded
 //     like fernCompileComponent.
 //
+//   fernCompileHttpHandlerCore(src) -> {
+//       wasm:   string,        // base64 of a wasi:http core module
+//       error:  string | null, // parse / check / codegen failure
+//   }
+//     Compiles a `handle(req: HttpRequest, plat: Platform):
+//     HttpResponse` program to the raw core module backing the
+//     wasi:http/incoming-handler component (exports
+//     `wasi:http/incoming-handler@0.2.0#handle` + `memory` +
+//     `cabi_realloc`). The page instantiates it against
+//     web/wasi-http-shim.js — a hand-written Canonical-ABI host that
+//     synthesises an incoming-request and reads back the response —
+//     to run a user HTTP handler in-browser with no jco. Base64-
+//     encoded like the others.
+//
 // State is fresh per call for fernInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
 // none). TCP / file I/O builtins on the Fern side would error at
@@ -315,6 +329,31 @@ func compileCoreWasm(src string) map[string]any {
 	return result
 }
 
+// compileHttpHandlerCore compiles a wasi:http handler program to the
+// raw core module backing the incoming-handler component, returning
+// the bytes base64-encoded. Drives the playground's "Run (wasm)"
+// path for the wasi-http world via web/wasi-http-shim.js.
+func compileHttpHandlerCore(src string) map[string]any {
+	result := map[string]any{
+		"wasm":  "",
+		"error": nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			result["error"] = fmt.Sprintf("internal: %v", r)
+		}
+	}()
+
+	bin, err := playground.CompileHttpHandlerCore(src)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	return result
+}
+
 // lspServer is the persistent LSP server backing fernLsp /
 // fernLspOnNotify. A single instance owns the open-document cache
 // so request-response pairs make sense across calls.
@@ -407,6 +446,16 @@ func main() {
 			}
 		}
 		return compileCoreWasm(args[0].String())
+	}))
+
+	js.Global().Set("fernCompileHttpHandlerCore", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return map[string]any{
+				"wasm":  "",
+				"error": "fernCompileHttpHandlerCore(src) requires one string argument",
+			}
+		}
+		return compileHttpHandlerCore(args[0].String())
 	}))
 
 	// Keep the Go runtime alive — js.FuncOf handlers are
