@@ -281,7 +281,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
 					// fast-path for len ≤ 7, heap copy otherwise.
-					needs.add("__fern_alloc")
+					// Heap buffer is rc=1-headered for reclamation.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_string_from_bytes")
 				case "__fern_read_file":
 					// (path) → Result[string, IoError]. Pulls in
@@ -480,9 +482,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__str_slice":
 					// (base_data, base_len, low, high) → (data, len)
 					// — copy bytes [low..high] into a fresh string.
+					// Heap buffer is rc=1-headered for reclamation.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
-					needs.add("__fern_alloc")
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__str_slice")
 				}
 			case ir.OpStrEq:
@@ -1349,6 +1353,7 @@ const rcUnderflowAddr = 48
 //	else
 //	    local.get 1
 //	end
+//
 // buildAllocBody assembles the wasm bytes for __fern_alloc.
 //
 // Signature: (param $size i32) (result i32)
@@ -1720,7 +1725,7 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 		// __free(base = m - 8, size = 16) — the handle cell
 		body = inst.InstLocalGet(body, 0)
 		body = inst.InstI32Const(body, 8)
-		body = numeric.InstI32Sub(body) // base
+		body = numeric.InstI32Sub(body)    // base
 		body = inst.InstI32Const(body, 16) // size
 		body = inst.InstCall(body, free)
 	}
@@ -3069,7 +3074,9 @@ func buildArrIdx8Body(idxs map[string]uint32) []byte { return buildArrIdxStride(
 //	         read values pushed outside their local scope, so
 //	         we save the byte to a local before the if-dispatch)
 func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__fern_alloc"]
+	// rc=1-headered heap buffer (data = base+8) so an owned string local
+	// reclaims it; the byte-copy loop writes to the returned data pointer.
+	alloc := helperIdxs["__fern_alloc_rc1"]
 	var body []byte
 	// $bLen = mem[bs - 4]
 	body = inst.InstLocalGet(body, 0)
@@ -3204,7 +3211,9 @@ func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
 func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 	strLen := helperIdxs["__fern_str_len"]
 	strByte := helperIdxs["__fern_str_byte"]
-	alloc := helperIdxs["__fern_alloc"]
+	// rc=1-headered heap buffer (data = base+8) so an owned string local
+	// reclaims it; the byte-copy loop writes to the returned data pointer.
+	alloc := helperIdxs["__fern_alloc_rc1"]
 	var body []byte
 	// $src_len = __fern_str_len(base_data, base_len)
 	body = inst.InstLocalGet(body, 0)
