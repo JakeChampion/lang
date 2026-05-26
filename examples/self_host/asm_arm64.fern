@@ -1359,7 +1359,8 @@ function (s: EmitState) mark_i32_pow(): EmitState {
 }
 
 function ret_tag_of(name: string): string {
-    if (name == "i32" || name == "f64" || name == "f32") { return "i32"; }
+    if (name == "i32") { return "i32"; }
+    if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }
     if (name == "string[]") { return "array_string"; }
@@ -1390,7 +1391,7 @@ function field_type_tag(field: string, s: EmitState): string {
 
 function infer_expr_type(e: parser.Expr, s: EmitState): string {
     match (e) {
-        parser.ExprNumber(_) => { return "i32"; },
+        parser.ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
         parser.ExprBool(_) => { return "bool"; },
         parser.ExprString(_) => { return "string"; },
         parser.ExprArray(a) => {
@@ -1418,16 +1419,23 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     || b.op == "==" || b.op == "!=" || b.op == "&&" || b.op == "||") {
                 return "bool";
             }
-            if (b.op == "+") {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 var lt: string = infer_expr_type(b.left, s);
                 var rt: string = infer_expr_type(b.right, s);
                 if (lt == "string" || rt == "string") { return "string"; }
+                if (lt == "f64" || rt == "f64") { return "f64"; }
                 return "i32";
             }
             return "i32";
         },
         parser.ExprUnary(u) => {
             if (u.op == "!") { return "bool"; }
+            if (u.op == "-") { return infer_expr_type(u.operand, s); }
+            if (u.op.len() >= 3 && u.op[0:3] == "as_") {
+                var ct: string = u.op[3:u.op.len()];
+                if (ct == "f64" || ct == "f32" || ct == "float") { return "f64"; }
+                return "i32";
+            }
             return "i32";
         },
         parser.ExprCall(c) => {
@@ -2145,6 +2153,22 @@ function escape_for_ascii(s: string): string {
 function emit_expr(e: parser.Expr, s: EmitState): EmitState {
     match (e) {
         parser.ExprNumber(n) => {
+            if (n.is_float) {
+                // Float literal: GAS converts the decimal text to an
+                // IEEE-754 double in .rodata; load its bits and push
+                // them (floats flow as their 8-byte bit pattern).
+                var fl: LabelOut = fresh_label(s);
+                s = fl.state;
+                s = s.write("    .section .rodata\n");
+                s = s.write(fl.name + ": .double " + n.text + "\n");
+                s = s.write("    .text\n");
+                s = s.write("    adrp x0, " + fl.name + "\n");
+                s = s.write("    add x0, x0, :lo12:" + fl.name + "\n");
+                s = s.write("    ldr d0, [x0]\n");
+                s = s.write("    fmov x0, d0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             // `ldr x0, =N` puts N in a literal pool; works for
             // any 64-bit value, including ones that don't fit
             // mov's 16-bit immediate field.
@@ -2237,6 +2261,41 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
+            // Float (f64) arithmetic + comparison. Operands flow as
+            // 8-byte bit patterns; fmov into d-regs and operate.
+            var is_flt: boolean = infer_expr_type(b.left, s) == "f64" || infer_expr_type(b.right, s) == "f64";
+            if (is_flt && (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/")) {
+                s = emit_expr(b.left, s);
+                s = emit_expr(b.right, s);
+                s = s.write("    ldr x0, [sp], #16\n");   // rhs
+                s = s.write("    ldr x1, [sp], #16\n");   // lhs
+                s = s.write("    fmov d0, x0\n");
+                s = s.write("    fmov d1, x1\n");
+                if (b.op == "+") { s = s.write("    fadd d0, d1, d0\n"); }
+                else if (b.op == "-") { s = s.write("    fsub d0, d1, d0\n"); }
+                else if (b.op == "*") { s = s.write("    fmul d0, d1, d0\n"); }
+                else { s = s.write("    fdiv d0, d1, d0\n"); }
+                s = s.write("    fmov x0, d0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            if (is_flt && (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "==" || b.op == "!=")) {
+                s = emit_expr(b.left, s);
+                s = emit_expr(b.right, s);
+                s = s.write("    ldr x0, [sp], #16\n");   // rhs
+                s = s.write("    ldr x1, [sp], #16\n");   // lhs
+                s = s.write("    fmov d0, x0\n");
+                s = s.write("    fmov d1, x1\n");
+                s = s.write("    fcmp d1, d0\n");          // lhs vs rhs
+                if (b.op == "<") { s = s.write("    cset w0, mi\n"); }
+                else if (b.op == "<=") { s = s.write("    cset w0, ls\n"); }
+                else if (b.op == ">") { s = s.write("    cset w0, gt\n"); }
+                else if (b.op == ">=") { s = s.write("    cset w0, ge\n"); }
+                else if (b.op == "==") { s = s.write("    cset w0, eq\n"); }
+                else { s = s.write("    cset w0, ne\n"); }
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             s = emit_expr(b.left, s);
             s = emit_expr(b.right, s);
             s = s.write("    ldr x1, [sp], #16\n");   // rhs
@@ -2290,7 +2349,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             if (u.op == "-") {
                 s = emit_expr(u.operand, s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                s = s.write("    neg x0, x0\n");
+                if (infer_expr_type(u.operand, s) == "f64") {
+                    s = s.write("    fmov d0, x0\n");
+                    s = s.write("    fneg d0, d0\n");
+                    s = s.write("    fmov x0, d0\n");
+                } else {
+                    s = s.write("    neg x0, x0\n");
+                }
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
@@ -2312,14 +2377,32 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // and anything else are no-ops.
             if (u.op.len() >= 3 && u.op[0:3] == "as_") {
                 var ty: string = u.op[3:u.op.len()];
+                var src_ty: string = infer_expr_type(u.operand, s);
+                var to_float: boolean = ty == "f64" || ty == "f32" || ty == "float";
                 s = emit_expr(u.operand, s);
                 s = s.write("    ldr x0, [sp], #16\n");
-                if (ty == "u8") { s = s.write("    uxtb w0, w0\n"); }
-                else if (ty == "u16") { s = s.write("    uxth w0, w0\n"); }
-                else if (ty == "u32") { s = s.write("    mov w0, w0\n"); }
-                else if (ty == "i8") { s = s.write("    sxtb x0, w0\n"); }
-                else if (ty == "i16") { s = s.write("    sxth x0, w0\n"); }
-                else if (ty == "i32") { s = s.write("    sxtw x0, w0\n"); }
+                if (to_float) {
+                    // → float. From int: scvtf. From float: no-op.
+                    if (src_ty != "f64") {
+                        s = s.write("    scvtf d0, x0\n");
+                        s = s.write("    fmov x0, d0\n");
+                    }
+                } else if (src_ty == "f64") {
+                    // float → int: truncate toward zero, then width-mask.
+                    s = s.write("    fmov d0, x0\n");
+                    s = s.write("    fcvtzs x0, d0\n");
+                    if (ty == "u8") { s = s.write("    uxtb w0, w0\n"); }
+                    else if (ty == "u16") { s = s.write("    uxth w0, w0\n"); }
+                    else if (ty == "i8") { s = s.write("    sxtb x0, w0\n"); }
+                    else if (ty == "i16") { s = s.write("    sxth x0, w0\n"); }
+                } else {
+                    if (ty == "u8") { s = s.write("    uxtb w0, w0\n"); }
+                    else if (ty == "u16") { s = s.write("    uxth w0, w0\n"); }
+                    else if (ty == "u32") { s = s.write("    mov w0, w0\n"); }
+                    else if (ty == "i8") { s = s.write("    sxtb x0, w0\n"); }
+                    else if (ty == "i16") { s = s.write("    sxth x0, w0\n"); }
+                    else if (ty == "i32") { s = s.write("    sxtw x0, w0\n"); }
+                }
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
