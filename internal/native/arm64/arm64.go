@@ -31,6 +31,79 @@ func MOVZ(rd uint32, imm16 uint16, shift uint32) uint32 {
 	return 0xD2800000 | (hw << 21) | (uint32(imm16) << 5) | (rd & regMask)
 }
 
+// MOVK encodes `movk Xd, #imm16, lsl #shift` (move-wide-keep): write
+// imm16 into one 16-bit slot of Xd, leaving the other bits unchanged.
+// Paired with MOVZ it builds an arbitrary 64-bit constant. shift must
+// be one of 0, 16, 32, 48.
+//
+// Encoding: sf=1 opc=11 100101 hw(2) imm16(16) Rd(5)
+// → base 0xF2800000 | hw<<21 | imm16<<5 | Rd.
+func MOVK(rd uint32, imm16 uint16, shift uint32) uint32 {
+	hw := (shift / 16) & 0x3
+	return 0xF2800000 | (hw << 21) | (uint32(imm16) << 5) | (rd & regMask)
+}
+
+// MOVN encodes `movn Xd, #imm16, lsl #shift` (move-wide-not): load the
+// bitwise complement of (imm16 << shift) into Xd. The building block
+// for small negative constants. shift ∈ {0, 16, 32, 48}.
+//
+// Encoding: sf=1 opc=00 → base 0x92800000 | hw<<21 | imm16<<5 | Rd.
+func MOVN(rd uint32, imm16 uint16, shift uint32) uint32 {
+	hw := (shift / 16) & 0x3
+	return 0x92800000 | (hw << 21) | (uint32(imm16) << 5) | (rd & regMask)
+}
+
+// ADDimm encodes `add Xd, Xn, #imm12{, lsl #12}` (64-bit). When
+// shift12 is set the 12-bit immediate is shifted left by 12, covering
+// the 0..0xfff000 range in 0x1000 steps. imm12 occupies the low 12 bits.
+//
+// Encoding: sf=1 op=0 S=0 100010 sh(1) imm12(12) Rn(5) Rd(5)
+// → base 0x91000000 | sh<<22 | imm12<<10 | Rn<<5 | Rd.
+func ADDimm(rd, rn uint32, imm12 uint16, shift12 bool) uint32 {
+	var sh uint32
+	if shift12 {
+		sh = 1
+	}
+	return 0x91000000 | (sh << 22) | ((uint32(imm12) & 0xfff) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SUBimm encodes `sub Xd, Xn, #imm12{, lsl #12}` (64-bit) — ADDimm
+// with the subtract opcode.
+//
+// Encoding: base 0xD1000000 | sh<<22 | imm12<<10 | Rn<<5 | Rd.
+func SUBimm(rd, rn uint32, imm12 uint16, shift12 bool) uint32 {
+	var sh uint32
+	if shift12 {
+		sh = 1
+	}
+	return 0xD1000000 | (sh << 22) | ((uint32(imm12) & 0xfff) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ADDreg encodes `add Xd, Xn, Xm` (64-bit, shifted-register form with
+// a zero shift — the plain three-register add).
+//
+// Encoding: sf=1 op=0 S=0 01011 shift=00 0 Rm(5) imm6=0 Rn(5) Rd(5)
+// → base 0x8B000000 | Rm<<16 | Rn<<5 | Rd.
+func ADDreg(rd, rn, rm uint32) uint32 {
+	return 0x8B000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SUBreg encodes `sub Xd, Xn, Xm` (64-bit, shifted-register, no shift).
+//
+// Encoding: base 0xCB000000 | Rm<<16 | Rn<<5 | Rd.
+func SUBreg(rd, rn, rm uint32) uint32 {
+	return 0xCB000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// MOVreg encodes `mov Xd, Xm` — register-to-register move, which
+// AArch64 expresses as `orr Xd, XZR, Xm`.
+//
+// Encoding: ORR shifted-register 64-bit with Rn = XZR(31)
+// → base 0xAA000000 | Rm<<16 | 31<<5 | Rd.
+func MOVreg(rd, rm uint32) uint32 {
+	return 0xAA000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
+}
+
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
 //
 // Encoding: 11010100 000 imm16 00001 → base 0xD4000001 | imm16<<5.

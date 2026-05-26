@@ -87,6 +87,47 @@ func TestExitCodeRunsUnderQemu(t *testing.T) {
 	}
 }
 
+// TestArithmeticRunsUnderQemu exercises the move + add/sub encoders
+// end-to-end: compute (40 + 5) - 3 = 42 across registers, then exit
+// with it. Covers MOVZ, ADDreg, SUBimm, and the exit syscall in one
+// runnable binary.
+func TestArithmeticRunsUnderQemu(t *testing.T) {
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
+			t.Skip("qemu-aarch64 not on PATH")
+		}
+	}
+
+	// x1 = 40 ; x2 = 5 ; x1 = x1 + x2 (=45) ; x0 = x1 - 3 (=42) ;
+	// x8 = 93 (__NR_exit) ; svc #0.
+	var text []byte
+	text = arm64.Put(text, arm64.MOVZ(1, 40, 0))
+	text = arm64.Put(text, arm64.MOVZ(2, 5, 0))
+	text = arm64.Put(text, arm64.ADDreg(1, 1, 2))
+	text = arm64.Put(text, arm64.SUBimm(0, 1, 3, false))
+	text = arm64.Put(text, arm64.MOVZ(8, 93, 0))
+	text = arm64.Put(text, arm64.SVC(0))
+	bin := elf.StaticExecutable(text)
+
+	path := filepath.Join(t.TempDir(), "arith42")
+	if err := os.WriteFile(path, bin, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+
+	err = exec.Command(qemu, path).Run()
+	if err == nil {
+		t.Fatalf("process exited 0, want 42")
+	}
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("run failed (not an exit code): %v", err)
+	}
+	if ee.ExitCode() != 42 {
+		t.Fatalf("exit code = %d, want 42", ee.ExitCode())
+	}
+}
+
 func u16(b []byte, off int) uint16 {
 	return uint16(b[off]) | uint16(b[off+1])<<8
 }
