@@ -1400,6 +1400,27 @@ function ret_tag_of(name: string): string {
 // field_type_tag infers the type tag of a struct-field read (`x.s`)
 // by finding a struct decl that declares a field of that name and
 // mapping its declared type. Mirrors the x86-64 emitter (asm.fern).
+// field_type_tag_in — see asm.fern. Resolves a field within a named
+// struct (used when the receiver's struct type is known).
+function field_type_tag_in(struct_name: string, field: string, s: EmitState): string {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == struct_name) {
+            var sd: parser.StructDecl = s.struct_decls[di];
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == field) {
+                    return ret_tag_of(sd.fields[fi].type_name);
+                }
+                fi = fi + 1;
+            }
+            return "unknown";
+        }
+        di = di + 1;
+    }
+    return "unknown";
+}
+
 function field_type_tag(field: string, s: EmitState): string {
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
@@ -1622,7 +1643,20 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             return "i32";
         },
         parser.ExprSlice(sl) => { return infer_expr_type(sl.array, s); },
-        parser.ExprFieldAccess(fa) => { return field_type_tag(fa.field, s); },
+        parser.ExprFieldAccess(fa) => {
+            // Resolve within the receiver's struct when its type is a
+            // known struct name (match-bound variant payloads); else
+            // fall back to the first-match field scan. See asm.fern.
+            var frt: string = infer_expr_type(fa.obj, s);
+            var di: i32 = 0;
+            while (di < s.struct_decls.len()) {
+                if (s.struct_decls[di].name == frt) {
+                    return field_type_tag_in(frt, fa.field, s);
+                }
+                di = di + 1;
+            }
+            return field_type_tag(fa.field, s);
+        },
         parser.ExprUnknown(_) => { return "unknown"; }
     }
     return "unknown";
@@ -4393,7 +4427,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                         s = s.write("    cmp x1, x2\n");
                         s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
                         if (pv.binding.len() > 0 && pv.binding != "_") {
-                            s = s.bind_local(pv.binding);
+                            // Type the binding with the variant's struct
+                            // name so a field read resolves within it.
+                            s = s.bind_local_typed(pv.binding, pv.type_name);
                             var bind_off: i32 = s.lookup_local(pv.binding);
                             s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
                         }
