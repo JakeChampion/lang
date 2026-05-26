@@ -1744,3 +1744,23 @@ function build(): i32 {
 		t.Errorf("expected %s to deep-drop values via the generic-enum drop:\n%s", loop, p)
 	}
 }
+
+// TestLowerMapOverwriteDrop verifies overwriting a struct map value emits
+// the pre-drop: __map_lookup_val fetches the about-to-be-replaced value
+// and __drop_struct_<V> deep-drops it (the type-erased runtime
+// overwrite-dec can't, so without this the replaced value leaks).
+func TestLowerMapOverwriteDrop(t *testing.T) {
+	p := lowerSourceWith(t, `struct Item { xs: i32[] }
+function build(): i32 {
+    var m: Map[i32, Item] = map_new(8);
+    m = m.set(1, Item { xs: [1, 2] });
+    m = m.set(1, Item { xs: [3] });
+    return 0;
+}`, 8)
+	if !callsDirect(p, "build", "__map_lookup_val") {
+		t.Errorf("expected overwrite pre-drop lookup via __map_lookup_val:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_struct_Item") {
+		t.Errorf("expected overwrite pre-drop to deep-drop the old value via __drop_struct_Item:\n%s", p)
+	}
+}

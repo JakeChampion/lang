@@ -51,7 +51,7 @@ var watHelperDeps = map[string][]string{
 	"__method_Map_has":          {"__map_has_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_get":          {"__map_get_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_get_or":       {"__map_get_or_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash"},
+	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val"},
 	"__method_Map_delete":       {"__map_delete_impl", "__map_hash"},
 	"__method_Map_clear":        {"__map_clear_impl"},
 	"__method_Map_keys":         {"__map_keys_impl", "__map_column"},

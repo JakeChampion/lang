@@ -609,6 +609,31 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map OVERWRITE reclamation: re-`set`ting an existing key replaces
+		// the value; for a struct value the IR pre-drops the old value via
+		// __map_lookup_val + __drop_struct_Item (the runtime overwrite-dec
+		// is a no-op for kind 4, so without this each replaced Item + its
+		// xs buffer leaks). Three overwrites per key, churned 300x. The
+		// live value is the LAST set: it.xs[0] = seed+4;
+		// sum_{0..299}(k+4) = 44850 + 1200 = 46050.
+		name: "map_overwrite_struct_churn_free",
+		src: `struct Item { xs: i32[] }
+function mk(seed: i32): i32 {
+    var m: Map[i32, Item] = map_new(8);
+    m = m.set(0, Item { xs: [seed, seed + 1] });
+    m = m.set(0, Item { xs: [seed + 2, seed + 3] });
+    m = m.set(0, Item { xs: [seed + 4] });
+    var it: Item = m.get_or(0, Item { xs: [0] });
+    return it.xs[0];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 300) { total = total + mk(k); k = k + 1; }
+    return (total - 46050) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a map value: an owned array built inside a
 		// helper escapes via `m.set` (retained without an inc under
 		// the borrow model), so it must NOT be freed at the helper's

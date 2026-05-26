@@ -295,6 +295,24 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
     return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
 }
 
+// __map_lookup_val returns the stored VALUE pointer for key k, or 0 if
+// the key is absent — WITHOUT retaining it. The IR's overwrite pre-drop
+// (struct/enum-valued maps) calls this just before `m.set(k, v2)` to
+// deep-drop the old value v1 that the set is about to replace, which the
+// type-erased runtime overwrite-dec (__map_dec_value) can't do for those
+// kinds. No retain: the returned pointer is consumed by the deep-drop,
+// not handed to the program.
+pub function __map_lookup_val(m: usize, k: usize): usize {
+    var idx: i32 = __map_lookup(m, k);
+    if (idx == 0 - 1) { return 0; }
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + 16 + cap * 4;
+    return __load_ptr(entriesBase + idx * entryStride + ptrW);
+}
+
 // __map_grow doubles the kv buffer's capacity and re-hashes
 // every existing entry into the new bucket array. Updates
 // the wrapper's data ptr in place; returns the new buffer
