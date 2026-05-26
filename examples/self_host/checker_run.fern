@@ -1,0 +1,20 @@
+// examples/self_host/checker_run.fern — stdin-driven driver for
+// checker.fern's type checker. Reads Fern source from stdin, runs
+// lexer + parser + checker.check_module, and exits 0 when the module
+// is well-typed or 1 when it isn't. Companion to asm_run.fern (codegen)
+// and interp_run.fern (evaluation): the same front end feeding the
+// self-hosted type checker.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./checker";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mt: checker.ModuleTypes = checker.check_module(mod);
+    if (mt.all_well_typed) { return 0; }
+    return 1;
+}
