@@ -920,15 +920,27 @@ Phase 3 CANNOT start with the freelist — it must start by
      pin fresh + aliased-widened + non-uniform shapes (all 0
      over-releases); `TestSelfHostVM*` (heavy `Value`-union users)
      stay green.
+   - **Deep (nested-of-nested) recursion — Stage A LANDED.** A nested
+     struct/enum field or payload now recurses through a generated
+     per-type `__drop_struct_<N>` / `__drop_enum_<N>` (uniform enums)
+     instead of the flat one-level `rc_dec`, so nested composite boxes
+     reclaim on the owning value's last reference. Each generated fn
+     is_unique-gates internally, so calling it on a shared child is
+     safe (dec only; free on the last reference); generation is
+     restricted to the composites actually nested inside a dropped
+     value (`collectNestedDropTypes`) so native backends don't carry a
+     drop fn per declared struct. Stage B remains: arrays-of-composite
+     element recursion (the `drop_arr_ptr` element loop still flat-decs
+     each element), map keys / non-array values, non-uniform / generic
+     enum payloads, and closure-capture composites.
    - **Remaining:** per-tag enum dispatch (non-uniform variants) +
      generic-enum type-arg substitution; closure / map drop handlers;
      the dec-on-overwrite site (entangled — `push`'s copy path
      transfers element ownership without an inc, so routing array
      overwrite through the drop would double-release; needs a
      per-method ownership audit or a self-push exclusion first); and
-     deep (nested-of-nested) recursion via per-type `drop_<T>` rather
-     than the flat `rc_dec` used for non-array fields/elements/
-     payloads now (sufficient while free is off).
+     the Stage B deep-recursion frontier above (arrays-of-composite,
+     map keys, non-uniform enum payloads, closure captures).
    - **rc-correctness corpus — LANDED (the step-4 go/no-go net).**
      `Test{X86_64,Arm64,WASM}RcCorrectnessCorpus` (`rc_correctness_test.go`)
      run a shared table of ~12 nested-value programs — array of
@@ -1083,7 +1095,10 @@ Phase 3 CANNOT start with the freelist — it must start by
    marks owned user-struct locals eligible (same borrow-aware taint;
    structs that escape into a container are tainted, and returned
    structs are protected by the struct return-inc + the rc==1 gate).
-   Nested struct/enum fields still leak (one level, like arrays).
+   Nested struct/enum fields now recurse through generated per-type
+   `__drop_struct_` / `__drop_enum_` fns (transitive reclamation Stage
+   A) rather than leaking at one level; nested arrays-of-composite,
+   map keys, and non-uniform enum payloads remain Stage B.
    Covered by `rc_correctness`'s `struct_box_churn_free` (200
    build/free cycles) and `struct_returned_not_freed`, plus the
    existing struct-heavy corpus entries, run free-on on all three
