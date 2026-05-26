@@ -1362,6 +1362,45 @@ function main(): i32 {
     return (got - 8) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — array-of-struct as a struct FIELD
+		// (the `struct Grid { rows: Row[] }` shape). Stage B deep-dropped
+		// array-of-struct LOCALS; a nested field now routes through the
+		// same __drop_arr_struct_<Elem> loop (each element box + buffer)
+		// instead of the flat dec that leaked them. Churned 100x.
+		// sum_{0..99}(i+1) = 5050.
+		name: "struct_field_arr_of_struct_churn_free",
+		src: `struct Row { cells: i32[] }
+struct Grid { rows: Row[], tag: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var g: Grid = Grid { rows: [Row { cells: [i, i + 1] }, Row { cells: [i + 2] }], tag: i };
+        acc = acc + g.rows[0].cells[1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Array-of-struct field that ESCAPES (Grid returned): the rows
+		// array + its Row boxes must survive the constructor. Churn
+		// forces same-size reuse that would corrupt a strayed read.
+		name: "struct_field_arr_of_struct_escapes",
+		src: `struct Row { cells: i32[] }
+struct Grid { rows: Row[], tag: i32 }
+function mk(n: i32): Grid { return Grid { rows: [Row { cells: [n, n + 1] }], tag: n }; }
+function main(): i32 {
+    var g: Grid = mk(9);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (g.rows[0].cells[1] - 10) + (g.rows.len() - 1) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

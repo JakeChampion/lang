@@ -929,7 +929,9 @@ Phase 3 CANNOT start with the freelist — it must start by
      `__drop_struct_<Elem>` per element, even for childless element
      structs, then `__fern_arr_dec` for the buffer) instead of
      `__fern_drop_arr_ptr`'s flat per-element `rc_dec`, so element boxes
-     (and their nested fields) reclaim too. Each generated fn
+     (and their nested fields) reclaim too. (A follow-up routes a nested
+     array-of-struct FIELD / payload — `struct Grid { rows: Row[] }` —
+     through the same loop, not just top-level locals.) Each generated fn
      is_unique-gates internally, so calling it on a shared child/element
      is safe (dec only; free on the last reference). Deep recursion
      fires ONLY in the free-eligible drop branch — an escaped/tainted
