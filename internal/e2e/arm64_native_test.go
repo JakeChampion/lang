@@ -15,6 +15,38 @@ import (
 	"github.com/jakechampion/lang/internal/native/elf"
 )
 
+// TestArm64NativePrintRunsUnderQemu confirms string printing works end
+// to end through the native backend: rodata string + the write-syscall
+// runtime. stdout must be exactly the printed text.
+func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
+	qemu := ""
+	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
+		if p, err := exec.LookPath(c); err == nil {
+			qemu = p
+			break
+		}
+	}
+	if qemu == "" {
+		t.Skip("qemu-aarch64 not on PATH")
+	}
+	asm := compileToArm64Asm(t, `function main(): i32 { print("hello native"); return 0; }`)
+	text, rodata, err := na.AssembleProgram(asm, elf.TextVAddr)
+	if err != nil {
+		t.Fatalf("AssembleProgram: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "prog")
+	if err := os.WriteFile(path, elf.StaticExecutableData(text, rodata), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(qemu, path).Output()
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := string(out); got != "hello native\n" {
+		t.Fatalf("stdout = %q, want %q", got, "hello native\n")
+	}
+}
+
 // TestArm64NativeBackendRunsUnderQemu is the integration gate for the
 // Go-side native backend: compile a Fern program to assembly with the
 // real arm64 code generator, then assemble + link it entirely
