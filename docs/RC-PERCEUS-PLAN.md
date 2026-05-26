@@ -1062,7 +1062,27 @@ Phase 3 CANNOT start with the freelist — it must start by
    exercise each sink free-on (churn-forced reuse so a wrongly-freed
    block corrupts the read-back); five fail free-on without the taint
    (the struct one is inc-protected). They run on all three backends
-   via `Test{X86_64,Arm64,WASM}ArrayDropFree`. The flip now waits only
+   via `Test{X86_64,Arm64,WASM}ArrayDropFree`.
+
+   **Widening slice — composite-literal locals + conditional-alias
+   taint (DONE).** `rhsTainted` now returns false for a `StructLit` RHS
+   (a fresh struct is OWNED, not an alias of a borrowed value — same as
+   the existing `ArrayLit` / `MakeClosure` cases), so `var s = S{…}`
+   locals become free-eligible and reclaim their box at scope exit
+   (previously they fell through `default: return true` and leaked).
+   Enabling that surfaced a latent use-after-free the no-free default
+   had masked: a local aliased through a CONDITIONAL value position —
+   `var v1 = if (c) { v0 } else { v0 }` or `var v1 = match (x) { … =>
+   v0 }` — is not inc'd (the alias-inc only fires for a direct Ident
+   RHS, and a per-arm inc can't be emitted unconditionally since some
+   arms yield fresh rc=1 values), so freeing `v0` stranded `v1`. The
+   differential fuzz (seed 1836) caught it as an x86 segfault; the
+   match-expr form was already a latent over-release for ARRAYS on the
+   pre-existing code, just never reuse-corrupted in free mode.
+   `computeFreeEligible`'s escape walk now taints any local that flows
+   out of an `IfExpr` / `MatchExpr` arm, so the conditionally-aliased
+   source is never freed. Corpus: `struct_literal_local_churn_free`,
+   `ifexpr_alias_struct_no_free`, `matchexpr_alias_array_no_free`. The flip now waits only
    on (a) that corpus + the differential gate green corpus-wide on all
    three backends in CI and (b) explicit owner sign-off. The
    pre-step-5 no-free arena stays the default; a handful of tests pin

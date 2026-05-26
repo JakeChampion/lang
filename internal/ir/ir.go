@@ -1667,6 +1667,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					escape(s.Value)
 				}
 			}
+		case *ast.IfExpr:
+			// A bare local read in an if-expr's value position
+			// (`var v = if (c) { v0 } else { v1 }`) aliases that local
+			// WITHOUT a reliable inc — the alias-inc only fires for a
+			// direct Ident RHS, not one wrapped in a conditional, and a
+			// per-arm inc can't be emitted unconditionally (some arms
+			// yield fresh rc=1 values). Freeing the source at scope exit
+			// would then strand the alias the conditional handed out, so
+			// taint any local that flows out of an arm.
+			escape(s.Then)
+			escape(s.Else)
 		case *ast.Destructure:
 			markBindings(s.Names)
 		case *ast.Match:
@@ -1676,6 +1687,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case *ast.MatchExpr:
 			for _, arm := range s.Arms {
 				markBindings(arm.Bindings)
+				// A local yielded from a match-expression arm
+				// (`var v = match (x) { … => v0 }`) is conditionally
+				// aliased without a reliable inc, so it must not be
+				// freed at scope exit. Mirrors the IfExpr case.
+				escape(arm.Body)
 			}
 		case *ast.IfLet:
 			markBindings(s.Bindings)
@@ -1803,6 +1819,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	switch x := e.(type) {
 	case *ast.ArrayLit:
+		return false
+	case *ast.StructLit:
 		return false
 	case *ast.MakeClosure:
 		// A freshly-built closure (rc=1), like an array literal — it

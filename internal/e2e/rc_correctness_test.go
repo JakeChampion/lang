@@ -1029,6 +1029,67 @@ function main(): i32 {
     return (keep[0].tags[1] - 8) + (keep[1].tags[0] - 9) + (keep.len() - 2) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Struct-literal locals are now free-eligible (rhsTainted no
+		// longer taints a StructLit RHS — a fresh struct is owned, not
+		// an alias). A struct local built from a literal and churned now
+		// frees its box each iteration; an over-release would drift the
+		// counter. sum_{i=0..99}(i+1) = 5050.
+		name: "struct_literal_local_churn_free",
+		src: `struct Pt { xs: i32[], y: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var p: Pt = Pt { xs: [i, i + 1], y: i };
+        acc = acc + p.xs[1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Conditional alias via an if-expression: `v1` aliases the
+		// struct `v0` through an arm, so v0 must NOT be freed at scope
+		// exit (the alias-inc doesn't fire through a conditional). The
+		// escape walk taints v0; the churn loop forces same-size reuse
+		// that would corrupt a strayed read. Reads both to keep the
+		// alias live.
+		name: "ifexpr_alias_struct_no_free",
+		src: `struct Pt { xs: i32[], y: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var v0: Pt = Pt { xs: [i, i + 1], y: i };
+        var v1: Pt = if (i < 50) { v0 } else { v0 };
+        acc = acc + v1.xs[1] + v0.y;
+        i = i + 1;
+    }
+    return (acc - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Conditional alias via a match-expression — the shape that was
+		// a latent use-after-free even for arrays before the escape-walk
+		// fix. `a1` aliases `a0` through the match arms; a0 must survive
+		// until both are read. Churned to force block reuse.
+		name: "matchexpr_alias_array_no_free",
+		src: `function pick_arr(o: Option[i32], a0: i32[]): i32[] {
+    return match (o) { Some(x) => a0, None => a0 };
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var a0: i32[] = [i, i + 1, i + 2];
+        var a1: i32[] = match (Some(i)) { Some(x) => a0, None => a0 };
+        acc = acc + a1[2] + a0[0];
+        i = i + 1;
+    }
+    return (acc - 10100) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
