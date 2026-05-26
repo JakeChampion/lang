@@ -263,7 +263,10 @@ planned order:
   follow-up.
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
-- ⬜ **Tuple destructuring** (`var (a, b) = …`) — see PR #1520.
+- ✅ **Tuple destructuring** (`var (a, b) = …`) — parser encodes the
+  names as "a,b"; the emitter binds a = tuple.0, b = tuple.1
+  (`self_host_tuple_destructure_test.go`). Also fixed `count_locals` to
+  account for the two bindings (and the four that `for (k,v)` binds).
 - ✅ **`?` try operator** — `expr?` desugars (parser) to the unary op
   "try_"; the emitter unwraps a Some/Ok payload or early-returns the
   None/Err box from the enclosing function

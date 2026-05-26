@@ -1060,6 +1060,23 @@ function parse_stmt(p: Par): StmtResult {
     }
     if (kw == "var") {
         p = p.advance();
+        // `var (x, y) = E` — tuple destructuring. The two names are
+        // encoded as "x,y"; the emitter splits them and binds from the
+        // tuple's element slots.
+        if (p.peek_punct() == "(") {
+            p = p.advance();
+            var tdx: string = p.peek_ident();
+            if (tdx.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
+            var tdy: string = p.peek_ident();
+            if (tdy.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+            if (p.peek_punct() == "=") { p = p.advance(); }
+            var tdinit: ExprResult = parse_expr(p);
+            p = tdinit.par;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            return StmtResult { par: p, stmt: s_var(tdx + "," + tdy, "", tdinit.expr) };
+        }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
             return StmtResult { par: p, stmt: s_unknown("missing var name") };
