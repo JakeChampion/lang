@@ -2677,6 +2677,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             return s;
         },
         parser.ExprUnary(u) => {
+            // `expr?` try operator: unwrap a Some/Ok payload, or
+            // early-return the None/Err box from the enclosing function.
+            if (u.op == "try_") {
+                s = emit_expr(u.operand, s);
+                s = s.write("    popq %rax\n");          // option/result box
+                s = s.write("    movq (%rax), %rcx\n");  // tag (0 = Some/Ok)
+                var tlbl: LabelOut = fresh_label(s);
+                s = tlbl.state;
+                s = s.write("    testq %rcx, %rcx\n");
+                s = s.write("    jz " + tlbl.name + "\n");
+                // None/Err: return the box (already in %rax) unchanged.
+                s = s.write("    leave\n");
+                s = s.write("    ret\n");
+                s = s.write(tlbl.name + ":\n");
+                s = s.write("    movq 8(%rax), %rax\n"); // payload
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             if (u.op == "-") {
                 s = emit_expr(u.operand, s);
                 s = s.write("    popq %rax\n");
