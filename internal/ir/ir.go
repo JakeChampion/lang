@@ -7813,6 +7813,41 @@ func (b *builder) callBody(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
+	// Overwrite reclamation: `m.set(k, v)` REPLACES any existing value at
+	// k. For a single-box pointer value (struct / enum / generic-enum,
+	// kind 4) the type-erased runtime overwrite-dec (__map_dec_value) is a
+	// no-op, so the replaced value would leak. Deep-drop the old value
+	// here, just before the set: look it up (non-retaining) and, if
+	// present, run its per-value drop. Scoped to non-boxed keys (the
+	// common i32-key cache); m and k must be call-free since the set below
+	// re-evaluates them (same idempotence requirement as the inc-on-set
+	// above). The set's own overwrite-dec stays a no-op for kind 4, so
+	// there's no double free; the freed box isn't dereferenced by the set
+	// (it only probes keys, then overwrites the slot).
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
+		ast.RcFreeEnabled && !needBoxK &&
+		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops) == 4 &&
+		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops); ok {
+			if err := b.expr(n.Args[0]); err != nil { // m
+				return err
+			}
+			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
+			oldSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__map_overwrite_old_%d", oldSlot)] = oldSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+			// if old != 0: deep-drop the replaced value.
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpCallDirect, Str: perVal, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+		}
+	}
 	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
 	// into a consumer-shaped `Option[V]`. The helper's payload sits
 	// at the usize slot offset (8 on natives), which only lines up
@@ -8485,6 +8520,25 @@ func isParamName(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// exprContainsCall reports whether e contains a function/method Call
+// anywhere in its tree. Used to gate re-evaluation: an expression with no
+// Call is side-effect-free, so evaluating it twice (e.g. once for the
+// map-overwrite pre-drop lookup and again for the set itself) is safe.
+func exprContainsCall(e ast.Expr) bool {
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		if _, ok := n.(*ast.Call); ok {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
