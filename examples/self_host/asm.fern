@@ -5090,6 +5090,73 @@ function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
     return s;
 }
 
+// emit_map_kv_for emits a `for (k, v) in m` loop (the var name is
+// "k,v"; kv_comma is the comma index). Iterates the map's parallel
+// keys[]/values[] arrays by index, binding k = keys[i+1], v =
+// values[i+1]. A separate function so emit_stmt's StmtFor arm stays
+// small.
+function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitState {
+    var iter_ty: string = infer_expr_type(f.iter, s);
+    var kvk: string = f.var_name[0 : kv_comma];
+    var kvv: string = f.var_name[kv_comma + 1 : f.var_name.len()];
+    var kvk_ty: string = "string";
+    if (map_key_is_i32(iter_ty)) { kvk_ty = "i32"; }
+    var kvv_ty: string = map_value_part(iter_ty);
+    s = emit_expr(f.iter, s);
+    var kvm_name: string = "__forkv_map_" + i32_to_string(s.label_n);
+    s = s.bind_local(kvm_name);
+    var kvm_off: i32 = s.lookup_local(kvm_name);
+    s = s.write("    popq %rax\n");
+    s = s.write("    movq %rax, " + i32_to_string(kvm_off) + "(%rbp)\n");
+    var kvi_name: string = "__forkv_i_" + i32_to_string(s.label_n);
+    s = s.bind_local(kvi_name);
+    var kvi_off: i32 = s.lookup_local(kvi_name);
+    s = s.write("    movq $0, " + i32_to_string(kvi_off) + "(%rbp)\n");
+    s = s.bind_local_typed(kvk, kvk_ty);
+    var kvk_off: i32 = s.lookup_local(kvk);
+    s = s.bind_local_typed(kvv, kvv_ty);
+    var kvv_off: i32 = s.lookup_local(kvv);
+    var kvtop: LabelOut = fresh_label(s);
+    s = kvtop.state;
+    var kvcont: LabelOut = fresh_label(s);
+    s = kvcont.state;
+    var kvend: LabelOut = fresh_label(s);
+    s = kvend.state;
+    s = s.write(kvtop.name + ":\n");
+    s = s.write("    movq " + i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq (%rax), %rcx\n");   // keys arr
+    s = s.write("    movq (%rcx), %rcx\n");   // keys.len
+    s = s.write("    movq " + i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    cmpq %rcx, %rdx\n");
+    s = s.write("    jge " + kvend.name + "\n");
+    s = s.write("    movq " + i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq (%rax), %rcx\n");   // keys arr
+    s = s.write("    movq " + i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    movq (%rcx,%rdx,8), %rax\n");   // keys[i+1]
+    s = s.write("    movq %rax, " + i32_to_string(kvk_off) + "(%rbp)\n");
+    s = s.write("    movq " + i32_to_string(kvm_off) + "(%rbp), %rax\n");
+    s = s.write("    movq 8(%rax), %rcx\n");   // values arr
+    s = s.write("    movq " + i32_to_string(kvi_off) + "(%rbp), %rdx\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    movq (%rcx,%rdx,8), %rax\n");   // values[i+1]
+    s = s.write("    movq %rax, " + i32_to_string(kvv_off) + "(%rbp)\n");
+    s = s.push_loop_labels(kvend.name, kvcont.name);
+    var kvbi: i32 = 0;
+    while (kvbi < f.body.len()) {
+        s = emit_stmt(f.body[kvbi], s);
+        kvbi = kvbi + 1;
+    }
+    s = s.pop_loop_labels();
+    s = s.write(kvcont.name + ":\n");
+    s = s.write("    movq " + i32_to_string(kvi_off) + "(%rbp), %rax\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq %rax, " + i32_to_string(kvi_off) + "(%rbp)\n");
+    s = s.write("    jmp " + kvtop.name + "\n");
+    s = s.write(kvend.name + ":\n");
+    return s;
+}
+
 function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
     match (stmt) {
         parser.StmtReturn(r) => {
@@ -5390,6 +5457,17 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             // carries it (lets `for x in strs { print(x); }`
             // dispatch as string).
             var iter_ty: string = infer_expr_type(f.iter, s);
+            // `for (k, v) in m` — the var name is "k,v"; iterate the
+            // map's parallel keys[]/values[] arrays (see emit_map_kv_for).
+            var kv_comma: i32 = 0 - 1;
+            var kvci: i32 = 0;
+            while (kvci < f.var_name.len()) {
+                if (f.var_name[kvci] == 44 && kv_comma < 0) { kv_comma = kvci; }
+                kvci = kvci + 1;
+            }
+            if (is_map(iter_ty) && kv_comma >= 0) {
+                return emit_map_kv_for(s, f, kv_comma);
+            }
             var elem_ty: string = "i32";
             if (iter_ty == "array_string") { elem_ty = "string"; }
             s = emit_expr(f.iter, s);
@@ -6841,7 +6919,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip 268435456\n");   // 256 MiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
+        s = s.write("__fern_heap: .skip 1073741824\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");

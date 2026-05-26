@@ -252,8 +252,15 @@ planned order:
 - ✅ **`m.keys()` / `m.values()`** — return the map box's parallel
   arrays (offset 0/8) as array_i32/array_string so array methods chain
   off them (`self_host_map_keys_test.go`).
-- ⬜ **`for (k,v) in m`** destructuring iteration (the last map case,
-  `map_iterate`).
+- ✅ **`for (k,v) in m`** destructuring iteration — parser encodes the
+  names as "k,v"; the emitter (`emit_map_kv_for`) walks the parallel
+  keys[]/values[] arrays (`self_host_for_kv_test.go`). Adding this code
+  exhausted the self-host's 256 MiB bump heap when compiling the larger
+  bundle, overflowing into the adjacent output buffer and corrupting
+  emitted strings (no GC, no bounds check) — **fixed by enlarging the
+  heap to 1 GiB** (zero-page .bss, both backends). A latent fragility
+  for any future growth of the compiler; a hard bounds-check/trap is a
+  follow-up.
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
 - ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.

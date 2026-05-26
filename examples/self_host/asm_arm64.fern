@@ -4674,6 +4674,71 @@ function emit_block(body: parser.Stmt[], s: EmitState): EmitState {
     return s;
 }
 
+// emit_map_kv_for — see asm.fern. `for (k, v) in m`, separate function
+// so the StmtFor arm stays small.
+function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitState {
+    var iter_ty: string = infer_expr_type(f.iter, s);
+    var kvk: string = f.var_name[0 : kv_comma];
+    var kvv: string = f.var_name[kv_comma + 1 : f.var_name.len()];
+    var kvk_ty: string = "string";
+    if (map_key_is_i32(iter_ty)) { kvk_ty = "i32"; }
+    var kvv_ty: string = map_value_part(iter_ty);
+    s = emit_expr(f.iter, s);
+    var kvm_name: string = "__forkv_map_" + i32_to_string(s.label_n);
+    s = s.bind_local(kvm_name);
+    var kvm_off: i32 = s.lookup_local(kvm_name);
+    s = s.write("    ldr x0, [sp], #16\n");
+    s = s.write("    str x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    var kvi_name: string = "__forkv_i_" + i32_to_string(s.label_n);
+    s = s.bind_local(kvi_name);
+    var kvi_off: i32 = s.lookup_local(kvi_name);
+    s = s.write("    mov x0, #0\n");
+    s = s.write("    str x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.bind_local_typed(kvk, kvk_ty);
+    var kvk_off: i32 = s.lookup_local(kvk);
+    s = s.bind_local_typed(kvv, kvv_ty);
+    var kvv_off: i32 = s.lookup_local(kvv);
+    var kvtop: LabelOut = fresh_label(s);
+    s = kvtop.state;
+    var kvcont: LabelOut = fresh_label(s);
+    s = kvcont.state;
+    var kvend: LabelOut = fresh_label(s);
+    s = kvend.state;
+    s = s.write(kvtop.name + ":\n");
+    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.write("    ldr x1, [x0]\n");        // keys arr
+    s = s.write("    ldr x1, [x1]\n");        // keys.len
+    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.write("    cmp x2, x1\n");
+    s = s.write("    b.ge " + kvend.name + "\n");
+    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.write("    ldr x1, [x0]\n");        // keys arr
+    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.write("    add x2, x2, #1\n");
+    s = s.write("    ldr x0, [x1, x2, lsl #3]\n");   // keys[i+1]
+    s = s.write("    str x0, [x29, #" + i32_to_string(kvk_off) + "]\n");
+    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.write("    ldr x1, [x0, #8]\n");    // values arr
+    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.write("    add x2, x2, #1\n");
+    s = s.write("    ldr x0, [x1, x2, lsl #3]\n");   // values[i+1]
+    s = s.write("    str x0, [x29, #" + i32_to_string(kvv_off) + "]\n");
+    s = s.push_loop_labels(kvend.name, kvcont.name);
+    var kvbi: i32 = 0;
+    while (kvbi < f.body.len()) {
+        s = emit_stmt(f.body[kvbi], s);
+        kvbi = kvbi + 1;
+    }
+    s = s.pop_loop_labels();
+    s = s.write(kvcont.name + ":\n");
+    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.write("    add x0, x0, #1\n");
+    s = s.write("    str x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.write("    b " + kvtop.name + "\n");
+    s = s.write(kvend.name + ":\n");
+    return s;
+}
+
 function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
     match (stmt) {
         parser.StmtReturn(r) => {
@@ -4943,6 +5008,16 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             //       __for_i_N = __for_i_N + 1;
             //   }
             var iter_ty: string = infer_expr_type(f.iter, s);
+            // `for (k, v) in m` — see emit_map_kv_for.
+            var kv_comma: i32 = 0 - 1;
+            var kvci: i32 = 0;
+            while (kvci < f.var_name.len()) {
+                if (f.var_name[kvci] == 44 && kv_comma < 0) { kv_comma = kvci; }
+                kvci = kvci + 1;
+            }
+            if (is_map(iter_ty) && kv_comma >= 0) {
+                return emit_map_kv_for(s, f, kv_comma);
+            }
             var elem_ty: string = "i32";
             if (iter_ty == "array_string") { elem_ty = "string"; }
             s = emit_expr(f.iter, s);
@@ -6194,7 +6269,7 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip 268435456\n");   // 256 MiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
+        s = s.write("__fern_heap: .skip 1073741824\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
