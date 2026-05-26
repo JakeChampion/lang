@@ -961,9 +961,16 @@ Phase 3 CANNOT start with the freelist — it must start by
      flat-dec a single static payload type) to the tag-dispatch
      variant-plan path (`enumHasStructPayload`), so uniform unions like
      `Value = VInt | VArr` deep-drop each variant's exact struct box.
+     A further follow-up reclaims a Map-typed nested field / payload /
+     capture (the `struct Req { headers: Map[..] }` shape): dropStructField
+     / appendChildDrop / the closure thunk route it through
+     __map_drop_values + __fern_map_drop (both self-guard on the map's
+     own rc==1) instead of flat-dec'ing the handle, freeing the whole
+     map structure on the owner's last reference.
    - **Remaining:** generic-enum type-arg substitution; enum-payload /
-     nested-closure captures; map keys / non-array map values; the
-     dec-on-overwrite site (entangled —
+     nested-closure captures; the map's own struct-typed VALUE column
+     (the runtime is type-erased — needs a value-drop fn pointer; array
+     values already reclaim); the dec-on-overwrite site (entangled —
      `push`'s copy path transfers element ownership without an inc, so
      routing array overwrite through the drop would double-release;
      needs a per-method ownership audit or a self-push exclusion first).
