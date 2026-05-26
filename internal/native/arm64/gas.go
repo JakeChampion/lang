@@ -123,6 +123,10 @@ func assembleInsn(a *Assembler, line string) error {
 		return asm3Reg(a, mnem, ops)
 	case "cmp":
 		return asmCmp(a, ops)
+	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
+		return asmLoadStore(a, mnem, ops)
+	case "stp", "ldp":
+		return asmPair(a, mnem, ops)
 	case "b":
 		return one(ops, func(s string) { a.B(s) })
 	case "bl":
@@ -294,6 +298,95 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
+// asmLoadStore handles the single-register unsigned-offset loads and
+// stores: `<op> Rt, [Xn{, #imm}]`. Pre/post-index single forms aren't
+// encoded yet, so they error rather than miscompile.
+func asmLoadStore(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	m, err := parseMem(ops[1])
+	if err != nil {
+		return err
+	}
+	if m.pre {
+		return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
+	}
+	if m.off < 0 {
+		return fmt.Errorf("%s negative offset needs the unscaled (ldur) form, not supported yet", mnem)
+	}
+	off := uint32(m.off)
+	switch mnem {
+	case "ldr":
+		a.Emit(LDRimm(rt, m.base, off))
+	case "str":
+		a.Emit(STRimm(rt, m.base, off))
+	case "ldrb":
+		a.Emit(LDRBimm(rt, m.base, off))
+	case "strb":
+		a.Emit(STRBimm(rt, m.base, off))
+	case "ldrh":
+		a.Emit(LDRHimm(rt, m.base, off))
+	case "strh":
+		a.Emit(STRHimm(rt, m.base, off))
+	}
+	return nil
+}
+
+// asmPair handles the load/store-pair frame idiom in its pre-index
+// (`stp Rt, Rt2, [Xn, #imm]!`) and post-index (`ldp Rt, Rt2, [Xn], #imm`)
+// forms — the only pair forms the encoders cover.
+func asmPair(a *Assembler, mnem string, ops []string) error {
+	if len(ops) < 3 {
+		return fmt.Errorf("%s expects two registers and a memory operand", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rt2, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	m, err := parseMem(ops[2])
+	if err != nil {
+		return err
+	}
+	var off int64
+	switch {
+	case m.pre && len(ops) == 3:
+		off = m.off // [Xn, #imm]!
+	case !m.pre && len(ops) == 4:
+		// post-index: base is [Xn], displacement is the trailing operand.
+		if m.off != 0 {
+			return fmt.Errorf("%s post-index base must be plain [Xn]", mnem)
+		}
+		v, err := parseImm(ops[3])
+		if err != nil {
+			return err
+		}
+		off = v
+	default:
+		return fmt.Errorf("%s supports only pre-index ([Xn,#imm]!) or post-index ([Xn],#imm)", mnem)
+	}
+	if mnem == "stp" {
+		if !m.pre {
+			return fmt.Errorf("stp post-index not supported yet")
+		}
+		a.Emit(STPpre(rt, rt2, m.base, int32(off)))
+	} else {
+		if m.pre {
+			return fmt.Errorf("ldp pre-index not supported yet")
+		}
+		a.Emit(LDPpost(rt, rt2, m.base, int32(off)))
+	}
+	return nil
+}
+
 func asmCmp(a *Assembler, ops []string) error {
 	if len(ops) < 2 {
 		return fmt.Errorf("cmp expects 2 operands")
@@ -357,16 +450,73 @@ func splitMnemonic(line string) (mnem, rest string) {
 	return line, ""
 }
 
+// splitOperands splits the operand list on commas, but keeps commas
+// that sit inside a memory operand's brackets together (so
+// "[x1, #8]" stays one operand).
 func splitOperands(rest string) []string {
 	if rest == "" {
 		return nil
 	}
-	parts := strings.Split(rest, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, strings.TrimSpace(p))
+	var out []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(rest[start:i]))
+				start = i + 1
+			}
+		}
 	}
+	out = append(out, strings.TrimSpace(rest[start:]))
 	return out
+}
+
+// memOperand is a parsed "[Xn]" / "[Xn, #imm]" / "[Xn, #imm]!" form.
+type memOperand struct {
+	base uint32
+	off  int64
+	pre  bool // pre-index ("[Xn, #imm]!"): writeback before access
+}
+
+// parseMem parses a bracketed memory operand. A trailing "!" marks
+// pre-index writeback. A missing offset means 0.
+func parseMem(s string) (memOperand, error) {
+	s = strings.TrimSpace(s)
+	var m memOperand
+	if !strings.HasPrefix(s, "[") {
+		return m, fmt.Errorf("expected memory operand, got %q", s)
+	}
+	if strings.HasSuffix(s, "]!") {
+		m.pre = true
+		s = strings.TrimSuffix(s, "]!")
+	} else if strings.HasSuffix(s, "]") {
+		s = strings.TrimSuffix(s, "]")
+	} else {
+		return m, fmt.Errorf("unterminated memory operand %q", s)
+	}
+	inner := splitOperands(strings.TrimPrefix(s, "["))
+	if len(inner) == 0 || len(inner) > 2 {
+		return m, fmt.Errorf("bad memory operand")
+	}
+	base, err := parseReg(inner[0])
+	if err != nil {
+		return m, err
+	}
+	m.base = base
+	if len(inner) == 2 {
+		off, err := parseImm(inner[1])
+		if err != nil {
+			return m, err
+		}
+		m.off = off
+	}
+	return m, nil
 }
 
 // parseShiftField reads an optional "lsl #N" operand at index i. A

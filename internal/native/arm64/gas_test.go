@@ -62,6 +62,11 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tand x0, x1, x2\n\torr x0, x1, x2\n\teor x0, x1, x2\n\tmul x0, x1, x2\n\tlsl x0, x1, x2\n\tlsr x0, x1, x2\n\tasr x0, x1, x2\n",
 		"compare": "" +
 			"\tcmp x1, x2\n\tcmp x1, #5\n",
+		"memory": "" +
+			"\tldr x0, [x1]\n\tldr x0, [x1, #16]\n\tstr x2, [x3, #8]\n" +
+			"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",
+		"frame_pair": "" +
+			"\tstp x29, x30, [sp, #-16]!\n\tldp x29, x30, [sp], #16\n",
 		"branch_regs": "" +
 			"\tbr x0\n\tblr x1\n\tret\n\tsvc #0\n",
 		"labels_and_branches": "" +
