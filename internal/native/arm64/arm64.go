@@ -211,6 +211,33 @@ func STRHimm(rt, rn, byteOffset uint32) uint32 {
 	return 0x79000000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
+// ---- Unscaled loads / stores (LDUR/STUR family) ----
+//
+// These carry a SIGNED 9-bit byte offset (-256..255) with no scaling,
+// so they reach negative and non-size-aligned displacements that the
+// scaled LDRimm/STRimm forms can't. off must fit the 9-bit field.
+
+// LDUR: `ldur Xt, [Xn, #off]` (64-bit unscaled).
+// Encoding: base 0xF8400000 | imm9<<12 | Rn<<5 | Rt.
+func LDUR(rt, rn uint32, off int32) uint32 {
+	return 0xF8400000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STUR: `stur Xt, [Xn, #off]` (64-bit unscaled).
+func STUR(rt, rn uint32, off int32) uint32 {
+	return 0xF8000000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDURB: `ldurb Wt, [Xn, #off]` (byte, unscaled, zero-extend).
+func LDURB(rt, rn uint32, off int32) uint32 {
+	return 0x38400000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STURB: `sturb Wt, [Xn, #off]` (byte, unscaled).
+func STURB(rt, rn uint32, off int32) uint32 {
+	return 0x38000000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 // ---- Load/store pair, pre/post-indexed ----
 //
 // The frame prologue/epilogue idiom. byteOffset is a signed multiple

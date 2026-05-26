@@ -323,6 +323,30 @@ func TestAssembledDivTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledUnscaledTextRunsUnderQemu exercises stur/ldur with a
+// 4-byte (non-8-aligned) offset — a displacement only the unscaled
+// form can encode — storing 42 into a reserved frame slot and reading
+// it back.
+func TestAssembledUnscaledTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tsub sp, sp, #16\n" +
+		"\tmov x0, #42\n" +
+		"\tstur x0, [sp, #4]\n" + // offset 4 is not 8-aligned -> needs stur
+		"\tmov x0, #0\n" +
+		"\tldur x0, [sp, #4]\n" +
+		"\tadd sp, sp, #16\n" +
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

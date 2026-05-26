@@ -139,6 +139,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmCmp(a, ops)
 	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
 		return asmLoadStore(a, mnem, ops)
+	case "ldur", "stur", "ldurb", "sturb":
+		return asmUnscaled(a, mnem, ops)
 	case "stp", "ldp":
 		return asmPair(a, mnem, ops)
 	case "b":
@@ -497,6 +499,40 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		a.Emit(LDRHimm(rt, m.base, off))
 	case "strh":
 		a.Emit(STRHimm(rt, m.base, off))
+	}
+	return nil
+}
+
+// asmUnscaled handles the LDUR/STUR family: `<op> Rt, [Xn{, #off}]`
+// with a signed 9-bit unscaled byte offset.
+func asmUnscaled(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	m, err := parseMem(ops[1])
+	if err != nil {
+		return err
+	}
+	if m.pre {
+		return fmt.Errorf("%s does not take pre-index addressing", mnem)
+	}
+	if m.off < -256 || m.off > 255 {
+		return fmt.Errorf("%s offset %d out of signed 9-bit range", mnem, m.off)
+	}
+	off := int32(m.off)
+	switch mnem {
+	case "ldur":
+		a.Emit(LDUR(rt, m.base, off))
+	case "stur":
+		a.Emit(STUR(rt, m.base, off))
+	case "ldurb":
+		a.Emit(LDURB(rt, m.base, off))
+	case "sturb":
+		a.Emit(STURB(rt, m.base, off))
 	}
 	return nil
 }
