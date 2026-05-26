@@ -66,7 +66,20 @@ parser's type representation and `infer_expr_type`.
 
 ---
 
-## Item 3 — `std/url` + `std/json` → Map runtime 🔧 (core landed)
+## Item 3 — `std/url` ✅ + `std/json` ⬜ → Map runtime
+
+**Status.** `std/url` full-links on both backends. The Map runtime is
+now on x86-64 **and** arm64 (`__fern_map_new`/`set`/`get`/`has`), and the
+self-host emitter tracks the Map value type in the type tag
+(`"map:<value-tag>"`), so `m.get(k): Option[string[]]` binds the payload
+as `string[]` — `existing.push(val)` / `.len()` dispatch to the array
+runtime instead of mis-typing as a string. Verified by
+`self_host_url_test.go` (x86 + CI-gated arm64): `url_parse`,
+`query_parse` over `Map[string, string[]]` with duplicate keys.
+`std/json` is still blocked — it needs the auto-injected `JsonValue`
+enum, Rust-style `enum`-declaration parsing + call-style constructors,
+Map iteration (`.iter()`/`.keys()`/`.values()`), and `std/string`
+(packed-u8), none of which the self-host compiler has yet.
 
 **Blocker.** Both need a hash-map: `map_new`, `map_get`/`get_or`,
 `map_set`, `map_has`, `map_delete`, `map_len`, `map_keys`, `map_values`.

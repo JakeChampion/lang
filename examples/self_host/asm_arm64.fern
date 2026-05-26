@@ -1374,6 +1374,12 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                 },
                 parser.ExprFieldAccess(fa) => {
                     if (fa.field == "read_chunk") { return "string"; }
+                    if (fa.field == "get") {
+                        var rt: string = infer_expr_type(fa.obj, s);
+                        if (rt.len() >= 4 && rt[0:4] == "map:") {
+                            return rt[4 : rt.len()];
+                        }
+                    }
                     return "unknown";
                 },
                 _ => { return "unknown"; }
@@ -1392,8 +1398,34 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
-    if (name.len() >= 3 && name[0:3] == "Map") { return "map"; }
+    if (name.len() >= 4 && name[0:4] == "Map[") {
+        // Carry the value type into the tag ("map:<value-tag>") so
+        // `m.get(k)` payloads infer correctly (e.g. string[] → array
+        // push/len rather than the string default).
+        return "map:" + map_value_tag(name);
+    }
+    if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
     if (name.len() > 0 && name[name.len() - 1] == 93) { return "array"; }
+    return "unknown";
+}
+
+// is_map — see asm.fern. Reports whether a tag denotes a Map.
+function is_map(t: string): boolean {
+    return t.len() >= 3 && t[0:3] == "map";
+}
+
+// map_value_tag — see asm.fern. Extracts the value-type tag from a
+// `Map[K, V]` type name.
+function map_value_tag(name: string): string {
+    if (name.len() < 5) { return "unknown"; }
+    var inner: string = name[4 : name.len() - 1];
+    var i: i32 = 0;
+    while (i + 1 < inner.len()) {
+        if (inner[i] == 44 && inner[i + 1] == 32) {
+            return ret_tag_of(inner[i + 2 : inner.len()]);
+        }
+        i = i + 1;
+    }
     return "unknown";
 }
 
@@ -1523,6 +1555,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "__alloc_u8") { return "array_i32"; }
                     if (id.name == "string_from_bytes") { return "string"; }
                     if (id.name == "random_bytes") { return "string"; }
+                    if (id.name == "map_new") { return "map:unknown"; }
                     if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
                             || id.name == "__floor_f64" || id.name == "__ceil_f64"
                             || id.name == "__trunc_f64" || id.name == "__round_f64"
@@ -1558,6 +1591,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                 },
                 parser.ExprFieldAccess(fa) => {
                     var rt: string = infer_expr_type(fa.obj, s);
+                    if (is_map(rt) && fa.field == "set") { return rt; }
+                    if (is_map(rt) && fa.field == "has") { return "bool"; }
+                    if (is_map(rt) && fa.field == "len") { return "i32"; }
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
@@ -2596,6 +2632,57 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Primitive-receiver fast path: see
                     // asm.fern for rationale.
                     var prim_recv: string = infer_expr_type(fa.obj, s);
+                    // Map methods (string-keyed). set → map; get →
+                    // Option[V]; has → bool; len → i32. Mirror of
+                    // asm.fern's x86-64 dispatch.
+                    if (is_map(prim_recv) && fa.field == "set" && c.args.len() == 2) {
+                        s = emit_expr(fa.obj, s);
+                        s = emit_expr(c.args[0], s);
+                        s = emit_expr(c.args[1], s);
+                        s = s.write("    ldr x2, [sp], #16\n");   // v
+                        s = s.write("    ldr x1, [sp], #16\n");   // k
+                        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+                        s = s.write("    bl __fern_map_set\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        s = s.mark_str_eq();
+                        s = s.mark_arr_push();
+                        return s;
+                    }
+                    if (is_map(prim_recv) && fa.field == "get" && c.args.len() == 1) {
+                        s = emit_expr(fa.obj, s);
+                        s = emit_expr(c.args[0], s);
+                        s = s.write("    ldr x1, [sp], #16\n");   // k
+                        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+                        s = s.write("    bl __fern_map_get\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        s = s.mark_str_eq();
+                        s = s.mark_arr_push();
+                        return s;
+                    }
+                    if (is_map(prim_recv) && fa.field == "has" && c.args.len() == 1) {
+                        s = emit_expr(fa.obj, s);
+                        s = emit_expr(c.args[0], s);
+                        s = s.write("    ldr x1, [sp], #16\n");   // k
+                        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+                        s = s.write("    bl __fern_map_has\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_str_eq();
+                        s = s.mark_arr_push();
+                        return s;
+                    }
+                    if (is_map(prim_recv) && fa.field == "len" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x0, [x0]\n");        // keys arr
+                        s = s.write("    ldr x0, [x0]\n");        // keys.len
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        s = s.mark_str_eq();
+                        s = s.mark_arr_push();
+                        return s;
+                    }
                     // Built-in `.to_string()` on i32 and string —
                     // i32 routes to the existing runtime helper,
                     // string returns the receiver unchanged. The
@@ -3589,6 +3676,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    bl __fern_string_from_bytes\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
+                return s;
+            }
+            // map_new(n) — fresh empty Map. The capacity hint is
+            // evaluated for side effects then ignored.
+            if (name == "map_new" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_map_new\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                s = s.mark_str_eq();
+                s = s.mark_arr_push();
                 return s;
             }
             // random_bytes(n) — string of n random bytes (getrandom).
@@ -6098,6 +6197,164 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_i32_lcm, .-__fern_i32_lcm\n");
+    }
+    // Map runtime (string-keyed, 8-byte values). Mirror of asm.fern's
+    // x86-64 runtime. A Map is a 16-byte box [keys: string[] @0,
+    // values: T[] @8]; linear scan + str_eq; set/get grow via
+    // __fern_arr_push. Gated on (arr_push && str_eq), both marked at
+    // every map op.
+    if (s.needs_arr_push && s.needs_str_eq) {
+        // __fern_map_new(x0 = capacity hint, ignored) → empty map box.
+        s = s.write(".globl __fern_map_new\n");
+        s = s.write(".type __fern_map_new, %function\n");
+        s = s.write("__fern_map_new:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");          // mapbox
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    bl __fern_alloc_u8\n");        // empty keys
+        s = s.write("    str x0, [x19]\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    bl __fern_alloc_u8\n");        // empty values
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_new, .-__fern_map_new\n");
+
+        // __fern_map_set(x0 = mapbox, x1 = key, x2 = val) → mapbox.
+        // Updates in place on a key hit, else appends.
+        s = s.write(".globl __fern_map_set\n");
+        s = s.write(".type __fern_map_set, %function\n");
+        s = s.write("__fern_map_set:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // mapbox
+        s = s.write("    mov x20, x1\n");           // key
+        s = s.write("    mov x21, x2\n");           // val
+        s = s.write("    ldr x22, [x19]\n");        // keys arr
+        s = s.write("    mov x23, #0\n");           // i
+        s = s.write(".Lms_loop:\n");
+        s = s.write("    ldr x9, [x22]\n");         // keys.len
+        s = s.write("    cmp x23, x9\n");
+        s = s.write("    b.ge .Lms_append\n");
+        s = s.write("    add x9, x23, #1\n");
+        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1]
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    cbnz x0, .Lms_found\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    b .Lms_loop\n");
+        s = s.write(".Lms_found:\n");
+        s = s.write("    ldr x9, [x19, #8]\n");      // values arr
+        s = s.write("    add x10, x23, #1\n");
+        s = s.write("    str x21, [x9, x10, lsl #3]\n");  // values[i+1] = val
+        s = s.write("    b .Lms_ret\n");
+        s = s.write(".Lms_append:\n");
+        s = s.write("    ldr x0, [x19]\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_arr_push\n");      // keys.push(key)
+        s = s.write("    str x0, [x19]\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    mov x1, x21\n");
+        s = s.write("    bl __fern_arr_push\n");      // values.push(val)
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write(".Lms_ret:\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_set, .-__fern_map_set\n");
+
+        // __fern_map_get(x0 = mapbox, x1 = key) → Option[V]:
+        // Some(values[i]) on hit, None otherwise.
+        s = s.write(".globl __fern_map_get\n");
+        s = s.write(".type __fern_map_get, %function\n");
+        s = s.write("__fern_map_get:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // mapbox
+        s = s.write("    mov x20, x1\n");           // key
+        s = s.write("    ldr x21, [x19]\n");        // keys arr
+        s = s.write("    mov x22, #0\n");
+        s = s.write(".Lmg_loop:\n");
+        s = s.write("    ldr x9, [x21]\n");
+        s = s.write("    cmp x22, x9\n");
+        s = s.write("    b.ge .Lmg_none\n");
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    ldr x0, [x21, x9, lsl #3]\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    cbnz x0, .Lmg_found\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lmg_loop\n");
+        s = s.write(".Lmg_found:\n");
+        s = s.write("    ldr x9, [x19, #8]\n");      // values arr
+        s = s.write("    add x10, x22, #1\n");
+        s = s.write("    ldr x20, [x9, x10, lsl #3]\n");  // values[i+1]
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");          // Some box
+        s = s.write("    mov x9, #0\n");
+        s = s.write("    str x9, [x0]\n");             // tag = Some
+        s = s.write("    str x20, [x0, #8]\n");        // payload
+        s = s.write("    b .Lmg_ret\n");
+        s = s.write(".Lmg_none:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");          // None box
+        s = s.write("    mov x9, #1\n");
+        s = s.write("    str x9, [x0]\n");             // tag = None
+        s = s.write(".Lmg_ret:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_get, .-__fern_map_get\n");
+
+        // __fern_map_has(x0 = mapbox, x1 = key) → 0/1.
+        s = s.write(".globl __fern_map_has\n");
+        s = s.write(".type __fern_map_has, %function\n");
+        s = s.write("__fern_map_has:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    ldr x21, [x19]\n");
+        s = s.write("    mov x22, #0\n");
+        s = s.write(".Lmh_loop:\n");
+        s = s.write("    ldr x9, [x21]\n");
+        s = s.write("    cmp x22, x9\n");
+        s = s.write("    b.ge .Lmh_no\n");
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    ldr x0, [x21, x9, lsl #3]\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    cbnz x0, .Lmh_yes\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lmh_loop\n");
+        s = s.write(".Lmh_yes:\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    b .Lmh_ret\n");
+        s = s.write(".Lmh_no:\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write(".Lmh_ret:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_has, .-__fern_map_has\n");
     }
     // f64 transcendental runtime functions (always emitted; arm64 has
     // no transcendental instructions, unlike x86's x87 FPU). Polynomial
