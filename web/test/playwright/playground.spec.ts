@@ -109,6 +109,39 @@ test("changing the asm target re-emits for that backend", async ({ page }) => {
   await expect(page.locator("#asmOut")).toContainText(".text");
 });
 
+test("Build component compiles the default source to a downloadable component", async ({
+  page,
+}) => {
+  await gotoReady(page);
+  await expect(page.locator("#buildComponent")).toBeEnabled();
+  // Default world is wasi:cli/run. Building emits a component binary;
+  // the meta line gains a download link + byte count regardless of
+  // whether the in-browser jco run (CDN-dependent) succeeds.
+  await page.locator("#buildComponent").click();
+  await expect(page.locator("#meta .dl-link")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#meta")).toContainText("bytes");
+  await expect(page.locator("#meta .dl-link")).toHaveAttribute(
+    "download",
+    /\.component\.wasm$/
+  );
+});
+
+test("Build component reports compile errors instead of a download", async ({
+  page,
+}) => {
+  await gotoReady(page);
+  // An unterminated function fails the front-end pipeline; building
+  // should surface that as a "[component error]" in the output pane
+  // rather than offering a download.
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("function main(): i32 { return ");
+  await page.locator("#buildComponent").click();
+  await expect(page.locator("#out")).toContainText("component error", {
+    timeout: 15_000,
+  });
+});
+
 test("theme toggle flips body.dark and updates the glyph", async ({ page }) => {
   await gotoReady(page);
   // Force light mode first so the toggle has a deterministic

@@ -2,5 +2,5 @@
 # A static host (e.g. GitHub Pages) regenerates these on push;
 # committing the binary would balloon the repo by ~5 MB per
 # version of the toolchain.
-lang.wasm
-lang.wasm.gz
+fern.wasm
+fern.wasm.gz

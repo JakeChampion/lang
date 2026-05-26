@@ -507,6 +507,12 @@
     <option value="arm64-darwin">arm64-darwin</option>
     <option value="x86-64">x86-64</option>
   </select>
+  <button id="buildComponent" class="secondary" disabled
+          title="Compile to a WebAssembly Component and run it in-browser via jco">Build component</button>
+  <select id="worldSelect" title="WIT world to compose">
+    <option value="wasm">wasi:cli/run</option>
+    <option value="wasi-http">wasi:http/incoming-handler</option>
+  </select>
   <select id="example">
     <option value="">— pick an example —</option>
     <option value="hello">hello, world</option>
@@ -832,6 +838,8 @@ const srcMount = document.getElementById("srcMount");
 const themeBtn = document.getElementById("themeToggle");
 const themeGlyph = document.getElementById("themeGlyph");
 const targetSelectEl = document.getElementById("targetSelect");
+const buildComponentBtn = document.getElementById("buildComponent");
+const worldSelectEl = document.getElementById("worldSelect");
 const viewAsmBtn = document.getElementById("viewAsm");
 const asmPanel = document.getElementById("asmPanel");
 const asmOutEl = document.getElementById("asmOut");
@@ -1044,6 +1052,85 @@ function runOnce() {
 runBtn.addEventListener("click", runOnce);
 // Ctrl/Cmd+Enter to run is registered as a CodeMirror keymap entry
 // below so it composes correctly with the editor's own key handling.
+
+// ---- Build & run a WebAssembly Component ----
+//
+// `fernCompileComponent(src, world)` returns the base64 of a real
+// Component Model binary (the same bytes `fern -target wasm` /
+// `-target wasi-http` write). We decode it, offer a download, and
+// then try to run it in-browser via jco (./component-runner.js,
+// which pulls jco + the preview2 WASI shim from a CDN on demand).
+//
+// The in-browser run is a progressive enhancement: if the CDN is
+// unreachable or the world isn't runnable client-side yet, we fall
+// back to showing the bytes + the exact CLI command to run it
+// locally, so the feature still does something useful offline.
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function offerDownload(bytes, world) {
+  const blob = new Blob([bytes], { type: "application/wasm" });
+  const url = URL.createObjectURL(blob);
+  const name = world === "wasi-http" ? "handler.component.wasm" : "main.component.wasm";
+  const cmd =
+    world === "wasi-http"
+      ? "wasmtime serve " + name
+      : "wasmtime run " + name;
+  metaEl.innerHTML =
+    '<a class="dl-link" download="' + name + '" href="' + url + '">⬇ ' +
+    name + "</a> · " + bytes.length + " bytes · run locally: <code>" +
+    cmd + "</code>";
+}
+
+async function buildComponentOnce() {
+  if (typeof globalThis.fernCompileComponent !== "function") {
+    outEl.textContent = "(runtime not ready)";
+    return;
+  }
+  const world = worldSelectEl.value || "wasm";
+  buildComponentBtn.disabled = true;
+  buildComponentBtn.textContent = "Building…";
+  outEl.textContent = "compiling to a " + world + " component…";
+  metaEl.textContent = "";
+  try {
+    const result = globalThis.fernCompileComponent(getSrc(), world);
+    if (result.error) {
+      outEl.textContent = "[component error]\n" + result.error;
+      return;
+    }
+    const bytes = b64ToBytes(result.wasm);
+    offerDownload(bytes, world);
+    outEl.textContent = "running component via jco…";
+    try {
+      const { runComponent } = await import("./component-runner.js");
+      const run = await runComponent(bytes, world);
+      let body = run.stdout || "";
+      if (run.status !== undefined) {
+        body += (body ? "\n" : "") + "[http " + run.status + "]\n" + (run.body || "");
+      }
+      outEl.textContent = body || "(component produced no output)";
+    } catch (e) {
+      // jco unavailable (offline / CDN blocked) or world not yet
+      // runnable in-browser. The download + command are already
+      // shown; explain why the in-browser run didn't happen.
+      outEl.textContent =
+        "Built a " + world + " component (" + bytes.length +
+        " bytes). In-browser run via jco is unavailable here:\n" + e +
+        "\n\nUse the download above and run it with the shown command.";
+    }
+  } catch (e) {
+    outEl.textContent = "JS error: " + e;
+  } finally {
+    buildComponentBtn.disabled = false;
+    buildComponentBtn.textContent = "Build component";
+  }
+}
+
+buildComponentBtn.addEventListener("click", buildComponentOnce);
 
 // ---- Assembly view ----
 //
@@ -1514,6 +1601,7 @@ WebAssembly.instantiateStreaming(fetch("fern.wasm"), go.importObject)
     go.run(result.instance);
     runBtn.disabled = false;
     viewAsmBtn.disabled = false;
+    buildComponentBtn.disabled = false;
     statusEl.textContent = embedMode
       ? "ready"
       : "ready · Ctrl/Cmd+Enter to run · hover for types";

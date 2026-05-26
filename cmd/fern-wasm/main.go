@@ -45,6 +45,19 @@
 //     target retired with the WAT backend — the wasmbin path
 //     emits binary bytes, not human-readable text.)
 //
+//   fernCompileComponent(src, world) -> {
+//       wasm:   string,        // base64 of the component binary
+//       world:  string,        // the world that was composed
+//       error:  string | null, // parse / check / compose failure
+//   }
+//     Compiles src to a Component Model binary the page can hand to
+//     jco (transpile + instantiate) to run a real Fern-built
+//     component in-browser. Worlds: "wasm" (a wasi:cli/run
+//     component) and "wasi-http" (a wasi:http/incoming-handler
+//     component). Bytes come back base64-encoded so they survive
+//     the syscall/js boundary as a plain string; the page decodes
+//     with atob into a Uint8Array.
+//
 // State is fresh per call for fernInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
 // none). TCP / file I/O builtins on the Fern side would error at
@@ -54,6 +67,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -68,6 +82,7 @@ import (
 	"github.com/jakechampion/lang/internal/lsp"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/wasm/playground"
 )
 
 // interpret runs src through the same pipeline `fern -interp -`
@@ -237,6 +252,31 @@ func compile(src, target string) map[string]any {
 	return result
 }
 
+// compileComponent compiles src to a Component Model binary for the
+// requested world and returns a JS-shaped result with the bytes
+// base64-encoded (see the API surface comment at the top of file).
+func compileComponent(src, world string) map[string]any {
+	result := map[string]any{
+		"wasm":  "",
+		"world": world,
+		"error": nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			result["error"] = fmt.Sprintf("internal: %v", r)
+		}
+	}()
+
+	bin, err := playground.CompileComponent(src, world)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	return result
+}
+
 // lspServer is the persistent LSP server backing fernLsp /
 // fernLspOnNotify. A single instance owns the open-document cache
 // so request-response pairs make sense across calls.
@@ -308,6 +348,17 @@ func main() {
 			}
 		}
 		return compile(args[0].String(), args[1].String())
+	}))
+
+	js.Global().Set("fernCompileComponent", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 2 {
+			return map[string]any{
+				"wasm":  "",
+				"world": "",
+				"error": "fernCompileComponent(src, world) requires two string arguments",
+			}
+		}
+		return compileComponent(args[0].String(), args[1].String())
 	}))
 
 	// Keep the Go runtime alive — js.FuncOf handlers are
