@@ -73,6 +73,10 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 	switch d {
 	case ".text":
 		return secText, nil
+	case ".ltorg":
+		// Flush the literal pool here (off the execution path).
+		a.FlushLiterals()
+		return sec, nil
 	case ".rodata":
 		return secRodata, nil
 	case ".section":
@@ -170,6 +174,17 @@ func assembleProgInsn(a *Assembler, line string) error {
 	mnem, rest := splitMnemonic(line)
 	ops := splitOperands(rest)
 	switch {
+	case mnem == "ldr" && len(ops) == 2 && strings.HasPrefix(ops[1], "="):
+		rt, err := parseReg(ops[0])
+		if err != nil {
+			return err
+		}
+		val, err := strconv.ParseUint(strings.TrimPrefix(ops[1], "="), 0, 64)
+		if err != nil {
+			return fmt.Errorf("bad literal %q", ops[1])
+		}
+		a.LDRLiteral(rt, val, !is32(ops[0]))
+		return nil
 	case mnem == "adrp":
 		if len(ops) != 2 {
 			return fmt.Errorf("adrp expects Xd, sym")

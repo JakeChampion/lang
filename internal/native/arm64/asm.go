@@ -23,6 +23,22 @@ type Assembler struct {
 	syms       map[string]symbol
 	adrpFixups []symFixup
 	lo12Fixups []symFixup
+
+	// Literal pool (ldr Xt, =value): pending literals awaiting the next
+	// flush (.ltorg or end), and the placed literals to relocate.
+	pendingLits []litRef
+	litFixups   []litResolve
+}
+
+type litRef struct {
+	at   int    // index of the ldr-literal instruction
+	val  uint64 // the literal value
+	wide bool   // 8-byte (x) vs 4-byte (w)
+}
+
+type litResolve struct {
+	at      int // ldr-literal instruction index
+	poolIdx int // index of the literal's first word in insns
 }
 
 // symbol is a named location: in .text it's an instruction index, in
@@ -80,6 +96,39 @@ func (a *Assembler) AlignRodata(n int) {
 	for n > 0 && len(a.rodata)%n != 0 {
 		a.rodata = append(a.rodata, 0)
 	}
+}
+
+// LDRLiteral emits `ldr Rt, =value` — a PC-relative load from a
+// literal pool. The value is stashed until the next FlushLiterals
+// (.ltorg or program end), then the load's 19-bit offset is resolved
+// in BytesProgram. wide selects an 8-byte (x) vs 4-byte (w) literal.
+func (a *Assembler) LDRLiteral(rt uint32, val uint64, wide bool) {
+	base := uint32(0x18000000) // ldr (literal), 32-bit
+	if wide {
+		base = 0x58000000 // ldr (literal), 64-bit
+	}
+	a.pendingLits = append(a.pendingLits, litRef{at: len(a.insns), val: val, wide: wide})
+	a.insns = append(a.insns, base|(rt&regMask))
+}
+
+// FlushLiterals places the pending literal-pool entries into the
+// instruction stream at the current position (the .ltorg point), 8-byte
+// aligning the wide ones. Each load's offset is resolved later by
+// BytesProgram. Placing the pool after a ret/branch keeps it off the
+// execution path.
+func (a *Assembler) FlushLiterals() {
+	for _, l := range a.pendingLits {
+		if l.wide && len(a.insns)%2 != 0 {
+			a.insns = append(a.insns, 0) // pad to 8-byte alignment
+		}
+		poolIdx := len(a.insns)
+		a.insns = append(a.insns, uint32(l.val))
+		if l.wide {
+			a.insns = append(a.insns, uint32(l.val>>32))
+		}
+		a.litFixups = append(a.litFixups, litResolve{at: l.at, poolIdx: poolIdx})
+	}
+	a.pendingLits = nil
 }
 
 // ADRPsym emits `adrp Xrd, sym` as a placeholder, resolved by
@@ -169,6 +218,16 @@ func (a *Assembler) Bytes() ([]byte, error) {
 // #:lo12:), laying .text at textVAddr and .rodata immediately after
 // (8-byte aligned). It returns the final .text and .rodata blobs.
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
+	// Flush any literals not yet placed by a .ltorg, then resolve each
+	// ldr-literal's PC-relative offset.
+	a.FlushLiterals()
+	for _, f := range a.litFixups {
+		insnAddr := textVAddr + uint64(f.at)*4
+		litAddr := textVAddr + uint64(f.poolIdx)*4
+		imm19 := uint32(int32(int64(litAddr)-int64(insnAddr)) / 4)
+		a.insns[f.at] |= (imm19 & 0x7ffff) << 5
+	}
+
 	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
 	if rem := rodataVAddr % 8; rem != 0 {
 		rodataVAddr += 8 - rem

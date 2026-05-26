@@ -51,6 +51,12 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"mul", "function main(): i32 { return 6 * 7; }", 42},
 		{"div", "function main(): i32 { return 84 / 2; }", 42},
 		{"locals", "function main(): i32 { var x: i32 = 40; var y: i32 = 2; return x + y; }", 42},
+		{"ifelse", "function main(): i32 { if (3 > 2) { return 42; } return 0; }", 42},
+		{"while", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 42) { s = s + 1; i = i + 1; } return s; }", 42},
+		{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(40, 2); }", 42},
+		{"recur", "function f(n: i32): i32 { if (n <= 1) { return 1; } return n * f(n - 1); } function main(): i32 { return f(5) / 3; }", 40},
+		{"i64", "function main(): i32 { var x: i64 = 40; var y: i64 = 2; return (x + y) as i32; }", 42},
+		{"f64", "function main(): i32 { var x: f64 = 21.0; return (x * 2.0) as i32; }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
