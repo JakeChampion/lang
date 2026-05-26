@@ -154,6 +154,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
 		return asmExtend(a, mnem, ops)
+	case "ubfx", "sbfx":
+		return asmBitfieldExtract(a, mnem, ops)
 	case "cmp":
 		return asmCmp(a, ops)
 	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
@@ -477,6 +479,38 @@ func asmShift(a *Assembler, mnem string, ops []string) error {
 		a.Emit(clearSF(LSRV(rd, rn, rm), w))
 	case "asr":
 		a.Emit(clearSF(ASRV(rd, rn, rm), w))
+	}
+	return nil
+}
+
+// asmBitfieldExtract handles `ubfx/sbfx Xd, Xn, #lsb, #width`.
+func asmBitfieldExtract(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("%s expects Xd, Xn, #lsb, #width", mnem)
+	}
+	if is32(ops[0]) {
+		return fmt.Errorf("32-bit %s not supported yet", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	lsb, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	width, err := parseImm(ops[3])
+	if err != nil {
+		return err
+	}
+	if mnem == "ubfx" {
+		a.Emit(UBFX(rd, rn, uint32(lsb), uint32(width)))
+	} else {
+		a.Emit(SBFX(rd, rn, uint32(lsb), uint32(width)))
 	}
 	return nil
 }

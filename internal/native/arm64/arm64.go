@@ -329,6 +329,12 @@ func SXTB(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 7) }
 func SXTH(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 15) }
 func SXTW(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 31) }
 
+// UBFX / SBFX encode `<op> Xd, Xn, #lsb, #width` — extract a width-bit
+// field starting at bit lsb, zero- (UBFX) or sign- (SBFX) extended.
+// UBFM/SBFM aliases with imms = lsb + width - 1.
+func UBFX(rd, rn, lsb, width uint32) uint32 { return ubfmX(rd, rn, lsb, lsb+width-1) }
+func SBFX(rd, rn, lsb, width uint32) uint32 { return sbfmX(rd, rn, lsb, lsb+width-1) }
+
 // CSEL encodes `csel Xd, Xn, Xm, <cond>` — Xd = cond ? Xn : Xm.
 // Encoding: base 0x9A800000 | Rm<<16 | cond<<12 | Rn<<5 | Rd.
 func CSEL(rd, rn, rm, cond uint32) uint32 {
