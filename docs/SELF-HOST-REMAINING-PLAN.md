@@ -236,7 +236,9 @@ planned order:
   mis-dispatched); `arr.min()`/`max()` now return `Option[i32]`
   (Some/None) instead of a raw i32 — matching the reference
   (`self_host_array_methods_test.go`).
-- ⬜ **`if let`** pattern sugar.
+- ✅ **`if let`** pattern sugar — `if let PAT = E { … } else { … }`
+  desugars in the parser to `match (E) { PAT => …, _ => … }`
+  (`self_host_if_let_test.go`).
 - ⬜ **`switch` / `case`.**
 - ⬜ **i32-keyed maps** (the Map runtime is currently string-keyed only).
 - ⬜ **Function types `(T) => R`** → higher-order functions.
