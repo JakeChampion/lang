@@ -49,7 +49,11 @@
 
 package ir
 
-import "github.com/jakechampion/lang/internal/ast"
+import (
+	"strings"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // inlineSizeLimit caps how many ops a callee can have to remain
 // eligible. Tuned to allow the bulk of prelude helpers (e.g.
@@ -161,6 +165,15 @@ func findInlineCandidates(prog *Program) map[string]inlineCandidate {
 // OpMakeClosure / oversized bodies disqualify.
 func isInlineable(fn *Func) bool {
 	if len(fn.Ops) == 0 || len(fn.Ops) > inlineSizeLimit {
+		return false
+	}
+	// Never inline a per-closure drop thunk: it reads captures at
+	// [env+offset], and ElideClosurePair only recognises the closure
+	// drop as a benign reader (so the closure can become a bare env)
+	// when the thunk is a single OpCallDirect. Inlining it splices
+	// raw [slot+off] capture loads that disqualify elision, leaving a
+	// {fn,env} PAIR the inlined thunk then misreads as an env.
+	if strings.HasPrefix(fn.Name, "__closure_drop_") {
 		return false
 	}
 	last := fn.Ops[len(fn.Ops)-1].Kind
