@@ -310,8 +310,19 @@ planned order:
   Truly parametric code can't call type-specific methods on `T`
   anyway, and the parity cases don't hit it; tracking per-
   instantiation field types is a follow-up if a real program needs it.
-- ⬜ stdlib **`std/test` / `std/fuzz` / `std/tcp`** (no user generics
-  of their own; gated on remaining stdlib-link work).
+- 🔧 stdlib **`std/test` / `std/fuzz` / `std/tcp`** (no user generics
+  of their own). **Survey done:** all three now **parse + emit cleanly**
+  through the self-host (0 `ExprUnknown`). The sole parse gap was a
+  **trailing comma before the closing `}` of a struct literal**
+  (`TestRunner { …, quiet: false, }`) — the self-host had two struct-lit
+  parsers (`parse_struct_lit_body` + the inline one in `parse_primary`),
+  both of which looped back to expect another field after the comma and
+  cascaded into a run of `ExprUnknown`. Both now allow the trailing
+  comma (`self_host_trailing_comma_test.go`, shared parser → both
+  backends). Remaining for a full link/run: import resolution / module
+  bundling of the `std/*` deps these modules pull in (`sort`, `json`,
+  `http`) — a driver-level effort (`bundle_run` / prelude injection),
+  not a language-feature gap.
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in

@@ -371,7 +371,13 @@ function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
             p = fv.par;
             fnames = fnames.push(fn);
             fvals = fvals.push(fv.expr);
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            if (p.peek_punct() == ",") {
+                p = p.advance();
+                // Trailing comma before the closing brace is allowed
+                // (std/test's TestRunner literals use it).
+                if (p.peek_punct() == "}") { break; }
+                continue;
+            }
             break;
         }
     }
@@ -626,7 +632,12 @@ function parse_primary(p: Par): ExprResult {
                         p = fv.par;
                         fnames = fnames.push(fname);
                         fvals = fvals.push(fv.expr);
-                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        if (p.peek_punct() == ",") {
+                            p = p.advance();
+                            // Trailing comma before `}` is allowed.
+                            if (p.peek_punct() == "}") { break; }
+                            continue;
+                        }
                         break;
                     }
                 }
