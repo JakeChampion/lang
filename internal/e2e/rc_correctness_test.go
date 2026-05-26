@@ -563,6 +563,28 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map with ARRAY-OF-STRUCT values (Map[K, Item[]]). The value
+		// array's buffer was freed (kind 3 drop_arr_ptr), but its Item
+		// boxes + their xs buffers leaked. The value now deep-drops via
+		// __drop_map_via___drop_arr_struct_Item → __drop_arr_struct_Item →
+		// __drop_struct_Item per element. Churned 200x. vs[0].xs[1] =
+		// seed+1; sum_{0..199}(k+1) = 20100.
+		name: "map_arr_struct_values_churn_free",
+		src: `struct Item { xs: i32[] }
+function mk(seed: i32): i32 {
+    var m: Map[i32, Item[]] = map_new(8);
+    m = m.set(seed, [Item { xs: [seed, seed + 1] }, Item { xs: [seed + 2] }]);
+    var vs: Item[] = m.get_or(seed, []);
+    return vs[0].xs[1];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a map value: an owned array built inside a
 		// helper escapes via `m.set` (retained without an inc under
 		// the borrow model), so it must NOT be freed at the helper's
