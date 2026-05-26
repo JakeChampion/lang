@@ -31,6 +31,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -745,7 +746,100 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			out.Funcs = append(out.Funcs, thunk)
 		}
 	}
+	// Transitive reclamation Stage A: emit a recursive __drop_struct_<N>
+	// for each CONCRETE struct that is NESTED (directly, as a field) in a
+	// dropped value. dropStructField / appendChildDrop route a nested
+	// struct field to these instead of a flat one-level rc_dec, so nested
+	// struct boxes reclaim (deep) on the owning value's last reference.
+	// Each fn is_unique-gates internally, so calling it on a shared child
+	// is safe (it dec's, frees only the last reference).
+	//
+	// A genfn is only ever CALLED for a struct that is a field of some
+	// dropped type (a top-level struct local uses the inline drop, not
+	// its own genfn). So generation is restricted to that reachable set —
+	// collectNestedDropTypes seeds from every function's struct locals
+	// and transitively closes over their struct fields — rather than
+	// every declared struct, which would bloat native backends (no
+	// dead-fn pruning). Names are sorted so the appended Func order is
+	// deterministic. Enum payloads (union variant type isn't statically
+	// known), arrays-of-struct elements, and map keys remain later slices.
+	if ast.RcFreeEnabled {
+		needGen := collectNestedDropTypes(prog, info)
+		names := make([]string, 0, len(needGen))
+		for name := range needGen {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fn := genStructDropFn(name, info.Structs[name], info, ptrW)
+			// Codegen pairs prog.Funcs[i] (AST) with out.Funcs[i] (IR) by
+			// index; append a stub AST decl in lockstep — emission reads
+			// the IR Func's ops, the stub carries the name/params the
+			// prologue needs.
+			prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+				Name:       fn.Name,
+				Params:     fn.Params,
+				ReturnType: fn.ReturnType,
+				Body:       &ast.Block{},
+			})
+			out.Funcs = append(out.Funcs, fn)
+		}
+	}
 	return out, nil
+}
+
+// collectNestedDropTypes returns the set of concrete struct type names
+// that need a generated recursive drop function: those that appear as a
+// struct-typed FIELD of another struct that is itself reachable as a
+// dropped value. The seed is every function's struct locals (the values
+// dropped at scope exit); the closure walks their struct fields
+// transitively. A top-level dropped local does NOT itself need a genfn
+// (it uses the inline drop sweep) — only its nested struct fields do,
+// which is exactly what dropStructField / appendChildDrop call. Map,
+// childless structs, arrays, and enums are excluded: array elements and
+// enum payloads still flat-dec (later slices), so structs reachable only
+// through them never have their genfn called.
+func collectNestedDropTypes(prog *ast.Program, info *checker.Info) map[string]bool {
+	needGen := map[string]bool{}
+	expanded := map[string]bool{}
+	var expand func(name string)
+	mark := func(t ast.Type) {
+		v, ok := t.(ast.StructType)
+		if !ok || v.Name == "Map" {
+			return
+		}
+		sd, ok := info.Structs[v.Name]
+		if !ok || !structHasRcField(sd) {
+			return
+		}
+		needGen[v.Name] = true
+		expand(v.Name)
+	}
+	expand = func(name string) {
+		if expanded[name] {
+			return
+		}
+		expanded[name] = true
+		sd, ok := info.Structs[name]
+		if !ok {
+			return
+		}
+		for _, f := range sd.Fields {
+			mark(f.Type)
+		}
+	}
+	// Seed: every struct local the dec sweep drops. expand() enqueues its
+	// nested struct fields (which need genfns); the top-level type itself
+	// uses the inline drop, so it isn't marked unless reached as some
+	// other struct's nested field.
+	for _, fn := range prog.Funcs {
+		for _, v := range info.Locals[fn] {
+			if st, ok := v.Type.(ast.StructType); ok {
+				expand(st.Name)
+			}
+		}
+	}
+	return needGen
 }
 
 // findPairFormFuncs scans every top-level function in prog and
@@ -1906,6 +2000,22 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
+	// dropStructField drops one struct field whose pointer is already on
+	// the operand stack. Transitive reclamation Stage A: a CONCRETE
+	// struct field (statically exact type) recurses through its
+	// generated __drop_struct_ fn, so its box + nested struct children
+	// reclaim on the field's last reference; the generated fn
+	// is_unique-gates internally, so this is safe whether the child is
+	// shared or not. Every other field type (arrays, enums/unions,
+	// closures, Map) keeps the flat one-level dec.
+	dropStructField := func(t ast.Type) {
+		if name, ok := dropFnNameFor(t, b.info); ok {
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		decValueOnStack(t, false)
+	}
 	emitDec := func(slot int32, t ast.Type, eligible bool, name string) {
 		// `eligible` is the borrow-aware verdict for THIS local: true
 		// only when it's a proven-OWNED array (computeFreeEligible).
@@ -1992,7 +2102,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						b.emit(Op{Kind: OpAdd})
 					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-					decValueOnStack(f.Type, false)
+					dropStructField(f.Type)
 				}
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: size})
@@ -2025,6 +2135,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+						// Owned-but-NOT-free-eligible (escaped / tainted): the box
+						// isn't freed here, and a nested struct field may still be
+						// reachable through the escape, so it must NOT be deep-freed.
+						// Flat one-level dec only; deep recursion fires solely in the
+						// eligible branch above.
 						decValueOnStack(f.Type, false)
 					}
 					b.emit(Op{Kind: OpEnd})
@@ -2365,6 +2480,107 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int) *Func {
 	return &Func{
 		Name:       "__closure_drop_" + name,
 		Params:     []ast.Param{{Name: "__cdenv", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        ops,
+	}
+}
+
+// structHasRcField reports whether a struct declaration has any
+// rc-tracked (pointer-shaped) field — the precondition for emitting a
+// recursive __drop_struct_<Name> function.
+func structHasRcField(sd *ast.StructDecl) bool {
+	for _, f := range sd.Fields {
+		if arrElemIsRcTracked(f.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// dropFnNameFor returns the generated recursive-drop function name for
+// a NESTED value of type t, plus whether one exists. Only a CONCRETE
+// user struct with rc-tracked fields routes to __drop_struct_<Name>:
+// its static type exactly matches the runtime value, so the generated
+// fn can safely read its fields. Everything else — arrays, closures,
+// the Map / runtime handle types, childless structs, and ALL enums —
+// returns ("", false) so the caller falls back to a flat one-level dec.
+// Enums are deliberately excluded: a union's variants carry different
+// payload types at the same offset, so a type-specific recursive drop
+// would misread the box for the non-recorded variant. Tag-dispatched
+// enum-payload recursion is a later slice.
+func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
+	v, ok := t.(ast.StructType)
+	if !ok || v.Name == "Map" {
+		return "", false
+	}
+	sd, ok := info.Structs[v.Name]
+	if !ok || !structHasRcField(sd) {
+		return "", false
+	}
+	return "__drop_struct_" + v.Name, true
+}
+
+// appendChildDrop appends the ops that drop one NESTED field whose
+// pointer is already on the operand stack. A concrete-struct field with
+// a generated recursive drop function recurses through it; every other
+// pointer-shaped field (arrays, enums/unions, closures, Map, childless
+// structs) takes a flat one-level __fern_rc_dec — matching the
+// pre-transitive behaviour for those shapes (deep array-element,
+// enum-payload, and map-key reclamation are later slices). Used by the
+// generated __drop_struct_ bodies; the inline (builder) struct-field
+// sweep delegates equivalently.
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
+	if name, ok := dropFnNameFor(t, info); ok {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: name, I32: 1},
+			Op{Kind: OpDrop})
+	}
+	return append(ops,
+		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop})
+}
+
+// genStructDropFn builds the recursive __drop_struct_<Name> function:
+// at the value's last reference (rc==1) it drops each rc-tracked field
+// — recursing into nested struct/enum fields via their own drop fns —
+// then returns the box to the freelist; otherwise it just dec's. The
+// box was alloc'd as `structFieldLayout size + 8` rc header, so
+// __fern_box_free frees base = data-8, size+8 (structFieldLayout's
+// size already accounts for the header). Callers must only reach this
+// for structs with at least one rc-tracked field (structHasRcField).
+func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int) *Func {
+	offs, size := structFieldLayout(sd.Fields, ptrW)
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+	}
+	for _, f := range sd.Fields {
+		if !arrElemIsRcTracked(f.Type) {
+			continue
+		}
+		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+		if off := offs[f.Name]; off != 0 {
+			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
+		}
+		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
+		ops = appendChildDrop(ops, f.Type, info)
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpConstI32, I32: size},
+		Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2},
+		Op{Kind: OpDrop},
+		Op{Kind: OpElse},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop},
+		Op{Kind: OpEnd},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn})
+	return &Func{
+		Name:       "__drop_struct_" + name,
+		Params:     []ast.Param{{Name: "__ds", Type: ast.NumberType{}}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}

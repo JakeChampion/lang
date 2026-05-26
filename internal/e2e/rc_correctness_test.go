@@ -854,6 +854,118 @@ function main(): i32 {
     return (acc - 25) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation Stage A — nested struct churn: an
+		// Outer holding an Inner (which itself holds an array) is
+		// built + discarded every iteration. Stage A recurses the
+		// Outer drop into __drop_struct_Inner (freeing Inner's box
+		// AND its array buffer), where the pre-transitive drop only
+		// flat-dec'd Inner (leak). A per-iteration over-release of
+		// the now-freed Inner box would accumulate on the underflow
+		// counter. sum_{i=0..99}(i+2) = 4950 + 200 = 5150.
+		name: "nested_struct_churn_free",
+		src: `struct Inner { vals: i32[] }
+struct Outer { inner: Inner, tag: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Outer = Outer { inner: Inner { vals: [i, i + 1, i + 2] }, tag: i };
+        acc = acc + o.inner.vals[2];
+        i = i + 1;
+    }
+    return (acc - 5150) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage A — uniform-enum-of-struct
+		// churn: a union whose variants each carry a struct holding
+		// an array, built + matched + discarded every iteration. The
+		// enum drop now recurses into __drop_struct_VInt (freeing the
+		// struct box + its array) rather than flat-dec'ing the
+		// payload. sum_{i=0..99}(i+1) = 4950 + 100 = 5050.
+		name: "enum_of_struct_churn_free",
+		src: `struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var x: Value = mk(i);
+        match (x) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage A — escape guard: a nested
+		// struct (Inner) inside a RETURNED Outer must NOT be freed at
+		// the constructor's exit. The deep recursive drop is
+		// is_unique-gated, and the return-inc keeps Outer (and hence
+		// Inner) live, so the churn loop's same-size reuse must not
+		// corrupt the surviving Inner.vals.
+		name: "nested_struct_escapes_return",
+		src: `struct Inner { vals: i32[] }
+struct Outer { inner: Inner }
+function mk(n: i32): Outer { return Outer { inner: Inner { vals: [n, n + 1] } }; }
+function main(): i32 {
+    var o: Outer = mk(42);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (o.inner.vals[0] - 42) + (o.inner.vals[1] - 43) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage A — shared nested struct: two
+		// Outers share the same Inner (aliased), so when the first
+		// Outer drops, Inner is rc>1 and must only dec (not free).
+		// The is_unique gate inside __drop_struct_Inner is what makes
+		// this safe; a premature free would corrupt the second read.
+		name: "shared_nested_struct_no_free",
+		src: `struct Inner { vals: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var shared: Inner = Inner { vals: [7, 8, 9] };
+    var a: Outer = Outer { inner: shared };
+    var b: Outer = Outer { inner: shared };
+    var first: i32 = a.inner.vals[2];
+    var second: i32 = b.inner.vals[2];
+    return (first - 9) + (second - 9) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage A — escaped struct with a nested
+		// struct field, churned. `o` escapes into the array (owned-but-
+		// not-free-eligible), so its drop takes the non-eligible branch,
+		// which keeps the flat one-level field dec — deep recursion (and
+		// the free it implies) fires only in the eligible branch. The
+		// shared inner is also held by a live local, so its rc stays > 1
+		// and the is_unique gate is exercised too. (The non-eligible
+		// deep-free regression itself is caught end-to-end by the
+		// self-host suite, whose parser threads structs through result
+		// shapes in a way no small corpus program reproduces.)
+		name: "escaped_struct_nested_field_no_free",
+		src: `struct Inner { vals: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    var shared: Inner = Inner { vals: [1, 2, 3] };
+    var keep: Outer[] = [];
+    var o: Outer = Outer { inner: shared };
+    keep = keep.push(o);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c, c];
+        c = c + 1;
+    }
+    return (keep[0].inner.vals[1] - 2) + (keep.len() - 1) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
