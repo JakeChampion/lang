@@ -2417,8 +2417,8 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 				return nil, err
 			}
 			switch left.(type) {
-			case *ast.Ident, *ast.Index:
-				// fine
+			case *ast.Ident, *ast.Index, *ast.FieldAccess:
+				// fine — same lvalue forms as plain `=`
 			default:
 				return nil, p.errorfCode(tok.Pos, "P003", "left-hand side of assignment is not assignable")
 			}
