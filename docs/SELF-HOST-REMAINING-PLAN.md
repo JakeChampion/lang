@@ -261,8 +261,20 @@ planned order:
   heap to 1 GiB** (zero-page .bss, both backends). A latent fragility
   for any future growth of the compiler; a hard bounds-check/trap is a
   follow-up.
-- ⬜ **Function types `(T) => R`** → higher-order functions.
-- ⬜ **Closures** (capturing nested functions returned as values).
+- ✅ **Function types `(T) => R`** → higher-order functions. The
+  parser consumes the `(T1, …) => R` type spelling (returning a coarse
+  "fn" tag); a function referenced by name as a value lowers to a
+  1-slot closure box `[&__fn_name]`. The closure-call convention now
+  passes the box in a register (x86 `%r10` / arm64 `x9`) rather than as
+  a hidden stack arg, so a plain function and a real closure share one
+  call convention with no param shifting and no per-function
+  trampolines — the plain function simply ignores the box
+  (`self_host_higher_order_test.go`).
+- ⬜ **Closures** (capturing nested functions returned as values). The
+  always-boxed `function(…)` lambda form already captures + is callable
+  (covered above); remaining: the arrow-lambda value syntax
+  `(x) => …` and returning a capturing closure across a `(T) => R`
+  return type.
 - ✅ **Tuple destructuring** (`var (a, b) = …`) — parser encodes the
   names as "a,b"; the emitter binds a = tuple.0, b = tuple.1
   (`self_host_tuple_destructure_test.go`). Also fixed `count_locals` to

@@ -2698,6 +2698,25 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 cfi = cfi + 1;
             }
+            // A bare ident naming a receiver-less function WITH params
+            // is a function value (higher-order use). Represent it as a
+            // 1-slot closure box [&__fn_name] so it flows through the
+            // closure-call path. The box-in-x9 convention means the
+            // plain function ignores the box and reads params at +16. See asm.fern.
+            var fvi: i32 = 0;
+            while (fvi < s.funcs.len()) {
+                if (s.funcs[fvi].name == id.name && s.funcs[fvi].receiver_type.len() == 0 && s.funcs[fvi].params.len() > 0) {
+                    s = s.write("    mov x0, #8\n");
+                    s = s.write("    bl __fern_alloc\n");
+                    s = s.mark_heap();
+                    s = s.write("    adrp x1, __fn_" + sanitize_label(id.name) + "\n");
+                    s = s.write("    add x1, x1, :lo12:__fn_" + sanitize_label(id.name) + "\n");
+                    s = s.write("    str x1, [x0]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    return s;
+                }
+                fvi = fvi + 1;
+            }
             // Bare ident naming a zero-field struct: no-payload enum
             // variant (`JNull`). Construct [shape_ptr]. See asm.fern.
             if (is_unit_variant(id.name, s)) {
@@ -4203,13 +4222,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     ci = ci - 1;
                 }
                 var off: i32 = s.lookup_local(name);
-                s = s.write("    ldr x0, [x29, #" + i32_to_string(off) + "]\n");
-                s = s.write("    str x0, [sp, #-16]!\n");
-                // Peek box ptr, load fn_addr.
-                s = s.write("    ldr x1, [sp]\n");
-                s = s.write("    ldr x2, [x1]\n");
+                // Box ptr in x9 (not on the stack) — see asm.fern. Args
+                // sit at +16, +32, … just like a direct call.
+                s = s.write("    ldr x9, [x29, #" + i32_to_string(off) + "]\n");
+                s = s.write("    ldr x2, [x9]\n");
                 s = s.write("    blr x2\n");
-                s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
+                if (c.args.len() > 0) {
+                    s = s.write("    add sp, sp, #" + i32_to_string(c.args.len() * 16) + "\n");
+                }
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
@@ -4572,12 +4592,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             s = s.reset_locals();
             s = s.enter_function();
-            // Bind __closure_box (slot 0), load from +16(x29).
+            // Bind __closure_box (slot 0), stash from x9 (the box ptr
+            // the call site placed in that register).
             var box_name: string = "__closure_box";
             s = s.bind_local(box_name);
             var box_off: i32 = s.lookup_local(box_name);
-            s = s.write("    ldr x0, [x29, #16]\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(box_off) + "]\n");
+            s = s.write("    str x9, [x29, #" + i32_to_string(box_off) + "]\n");
             // Bind each capture, load from box[+(i+1)*8]. The
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
@@ -4605,12 +4625,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [x29, #" + i32_to_string(c_off) + "]   // capture " + caps[ci] + "\n");
                 ci = ci + 1;
             }
-            // Bind params; args at +32, +48, … (shifted by box).
+            // Bind params; args at +16, +32, … — IDENTICAL to a direct
+            // call, because the box now arrives in x9, not on the stack.
             var pi2: i32 = 0;
             while (pi2 < argc_l) {
                 s = s.bind_local_typed(lm.params[pi2].name, ret_tag_of(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
-                var a_off: i32 = 32 + pi2 * 16;
+                var a_off: i32 = 16 + pi2 * 16;
                 s = s.write("    ldr x0, [x29, #" + i32_to_string(a_off) + "]   // param " + lm.params[pi2].name + "\n");
                 s = s.write("    str x0, [x29, #" + i32_to_string(p_off) + "]\n");
                 pi2 = pi2 + 1;

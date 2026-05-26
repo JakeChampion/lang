@@ -2804,6 +2804,25 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 cfi = cfi + 1;
             }
+            // A bare ident naming a receiver-less function WITH params
+            // is a function value (higher-order use, e.g. `apply(dbl, …)`).
+            // Represent it as a 1-slot closure box `[&__fn_name]` so it
+            // flows through the same closure-call path as a real lambda.
+            // The box-in-%r10 convention means the plain function ignores
+            // the (empty) box and reads its params at +16(%rbp) as usual.
+            var fvi: i32 = 0;
+            while (fvi < s.funcs.len()) {
+                if (s.funcs[fvi].name == id.name && s.funcs[fvi].receiver_type.len() == 0 && s.funcs[fvi].params.len() > 0) {
+                    s = s.write("    movq $8, %rdi\n");
+                    s = s.write("    call __fern_alloc\n");
+                    s = s.mark_heap();
+                    s = s.write("    leaq __fn_" + sanitize_label(id.name) + "(%rip), %rcx\n");
+                    s = s.write("    movq %rcx, (%rax)\n");
+                    s = s.write("    pushq %rax\n");
+                    return s;
+                }
+                fvi = fvi + 1;
+            }
             // A bare ident naming a zero-field struct is a no-payload
             // enum variant (`JNull`). Construct [shape_ptr] — an 8-byte
             // box holding the interned variant name, so the match's
@@ -4523,12 +4542,15 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // [fn_addr, cap0, cap1, …] (always-boxed, even for
             // capture-less lambdas — see the ExprLambda arm).
             //
-            // Calling convention: push args RIGHT-to-LEFT, then
-            // push the box ptr (so box is on top of the stack
-            // before the call). After the callee's prologue,
-            // the box sits at +16(%rbp) and args at +24, +32, …
-            // The callee body loads captures via the box and
-            // shifts param offsets by +8.
+            // Calling convention: push args RIGHT-to-LEFT (so the
+            // callee sees param[0] at +16(%rbp) — IDENTICAL to a
+            // direct call), then load the box ptr into %r10 and
+            // indirect-call box[0]. The callee body reads the box
+            // from %r10 (a closure stashes it in its first local;
+            // a plain top-level function used as a value ignores
+            // it). This box-in-register shape means a plain
+            // function and a closure share one call convention with
+            // no param shifting and no per-function trampolines.
             if (s.has_local(name)) {
                 var ci: i32 = c.args.len() - 1;
                 while (ci >= 0) {
@@ -4536,14 +4558,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     ci = ci - 1;
                 }
                 var off: i32 = s.lookup_local(name);
-                s = s.write("    movq " + i32_to_string(off) + "(%rbp), %rax\n");
-                s = s.write("    pushq %rax\n");
-                // Peek box ptr (top of stack), load fn_addr.
-                s = s.write("    movq (%rsp), %rcx\n");
-                s = s.write("    movq (%rcx), %rdx\n");
+                s = s.write("    movq " + i32_to_string(off) + "(%rbp), %r10\n");
+                s = s.write("    movq (%r10), %rdx\n");
                 s = s.write("    call *%rdx\n");
-                // Caller cleanup: args + box.
-                s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+                // Caller cleanup: args only (box was in a register).
+                if (c.args.len() > 0) {
+                    s = s.write("    addq $" + i32_to_string(c.args.len() * 8) + ", %rsp\n");
+                }
                 s = s.write("    pushq %rax\n");
                 return s;
             }
@@ -4993,12 +5014,12 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             s = s.reset_locals();
             s = s.enter_function();
-            // Bind __closure_box (slot 0), copy from +16(%rbp).
+            // Bind __closure_box (slot 0), copy from %r10 (the box
+            // ptr the call site loaded into that register).
             var box_name: string = "__closure_box";
             s = s.bind_local(box_name);
             var box_off: i32 = s.lookup_local(box_name);
-            s = s.write("    movq 16(%rbp), %rax\n");
-            s = s.write("    movq %rax, " + i32_to_string(box_off) + "(%rbp)\n");
+            s = s.write("    movq %r10, " + i32_to_string(box_off) + "(%rbp)\n");
             // Bind each capture, load from box[+(i+1)*8]. The
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
@@ -5026,13 +5047,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    movq %rax, " + i32_to_string(c_off) + "(%rbp) # capture " + caps[ci] + "\n");
                 ci = ci + 1;
             }
-            // Bind params; args sit at +24, +32, … (shifted by
-            // the box ptr at +16).
+            // Bind params; args sit at +16, +24, … — IDENTICAL to a
+            // direct call, because the box now arrives in %r10 rather
+            // than as a hidden stack arg.
             var pi2: i32 = 0;
             while (pi2 < argc_l) {
                 s = s.bind_local_typed(lm.params[pi2].name, ret_tag_of(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
-                var a_off: i32 = 24 + pi2 * 8;
+                var a_off: i32 = 16 + pi2 * 8;
                 s = s.write("    movq " + i32_to_string(a_off) + "(%rbp), %rax\n");
                 s = s.write("    movq %rax, " + i32_to_string(p_off) + "(%rbp) # param " + lm.params[pi2].name + "\n");
                 pi2 = pi2 + 1;
