@@ -1445,6 +1445,59 @@ function main(): i32 {
     return (got - 10) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — a PLAIN-array struct FIELD (i32[]).
+		// Previously dropStructField only deep-dropped array-OF-struct
+		// fields; a plain `data: i32[]` field flat-dec'd and leaked its
+		// buffer. It now frees the buffer via __fern_arr_dec on the
+		// owner's last reference (is_unique-gated). Churned 100x.
+		// sum_{0..99}(i+1) = 5050.
+		name: "struct_plain_array_field_churn_free",
+		src: `struct Buf { data: i32[], n: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var b: Buf = Buf { data: [i, i + 1, i + 2], n: i };
+        acc = acc + b.data[1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Array-of-array struct field (i32[][]): the OUTER buffer is now
+		// freed via __fern_drop_arr_ptr (inner buffers are array-of-array,
+		// a later slice — still leak, no over-release). sum_{0..99}(i+1).
+		name: "struct_arr_of_arr_field_churn_free",
+		src: `struct Mat { rows: i32[][], n: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var m: Mat = Mat { rows: [[i, i + 1], [i + 2]], n: i };
+        acc = acc + m.rows[0][1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Plain-array field that ESCAPES (Buf returned): the buffer must
+		// survive the constructor. Churn forces same-size reuse.
+		name: "struct_plain_array_field_escapes",
+		src: `struct Buf { data: i32[], n: i32 }
+function mk(n: i32): Buf { return Buf { data: [n, n + 1, n + 2], n: n }; }
+function main(): i32 {
+    var b: Buf = mk(7);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (b.data[2] - 9) + (b.data.len() - 3) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

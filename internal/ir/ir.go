@@ -2048,18 +2048,28 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			return
 		}
 		if at, ok := t.(ast.ArrayType); ok {
+			// Any array field frees its BUFFER on the owning value's
+			// last reference (the owner is eligible/unique here, so the
+			// field is owned; each helper still is_unique-gates the
+			// array, so a shared one only dec's). Array-of-struct also
+			// deep-drops each element box (Stage B loop); array-of-rc
+			// (e.g. i32[][]) frees the outer buffer + flat-dec's inner
+			// (inner buffers are array-of-array, a later slice); plain
+			// arrays (i32[]) free the buffer via arr_dec. Previously all
+			// of these flat-dec'd, leaking the buffer.
 			if name, ok := arrElemStructDropName(at.Elem, b.info); ok {
-				// Array-of-struct field (e.g. struct Grid { rows:
-				// Row[] }): deep-drop each element box + the buffer via
-				// the Stage B loop, instead of the flat dec that leaked
-				// them. The fn is_unique-gates the array, so a shared one
-				// only dec's. Plain-elem arrays fall through to the flat
-				// dec below (their buffer reclamation is the top-level
-				// local path's job).
 				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
+			helper := "__fern_arr_dec"
+			if arrElemIsRcTracked(at.Elem) {
+				helper = "__fern_drop_arr_ptr"
+			}
+			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			return
 		}
 		decValueOnStack(t, false)
 	}
@@ -2796,7 +2806,7 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // enum-payload, and map-key reclamation are later slices). Used by the
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
-func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int) []Op {
 	if isMapType(t) {
 		return appendMapDrop(ops)
 	}
@@ -2806,13 +2816,22 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
 			Op{Kind: OpDrop})
 	}
 	if at, ok := t.(ast.ArrayType); ok {
+		// Any array field frees its buffer (see dropStructField for the
+		// rationale): array-of-struct deep-drops elements + buffer,
+		// array-of-rc frees the outer buffer, plain arrays arr_dec.
 		if name, ok := arrElemStructDropName(at.Elem, info); ok {
-			// Array-of-struct field: deep-drop elements + buffer via the
-			// Stage B loop (is_unique-gated), instead of the flat dec.
 			return append(ops,
 				Op{Kind: OpCallDirect, Str: name, I32: 1},
 				Op{Kind: OpDrop})
 		}
+		helper := "__fern_arr_dec"
+		if arrElemIsRcTracked(at.Elem) {
+			helper = "__fern_drop_arr_ptr"
+		}
+		return append(ops,
+			Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
+			Op{Kind: OpCallDirect, Str: helper, I32: 2},
+			Op{Kind: OpDrop})
 	}
 	return append(ops,
 		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
@@ -2843,7 +2862,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, f.Type, info)
+		ops = appendChildDrop(ops, f.Type, info, ptrW)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -2901,7 +2920,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int) 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			ops = appendChildDrop(ops, ld.typ, info)
+			ops = appendChildDrop(ops, ld.typ, info, ptrW)
 		}
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
