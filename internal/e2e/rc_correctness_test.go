@@ -1260,6 +1260,49 @@ function main(): i32 {
     return (got - 11) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — a Map-typed STRUCT FIELD (the
+		// headers-map shape). Dropping the owning struct now reclaims
+		// the whole map structure (value column + buf + handle) via
+		// __map_drop_values + __fern_map_drop, instead of the flat dec
+		// that leaked it. Both helpers self-guard on the map's rc==1.
+		// Churned 50x: an over-release would drift the counter.
+		name: "struct_map_field_churn_free",
+		src: `struct Req { headers: Map[string, string], n: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var m: Map[string, string] = map_new(8);
+        m = m.set("k", "v");
+        var r: Req = Req { headers: m, n: i };
+        acc = acc + r.headers.get_or("k", "x").len();
+        i = i + 1;
+    }
+    return (acc - 50) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Map struct field that ESCAPES (struct returned): the map must
+		// survive the constructor — the returned struct still owns it.
+		// Churn forces same-size reuse that would corrupt a strayed read.
+		name: "struct_map_field_escapes",
+		src: `struct Req { headers: Map[string, string], n: i32 }
+function mk(): Req {
+    var m: Map[string, string] = map_new(8);
+    m = m.set("k", "vv");
+    return Req { headers: m, n: 1 };
+}
+function main(): i32 {
+    var r: Req = mk();
+    var c: i32 = 0;
+    while (c < 100) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (r.headers.get_or("k", "x").len() - 2) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

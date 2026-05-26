@@ -2020,6 +2020,18 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// shared or not. Every other field type (arrays, enums/unions,
 	// closures, Map) keeps the flat one-level dec.
 	dropStructField := func(t ast.Type) {
+		if isMapType(t) {
+			// A Map-typed field (e.g. struct Request { headers:
+			// Map[..] }) reclaims the whole map structure on the owning
+			// value's last reference: free the value column then the
+			// buf + handle. Both helpers self-guard on the map's own
+			// rc==1, so a shared map only dec's. They return the map
+			// ptr, so the stack value chains through without a reload.
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		if name, ok := dropFnNameFor(t, b.info); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -2504,6 +2516,13 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
 						Op{Kind: OpCallDirect, Str: helper, I32: 2})
 				}
+			} else if isMapType(c.Type) {
+				// Map capture: reclaim the value column + buf + handle
+				// (both helpers self-guard on the map's rc==1 and return
+				// the map ptr, which the trailing OpDrop discards).
+				ops = append(ops,
+					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
+					Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 			} else if drop, ok := dropFnNameFor(c.Type, info); ok {
 				// Concrete-struct capture: free its box + nested struct
 				// fields (childless structs too).
@@ -2552,6 +2571,25 @@ func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
 		return "", false
 	}
 	return "__drop_struct_" + v.Name, true
+}
+
+// isMapType reports whether t is the runtime Map handle type. A
+// Map-typed field / payload / capture reclaims its structure (value
+// column + buf + handle) via __map_drop_values then __fern_map_drop,
+// both of which self-guard on the map's own rc==1 and return the map
+// ptr (so a stack value chains through).
+func isMapType(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && st.Name == "Map"
+}
+
+// appendMapDrop appends the map-reclamation chain for a map pointer
+// already on the operand stack.
+func appendMapDrop(ops []Op) []Op {
+	return append(ops,
+		Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
+		Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1},
+		Op{Kind: OpDrop})
 }
 
 // enumHasStructPayload reports whether any variant of ed carries a
@@ -2664,6 +2702,9 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
 func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
+	if isMapType(t) {
+		return appendMapDrop(ops)
+	}
 	if name, ok := dropFnNameFor(t, info); ok {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: name, I32: 1},
