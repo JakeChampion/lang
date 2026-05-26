@@ -1363,6 +1363,53 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Transitive reclamation — a GENERIC enum as a struct FIELD
+		// (`Holder { b: Option[Item] }`). Generic-enum LOCALS already
+		// reclaim (the inline emitDec path substitutes the type args); a
+		// nested field reaches the drop through __drop_struct_Holder →
+		// dropFnNameFor, which previously bailed on any EnumType with Args
+		// and flat-dec'd — leaking the Option box + Item + its buffer. It
+		// now substitutes (Option[Item] → Some(Item)), confirms the
+		// instantiation is heap-boxed (pointer payload), and routes to a
+		// per-instantiation __drop_enum_<mangled> the worklist regenerates
+		// from the stashed substituted decl. Churned 100x.
+		// sum_{0..99}(i+1) = 5050.
+		name: "generic_enum_struct_field_churn_free",
+		src: `struct Item { xs: i32[] }
+struct Holder { b: Option[Item], n: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var h: Holder = Holder { b: Some(Item { xs: [i, i + 1] }), n: i };
+        match (h.b) { Some(it) => { acc = acc + it.xs[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Generic-enum struct field that ESCAPES (Holder returned): the
+		// Option box + Item + buffer must survive the constructor's exit
+		// drop (the struct return-inc protects it). Churn forces same-size
+		// reuse that would corrupt a strayed read after an over-release.
+		name: "generic_enum_struct_field_escapes",
+		src: `struct Item { xs: i32[] }
+struct Holder { b: Option[Item], n: i32 }
+function mk(n: i32): Holder { return Holder { b: Some(Item { xs: [n, n + 1] }), n: n }; }
+function main(): i32 {
+    var h: Holder = mk(9);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (h.b) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
+    return (got - 10) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Transitive reclamation — array-of-struct as a struct FIELD
 		// (the `struct Grid { rows: Row[] }` shape). Stage B deep-dropped
 		// array-of-struct LOCALS; a nested field now routes through the

@@ -713,8 +713,12 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 		}
 	}
 	out := &Program{PairForm: pairForm, PtrW: ptrW}
+	// Registry of generic-enum-instantiation drops discovered while
+	// routing nested fields/payloads/captures (see builder.genEnumDrops).
+	// Shared across lowering and the post-pass drop worklist below.
+	genEnumDrops := map[string]*ast.EnumDecl{}
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops)
 		if err != nil {
 			return nil, err
 		}
@@ -726,7 +730,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// MakeEnv). emitDec dispatches owned closure drops to these.
 	if ast.RcFreeEnabled {
 		for name, caps := range closureCaps {
-			thunk := genClosureDropThunk(name, caps, ptrW, info)
+			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops)
 			if thunk == nil {
 				continue
 			}
@@ -797,9 +801,16 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			} else if en := strings.TrimPrefix(name, "__drop_enum_"); en != name {
 				ed, ok := info.Enums[en]
 				if !ok {
+					// Not a concrete enum — a generic instantiation
+					// (Option[Item]) whose substituted decl dropFnNameFor
+					// stashed under the mangled name. info.Enums only holds
+					// the un-substituted generic, keyed by base name.
+					ed, ok = genEnumDrops[en]
+				}
+				if !ok {
 					continue
 				}
-				fn = genEnumDropFn(en, ed, info, ptrW)
+				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops)
 				if fn == nil {
 					continue // plan failed — routing shouldn't have named it
 				}
@@ -809,7 +820,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue // routing only names structs it verified exist
 				}
-				fn = genStructDropFn(sn, sd, info, ptrW)
+				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops)
 			}
 			generated[name] = true
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
@@ -1400,6 +1411,16 @@ type builder struct {
 	info *checker.Info
 	fn   *ast.FuncDecl
 	out  *Func
+	// genEnumDrops is the shared (LowerWith-owned) registry mapping a
+	// generic-enum-instantiation drop name (the mangled `en` part of
+	// `__drop_enum_<en>`, e.g. `Option_LB_Item_RB_`) to the SUBSTITUTED
+	// enum decl its drop body is generated from. dropFnNameFor records
+	// here when it routes a nested generic-enum field/payload/capture
+	// (info.Enums only holds the un-substituted generic decl, keyed by
+	// the base name), and the LowerWith drop worklist reads it to
+	// generate the body. Map header is shared by value, so writes from
+	// any lowering / post-pass site reach the worklist.
+	genEnumDrops map[string]*ast.EnumDecl
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -2042,7 +2063,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
-		if name, ok := dropFnNameFor(t, b.info); ok {
+		if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -2526,7 +2547,7 @@ func hasRcCapture(caps []ast.Param) bool {
 // rc-tracked captures (the generic helper already handles those).
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
-func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info) *Func {
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl) *Func {
 	if !hasRcCapture(caps) {
 		return nil
 	}
@@ -2572,9 +2593,9 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				ops = append(ops,
 					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
 					Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-			} else if drop, ok := dropFnNameFor(c.Type, info); ok {
-				// Concrete-struct capture: free its box + nested struct
-				// fields (childless structs too).
+			} else if drop, ok := dropFnNameFor(c.Type, info, reg); ok {
+				// Concrete-struct (or boxed generic-enum) capture: free its
+				// box + nested children.
 				ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
 			} else {
 				// enum / closure capture: flat one-level dec (a union's
@@ -2610,7 +2631,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 // arrays, closures, and generic enum instantiations (Args != nil; their
 // box-vs-pair-form shape needs the type args, handled inline for locals)
 // return ("", false) so the caller falls back to a flat one-level dec.
-func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
+func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
 		if v.Name == "Map" {
@@ -2621,16 +2642,60 @@ func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
 		}
 		return "__drop_struct_" + v.Name, true
 	case ast.EnumType:
-		if len(v.Args) > 0 {
-			return "", false // generic instantiation — not handled as a field yet
-		}
 		ed, ok := info.Enums[v.Name]
-		if !ok || !enumNeedsDrop(ed) {
+		if !ok {
+			return "", false
+		}
+		if len(v.Args) > 0 {
+			// Generic instantiation (Option[Item]). Substitute the type
+			// args into the decl and route to a per-instantiation drop
+			// IFF the substituted decl is heap-boxed (a pointer payload).
+			// Scalar instantiations (Option[i32], pair-form, no box) read
+			// false and fall through to the flat dec, exactly as before.
+			// The substituted decl is stashed in reg under a mangled name
+			// the worklist regenerates the body from. Without a registry
+			// to record into (direct unit calls) we can't be regenerated,
+			// so bail to the safe flat path.
+			if reg == nil {
+				return "", false
+			}
+			sub := substituteEnumDecl(ed, v.Args)
+			if !enumHasPointerPayload(sub) {
+				return "", false
+			}
+			mangled := mangleEnumInst(v)
+			reg[mangled] = sub
+			return "__drop_enum_" + mangled, true
+		}
+		if !enumNeedsDrop(ed) {
 			return "", false
 		}
 		return "__drop_enum_" + v.Name, true
 	}
 	return "", false
+}
+
+// mangleEnumInst turns a generic enum instantiation type into a
+// symbol-safe, injective name component for its `__drop_enum_<...>`
+// drop function — `Option[Item]` → `Option_LB_Item_RB_`,
+// `Result[Item, Err]` → `Result_LB_Item_C_Err_RB_`. Derived from the
+// type's canonical String() with the non-identifier characters escaped
+// to fixed tokens, so two distinct instantiations never collide and the
+// same instantiation always mangles identically (routing ⇄ generation
+// agreement, as the worklist requires). The escape tokens use only
+// `[A-Za-z0-9_]`, keeping the name a valid wasm/asm symbol. The worklist
+// resolves a `__drop_enum_<en>` name against info.Enums (concrete) before
+// the generic registry, so a base name never shadows a real enum; the
+// reverse — a hand-authored enum literally named to mimic an escaped
+// instantiation (e.g. `Option_LB_Item_RB_`) — is a pathological clash we
+// don't defend, as no realistic source produces it.
+func mangleEnumInst(et ast.EnumType) string {
+	return strings.NewReplacer(
+		"[", "_LB_",
+		"]", "_RB_",
+		",", "_C_",
+		" ", "",
+	).Replace(et.String())
 }
 
 // enumNeedsDrop reports whether a concrete enum has a heap box worth
@@ -2812,11 +2877,11 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // enum-payload, and map-key reclamation are later slices). Used by the
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
-func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int) []Op {
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) []Op {
 	if isMapType(t) {
 		return appendMapDrop(ops)
 	}
-	if name, ok := dropFnNameFor(t, info); ok {
+	if name, ok := dropFnNameFor(t, info, reg); ok {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: name, I32: 1},
 			Op{Kind: OpDrop})
@@ -2852,7 +2917,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int) []Op {
 // frees base = data-8, size+8 (structFieldLayout's size already
 // accounts for the header). Works for a childless struct too: the
 // field loop is empty, so it just is_unique-gates and frees the box.
-func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int) *Func {
+func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) *Func {
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -2868,7 +2933,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, f.Type, info, ptrW)
+		ops = appendChildDrop(ops, f.Type, info, ptrW, reg)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -2899,7 +2964,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
 // capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
-func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int) *Func {
+func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) *Func {
 	plan, ok := enumVariantDropPlan(ed, ptrW)
 	if !ok {
 		return nil
@@ -2926,7 +2991,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int) 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			ops = appendChildDrop(ops, ld.typ, info, ptrW)
+			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg)
 		}
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
@@ -3112,7 +3177,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -3121,15 +3186,16 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		Captures:   fn.Captures,
 	}
 	b := &builder{
-		info:        info,
-		fn:          fn,
-		out:         out,
-		locals:      map[string]int32{},
-		scratchType: map[int32]ast.Type{},
-		ptrW:        ptrW,
-		pairForm:    pairForm,
-		closureCaps: closureCaps,
-		thisIsPair:  pairForm[fn.Name],
+		info:         info,
+		fn:           fn,
+		out:          out,
+		locals:       map[string]int32{},
+		scratchType:  map[int32]ast.Type{},
+		ptrW:         ptrW,
+		pairForm:     pairForm,
+		closureCaps:  closureCaps,
+		genEnumDrops: genEnumDrops,
+		thisIsPair:   pairForm[fn.Name],
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
