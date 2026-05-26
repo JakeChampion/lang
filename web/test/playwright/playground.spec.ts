@@ -109,6 +109,39 @@ test("changing the asm target re-emits for that backend", async ({ page }) => {
   await expect(page.locator("#asmOut")).toContainText(".text");
 });
 
+test("Run (wasm) compiles and executes the default source in-browser", async ({
+  page,
+}) => {
+  await gotoReady(page);
+  await expect(page.locator("#runWasm")).toBeEnabled();
+  // The hello example is the default load. "Run (wasm)" compiles it
+  // to a core module and runs it through web/wasi-shim.js (the
+  // compiled backend, not the interpreter), so stdout should match.
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toContainText("hello, world", {
+    timeout: 15_000,
+  });
+  // The meta line distinguishes this from the interpreter path and
+  // shows a green exit chip for the clean exit.
+  await expect(page.locator("#meta")).toContainText("ran in-browser");
+  await expect(page.locator("#meta .exit-ok")).toBeVisible();
+});
+
+test("Run (wasm) reports compile errors instead of output", async ({
+  page,
+}) => {
+  await gotoReady(page);
+  // An unterminated function fails the front-end pipeline; the wasm
+  // run should surface that as "[compile error]" rather than output.
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("function main(): i32 { return ");
+  await page.locator("#runWasm").click();
+  await expect(page.locator("#out")).toContainText("compile error", {
+    timeout: 15_000,
+  });
+});
+
 test("Build component compiles the default source to a downloadable component", async ({
   page,
 }) => {

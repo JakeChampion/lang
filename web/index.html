@@ -500,6 +500,8 @@
 
 <div class="toolbar">
   <button id="run" disabled>Run</button>
+  <button id="runWasm" class="secondary" disabled
+          title="Compile to a WebAssembly core module and run it in-browser (the compiled backend, not the interpreter)">Run (wasm)</button>
   <button id="share" class="secondary">Share</button>
   <button id="viewAsm" class="secondary btn-asm" disabled>View assembly</button>
   <select id="targetSelect" title="Backend for the assembly view">
@@ -829,6 +831,7 @@ function main(): i32 {
 const outEl = document.getElementById("out");
 const metaEl = document.getElementById("meta");
 const runBtn = document.getElementById("run");
+const runWasmBtn = document.getElementById("runWasm");
 const shareBtn = document.getElementById("share");
 const statusEl = document.getElementById("status");
 const exampleEl = document.getElementById("example");
@@ -1052,6 +1055,57 @@ function runOnce() {
 runBtn.addEventListener("click", runOnce);
 // Ctrl/Cmd+Enter to run is registered as a CodeMirror keymap entry
 // below so it composes correctly with the editor's own key handling.
+
+// ---- Run (wasm): compile + execute the real backend in-browser ----
+//
+// Unlike Run (which drives the AST interpreter), this compiles the
+// source to a raw preview-1 core WebAssembly module via
+// `fernCompileCoreWasm` and instantiates it directly against
+// web/wasi-shim.js — no component / jco transpile, no CDN. It's the
+// actual compiled wasm backend running in the page, so it also
+// surfaces the backend's coverage gaps as "[compile error]" when a
+// program reaches for an op the binary emitter doesn't handle yet.
+// `runCoreWasm` is imported statically near the CodeMirror imports
+// below (the binding is hoisted, so referencing it here is fine).
+function runWasmOnce() {
+  if (typeof globalThis.fernCompileCoreWasm !== "function") {
+    outEl.textContent = "(runtime not ready)";
+    return;
+  }
+  runWasmBtn.disabled = true;
+  runWasmBtn.textContent = "Running…";
+  outEl.textContent = "compiling to wasm…";
+  metaEl.textContent = "";
+  // setTimeout(0) lets the disabled state + "compiling…" paint before
+  // the synchronous fernCompileCoreWasm call blocks the UI thread.
+  setTimeout(async () => {
+    try {
+      const result = globalThis.fernCompileCoreWasm(getSrc());
+      if (result.error) {
+        outEl.textContent = "[compile error]\n" + result.error;
+        return;
+      }
+      const run = await runCoreWasm(b64ToBytes(result.wasm));
+      let body = run.stdout || "";
+      if (run.stderr) {
+        body += (body ? "\n" : "") + "[stderr]\n" + run.stderr;
+      }
+      outEl.textContent = body || "(program produced no output)";
+      const cls = run.exit === 0 ? "exit-ok" : "exit-err";
+      metaEl.innerHTML =
+        '<span class="exit-label">compiled to wasm · ran in-browser · exit </span>' +
+        '<span class="' + cls + '">' + run.exit + "</span>";
+    } catch (e) {
+      outEl.textContent = "JS error: " + e;
+      metaEl.textContent = "";
+    } finally {
+      runWasmBtn.disabled = false;
+      runWasmBtn.textContent = "Run (wasm)";
+    }
+  }, 0);
+}
+
+runWasmBtn.addEventListener("click", runWasmOnce);
 
 // ---- Build a WebAssembly Component ----
 //
@@ -1359,6 +1413,9 @@ import {bracketMatching, indentOnInput} from "https://esm.sh/@codemirror/languag
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "https://esm.sh/@codemirror/autocomplete@6";
 import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
 import {oneDark} from "https://esm.sh/@codemirror/theme-one-dark@6";
+// Local (same-origin) WASI preview-1 host for the "Run (wasm)"
+// button. No CDN — see web/wasi-shim.js.
+import {runCoreWasm} from "./wasi-shim.js";
 
 // editorView is declared earlier in this script (above the
 // theme-bootstrap call) so applyTheme() can safely reference it.
@@ -1590,6 +1647,7 @@ WebAssembly.instantiateStreaming(fetch("fern.wasm"), go.importObject)
   .then(result => {
     go.run(result.instance);
     runBtn.disabled = false;
+    runWasmBtn.disabled = false;
     viewAsmBtn.disabled = false;
     buildComponentBtn.disabled = false;
     statusEl.textContent = embedMode
