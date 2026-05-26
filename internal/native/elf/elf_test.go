@@ -368,6 +368,29 @@ func TestAssembledWRegisterTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledFloatTextRunsUnderQemu exercises the double-precision
+// path end-to-end: 84.0 / 2.0 = 42.0, converted back to an integer.
+// Covers scvtf, fdiv, and fcvtzs in one runnable binary.
+func TestAssembledFloatTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x1, #84\n" +
+		"\tscvtf d0, x1\n" + // d0 = 84.0
+		"\tmov x2, #2\n" +
+		"\tscvtf d1, x2\n" + // d1 = 2.0
+		"\tfdiv d2, d0, d1\n" + // d2 = 42.0
+		"\tfcvtzs x0, d2\n" + // x0 = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

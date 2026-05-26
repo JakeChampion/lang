@@ -68,6 +68,9 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tmov w0, #42\n\tmov w1, w0\n\tmovz w8, #93\n\tadd w0, w1, #1\n\tadd w0, w1, w2\n\tsub w4, w5, w6\n" +
 			"\tand w0, w1, w2\n\tmul w0, w1, w2\n\tcmp w1, w2\n\tcmp w1, #5\n\tcsel w0, w1, w2, eq\n\tcset w0, ne\n" +
 			"\tudiv w0, w1, w2\n\tlsl w0, w1, w2\n\tneg w0, w1\n",
+		"float_double": "" +
+			"\tfadd d0, d1, d2\n\tfsub d0, d1, d2\n\tfmul d0, d1, d2\n\tfdiv d0, d1, d2\n\tfneg d0, d1\n\tfcmp d1, d2\n" +
+			"\tfmov d0, d1\n\tfmov d0, x1\n\tfmov x0, d1\n\tscvtf d0, x1\n\tfcvtzs x0, d1\n",
 		"csel_div_extras": "" +
 			"\tcsel x0, x1, x2, eq\n\tcsel x3, x4, x5, lt\n\tcset x0, ne\n\tcset x7, ge\n" +
 			"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
