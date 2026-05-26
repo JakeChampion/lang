@@ -378,7 +378,19 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // string to route through `__fern_print_str`).
             return "fn_" + ret_tag_of(lm.ret_type);
         },
-        parser.ExprIdent(id) => { return s.local_type_of(id.name); },
+        parser.ExprIdent(id) => {
+            if (s.has_local(id.name)) { return s.local_type_of(id.name); }
+            // A bare ident may name a zero-arg function (a `const`);
+            // report its return type so const-typed exprs dispatch.
+            var cfi: i32 = 0;
+            while (cfi < s.funcs.len()) {
+                if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
+                    return ret_tag_of(s.funcs[cfi].ret_type);
+                }
+                cfi = cfi + 1;
+            }
+            return s.local_type_of(id.name);
+        },
         parser.ExprBinary(b) => {
             // `+` propagates string when either side is string
             // (string + string → string concat). Comparisons
@@ -2532,6 +2544,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    movq $1, (%rax)\n");
                 s = s.write("    pushq %rax\n");
                 return s;
+            }
+            // A bare ident naming a zero-arg, receiver-less function
+            // (i.e. a `const`, desugared to such a function) lowers to
+            // a call to that function.
+            var cfi: i32 = 0;
+            while (cfi < s.funcs.len()) {
+                if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
+                    s = s.write("    call __fn_" + sanitize_label(id.name) + "\n");
+                    s = s.write("    pushq %rax\n");
+                    return s;
+                }
+                cfi = cfi + 1;
             }
             s = s.write("    # unresolved ident: " + id.name + "\n");
             s = s.write("    pushq $0\n");

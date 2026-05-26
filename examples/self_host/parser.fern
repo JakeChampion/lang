@@ -1278,6 +1278,32 @@ function parse_import(p: Par): ImportResult {
     return ImportResult { par: p, imp: Import { path: path } };
 }
 
+// parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
+// `const` keyword) and returns it as a zero-arg FuncDecl returning
+// EXPR — so the rest of the pipeline + the emitter reuse the existing
+// function machinery, and a bare `NAME` reference becomes a call.
+function parse_const_decl(p: Par): FuncResult {
+    p = p.advance();  // consume `const`
+    var name: string = p.peek_ident();
+    if (name.len() == 0) { name = p.peek_keyword(); }
+    if (name.len() > 0) { p = p.advance(); }
+    var ty: string = "";
+    if (p.peek_punct() == ":") {
+        p = p.advance();
+        var tr: TypeNameResult = parse_type_name(p);
+        p = tr.par;
+        ty = tr.name;
+    }
+    if (p.peek_punct() == "=") { p = p.advance(); }
+    var er: ExprResult = parse_expr(p);
+    p = er.par;
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    var body: Stmt[] = [];
+    body = body.push(s_return(er.expr));
+    var noparams: ParamDecl[] = [];
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", params: noparams, ret_type: ty, body: body } };
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];
@@ -1310,6 +1336,15 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var tr: TypeAliasResult = parse_type_alias(p);
             p = tr.par;
             aliases = aliases.push(tr.alias);
+            continue;
+        }
+        if (kw == "const") {
+            // `const NAME: T = EXPR;` desugars to a zero-arg function
+            // `function NAME(): T { return EXPR; }`; a bare reference
+            // to NAME is lowered to a call (see emit_expr ExprIdent).
+            var cr: FuncResult = parse_const_decl(p);
+            p = cr.par;
+            funcs = funcs.push(cr.func);
             continue;
         }
         if (kw == "import") {
