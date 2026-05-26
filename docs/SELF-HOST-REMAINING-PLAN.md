@@ -75,6 +75,15 @@ parser's type representation and `infer_expr_type`.
 shape as `Some(x)` / `Ok(x)`, already supported, but currently only the
 Option/Result names are special-cased.
 
+**Note (refined).** `std/url` is *doubly* blocked: beyond the Map
+runtime it relies on `m.get(key): Option[string[]]` and then
+`existing.push(val)` on the payload — but the coarse "Some payload is a
+string" heuristic (item 5) mis-types `existing` as a string, so `.push`
+mis-dispatches (`string__push`). So `std/url`/`std/json` full-linking
+also depends on item 5. The **Map runtime is the self-contained core**
+and is landed first on its own (testable directly with `Map[string,i32]`,
+where the payload-type coarseness doesn't bite).
+
 **Plan.**
 - A string-keyed map runtime in the emitter: parallel `keys[]` /
   `values[]` arrays with linear probe (simplest correct form; the

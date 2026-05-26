@@ -1358,6 +1358,32 @@ function (s: EmitState) mark_i32_pow(): EmitState {
     };
 }
 
+// match_payload_type — see asm.fern. Infers an Option/Result payload
+// binding's type from the match scrutinee so an i32 payload isn't
+// wrongly typed "string".
+function match_payload_type(scrut: parser.Expr, s: EmitState): string {
+    match (scrut) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
+                        return infer_expr_type(c.args[0], s);
+                    }
+                    if (id.name == "read_file" || id.name == "read_all_stdin") { return "string"; }
+                    return "unknown";
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "read_chunk") { return "string"; }
+                    return "unknown";
+                },
+                _ => { return "unknown"; }
+            }
+        },
+        _ => { return "unknown"; }
+    }
+    return "unknown";
+}
+
 function ret_tag_of(name: string): string {
     if (name == "i32") { return "i32"; }
     if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
@@ -1366,6 +1392,7 @@ function ret_tag_of(name: string): string {
     if (name == "string[]") { return "array_string"; }
     if (name == "i32[]") { return "array_i32"; }
     if (name == "bool[]" || name == "boolean[]") { return "array_i32"; }
+    if (name.len() >= 3 && name[0:3] == "Map") { return "map"; }
     if (name.len() > 0 && name[name.len() - 1] == 93) { return "array"; }
     return "unknown";
 }
@@ -4352,7 +4379,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                                 // read_chunk → Some / read_file → Ok carry
                                 // string payloads; bind as string for
                                 // print / concat dispatch.
-                                s = s.bind_local_typed(pv.binding, "string");
+                                s = s.bind_local_typed(pv.binding, match_payload_type(m.scrutinee, s));
                                 var pbind_off: i32 = s.lookup_local(pv.binding);
                                 s = s.write("    str x1, [x29, #" + i32_to_string(pbind_off) + "]\n");
                             }
