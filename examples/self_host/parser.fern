@@ -957,24 +957,35 @@ function parse_stmt(p: Par): StmtResult {
                             || assign_op == "*=" || assign_op == "/="
                             || assign_op == "%=";
     if (is_assign || is_compound) {
-        var target: string = "";
-        match (e.expr) {
-            ExprIdent(id) => { target = id.name; },
-            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident") }; }
-        }
         p = p.advance(); // consume the assign-op token
         var av = parse_expr(p);
         p = av.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
         var rhs: Expr = av.expr;
-        if (is_compound) {
-            // `x += y` desugars to `x = x + y`. Strip the
-            // trailing `=` off the op to recover the binary
-            // operator the source intended.
-            var op: string = assign_op[0:assign_op.len() - 1];
-            rhs = e_binary(op, e_ident(target), rhs);
+        // Dispatch on the lvalue shape: bare ident → StmtAssign;
+        // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
+        // value) (an expression statement) so no new Stmt node is
+        // needed. Compound `arr[idx] += y` is not supported (rare).
+        match (e.expr) {
+            ExprIdent(id) => {
+                var rhs2: Expr = rhs;
+                if (is_compound) {
+                    // `x += y` desugars to `x = x + y`. Strip the
+                    // trailing `=` off the op to recover the operator.
+                    var op: string = assign_op[0:assign_op.len() - 1];
+                    rhs2 = e_binary(op, e_ident(id.name), rhs);
+                }
+                return StmtResult { par: p, stmt: s_assign(id.name, rhs2) };
+            },
+            ExprIndex(ix) => {
+                var sargs: Expr[] = [];
+                sargs = sargs.push(ix.array);
+                sargs = sargs.push(ix.index);
+                sargs = sargs.push(rhs);
+                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
+            },
+            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident or index") }; }
         }
-        return StmtResult { par: p, stmt: s_assign(target, rhs) };
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
     return StmtResult { par: p, stmt: s_expr(e.expr) };
