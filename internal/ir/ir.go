@@ -2242,7 +2242,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 								b.emit(Op{Kind: OpAdd})
 							}
 							b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
-							decValueOnStack(ld.typ, false)
+							// Transitive reclamation Stage C: this arm is
+							// tag-guarded (tag == vd.tag), so ld.typ is the
+							// EXACT payload type of this variant — unlike the
+							// uniform path, a type-specific recursive drop is
+							// sound here. A concrete-struct payload recurses
+							// through __drop_struct_<T> (freeing its box +
+							// nested struct fields); other payloads keep the
+							// flat one-level dec.
+							dropStructField(ld.typ)
 						}
 						b.emit(Op{Kind: OpLoadLocal, I32: slot})
 						b.emit(Op{Kind: OpConstI32, I32: vd.size})

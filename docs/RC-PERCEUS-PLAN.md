@@ -939,10 +939,17 @@ Phase 3 CANNOT start with the freelist — it must start by
      restricted to the structs actually nested inside / element-of a
      dropped value (`collectNestedDropTypes` + `collectArrayElemStructs`)
      so native backends don't carry a drop fn per declared struct.
-   - **Remaining:** enum-payload recursion (uniform unions can't use a
-     single static payload type — the variant at the shared offset
-     differs; needs tag-dispatch via `enumVariantDropPlan`) + generic-
-     enum type-arg substitution; closure-capture composites; map keys /
+     Stage C: a NON-UNIFORM enum's tag-dispatch (variant-plan) drop arm
+     is tag-guarded, so the payload type is statically exact in each
+     arm — a concrete-struct payload there recurses through
+     `__drop_struct_<T>` (freeing its box + nested fields) instead of
+     the flat dec. (The UNIFORM enum path can't: the variant at the
+     shared offset differs, so it keeps the type-agnostic flat dec.)
+     Reachable because composite-literal RHS is now free-eligible (the
+     struct-escape PR), so `var nd = Variant(Foo{…})` enums are owned.
+   - **Remaining:** uniform-union struct payloads (would need per-arm
+     tag dispatch instead of the branchless uniform path) + generic-enum
+     type-arg substitution; closure-capture composites; map keys /
      non-array map values; childless nested-struct FIELD boxes (Stage A
      left those flat); the dec-on-overwrite site (entangled — `push`'s
      copy path transfers element ownership without an inc, so routing
