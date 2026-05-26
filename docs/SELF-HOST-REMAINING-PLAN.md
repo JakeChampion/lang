@@ -17,7 +17,7 @@ self-hosted type checker; and real `std/io`, `std/hex`, `std/base64`,
 
 ---
 
-## Item 1 — ASCII i32 char methods → `std/sort` 🔧
+## Item 1 — ASCII i32 char methods → `std/sort` ✅
 
 **Blocker.** `std/sort` links against `__fn_i32__to_lower` (case-insensitive
 string compare). `std/string` additionally uses `is_digit` / `is_alpha` /
@@ -40,7 +40,7 @@ pending. ~½ PR remaining.
 
 ---
 
-## Item 2 — `std/string` + `std/array` remaining deps ⬜
+## Item 2 — `std/array` ✅ / `std/string` ⬜ (packed-u8[] mismatch)
 
 **Blockers (after Item 1).** `std/string` still needs `__memcpy` (a
 runtime byte-copy), `int.parse_int_radix`, and `i32.to_ascii_string`.
@@ -66,7 +66,7 @@ parser's type representation and `infer_expr_type`.
 
 ---
 
-## Item 3 — `std/url` + `std/json` → Map runtime ⬜
+## Item 3 — `std/url` + `std/json` → Map runtime 🔧 (core landed)
 
 **Blocker.** Both need a hash-map: `map_new`, `map_get`/`get_or`,
 `map_set`, `map_has`, `map_delete`, `map_len`, `map_keys`, `map_values`.
@@ -126,7 +126,7 @@ links once all 11 exist.
 
 ---
 
-## Item 5 — `interp.fern` → inference overhaul ⬜
+## Item 5 — `interp.fern` → inference overhaul ✅
 
 **Blocker.** The self-host `infer_expr_type` is name-based: a struct
 field read `x.f` resolves via the *first* struct declaring field `f`.
@@ -151,7 +151,7 @@ radius. Do last, with the full suite as a regression net.
 
 ---
 
-## Item 6 — `std/time` ⬜
+## Item 6 — `std/time` ✅
 
 **Status.** Uninvestigated: currently exit-137s (a parser runaway) like
 `std/string` did before the tuple-type fix.
