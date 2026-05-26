@@ -440,6 +440,51 @@ func TestAssembledSinglePrecisionTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledDataTextRunsUnderQemu is the symbol-addressing gate: a
+// program materialises the address of a .rodata constant via adrp +
+// add #:lo12:, loads the value (42), and exits with it. Wrong adrp page
+// math or rodata layout would load garbage and miss exit 42.
+func TestAssembledDataTextRunsUnderQemu(t *testing.T) {
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
+			t.Skip("qemu-aarch64 not on PATH")
+		}
+	}
+	src := "" +
+		"\t.text\n" +
+		"\tadrp x1, val\n" +
+		"\tadd x1, x1, :lo12:val\n" +
+		"\tldr x0, [x1]\n" + // x0 = *val = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n" +
+		"\t.section .rodata\n" +
+		"\t.balign 8\n" +
+		"val:\n" +
+		"\t.8byte 42\n"
+	text, rodata, err := arm64.AssembleProgram(src, elf.TextVAddr)
+	if err != nil {
+		t.Fatalf("AssembleProgram: %v", err)
+	}
+	bin := elf.StaticExecutableData(text, rodata)
+	path := filepath.Join(t.TempDir(), "data42")
+	if err := os.WriteFile(path, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = exec.Command(qemu, path).Run()
+	got := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run failed: %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != 42 {
+		t.Fatalf("exit code = %d, want 42", got)
+	}
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

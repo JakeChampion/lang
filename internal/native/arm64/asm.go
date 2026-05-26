@@ -17,6 +17,29 @@ type Assembler struct {
 	insns  []uint32
 	labels map[string]int
 	fixups []fixup
+
+	// Data section + symbol addressing (used by AssembleProgram).
+	rodata     []byte
+	syms       map[string]symbol
+	adrpFixups []symFixup
+	lo12Fixups []symFixup
+}
+
+// symbol is a named location: in .text it's an instruction index, in
+// .rodata a byte offset within the rodata blob.
+type symbol struct {
+	inText bool
+	val    int
+}
+
+// symFixup records an adrp / add-#:lo12: instruction that references a
+// symbol by name, to be resolved once section virtual addresses are
+// fixed. rd/rn hold the instruction's registers.
+type symFixup struct {
+	at    int
+	label string
+	rd    uint32
+	rn    uint32 // add-lo12 only
 }
 
 type branchKind int
@@ -34,7 +57,42 @@ type fixup struct {
 
 // NewAssembler returns an empty assembler.
 func NewAssembler() *Assembler {
-	return &Assembler{labels: map[string]int{}}
+	return &Assembler{labels: map[string]int{}, syms: map[string]symbol{}}
+}
+
+// TextLabel marks a .text symbol at the current instruction position
+// (also usable as a branch target).
+func (a *Assembler) TextLabel(name string) {
+	a.labels[name] = len(a.insns)
+	a.syms[name] = symbol{inText: true, val: len(a.insns)}
+}
+
+// RodataLabel marks a .rodata symbol at the current rodata offset.
+func (a *Assembler) RodataLabel(name string) {
+	a.syms[name] = symbol{inText: false, val: len(a.rodata)}
+}
+
+// AppendRodata appends raw bytes to the .rodata blob.
+func (a *Assembler) AppendRodata(b []byte) { a.rodata = append(a.rodata, b...) }
+
+// AlignRodata pads .rodata to a multiple of n bytes.
+func (a *Assembler) AlignRodata(n int) {
+	for n > 0 && len(a.rodata)%n != 0 {
+		a.rodata = append(a.rodata, 0)
+	}
+}
+
+// ADRPsym emits `adrp Xrd, sym` as a placeholder, resolved by
+// BytesProgram once addresses are known.
+func (a *Assembler) ADRPsym(rd uint32, sym string) {
+	a.adrpFixups = append(a.adrpFixups, symFixup{at: len(a.insns), label: sym, rd: rd})
+	a.insns = append(a.insns, ADRP(rd, 0))
+}
+
+// AddLo12 emits `add Xrd, Xrn, #:lo12:sym` as a placeholder.
+func (a *Assembler) AddLo12(rd, rn uint32, sym string) {
+	a.lo12Fixups = append(a.lo12Fixups, symFixup{at: len(a.insns), label: sym, rd: rd, rn: rn})
+	a.insns = append(a.insns, ADDimm(rd, rn, 0, false))
 }
 
 // Emit appends a fully-encoded instruction word.
@@ -105,4 +163,65 @@ func (a *Assembler) Bytes() ([]byte, error) {
 		buf = Put(buf, insn)
 	}
 	return buf, nil
+}
+
+// BytesProgram resolves branches AND symbol references (adrp / add
+// #:lo12:), laying .text at textVAddr and .rodata immediately after
+// (8-byte aligned). It returns the final .text and .rodata blobs.
+func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
+	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
+	if rem := rodataVAddr % 8; rem != 0 {
+		rodataVAddr += 8 - rem
+	}
+
+	symVAddr := func(name string) (uint64, bool) {
+		s, ok := a.syms[name]
+		if !ok {
+			return 0, false
+		}
+		if s.inText {
+			return textVAddr + uint64(s.val)*4, true
+		}
+		return rodataVAddr + uint64(s.val), true
+	}
+
+	// Branch fixups (text-relative), same as Bytes.
+	for _, f := range a.fixups {
+		target, ok := a.labels[f.label]
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: branch to undefined label %q", f.label)
+		}
+		off := uint32(target - f.at)
+		switch f.kind {
+		case branchImm26:
+			a.insns[f.at] |= off & 0x03ffffff
+		case branchImm19:
+			a.insns[f.at] |= (off & 0x7ffff) << 5
+		}
+	}
+
+	// adrp: page(sym) - page(insn), in 4 KiB units.
+	for _, f := range a.adrpFixups {
+		sv, ok := symVAddr(f.label)
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: adrp to undefined symbol %q", f.label)
+		}
+		insnVAddr := textVAddr + uint64(f.at)*4
+		pageDelta := int32(int64(sv>>12) - int64(insnVAddr>>12))
+		a.insns[f.at] = ADRP(f.rd, pageDelta)
+	}
+
+	// add #:lo12:sym → low 12 bits of the symbol address.
+	for _, f := range a.lo12Fixups {
+		sv, ok := symVAddr(f.label)
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: :lo12: of undefined symbol %q", f.label)
+		}
+		a.insns[f.at] = ADDimm(f.rd, f.rn, uint16(sv&0xfff), false)
+	}
+
+	for _, insn := range a.insns {
+		text = Put(text, insn)
+	}
+	return text, a.rodata, nil
 }

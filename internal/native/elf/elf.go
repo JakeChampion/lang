@@ -23,6 +23,30 @@ const (
 	emAArch64 = 183      // EM_AARCH64 (e_machine)
 )
 
+// TextVAddr is the virtual address at which .text begins in the
+// single-segment image (just past the ELF header + one program
+// header). The assembler needs this to resolve PC-relative symbol
+// references (adrp / :lo12:); pass it to arm64.AssembleProgram.
+const TextVAddr = baseVAddr + ehSize + phSize
+
+// StaticExecutableData wraps .text + .rodata into a runnable static
+// ELF-64 executable. Both live in a single R+X PT_LOAD (the rodata is
+// mapped executable too — harmless for this no-PIE, fixed-address
+// posture, and it keeps the loader to one segment). .rodata is placed
+// immediately after .text, 8-byte aligned, matching the layout
+// arm64.AssembleProgram assumes when it resolves adrp/:lo12: against
+// TextVAddr. Entry is the first instruction of .text.
+func StaticExecutableData(text, rodata []byte) []byte {
+	pad := (8 - len(text)%8) % 8
+	body := make([]byte, 0, len(text)+pad+len(rodata))
+	body = append(body, text...)
+	for i := 0; i < pad; i++ {
+		body = append(body, 0)
+	}
+	body = append(body, rodata...)
+	return StaticExecutable(body)
+}
+
 // StaticExecutable wraps a flat .text blob (a sequence of encoded
 // machine instructions) into a runnable static ELF-64 executable for
 // arm64 Linux. Execution begins at the first byte of text; the
