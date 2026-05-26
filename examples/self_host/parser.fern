@@ -1234,6 +1234,19 @@ function parse_type_name(p: Par): TypeNameResult {
                 if (tpk == ")") { td = td - 1; p = p.advance(); if (td == 0) { break; } continue; }
                 p = p.advance();
             }
+            // Function type `(T1, …) => R`. After the balanced param
+            // parens, a `=>` introduces the return type. Consume it
+            // and the return-type spelling, returning a coarse "fn"
+            // tag (the self-host stores types coarsely; the only thing
+            // the emitter needs is that a value of this type is a
+            // closure box). Without consuming `=> R` the arrow + return
+            // type are left on the cursor and the decl loop spins (OOM).
+            if (p.peek_punct() == "=>") {
+                p = p.advance();  // consume `=>`
+                var rr: TypeNameResult = parse_type_name(p);
+                p = rr.par;
+                return TypeNameResult { par: p, name: "fn" };
+            }
             return TypeNameResult { par: p, name: "tuple" };
         }
         return TypeNameResult { par: p, name: "" };
