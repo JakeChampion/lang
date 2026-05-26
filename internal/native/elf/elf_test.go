@@ -391,6 +391,29 @@ func TestAssembledFloatTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledSignedLoadTextRunsUnderQemu exercises ldrsb: store the
+// byte 42 to the stack and sign-extend-load it into a 64-bit register,
+// then exit with it.
+func TestAssembledSignedLoadTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tsub sp, sp, #16\n" +
+		"\tmov x0, #42\n" +
+		"\tstrb w0, [sp, #0]\n" +
+		"\tmov x0, #0\n" +
+		"\tldrsb x0, [sp, #0]\n" + // sign-extend-load 42 (positive) -> 42
+		"\tadd sp, sp, #16\n" +
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {

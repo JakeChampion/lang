@@ -211,6 +211,36 @@ func STRHimm(rt, rn, byteOffset uint32) uint32 {
 	return 0x79000000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
+// ---- Sign-extending loads (unsigned scaled offset) ----
+//
+// Each loads a narrow value and sign-extends it into the destination.
+// to64 selects the 64-bit destination (opc=10) vs the 32-bit one
+// (opc=11). byteOffset is scaled by the access size, like the plain
+// loads.
+
+// LDRSB: `ldrsb Rt, [Xn, #byteOffset]` (signed byte, scale 1).
+func LDRSB(rt, rn, byteOffset uint32, to64 bool) uint32 {
+	base := uint32(0x39C00000) // to W (opc=11)
+	if to64 {
+		base = 0x39800000 // to X (opc=10)
+	}
+	return base | ((byteOffset & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDRSH: `ldrsh Rt, [Xn, #byteOffset]` (signed halfword, scale 2).
+func LDRSH(rt, rn, byteOffset uint32, to64 bool) uint32 {
+	base := uint32(0x79C00000)
+	if to64 {
+		base = 0x79800000
+	}
+	return base | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDRSW: `ldrsw Xt, [Xn, #byteOffset]` (signed word -> 64-bit, scale 4).
+func LDRSW(rt, rn, byteOffset uint32) uint32 {
+	return 0xB9800000 | (((byteOffset / 4) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 // ---- Unscaled loads / stores (LDUR/STUR family) ----
 //
 // These carry a SIGNED 9-bit byte offset (-256..255) with no scaling,

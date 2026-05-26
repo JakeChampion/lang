@@ -153,6 +153,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmLoadStore(a, mnem, ops)
 	case "ldur", "stur", "ldurb", "sturb":
 		return asmUnscaled(a, mnem, ops)
+	case "ldrsb", "ldrsh", "ldrsw":
+		return asmLoadSigned(a, mnem, ops)
 	case "stp", "ldp":
 		return asmPair(a, mnem, ops)
 	case "b":
@@ -519,6 +521,40 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		a.Emit(LDRHimm(rt, m.base, off))
 	case "strh":
 		a.Emit(STRHimm(rt, m.base, off))
+	}
+	return nil
+}
+
+// asmLoadSigned handles the sign-extending loads ldrsb/ldrsh/ldrsw.
+// The destination register width (Wt vs Xt) selects the 32- vs 64-bit
+// sign-extension; ldrsw is always 64-bit.
+func asmLoadSigned(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	m, err := parseMem(ops[1])
+	if err != nil {
+		return err
+	}
+	if m.pre {
+		return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
+	}
+	if m.off < 0 {
+		return fmt.Errorf("%s negative offset not supported yet", mnem)
+	}
+	to64 := !is32(ops[0])
+	off := uint32(m.off)
+	switch mnem {
+	case "ldrsb":
+		a.Emit(LDRSB(rt, m.base, off, to64))
+	case "ldrsh":
+		a.Emit(LDRSH(rt, m.base, off, to64))
+	case "ldrsw":
+		a.Emit(LDRSW(rt, m.base, off))
 	}
 	return nil
 }
