@@ -966,6 +966,69 @@ function main(): i32 {
     return (keep[0].inner.vals[1] - 2) + (keep.len() - 1) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation Stage B — array of structs (each
+		// holding an array), built + discarded every iteration. The
+		// eligible array drop now recurses through __drop_arr_struct_Item
+		// → __drop_struct_Item per element, freeing each element box AND
+		// its array buffer, where the pre-Stage-B __fern_drop_arr_ptr
+		// only flat-dec'd the element pointers (leaking the boxes). A
+		// per-iteration over-release of a now-freed element box would
+		// accumulate on the underflow counter. sum_{i=0..99}((i+1)+(i+2))
+		// = 2*4950 + 300 = 10200.
+		name: "arr_of_struct_deep_churn_free",
+		src: `struct Item { tags: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        acc = acc + items[0].tags[1] + items[1].tags[0];
+        i = i + 1;
+    }
+    return (acc - 10200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage B — array of CHILDLESS structs:
+		// the element struct has no rc fields, so __drop_struct_P just
+		// frees the element box on its last reference (the loop now
+		// reclaims element boxes that drop_arr_ptr's flat dec leaked).
+		// sum_{i=0..99}(i+1) = 5050.
+		name: "arr_of_childless_struct_churn_free",
+		src: `struct P { x: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var ps: P[] = [P { x: i }, P { x: i + 1 }];
+        acc = acc + ps[1].x;
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Transitive reclamation Stage B — array of structs that
+		// ESCAPES (returned from mk): the array must not be freed at the
+		// constructor's exit, so its element boxes survive. The churn
+		// loop forces same-size reuse that would corrupt a strayed read.
+		name: "arr_of_struct_escapes_return",
+		src: `struct Item { tags: i32[] }
+function mk(n: i32): Item[] {
+    var xs: Item[] = [Item { tags: [n, n + 1] }, Item { tags: [n + 2] }];
+    return xs;
+}
+function main(): i32 {
+    var keep: Item[] = mk(7);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (keep[0].tags[1] - 8) + (keep[1].tags[0] - 9) + (keep.len() - 2) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
