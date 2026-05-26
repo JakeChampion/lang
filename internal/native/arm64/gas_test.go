@@ -60,6 +60,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tadd x0, x1, #1\n\tadd x2, x3, #1, lsl #12\n\tsub x4, x5, x6\n\tadd x0, x1, x2\n",
 		"logical_mul_shift": "" +
 			"\tand x0, x1, x2\n\torr x0, x1, x2\n\teor x0, x1, x2\n\tmul x0, x1, x2\n\tlsl x0, x1, x2\n\tlsr x0, x1, x2\n\tasr x0, x1, x2\n",
+		"shift_imm_and_extend": "" +
+			"\tlsl x0, x1, #4\n\tlsr x0, x1, #4\n\tasr x0, x1, #4\n\tlsl x2, x3, #1\n\tsxtb x0, w1\n\tsxth x0, w1\n\tsxtw x0, w1\n",
 		"compare": "" +
 			"\tcmp x1, x2\n\tcmp x1, #5\n",
 		"memory": "" +

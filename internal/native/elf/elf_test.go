@@ -286,6 +286,24 @@ func TestAssembledStackTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledShiftImmTextRunsUnderQemu exercises the immediate-shift
+// alias end-to-end: 84 >> 1 = 42, assembled from text and run.
+func TestAssembledShiftImmTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x0, #84\n" +
+		"\tlsr x0, x0, #1\n" + // 84 >> 1 = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
