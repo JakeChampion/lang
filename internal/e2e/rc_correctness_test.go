@@ -1136,6 +1136,45 @@ function main(): i32 {
     return (got - 6) + (keep.len() - 1) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — CHILDLESS nested-struct field box.
+		// Outer holds a Pt with no rc-tracked fields; dropFnNameFor now
+		// routes it through __drop_struct_Pt (is_unique → box_free)
+		// instead of the flat dec that leaked the Pt box. Churned so a
+		// per-iteration over-release would accumulate. sum_{i=0..99}(i+1)
+		// = 5050.
+		name: "childless_nested_struct_field_free",
+		src: `struct Pt { x: i32, y: i32 }
+struct Outer { inner: Pt, tag: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Outer = Outer { inner: Pt { x: i, y: i + 1 }, tag: i };
+        acc = acc + o.inner.y;
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Childless struct field that ESCAPES (Outer returned): the Pt
+		// box must NOT be freed at the constructor's exit; the returned
+		// Outer still references it. Churn forces same-size reuse.
+		name: "childless_nested_struct_escapes",
+		src: `struct Pt { x: i32, y: i32 }
+struct Outer { inner: Pt, tag: i32 }
+function mk(n: i32): Outer { return Outer { inner: Pt { x: n, y: n + 1 }, tag: n }; }
+function main(): i32 {
+    var o: Outer = mk(42);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (o.inner.y - 43) + (o.tag - 42) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

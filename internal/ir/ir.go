@@ -2504,36 +2504,24 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int) *Func {
 	}
 }
 
-// structHasRcField reports whether a struct declaration has any
-// rc-tracked (pointer-shaped) field — the precondition for emitting a
-// recursive __drop_struct_<Name> function.
-func structHasRcField(sd *ast.StructDecl) bool {
-	for _, f := range sd.Fields {
-		if arrElemIsRcTracked(f.Type) {
-			return true
-		}
-	}
-	return false
-}
-
 // dropFnNameFor returns the generated recursive-drop function name for
-// a NESTED value of type t, plus whether one exists. Only a CONCRETE
-// user struct with rc-tracked fields routes to __drop_struct_<Name>:
+// a NESTED value of type t, plus whether one exists. Any CONCRETE user
+// struct (rc-field-carrying OR childless) routes to __drop_struct_<Name>:
 // its static type exactly matches the runtime value, so the generated
-// fn can safely read its fields. Everything else — arrays, closures,
-// the Map / runtime handle types, childless structs, and ALL enums —
-// returns ("", false) so the caller falls back to a flat one-level dec.
-// Enums are deliberately excluded: a union's variants carry different
-// payload types at the same offset, so a type-specific recursive drop
-// would misread the box for the non-recorded variant. Tag-dispatched
-// enum-payload recursion is a later slice.
+// fn can safely read its fields, and even a childless struct's box is
+// reclaimed (genStructDropFn just is_unique-gates and frees it). Map /
+// runtime handle types, arrays, closures, and ALL enums return
+// ("", false) so the caller falls back to a flat one-level dec. Enums
+// are deliberately excluded: a union's variants carry different payload
+// types at the same offset, so a type-specific recursive drop would
+// misread the box for the non-recorded variant (the eligible
+// variant-plan arm handles that via tag dispatch instead).
 func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
 	v, ok := t.(ast.StructType)
 	if !ok || v.Name == "Map" {
 		return "", false
 	}
-	sd, ok := info.Structs[v.Name]
-	if !ok || !structHasRcField(sd) {
+	if _, ok := info.Structs[v.Name]; !ok {
 		return "", false
 	}
 	return "__drop_struct_" + v.Name, true
@@ -2645,12 +2633,12 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info) []Op {
 
 // genStructDropFn builds the recursive __drop_struct_<Name> function:
 // at the value's last reference (rc==1) it drops each rc-tracked field
-// — recursing into nested struct/enum fields via their own drop fns —
-// then returns the box to the freelist; otherwise it just dec's. The
-// box was alloc'd as `structFieldLayout size + 8` rc header, so
-// __fern_box_free frees base = data-8, size+8 (structFieldLayout's
-// size already accounts for the header). Callers must only reach this
-// for structs with at least one rc-tracked field (structHasRcField).
+// — recursing into nested struct fields via their own drop fns — then
+// returns the box to the freelist; otherwise it just dec's. The box was
+// alloc'd as `structFieldLayout size + 8` rc header, so __fern_box_free
+// frees base = data-8, size+8 (structFieldLayout's size already
+// accounts for the header). Works for a childless struct too: the
+// field loop is empty, so it just is_unique-gates and frees the box.
 func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int) *Func {
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
