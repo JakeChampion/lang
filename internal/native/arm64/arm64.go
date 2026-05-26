@@ -247,6 +247,41 @@ func RET(rn uint32) uint32 {
 	return 0xD65F0000 | ((rn & regMask) << 5)
 }
 
+// BR encodes `br Xn` — unconditional indirect branch to the address
+// in Xn (no link).
+//
+// Encoding: 1101011 0000 11111 0000 00 Rn 00000 → base 0xD61F0000 | Rn<<5.
+func BR(rn uint32) uint32 {
+	return 0xD61F0000 | ((rn & regMask) << 5)
+}
+
+// BLR encodes `blr Xn` — indirect call: branch to Xn, link in x30.
+//
+// Encoding: base 0xD63F0000 | Rn<<5.
+func BLR(rn uint32) uint32 {
+	return 0xD63F0000 | ((rn & regMask) << 5)
+}
+
+// Condition codes for B.cond (the low 4 bits of the conditional-branch
+// encoding). The assembler's Bcond takes one of these.
+const (
+	CondEQ uint32 = 0  // equal (Z==1)
+	CondNE uint32 = 1  // not equal
+	CondHS uint32 = 2  // unsigned >= (also CS)
+	CondLO uint32 = 3  // unsigned <  (also CC)
+	CondMI uint32 = 4  // negative
+	CondPL uint32 = 5  // non-negative
+	CondVS uint32 = 6  // overflow set
+	CondVC uint32 = 7  // overflow clear
+	CondHI uint32 = 8  // unsigned >
+	CondLS uint32 = 9  // unsigned <=
+	CondGE uint32 = 10 // signed >=
+	CondLT uint32 = 11 // signed <
+	CondGT uint32 = 12 // signed >
+	CondLE uint32 = 13 // signed <=
+	CondAL uint32 = 14 // always
+)
+
 // Put appends insn to buf as 4 little-endian bytes.
 func Put(buf []byte, insn uint32) []byte {
 	return append(buf, byte(insn), byte(insn>>8), byte(insn>>16), byte(insn>>24))
