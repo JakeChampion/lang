@@ -72,6 +72,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",
 		"frame_pair": "" +
 			"\tstp x29, x30, [sp, #-16]!\n\tldp x29, x30, [sp], #16\n",
+		"unscaled": "" +
+			"\tldur x0, [x1, #-8]\n\tstur x0, [x1, #-8]\n\tldur x2, [x3, #15]\n\tstur x4, [x5]\n\tldurb w0, [x1, #-1]\n\tsturb w0, [x1, #-1]\n",
 		"branch_regs": "" +
 			"\tbr x0\n\tblr x1\n\tret\n\tsvc #0\n",
 		"labels_and_branches": "" +
