@@ -1610,3 +1610,20 @@ function build(): i32 {
 		t.Errorf("scalar pair-form Option[i32] field must not mint a deep-drop fn:\n%s", p)
 	}
 }
+
+// TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
+// heap box at the last reference: the exit sweep must emit an
+// rc==1-gated __fern_box_free (tuples previously leaked their box
+// entirely — no rc header, never swept).
+func TestLowerTupleBoxReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var t: (i32, i32) = (1, 2);
+    return t.0 + t.1;
+}`, 8)
+	if !callsDirect(p, "build", "__fern_box_free") {
+		t.Errorf("expected owned tuple local to reclaim its box via __fern_box_free:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_rc_is_unique") {
+		t.Errorf("expected tuple box reclamation to be rc==1 gated:\n%s", p)
+	}
+}

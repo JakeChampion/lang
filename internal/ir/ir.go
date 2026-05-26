@@ -1839,6 +1839,12 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// alias, stored into a container, passed as a retained arg)
 			// is tainted and falls back to the plain dec.
 			elig[v.Name] = true
+		case ast.TupleType:
+			// An owned tuple returns its box to the freelist at the
+			// last reference (emitDec → __fern_box_free). Same
+			// borrow-aware taint as the others; box reclamation only
+			// (elements keep their own rc, freed where they're owned).
+			elig[v.Name] = true
 		}
 	}
 	return elig
@@ -1852,6 +1858,13 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.ArrayLit:
 		return false
 	case *ast.StructLit:
+		return false
+	case *ast.TupleLit:
+		// A freshly-built tuple (rc=1) owns its box, like an array /
+		// struct literal — not an alias of a borrowed value, so the
+		// tuple local is eligible to free its box at the last reference.
+		// Escapes are still caught: a returned tuple takes move-on-return
+		// and one stored into a container is escape-tainted at the sink.
 		return false
 	case *ast.MakeClosure:
 		// A freshly-built closure (rc=1), like an array literal — it
@@ -1899,7 +1912,7 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 			continue
 		}
 		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType:
+		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
 			return true
 		}
 		return false
@@ -2118,6 +2131,32 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		// Tuple reclamation: an OWNED tuple local returns its box to the
+		// freelist on the last reference (rc==1), mirroring the struct
+		// box path. The box was alloc'd as `tupleElemLayout size + 8` rc
+		// header, so __fern_box_free frees base = data-8, size+8. Only
+		// the BOX is reclaimed here — elements keep their own rc and are
+		// freed wherever they're owned (a tuple deep-drop of element
+		// buffers is a later slice; flat-dec'ing them here would strand
+		// references that destructuring / field reads hand out without
+		// an inc). Ineligible (borrowed / escaped) tuples and flag-off
+		// builds fall through to the plain box dec below.
+		if tt, ok := t.(ast.TupleType); ok && ast.RcFreeEnabled && eligible {
+			_, size := tupleElemLayout(tt.Elems, b.ptrW)
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpConstI32, I32: size})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpElse})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
 			return
 		}
 		// Phase 3 map reclamation: an OWNED Map local returns its buf
@@ -2450,6 +2489,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// (immortal sentinel on natives, low-address short-circuit
 		// on wasm). All pointer-shaped; rc_inc/dec are safe.
 		if _, isFunc := t.(*ast.FuncType); isFunc {
+			return true
+		}
+		// Tuple values are always pointer-shaped headered boxes
+		// (TupleLit lowering); rc_inc/dec + box_free apply.
+		if _, isTuple := t.(ast.TupleType); isTuple {
 			return true
 		}
 		return false
@@ -3264,6 +3308,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		}
 		// Phase 1e-closures-ii: zero FuncType (closure) slots too.
 		if _, isFunc := t.(*ast.FuncType); isFunc {
+			return true
+		}
+		// Zero tuple slots too: the exit-dec null guard then fires on
+		// a never-initialised tuple local (conditional declaration).
+		if _, isTuple := t.(ast.TupleType); isTuple {
 			return true
 		}
 		return false
@@ -5681,19 +5730,32 @@ func (b *builder) expr(e ast.Expr) error {
 		// `offs[i]` with a width that matches the element's
 		// type (so pointer-typed elements get pointer-width
 		// slots on arm64).
+		//
+		// Tuple reclamation: like StructLit, the box carries an
+		// 8-byte rc header before `data` (rc=1 at [base+0]); the
+		// user-visible pointer is `base + rcHeaderBytes`, so
+		// __fern_rc_inc/dec and __fern_box_free work uniformly.
+		// Element offsets shift by the header. Field access /
+		// destructure read `value + offs[i]` against this data
+		// pointer unchanged (the header sits below it).
 		elemTypes := make([]ast.Type, len(n.Elems))
 		for i, elem := range n.Elems {
 			elemTypes[i] = b.exprType(elem)
 		}
 		offs, size := tupleElemLayout(elemTypes, b.ptrW)
-		b.emit(Op{Kind: OpConstI32, I32: size})
+		const rcHeaderBytes = 8
+		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_tup_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+		// rc = 1 at [base + 0].
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: 1})
+		b.emit(Op{Kind: OpStore})
 		for i, elem := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-			b.emit(Op{Kind: OpConstI32, I32: offs[i]})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[i]})
 			b.emit(Op{Kind: OpAdd})
 			if err := b.expr(elem); err != nil {
 				return err
@@ -5706,7 +5768,10 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
+		// Push the user-visible data pointer (= base + rc header).
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+		b.emit(Op{Kind: OpAdd})
 	case *ast.StructLit:
 		sd, ok := b.info.Structs[n.TypeName]
 		if !ok {
@@ -8246,6 +8311,15 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// inc's its rc=1 heap header; static cells short-circuit
 	// (sentinel on natives, low-address guard on wasm).
 	if _, isFunc := t.(*ast.FuncType); isFunc {
+		return true
+	}
+	// Tuple reclamation: aliasing a tuple-typed ident / field / index
+	// inc's its box (rc=1 header from TupleLit lowering). Balances the
+	// box dec the exit sweep emits for tuple locals, and — critically —
+	// keeps the box alive when a tuple flows into a container that
+	// outlives the source local (no inc would let the source's box_free
+	// strand the container's reference).
+	if _, isTuple := t.(ast.TupleType); isTuple {
 		return true
 	}
 	return false

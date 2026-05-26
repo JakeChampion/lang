@@ -319,6 +319,103 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
+		// whole heap box entirely (tuples carried no rc header and were
+		// never swept). It now carries an rc=1 header and returns the
+		// box to the freelist at the owning local's last reference. 200
+		// build/free cycles churn the box size class; a corrupted reuse
+		// or over-release drifts the checksum / underflow count.
+		// mk(seed) = 2*seed + 1; sum_{0..199}(2k+1) = 2*19900 + 200.
+		name: "tuple_scalar_box_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var t: (i32, i32) = (seed, seed + 1);
+    return t.0 + t.1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Destructure temp box reclamation: `var (a, b) = (i, i+1)`
+		// builds a tuple box, extracts the elements, and the box is pure
+		// overhead afterward. The temp is an owned tuple local, so its
+		// box frees at scope exit — extracting a/b (scalar here) doesn't
+		// alias the box. a + b = 2i + 1; sum_{0..199} = 40000.
+		name: "tuple_destructure_box_churn_free",
+		src: `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var (a, b) = (i, i + 1);
+        acc = acc + a + b;
+        i = i + 1;
+    }
+    return (acc - 40000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Returned tuple: mk builds an owned tuple box and returns it.
+		// Move-on-return (isOwnedRcLocal now covers tuples) must skip the
+		// exit dec so mk's box_free does NOT free the box out from under
+		// the caller. Churn forces same-size reuse that would corrupt a
+		// strayed read. t.0 + t.1 = 7 + 8 = 15.
+		name: "tuple_returned_escapes",
+		src: `function mk(n: i32): (i32, i32) { return (n, n + 1); }
+function main(): i32 {
+    var t: (i32, i32) = mk(7);
+    var c: i32 = 0;
+    while (c < 200) { var junk: i32[] = [c, c]; c = c + 1; }
+    return (t.0 + t.1 - 15) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Tuple-to-tuple alias, both live: `var t2 = t1` inc's the box
+		// (needsRcIncOnAlias), so the two exit decs free it exactly once
+		// (the first sees rc==2 and just dec's; the second sees rc==1 and
+		// box_free's). Without the alias inc this double-frees.
+		// t1.0 + t2.1 = 2*seed + 1; sum_{0..199} = 40000.
+		name: "tuple_alias_box_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var t1: (i32, i32) = (seed, seed + 1);
+    var t2: (i32, i32) = t1;
+    return t1.0 + t2.1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Destructure-of-arrays that ESCAPES: `var (a, b) = (...)` extracts
+		// element ARRAY pointers from the tuple box WITHOUT an inc, then
+		// the box frees at mk's exit. Box reclamation is box-ONLY (never
+		// deep-frees element buffers), so the returned `a` buffer stays
+		// valid after the box is freed — the precise guarantee that lets
+		// destructuring hand out element pointers safely. A deep-free of
+		// elements here would strand `a` (UAF / corrupt checksum / reuse).
+		// a = [10, 20]; r[1] = 20; sum_{0..99} 20 = 2000.
+		name: "tuple_destructure_array_escapes",
+		src: `function mk(): i32[] {
+    var (a, b) = ([10, 20], [30, 40, 50]);
+    return a;
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var r: i32[] = mk();
+        got = got + r[1];
+        k = k + 1;
+    }
+    return (got - 2000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Map with i32 keys and array values (rc-tracked values).
 		name: "map_array_values",
 		src: `function main(): i32 {
