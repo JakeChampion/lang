@@ -414,6 +414,32 @@ func TestAssembledSignedLoadTextRunsUnderQemu(t *testing.T) {
 	})
 }
 
+// TestAssembledSinglePrecisionTextRunsUnderQemu exercises the
+// single-precision path + ucvtf/fcvtzu: 84.0f / 2.0f = 42, via
+// unsigned int->double->single arithmetic and back.
+func TestAssembledSinglePrecisionTextRunsUnderQemu(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tmov x1, #84\n" +
+		"\tucvtf d0, x1\n" + // d0 = 84.0
+		"\tfcvt s0, d0\n" + // s0 = 84.0f
+		"\tmov x2, #2\n" +
+		"\tucvtf d1, x2\n" +
+		"\tfcvt s1, d1\n" + // s1 = 2.0f
+		"\tfdiv s2, s0, s1\n" + // s2 = 42.0f
+		"\tfcvt d2, s2\n" + // d2 = 42.0
+		"\tfcvtzu x0, d2\n" + // x0 = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n"
+	runExpectExit(t, 42, func() []byte {
+		code, err := arm64.Assemble(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return code
+	})
+}
+
 // runExpectExit builds an ELF from the instructions returned by gen,
 // runs it under qemu-aarch64, and asserts the process exit code.
 func runExpectExit(t *testing.T, want int, gen func() []byte) {
