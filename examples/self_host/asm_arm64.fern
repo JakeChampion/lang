@@ -1523,6 +1523,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "__alloc_u8") { return "array_i32"; }
                     if (id.name == "string_from_bytes") { return "string"; }
                     if (id.name == "random_bytes") { return "string"; }
+                    if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
+                            || id.name == "__floor_f64" || id.name == "__ceil_f64"
+                            || id.name == "__trunc_f64" || id.name == "__round_f64") {
+                        return "f64";
+                    }
                     if (id.name == "str_split") { return "array_string"; }
                     // Local-callee path: when `f()` invokes a
                     // local var that was bound to a lambda, its
@@ -3497,6 +3502,28 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    bl __fern_read_file\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
+                return s;
+            }
+            // f64 math intrinsics — the cheap subset that lowers to a
+            // single FP instruction. The -nostdlib native backends
+            // can't link libm, so std/float's `__*_f64` primitives are
+            // implemented directly. Operand + result are f64 bit
+            // patterns on the stack (in x0). `__round_f64` is round-
+            // half-away-from-zero (Go's math.Round) = frinta.
+            if ((name == "__abs_f64" || name == "__sqrt_f64" || name == "__floor_f64"
+                    || name == "__ceil_f64" || name == "__trunc_f64" || name == "__round_f64")
+                    && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    fmov d0, x0\n");
+                if (name == "__abs_f64") { s = s.write("    fabs d0, d0\n"); }
+                else if (name == "__sqrt_f64") { s = s.write("    fsqrt d0, d0\n"); }
+                else if (name == "__floor_f64") { s = s.write("    frintm d0, d0\n"); }
+                else if (name == "__ceil_f64") { s = s.write("    frintp d0, d0\n"); }
+                else if (name == "__trunc_f64") { s = s.write("    frintz d0, d0\n"); }
+                else { s = s.write("    frinta d0, d0\n"); }
+                s = s.write("    fmov x0, d0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
             // __alloc_u8(n) — fresh zeroed byte array of n elements

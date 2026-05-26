@@ -451,6 +451,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "string_from_bytes") { return "string"; }
                     if (id.name == "random_bytes") { return "string"; }
                     if (id.name == "map_new") { return "map"; }
+                    if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
+                            || id.name == "__floor_f64" || id.name == "__ceil_f64"
+                            || id.name == "__trunc_f64" || id.name == "__round_f64") {
+                        return "f64";
+                    }
                     if (id.name == "str_split") { return "array_string"; }
                     // Local-callee path: when `f()` invokes a
                     // local var that was bound to a lambda, its
@@ -3737,6 +3742,52 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    call __fern_read_file\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_heap();
+                return s;
+            }
+            // f64 math intrinsics — the cheap subset that lowers to a
+            // single SSE instruction. The -nostdlib native backends
+            // can't link libm, so std/float's `__*_f64` primitives are
+            // implemented directly. Operand + result are f64 bit
+            // patterns on the stack (in %rax). roundsd needs SSE4.1
+            // (universal on x86-64). `__round_f64` is round-half-away-
+            // from-zero (Go's math.Round) = trunc(x + copysign(0.5, x)).
+            if ((name == "__abs_f64" || name == "__sqrt_f64" || name == "__floor_f64"
+                    || name == "__ceil_f64" || name == "__trunc_f64" || name == "__round_f64")
+                    && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rax\n");
+                if (name == "__abs_f64") {
+                    s = s.write("    movabsq $0x7fffffffffffffff, %rcx\n");
+                    s = s.write("    andq %rcx, %rax\n");
+                } else if (name == "__sqrt_f64") {
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    sqrtsd %xmm0, %xmm0\n");
+                    s = s.write("    movq %xmm0, %rax\n");
+                } else if (name == "__floor_f64") {
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    roundsd $1, %xmm0, %xmm0\n");
+                    s = s.write("    movq %xmm0, %rax\n");
+                } else if (name == "__ceil_f64") {
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    roundsd $2, %xmm0, %xmm0\n");
+                    s = s.write("    movq %xmm0, %rax\n");
+                } else if (name == "__trunc_f64") {
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    roundsd $3, %xmm0, %xmm0\n");
+                    s = s.write("    movq %xmm0, %rax\n");
+                } else {
+                    s = s.write("    movq %rax, %rcx\n");
+                    s = s.write("    movabsq $0x8000000000000000, %rdx\n");
+                    s = s.write("    andq %rdx, %rcx\n");            // sign bit of x
+                    s = s.write("    movabsq $0x3fe0000000000000, %rdx\n"); // 0.5
+                    s = s.write("    orq %rdx, %rcx\n");             // copysign(0.5, x)
+                    s = s.write("    movq %rcx, %xmm1\n");
+                    s = s.write("    movq %rax, %xmm0\n");
+                    s = s.write("    addsd %xmm1, %xmm0\n");
+                    s = s.write("    roundsd $3, %xmm0, %xmm0\n");
+                    s = s.write("    movq %xmm0, %rax\n");
+                }
+                s = s.write("    pushq %rax\n");
                 return s;
             }
             // __alloc_u8(n) — fresh zeroed byte array of n elements
