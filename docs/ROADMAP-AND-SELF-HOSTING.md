@@ -184,6 +184,33 @@ Reader / Option lowering on both backends (so the fixpoint compiles
 the real `std/io`). The original "minimal fix … ~1-2 weeks" /
 "6-9 weeks" estimates below are superseded by this result.
 
+### ✅ UPDATE: real CLI toolchain + import-driven file loading
+
+The self-host emitters have since grown the surface a real compiler
+driver needs, all gated by `internal/e2e/self_host_*_test.go` and
+cross-checked against the Go backend (both x86-64 and arm64):
+
+- **argv + file I/O**: `args(): string[]`, `arg_at` / `args_count`,
+  `read_file(path): Result[string, IoError]` (`openat` + `lseek`-sized
+  read + `Ok`/`Err` match), `write` (no-newline output).
+- **integer ops**: `expr as Type` casts (mask / sign-extend per width),
+  bitwise + shift operators `& | ^ << >>` (added to the parser
+  precedence table — they were silently dropped before).
+- **byte arrays**: `__alloc_u8(n)`, `string_from_bytes(arr)`, and array
+  element assignment `arr[idx] = val`. Together these compile the real
+  `std/hex` and `std/base64` (`TestSelfHostBytesX86_64`).
+
+On top of those, `examples/self_host/asm_load_run.fern` is an
+**import-driven, file-loading driver**: given an entry `.fern` path it
+follows `import "./x"` declarations to sibling files on disk
+(`read_file` + the parser's `Import` list), loads them transitively,
+and compiles the merged set — no stdin marker-bundle. It reaches its
+own **file-driven self-hosting fixpoint** (`TestSelfHostLoadFixpointX86_64`):
+the Go-built loader compiles its own source resolving
+lexer + parser + flatten + asm from disk → gen1, and gen1 → gen2
+byte-identical. `examples/self_host/asm_file_run.fern` is the simpler
+single-file CLI shape (compile one file by path).
+
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
 Originally the audit's main blocker. Landed in PR #390
