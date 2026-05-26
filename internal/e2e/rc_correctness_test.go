@@ -489,6 +489,54 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map with STRUCT values (valKind 4). Previously struct map values
+		// leaked entirely — not retained on set/get, not dropped. They now
+		// route through the generated __drop_map_struct_<Item> loop
+		// (deep-dropping each value via __drop_struct_Item → its box + xs
+		// buffer) at the map's last reference, with set/get retains
+		// balancing it. Churned 200x: a leak grows the heap, a miscount
+		// drifts the underflow detector. it.xs[1] = seed+1;
+		// sum_{0..199}(k+1) = 19900 + 200 = 20100.
+		name: "map_struct_values_churn_free",
+		src: `struct Item { xs: i32[] }
+function mk(seed: i32): i32 {
+    var m: Map[i32, Item] = map_new(8);
+    m = m.set(seed, Item { xs: [seed, seed + 1] });
+    m = m.set(seed + 1, Item { xs: [seed + 2] });
+    var it: Item = m.get_or(seed, Item { xs: [0] });
+    return it.xs[1];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Struct map value that ESCAPES: a value read out via get_or is
+		// retained (inc) so it survives the map's deep-drop at the
+		// helper's exit. The returned Item must stay valid + uncorrupted
+		// across 200 churn iterations. it.xs[1] = c+1; sum = 20100.
+		name: "map_struct_value_escapes",
+		src: `struct Item { xs: i32[] }
+function mk(n: i32): Item {
+    var m: Map[i32, Item] = map_new(4);
+    m = m.set(0, Item { xs: [n, n + 1] });
+    return m.get_or(0, Item { xs: [0] });
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var c: i32 = 0;
+    while (c < 200) {
+        var it: Item = mk(c);
+        got = got + it.xs[1];
+        c = c + 1;
+    }
+    return (got - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a map value: an owned array built inside a
 		// helper escapes via `m.set` (retained without an inc under
 		// the borrow model), so it must NOT be freed at the helper's

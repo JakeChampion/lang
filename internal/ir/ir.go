@@ -781,6 +781,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
+					strings.HasPrefix(op.Str, "__drop_map_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
@@ -798,6 +799,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if v := strings.TrimPrefix(name, "__drop_map_struct_"); v != name {
+				// Struct-valued map drop loop; its body calls
+				// __drop_struct_<V>, which this worklist then generates.
+				if _, ok := info.Structs[v]; !ok {
+					continue // routing only names value structs it verified exist
+				}
+				fn = genMapStructDropFn(v, ptrW)
 			} else if en := strings.TrimPrefix(name, "__drop_enum_"); en != name {
 				ed, ok := info.Enums[en]
 				if !ok {
@@ -1885,6 +1893,22 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.FieldAccess, *ast.Index, *ast.SliceExpr:
 		return true
 	case *ast.Call:
+		// Map builtins return the MAP HANDLE, which aliases only the
+		// receiver (cow) — never the stored key/value args. The generic
+		// any-arg-tainted rule below would taint every map handle (the
+		// cap/key/value args are routinely tainted — params, literals via
+		// the default case), leaving map locals permanently ineligible and
+		// their buf/handle + values unreclaimed. The rc inc-on-set /
+		// dec-on-drop balance makes freeing an owned map's storage safe.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			switch id.Name {
+			case "map_new":
+				return false // fresh owned handle
+			case "__method_Map_set", "__method_Map_clear":
+				// Aliases the receiver (Args[0]) only.
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			}
+		}
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.rhsTainted(fa.Target, tainted) {
 			return true // method receiver is tainted
 		}
@@ -2189,8 +2213,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// derived) maps and flag-off builds fall through to the plain
 		// box dec.
 		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
+			// Struct-valued maps deep-drop each value via the generated
+			// __drop_map_struct_<V> loop; array-valued maps use the generic
+			// __map_drop_values (kind 2/3). Both free the buf + handle via
+			// the trailing __fern_map_drop.
+			dropValues := "__map_drop_values"
+			if name, ok := mapStructValDropName(st, b.info); ok {
+				dropValues = name
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
@@ -2925,6 +2957,107 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 		Name:         "__drop_arr_struct_" + elemName,
 		Params:       []ast.Param{{Name: "__as", Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
+// mapStructValDropName returns the __drop_map_struct_<V> function name for
+// a Map whose VALUE type is a concrete user struct, plus whether one
+// applies. The map's drop routes to this generated loop (deep-dropping
+// each live struct value via __drop_struct_<V>) instead of the generic
+// __map_drop_values, which only reclaims array values. The value type is
+// statically exact (Map[K, V]'s second type arg), so a type-specific
+// per-value drop is safe. Non-struct values (arrays / scalars / string /
+// enum / tuple / nested Map) return ("", false).
+func mapStructValDropName(st ast.StructType, info *checker.Info) (string, bool) {
+	if st.Name != "Map" || len(st.Args) < 2 {
+		return "", false
+	}
+	v, ok := st.Args[1].(ast.StructType)
+	if !ok || v.Name == "Map" {
+		return "", false
+	}
+	if _, isUser := info.Structs[v.Name]; !isUser {
+		return "", false
+	}
+	return "__drop_map_struct_" + v.Name, true
+}
+
+// genMapStructDropFn builds __drop_map_struct_<V>(m): on the map's last
+// reference (rc==1, guarded by __fern_rc_is_unique on the handle) it
+// walks the value column and deep-drops each live struct value through
+// __drop_struct_<V> (which is_unique-gates per value, so a value shared
+// via an outstanding get/values borrow only dec's). The buf + handle are
+// freed separately by the trailing __fern_map_drop the caller emits.
+// Mirrors __map_drop_values' iteration: cap@buf+0, len@buf+4, entries at
+// buf+16+cap*4, value at entry+ptrW with entryStride = 2*ptrW. Returns m
+// so the caller's OpDrop pops a real value. Slots: 0=m (param),
+// 1=buf, 2=len, 3=i, 4=entriesBase (scratch).
+func genMapStructDropFn(valName string, ptrW int) *Func {
+	pw := int32(ptrW)
+	entryStride := 2 * pw
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		// buf = mem[m]
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpStoreLocal, I32: 1},
+		// len = mem[buf+4]
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpAdd},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		// entriesBase = buf + 16 + cap*4   (cap = mem[buf])
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 16},
+		{Kind: OpAdd},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoad},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 4},
+		// i = 0
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 3},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		// if i >= len: break (depth 1).
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// __drop_struct_<V>(mem[entriesBase + i*entryStride + ptrW]); drop.
+		{Kind: OpLoadLocal, I32: 4},
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpConstI32, I32: entryStride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpConstI32, I32: pw},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpCallDirect, Str: "__drop_struct_" + valName, I32: 1},
+		{Kind: OpDrop},
+		// i = i + 1; continue.
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 3},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         "__drop_map_struct_" + valName,
+		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
 	}
@@ -5736,7 +5869,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
-		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW)})
+		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
@@ -7152,12 +7285,23 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 // overwrite-dec in __map_set_impl; readers mask the low byte
 // (kind != 0 == pointer-shaped) since map_new stores the packed
 // mapValTag (kind | stride<<8), not the bare kind.
-func mapValKindTag(t ast.Type) int32 {
+func mapValKindTag(t ast.Type, info *checker.Info) int32 {
 	if at, ok := t.(ast.ArrayType); ok {
 		if arrElemIsRcTracked(at.Elem) {
 			return 3
 		}
 		return 2
+	}
+	// Concrete USER struct values (4): deep-droppable via the generated
+	// __drop_map_struct_<T> at the map's last reference, and retained on
+	// set / get / values / iter through the same `kind >= 2` machinery as
+	// arrays. Runtime handle structs (Map / Reader / Writer / MapIter)
+	// have no StructDecl — they fall through to the non-reclaimed pointer
+	// kind (1), as do string / enum / tuple / slice values.
+	if st, ok := t.(ast.StructType); ok && st.Name != "Map" {
+		if _, isUser := info.Structs[st.Name]; isUser {
+			return 4
+		}
 	}
 	if ast.IsPointerType(t) {
 		return 1
@@ -7173,8 +7317,8 @@ func mapValKindTag(t ast.Type) int32 {
 // stride = tag >> 8) so the runtime can arr_dec / drop_arr_ptr a
 // value without the IR threading the stride through every set /
 // drop call. Non-array kinds (0/1) carry no stride.
-func mapValTag(t ast.Type, ptrW int) int32 {
-	kind := mapValKindTag(t)
+func mapValTag(t ast.Type, ptrW int, info *checker.Info) int32 {
+	kind := mapValKindTag(t, info)
 	if kind >= 2 {
 		if at, ok := t.(ast.ArrayType); ok {
 			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
@@ -7636,7 +7780,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-reads the same pointer. Runs before the wide/generic
 	// dispatch so both set lowerings are covered uniformly.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 &&
-		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1]) >= 2 &&
+		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info) >= 2 &&
 		needsRcIncOnAlias(n.Args[2], b) {
 		if err := b.expr(n.Args[2]); err != nil {
 			return err
@@ -7727,7 +7871,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
-			valKind = mapValTag(n.TypeArgs[1], b.ptrW)
+			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info)
 		}
 		b.emit(Op{Kind: OpConstI32, I32: keyKind})
 		b.emit(Op{Kind: OpConstI32, I32: valKind})

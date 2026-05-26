@@ -1648,3 +1648,25 @@ func TestLowerTupleDestructureArrayReclaim(t *testing.T) {
 		t.Errorf("expected destructured array bindings to free their buffers via __fern_arr_dec:\n%s", p)
 	}
 }
+
+// TestLowerMapStructValueReclaim verifies a Map[K, ConcreteStruct] routes
+// its drop through the generated __drop_map_struct_<V> loop, which
+// deep-drops each value via __drop_struct_<V> — rather than the generic
+// __map_drop_values (which only reclaims array values).
+func TestLowerMapStructValueReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Item { xs: i32[] }
+function build(): i32 {
+    var m: Map[i32, Item] = map_new(8);
+    m = m.set(1, Item { xs: [1, 2] });
+    return 0;
+}`, 8)
+	if !funcExists(p, "__drop_map_struct_Item") {
+		t.Fatalf("expected generated __drop_map_struct_Item:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_map_struct_Item") {
+		t.Errorf("expected map local drop to route through __drop_map_struct_Item:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_map_struct_Item", "__drop_struct_Item") {
+		t.Errorf("expected __drop_map_struct_Item to deep-drop values via __drop_struct_Item:\n%s", p)
+	}
+}

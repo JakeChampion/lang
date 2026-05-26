@@ -251,7 +251,7 @@ function __map_val_stride(buf: usize): i32 {
 // non-array values.
 function __map_dec_value(buf: usize, v: usize) {
     var vk: i32 = __map_val_kind(buf);
-    if (vk < 2) { return; }
+    if (vk != 2 && vk != 3) { return; }
     var stride: i32 = __map_val_stride(buf);
     if (vk == 3) {
         __fern_drop_arr_ptr(v, stride);
@@ -563,7 +563,13 @@ pub function __map_drop_values(m: usize): usize {
     if (m < 65536) { return m; }
     if (__load_i32(m - 8) != 1) { return m; }
     var buf: usize = __load_ptr(m);
-    if (__map_val_kind(buf) < 2) { return m; }
+    var vk0: i32 = __map_val_kind(buf);
+    // Only array values (2/3) are reclaimed here. Struct values (kind 4)
+    // are deep-dropped by the IR-generated __drop_map_struct_<T> at the
+    // map LOCAL's drop; a struct-valued map reached as a field / capture
+    // routes through here and must NOT misread its struct pointers as
+    // arrays — skip. Scalar (0) / other-pointer (1) leave the column.
+    if (vk0 != 2 && vk0 != 3) { return m; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
