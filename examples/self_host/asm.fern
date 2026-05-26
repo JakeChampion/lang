@@ -550,6 +550,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                         if (fa.field == "chars") { return "array_string"; }
                         if (fa.field == "lines") { return "array_string"; }
                         if (fa.field == "bytes") { return "array_i32"; }
+                        if (fa.field == "as_bytes") { return "array_i32"; }
                         if (fa.field == "reverse") { return "string"; }
                         if (fa.field == "first_byte" || fa.field == "last_byte") { return "i32"; }
                         if (fa.field == "contains") { return "bool"; }
@@ -3435,6 +3436,19 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.mark_str_bytes();
                             return s;
                         }
+                        // `s.as_bytes()` — in std/string this is the
+                        // zero-copy companion to bytes(); the self-host's
+                        // slot-array representation has no separate slice
+                        // view, so it returns the same fresh u8[] as
+                        // bytes() (correct, just not zero-copy).
+                        if (fa.field == "as_bytes" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdi\n");
+                            s = s.write("    call __fern_str_bytes\n");
+                            s = s.write("    pushq %rax\n");
+                            s = s.mark_str_bytes();
+                            return s;
+                        }
                         if (fa.field == "reverse" && c.args.len() == 0) {
                             s = emit_expr(fa.obj, s);
                             s = s.write("    popq %rdi\n");
@@ -4038,6 +4052,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    call __fern_alloc_u8\n");
                 s = s.write("    pushq %rax\n");
                 s = s.mark_heap();
+                return s;
+            }
+            // __memcpy(dst, src, n) — raw byte copy (rep movsb). Args
+            // are usize pointers + a byte count; returns the dst as a
+            // dummy. std/string only reaches this from its bytes()
+            // body, which the self-host dispatches to __fern_str_bytes
+            // instead, so this exists mainly so std/string links.
+            if (name == "__memcpy" && c.args.len() == 3) {
+                s = emit_expr(c.args[0], s);   // dst
+                s = emit_expr(c.args[1], s);   // src
+                s = emit_expr(c.args[2], s);   // n
+                s = s.write("    popq %rcx\n");        // n
+                s = s.write("    popq %rsi\n");        // src
+                s = s.write("    popq %rdi\n");        // dst
+                s = s.write("    rep movsb\n");
+                s = s.write("    pushq $0\n");
                 return s;
             }
             // string_from_bytes(arr) — pack each element's low byte

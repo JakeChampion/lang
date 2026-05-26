@@ -40,7 +40,20 @@ pending. ~½ PR remaining.
 
 ---
 
-## Item 2 — `std/array` ✅ / `std/string` ⬜ (packed-u8[] mismatch)
+## Item 2 — `std/array` ✅ / `std/string` ✅
+
+**Status (std/string).** Links and works on the self-host. The feared
+packed-u8[] mismatch turned out narrow: `std/string` only references
+the packed representation from its `bytes()` body (`__memcpy(out,
+s.as_bytes(), n)`), but the self-host dispatches `s.bytes()` to its own
+slot-array `__fern_str_bytes` builtin, leaving that body uncalled. So
+the fix was just two linkable shims: `s.as_bytes()` → `__fern_str_bytes`
+(same fresh u8[]; no zero-copy slice in the slot model) and `__memcpy`
+→ `rep movsb` (x86) / byte loop (arm64). Verified by
+`self_host_string_test.go` (index_of, trim, to_upper/lower, contains,
+starts_with, replace, repeat, split) cross-checked vs the Go backend.
+
+
 
 **Blockers (after Item 1).** `std/string` still needs `__memcpy` (a
 runtime byte-copy), `int.parse_int_radix`, and `i32.to_ascii_string`.
@@ -84,9 +97,9 @@ lowers to a synthesized struct with a `__ev` marker field; see
 `self_host_enum_test.go`); and (2) Map iteration — `m.iter()` →
 `MapIter[K,V]` with `.has_next()`/`.key()`/`.value()`/`.advance()` over
 the parallel keys[]/values[] arrays (`self_host_map_iter_test.go`).
-Remaining `std/json` blockers: the auto-injected `JsonValue` enum (the
-self-host compiler does no prelude injection) and `std/string`
-(packed-u8).
+Remaining `std/json` blocker: the auto-injected `JsonValue` enum (the
+self-host compiler does no prelude injection). `std/string` now links
+(see Item 2).
 
 **Blocker.** Both need a hash-map: `map_new`, `map_get`/`get_or`,
 `map_set`, `map_has`, `map_delete`, `map_len`, `map_keys`, `map_values`.
