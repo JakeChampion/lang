@@ -947,14 +947,17 @@ Phase 3 CANNOT start with the freelist — it must start by
      shared offset differs, so it keeps the type-agnostic flat dec.)
      Reachable because composite-literal RHS is now free-eligible (the
      struct-escape PR), so `var nd = Variant(Foo{…})` enums are owned.
+     A follow-up widened `dropFnNameFor` to ALL concrete user structs
+     (not just rc-field-carrying ones), so a CHILDLESS nested-struct
+     field / payload now frees its box too (genStructDropFn's field
+     loop is just empty → is_unique + box_free).
    - **Remaining:** uniform-union struct payloads (would need per-arm
      tag dispatch instead of the branchless uniform path) + generic-enum
      type-arg substitution; closure-capture composites; map keys /
-     non-array map values; childless nested-struct FIELD boxes (Stage A
-     left those flat); the dec-on-overwrite site (entangled — `push`'s
-     copy path transfers element ownership without an inc, so routing
-     array overwrite through the drop would double-release; needs a
-     per-method ownership audit or a self-push exclusion first).
+     non-array map values; the dec-on-overwrite site (entangled —
+     `push`'s copy path transfers element ownership without an inc, so
+     routing array overwrite through the drop would double-release;
+     needs a per-method ownership audit or a self-push exclusion first).
    - **rc-correctness corpus — LANDED (the step-4 go/no-go net).**
      `Test{X86_64,Arm64,WASM}RcCorrectnessCorpus` (`rc_correctness_test.go`)
      run a shared table of ~12 nested-value programs — array of
