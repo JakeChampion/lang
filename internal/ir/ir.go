@@ -2247,7 +2247,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// instantiations (Option[i32], pair-form, no box) keep the
 				// generic decl and bail to the flat dec as before.
 				if len(et.Args) > 0 {
-					if sub := substituteEnumDecl(ed, et.Args); enumHasStructPayload(sub, b.info) {
+					if sub := substituteEnumDecl(ed, et.Args); enumHasPointerPayload(sub) {
 						ed = sub
 					}
 				}
@@ -2261,7 +2261,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// where each arm knows its exact type and recurses through
 				// __drop_struct_<T> (Stage C). Uniform stays for array /
 				// other payloads, which flat-dec under both paths anyway.
-				if loadsOk && sizeOk && !enumHasStructPayload(ed, b.info) {
+				if loadsOk && sizeOk && !enumHasPointerPayload(ed) {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -2672,15 +2672,21 @@ func appendMapDrop(ops []Op) []Op {
 		Op{Kind: OpDrop})
 }
 
-// enumHasStructPayload reports whether any variant of ed carries a
-// concrete-struct payload that dropFnNameFor would deep-drop. Used to
-// steer such enums away from the branchless uniform drop path (which
-// can only flat-dec a payload) toward the tag-dispatch variant-plan
-// path, where each arm's exact payload type is known.
-func enumHasStructPayload(ed *ast.EnumDecl, info *checker.Info) bool {
+// enumHasPointerPayload reports whether any variant of ed carries a
+// POINTER-shaped payload (array / struct / enum / closure / Map — all
+// heap-boxed). This is the condition for "the eligible enum drop should
+// take the tag-dispatch variant-plan path rather than the branchless
+// uniform path": every such payload is deep-droppable in a tag-guarded
+// arm (where its exact type is known), where the uniform path could
+// only flat-dec it (and a union's variants differ at the shared
+// offset). It's also the gate for adopting a generic instantiation's
+// substituted decl — a pointer payload proves a heap-boxed (non-pair-
+// form) instantiation, so the variant-plan's box_free is valid; scalar
+// payloads (pair-form, no box) read false and stay on the flat path.
+func enumHasPointerPayload(ed *ast.EnumDecl) bool {
 	for _, v := range ed.Variants {
 		for _, pt := range v.Payloads {
-			if _, ok := dropFnNameFor(pt, info); ok {
+			if arrElemIsRcTracked(pt) {
 				return true
 			}
 		}

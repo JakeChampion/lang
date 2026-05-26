@@ -960,11 +960,13 @@ Phase 3 CANNOT start with the freelist — it must start by
      __drop_struct_ / __drop_arr_struct_) instead of flat-dec'ing them;
      the thunk only runs when every capture was inc'd at MakeEnv, so it
      stays balanced. Enum / nested-closure captures keep the flat dec.
-     A further follow-up steers an eligible enum WITH a concrete-struct
-     payload away from the branchless uniform path (which can only
-     flat-dec a single static payload type) to the tag-dispatch
-     variant-plan path (`enumHasStructPayload`), so uniform unions like
-     `Value = VInt | VArr` deep-drop each variant's exact struct box.
+     A further follow-up steers an eligible enum with any POINTER-shaped
+     payload (struct / array / enum / closure / Map — `enumHasPointerPayload`)
+     away from the branchless uniform path (which can only flat-dec a
+     single static payload type) to the tag-dispatch variant-plan path,
+     so uniform unions like `Value = VInt | VArr` deep-drop each
+     variant's exact struct box, and array-payload enums (incl. generic
+     `Option[i32[]]`) free their payload buffer per tag-guarded arm.
      A further follow-up reclaims a Map-typed nested field / payload /
      capture (the `struct Req { headers: Map[..] }` shape): dropStructField
      / appendChildDrop / the closure thunk route it through
