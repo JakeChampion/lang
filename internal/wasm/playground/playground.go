@@ -74,6 +74,34 @@ func CompileCoreWasm(src string) ([]byte, error) {
 	})
 }
 
+// CompileHttpHandlerCore compiles a Fern `handle(req: HttpRequest,
+// plat: Platform): HttpResponse` program to the *raw* preview-2 core
+// module that backs the wasi:http/incoming-handler component — the
+// same bytes httpHandlerComponent composes, but *before* the
+// component wrap. The module exports `__http_entry` (core signature
+// `(i32 incoming-request, i32 response-outparam) -> ()`) plus
+// `memory` and `cabi_realloc`, and imports the wasi:http/types +
+// wasi:io/streams canonical-ABI functions.
+//
+// A browser can instantiate this directly against a hand-written
+// host (web/wasi-http-shim.js) that mints request/response resource
+// handles and marshals the Canonical ABI — no jco, no Component
+// Model transpile. The playground's "Run (wasm)" path uses it for
+// the wasi-http world: synthesise an incoming-request from a
+// user-supplied request, call `__http_entry`, read back the
+// response the guest committed via response-outparam.set.
+func CompileHttpHandlerCore(src string) ([]byte, error) {
+	prog, info, err := frontEnd(src)
+	if err != nil {
+		return nil, err
+	}
+	return wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		HttpHandler:        true,
+		Preview2WASI:       true,
+		ForceMemorySection: true,
+	})
+}
+
 // frontEnd runs the shared parse → constfold → check → monomorph
 // pipeline. Errors are formatted with diag so the playground shows
 // the same caret diagnostics it does for Run / View assembly.

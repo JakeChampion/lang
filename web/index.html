@@ -295,6 +295,66 @@
     textarea, pre, #srcMount { height: 320px; }
   }
 
+  /* ---- HTTP request editor (wasi:http world) ---- */
+  .http-req {
+    max-width: 1400px;
+    margin: 0 0 1em;
+    padding: 0.7em 0.9em;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+  }
+  .http-req[hidden] { display: none; }
+  .http-req h2 {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+    margin: 0 0 0.5em;
+  }
+  .http-req-line {
+    display: flex;
+    gap: 0.5em;
+    margin-bottom: 0.5em;
+  }
+  .http-req-line #httpPath { flex: 1; }
+  .http-req input,
+  .http-req textarea {
+    font-family: "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--fg-primary);
+    padding: 0.4em 0.6em;
+    box-sizing: border-box;
+    width: 100%;
+    resize: vertical;
+  }
+  .http-req-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7em;
+  }
+  .http-req-fields label {
+    display: block;
+    font-size: 0.8em;
+    color: var(--fg-secondary);
+  }
+  .http-req-fields label span { color: var(--fg-tertiary); }
+  .http-req-fields textarea { margin-top: 0.25em; }
+  @media (max-width: 800px) {
+    .http-req-fields { grid-template-columns: 1fr; }
+  }
+  /* Response header list rendered into the output meta line. */
+  .resp-headers {
+    margin: 0.4em 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .resp-headers li { color: var(--fg-secondary); }
+  .resp-headers .hname { color: var(--fg-primary); font-weight: 600; }
+
   /* ---- Assembly view ----
    *
    * The "View assembly" toggle reveals a third pane below the
@@ -525,12 +585,41 @@
     <option value="result">Result error handling</option>
     <option value="interp">lex+parse arithmetic</option>
     <option value="format">format(fmt, args)</option>
+    <option value="http">http handler</option>
   </select>
   <span class="status" id="status">loading runtime…</span>
   <button id="themeToggle" class="btn-theme" type="button"
           title="Switch theme" aria-label="Switch theme">
     <span id="themeGlyph">🌙</span>
   </button>
+</div>
+
+<!-- Request editor for the wasi:http world. Hidden unless the world
+     select is "wasi-http"; "Run (wasm)" then sends this request
+     through the compiled handler via web/wasi-http-shim.js. -->
+<div class="http-req" id="httpReq" hidden>
+  <h2>request</h2>
+  <div class="http-req-line">
+    <select id="httpMethod" title="HTTP method">
+      <option>GET</option>
+      <option>POST</option>
+      <option>PUT</option>
+      <option>DELETE</option>
+      <option>PATCH</option>
+    </select>
+    <input id="httpPath" type="text" value="/hello" spellcheck="false"
+           aria-label="request path" placeholder="/path">
+  </div>
+  <div class="http-req-fields">
+    <label>headers <span>(one <code>Name: value</code> per line)</span>
+      <textarea id="httpHeaders" spellcheck="false" rows="3"
+                placeholder="x-test: playground"></textarea>
+    </label>
+    <label>body
+      <textarea id="httpBody" spellcheck="false" rows="3"
+                placeholder="(request body)"></textarea>
+    </label>
+  </div>
 </div>
 
 <div class="grid">
@@ -826,6 +915,22 @@ function main(): i32 {
 
     return 0;
 }`,
+  http: `// An HTTP handler. Pick the "wasi:http/incoming-handler" world,
+// then hit "Run (wasm)" to send the request on the right through
+// the compiled handler — in-browser, no server. Routes on path +
+// method, reads the body, and sets a response header.
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/hello") {
+        var h: HeaderMap = header_map_new();
+        h.set("x-served-by", "fern");
+        return HttpResponse { status: 200, body: "hello, world", headers: h };
+    }
+    if (req.method == "POST") {
+        // Echo the request body back.
+        return http_response_ok(req.body_string());
+    }
+    return http_response_text(404, "not found");
+}`,
 };
 
 const outEl = document.getElementById("out");
@@ -843,6 +948,11 @@ const themeGlyph = document.getElementById("themeGlyph");
 const targetSelectEl = document.getElementById("targetSelect");
 const buildComponentBtn = document.getElementById("buildComponent");
 const worldSelectEl = document.getElementById("worldSelect");
+const httpReqEl = document.getElementById("httpReq");
+const httpMethodEl = document.getElementById("httpMethod");
+const httpPathEl = document.getElementById("httpPath");
+const httpHeadersEl = document.getElementById("httpHeaders");
+const httpBodyEl = document.getElementById("httpBody");
 const viewAsmBtn = document.getElementById("viewAsm");
 const asmPanel = document.getElementById("asmPanel");
 const asmOutEl = document.getElementById("asmOut");
@@ -980,6 +1090,12 @@ exampleEl.addEventListener("change", () => {
   const v = exampleEl.value;
   if (v && examples[v]) {
     setSrc(examples[v]);
+    // The http example only makes sense in the wasi-http world;
+    // every other example is a cli/run program. Flip the world
+    // select (+ request editor) to match so "Run (wasm)" does the
+    // right thing without the user having to also change the world.
+    worldSelectEl.value = v === "http" ? "wasi-http" : "wasm";
+    syncHttpReqVisibility();
     outEl.textContent = "";
     metaEl.textContent = "";
     // Clear the hash so the example is the "owner" of the
@@ -1067,25 +1183,89 @@ runBtn.addEventListener("click", runOnce);
 // program reaches for an op the binary emitter doesn't handle yet.
 // `runCoreWasm` is imported statically near the CodeMirror imports
 // below (the binding is hoisted, so referencing it here is fine).
+// Parse the headers textarea ("Name: value" per line) into the
+// [[name, value], ...] shape the http shim wants. Blank lines and
+// lines without a colon are skipped.
+function parseHeaderLines(text) {
+  const out = [];
+  for (const line of text.split("\n")) {
+    const i = line.indexOf(":");
+    if (i < 0) continue;
+    const name = line.slice(0, i).trim();
+    if (!name) continue;
+    out.push([name, line.slice(i + 1).trim()]);
+  }
+  return out;
+}
+
+// Render an HTTP response (status + headers + body) into the output
+// + meta panes. escapeHtml keeps server-controlled header text inert.
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+function renderHttpResponse(resp) {
+  outEl.textContent = resp.body || "(empty response body)";
+  const ok = resp.status >= 200 && resp.status < 400;
+  const cls = ok ? "exit-ok" : "exit-err";
+  let html =
+    '<span class="exit-label">compiled to wasm · ran in-browser · HTTP </span>' +
+    '<span class="' + cls + '">' + resp.status + "</span>";
+  if (resp.headers && resp.headers.length) {
+    html += '<ul class="resp-headers">';
+    for (const [n, v] of resp.headers) {
+      html +=
+        '<li><span class="hname">' + escapeHtml(n) + "</span>: " +
+        escapeHtml(v) + "</li>";
+    }
+    html += "</ul>";
+  }
+  metaEl.innerHTML = html;
+}
+
+// "Run (wasm)" — world-aware. For the cli/run world it compiles a
+// core command module and runs it through web/wasi-shim.js; for the
+// wasi-http world it compiles the handler core module and drives one
+// request (from the request editor) through web/wasi-http-shim.js.
+// Both paths run the real compiled backend in-browser, no jco.
 function runWasmOnce() {
-  if (typeof globalThis.fernCompileCoreWasm !== "function") {
+  const httpWorld = worldSelectEl.value === "wasi-http";
+  const compileFn = httpWorld
+    ? globalThis.fernCompileHttpHandlerCore
+    : globalThis.fernCompileCoreWasm;
+  if (typeof compileFn !== "function") {
     outEl.textContent = "(runtime not ready)";
     return;
   }
   runWasmBtn.disabled = true;
   runWasmBtn.textContent = "Running…";
-  outEl.textContent = "compiling to wasm…";
+  outEl.textContent = httpWorld
+    ? "compiling handler to wasm…"
+    : "compiling to wasm…";
   metaEl.textContent = "";
   // setTimeout(0) lets the disabled state + "compiling…" paint before
-  // the synchronous fernCompileCoreWasm call blocks the UI thread.
+  // the synchronous compile call blocks the UI thread.
   setTimeout(async () => {
     try {
-      const result = globalThis.fernCompileCoreWasm(getSrc());
+      const result = compileFn(getSrc());
       if (result.error) {
         outEl.textContent = "[compile error]\n" + result.error;
         return;
       }
-      const run = await runCoreWasm(b64ToBytes(result.wasm));
+      const bytes = b64ToBytes(result.wasm);
+      if (httpWorld) {
+        const resp = await runHttpHandler(bytes, {
+          method: httpMethodEl.value,
+          path: httpPathEl.value || "/",
+          headers: parseHeaderLines(httpHeadersEl.value),
+          body: httpBodyEl.value,
+        });
+        renderHttpResponse(resp);
+        return;
+      }
+      const run = await runCoreWasm(bytes);
       let body = run.stdout || "";
       if (run.stderr) {
         body += (body ? "\n" : "") + "[stderr]\n" + run.stderr;
@@ -1096,7 +1276,11 @@ function runWasmOnce() {
         '<span class="exit-label">compiled to wasm · ran in-browser · exit </span>' +
         '<span class="' + cls + '">' + run.exit + "</span>";
     } catch (e) {
-      outEl.textContent = "JS error: " + e;
+      // A handler that does something the host can't honour (e.g.
+      // hits an unimplemented WASI call, or trips the canonical-ABI
+      // bounds checks) lands here — show it rather than failing
+      // silently.
+      outEl.textContent = "[handler error]\n" + e;
       metaEl.textContent = "";
     } finally {
       runWasmBtn.disabled = false;
@@ -1106,6 +1290,13 @@ function runWasmOnce() {
 }
 
 runWasmBtn.addEventListener("click", runWasmOnce);
+
+// Show the request editor only for the wasi:http world.
+function syncHttpReqVisibility() {
+  httpReqEl.hidden = worldSelectEl.value !== "wasi-http";
+}
+worldSelectEl.addEventListener("change", syncHttpReqVisibility);
+syncHttpReqVisibility();
 
 // ---- Build a WebAssembly Component ----
 //
@@ -1413,9 +1604,11 @@ import {bracketMatching, indentOnInput} from "https://esm.sh/@codemirror/languag
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "https://esm.sh/@codemirror/autocomplete@6";
 import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
 import {oneDark} from "https://esm.sh/@codemirror/theme-one-dark@6";
-// Local (same-origin) WASI preview-1 host for the "Run (wasm)"
-// button. No CDN — see web/wasi-shim.js.
+// Local (same-origin) WASI hosts for the "Run (wasm)" button. No
+// CDN — see web/wasi-shim.js (cli/run) and web/wasi-http-shim.js
+// (wasi:http/incoming-handler).
 import {runCoreWasm} from "./wasi-shim.js";
+import {runHttpHandler} from "./wasi-http-shim.js";
 
 // editorView is declared earlier in this script (above the
 // theme-bootstrap call) so applyTheme() can safely reference it.

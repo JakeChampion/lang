@@ -1389,6 +1389,105 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2HttpHandlerResponseHeaders pins the wasi:http
+// wrapper's response-header marshalling: a handler that builds a
+// HeaderMap and `.set`s custom headers must have them surface on the
+// wire. Regression guard for the bug where the wrapper read the
+// user's `string[]` headers at the wrong (length-prefixed) offsets
+// and passed SSO-inline header strings straight to
+// `fields.append` — both produced an out-of-bounds trap (500). The
+// short value "fern" exercises the inline-SSO path; "text/plain"
+// (>7 bytes) exercises the heap-string path.
+func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "router.fern")
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var h: HeaderMap = header_map_new();
+    h.set("x-served-by", "fern");
+    h.set("content-type", "text/plain");
+    return HttpResponse { status: 201, body: "ok", headers: h };
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "router.component.wasm")
+	emit := exec.Command(bin, "-target", "wasi-http", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp.StatusCode != 201 {
+		t.Errorf("status = %d; want 201\nstderr:\n%s", resp.StatusCode, serr.String())
+	}
+	if got := resp.Header.Get("x-served-by"); got != "fern" {
+		t.Errorf("x-served-by = %q; want %q", got, "fern")
+	}
+	if got := resp.Header.Get("content-type"); got != "text/plain" {
+		t.Errorf("content-type = %q; want %q", got, "text/plain")
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "ok" {
+		t.Errorf("body = %q; want %q", string(body), "ok")
+	}
+}
+
 // TestWasmPreview2HttpHandlerLoggingAdapterFree composes an adapter-free
 // wasi:http handler that also print()s — exercising TCP/http + CLI-stream
 // mixing. ComposeHttpHandler surfaces wasi:cli/stdout.get-stdout and
