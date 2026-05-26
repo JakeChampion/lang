@@ -473,10 +473,10 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
-                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign")) {
+                    if (rt == "i32" && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper")) {
                         return "i32";
                     }
-                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative")) {
+                    if (rt == "i32" && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
                         return "bool";
                     }
                     if (fa.field == "len"
@@ -2794,6 +2794,120 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    movq $0, %rax\n");
                             s = s.write("    setl %al\n");
                             s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        // ASCII byte-classification + case methods
+                        // (mirror std/i32). A range check `lo<=b<=hi`
+                        // lowers to `subq lo; cmpq (hi-lo); setbe`
+                        // (unsigned); the case ops use cmovbe.
+                        if (fa.field == "is_digit" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    subq $48, %rax\n");
+                            s = s.write("    cmpq $9, %rax\n");
+                            s = s.write("    setbe %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_lower" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    subq $97, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_upper" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    subq $65, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if ((fa.field == "is_alpha" || fa.field == "is_letter") && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdx\n");          // b
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $65, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %cl\n");          // upper?
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $97, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %al\n");          // lower?
+                            s = s.write("    orb %cl, %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_alnum" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdx\n");          // b
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $48, %rax\n");
+                            s = s.write("    cmpq $9, %rax\n");
+                            s = s.write("    setbe %cl\n");          // digit?
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $65, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %sil\n");         // upper?
+                            s = s.write("    orb %sil, %cl\n");
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $97, %rax\n");
+                            s = s.write("    cmpq $25, %rax\n");
+                            s = s.write("    setbe %al\n");          // lower?
+                            s = s.write("    orb %cl, %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "is_hex_digit" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rdx\n");          // b
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $48, %rax\n");
+                            s = s.write("    cmpq $9, %rax\n");
+                            s = s.write("    setbe %cl\n");          // 0-9?
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $65, %rax\n");
+                            s = s.write("    cmpq $5, %rax\n");
+                            s = s.write("    setbe %sil\n");         // A-F?
+                            s = s.write("    orb %sil, %cl\n");
+                            s = s.write("    movq %rdx, %rax\n");
+                            s = s.write("    subq $97, %rax\n");
+                            s = s.write("    cmpq $5, %rax\n");
+                            s = s.write("    setbe %al\n");          // a-f?
+                            s = s.write("    orb %cl, %al\n");
+                            s = s.write("    movzbq %al, %rax\n");
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "to_lower" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    movq %rax, %rcx\n");
+                            s = s.write("    subq $65, %rcx\n");     // b-65
+                            s = s.write("    cmpq $25, %rcx\n");     // uppercase?
+                            s = s.write("    leaq 32(%rax), %rdx\n");
+                            s = s.write("    cmovbe %rdx, %rax\n");  // → b+32
+                            s = s.write("    pushq %rax\n");
+                            return s;
+                        }
+                        if (fa.field == "to_upper" && c.args.len() == 0) {
+                            s = emit_expr(fa.obj, s);
+                            s = s.write("    popq %rax\n");
+                            s = s.write("    movq %rax, %rcx\n");
+                            s = s.write("    subq $97, %rcx\n");     // b-97
+                            s = s.write("    cmpq $25, %rcx\n");     // lowercase?
+                            s = s.write("    leaq -32(%rax), %rdx\n");
+                            s = s.write("    cmovbe %rdx, %rax\n");  // → b-32
                             s = s.write("    pushq %rax\n");
                             return s;
                         }
