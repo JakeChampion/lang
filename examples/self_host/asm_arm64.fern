@@ -1664,6 +1664,16 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "keys") {
+                        if (map_key_is_i32(rt)) { return "array_i32"; }
+                        return "array_string";
+                    }
+                    if (is_map(rt) && fa.field == "values") {
+                        var vt: string = map_value_part(rt);
+                        if (vt == "i32") { return "array_i32"; }
+                        if (vt == "string") { return "array_string"; }
+                        return "array";
+                    }
                     if (is_map(rt) && fa.field == "iter") {
                         return "mapiter:" + map_value_part(rt);
                     }
@@ -2782,6 +2792,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_heap();
                         s = s.mark_str_eq();
                         s = s.mark_arr_push();
+                        return s;
+                    }
+                    // m.keys() / m.values() — see asm.fern; the box holds
+                    // the parallel arrays at offset 0/8.
+                    if (is_map(prim_recv) && fa.field == "keys" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x0, [x0]\n");        // keys arr
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        return s;
+                    }
+                    if (is_map(prim_recv) && fa.field == "values" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    ldr x0, [sp], #16\n");
+                        s = s.write("    ldr x0, [x0, #8]\n");    // values arr
+                        s = s.write("    str x0, [sp, #-16]!\n");
                         return s;
                     }
                     // Map iteration — mirror of asm.fern. Iterator box
