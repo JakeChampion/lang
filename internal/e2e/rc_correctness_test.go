@@ -416,6 +416,47 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Destructure of an ALIASED tuple local: `var (a, b) = t` copies
+		// t's box pointer into the destructure temp. Both t and the temp
+		// are owned tuple locals that box_free at exit, so the temp store
+		// must inc the box — else the two frees double-free it (a
+		// nondeterministic heap corruption / OOB). The underflow detector
+		// + churn catch the missing inc. a + b = 2*seed + 1; sum = 40000.
+		name: "tuple_alias_destructure_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var t: (i32, i32) = (seed, seed + 1);
+    var (a, b) = t;
+    return a + b;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Nested-tuple destructure: `var (a, b) = t; var (c, d) = b` where
+		// b is an inner tuple extracted from t. Each destructure temp
+		// aliases a distinct box (t's outer, b's inner), so each needs its
+		// own alias inc; a missing inc double-frees the outer or inner box
+		// (the TestWASMTupleNestedTuple OOB regression). Churned to surface
+		// freelist corruption. a + c + d = 3*seed + 3; sum_{0..199} = 60300.
+		name: "tuple_nested_destructure_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var t: (i32, (i32, i32)) = (seed, (seed + 1, seed + 2));
+    var (a, b) = t;
+    var (c, d) = b;
+    return a + c + d;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 60300) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Map with i32 keys and array values (rc-tracked values).
 		name: "map_array_values",
 		src: `function main(): i32 {

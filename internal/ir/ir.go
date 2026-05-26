@@ -4454,6 +4454,18 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if err := b.expr(n.Init); err != nil {
 			return err
 		}
+		// The temp is an rc-tracked tuple local (swept at scope exit).
+		// When Init ALIASES an existing tuple (a bare ident / field /
+		// index load — `var (a, b) = t`), the temp co-owns that box, so
+		// bump the rc: otherwise the temp's exit box_free and the
+		// source's would both free the same box (double free), or — for
+		// a borrowed tuple PARAM — the temp would free the caller's box
+		// (UAF). A fresh Init (TupleLit / call result) isn't alias-shaped
+		// and reads false, so the temp owns the sole reference and frees
+		// it normally. Mirrors the Var-binding alias inc.
+		if needsRcIncOnAlias(n.Init, b) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
 		// Recover the tuple element types from the synthetic
 		// temp so we can pick the right per-element load op +
