@@ -834,6 +834,32 @@ function parse_stmt(p: Par): StmtResult {
     }
     if (kw == "if") {
         p = p.advance();
+        // `if let PAT = EXPR { then } else { else }` desugars to a
+        // `match (EXPR) { PAT => { then }, _ => { else } }` — the
+        // pattern arm plus a wildcard arm for the else (empty when
+        // there's no else). Parsed before the `(` check since if-let
+        // has no parenthesised condition.
+        if (p.peek_keyword() == "let") {
+            p = p.advance();  // consume `let`
+            var ilpat: PatternResult = parse_pattern(p);
+            p = ilpat.par;
+            if (p.peek_punct() == "=") { p = p.advance(); }
+            var ilscrut: ExprResult = parse_expr(p);
+            p = ilscrut.par;
+            var ilthen: BlockResult = parse_block(p);
+            p = ilthen.par;
+            var ilelse: Stmt[] = [];
+            if (p.peek_keyword() == "else") {
+                p = p.advance();
+                var ileb: BlockResult = parse_block(p);
+                p = ileb.par;
+                ilelse = ileb.body;
+            }
+            var ilarms: MatchArm[] = [];
+            ilarms = ilarms.push(MatchArm { pattern: ilpat.pattern, body: ilthen.body });
+            ilarms = ilarms.push(MatchArm { pattern: p_wildcard(), body: ilelse });
+            return StmtResult { par: p, stmt: s_match(ilscrut.expr, ilarms) };
+        }
         if (p.peek_punct() != "(") {
             return StmtResult { par: p, stmt: s_unknown("missing ( in if") };
         }
