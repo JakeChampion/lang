@@ -239,7 +239,9 @@ planned order:
 - ✅ **`if let`** pattern sugar — `if let PAT = E { … } else { … }`
   desugars in the parser to `match (E) { PAT => …, _ => … }`
   (`self_host_if_let_test.go`).
-- ⬜ **`switch` / `case`.**
+- ✅ **`switch` / `case`** — desugars in the parser to a nested
+  if/else-if chain (multi-value cases OR their `==` comparisons; no
+  fall-through) (`self_host_switch_test.go`).
 - ⬜ **i32-keyed maps** (the Map runtime is currently string-keyed only).
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
