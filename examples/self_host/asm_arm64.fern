@@ -1453,6 +1453,8 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "args_count") { return "i32"; }
                     if (id.name == "arg_at") { return "string"; }
                     if (id.name == "args") { return "array_string"; }
+                    if (id.name == "__alloc_u8") { return "array_i32"; }
+                    if (id.name == "string_from_bytes") { return "string"; }
                     if (id.name == "str_split") { return "array_string"; }
                     // Local-callee path: when `f()` invokes a
                     // local var that was bound to a lambda, its
@@ -3188,6 +3190,41 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    bl __fern_read_file\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
+                return s;
+            }
+            // __alloc_u8(n) — fresh zeroed byte array of n elements
+            // (8-byte slots, cap header).
+            if (name == "__alloc_u8" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_alloc_u8\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // string_from_bytes(arr) — pack each element's low byte
+            // into a fresh string.
+            if (name == "string_from_bytes" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_string_from_bytes\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // __set_index(arr, idx, val) — array element assignment
+            // (desugar of `arr[idx] = val`). Pushes a dummy result.
+            if (name == "__set_index" && c.args.len() == 3) {
+                s = emit_expr(c.args[0], s);   // arr
+                s = emit_expr(c.args[1], s);   // idx
+                s = emit_expr(c.args[2], s);   // val
+                s = s.write("    ldr x2, [sp], #16\n");   // val
+                s = s.write("    ldr x1, [sp], #16\n");   // idx
+                s = s.write("    ldr x0, [sp], #16\n");   // arr
+                s = s.write("    add x1, x1, #1\n");       // skip len prefix
+                s = s.write("    str x2, [x0, x1, lsl #3]\n");
+                s = s.write("    mov x0, #0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
             // stdin() — returns a Reader (its fd; 0 for stdin).
@@ -5526,6 +5563,60 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_read_file, .-__fern_read_file\n");
+
+        // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
+        // 8-byte slots, returned base+8). Elements start zero (.bss).
+        s = s.write(".globl __fern_alloc_u8\n");
+        s = s.write(".type __fern_alloc_u8, %function\n");
+        s = s.write("__fern_alloc_u8:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // n
+        s = s.write("    add x0, x19, #2\n");       // (n+2)*8 bytes
+        s = s.write("    lsl x0, x0, #3\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x19, [x0]\n");          // cap
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    str x19, [x0]\n");          // len
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
+
+        // __fern_string_from_bytes(x0 = arr ptr) → string box: pack
+        // the low byte of each element slot into a len-byte buffer.
+        s = s.write(".globl __fern_string_from_bytes\n");
+        s = s.write(".type __fern_string_from_bytes, %function\n");
+        s = s.write("__fern_string_from_bytes:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // arr
+        s = s.write("    ldr x20, [x19]\n");         // len
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_alloc\n");        // len-byte buffer
+        s = s.write("    mov x21, x0\n");            // data buf
+        s = s.write("    mov x22, #0\n");            // i
+        s = s.write(".Lsfb_loop:\n");
+        s = s.write("    cmp x22, x20\n");
+        s = s.write("    b.ge .Lsfb_done\n");
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    ldr x10, [x19, x9, lsl #3]\n");  // slot (i+1)*8
+        s = s.write("    strb w10, [x21, x22]\n");        // low byte
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lsfb_loop\n");
+        s = s.write(".Lsfb_done:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");          // data@0
+        s = s.write("    str x20, [x0, #8]\n");      // len@8
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_string_from_bytes, .-__fern_string_from_bytes\n");
     }
     // Command-line args. Mirror of asm.fern.
     if (s.needs_args) {
