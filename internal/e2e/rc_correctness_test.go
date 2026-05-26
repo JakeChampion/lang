@@ -537,6 +537,32 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map with ENUM values (valKind 4, generalized from struct). A
+		// union value reclaims through __drop_map_via___drop_enum_Value
+		// (deep-dropping each value's box + payload via the tag-dispatched
+		// __drop_enum_Value) at the map's last reference, with set/get
+		// retains balancing it. Churned 200x. got = a.v[1] = seed+1;
+		// sum_{0..199}(k+1) = 20100.
+		name: "map_enum_values_churn_free",
+		src: `struct VI { v: i32[] }
+struct VA { v: i32[] }
+type Value = VI | VA;
+function mk(seed: i32): i32 {
+    var m: Map[i32, Value] = map_new(8);
+    m = m.set(seed, VI { v: [seed, seed + 1] });
+    var v: Value = m.get_or(seed, VA { v: [0] });
+    var got: i32 = 0;
+    match (v) { VI(a) => { got = a.v[1]; }, VA(b) => { got = b.v[0]; } }
+    return got;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20100) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a map value: an owned array built inside a
 		// helper escapes via `m.set` (retained without an inc under
 		// the borrow model), so it must NOT be freed at the helper's
