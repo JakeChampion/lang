@@ -58,6 +58,18 @@
 //     base64-encoded so they survive the syscall/js boundary as a
 //     plain string; the page decodes with atob into a Uint8Array.
 //
+//   fernCompileCoreWasm(src) -> {
+//       wasm:   string,        // base64 of a preview-1 core module
+//       error:  string | null, // parse / check / codegen failure
+//   }
+//     Compiles src to a raw preview-1 core WebAssembly command
+//     module (exported `_start` + `memory`, classic
+//     wasi_snapshot_preview1 imports). The page instantiates it
+//     directly via WebAssembly.instantiate against web/wasi-shim.js
+//     — no component / jco transpile step — to run the compiled
+//     backend (not the AST interpreter) in-browser. Base64-encoded
+//     like fernCompileComponent.
+//
 // State is fresh per call for fernInterpret. Imports aren't
 // supported (modload reads files from disk; the browser has
 // none). TCP / file I/O builtins on the Fern side would error at
@@ -277,6 +289,32 @@ func compileComponent(src, world string) map[string]any {
 	return result
 }
 
+// compileCoreWasm compiles src to a raw preview-1 core module and
+// returns a JS-shaped result with the bytes base64-encoded (see the
+// API surface comment at the top of file). Drives the playground's
+// "Run (wasm)" button, which instantiates the result against
+// web/wasi-shim.js.
+func compileCoreWasm(src string) map[string]any {
+	result := map[string]any{
+		"wasm":  "",
+		"error": nil,
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			result["error"] = fmt.Sprintf("internal: %v", r)
+		}
+	}()
+
+	bin, err := playground.CompileCoreWasm(src)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	return result
+}
+
 // lspServer is the persistent LSP server backing fernLsp /
 // fernLspOnNotify. A single instance owns the open-document cache
 // so request-response pairs make sense across calls.
@@ -359,6 +397,16 @@ func main() {
 			}
 		}
 		return compileComponent(args[0].String(), args[1].String())
+	}))
+
+	js.Global().Set("fernCompileCoreWasm", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return map[string]any{
+				"wasm":  "",
+				"error": "fernCompileCoreWasm(src) requires one string argument",
+			}
+		}
+		return compileCoreWasm(args[0].String())
 	}))
 
 	// Keep the Go runtime alive — js.FuncOf handlers are

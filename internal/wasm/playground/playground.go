@@ -48,6 +48,32 @@ func CompileComponent(src, world string) ([]byte, error) {
 	}
 }
 
+// CompileCoreWasm compiles src to a raw preview-1 core WebAssembly
+// command module — the same shape `fern -target wasm-bin` emits,
+// with a synthesised `_start` entry that calls `main` and an
+// exported linear `memory`. Unlike CompileComponent it produces a
+// plain core module (Component Model layer 0x0000), which a browser
+// can `WebAssembly.instantiate` directly against a small preview-1
+// WASI shim — no jco / canonical-ABI transpile step in between. The
+// playground's "Run (wasm)" button uses this to execute the actual
+// compiled backend in-page, distinct from the AST interpreter that
+// "Run" drives.
+//
+// Preview2WASI is deliberately left off: the classic
+// wasi_snapshot_preview1 import names (fd_write, proc_exit,
+// random_get, clock_time_get, args_*) are what the JS shim
+// implements.
+func CompileCoreWasm(src string) ([]byte, error) {
+	prog, info, err := frontEnd(src)
+	if err != nil {
+		return nil, err
+	}
+	return wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		SynthStart:         true,
+		ForceMemorySection: true,
+	})
+}
+
 // frontEnd runs the shared parse → constfold → check → monomorph
 // pipeline. Errors are formatted with diag so the playground shows
 // the same caret diagnostics it does for Run / View assembly.

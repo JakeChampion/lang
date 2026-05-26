@@ -98,6 +98,83 @@ func TestCompileComponentRunsUnderWasmtime(t *testing.T) {
 	}
 }
 
+// coreHeader is the 8-byte preamble of a Component Model *core*
+// module: "\0asm" + version 0x0001 + layer 0x0000. The layer bytes
+// (offset 6..7) are 0x0000 for a core module vs 0x0001 for a
+// component — the distinguishing marker from componentHeader above.
+var coreHeader = []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+
+func TestCompileCoreWasmStructure(t *testing.T) {
+	src := `function main(): i32 {
+  print("hi");
+  return 0;
+}`
+	bin, err := CompileCoreWasm(src)
+	if err != nil {
+		t.Fatalf("CompileCoreWasm: %v", err)
+	}
+	if !bytes.HasPrefix(bin, coreHeader) {
+		t.Fatalf("output is not a core module: first 8 bytes = % x", bin[:min(8, len(bin))])
+	}
+}
+
+func TestCompileCoreWasmParseErrorFormatted(t *testing.T) {
+	_, err := CompileCoreWasm(`function main(): i32 { return `)
+	if err == nil {
+		t.Fatal("expected a parse error")
+	}
+	if !strings.Contains(err.Error(), "<playground>") {
+		t.Fatalf("parse error should be diag-formatted, got: %v", err)
+	}
+}
+
+// TestCompileCoreWasmRunsUnderWasmtime is the end-to-end check for the
+// playground's "Run (wasm)" path: the raw preview-1 core module this
+// package produces is a valid WASI command (exports `_start` + an
+// imported preview-1 host) that prints what the program wrote and
+// surfaces an explicit exit() through proc_exit. wasmtime stands in
+// for the browser's WebAssembly.instantiate + web/wasi-shim.js here;
+// both drive the same `_start` entry against the same imports. Skips
+// when wasmtime isn't on PATH (matching the convention above).
+func TestCompileCoreWasmRunsUnderWasmtime(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping core-wasm execution check")
+	}
+	const want = "hello from core wasm"
+	src := `function main(): i32 {
+  print("` + want + `");
+  exit(7);
+  return 0;
+}`
+	bin, err := CompileCoreWasm(src)
+	if err != nil {
+		t.Fatalf("CompileCoreWasm: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "prog.wasm")
+	if err := os.WriteFile(path, bin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sout, serr bytes.Buffer
+	run := exec.Command(wasmtime, "run", path)
+	run.Stdout = &sout
+	run.Stderr = &serr
+	runErr := run.Run()
+	if got := strings.TrimSpace(sout.String()); got != want {
+		t.Fatalf("stdout = %q, want %q (stderr: %s)", got, want, serr.String())
+	}
+	// `exit(7)` lowers to proc_exit(7); wasmtime reports it as the
+	// process exit code. The JS shim mirrors this by capturing the
+	// proc_exit argument.
+	ee, ok := runErr.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected a non-zero exit from exit(7), got err=%v", runErr)
+	}
+	if ee.ExitCode() != 7 {
+		t.Fatalf("exit code = %d, want 7", ee.ExitCode())
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
