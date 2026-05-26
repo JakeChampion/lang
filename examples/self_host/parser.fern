@@ -1414,6 +1414,21 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     return structs;
 }
 
+// module_with_builtins returns `mod` with the auto-injected builtin
+// enum variants (JsonValue / IoError) merged into its struct table.
+// Compilation drivers call this before emit; emit_module itself stays
+// pure so the asm self-test (which calls emit_module directly and is
+// compiled to native code) doesn't carry the injection path.
+pub function module_with_builtins(mod: Module): Module {
+    return Module {
+        funcs: mod.funcs,
+        structs: inject_builtin_enums(mod.structs),
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: mod.top_stmts
+    };
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];

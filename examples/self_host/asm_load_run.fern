@@ -133,6 +133,6 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
-    write(asm.emit_module(merged));
+    write(asm.emit_module(parser.module_with_builtins(merged)));
     return 0;
 }

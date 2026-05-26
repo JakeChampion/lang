@@ -5038,9 +5038,8 @@ pub function emit_module(mod: parser.Module): string {
     strbuf_reset();
     var s: EmitState = new_state();
     // Seed the struct-decl table for ExprStructLit /
-    // ExprFieldAccess. Inject builtin enum variants (JsonValue /
-    // IoError) here, not in parse_module (a tested API).
-    var seeded_structs: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
+    // ExprFieldAccess. Builtin enum injection happens in the driver
+    // (parser.module_with_builtins); emit_module stays pure.
     s = EmitState {
         out: s.out,
         label_n: s.label_n,
@@ -5050,7 +5049,7 @@ pub function emit_module(mod: parser.Module): string {
         needs_print_int: s.needs_print_int,
         needs_read_int: s.needs_read_int,
         needs_heap: s.needs_heap,
-        struct_decls: seeded_structs,
+        struct_decls: mod.structs,
         loop_exit_labels: s.loop_exit_labels,
         loop_cont_labels: s.loop_cont_labels,
         funcs: mod.funcs,
