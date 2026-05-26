@@ -430,6 +430,21 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             } else {
                 base = e_field_access(base, fname);
             }
+        } else if (p.peek_keyword() == "as") {
+            // `expr as Type` cast. Desugar to a unary op
+            // `as_<Type>` (operand = base); the emitter masks /
+            // sign-extends per the target integer width (see
+            // asm.fern). Modelling it as a unary keeps `base` in
+            // argument position — the checker mishandles `Expr`
+            // identity for a reassigned local in var-decl / array-
+            // push position but accepts it as a function argument
+            // (cf. e_call(base, …) above). Without this branch the
+            // parser would stall on the `as` keyword.
+            p = p.advance();
+            var tyname: string = p.peek_ident();
+            if (tyname.len() == 0) { tyname = p.peek_keyword(); }
+            if (tyname.len() > 0) { p = p.advance(); }
+            base = e_unary("as_" + tyname, base);
         } else {
             break;
         }
@@ -456,7 +471,9 @@ function parse_primary(p: Par): ExprResult {
     match (t) {
         lexer.TokNumber(x) => {
             p = p.advance();
-            return ExprResult { par: p, expr: e_number(x.text, x.suffix, x.is_float) };
+            // Route through parse_postfix so a numeric primary can
+            // carry a trailing `as Type` cast (e.g. `15 as u8`).
+            return parse_postfix(p, e_number(x.text, x.suffix, x.is_float));
         },
         lexer.TokString(x) => {
             p = p.advance();
@@ -663,10 +680,14 @@ function parse_primary(p: Par): ExprResult {
 function precedence(op: string): i32 {
     if (op == "||") { return 1; }
     if (op == "&&") { return 2; }
-    if (op == "==" || op == "!=") { return 3; }
-    if (op == "<" || op == ">" || op == "<=" || op == ">=") { return 4; }
-    if (op == "+" || op == "-") { return 5; }
-    if (op == "*" || op == "/" || op == "%") { return 6; }
+    if (op == "|") { return 3; }
+    if (op == "^") { return 4; }
+    if (op == "&") { return 5; }
+    if (op == "==" || op == "!=") { return 6; }
+    if (op == "<" || op == ">" || op == "<=" || op == ">=") { return 7; }
+    if (op == "<<" || op == ">>") { return 8; }
+    if (op == "+" || op == "-") { return 9; }
+    if (op == "*" || op == "/" || op == "%") { return 10; }
     return 0 - 1;
 }
 

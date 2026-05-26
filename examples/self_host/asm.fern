@@ -2351,6 +2351,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    cqto\n");
                 s = s.write("    idivq %rcx\n");
                 s = s.write("    movq %rdx, %rax\n");
+            } else if (b.op == "&") {
+                s = s.write("    andq %rcx, %rax\n");
+            } else if (b.op == "|") {
+                s = s.write("    orq %rcx, %rax\n");
+            } else if (b.op == "^") {
+                s = s.write("    xorq %rcx, %rax\n");
+            } else if (b.op == "<<") {
+                s = s.write("    shlq %cl, %rax\n");
+            } else if (b.op == ">>") {
+                // Arithmetic (signed) shift right — Fern i32 is signed.
+                s = s.write("    sarq %cl, %rax\n");
             } else if (b.op == "<" || b.op == "<=" || b.op == ">"
                     || b.op == ">=" || b.op == "==" || b.op == "!=") {
                 // Comparison: `cmpq rhs, lhs` sets flags from
@@ -2390,6 +2401,23 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(u.operand, s);
                 s = s.write("    popq %rax\n");
                 s = s.write("    xorq $1, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            // `expr as Type` casts (parser desugars to the unary op
+            // `as_<Type>`). All integer types occupy 64-bit slots, so
+            // a cast masks (unsigned) or sign-extends (signed) to the
+            // target width; i64/u64/usize and anything else are no-ops.
+            if (u.op.len() >= 3 && u.op[0:3] == "as_") {
+                var ty: string = u.op[3:u.op.len()];
+                s = emit_expr(u.operand, s);
+                s = s.write("    popq %rax\n");
+                if (ty == "u8") { s = s.write("    andq $255, %rax\n"); }
+                else if (ty == "u16") { s = s.write("    andq $65535, %rax\n"); }
+                else if (ty == "u32") { s = s.write("    movl %eax, %eax\n"); }
+                else if (ty == "i8") { s = s.write("    movsbq %al, %rax\n"); }
+                else if (ty == "i16") { s = s.write("    movswq %ax, %rax\n"); }
+                else if (ty == "i32") { s = s.write("    movslq %eax, %rax\n"); }
                 s = s.write("    pushq %rax\n");
                 return s;
             }
