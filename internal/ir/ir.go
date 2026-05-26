@@ -2202,6 +2202,21 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// payloadless static sentinels (rc high-bit), so
 			// __fern_box_free only ever sees a real rc==1 box.
 			if edOk && ast.RcFreeEnabled && eligible {
+				// Generic-enum reclamation: a heap-boxed instantiation
+				// like Option[Item] / Result[Item, E] carries ParamType
+				// payloads in its decl, so the drop plan can't see the
+				// concrete type. Substitute the type args (et.Args) to
+				// recover them — but ONLY adopt the substituted decl when
+				// it exposes a concrete STRUCT payload. That guarantees a
+				// pointer-shaped (heap-boxed, non-pair-form) instantiation,
+				// so the variant-plan's box_free is valid; scalar
+				// instantiations (Option[i32], pair-form, no box) keep the
+				// generic decl and bail to the flat dec as before.
+				if len(et.Args) > 0 {
+					if sub := substituteEnumDecl(ed, et.Args); enumHasStructPayload(sub, b.info) {
+						ed = sub
+					}
+				}
 				loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
 				size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
 				// The branchless uniform path can only flat-dec its
@@ -2606,6 +2621,31 @@ func enumHasStructPayload(ed *ast.EnumDecl, info *checker.Info) bool {
 		}
 	}
 	return false
+}
+
+// substituteEnumDecl returns a copy of ed with each variant payload's
+// top-level ParamType bound to its concrete type arg (Option[Item] →
+// Some(Item)). Reproduces exactly the payload types emitEnumNew sized
+// the box from (b.info.VariantCallPayloads), so the resulting drop plan
+// frees with the right box size. Returns ed unchanged when not a
+// type-arg-bearing instantiation. Nested ParamType (e.g. `T[]`) is left
+// alone — enumVariantDropPlan then finds no droppable load and bails,
+// keeping the flat dec (safe).
+func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
+	if len(ed.TypeParams) == 0 || len(args) != len(ed.TypeParams) {
+		return ed
+	}
+	out := *ed
+	out.Variants = make([]ast.EnumVariant, len(ed.Variants))
+	for i, v := range ed.Variants {
+		nv := v
+		nv.Payloads = make([]ast.Type, len(v.Payloads))
+		for j, pt := range v.Payloads {
+			nv.Payloads[j] = resolveTypeParam(pt, ed.TypeParams, args)
+		}
+		out.Variants[i] = nv
+	}
+	return &out
 }
 
 // arrElemStructDropName returns the __drop_arr_struct_<Elem> function

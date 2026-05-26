@@ -1303,6 +1303,65 @@ function main(): i32 {
     return (r.headers.get_or("k", "x").len() - 2) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — GENERIC enum (Option[struct]). The
+		// boxed Option[Item] carries a ParamType payload in its decl, so
+		// the drop plan couldn't see the concrete type and flat-dec'd
+		// (leaking the box + the Item). Substituting the type args
+		// (Option[Item] → Some(Item)) recovers the concrete payload and
+		// routes it through the tag-dispatch variant-plan deep-drop. Only
+		// adopted when the substituted payload is a struct (so the
+		// instantiation is heap-boxed, not pair-form). sum_{0..99}(i+1)=5050.
+		name: "option_struct_payload_churn_free",
+		src: `struct Item { tags: i32[] }
+function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Option[Item] = mk(i);
+        match (o) { Some(it) => { acc = acc + it.tags[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Pair-form Option[i32] (scalar payload, no heap box) must be
+		// untouched by the generic-enum substitution — it has no struct
+		// payload, so it keeps the generic decl and the flat dec. A
+		// stray box_free here would corrupt. sum_{0..99}(i) = 4950.
+		name: "option_scalar_pairform_unaffected",
+		src: `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var o: Option[i32] = Some(i);
+        match (o) { Some(n) => { acc = acc + n; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 4950) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Option[struct] that ESCAPES (returned): the box + payload must
+		// survive the constructor; the caller still owns it. Churn forces
+		// same-size reuse.
+		name: "option_struct_escapes_return",
+		src: `struct Item { tags: i32[] }
+function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
+function main(): i32 {
+    var o: Option[Item] = mk(7);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (o) { Some(it) => { got = it.tags[1]; }, None => { got = 0; } }
+    return (got - 8) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
