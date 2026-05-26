@@ -1175,6 +1175,46 @@ function main(): i32 {
     return (o.inner.y - 43) + (o.tag - 42) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Closure-capture composite — a closure capturing a STRUCT now
+		// deep-drops it (the per-closure drop thunk routes the struct
+		// capture through __drop_struct_Item, freeing its box) instead
+		// of the flat one-level rc_dec. The thunk only runs when every
+		// capture was inc'd at MakeEnv, so this is balanced. Churned:
+		// an over-release would accumulate. sum_{i=0..99}(i+1) = 5050.
+		name: "closure_captures_struct_churn_free",
+		src: `struct Item { tags: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var it: Item = Item { tags: [i, i + 1] };
+        var f = function (d: i32): i32 { return it.tags[1] + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Closure-capture composite — a closure capturing an ARRAY OF
+		// STRUCTS deep-drops each element box via __drop_arr_struct_Item
+		// (Stage B loop) at the closure's death, not just the buffer.
+		// Two elements per iter → f() returns len 2.
+		name: "closure_captures_arr_of_struct_churn_free",
+		src: `struct Item { tags: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        var f = function (d: i32): i32 { return items.len() + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 200) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

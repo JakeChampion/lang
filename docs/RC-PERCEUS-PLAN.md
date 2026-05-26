@@ -951,9 +951,14 @@ Phase 3 CANNOT start with the freelist — it must start by
      (not just rc-field-carrying ones), so a CHILDLESS nested-struct
      field / payload now frees its box too (genStructDropFn's field
      loop is just empty → is_unique + box_free).
+     A follow-up extended the per-closure drop thunk (genClosureDropThunk)
+     to deep-drop CONCRETE-struct and array-of-struct captures (via
+     __drop_struct_ / __drop_arr_struct_) instead of flat-dec'ing them;
+     the thunk only runs when every capture was inc'd at MakeEnv, so it
+     stays balanced. Enum / nested-closure captures keep the flat dec.
    - **Remaining:** uniform-union struct payloads (would need per-arm
      tag dispatch instead of the branchless uniform path) + generic-enum
-     type-arg substitution; closure-capture composites; map keys /
+     type-arg substitution; enum / closure captures; map keys /
      non-array map values; the dec-on-overwrite site (entangled —
      `push`'s copy path transfers element ownership without an inc, so
      routing array overwrite through the drop would double-release;
