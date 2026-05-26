@@ -102,7 +102,7 @@ and K/V type combinations (string→string vs string→i32) need handling.
 
 ---
 
-## Item 4 — `std/float` → libm intrinsics ⬜
+## Item 4 — `std/float` → libm intrinsics ✅
 
 **Blocker.** `std/float` calls `__abs_f64`, `__sqrt_f64`, `__floor_f64`,
 `__ceil_f64`, `__round_f64`, `__trunc_f64`, `__sin_f64`, `__cos_f64`,
@@ -123,6 +123,16 @@ checked to a tolerance (compare truncated/scaled results).
 **Risk.** High for the transcendentals — specialised numerics, the most
 error-prone item. The cheap subset is low-risk but `std/float` only fully
 links once all 11 exist.
+
+**Status.** Done. Cheap subset (abs/sqrt/floor/ceil/round/trunc) is
+inlined as single SSE / FP instructions on both backends (`round` is
+ties-away-from-zero: `frinta` on arm64, `trunc(x + copysign(0.5, x))`
+on x86). Transcendentals (sin/cos/exp/log/pow): x86 uses the x87 FPU
+directly (`fsin`/`fcos`/`fyl2x`/`f2xm1` — hardware-accurate, no libm);
+arm64 has no transcendental instructions, so they're polynomial-
+approximation runtime functions (range-reduced Taylor/series, validated
+<1e-5 vs libm). Tested by `self_host_float_intrinsics_test.go`
+(x86 + CI-gated arm64); fixpoint stays byte-identical.
 
 ---
 

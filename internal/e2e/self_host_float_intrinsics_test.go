@@ -31,6 +31,66 @@ var floatIntrinsicCases = []struct {
 	{"round-down", "function main(): i32 { return __round_f64(2.4) as i32; }", 2},
 }
 
+// floatTranscendentalCases exercise the self-hosted compiler's f64
+// transcendentals: __sin_f64 / __cos_f64 / __exp_f64 / __log_f64 /
+// __pow_f64. x86-64 uses the x87 FPU (fsin/fcos/fyl2x/f2xm1); arm64
+// uses polynomial approximations (the ISA has no transcendentals).
+// Results are checked to a tolerance (the i32 cast truncates). Values
+// cross-checked against Go's math package.
+var floatTranscendentalCases = []struct {
+	name string
+	src  string
+	exit int
+}{
+	{"exp-0", "function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
+	{"exp-2", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
+	{"exp-e-tol", "function main(): i32 { var r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
+	{"log-tol", "function main(): i32 { var r: f64 = __log_f64(2.0); if (r > 0.69 && r < 0.70) { return 7; } return 0; }", 7},
+	{"log-10", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
+	{"exp-log-roundtrip", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
+	{"sin-0", "function main(): i32 { return __sin_f64(0.0) as i32; }", 0},
+	{"sin-halfpi-tol", "function main(): i32 { var r: f64 = __sin_f64(1.5707963); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+	{"cos-0", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
+	{"cos-pi-tol", "function main(): i32 { var r: f64 = __cos_f64(3.1415926); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
+	{"pow-int", "function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
+	{"pow-sqrt-tol", "function main(): i32 { var r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
+	{"pow-3-2", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
+}
+
+// TestSelfHostFloatTranscendentalsX86_64 — x87 FPU transcendentals.
+func TestSelfHostFloatTranscendentalsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	for _, tc := range floatTranscendentalCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
 // TestSelfHostFloatIntrinsicsX86_64 — the self-hosted x86-64 emitter's
 // cheap libm intrinsics (plan item 4, cheap subset).
 func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
