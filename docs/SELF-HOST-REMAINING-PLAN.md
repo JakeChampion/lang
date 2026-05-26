@@ -249,7 +249,11 @@ planned order:
 - ✅ **Map literals** `Map { k: v, … }` — parsed (in a `parse_map_lit`
   helper) into a chained `map_new[_i32](n).set(k,v)…` desugar; integer
   vs string keys picked from the first key (`self_host_map_literal_test.go`).
-- ⬜ **`for (k,v) in m`** destructuring iteration + **`.keys()`** snapshot.
+- ✅ **`m.keys()` / `m.values()`** — return the map box's parallel
+  arrays (offset 0/8) as array_i32/array_string so array methods chain
+  off them (`self_host_map_keys_test.go`).
+- ⬜ **`for (k,v) in m`** destructuring iteration (the last map case,
+  `map_iterate`).
 - ⬜ **Function types `(T) => R`** → higher-order functions.
 - ⬜ **Closures** (capturing nested functions returned as values).
 - ⬜ **Tuple destructuring** (`var (a, b) = …`) + the **`?` try operator**.

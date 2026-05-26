@@ -496,6 +496,16 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
+                    if (is_map(rt) && fa.field == "keys") {
+                        if (map_key_is_i32(rt)) { return "array_i32"; }
+                        return "array_string";
+                    }
+                    if (is_map(rt) && fa.field == "values") {
+                        var vt: string = map_value_part(rt);
+                        if (vt == "i32") { return "array_i32"; }
+                        if (vt == "string") { return "array_string"; }
+                        return "array";
+                    }
                     if (is_map(rt) && fa.field == "iter") {
                         return "mapiter:" + map_value_part(rt);
                     }
@@ -2898,6 +2908,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.mark_heap();
                         s = s.mark_str_eq();
                         s = s.mark_arr_push();
+                        return s;
+                    }
+                    // m.keys() / m.values() — the map box already holds
+                    // the parallel keys[]/values[] arrays at offset 0/8,
+                    // so return them directly (live snapshots; the
+                    // self-host compiler isn't perf-/aliasing-critical).
+                    if (is_map(prim_recv) && fa.field == "keys" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");
+                        s = s.write("    movq (%rax), %rax\n");   // keys arr
+                        s = s.write("    pushq %rax\n");
+                        return s;
+                    }
+                    if (is_map(prim_recv) && fa.field == "values" && c.args.len() == 0) {
+                        s = emit_expr(fa.obj, s);
+                        s = s.write("    popq %rax\n");
+                        s = s.write("    movq 8(%rax), %rax\n");  // values arr
+                        s = s.write("    pushq %rax\n");
                         return s;
                     }
                     // Map iteration. m.iter() → a 16-byte iterator box
