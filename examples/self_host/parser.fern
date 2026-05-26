@@ -984,7 +984,24 @@ function parse_stmt(p: Par): StmtResult {
                 sargs = sargs.push(rhs);
                 return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
             },
-            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident or index") }; }
+            ExprFieldAccess(fa) => {
+                // `obj.field = rhs` → __set_field(obj, "field", rhs)
+                // (an expression statement; the emitter shape-dispatches
+                // to the field's slot). Compound forms desugar to a read
+                // of the same field (re-evaluates obj — fine for the
+                // simple lvalues that use this).
+                var frhs: Expr = rhs;
+                if (is_compound) {
+                    var fop: string = assign_op[0:assign_op.len() - 1];
+                    frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
+                }
+                var fargs: Expr[] = [];
+                fargs = fargs.push(fa.obj);
+                fargs = fargs.push(e_string(fa.field));
+                fargs = fargs.push(frhs);
+                return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_field"), fargs)) };
+            },
+            _ => { return StmtResult { par: p, stmt: s_unknown("lhs of assign must be ident, index, or field") }; }
         }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
