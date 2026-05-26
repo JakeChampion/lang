@@ -1538,3 +1538,75 @@ func TestLowerArithStrengthReducesMulPow2(t *testing.T) {
 	}
 }
 
+// callsDirect reports whether the named function's ops contain an
+// OpCallDirect to callee.
+func callsDirect(p *Program, fnName, callee string) bool {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && op.Str == callee {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func funcExists(p *Program, name string) bool {
+	for _, fn := range p.Funcs {
+		if fn.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLowerGenericEnumStructFieldDrop verifies a heap-boxed generic-enum
+// instantiation used as a struct field (`Holder { b: Option[Item] }`)
+// routes its drop through a per-instantiation deep-drop fn rather than
+// the flat one-level dec that leaks the box + payload. Holder is nested
+// inside Outer so it reclaims through a GENERATED __drop_struct_Holder
+// (appendChildDrop), exercising the registry threaded through the gen
+// functions — not just the builder's inline dropStructField. That body
+// must call __drop_enum_<mangled>, and the worklist must have generated
+// that fn from the stashed substituted decl.
+func TestLowerGenericEnumStructFieldDrop(t *testing.T) {
+	p := lowerSourceWith(t, `struct Item { xs: i32[] }
+struct Holder { b: Option[Item], n: i32 }
+struct Outer { h: Holder, tag: i32 }
+function build(): i32 {
+    var o: Outer = Outer { h: Holder { b: Some(Item { xs: [1, 2] }), n: 3 }, tag: 4 };
+    var got: i32 = 0;
+    match (o.h.b) { Some(it) => { got = it.xs[1]; }, None => { got = 0; } }
+    return got;
+}`, 8)
+	const drop = "__drop_enum_Option_LB_Item_RB_"
+	if !funcExists(p, drop) {
+		t.Fatalf("expected generated %s fn (generic-enum-instantiation deep-drop):\n%s", drop, p)
+	}
+	if !funcExists(p, "__drop_struct_Holder") {
+		t.Fatalf("expected generated __drop_struct_Holder (Holder nested in Outer):\n%s", p)
+	}
+	if !callsDirect(p, "__drop_struct_Holder", drop) {
+		t.Errorf("expected __drop_struct_Holder to deep-drop its Option[Item] field via %s:\n%s", drop, p)
+	}
+}
+
+// TestLowerGenericEnumScalarFieldNoBox verifies the inverse: a scalar
+// (pair-form) generic instantiation as a field — Option[i32], no heap
+// box — must NOT mint a generic-enum drop fn. A stray box_free on a
+// pair-form value would corrupt.
+func TestLowerGenericEnumScalarFieldNoBox(t *testing.T) {
+	p := lowerSourceWith(t, `struct Holder { b: Option[i32], n: i32 }
+function build(): i32 {
+    var h: Holder = Holder { b: Some(7), n: 3 };
+    var got: i32 = 0;
+    match (h.b) { Some(v) => { got = v; }, None => { got = 0; } }
+    return got;
+}`, 8)
+	if funcExists(p, "__drop_enum_Option_LB_i32_RB_") || funcExists(p, "__drop_enum_Option_LB_number_RB_") {
+		t.Errorf("scalar pair-form Option[i32] field must not mint a deep-drop fn:\n%s", p)
+	}
+}
