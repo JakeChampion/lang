@@ -7,23 +7,7 @@ import (
 	"testing"
 )
 
-// jsonValueEnum is the JsonValue enum that the Go checker auto-injects
-// for std/json. The self-host compiler does no prelude injection, so
-// the test bundle declares it explicitly ahead of std/json — exercising
-// the full chain (enum declarations, the Map runtime + iteration,
-// std/string, and struct field assignment, which std/json's recursive
-// parser relies on via p.pos / p.error mutation).
-const jsonValueEnum = `enum JsonValue {
-    JNull,
-    JBool(boolean),
-    JNumber(string),
-    JString(string),
-    JArray(JsonValue[]),
-    JObject(Map[string, JsonValue])
-}
-`
-
-// jsonCases bundle the JsonValue enum + std/json + a main, and check
+// jsonCases bundle std/json + a main, and check
 // the exit code. Exercises json_parse (objects, arrays, nesting),
 // json_encode, and the typed extractors. Exit codes cross-checked vs
 // the Go backend.
@@ -47,8 +31,10 @@ func jsonSource(t *testing.T, mainBody string) []byte {
 	if err != nil {
 		t.Fatalf("read std/json.fern: %v", err)
 	}
-	out := []byte(jsonValueEnum)
-	out = append(out, src...)
+	// No local `enum JsonValue { … }` declaration: the self-host
+	// emitter injects the builtin enum (parser.inject_builtin_enums),
+	// the same way the Go checker auto-injects it.
+	out := append([]byte{}, src...)
 	out = append(out, []byte("\nfunction main(): i32 { "+mainBody+" }\n")...)
 	return out
 }

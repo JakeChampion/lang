@@ -100,10 +100,13 @@ call-style constructors + payload-binding matches (`self_host_enum_test.go`);
 `p.error`, which was previously a silent no-op (the lvalue fell to a
 StmtUnknown). Field assignment desugars to `__set_field(obj, "field",
 v)`, shape-dispatched to the field slot like a field read
-(`self_host_field_assign_test.go`). The self-host has no prelude
-injection, so the json test bundle declares the `JsonValue` enum
-explicitly ahead of `std/json` (a real program would rely on the Go
-checker's auto-injection).
+(`self_host_field_assign_test.go`). The emitter now also injects the
+builtin enums the Go checker auto-injects — `JsonValue` and `IoError`
+(`parser.inject_builtin_enums`, seeded into `emit_module`'s struct table,
+not `parse_module` which is a tested API) — so a program uses `std/json`
+or `IoError` without a local `enum` declaration
+(`self_host_json_test.go` now bundles no enum;
+`self_host_builtin_enum_test.go` covers `IoError`).
 
 Aside: found a Go *native* backend bug while testing — compound
 assignment to a struct field (`a.v += 35`) yields a wrong result

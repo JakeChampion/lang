@@ -1366,6 +1366,54 @@ function parse_const_decl(p: Par): FuncResult {
     return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", params: noparams, ret_type: ty, body: body } };
 }
 
+// struct_declared reports whether `structs` already contains a struct
+// (or synthesized enum variant) with the given name.
+function struct_declared(structs: StructDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// add_builtin_variant appends a synthesized enum-variant struct (a
+// payload variant carries the marker field "__ev"; a no-payload variant
+// has zero fields — same lowering as parse_enum_decl) unless a struct of
+// that name is already declared.
+function add_builtin_variant(acc: StructDecl[], name: string, payload_type: string): StructDecl[] {
+    if (struct_declared(acc, name)) { return acc; }
+    var fields: StructFieldDecl[] = [];
+    if (payload_type.len() > 0) {
+        fields = fields.push(StructFieldDecl { name: "__ev", type_name: payload_type });
+    }
+    return acc.push(StructDecl { name: name, fields: fields });
+}
+
+// inject_builtin_enums adds the variant structs for the enums the
+// reference front-end auto-injects — JsonValue and IoError — unless the
+// program already declares them. This is the self-host analogue of the
+// checker's builtinEnumDecls: it lets programs use `std/json`
+// (JString(x), match … JObject(m) …) and IoError without a local enum
+// declaration. Option / Result are handled separately (Some/Ok/None/Err
+// are special-cased in the emitter).
+pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
+    structs = add_builtin_variant(structs, "JNull", "");
+    structs = add_builtin_variant(structs, "JBool", "boolean");
+    structs = add_builtin_variant(structs, "JNumber", "string");
+    structs = add_builtin_variant(structs, "JString", "string");
+    structs = add_builtin_variant(structs, "JArray", "JsonValue[]");
+    structs = add_builtin_variant(structs, "JObject", "Map[string, JsonValue]");
+    structs = add_builtin_variant(structs, "NotFound", "string");
+    structs = add_builtin_variant(structs, "PermissionDenied", "string");
+    structs = add_builtin_variant(structs, "AlreadyExists", "string");
+    structs = add_builtin_variant(structs, "InvalidUtf8", "string");
+    structs = add_builtin_variant(structs, "Interrupted", "");
+    structs = add_builtin_variant(structs, "Unsupported", "");
+    structs = add_builtin_variant(structs, "Other", "string");
+    return structs;
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];
