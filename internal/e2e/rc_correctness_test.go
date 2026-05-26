@@ -1401,6 +1401,50 @@ function main(): i32 {
     return (g.rows[0].cells[1] - 10) + (g.rows.len() - 1) + __rc_underflow_count();
 }`,
 	},
+	{
+		// Transitive reclamation — an ENUM-typed struct FIELD. A
+		// `Holder { val: Value }` (Value = VInt | VArr) field flat-dec'd
+		// and leaked the enum box + payload. It now routes through a
+		// generated tag-dispatched __drop_enum_Value (reading the runtime
+		// tag picks the exact per-variant payload type, then box_free's
+		// with that variant's size). Churned 100x. sum_{0..99}(i+1)=5050.
+		name: "struct_enum_field_churn_free",
+		src: `struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Holder { val: Value, n: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var h: Holder = Holder { val: VInt { v: [i, i + 1] }, n: i };
+        match (h.val) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Enum-typed field that ESCAPES (Holder returned): the enum box
+		// + payload must survive the constructor. Churn forces reuse.
+		name: "struct_enum_field_escapes",
+		src: `struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Holder { val: Value, n: i32 }
+function mk(n: i32): Holder { return Holder { val: VArr { v: [n, n + 1] }, n: n }; }
+function main(): i32 {
+    var h: Holder = mk(9);
+    var c: i32 = 0;
+    while (c < 200) {
+        var junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    var got: i32 = 0;
+    match (h.val) { VInt(a) => { got = a.v[0]; }, VArr(b) => { got = b.v[1]; } }
+    return (got - 10) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
