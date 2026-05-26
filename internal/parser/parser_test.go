@@ -418,6 +418,32 @@ func TestCompoundAssignDesugars(t *testing.T) {
 	}
 }
 
+// Compound assignment to a struct field (`a.v += 2`) must desugar the
+// same way as a plain `=` lvalue — into `a.v = a.v + 2`. Previously the
+// compound path only allowed Ident/Index targets and rejected a field
+// lvalue with P003, even though plain `=` accepted it.
+func TestCompoundAssignFieldDesugars(t *testing.T) {
+	prog, err := Parse(`struct A { v: i32 } function f(): i32 { var a: A = A { v: 1 }; a.v += 2; return a.v; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt := prog.Funcs[0].Body.Stmts[1].(*ast.ExprStmt)
+	a, ok := stmt.Expr.(*ast.Assign)
+	if !ok {
+		t.Fatalf("compound `+=` on a field should desugar to *Assign, got %T", stmt.Expr)
+	}
+	if _, ok := a.Target.(*ast.FieldAccess); !ok {
+		t.Fatalf("assign target should be FieldAccess, got %T", a.Target)
+	}
+	bin, ok := a.Value.(*ast.Binary)
+	if !ok || bin.Op != "+" {
+		t.Fatalf("RHS should be `+` Binary, got %v", a.Value)
+	}
+	if _, ok := bin.Left.(*ast.FieldAccess); !ok {
+		t.Errorf("desugared LHS should reuse the field target `a.v`, got %T", bin.Left)
+	}
+}
+
 func TestIfExpr(t *testing.T) {
 	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	if err != nil {
