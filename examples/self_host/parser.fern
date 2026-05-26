@@ -1018,6 +1018,24 @@ function parse_stmt(p: Par): StmtResult {
         // TokIdent (not in the lexer's keyword set), so peek
         // it through peek_ident rather than peek_keyword.
         p = p.advance();  // consume `for`
+        // `for (k, v) in m { body }` — map destructuring iteration. The
+        // two names are encoded as "k,v" in the for-var; the emitter
+        // detects the comma + a map iter and emits an iterator loop.
+        if (p.peek_punct() == "(") {
+            p = p.advance();
+            var kvk: string = p.peek_ident();
+            if (kvk.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
+            var kvv: string = p.peek_ident();
+            if (kvv.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+            if (p.peek_ident() == "in") { p = p.advance(); }
+            var kvi: ExprResult = parse_expr(p);
+            p = kvi.par;
+            var kvb: BlockResult = parse_block(p);
+            p = kvb.par;
+            return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
+        }
         var fvar: string = p.peek_ident();
         if (fvar.len() == 0) {
             return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
