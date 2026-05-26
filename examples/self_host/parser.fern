@@ -826,8 +826,71 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     return MatchStmtResult { par: p, stmt: s_match(sr.expr, arms) };
 }
 
+// parse_switch_arms consumes the `case` / `default` arms of a switch
+// (the cursor is just past the opening `{`) and folds them into a
+// nested if/else-if chain, returning it as the body (a 1-element
+// Stmt[] holding the head StmtIf, or the default body, or empty).
+// `scrut` is the switch scrutinee, compared with `==` per case value
+// (multi-value cases OR the comparisons). The scrutinee is re-evaluated
+// per case — fine for the var/param scrutinees switch is used on. No
+// fall-through: each case body runs alone.
+function parse_switch_arms(p: Par, scrut: Expr): BlockResult {
+    var kw: string = p.peek_keyword();
+    if (kw == "case") {
+        p = p.advance();  // consume `case`
+        var cv: ExprResult = parse_expr(p);
+        p = cv.par;
+        var cond: Expr = e_binary("==", scrut, cv.expr);
+        while (p.peek_punct() == ",") {
+            p = p.advance();
+            var cv2: ExprResult = parse_expr(p);
+            p = cv2.par;
+            cond = e_binary("||", cond, e_binary("==", scrut, cv2.expr));
+        }
+        if (p.peek_punct() == ":") { p = p.advance(); }
+        var body: Stmt[] = [];
+        while (p.peek_keyword() != "case" && p.peek_keyword() != "default"
+                && p.peek_punct() != "}" && !p.at_end()) {
+            var st: StmtResult = parse_stmt(p);
+            p = st.par;
+            body = body.push(st.stmt);
+        }
+        var rest: BlockResult = parse_switch_arms(p, scrut);
+        p = rest.par;
+        var arms: Stmt[] = [];
+        arms = arms.push(s_if(cond, body, rest.body));
+        return BlockResult { par: p, body: arms };
+    }
+    if (kw == "default") {
+        p = p.advance();  // consume `default`
+        if (p.peek_punct() == ":") { p = p.advance(); }
+        var dbody: Stmt[] = [];
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var ds: StmtResult = parse_stmt(p);
+            p = ds.par;
+            dbody = dbody.push(ds.stmt);
+        }
+        return BlockResult { par: p, body: dbody };
+    }
+    var empty: Stmt[] = [];
+    return BlockResult { par: p, body: empty };
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
+    if (kw == "switch") {
+        p = p.advance();  // consume `switch`
+        if (p.peek_punct() == "(") { p = p.advance(); }
+        var se: ExprResult = parse_expr(p);
+        p = se.par;
+        if (p.peek_punct() == ")") { p = p.advance(); }
+        if (p.peek_punct() == "{") { p = p.advance(); }
+        var sarms: BlockResult = parse_switch_arms(p, se.expr);
+        p = sarms.par;
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        if (sarms.body.len() >= 1) { return StmtResult { par: p, stmt: sarms.body[0] }; }
+        return StmtResult { par: p, stmt: s_unknown("empty switch") };
+    }
     if (kw == "match") {
         var mr: MatchStmtResult = parse_match_stmt(p);
         return StmtResult { par: mr.par, stmt: mr.stmt };
