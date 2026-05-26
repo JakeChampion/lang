@@ -978,10 +978,17 @@ Phase 3 CANNOT start with the freelist — it must start by
      substituted decl exposes a struct payload — that proves a
      heap-boxed (non-pair-form) instantiation, so scalar Option[i32]
      (pair-form, no box) is left on the flat path untouched.
-   - **Remaining:** enum-payload / nested-closure captures; generic
-     enums whose payload is array-of-struct or a nested ParamType (the
-     bare-ParamType struct case is done); the map's own struct-typed
-     VALUE column (the runtime is type-erased — needs a value-drop fn
+     A further follow-up generates a tag-dispatched __drop_enum_<Name>
+     for any CONCRETE (non-generic) enum with a payload-carrying variant
+     and routes an enum-typed nested field / payload / capture to it
+     (dropFnNameFor's enum case) — reading the runtime tag picks the
+     exact per-variant type, so a `Holder { val: Value }` field reclaims
+     the enum box + payload. Nested closures still keep the env-only drop.
+   - **Remaining:** generic enum FIELDS (Option[Item] as a field needs
+     the type-arg substitution the inline local path does), and generic
+     enums whose payload is array-of-struct / nested ParamType; the
+     map's own struct-typed VALUE column (the runtime is type-erased —
+     needs a value-drop fn
      pointer; array values already reclaim); the dec-on-overwrite site
      (entangled — `push`'s copy path transfers element ownership without
      an inc, so routing array overwrite through the drop would

@@ -776,7 +776,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 					continue
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
-					strings.HasPrefix(op.Str, "__drop_arr_struct_")) && !queued[op.Str] {
+					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
+					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
 				}
@@ -793,6 +794,15 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if en := strings.TrimPrefix(name, "__drop_enum_"); en != name {
+				ed, ok := info.Enums[en]
+				if !ok {
+					continue
+				}
+				fn = genEnumDropFn(en, ed, info, ptrW)
+				if fn == nil {
+					continue // plan failed — routing shouldn't have named it
+				}
 			} else {
 				sn := strings.TrimPrefix(name, "__drop_struct_")
 				sd, ok := info.Structs[sn]
@@ -2580,26 +2590,57 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 }
 
 // dropFnNameFor returns the generated recursive-drop function name for
-// a NESTED value of type t, plus whether one exists. Any CONCRETE user
-// struct (rc-field-carrying OR childless) routes to __drop_struct_<Name>:
-// its static type exactly matches the runtime value, so the generated
-// fn can safely read its fields, and even a childless struct's box is
-// reclaimed (genStructDropFn just is_unique-gates and frees it). Map /
-// runtime handle types, arrays, closures, and ALL enums return
-// ("", false) so the caller falls back to a flat one-level dec. Enums
-// are deliberately excluded: a union's variants carry different payload
-// types at the same offset, so a type-specific recursive drop would
-// misread the box for the non-recorded variant (the eligible
-// variant-plan arm handles that via tag dispatch instead).
+// a NESTED value of type t, plus whether one exists. A CONCRETE user
+// struct (rc-field-carrying OR childless) routes to __drop_struct_<Name>
+// (genStructDropFn reads its exact fields). A CONCRETE (non-generic)
+// enum with at least one statically-droppable payload routes to a
+// tag-dispatched __drop_enum_<Name> — reading the runtime tag picks the
+// exact per-variant payload type, so a union's differing variant types
+// are handled correctly (no misread). Map / runtime handle types,
+// arrays, closures, and generic enum instantiations (Args != nil; their
+// box-vs-pair-form shape needs the type args, handled inline for locals)
+// return ("", false) so the caller falls back to a flat one-level dec.
 func dropFnNameFor(t ast.Type, info *checker.Info) (string, bool) {
-	v, ok := t.(ast.StructType)
-	if !ok || v.Name == "Map" {
-		return "", false
+	switch v := t.(type) {
+	case ast.StructType:
+		if v.Name == "Map" {
+			return "", false
+		}
+		if _, ok := info.Structs[v.Name]; !ok {
+			return "", false
+		}
+		return "__drop_struct_" + v.Name, true
+	case ast.EnumType:
+		if len(v.Args) > 0 {
+			return "", false // generic instantiation — not handled as a field yet
+		}
+		ed, ok := info.Enums[v.Name]
+		if !ok || !enumNeedsDrop(ed) {
+			return "", false
+		}
+		return "__drop_enum_" + v.Name, true
 	}
-	if _, ok := info.Structs[v.Name]; !ok {
-		return "", false
+	return "", false
+}
+
+// enumNeedsDrop reports whether a concrete enum has a heap box worth
+// reclaiming: at least one payload-carrying variant and no ParamType
+// payload (generic). Mirrors enumVariantDropPlan's success condition
+// without needing ptrW, so dropFnNameFor and the genEnumDropFn worklist
+// agree on which enums get a __drop_enum_ fn.
+func enumNeedsDrop(ed *ast.EnumDecl) bool {
+	hasPayload := false
+	for _, v := range ed.Variants {
+		for _, pt := range v.Payloads {
+			if _, isParam := pt.(ast.ParamType); isParam {
+				return false
+			}
+		}
+		if len(v.Payloads) > 0 {
+			hasPayload = true
+		}
 	}
-	return "__drop_struct_" + v.Name, true
+	return hasPayload
 }
 
 // isMapType reports whether t is the runtime Map handle type. A
@@ -2821,6 +2862,68 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		Params:     []ast.Param{{Name: "__ds", Type: ast.NumberType{}}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
+	}
+}
+
+// genEnumDropFn builds the tag-dispatched __drop_enum_<Name> function
+// for a concrete enum: at the value's last reference (rc==1) it reads
+// the tag, and in each variant arm — where the payload type is
+// statically exact — deep-drops the variant's payloads (recursing via
+// appendChildDrop) then frees the box with THAT variant's size;
+// otherwise it dec's. Payloadless / sentinel values fail the is_unique
+// gate and take the dec path. Mirrors the inline non-uniform enum drop
+// (emitDec), but as a standalone fn so a nested enum field / payload /
+// capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
+func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int) *Func {
+	plan, ok := enumVariantDropPlan(ed, ptrW)
+	if !ok {
+		return nil
+	}
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		// tag = mem[ptr+0] → slot 1 (stashed so arms read it after a
+		// variant's box_free has freed the box).
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 1},
+	}
+	for _, vd := range plan {
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 1},
+			Op{Kind: OpConstI32, I32: int32(vd.tag)},
+			Op{Kind: OpEq},
+			Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, ld := range vd.loads {
+			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+			if ld.off != 0 {
+				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
+			}
+			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
+			ops = appendChildDrop(ops, ld.typ, info)
+		}
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpConstI32, I32: vd.size},
+			Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2},
+			Op{Kind: OpDrop},
+			Op{Kind: OpEnd})
+	}
+	ops = append(ops,
+		Op{Kind: OpElse},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop},
+		Op{Kind: OpEnd},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn})
+	return &Func{
+		Name:         "__drop_enum_" + name,
+		Params:       []ast.Param{{Name: "__de", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
 	}
 }
 
