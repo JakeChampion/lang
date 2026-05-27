@@ -1799,9 +1799,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	// env() is not granted by the wasi:http/proxy world `wasmtime serve`
 	// runs, so an env-using handler must be rejected with a clear message
 	// (rather than composing a component that fails at serve-link time).
-	envSrc := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	envSrc := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (env("X")) { Some(_) => {}, None => {} }
-    return http_response_ok("e");
+    return http.http_response_ok("e");
 }
 `
 	envPath := filepath.Join(dir, "env.fern")
