@@ -2231,6 +2231,22 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for i, et := range tt.Elems {
+				if _, isStr := et.(ast.StringType); isStr && b.ptrW == 4 {
+					// Two-word string element: load (data, len) and reclaim
+					// via __fern_str_dec. Unique here (rc==1 guard), so the
+					// element is uniquely owned; inline / literal strings
+					// no-op. Balances the projection dup (__fern_str_inc) and
+					// the construction retain.
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					if offs[i] != 0 {
+						b.emit(Op{Kind: OpConstI32, I32: offs[i]})
+						b.emit(Op{Kind: OpAdd})
+					}
+					b.emit(Op{Kind: OpLoad, Width: WidthString})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					continue
+				}
 				if !arrElemIsRcTracked(et) {
 					continue
 				}
@@ -4751,7 +4767,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// deep-drop dec of the same element. Without the dup the
 			// binding and the tuple's drop would both release one
 			// reference for a single count (double free / underflow).
-			if arrElemIsRcTracked(tup.Elems[i]) {
+			if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 4 {
+				// Two-word string element: dup via __fern_str_inc (consumes
+				// + re-pushes the (data, len) pair) so the binding co-owns
+				// the buffer alongside the tuple box. Without it the tuple's
+				// deep-drop __fern_str_dec would free the buffer under the
+				// still-live binding (UAF).
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			} else if arrElemIsRcTracked(tup.Elems[i]) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})

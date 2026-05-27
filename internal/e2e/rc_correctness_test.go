@@ -434,6 +434,30 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String TUPLE ELEMENT reclamation (wasm). A (string, i32) tuple's
+		// string element is retained on construction (alias-inc), dup'd
+		// when destructured (so the binding co-owns), and freed once by the
+		// tuple's deep-drop __fern_str_dec after the binding + source also
+		// dec. Exercises both projection paths (destructure `var (a,_)` and
+		// direct `t.0`). 100x churn; a double-free / UAF / underflow on the
+		// element buffer trips the checksum or underflow detector.
+		// a.len()=2 + t.0.len()=2 + s.len()=2 = 6; 100*6=600.
+		name: "string_tuple_elem_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var pre: string = "v";
+    var s: string = pre + "x";
+    var t: (string, i32) = (s, seed);
+    var (a, b) = t;
+    return a.len() + t.0.len() + s.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) { total = total + mk(k); k = k + 1; }
+    return (total - 600) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the
