@@ -1151,6 +1151,46 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map.get reboxes the helper's Option[usize] into a user-shaped
+		// Option[V]. That box must carry the 8-byte rc header (rc=1 at
+		// [base+0], data = base+8) like a Some(..) literal — without it
+		// the scope-exit drop of an UNUSED `var o = m.get(k)` reads heap
+		// metadata at [data-8] as the rc and underflows. Consumed /
+		// discarded gets dodged it, so it stayed hidden. Exercises every
+		// rebox arm left unused-and-dropped: Some + None, i32 / string
+		// key, and a string VALUE (whose get-time __fern_str_inc must be
+		// balanced by the unused Option's drop str_dec). One consumed
+		// read anchors the value: +9 per iter; 500x → 4500.
+		name: "map_get_option_header_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 5);
+    m = m.set(2, 9);
+    var hit = m.get(1);              // unused Some(i32), dropped at exit
+    var miss = m.get(99);            // unused None, dropped at exit
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.set("a" + "a", 3);
+    var shit = sm.get("a" + "a");    // unused Some, string key
+    var smiss = sm.get("z" + "z");   // unused None, string key
+    var vm: Map[i32, string] = map_new(8);
+    vm = vm.set(1, "hi" + "there");
+    var vhit = vm.get(1);            // unused Some(string): str_inc must balance
+    var acc: i32 = 0;
+    match (m.get(2)) { Some(x) => { acc = x; }, None => {} } // anchored read: 9
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 4500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
