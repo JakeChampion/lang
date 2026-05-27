@@ -1488,6 +1488,106 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2HttpHandlerRequestHeaders drives several requests
+// with different `x-echo` header values through ONE handler instance
+// and asserts each is read back correctly. The wrapper builds the
+// request HeaderMap's backing string[]s before populating them from
+// fields.entries; this guards that those arrays are valid empty
+// growable arrays (len read from the canonical -4 slot) rather than
+// relying on the bytes preceding the allocation — which a per-request
+// arena reset reuses with stale data, so request 2+ would otherwise
+// read a garbage length.
+func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "router.fern")
+	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    match (req.headers.get("x-echo")) {
+        Some(v) => { return http_response_ok(v); },
+        None => { return http_response_text(400, "no x-echo"); },
+    }
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "router.component.wasm")
+	emit := exec.Command(bin, "-target", "wasi-http", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	// Several distinct values, sent in sequence to the same instance,
+	// so request 2+ runs against arena memory the prior request wrote.
+	wants := []string{"first", "second-value", "third"}
+	for i, want := range wants {
+		var resp *http.Response
+		for {
+			req, _ := http.NewRequest("GET", "http://"+addr+"/", nil)
+			req.Header.Set("x-echo", want)
+			resp, err = client.Do(req)
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("request %d: %v\nstderr:\n%s", i, err, serr.String())
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if resp.StatusCode != 200 {
+			t.Fatalf("request %d (x-echo=%q): status = %d; want 200\nstderr:\n%s", i, want, resp.StatusCode, serr.String())
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != want {
+			t.Errorf("request %d body = %q; want %q", i, string(body), want)
+		}
+	}
+}
+
 // TestWasmPreview2HttpHandlerLoggingAdapterFree composes an adapter-free
 // wasi:http handler that also print()s — exercising TCP/http + CLI-stream
 // mixing. ComposeHttpHandler surfaces wasi:cli/stdout.get-stdout and
