@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/batch7_test.fern — exercises the additions
 // from the seventh test-runner-migration tranche:
 //   - wider-int relational assertions (lt/le/gt/ge on i64,
@@ -8,24 +10,24 @@
 
 // ---------- wider-int relational ----------
 
-function test_i64_lt(): Option[string] { return assert_lt_i64(5000000000 as i64, 9000000000 as i64); }
-function test_i64_le(): Option[string] { return assert_le_i64(5000000000 as i64, 5000000000 as i64); }
-function test_i64_gt(): Option[string] { return assert_gt_i64(9000000000 as i64, 5000000000 as i64); }
-function test_i64_ge(): Option[string] { return assert_ge_i64(5000000000 as i64, 5000000000 as i64); }
+function test_i64_lt(): Option[string] { return test.assert_lt_i64(5000000000 as i64, 9000000000 as i64); }
+function test_i64_le(): Option[string] { return test.assert_le_i64(5000000000 as i64, 5000000000 as i64); }
+function test_i64_gt(): Option[string] { return test.assert_gt_i64(9000000000 as i64, 5000000000 as i64); }
+function test_i64_ge(): Option[string] { return test.assert_ge_i64(5000000000 as i64, 5000000000 as i64); }
 
-function test_u32_lt(): Option[string] { return assert_lt_u32(1u32, 4294967295u32); }
-function test_u64_gt(): Option[string] { return assert_gt_u64(18446744073709551615u64, 0u64); }
+function test_u32_lt(): Option[string] { return test.assert_lt_u32(1u32, 4294967295u32); }
+function test_u64_gt(): Option[string] { return test.assert_gt_u64(18446744073709551615u64, 0u64); }
 
 function test_i64_lt_failure_message(): Option[string] {
     // Confirm the failure message names the violation.
-    match (assert_lt_i64(10 as i64, 5 as i64)) {
+    match (test.assert_lt_i64(10 as i64, 5 as i64)) {
         Some(msg) => {
             if (!msg.contains("expected 10")) {
-                return fail("missing actual value: " + msg);
+                return test.fail("missing actual value: " + msg);
             }
             return None;
         },
-        None => { return fail("expected lt_i64(10, 5) to fail"); }
+        None => { return test.fail("expected lt_i64(10, 5) to fail"); }
     }
     return None;
 }
@@ -36,34 +38,34 @@ function test_f64_bits_round_trip(): Option[string] {
     // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
     var x: f64 = 1.0;
     var bits: i64 = f64_bits(x);
-    return assert_eq_i64(bits, 4607182418800017408 as i64);
+    return test.assert_eq_i64(bits, 4607182418800017408 as i64);
 }
 
 function test_f64_from_bits_round_trips(): Option[string] {
     var x: f64 = 3.14;
     var bits: i64 = f64_bits(x);
     var back: f64 = f64_from_bits(bits);
-    return assert_eq_f64_exact(back, x);
+    return test.assert_eq_f64_exact(back, x);
 }
 
 // ---------- stat + file-state ----------
 
-function test_stat_workflow(r: TestRunner): TestRunner {
-    var (dir, rr) = must_temp_dir(r, "batch7-stat");
+function test_stat_workflow(r: test.TestRunner): test.TestRunner {
+    var (dir, rr) = test.must_temp_dir(r, "batch7-stat");
     if (dir == "") { return rr; }
 
     var path: string = dir + "/payload.dat";
     match (write_file(path, "0123456789")) {
         None => { },
-        Some(_) => { return rr.it("write fixture", fail("write_file failed")); }
+        Some(_) => { return rr.it("write fixture", test.fail("write_file failed")); }
     }
 
-    rr = rr.it("is_file true",             assert_is_file(path));
-    rr = rr.it("is_dir false on file",     match_invert_to_pass(assert_is_dir(path)));
-    rr = rr.it("file_size matches",        assert_file_size(path, 10 as i64));
+    rr = rr.it("is_file true",             test.assert_is_file(path));
+    rr = rr.it("is_dir false on file",     match_invert_to_pass(test.assert_is_dir(path)));
+    rr = rr.it("file_size matches",        test.assert_file_size(path, 10 as i64));
 
-    rr = rr.it("is_dir true on dir",       assert_is_dir(dir));
-    rr = rr.it("is_file false on dir",     match_invert_to_pass(assert_is_file(dir)));
+    rr = rr.it("is_dir true on dir",       test.assert_is_dir(dir));
+    rr = rr.it("is_file false on dir",     match_invert_to_pass(test.assert_is_file(dir)));
 
     return rr;
 }
@@ -75,7 +77,7 @@ function test_stat_workflow(r: TestRunner): TestRunner {
 function match_invert_to_pass(result: Option[string]): Option[string] {
     match (result) {
         Some(_) => { return None; },
-        None => { return fail("expected the assertion to fail"); }
+        None => { return test.fail("expected the assertion to fail"); }
     }
     return None;
 }
@@ -83,31 +85,31 @@ function match_invert_to_pass(result: Option[string]): Option[string] {
 // ---------- assert_json_eq ----------
 
 function test_json_simple_equal(): Option[string] {
-    return assert_json_eq("{\"a\":1}", "{\"a\":1}");
+    return test.assert_json_eq("{\"a\":1}", "{\"a\":1}");
 }
 
 function test_json_key_order_independent(): Option[string] {
-    return assert_json_eq(
+    return test.assert_json_eq(
         "{\"a\":1,\"b\":2,\"c\":3}",
         "{\"c\":3,\"a\":1,\"b\":2}");
 }
 
 function test_json_nested_arrays(): Option[string] {
-    return assert_json_eq(
+    return test.assert_json_eq(
         "{\"items\":[1,2,{\"x\":\"y\"}]}",
         "{\"items\":[1,2,{\"x\":\"y\"}]}");
 }
 
 function test_json_differing_values_fails(): Option[string] {
-    return match_invert_to_pass(assert_json_eq("[1,2,3]", "[1,2,4]"));
+    return match_invert_to_pass(test.assert_json_eq("[1,2,3]", "[1,2,4]"));
 }
 
 function test_json_invalid_actual_fails(): Option[string] {
-    return match_invert_to_pass(assert_json_eq("{not json", "{}"));
+    return match_invert_to_pass(test.assert_json_eq("{not json", "{}"));
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("batch 7");
+    var r: test.TestRunner = test.test_new("batch 7");
 
     r = r.it("i64 lt",                        test_i64_lt());
     r = r.it("i64 le",                        test_i64_le());

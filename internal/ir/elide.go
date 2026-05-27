@@ -98,8 +98,8 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	type reader struct {
 		loadIdx       int
 		canonicalOk   bool
-		canonDropIdxs [3]int  // the const+add+load indices to drop
-		aliasDst      int32   // target slot when followed by OpStoreLocal
+		canonDropIdxs [3]int // the const+add+load indices to drop
+		aliasDst      int32  // target slot when followed by OpStoreLocal
 		aliasOk       bool
 	}
 	writers := map[int32][]writer{}
@@ -358,4 +358,3 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	}
 	fn.Ops = out
 }
-

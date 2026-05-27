@@ -462,6 +462,7 @@ func (s *Server) handleDidChange(raw json.RawMessage) *rpcError {
 //     closure too, not just this file's text.
 //  3. New source: full pipeline, then (single-file only) caches
 //     updated.
+//
 // updateDoc returns the list of OTHER open URIs whose cached
 // diagnostics changed as a side-effect of this update (workspace
 // mode only — a load from main.fern can update util.fern's diags

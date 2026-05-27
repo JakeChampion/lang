@@ -1,10 +1,12 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/quiet_mode_test.fern — exercises the
 // new --quiet mode added to std/test:
-//   * `test_new_quiet(suite)` — constructor that enables
+//   * `test.test_new_quiet(suite)` — constructor that enables
 //     quiet mode from the start.
 //   * `(r).with_quiet()` — flip the mode on an existing
 //     runner.
-//   * `parse_quiet_from_args(argv)` — pull the boolean
+//   * `test.parse_quiet_from_args(argv)` — pull the boolean
 //     off `--quiet` in `args()`.
 //
 // Quiet mode contract:
@@ -30,12 +32,12 @@ function test_quiet_preserves_counters(): Option[string] {
     // Build a quiet runner with 3 passes; counters
     // should reflect the work even though no per-case
     // lines were printed.
-    var sub: TestRunner = test_new_quiet("quiet-counters");
+    var sub: test.TestRunner = test.test_new_quiet("quiet-counters");
     sub = sub.it("p1", trivial_pass());
     sub = sub.it("p2", trivial_pass());
     sub = sub.it("p3", trivial_pass());
     if (sub.passed != 3 || sub.failed != 0 || sub.skipped != 0) {
-        return fail("quiet counters off: p=" + sub.passed.to_string() +
+        return test.fail("quiet counters off: p=" + sub.passed.to_string() +
                     " f=" + sub.failed.to_string() +
                     " s=" + sub.skipped.to_string());
     }
@@ -45,48 +47,48 @@ function test_quiet_preserves_counters(): Option[string] {
 function test_quiet_skip_still_counted(): Option[string] {
     // A skip in quiet mode still increments `skipped`
     // even though the SKIP line is suppressed.
-    var sub: TestRunner = test_new_quiet("quiet-skip");
+    var sub: test.TestRunner = test.test_new_quiet("quiet-skip");
     sub = sub.skip("p1", "manual skip");
     if (sub.skipped == 1 && sub.passed == 0) { return None; }
-    return fail("skip counter off in quiet mode");
+    return test.fail("skip counter off in quiet mode");
 }
 
 function test_parse_quiet_present(): Option[string] {
     var argv: string[] = ["lang", "-interp", "test.fern", "--", "--quiet"];
-    if (parse_quiet_from_args(argv)) { return None; }
-    return fail("--quiet not detected in argv");
+    if (test.parse_quiet_from_args(argv)) { return None; }
+    return test.fail("--quiet not detected in argv");
 }
 
 function test_parse_quiet_absent(): Option[string] {
     var argv: string[] = ["lang", "-interp", "test.fern"];
-    if (!parse_quiet_from_args(argv)) { return None; }
-    return fail("false-positive: detected --quiet in clean argv");
+    if (!test.parse_quiet_from_args(argv)) { return None; }
+    return test.fail("false-positive: detected --quiet in clean argv");
 }
 
 function test_with_quiet_preserves_filter(): Option[string] {
-    var r0: TestRunner = test_new_filtered("with-q", "x");
-    var r1: TestRunner = r0.with_quiet();
+    var r0: test.TestRunner = test.test_new_filtered("with-q", "x");
+    var r1: test.TestRunner = r0.with_quiet();
     if (r1.filter == "x" && r1.quiet) { return None; }
-    return fail("with_quiet clobbered an unrelated field");
+    return test.fail("with_quiet clobbered an unrelated field");
 }
 
 function test_with_quiet_preserves_fail_fast(): Option[string] {
     // Quiet + fail-fast should be orthogonal — setting one
     // must not affect the other.
-    var r0: TestRunner = test_new_fail_fast("with-q-ff");
-    var r1: TestRunner = r0.with_quiet();
+    var r0: test.TestRunner = test.test_new_fail_fast("with-q-ff");
+    var r1: test.TestRunner = r0.with_quiet();
     if (r1.fail_fast && r1.quiet) { return None; }
-    return fail("with_quiet did not preserve fail_fast=true");
+    return test.fail("with_quiet did not preserve fail_fast=true");
 }
 
 function test_test_new_quiet_constructor(): Option[string] {
-    var r: TestRunner = test_new_quiet("ctor-quiet");
+    var r: test.TestRunner = test.test_new_quiet("ctor-quiet");
     if (r.quiet) { return None; }
-    return fail("test_new_quiet did not enable quiet field");
+    return test.fail("test_new_quiet did not enable quiet field");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("quiet mode");
+    var r: test.TestRunner = test.test_new("quiet mode");
     r = r.it("quiet preserves counters across passes",
              test_quiet_preserves_counters());
     r = r.it("skip in quiet still increments counter",

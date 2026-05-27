@@ -1431,16 +1431,16 @@ func (p *parser) nextForeachID() int {
 //
 // Shape after desugaring:
 //
-//   {
-//     var __foreach_iter_N = expr;
-//     var __foreach_len_N  = len(__foreach_iter_N);
-//     var __foreach_idx_N  = 0;
-//     while (__foreach_idx_N < __foreach_len_N) {
-//       var IDENT = __foreach_iter_N[__foreach_idx_N];
-//       <body>
-//       __foreach_idx_N = __foreach_idx_N + 1;
-//     }
-//   }
+//	{
+//	  var __foreach_iter_N = expr;
+//	  var __foreach_len_N  = len(__foreach_iter_N);
+//	  var __foreach_idx_N  = 0;
+//	  while (__foreach_idx_N < __foreach_len_N) {
+//	    var IDENT = __foreach_iter_N[__foreach_idx_N];
+//	    <body>
+//	    __foreach_idx_N = __foreach_idx_N + 1;
+//	  }
+//	}
 //
 // Works for both arrays (any element type) and strings (each
 // element a number = byte). The IDENT's type is inferred from the

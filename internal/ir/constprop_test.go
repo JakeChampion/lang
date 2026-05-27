@@ -71,8 +71,8 @@ func TestConstPropTracksAcrossTee(t *testing.T) {
 		Name: "f",
 		Ops: []Op{
 			{Kind: OpConstI32, I32: 11},
-			{Kind: OpTeeLocal, I32: 0}, // slot 0 = 11, also leaves 11 on stack
-			{Kind: OpDrop},             // discard the tee's pushed value
+			{Kind: OpTeeLocal, I32: 0},  // slot 0 = 11, also leaves 11 on stack
+			{Kind: OpDrop},              // discard the tee's pushed value
 			{Kind: OpLoadLocal, I32: 0}, // should become const 11
 			{Kind: OpReturn},
 		},

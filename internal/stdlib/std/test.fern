@@ -67,6 +67,8 @@ import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
+// f32 / f64 `.to_string()` for the near/rel float assertion families.
+import "std/float";
 import "std/array";
 import "std/string";
 // `assert_json_eq` parses both sides and walks the JsonValue

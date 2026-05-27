@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/bench_test.fern — exercises the bench
 // harness added to std/test.
 //
@@ -23,7 +25,7 @@ function workload_string_build() {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("bench harness");
+    var r: test.TestRunner = test.test_new("bench harness");
 
     // No-regression bench — reports timing, always passes.
     r = r.bench("tiny arithmetic loop", 20, workload_tiny);

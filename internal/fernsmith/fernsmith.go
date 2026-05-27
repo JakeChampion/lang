@@ -151,8 +151,8 @@ type chooser interface {
 // statistical guarantees.
 type randChooser struct{ rng *rand.Rand }
 
-func (c *randChooser) intN(n int) int       { return c.rng.IntN(n) }
-func (c *randChooser) flip(p float64) bool  { return c.rng.Float64() < p }
+func (c *randChooser) intN(n int) int      { return c.rng.IntN(n) }
+func (c *randChooser) flip(p float64) bool { return c.rng.Float64() < p }
 
 // byteChooser yields decisions from a fixed byte slice. Each
 // `intN` and `flip` call consumes exactly one byte. Once the
@@ -202,7 +202,6 @@ func (c *byteChooser) flip(p float64) bool {
 	// 0.4..0.6 biases the generator uses today.
 	return float64(b)/256.0 < p
 }
-
 
 // Profile names the fernsmith generator's operating mode. The
 // two values trade coverage for cross-backend determinism:
@@ -416,21 +415,21 @@ var allTypes = [numTypes]gtype{
 // than three switch cases that can drift apart. Pinned in place by
 // `TestGtypeNamesCoversEveryBuiltin`.
 var gtypeNames = [numTypes]string{
-	tI32:        "i32",
-	tI64:        "i64",
-	tBool:       "boolean",
-	tF32:        "f32",
-	tString:     "string",
-	tArrI32:     "i32[]",
-	tArrI64:     "i64[]",
-	tArrBool:    "boolean[]",
-	tPair:       "Pair",
-	tColor:      "Color",
-	tOptI32:     "Option[i32]",
-	tMapI32I32:  "Map[i32, i32]",
-	tXyz:        "Xyz",
-	tStatus:     "Status",
-	tResI32I32:  "Result[i32, i32]",
+	tI32:       "i32",
+	tI64:       "i64",
+	tBool:      "boolean",
+	tF32:       "f32",
+	tString:    "string",
+	tArrI32:    "i32[]",
+	tArrI64:    "i64[]",
+	tArrBool:   "boolean[]",
+	tPair:      "Pair",
+	tColor:     "Color",
+	tOptI32:    "Option[i32]",
+	tMapI32I32: "Map[i32, i32]",
+	tXyz:       "Xyz",
+	tStatus:    "Status",
+	tResI32I32: "Result[i32, i32]",
 }
 
 // String reports the source-level name for a builtin gtype.

@@ -2326,6 +2326,7 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
+
 // random bytes via wasi_random_get. Returns the (data, len)
 // pair in heap form (top bit of len clear).
 //
@@ -2368,20 +2369,21 @@ func buildRandomBytesBody(idxs map[string]uint32) []byte {
 // environ_ptrs. Returns Some(value) on match, None otherwise.
 //
 // Layout matches __fern_read_line's Option[string] box:
-//   Some(line): 16-byte alloc, tag=0 at +0, data at +8, len at +12.
-//   None:       4-byte alloc, tag=1 at +0.
+//
+//	Some(line): 16-byte alloc, tag=0 at +0, data at +8, len at +12.
+//	None:       4-byte alloc, tag=1 at +0.
 //
 // Algorithm:
 //   - Lazily init the env cache (shared with __fern_env_at).
 //   - For each i in 0..envc:
-//     - entry = environ_ptrs[i]  (NUL-terminated "KEY=VALUE")
-//     - Walk j from 0:
-//       - byte = mem[entry + j]
-//       - If j == name_len AND byte == '=': match found
-//       - If j == name_len OR byte != name[j]: no match, next i
-//     - When match: value_start = entry + j + 1
-//       value_len = strlen(value_start)
-//       Build Some(value).
+//   - entry = environ_ptrs[i]  (NUL-terminated "KEY=VALUE")
+//   - Walk j from 0:
+//   - byte = mem[entry + j]
+//   - If j == name_len AND byte == '=': match found
+//   - If j == name_len OR byte != name[j]: no match, next i
+//   - When match: value_start = entry + j + 1
+//     value_len = strlen(value_start)
+//     Build Some(value).
 //   - If no entry matches: return None.
 //
 // Locals (after 2 params):
@@ -2708,7 +2710,7 @@ func buildEnvBodyP2(idxs map[string]uint32) []byte {
 				{
 					body = inst.InstI32Const(body, 0)
 					body = inst.InstLocalSet(body, 7) // $matched = 0
-					body = inst.InstBr(body, 2)        // break cmp loop
+					body = inst.InstBr(body, 2)       // break cmp loop
 				}
 				body = inst.InstEnd(body)
 				body = inst.InstLocalGet(body, 6)

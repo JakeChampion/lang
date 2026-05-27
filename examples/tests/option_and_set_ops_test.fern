@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/option_and_set_ops_test.fern — batch 26
 // additions to std/test:
 //   * Option result assertions:
@@ -16,12 +18,12 @@ function lookup(k: i32): Option[i32] {
 }
 
 function test_is_some_i32_pass(): Option[string] {
-    return assert_is_some_i32(lookup(1));
+    return test.assert_is_some_i32(lookup(1));
 }
 
 function test_is_some_i32_none_fails(): Option[string] {
-    match (assert_is_some_i32(lookup(99))) {
-        None => { return fail("expected None to fail is_some"); },
+    match (test.assert_is_some_i32(lookup(99))) {
+        None => { return test.fail("expected None to fail is_some"); },
         Some(msg) => {
             if (!msg.contains("got None")) {
                 return Some("expected 'got None': " + msg);
@@ -32,12 +34,12 @@ function test_is_some_i32_none_fails(): Option[string] {
 }
 
 function test_is_none_i32_pass(): Option[string] {
-    return assert_is_none_i32(lookup(99));
+    return test.assert_is_none_i32(lookup(99));
 }
 
 function test_is_none_i32_some_fails_with_value(): Option[string] {
-    match (assert_is_none_i32(lookup(1))) {
-        None => { return fail("expected Some to fail is_none"); },
+    match (test.assert_is_none_i32(lookup(1))) {
+        None => { return test.fail("expected Some to fail is_none"); },
         Some(msg) => {
             // Failure must embed the unexpected payload.
             if (!msg.contains("Some(100)")) {
@@ -49,12 +51,12 @@ function test_is_none_i32_some_fails_with_value(): Option[string] {
 }
 
 function test_is_some_eq_i32_pass(): Option[string] {
-    return assert_is_some_eq_i32(lookup(1), 100);
+    return test.assert_is_some_eq_i32(lookup(1), 100);
 }
 
 function test_is_some_eq_i32_wrong_value(): Option[string] {
-    match (assert_is_some_eq_i32(lookup(1), 999)) {
-        None => { return fail("wrong-value should fail"); },
+    match (test.assert_is_some_eq_i32(lookup(1), 999)) {
+        None => { return test.fail("wrong-value should fail"); },
         Some(msg) => {
             if (!msg.contains("got Some(100)") || !msg.contains("expected Some(999)")) {
                 return Some("expected both Somes in failure: " + msg);
@@ -65,8 +67,8 @@ function test_is_some_eq_i32_wrong_value(): Option[string] {
 }
 
 function test_is_some_eq_i32_none_fails(): Option[string] {
-    match (assert_is_some_eq_i32(lookup(99), 1)) {
-        None => { return fail("None should fail is_some_eq"); },
+    match (test.assert_is_some_eq_i32(lookup(99), 1)) {
+        None => { return test.fail("None should fail is_some_eq"); },
         Some(msg) => {
             // Distinct diagnostic from value-mismatch ("got
             // None, expected Some(...)") so the regression
@@ -85,20 +87,20 @@ function lookup_str(k: string): Option[string] {
 }
 
 function test_is_some_eq_string_pass(): Option[string] {
-    return assert_is_some_eq_string(lookup_str("hi"), "hello");
+    return test.assert_is_some_eq_string(lookup_str("hi"), "hello");
 }
 
 function test_is_some_string_pass(): Option[string] {
-    return assert_is_some_string(lookup_str("hi"));
+    return test.assert_is_some_string(lookup_str("hi"));
 }
 
 function test_is_none_string_pass(): Option[string] {
-    return assert_is_none_string(lookup_str("nope"));
+    return test.assert_is_none_string(lookup_str("nope"));
 }
 
 function test_is_none_string_some_quotes_value(): Option[string] {
-    match (assert_is_none_string(lookup_str("hi"))) {
-        None => { return fail("Some should fail is_none_string"); },
+    match (test.assert_is_none_string(lookup_str("hi"))) {
+        None => { return test.fail("Some should fail is_none_string"); },
         Some(msg) => {
             if (!msg.contains("Some(\"hello\")")) {
                 return Some("expected quoted payload: " + msg);
@@ -109,12 +111,12 @@ function test_is_none_string_some_quotes_value(): Option[string] {
 }
 
 function test_intersects_i32_pass(): Option[string] {
-    return assert_array_intersects_i32([1, 2, 3], [3, 4, 5]);
+    return test.assert_array_intersects_i32([1, 2, 3], [3, 4, 5]);
 }
 
 function test_intersects_i32_no_overlap_fails(): Option[string] {
-    match (assert_array_intersects_i32([1, 2, 3], [4, 5, 6])) {
-        None => { return fail("disjoint should fail intersects"); },
+    match (test.assert_array_intersects_i32([1, 2, 3], [4, 5, 6])) {
+        None => { return test.fail("disjoint should fail intersects"); },
         Some(msg) => {
             // Failure should mention the array lengths.
             if (!msg.contains("length 3 and 3")) {
@@ -127,23 +129,23 @@ function test_intersects_i32_no_overlap_fails(): Option[string] {
 
 function test_intersects_i32_empty_fails(): Option[string] {
     var empty: i32[] = [];
-    match (assert_array_intersects_i32(empty, [1, 2, 3])) {
-        None => { return fail("empty A should fail intersects"); },
+    match (test.assert_array_intersects_i32(empty, [1, 2, 3])) {
+        None => { return test.fail("empty A should fail intersects"); },
         Some(_) => { return None; }
     }
 }
 
 function test_intersects_string_pass(): Option[string] {
-    return assert_array_intersects_string(["a", "b"], ["b", "c"]);
+    return test.assert_array_intersects_string(["a", "b"], ["b", "c"]);
 }
 
 function test_disjoint_i32_pass(): Option[string] {
-    return assert_array_disjoint_i32([1, 2, 3], [4, 5, 6]);
+    return test.assert_array_disjoint_i32([1, 2, 3], [4, 5, 6]);
 }
 
 function test_disjoint_i32_shared_fails(): Option[string] {
-    match (assert_array_disjoint_i32([1, 2, 3], [3, 5, 7])) {
-        None => { return fail("shared elem should fail disjoint"); },
+    match (test.assert_array_disjoint_i32([1, 2, 3], [3, 5, 7])) {
+        None => { return test.fail("shared elem should fail disjoint"); },
         Some(msg) => {
             if (!msg.contains("shared element 3")) {
                 return Some("expected 'shared element 3': " + msg);
@@ -155,15 +157,15 @@ function test_disjoint_i32_shared_fails(): Option[string] {
 
 function test_disjoint_i32_empty_vacuous(): Option[string] {
     var empty: i32[] = [];
-    return assert_array_disjoint_i32(empty, [1, 2, 3]);
+    return test.assert_array_disjoint_i32(empty, [1, 2, 3]);
 }
 
 function test_disjoint_string_pass(): Option[string] {
-    return assert_array_disjoint_string(["a", "b"], ["c", "d"]);
+    return test.assert_array_disjoint_string(["a", "b"], ["c", "d"]);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("Options + array set ops");
+    var r: test.TestRunner = test.test_new("Options + array set ops");
     r = r.it("is_some_i32 pass",                  test_is_some_i32_pass());
     r = r.it("is_some_i32 None fails",            test_is_some_i32_none_fails());
     r = r.it("is_none_i32 pass",                  test_is_none_i32_pass());

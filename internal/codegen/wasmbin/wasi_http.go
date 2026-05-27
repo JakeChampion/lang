@@ -767,7 +767,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = inst.InstI32Const(body, 4)
 			body = numeric.InstI32Add(body)
 			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalSet(body, 4) // name_len
+			body = inst.InstLocalSet(body, 4)                  // name_len
 			body = emitStrNormalize(body, idxs, 3, 4, 5, 6, 9) // → buf 5, byteLen 6
 			body = inst.InstLocalGet(body, 40)
 			body = memory.InstI32Load(body, 2, 0)
@@ -776,7 +776,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = inst.InstI32Const(body, 4)
 			body = numeric.InstI32Add(body)
 			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalSet(body, 11) // value_len
+			body = inst.InstLocalSet(body, 11)                      // value_len
 			body = emitStrNormalize(body, idxs, 10, 11, 12, 13, 14) // → buf 12, byteLen 13
 			// fields.append(headers, name_buf, name_byteLen, value_buf, value_byteLen, retptr)
 			body = inst.InstLocalGet(body, 21) // headers handle
@@ -1026,7 +1026,7 @@ func emitMethodDispatch(body []byte, idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, bytesToStr)
 	body = inst.InstLocalSet(body, 4) // method_len
 	body = inst.InstLocalSet(body, 3) // method_data
-	body = inst.InstEnd(body) // end outer block
+	body = inst.InstEnd(body)         // end outer block
 	return body
 }
 
@@ -1054,4 +1054,3 @@ func ssoLen(s string) int32 {
 	l |= 0x80000000
 	return int32(l)
 }
-

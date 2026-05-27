@@ -33,11 +33,10 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/fernsmith"
+	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // diffOracleSeedCount keeps `go test ./...` fast by default; the
@@ -81,11 +80,11 @@ func diffOracleArtifactDir() string {
 // normally), and the path to the asm artifact for later
 // inspection. Helpers below fill it out.
 type diagInfo struct {
-	out      string
-	code     int
-	signal   string // e.g. "SIGSEGV" — empty if exited normally
-	asmPath  string
-	binPath  string
+	out     string
+	code    int
+	signal  string // e.g. "SIGSEGV" — empty if exited normally
+	asmPath string
+	binPath string
 }
 
 // describeSignal turns a Go ExitError's WaitStatus into a
@@ -399,9 +398,9 @@ func compileAndRunWasmbinMain(t *testing.T, src string) int {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	prog, err := parser.Parse(src)
+	prog, _, err := modload.LoadSource(src)
 	if err != nil {
-		t.Fatalf("parse: %v\nsrc:\n%s", err, src)
+		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
@@ -538,9 +537,9 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 // generated something the front end shouldn't have accepted.
 func runInterpByte(t *testing.T, src string) int {
 	t.Helper()
-	prog, err := parser.Parse(src)
+	prog, _, err := modload.LoadSource(src)
 	if err != nil {
-		t.Fatalf("parse: %v\nsrc:\n%s", err, src)
+		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
 	if _, err := checker.Check(prog); err != nil {
 		t.Fatalf("check: %v\nsrc:\n%s", err, src)

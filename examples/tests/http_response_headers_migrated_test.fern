@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 import "std/http";
 
 // examples/tests/http_response_headers_migrated_test.fern
@@ -26,7 +28,7 @@ function test_user_headers_before_auto_block(): Option[string] {
     r.headers.set("X-Trace-Id", "abc123");
     r.headers.set("Cache-Control", "no-store");
     var wire: string = http.http_serialize_response(r);
-    return assert_eq_string(wire,
+    return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
         "x-trace-id: abc123\r\n" +
         "cache-control: no-store\r\n" +
@@ -38,7 +40,7 @@ function test_user_headers_before_auto_block(): Option[string] {
 
 function test_redirect_sets_location_header(): Option[string] {
     var r: HttpResponse = http.http_response_redirect("/login");
-    return assert_is_some_eq_string(r.headers.get("location"),
+    return test.assert_is_some_eq_string(r.headers.get("location"),
                                     "/login");
 }
 
@@ -48,7 +50,7 @@ function test_user_content_length_is_ignored(): Option[string] {
     // must override with the real length (2).
     r.headers.set("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
-    return assert_eq_string(wire,
+    return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
         "Content-Length: 2\r\n" +
         "Connection: close\r\n" +
@@ -62,7 +64,7 @@ function test_user_content_length_does_not_leak_into_wire(): Option[string] {
     var r: HttpResponse = http.http_response_ok("hi");
     r.headers.set("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
-    return assert_not_contains(wire, "9999");
+    return test.assert_not_contains(wire, "9999");
 }
 
 function test_duplicate_set_cookie_via_append(): Option[string] {
@@ -70,7 +72,7 @@ function test_duplicate_set_cookie_via_append(): Option[string] {
     r.headers.append("Set-Cookie", "a=1");
     r.headers.append("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
-    return assert_eq_string(wire,
+    return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
         "set-cookie: a=1\r\n" +
         "set-cookie: b=2\r\n" +
@@ -86,12 +88,12 @@ function test_duplicate_set_cookie_both_in_order(): Option[string] {
     r.headers.append("Set-Cookie", "a=1");
     r.headers.append("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
-    return assert_contains_in_order(wire,
+    return test.assert_contains_in_order(wire,
         ["set-cookie: a=1", "set-cookie: b=2"]);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("HTTP response headers (migrated)");
+    var r: test.TestRunner = test.test_new("HTTP response headers (migrated)");
     r = r.it("user-set headers before auto block",
              test_user_headers_before_auto_block());
     r = r.it("redirect helper sets Location",

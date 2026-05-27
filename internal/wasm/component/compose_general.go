@@ -209,8 +209,8 @@ const (
 	gFsRead gFsMode = iota
 	gFsWrite
 	gFsAppend
-	gFsReadWrite        // read AND write of files in one program (combined descriptor)
-	gFsReadWriteAppend  // read, write AND append in one program (all three via-stream methods)
+	gFsReadWrite       // read AND write of files in one program (combined descriptor)
+	gFsReadWriteAppend // read, write AND append in one program (all three via-stream methods)
 )
 
 // ensureFilesystem imports wasi:filesystem/types (one descriptor direction)

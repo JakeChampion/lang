@@ -79,9 +79,9 @@ func TestDCEKeepsSideEffectOps(t *testing.T) {
 	addr := f.AddParam()
 	val := f.AddParam()
 	entry := f.NewBlock()
-	_ = f.AddOp(entry, OpLoad, addr)     // unused load
+	_ = f.AddOp(entry, OpLoad, addr) // unused load
 	f.AddOpNoResult(entry, OpStore, addr, val)
-	_ = f.AddOp(entry, OpCall, addr)     // unused call
+	_ = f.AddOp(entry, OpCall, addr) // unused call
 	f.SetRet(entry, Value{})
 
 	DCE(f)

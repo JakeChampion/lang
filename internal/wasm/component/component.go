@@ -273,9 +273,9 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes
 		panic("component: multi-result functions not yet supported")
 	}
 	body := []byte{}
-	body = leb128.UlebU64(body, 1)                            // vec(1) type entries
-	body = append(body, 0x42)                                 // instance-type form
-	body = leb128.UlebU64(body, uint64(2+len(innerTypes)))    // vec(2+N) decls
+	body = leb128.UlebU64(body, 1)                         // vec(1) type entries
+	body = append(body, 0x42)                              // instance-type form
+	body = leb128.UlebU64(body, uint64(2+len(innerTypes))) // vec(2+N) decls
 
 	// N inner type decls: each `01 <defvaltype-body>`.
 	for _, it := range innerTypes {
@@ -295,7 +295,7 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes
 		body = append(body, 0x01)      // resultlist: named
 		body = leb128.UlebU64(body, 0) // vec(0) results
 	} else {
-		body = append(body, 0x00)            // resultlist: single anonymous
+		body = append(body, 0x00)              // resultlist: single anonymous
 		body = append(body, resultValtypes[0]) // valtype byte
 	}
 
@@ -303,8 +303,8 @@ func PutTypeSectionInstanceWithInnerTypesAndOneFuncExport(buf []byte, innerTypes
 	body = append(body, 0x04) // export decl
 	body = append(body, 0x00) // exportname kind = label
 	body = putName(body, exportName)
-	body = append(body, 0x01)                              // externdesc kind = func
-	body = leb128.UlebU64(body, uint64(len(innerTypes)))   // typeidx = N (count of inner types)
+	body = append(body, 0x01)                            // externdesc kind = func
+	body = leb128.UlebU64(body, uint64(len(innerTypes))) // typeidx = N (count of inner types)
 
 	return wrapSection(buf, SectionType, body)
 }
@@ -909,7 +909,7 @@ func WasiHttpTypesInstanceTypeBody(inputStreamT, outputStreamT uint32) []byte {
 	oOutparam := def([]byte{0x69, byte(responseOutparam)})
 
 	// Result wrappers.
-	rIncBody := def(InnerTypeResultOk(oIncBody))    // consume
+	rIncBody := def(InnerTypeResultOk(oIncBody))     // consume
 	rInStream := def(InnerTypeResultOk(oInStream))   // incoming-body.stream
 	rOutBody := def(InnerTypeResultOk(oOutBody))     // outgoing-response.body
 	rOutStream := def(InnerTypeResultOk(oOutStream)) // outgoing-body.write
@@ -978,7 +978,7 @@ func WasiHttpTypesInstanceTypeBody(inputStreamT, outputStreamT uint32) []byte {
 // Decls: 0 pollable (sub-resource), 1 borrow<pollable>, 2 func(self)
 // -> (), 3 export "[method]pollable.block" (func 0).
 func WasiIoPollInstanceTypeBody() []byte {
-	body := []byte{0x01, 0x42, 0x04} // 4 decls
+	body := []byte{0x01, 0x42, 0x04}                          // 4 decls
 	body = append(body, ExportSubResourceDecl("pollable")...) // 0
 	body = append(body, 0x01, 0x68, 0x00)                     // 1: borrow<pollable=0>
 	// 2: func(self: borrow 1) -> () (no result)
@@ -1029,7 +1029,7 @@ var WasiSocketsNetworkErrorCodeNames = []string{
 // export, 11 ipv6-socket-address record / 12 export, 13
 // ip-socket-address variant / 14 export. (15 decls.)
 func WasiSocketsNetworkInstanceTypeBody() []byte {
-	body := []byte{0x01, 0x42, 0x0f} // 15 decls
+	body := []byte{0x01, 0x42, 0x0f}                         // 15 decls
 	body = append(body, ExportSubResourceDecl("network")...) // 0
 	body = append(body, 0x01)                                // 1: error-code enum
 	body = append(body, InnerTypeEnum(WasiSocketsNetworkErrorCodeNames)...)
@@ -1081,9 +1081,9 @@ func WasiSocketsNetworkInstanceTypeBody() []byte {
 // Decls: 0 alias-outer network, 1 own<network>, 2 func() ->
 // own<network>, 3 export "instance-network" (func 2).
 func WasiSocketsInstanceNetworkInstanceTypeBody(outerNetworkTypeidx uint32) []byte {
-	body := []byte{0x01, 0x42, 0x04} // 4 decls
+	body := []byte{0x01, 0x42, 0x04}                                   // 4 decls
 	body = append(body, OuterAliasTypeDecl(1, outerNetworkTypeidx)...) // 0
-	body = append(body, 0x01, 0x69, 0x00)                             // 1: own<network=0>
+	body = append(body, 0x01, 0x69, 0x00)                              // 1: own<network=0>
 	// 2: func() -> own<network=1> (no params, single anonymous result)
 	body = append(body, 0x01, 0x40, 0x00, 0x00, 0x01)
 	// 3: export "instance-network" (func is type 2)
@@ -1133,7 +1133,7 @@ func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	body := []byte{0x01, 0x42, 0x1c} // 28 decls
+	body := []byte{0x01, 0x42, 0x1c}                             // 28 decls
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
 	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
 	body = append(body, OuterAliasTypeDecl(1, ipSockAddrT)...)   // 2
@@ -1187,7 +1187,7 @@ func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 // tcp-socket, 3 own<tcp-socket>, 4 result<own,error-code>, 5 func, 6
 // export "create-tcp-socket".
 func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSocketT uint32) []byte {
-	body := []byte{0x01, 0x42, 0x07} // 7 decls
+	body := []byte{0x01, 0x42, 0x07}                             // 7 decls
 	body = append(body, OuterAliasTypeDecl(1, ipAddrFamilyT)...) // 0
 	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
 	body = append(body, OuterAliasTypeDecl(1, tcpSocketT)...)    // 2
@@ -1315,7 +1315,7 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []
 // udp-socket, 3 own<udp-socket>, 4 result<own,error-code>, 5 func, 6
 // export "create-udp-socket".
 func WasiSocketsUdpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, udpSocketT uint32) []byte {
-	body := []byte{0x01, 0x42, 0x07} // 7 decls
+	body := []byte{0x01, 0x42, 0x07}                             // 7 decls
 	body = append(body, OuterAliasTypeDecl(1, ipAddrFamilyT)...) // 0
 	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
 	body = append(body, OuterAliasTypeDecl(1, udpSocketT)...)    // 2
@@ -1551,19 +1551,19 @@ func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
 //
 // Inside-instance decl list (20 decls):
 //
-//   0  descriptor (sub resource)
-//   1  alias outer input-stream            2  export "input-stream" (eq 1)
-//   3  enum error-code                      4  export "error-code" (eq 3)
-//   5  flags path-flags                     6  export "path-flags" (eq 5)
-//   7  flags open-flags                     8  export "open-flags" (eq 7)
-//   9  flags descriptor-flags              10  export "descriptor-flags" (eq 9)
-//  11  own<descriptor=0>
-//  12  own<input-stream=2>
-//  13  borrow<descriptor=0>
-//  14  result<own descriptor=11, err=4>    (open-at)
-//  15  result<own input-stream=12, err=4>  (read-via-stream)
-//  16  func open-at(...) -> 14             export "[method]descriptor.open-at" (func 16)
-//  17  func read-via-stream(...) -> 15     export "[method]descriptor.read-via-stream" (func 17)
+//	 0  descriptor (sub resource)
+//	 1  alias outer input-stream            2  export "input-stream" (eq 1)
+//	 3  enum error-code                      4  export "error-code" (eq 3)
+//	 5  flags path-flags                     6  export "path-flags" (eq 5)
+//	 7  flags open-flags                     8  export "open-flags" (eq 7)
+//	 9  flags descriptor-flags              10  export "descriptor-flags" (eq 9)
+//	11  own<descriptor=0>
+//	12  own<input-stream=2>
+//	13  borrow<descriptor=0>
+//	14  result<own descriptor=11, err=4>    (open-at)
+//	15  result<own input-stream=12, err=4>  (read-via-stream)
+//	16  func open-at(...) -> 14             export "[method]descriptor.open-at" (func 16)
+//	17  func read-via-stream(...) -> 15     export "[method]descriptor.read-via-stream" (func 17)
 //
 // (func-exports don't consume a typeidx, so the two methods are
 // typeidx 16 and 17.)
@@ -2112,13 +2112,13 @@ func WasiCliEnvironmentGetEnvironmentInstanceTypeBody() []byte {
 //
 // Inside-instance decl list (7 decls):
 //
-//	0. type list<string>                  → typeidx 0
-//	1. type func() -> typeidx 0           → typeidx 1
-//	2. export "get-arguments" (func 1)
-//	3. type tuple<string, string>         → typeidx 2
-//	4. type list<typeidx 2>               → typeidx 3
-//	5. type func() -> typeidx 3           → typeidx 4
-//	6. export "get-environment" (func 4)
+//  0. type list<string>                  → typeidx 0
+//  1. type func() -> typeidx 0           → typeidx 1
+//  2. export "get-arguments" (func 1)
+//  3. type tuple<string, string>         → typeidx 2
+//  4. type list<typeidx 2>               → typeidx 3
+//  5. type func() -> typeidx 3           → typeidx 4
+//  6. export "get-environment" (func 4)
 //
 // Func exports occupy the func index space, not the type index space,
 // so the get-environment types resume numbering after the
@@ -2236,12 +2236,12 @@ func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	body = append(body, InnerTypeResultErr(5)...)
 	// decl 9: type func(self: 6, contents: 7) -> typeidx 8 → inner 9
 	body = append(body,
-		0x01,                                                 // type decl
-		0x40,                                                 // functype form
-		0x02,                                                 // vec(2) params
-		0x04, 's', 'e', 'l', 'f', 0x06,                       // param "self" valtype=typeidx 6
-		0x08, 'c', 'o', 'n', 't', 'e', 'n', 't', 's', 0x07,   // param "contents" valtype=typeidx 7
-		0x00, 0x08,                                           // resultlist single anonymous, valtype = typeidx 8
+		0x01,                           // type decl
+		0x40,                           // functype form
+		0x02,                           // vec(2) params
+		0x04, 's', 'e', 'l', 'f', 0x06, // param "self" valtype=typeidx 6
+		0x08, 'c', 'o', 'n', 't', 'e', 'n', 't', 's', 0x07, // param "contents" valtype=typeidx 7
+		0x00, 0x08, // resultlist single anonymous, valtype = typeidx 8
 	)
 	// decl 10: export "[method]output-stream.blocking-write-and-flush" (func 9)
 	body = append(body, 0x04, 0x00, 0x2e) // export, kind=label, name-len 46
@@ -2267,27 +2267,27 @@ func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 // 13 export it, 14 func blocking-read, 15 export it. (func exports
 // don't consume a typeidx, so the methods are typeidx 12 and 13.)
 func WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx uint32) []byte {
-	body := []byte{0x01, 0x42, 0x10} // 16 decls
-	body = append(body, ExportSubResourceDecl("output-stream")...)         // 0
-	body = append(body, ExportSubResourceDecl("input-stream")...)          // 1
-	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...)        // 2
-	body = append(body, ExportTypeEqDecl("error", 2)...)                   // 3
-	body = append(body, 0x01, 0x69, 0x03)                                  // 4: own<error=3>
-	body = append(body, 0x01)                                              // 5: variant
+	body := []byte{0x01, 0x42, 0x10}                                 // 16 decls
+	body = append(body, ExportSubResourceDecl("output-stream")...)   // 0
+	body = append(body, ExportSubResourceDecl("input-stream")...)    // 1
+	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...) // 2
+	body = append(body, ExportTypeEqDecl("error", 2)...)             // 3
+	body = append(body, 0x01, 0x69, 0x03)                            // 4: own<error=3>
+	body = append(body, 0x01)                                        // 5: variant
 	body = append(body, InnerTypeVariant([]VariantCase{
 		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x04},
 		{Name: "closed"},
 	})...)
-	body = append(body, ExportTypeEqDecl("stream-error", 5)...)            // 6
-	body = append(body, 0x01)                                              // 7: borrow<output=0>
+	body = append(body, ExportTypeEqDecl("stream-error", 5)...) // 6
+	body = append(body, 0x01)                                   // 7: borrow<output=0>
 	body = append(body, InnerTypeBorrow(0)...)
-	body = append(body, 0x01)                                              // 8: borrow<input=1>
+	body = append(body, 0x01) // 8: borrow<input=1>
 	body = append(body, InnerTypeBorrow(1)...)
-	body = append(body, 0x01)                                              // 9: list<u8>
+	body = append(body, 0x01) // 9: list<u8>
 	body = append(body, InnerTypeListU8...)
-	body = append(body, 0x01)                                              // 10: result<_, err=6>
+	body = append(body, 0x01) // 10: result<_, err=6>
 	body = append(body, InnerTypeResultErr(6)...)
-	body = append(body, 0x01)                                              // 11: result<list=9, err=6>
+	body = append(body, 0x01) // 11: result<list=9, err=6>
 	body = append(body, InnerTypeResultOkErr(9, 6)...)
 	// 12: func blocking-write-and-flush(self: borrow-out=7, contents: list=9) -> 10
 	body = append(body,
@@ -2329,27 +2329,27 @@ func WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 // instead of `contents: list<u8>`.
 func WasiIoStreamsReadInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	body := []byte{0x01, 0x42, 0x0b}
-	body = append(body, ExportSubResourceDecl("input-stream")...)        // inner 0
-	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...)      // inner 1
-	body = append(body, ExportTypeEqDecl("error", 1)...)                 // inner 2
-	body = append(body, 0x01, 0x69, 0x02)                                // inner 3: own<2>
-	body = append(body, 0x01)                                            // inner 4: variant
+	body = append(body, ExportSubResourceDecl("input-stream")...)    // inner 0
+	body = append(body, OuterAliasTypeDecl(1, outerErrorTypeidx)...) // inner 1
+	body = append(body, ExportTypeEqDecl("error", 1)...)             // inner 2
+	body = append(body, 0x01, 0x69, 0x02)                            // inner 3: own<2>
+	body = append(body, 0x01)                                        // inner 4: variant
 	body = append(body, InnerTypeVariant([]VariantCase{
 		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x03},
 		{Name: "closed"},
 	})...)
-	body = append(body, ExportTypeEqDecl("stream-error", 4)...)          // inner 5
-	body = append(body, 0x01)                                            // inner 6: borrow<0>
+	body = append(body, ExportTypeEqDecl("stream-error", 4)...) // inner 5
+	body = append(body, 0x01)                                   // inner 6: borrow<0>
 	body = append(body, InnerTypeBorrow(0)...)
-	body = append(body, 0x01)                                            // inner 7: list<u8>
+	body = append(body, 0x01) // inner 7: list<u8>
 	body = append(body, InnerTypeListU8...)
-	body = append(body, 0x01)                                            // inner 8: result<ok=7, err=5>
+	body = append(body, 0x01) // inner 8: result<ok=7, err=5>
 	body = append(body, InnerTypeResultOkErr(7, 5)...)
 	// inner 9: func(self: borrow<input-stream> typeidx 6, len: u64) -> typeidx 8
 	body = append(body,
-		0x01,                          // type decl
-		0x40,                          // functype form
-		0x02,                          // vec(2) params
+		0x01,                           // type decl
+		0x40,                           // functype form
+		0x02,                           // vec(2) params
 		0x04, 's', 'e', 'l', 'f', 0x06, // param "self" valtype=typeidx 6
 		0x03, 'l', 'e', 'n', CValtypeU64, // param "len" valtype=u64
 		0x00, 0x08, // resultlist single anonymous, valtype = typeidx 8
@@ -2367,7 +2367,7 @@ func WasiIoStreamsReadInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 func PutImportSectionOneInstance(buf []byte, name string, instanceTypeidx uint32) []byte {
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1)
-	body = append(body, 0x00)         // importname kind = label
+	body = append(body, 0x00)      // importname kind = label
 	body = putName(body, name)
 	body = append(body, 0x05) // externdesc kind = instance
 	body = leb128.UlebU64(body, uint64(instanceTypeidx))
@@ -2381,8 +2381,8 @@ func PutImportSectionOneInstance(buf []byte, name string, instanceTypeidx uint32
 func PutAliasSectionInstanceExportFunc(buf []byte, instanceIdx uint32, name string) []byte {
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1)
-	body = append(body, 0x01)         // sort = func
-	body = append(body, 0x00)         // target: from-instance-export
+	body = append(body, 0x01)      // sort = func
+	body = append(body, 0x00)      // target: from-instance-export
 	body = leb128.UlebU64(body, uint64(instanceIdx))
 	body = putName(body, name)
 	return wrapSection(buf, SectionAlias, body)
@@ -2410,8 +2410,8 @@ func PutAliasSectionInstanceExportFunc(buf []byte, instanceIdx uint32, name stri
 func PutAliasSectionInstanceExportType(buf []byte, instanceIdx uint32, name string) []byte {
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1)
-	body = append(body, 0x03)         // sort = type
-	body = append(body, 0x00)         // target: from-instance-export
+	body = append(body, 0x03)      // sort = type
+	body = append(body, 0x00)      // target: from-instance-export
 	body = leb128.UlebU64(body, uint64(instanceIdx))
 	body = putName(body, name)
 	return wrapSection(buf, SectionAlias, body)
@@ -2423,8 +2423,8 @@ func PutAliasSectionInstanceExportType(buf []byte, instanceIdx uint32, name stri
 func PutCanonSectionLowerNoOpts(buf []byte, funcIdx uint32) []byte {
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1)
-	body = append(body, 0x01)         // canon-lower
-	body = append(body, 0x00)         // function-lower sub-tag
+	body = append(body, 0x01)      // canon-lower
+	body = append(body, 0x00)      // function-lower sub-tag
 	body = leb128.UlebU64(body, uint64(funcIdx))
 	body = leb128.UlebU64(body, 0) // no opts
 	return wrapSection(buf, SectionCanon, body)
@@ -2468,12 +2468,12 @@ func PutCanonResourceDrop(buf []byte, resourceTypeidx uint32) []byte {
 // emits the canon-lower bytes.
 func PutCanonSectionLowerWithMemory(buf []byte, funcIdx uint32, memIdx uint32) []byte {
 	body := []byte{}
-	body = leb128.UlebU64(body, 1)             // vec(1) canons
-	body = append(body, 0x01)                  // canon-lower
-	body = append(body, 0x00)                  // function-lower sub-tag
+	body = leb128.UlebU64(body, 1) // vec(1) canons
+	body = append(body, 0x01)      // canon-lower
+	body = append(body, 0x00)      // function-lower sub-tag
 	body = leb128.UlebU64(body, uint64(funcIdx))
-	body = leb128.UlebU64(body, 1)             // opts vec(1)
-	body = append(body, 0x03)                  // canonopt: memory
+	body = leb128.UlebU64(body, 1) // opts vec(1)
+	body = append(body, 0x03)      // canonopt: memory
 	body = leb128.UlebU64(body, uint64(memIdx))
 	return wrapSection(buf, SectionCanon, body)
 }
@@ -2497,14 +2497,14 @@ func PutCanonSectionLowerWithMemory(buf []byte, funcIdx uint32, memIdx uint32) [
 //	04 f:<core funcidx>     -- realloc
 func PutCanonSectionLowerWithMemoryRealloc(buf []byte, funcIdx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
 	body := []byte{}
-	body = leb128.UlebU64(body, 1)                       // vec(1) canons
-	body = append(body, 0x01)                            // canon-lower
-	body = append(body, 0x00)                            // function-lower sub-tag
+	body = leb128.UlebU64(body, 1) // vec(1) canons
+	body = append(body, 0x01)      // canon-lower
+	body = append(body, 0x00)      // function-lower sub-tag
 	body = leb128.UlebU64(body, uint64(funcIdx))
-	body = leb128.UlebU64(body, 2)                       // opts vec(2)
-	body = append(body, 0x03)                            // canonopt: memory
+	body = leb128.UlebU64(body, 2) // opts vec(2)
+	body = append(body, 0x03)      // canonopt: memory
 	body = leb128.UlebU64(body, uint64(memIdx))
-	body = append(body, 0x04)                            // canonopt: realloc
+	body = append(body, 0x04) // canonopt: realloc
 	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
 	return wrapSection(buf, SectionCanon, body)
 }
@@ -2516,7 +2516,7 @@ func PutCanonSectionLowerWithMemoryRealloc(buf []byte, funcIdx uint32, memIdx ui
 func PutCoreInstanceSectionFromOneFuncExport(buf []byte, exportName string, coreFuncIdx uint32) []byte {
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1) instances
-	body = append(body, 0x01)         // form: from-exports
+	body = append(body, 0x01)      // form: from-exports
 	body = leb128.UlebU64(body, 1) // vec(1) exports
 	body = putName(body, exportName)
 	body = append(body, CoreSortFunc)
@@ -2576,7 +2576,7 @@ func PutCoreInstanceSectionInstantiateWithInstanceArgs(buf []byte, moduleIdx uin
 	}
 	body := []byte{}
 	body = leb128.UlebU64(body, 1) // vec(1) instances
-	body = append(body, 0x00)         // form: instantiate
+	body = append(body, 0x00)      // form: instantiate
 	body = leb128.UlebU64(body, uint64(moduleIdx))
 	body = leb128.UlebU64(body, uint64(len(argNames)))
 	for i := range argNames {
@@ -2680,9 +2680,9 @@ func PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf []byte, resultTypei
 	body := []byte{
 		0x02,             // vec(2) type entries
 		0x6a, 0x00, 0x00, // first: result<_, _>
-		0x40,             // second: functype form
-		0x00,             // vec(0) params
-		0x00,             // resultlist: single anonymous
+		0x40, // second: functype form
+		0x00, // vec(0) params
+		0x00, // resultlist: single anonymous
 	}
 	body = leb128.UlebU64(body, uint64(resultTypeidx)) // valtype = typeidx of the result type
 	return wrapSection(buf, SectionType, body)

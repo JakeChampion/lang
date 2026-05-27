@@ -189,7 +189,9 @@ func TestPutAliasSectionInstanceExportType_Bytes(t *testing.T) {
 // TestOuterAliasTypeDecl_Bytes pins the 5-byte outer-alias decl
 // emitted inside instance-type bodies. The example matches what
 // wasm-tools emits inside the wasi:io/streams instance type:
-//   `(alias outer 1 1 (type (;1;)))`
+//
+//	`(alias outer 1 1 (type (;1;)))`
+//
 // — 1 scope up, outer typeidx 1.
 func TestOuterAliasTypeDecl_Bytes(t *testing.T) {
 	got := component.OuterAliasTypeDecl(1, 1)
@@ -356,13 +358,13 @@ func TestWasiFilesystemTypesReadWritePathInstanceTypeBody_Validates(t *testing.T
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())          // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                   // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                           // type 1
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1)) // type 2
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                 // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                   // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                    // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())                          // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                                   // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                                           // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))              // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                 // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                   // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                    // type 4
 	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesReadWritePathInstanceTypeBody(4, 3)) // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 5)
 	dir := t.TempDir()
@@ -665,9 +667,10 @@ func TestInnerTypeResultErr_Bytes(t *testing.T) {
 //   - "closed" — no payload
 //
 // Expected wire shape (matches wasm-tools dump):
-//   6b 02
-//   15 "last-operation-failed" 01 03 00
-//   06 "closed" 00 00
+//
+//	6b 02
+//	15 "last-operation-failed" 01 03 00
+//	06 "closed" 00 00
 func TestInnerTypeVariant_StreamError(t *testing.T) {
 	got := component.InnerTypeVariant([]component.VariantCase{
 		{Name: "last-operation-failed", HasPayload: true, PayloadValtype: 0x03},
@@ -999,8 +1002,8 @@ func TestWasiFilesystemErrorCodeEnum_Validates(t *testing.T) {
 	// instance type: vec(2) decls — the enum type + its export.
 	enum := component.InnerTypeEnum(component.WasiFilesystemErrorCodeNames)
 	ibody := []byte{0x01, 0x42, 0x02}
-	ibody = append(ibody, 0x01)        // type decl
-	ibody = append(ibody, enum...)     // inner 0 = enum
+	ibody = append(ibody, 0x01)    // type decl
+	ibody = append(ibody, enum...) // inner 0 = enum
 	ibody = append(ibody, component.ExportTypeEqDecl("error-code", 0)...)
 	buf := component.PutComponentHeader(nil)
 	buf = component.PutTypeSectionRawBody(buf, ibody)
@@ -1182,15 +1185,15 @@ func TestWasiHttpTypesInstanceTypeBody_Validates(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())              // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                       // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                               // type 1
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))  // type 2
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                     // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                       // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                        // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiHttpTypesInstanceTypeBody(4, 3))        // type 5
-	buf = component.PutImportSectionOneInstance(buf, "wasi:http/types@0.2.0", 5)                     // inst 2
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())             // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                      // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                              // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1)) // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                    // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                      // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                       // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiHttpTypesInstanceTypeBody(4, 3))       // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:http/types@0.2.0", 5)                    // inst 2
 	dir := t.TempDir()
 	p := filepath.Join(dir, "httptypes.wasm")
 	if err := os.WriteFile(p, buf, 0o644); err != nil {
@@ -1288,23 +1291,23 @@ func TestWasiSocketsTcpInstanceTypeBody_Validates(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())  // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)           // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                   // type 1
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1)) // type 2
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)         // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")           // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")            // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())   // type 5
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)            // inst 2
-	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                // type 6
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody()) // type 7
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 7)    // inst 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "network")                 // type 8
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "error-code")              // type 9
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-socket-address")       // type 10
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())                     // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                              // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                                      // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))         // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                            // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                              // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                               // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                      // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                               // inst 2
+	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                   // type 6
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())              // type 7
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 7)                       // inst 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "network")                                    // type 8
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "error-code")                                 // type 9
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-socket-address")                          // type 10
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsTcpInstanceTypeBody(8, 9, 10, 4, 3, 6)) // type 11
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/tcp@0.2.0", 11)       // inst 4
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/tcp@0.2.0", 11)                          // inst 4
 	dir := t.TempDir()
 	p := filepath.Join(dir, "tcp.wasm")
 	if err := os.WriteFile(p, buf, 0o644); err != nil {
@@ -1334,25 +1337,25 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())  // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)           // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                   // type 1
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1)) // type 2
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)         // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")           // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")            // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())   // type 5
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)            // inst 2
-	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                // type 6
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody()) // type 7
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 7)    // inst 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "network")                 // type 8
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "error-code")              // type 9
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-socket-address")       // type 10
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsTcpInstanceTypeBody(8, 9, 10, 4, 3, 6)) // type 11
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/tcp@0.2.0", 11)       // inst 4
-	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-address-family")       // type 12
-	buf = component.PutAliasSectionInstanceExportType(buf, 4, "tcp-socket")              // type 13
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())                         // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                                  // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                                          // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))             // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                  // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                   // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                          // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                   // inst 2
+	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                       // type 6
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())                  // type 7
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 7)                           // inst 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "network")                                        // type 8
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "error-code")                                     // type 9
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-socket-address")                              // type 10
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsTcpInstanceTypeBody(8, 9, 10, 4, 3, 6))     // type 11
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/tcp@0.2.0", 11)                              // inst 4
+	buf = component.PutAliasSectionInstanceExportType(buf, 3, "ip-address-family")                              // type 12
+	buf = component.PutAliasSectionInstanceExportType(buf, 4, "tcp-socket")                                     // type 13
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsTcpCreateSocketInstanceTypeBody(12, 9, 13)) // type 14
 	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/tcp-create-socket@0.2.0", 14)
 	dir := t.TempDir()
@@ -1383,15 +1386,15 @@ func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody()) // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 0)          // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "network")                       // type 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                    // type 2
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")             // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")             // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3)) // type 5
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp@0.2.0", 5)              // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "udp-socket")                    // type 6
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())                // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/network@0.2.0", 0)                         // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "network")                                      // type 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                                   // type 2
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")                            // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")                            // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3))             // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp@0.2.0", 5)                             // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "udp-socket")                                   // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpCreateSocketInstanceTypeBody(4, 2, 6)) // type 7
 	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp-create-socket@0.2.0", 7)
 	dir := t.TempDir()

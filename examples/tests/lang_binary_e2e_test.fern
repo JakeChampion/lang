@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/lang_binary_e2e_test.fern — end-to-end
 // migration pattern: a Lang test file that drives the `lang`
 // binary itself, asserts on its (exit_code, stdout, stderr)
@@ -14,19 +16,19 @@
 function test_interp_returns_exit_code(lang_bin: string): Option[string] {
     var src: string = "function main(): i32 { return 7; }";
     var r: ProcessResult = subprocess(lang_bin, ["-interp", "-"], src);
-    return assert_exit(r, 7);
+    return test.assert_exit(r, 7);
 }
 
 function test_interp_stdout_contains(lang_bin: string): Option[string] {
     var src: string = "function main(): i32 { print(\"from-lang-test\"); return 0; }";
     var r: ProcessResult = subprocess(lang_bin, ["-interp", "-"], src);
-    return assert_process(r, 0, "from-lang-test");
+    return test.assert_process(r, 0, "from-lang-test");
 }
 
 function test_check_passes_clean_program(lang_bin: string): Option[string] {
     var src: string = "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(2, 3); }";
     var r: ProcessResult = subprocess(lang_bin, ["-check", "-"], src);
-    return assert_exit(r, 0);
+    return test.assert_exit(r, 0);
 }
 
 function test_check_rejects_type_error(lang_bin: string): Option[string] {
@@ -59,11 +61,11 @@ function test_interp_reads_a_file(lang_bin: string, dir: string): Option[string]
         Some(_) => { return Some("write_file failed for " + src_path); }
     }
     var r: ProcessResult = subprocess(lang_bin, ["-interp", src_path], "");
-    return assert_process(r, 42, "file-mode");
+    return test.assert_process(r, 42, "file-mode");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("lang binary e2e");
+    var r: test.TestRunner = test.test_new("lang binary e2e");
 
     // Gate the suite on $LANG_BIN being set + pointing at an
     // executable. A best-effort sanity probe spawns `lang

@@ -164,18 +164,18 @@ type EnumType struct {
 // needs to compare two parameters from different scopes.
 type ParamType struct{ Name string }
 
-func (NumberType) isType()  {}
-func (BoolType) isType()    {}
-func (VoidType) isType()    {}
-func (StringType) isType()  {}
-func (FloatType) isType()   {}
-func (ArrayType) isType()   {}
-func (SliceType) isType()   {}
-func (TupleType) isType()   {}
-func (*FuncType) isType()   {}
-func (StructType) isType()  {}
-func (EnumType) isType()    {}
-func (ParamType) isType()   {}
+func (NumberType) isType() {}
+func (BoolType) isType()   {}
+func (VoidType) isType()   {}
+func (StringType) isType() {}
+func (FloatType) isType()  {}
+func (ArrayType) isType()  {}
+func (SliceType) isType()  {}
+func (TupleType) isType()  {}
+func (*FuncType) isType()  {}
+func (StructType) isType() {}
+func (EnumType) isType()   {}
+func (ParamType) isType()  {}
 func (n NumberType) String() string {
 	if n.IsPointerWidth() {
 		return "usize"
@@ -401,6 +401,7 @@ var TwoWordOverride bool
 //     assignment targets — is tainted so the owner never frees out
 //     from under the container. (StructLit / TupleLit construction inc
 //     their stored values, so escaping through those is already safe.)
+//
 // rc_correctness's escape_array_into_* entries cover each sink free-on
 // on all three backends; the differential gate
 // (Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree) asserts free-on ==
@@ -1020,19 +1021,19 @@ type MakeClosure struct {
 	Captures  []Expr
 }
 
-func (e *NumberLit) Pos() Position { return e.P }
-func (e *CastExpr) Pos() Position  { return e.P }
-func (e *BoolLit) Pos() Position   { return e.P }
-func (e *StringLit) Pos() Position { return e.P }
-func (e *FString) Pos() Position   { return e.P }
-func (e *FloatLit) Pos() Position  { return e.P }
-func (e *Ident) Pos() Position     { return e.P }
-func (e *ArrayLit) Pos() Position  { return e.P }
-func (e *Index) Pos() Position     { return e.P }
-func (e *SliceExpr) Pos() Position { return e.P }
-func (e *Call) Pos() Position      { return e.P }
-func (e *Binary) Pos() Position    { return e.P }
-func (e *Unary) Pos() Position     { return e.P }
+func (e *NumberLit) Pos() Position   { return e.P }
+func (e *CastExpr) Pos() Position    { return e.P }
+func (e *BoolLit) Pos() Position     { return e.P }
+func (e *StringLit) Pos() Position   { return e.P }
+func (e *FString) Pos() Position     { return e.P }
+func (e *FloatLit) Pos() Position    { return e.P }
+func (e *Ident) Pos() Position       { return e.P }
+func (e *ArrayLit) Pos() Position    { return e.P }
+func (e *Index) Pos() Position       { return e.P }
+func (e *SliceExpr) Pos() Position   { return e.P }
+func (e *Call) Pos() Position        { return e.P }
+func (e *Binary) Pos() Position      { return e.P }
+func (e *Unary) Pos() Position       { return e.P }
 func (e *Assign) Pos() Position      { return e.P }
 func (e *IfExpr) Pos() Position      { return e.P }
 func (e *MatchExpr) Pos() Position   { return e.P }
@@ -1046,19 +1047,19 @@ func (e *CaptureRef) Pos() Position  { return e.P }
 func (e *MakeClosure) Pos() Position { return e.P }
 func (e *Lambda) Pos() Position      { return e.P }
 
-func (*NumberLit) isExpr() {}
-func (*CastExpr) isExpr()  {}
-func (*BoolLit) isExpr()   {}
-func (*StringLit) isExpr() {}
-func (*FString) isExpr()   {}
-func (*FloatLit) isExpr()  {}
-func (*Ident) isExpr()     {}
-func (*ArrayLit) isExpr()  {}
-func (*Index) isExpr()     {}
-func (*SliceExpr) isExpr() {}
-func (*Call) isExpr()      {}
-func (*Binary) isExpr()    {}
-func (*Unary) isExpr()     {}
+func (*NumberLit) isExpr()   {}
+func (*CastExpr) isExpr()    {}
+func (*BoolLit) isExpr()     {}
+func (*StringLit) isExpr()   {}
+func (*FString) isExpr()     {}
+func (*FloatLit) isExpr()    {}
+func (*Ident) isExpr()       {}
+func (*ArrayLit) isExpr()    {}
+func (*Index) isExpr()       {}
+func (*SliceExpr) isExpr()   {}
+func (*Call) isExpr()        {}
+func (*Binary) isExpr()      {}
+func (*Unary) isExpr()       {}
 func (*Assign) isExpr()      {}
 func (*IfExpr) isExpr()      {}
 func (*MatchExpr) isExpr()   {}
@@ -1251,20 +1252,20 @@ type Match struct {
 // of {Literal, IsWildcard, VariantName}. Literal-pattern arms
 // dispatch via equality comparison instead of tag-based match.
 type MatchArm struct {
-	P            Position
-	VariantName  string   // empty when IsWildcard or Literal != nil
+	P           Position
+	VariantName string // empty when IsWildcard or Literal != nil
 	// VariantModule is the optional `mod.` qualifier on a variant
 	// pattern (`mod.TokA(x) => …`). Set by the parser when the
 	// pattern spells the module name; empty for unqualified
 	// patterns. The checker validates it matches the scrutinee
 	// enum's source module when both are known.
 	VariantModule string
-	Bindings     []string // payload binding names, in payload order
-	BindingTypes []Type   // resolved by the checker; same length as Bindings
-	IsWildcard   bool     // `_ => …`
-	Literal      Expr     // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
-	Guard        Expr     // optional `when <expr>`; nil for unconditional arms
-	Body         *Block
+	Bindings      []string // payload binding names, in payload order
+	BindingTypes  []Type   // resolved by the checker; same length as Bindings
+	IsWildcard    bool     // `_ => …`
+	Literal       Expr     // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	Guard         Expr     // optional `when <expr>`; nil for unconditional arms
+	Body          *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -1301,43 +1302,43 @@ type MatchExprArm struct {
 	Body          Expr
 }
 
-func (s *Block) Pos() Position    { return s.P }
-func (s *If) Pos() Position       { return s.P }
-func (s *IfLet) Pos() Position    { return s.P }
-func (s *LetElse) Pos() Position  { return s.P }
-func (s *While) Pos() Position    { return s.P }
-func (s *For) Pos() Position      { return s.P }
-func (s *Break) Pos() Position    { return s.P }
-func (s *Continue) Pos() Position { return s.P }
-func (s *Return) Pos() Position   { return s.P }
-func (s *Defer) Pos() Position    { return s.P }
-func (s *Arena) Pos() Position    { return s.P }
-func (s *Var) Pos() Position      { return s.P }
-func (s *Destructure) Pos() Position { return s.P }
-func (s *ExprStmt) Pos() Position { return s.P }
-func (s *Switch) Pos() Position   { return s.P }
-func (s *Match) Pos() Position    { return s.P }
-func (s *FuncDecl) Pos() Position           { return s.P }
-func (s *FuncDecl) GenericName() string     { return s.Name }
+func (s *Block) Pos() Position                  { return s.P }
+func (s *If) Pos() Position                     { return s.P }
+func (s *IfLet) Pos() Position                  { return s.P }
+func (s *LetElse) Pos() Position                { return s.P }
+func (s *While) Pos() Position                  { return s.P }
+func (s *For) Pos() Position                    { return s.P }
+func (s *Break) Pos() Position                  { return s.P }
+func (s *Continue) Pos() Position               { return s.P }
+func (s *Return) Pos() Position                 { return s.P }
+func (s *Defer) Pos() Position                  { return s.P }
+func (s *Arena) Pos() Position                  { return s.P }
+func (s *Var) Pos() Position                    { return s.P }
+func (s *Destructure) Pos() Position            { return s.P }
+func (s *ExprStmt) Pos() Position               { return s.P }
+func (s *Switch) Pos() Position                 { return s.P }
+func (s *Match) Pos() Position                  { return s.P }
+func (s *FuncDecl) Pos() Position               { return s.P }
+func (s *FuncDecl) GenericName() string         { return s.Name }
 func (s *FuncDecl) GenericTypeParams() []string { return s.TypeParams }
 
-func (*Block) isStmt()    {}
-func (*If) isStmt()       {}
-func (*IfLet) isStmt()    {}
-func (*LetElse) isStmt()  {}
-func (*While) isStmt()    {}
-func (*For) isStmt()      {}
-func (*Break) isStmt()    {}
-func (*Continue) isStmt() {}
-func (*Return) isStmt()   {}
-func (*Defer) isStmt()    {}
-func (*Arena) isStmt()    {}
-func (*Var) isStmt()      {}
+func (*Block) isStmt()       {}
+func (*If) isStmt()          {}
+func (*IfLet) isStmt()       {}
+func (*LetElse) isStmt()     {}
+func (*While) isStmt()       {}
+func (*For) isStmt()         {}
+func (*Break) isStmt()       {}
+func (*Continue) isStmt()    {}
+func (*Return) isStmt()      {}
+func (*Defer) isStmt()       {}
+func (*Arena) isStmt()       {}
+func (*Var) isStmt()         {}
 func (*Destructure) isStmt() {}
-func (*ExprStmt) isStmt() {}
-func (*Switch) isStmt()   {}
-func (*Match) isStmt()    {}
-func (*FuncDecl) isStmt() {} // legal as a stmt only when IsLocal is true
+func (*ExprStmt) isStmt()    {}
+func (*Switch) isStmt()      {}
+func (*Match) isStmt()       {}
+func (*FuncDecl) isStmt()    {} // legal as a stmt only when IsLocal is true
 
 // ---------- Top level ----------
 
@@ -1673,10 +1674,10 @@ type Import struct {
 // Pos accessors for top-level declarations that aren't also Stmts.
 // FuncDecl already has Pos() via its Stmt role; the rest need their
 // own so they satisfy the ast.Node interface for Walk / WalkProgram.
-func (d *StructDecl) Pos() Position             { return d.P }
-func (d *StructDecl) GenericName() string       { return d.Name }
+func (d *StructDecl) Pos() Position               { return d.P }
+func (d *StructDecl) GenericName() string         { return d.Name }
 func (d *StructDecl) GenericTypeParams() []string { return d.TypeParams }
-func (d *EnumDecl) Pos() Position   { return d.P }
-func (d *UnionDecl) Pos() Position  { return d.P }
-func (d *ConstDecl) Pos() Position  { return d.P }
-func (d *Import) Pos() Position     { return d.P }
+func (d *EnumDecl) Pos() Position                 { return d.P }
+func (d *UnionDecl) Pos() Position                { return d.P }
+func (d *ConstDecl) Pos() Position                { return d.P }
+func (d *Import) Pos() Position                   { return d.P }

@@ -113,9 +113,9 @@ var linuxDarwinSysno = map[string][2]int{
 // driver builds with `-target arm64-darwin` instead of
 // silently producing wrong asm.
 var linuxOnlySysno = map[string]int{
-	"fstat":          sysFstat,
-	"getrandom":      sysGetrandom,
-	"clock_gettime":  sysClockGettime,
+	"fstat":         sysFstat,
+	"getrandom":     sysGetrandom,
+	"clock_gettime": sysClockGettime,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -940,7 +940,7 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.emit("cbz x19, .Lboxfree_ret")
 	g.emit("cmp x19, #0x10000")
 	g.emit("b.lo .Lboxfree_ret")
-	g.emit("add x1, x1, #8") // size + 8 rc header (arg1)
+	g.emit("add x1, x1, #8")  // size + 8 rc header (arg1)
 	g.emit("sub x0, x19, #8") // base = data - 8 (arg0)
 	g.emit("bl __fern_free")
 	g.label(".Lboxfree_ret")
@@ -971,9 +971,9 @@ func (g *generator) emitClosureDropRuntime() {
 	g.emit("b.lo .Lcd_ret")
 	g.emit("ldur w1, [x0, #-8]") // rc
 	g.emit("cmp w1, #1")
-	g.emit("b.ne .Lcd_dec") // rc != 1 (shared, or static sentinel) → dec
+	g.emit("b.ne .Lcd_dec")      // rc != 1 (shared, or static sentinel) → dec
 	g.emit("ldur w1, [x0, #-4]") // rc==1: payload size → arg2
-	g.emit("b __fern_box_free") // tail-call box_free(x0=data, x1=size) -> x0
+	g.emit("b __fern_box_free")  // tail-call box_free(x0=data, x1=size) -> x0
 	g.label(".Lcd_dec")
 	g.emit("b __fern_rc_dec") // tail-call rc_dec(x0) -> x0
 	g.label(".Lcd_ret")
@@ -1198,7 +1198,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.label("__fern_arr_push_grow")
 	// Fast path: rc==1 and oldLen < cap. arm64 AAPCS64 inputs:
 	//   x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
-	g.emit("ldur w3, [x0, #-8]")  // w3 = rc
+	g.emit("ldur w3, [x0, #-8]") // w3 = rc
 	g.emit("cmp w3, #1")
 	g.emit("b.ne .Lpush_copy")
 	g.emit("ldur w4, [x0, #-12]") // w4 = cap
@@ -1497,7 +1497,7 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.emit("mov w20, w1") // len
 	g.emit("mov x0, #8")
 	g.emit("bl __fern_alloc")
-	g.emit("str w19, [x0]")    // [+0..+3] data_ptr (i32)
+	g.emit("str w19, [x0]")     // [+0..+3] data_ptr (i32)
 	g.emit("str w20, [x0, #4]") // [+4..+7] len (i32)
 	g.emit("ldp x19, x20, [sp], #16")
 	g.emit("ldp x29, x30, [sp], #16")
@@ -1597,7 +1597,7 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("add x0, x21, x22")
 	g.emit("add x0, x0, #4")
 	g.emit("bl __fern_alloc")
-	g.emit("add x23, x0, #4") // x23 = data ptr (past the 4-byte length prefix)
+	g.emit("add x23, x0, #4")  // x23 = data ptr (past the 4-byte length prefix)
 	g.emit("add w5, w21, w22") // w5 = combined length
 	g.emitStrLenStore("w5", "x23")
 	// Materialise a / b for the memcpy reads.
@@ -1686,9 +1686,9 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.emitStrDataPtr2W("x4", "x21", "x22", 80) // x4 = b byte ptr; spill at [x29+80]
 	// memcpy(dst + a_byteLen, b_data, b_byteLen).
 	g.emit("ldr x0, [x29, #96]")
-	g.emit("add x0, x0, x23")    // dst + a_byteLen
-	g.emit("mov x1, x4")          // src = b byte ptr
-	g.emit("mov x2, x24")         // n = b_byteLen
+	g.emit("add x0, x0, x23") // dst + a_byteLen
+	g.emit("mov x1, x4")      // src = b byte ptr
+	g.emit("mov x2, x24")     // n = b_byteLen
 	g.emit("bl __fern_memcpy")
 	// Return (dst, total_byteLen) in (x0, x1).
 	g.emit("ldr x0, [x29, #96]")
@@ -1893,8 +1893,8 @@ func (g *generator) emitStrcmpRuntime2W() {
 	g.emit("beq .Lscmp2w_eq")
 	g.label(".Lscmp2w_check_len")
 	// Extract byte lengths.
-	g.emit("mov x4, x1") // save a_len
-	g.emit("mov x5, x3") // save b_len
+	g.emit("mov x4, x1")       // save a_len
+	g.emit("mov x5, x3")       // save b_len
 	g.emitStrLen2W("w6", "x4") // w6 = a byte length
 	g.emitStrLen2W("w7", "x5") // w7 = b byte length
 	g.emit("cmp w6, w7")
@@ -1902,7 +1902,7 @@ func (g *generator) emitStrcmpRuntime2W() {
 	// Same length → materialise both byte pointers.
 	g.emitStrDataPtr2W("x0", "x0", "x1", 16) // x0 = a byte ptr; scratch at [x29+16]
 	g.emitStrDataPtr2W("x1", "x2", "x3", 32) // x1 = b byte ptr; scratch at [x29+32]
-	g.emit("mov w2, w6") // remaining bytes
+	g.emit("mov w2, w6")                     // remaining bytes
 	g.label(".Lscmp2w_word")
 	g.emit("cmp w2, #4")
 	g.emit("blt .Lscmp2w_tail")
@@ -2064,7 +2064,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
-	g.emit("mov x19, x0")     // x19 = n (callee-save, survives bl)
+	g.emit("mov x19, x0") // x19 = n (callee-save, survives bl)
 	// Short-circuit on n == 0: return the shared static empty-
 	// array sentinel rather than allocating a fresh header-only
 	// buffer. The sentinel's byte at offset -4 is 0 (length), so
@@ -2077,7 +2077,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.label(".Lallocu8_alloc")
 	g.emit("add x0, x19, #16")
 	g.emit("bl __fern_alloc")
-	g.emit("add x0, x0, #16")  // x0 = data ptr (past 16-byte header)
+	g.emit("add x0, x0, #16")      // x0 = data ptr (past 16-byte header)
 	g.emit("stur w19, [x0, #-12]") // cap = n  (Phase 2-prep)
 	g.emit("mov w1, #1")
 	g.emit("stur w1, [x0, #-8]") // rc = 1 (phase 1 of RC rollout)
@@ -2105,8 +2105,8 @@ func (g *generator) emitStringFromBytesRuntime() {
 		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0")          // x19 = bs (input u8[])
-		g.emitArrayLen("w20", "x19")   // x20 = byte length
+		g.emit("mov x19, x0")        // x19 = bs (input u8[])
+		g.emitArrayLen("w20", "x19") // x20 = byte length
 		// Empty input → empty pair.
 		g.emit("cbnz w20, .Lsfb2w_alloc")
 		g.emit("mov x0, xzr")
@@ -2114,13 +2114,13 @@ func (g *generator) emitStringFromBytesRuntime() {
 		g.emit("b .Lsfb2w_ret")
 		g.label(".Lsfb2w_alloc")
 		g.emit("mov w0, w20")
-		g.emit("bl __fern_alloc")      // x0 = dst
-		g.emit("mov x2, x20")           // n
-		g.emit("mov x1, x19")           // src = bs
+		g.emit("bl __fern_alloc")          // x0 = dst
+		g.emit("mov x2, x20")              // n
+		g.emit("mov x1, x19")              // src = bs
 		g.emit("stp x0, xzr, [sp, #-16]!") // save dst on stack
 		g.emit("bl __fern_memcpy")
-		g.emit("ldp x0, x1, [sp], #16")  // x0 = dst (saved), x1 = junk
-		g.emit("mov w1, w20")            // len = byteLen
+		g.emit("ldp x0, x1, [sp], #16") // x0 = dst (saved), x1 = junk
+		g.emit("mov w1, w20")           // len = byteLen
 		g.label(".Lsfb2w_ret")
 		g.emit("ldp x19, x20, [sp, #16]")
 		g.emit("ldp x29, x30, [sp], #48")
@@ -2135,8 +2135,8 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
-	g.emit("mov x19, x0")           // x19 = bs (input u8[] array)
-	g.emitArrayLen("w20", "x19")    // x20 = input array length
+	g.emit("mov x19, x0")        // x19 = bs (input u8[] array)
+	g.emitArrayLen("w20", "x19") // x20 = input array length
 	// Short-circuit on input length == 0: return the shared
 	// empty-string sentinel rather than allocating a fresh
 	// 0-byte buffer.
@@ -2161,13 +2161,13 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.label(".Lsfb_heap")
 	g.emit("add x0, x20, #4")
 	g.emit("bl __fern_alloc")
-	g.emit("add x21, x0, #4")       // x21 = data ptr (callee-save)
+	g.emit("add x21, x0, #4") // x21 = data ptr (callee-save)
 	g.emitStrLenStore("w20", "x21")
-	g.emit("mov x0, x21")           // memcpy dst
+	g.emit("mov x0, x21") // memcpy dst
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x20")
 	g.emit("bl __fern_memcpy")
-	g.emit("mov x0, x21")           // return data ptr
+	g.emit("mov x0, x21") // return data ptr
 	g.label(".Lsfb_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -2201,9 +2201,9 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("str x23, [sp, #48]")
-	g.emit("mov x19, x0") // x19 = base (may be inline-tagged)
-	g.emit("mov x20, x1") // x20 = low
-	g.emit("mov x21, x2") // x21 = high
+	g.emit("mov x19, x0")      // x19 = base (may be inline-tagged)
+	g.emit("mov x20, x1")      // x20 = low
+	g.emit("mov x21, x2")      // x21 = high
 	g.emitStrLen("w22", "x19") // x22 = src_len
 	// low < 0 → trap
 	g.emit("cmp x20, #0")
@@ -2245,14 +2245,14 @@ func (g *generator) emitStrSliceRuntime() {
 	// --- Heap output path ---
 	g.emit("add x0, x22, #4")
 	g.emit("bl __fern_alloc")
-	g.emit("add x23, x0, #4")     // x23 = data ptr (callee-save survives bl)
+	g.emit("add x23, x0, #4") // x23 = data ptr (callee-save survives bl)
 	g.emitStrLenStore("w22", "x23")
 	// memcpy(data_ptr, base + low, new_len).
-	g.emit("add x1, x19, x20")    // src = base + low
-	g.emit("mov x2, x22")         // n
-	g.emit("mov x0, x23")         // dst
+	g.emit("add x1, x19, x20") // src = base + low
+	g.emit("mov x2, x22")      // n
+	g.emit("mov x0, x23")      // dst
 	g.emit("bl __fern_memcpy")
-	g.emit("mov x0, x23")         // return data ptr
+	g.emit("mov x0, x23") // return data ptr
 	g.label(".Lstrslice_ret")
 	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
@@ -2360,36 +2360,36 @@ func (g *generator) emitEnvRuntime() {
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
 		g.emit("stp x21, x22, [sp, #32]")
-		g.emitStrLen2W("w20", "x1") // x20 = name byte length
+		g.emitStrLen2W("w20", "x1")               // x20 = name byte length
 		g.emitStrDataPtr2W("x19", "x0", "x1", 64) // x19 = name byte ptr
 	} else {
-	// Frame: 64 bytes — fp/lr (16) + x19..x22 (32) + 8 SSO scratch
-	// at [x29 + 48] for materialising the name + 8 padding.
-	g.emit("stp x29, x30, [sp, #-64]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("stp x21, x22, [sp, #32]")
-	g.emitStrLen("w20", "x0")           // x20 = name_len (read before materialise)
-	g.emitStrDataPtr("x19", "x0", 48)   // x19 = name byte ptr
+		// Frame: 64 bytes — fp/lr (16) + x19..x22 (32) + 8 SSO scratch
+		// at [x29 + 48] for materialising the name + 8 padding.
+		g.emit("stp x29, x30, [sp, #-64]!")
+		g.emit("mov x29, sp")
+		g.emit("stp x19, x20, [sp, #16]")
+		g.emit("stp x21, x22, [sp, #32]")
+		g.emitStrLen("w20", "x0")         // x20 = name_len (read before materialise)
+		g.emitStrDataPtr("x19", "x0", 48) // x19 = name byte ptr
 	}
 	g.adrpAdd("x21", "__fern_envp")
-	g.emit("ldr x21, [x21]")            // x21 = envp
+	g.emit("ldr x21, [x21]") // x21 = envp
 	g.label(".Lenv_loop")
-	g.emit("ldr x22, [x21]")        // x22 = envp[i]
-	g.emit("cbz x22, .Lenv_none")   // NULL terminator → return None
+	g.emit("ldr x22, [x21]")      // x22 = envp[i]
+	g.emit("cbz x22, .Lenv_none") // NULL terminator → return None
 	// Compare first name_len bytes of envp[i] with name, then check '='.
-	g.emit("mov x0, x22")           // candidate envp entry
-	g.emit("mov x1, x19")           // name
-	g.emit("mov x2, x20")           // n
+	g.emit("mov x0, x22") // candidate envp entry
+	g.emit("mov x1, x19") // name
+	g.emit("mov x2, x20") // n
 	g.emit("bl __memcmp_n_env")
-	g.emit("cbnz w0, .Lenv_next")   // not equal
+	g.emit("cbnz w0, .Lenv_next") // not equal
 	// Check that byte at offset name_len is '='.
 	g.emit("ldrb w0, [x22, x20]")
-	g.emit("cmp w0, #61")           // '='
+	g.emit("cmp w0, #61") // '='
 	g.emit("bne .Lenv_next")
 	// Found. Build a fresh lang string holding the value after '='.
 	g.emit("add x0, x22, x20")
-	g.emit("add x0, x0, #1")        // x0 = start of value (NUL-terminated)
+	g.emit("add x0, x0, #1") // x0 = start of value (NUL-terminated)
 	g.emit("mov x1, x0")
 	g.label(".Lenv_strlen")
 	g.emit("ldrb w2, [x1]")
@@ -2397,9 +2397,9 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("add x1, x1, #1")
 	g.emit("b .Lenv_strlen")
 	g.label(".Lenv_strlen_done")
-	g.emit("sub x2, x1, x0")        // x2 = value length
-	g.emit("mov x19, x0")           // stash value src ptr
-	g.emit("mov x20, x2")           // stash value len
+	g.emit("sub x2, x1, x0") // x2 = value length
+	g.emit("mov x19, x0")    // stash value src ptr
+	g.emit("mov x20, x2")    // stash value len
 	if twoWord {
 		// Heap-form: alloc exactly value-len bytes (no
 		// length prefix).
@@ -2414,7 +2414,7 @@ func (g *generator) emitEnvRuntime() {
 		// len@16}.
 		g.emit("mov x0, #24")
 		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")     // tag = 0 (Some)
+		g.emit("str wzr, [x0]")      // tag = 0 (Some)
 		g.emit("str x22, [x0, #8]")  // data
 		g.emit("str x20, [x0, #16]") // len
 		g.emit("b .Lenv_done")
@@ -2506,17 +2506,17 @@ func (g *generator) emitTcpListenRuntime() {
 	// Build sockaddr_in on the stack (16 bytes).
 	g.emit("sub sp, sp, #16")
 	g.emit("mov w0, #2")
-	g.emit("strh w0, [sp]")      // sin_family
-	g.emit("rev16 w0, w19")      // htons(port)
+	g.emit("strh w0, [sp]") // sin_family
+	g.emit("rev16 w0, w19") // htons(port)
 	g.emit("strh w0, [sp, #2]")
-	g.emit("str wzr, [sp, #4]")  // sin_addr = 0
-	g.emit("str xzr, [sp, #8]")  // sin_zero[0..7]
+	g.emit("str wzr, [sp, #4]") // sin_addr = 0
+	g.emit("str xzr, [sp, #8]") // sin_zero[0..7]
 	// bind(fd, sa, 16)
 	g.emit("mov x0, x20")
 	g.emit("mov x1, sp")
 	g.emit("mov x2, #16")
 	g.syscall("bind")
-	g.emit("add sp, sp, #16")    // pop sockaddr_in
+	g.emit("add sp, sp, #16") // pop sockaddr_in
 	g.emit("cmp x0, #0")
 	g.emit("blt .Ltcp_lst_err")
 	// listen(fd, 128)
@@ -2525,7 +2525,7 @@ func (g *generator) emitTcpListenRuntime() {
 	g.syscall("listen")
 	g.emit("cmp x0, #0")
 	g.emit("blt .Ltcp_lst_err")
-	g.emit("mov x0, x20")        // return fd
+	g.emit("mov x0, x20") // return fd
 	g.emit("b .Ltcp_lst_done")
 	g.label(".Ltcp_lst_err")
 	// x0 holds -errno from the failed syscall.
@@ -2629,11 +2629,11 @@ func (g *generator) emitTcpSendRuntime() {
 		// x0 = fd, x1 = data, x2 = len.
 		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
-		g.emit("mov w3, w0") // w3 = fd
-		g.emitStrLen2W("w4", "x2")             // w4 = byte length
+		g.emit("mov w3, w0")                     // w3 = fd
+		g.emitStrLen2W("w4", "x2")               // w4 = byte length
 		g.emitStrDataPtr2W("x1", "x1", "x2", 16) // x1 = byte ptr
-		g.emit("mov w0, w3")                    // x0 = fd
-		g.emit("mov x2, x4")                    // x2 = byte length
+		g.emit("mov w0, w3")                     // x0 = fd
+		g.emit("mov x2, x4")                     // x2 = byte length
 		g.syscall("write")
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
@@ -2682,9 +2682,9 @@ func (g *generator) emitWriteRuntime() {
 		// inline-spill at [x29+16..x29+31] + 16 align pad.
 		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
-		g.emitStrLen2W("w2", "x1")                // x2 = byte length
-		g.emitStrDataPtr2W("x1", "x0", "x1", 16)  // x1 = byte ptr; spill scratch at [x29+16]
-		g.emit("mov x0, #1")                      // fd = stdout
+		g.emitStrLen2W("w2", "x1")               // x2 = byte length
+		g.emitStrDataPtr2W("x1", "x0", "x1", 16) // x1 = byte ptr; spill scratch at [x29+16]
+		g.emit("mov x0, #1")                     // fd = stdout
 		g.syscall("write")
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
@@ -2695,9 +2695,9 @@ func (g *generator) emitWriteRuntime() {
 	// Legacy single-register native ABI.
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
-	g.emitStrLen("w2", "x0")           // x2 = length
-	g.emitStrDataPtr("x1", "x0", 16)   // x1 = byte ptr (buf)
-	g.emit("mov x0, #1")               // x0 = fd (stdout)
+	g.emitStrLen("w2", "x0")         // x2 = length
+	g.emitStrDataPtr("x1", "x0", 16) // x1 = byte ptr (buf)
+	g.emit("mov x0, #1")             // x0 = fd (stdout)
 	g.syscall("write")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
@@ -2773,11 +2773,11 @@ func (g *generator) emitPutcharRuntime() {
 	g.line(".global __fern_putchar")
 	g.typeDirective("__fern_putchar")
 	g.label("__fern_putchar")
-	g.emit("sub sp, sp, #16")     // 16-byte slot for sp alignment
-	g.emit("strb w0, [sp]")        // store byte on the stack
-	g.emit("mov x1, sp")           // buf
-	g.emit("mov x2, #1")           // len
-	g.emit("mov x0, #1")           // fd
+	g.emit("sub sp, sp, #16") // 16-byte slot for sp alignment
+	g.emit("strb w0, [sp]")   // store byte on the stack
+	g.emit("mov x1, sp")      // buf
+	g.emit("mov x2, #1")      // len
+	g.emit("mov x0, #1")      // fd
 	g.syscall("write")
 	g.emit("add sp, sp, #16")
 	g.emit("ret")
@@ -2802,7 +2802,7 @@ func (g *generator) emitEprintRuntime() {
 		g.emit("mov x29, sp")
 		g.emitStrLen2W("w2", "x1")
 		g.emitStrDataPtr2W("x1", "x0", "x1", 16)
-		g.emit("mov x0, #2")            // fd = stderr
+		g.emit("mov x0, #2") // fd = stderr
 		g.syscall("write")
 		g.adrpAdd("x1", ".LLangNewline")
 		g.emit("mov x2, #1")
@@ -2899,9 +2899,9 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("stp x29, x30, [sp, #-64]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0") // a_data
-		g.emit("mov x20, x1") // a_len-with-tag
-		g.emitStrLen2W("w20", "x20")               // w20 = byte length (untagged)
+		g.emit("mov x19, x0")                       // a_data
+		g.emit("mov x20, x1")                       // a_len-with-tag
+		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
 		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
 		// dst = strbuf_data + strbuf_len
 		g.emit("adrp x2, __fern_strbuf_len")
@@ -2928,8 +2928,8 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("mov x29, sp")
 		g.emit("str x19, [sp, #16]")
 		g.emit("mov x19, x0")
-		g.emitStrLen("w20", "x19")                 // w20 = byte length
-		g.emitStrDataPtr("x19", "x19", 24)         // x19 = byte ptr
+		g.emitStrLen("w20", "x19")         // w20 = byte length
+		g.emitStrDataPtr("x19", "x19", 24) // x19 = byte ptr
 		g.emit("adrp x2, __fern_strbuf_len")
 		g.emit("add x2, x2, :lo12:__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
@@ -3045,19 +3045,19 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("mov x29, sp")
 	// timespec buffer at sp+16.
 	g.emit("add x1, sp, #16")
-	g.emit("mov x0, #0")                       // CLOCK_REALTIME
+	g.emit("mov x0, #0") // CLOCK_REALTIME
 	g.emit("mov x8, #%d", sysClockGettime)
 	g.emit("svc #0")
-	g.emit("ldr x9, [sp, #16]")                // tv_sec (i64)
+	g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
 	g.emit("mov x10, #1000")
-	g.emit("mul x9, x9, x10")                  // sec * 1000
-	g.emit("ldr x11, [sp, #24]")               // tv_nsec (i64, always 0..1e9)
+	g.emit("mul x9, x9, x10")    // sec * 1000
+	g.emit("ldr x11, [sp, #24]") // tv_nsec (i64, always 0..1e9)
 	// 1_000_000 (0xF4240) is 20 bits — beyond `mov`'s 16-bit
 	// immediate range. Use the literal-pool form instead; the
 	// pool is flushed by the `.ltorg` at the function's end.
 	g.emit("ldr x10, =1000000")
-	g.emit("udiv x11, x11, x10")               // nsec / 1_000_000
-	g.emit("add x0, x9, x11")                  // result
+	g.emit("udiv x11, x11, x10") // nsec / 1_000_000
+	g.emit("add x0, x9, x11")    // result
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_now_unix_ms")
@@ -3110,10 +3110,10 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("lsl x0, x19, #3")
 	g.emit("add x0, x0, #16")
 	g.emit("bl __fern_alloc")
-	g.emit("add x21, x0, #16")     // x21 = result data pointer (16-aligned)
+	g.emit("add x21, x0, #16")      // x21 = result data pointer (16-aligned)
 	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
 	g.emit("mov w9, #1")
-	g.emit("stur w9, [x21, #-8]") // rc = 1 (phase 1 of RC rollout)
+	g.emit("stur w9, [x21, #-8]")  // rc = 1 (phase 1 of RC rollout)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	// for (i = 0; i < argc; i++)
 	g.emit("mov x22, #0") // x22 = i
@@ -3130,8 +3130,8 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("add x0, x0, #1")
 	g.emit("b .Largs_strlen")
 	g.label(".Largs_strlen_done")
-	g.emit("sub x0, x0, x23")     // x0 = strlen
-	g.emit("mov x9, x0")          // x9 = saved strlen (caller-save, not preserved across bl)
+	g.emit("sub x0, x0, x23") // x0 = strlen
+	g.emit("mov x9, x0")      // x9 = saved strlen (caller-save, not preserved across bl)
 	// Allocate strlen + 5 (4 prefix + N data + 1 trailing NUL).
 	g.emit("add x0, x0, #5")
 	g.emit("bl __fern_alloc")
@@ -3199,15 +3199,15 @@ func (g *generator) emitArgsRuntime2W() {
 	// Allocate: 16-byte header + argc * 16 (entries are 16-byte
 	// (data, len) pairs). Header is 16 bytes so element 0 sits
 	// at +16 = stride-aligned; length prefix at `[base + 12]`.
-	g.emit("lsl x0, x19, #4")  // argc * 16
-	g.emit("add x0, x0, #16")  // + header
+	g.emit("lsl x0, x19, #4") // argc * 16
+	g.emit("add x0, x0, #16") // + header
 	g.emit("bl __fern_alloc")
-	g.emit("add x21, x0, #16") // x21 = data pointer (past header)
+	g.emit("add x21, x0, #16")      // x21 = data pointer (past header)
 	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
 	g.emit("mov w9, #1")
-	g.emit("stur w9, [x21, #-8]") // rc = 1 (phase 1 of RC rollout)
+	g.emit("stur w9, [x21, #-8]")  // rc = 1 (phase 1 of RC rollout)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
-	g.emit("mov x22, #0")      // loop counter i
+	g.emit("mov x22, #0")          // loop counter i
 	g.label(".Largs2w_loop")
 	g.emit("cmp x22, x19")
 	g.emit("bge .Largs2w_done")
@@ -3226,17 +3226,17 @@ func (g *generator) emitArgsRuntime2W() {
 	// Allocate strlen bytes (no length prefix; len lives in
 	// the entry's `len` half).
 	g.emit("bl __fern_alloc")
-	g.emit("mov x25, x0")     // x25 = dst (callee-save, survives bl)
+	g.emit("mov x25, x0") // x25 = dst (callee-save, survives bl)
 	// memcpy(dst, src, strlen).
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x23")
 	g.emit("mov x2, x24")
 	g.emit("bl __fern_memcpy")
 	// Write entry: data at [x21 + i*16], len at [x21 + i*16 + 8].
-	g.emit("lsl x11, x22, #4")     // x11 = i * 16
-	g.emit("str x25, [x21, x11]")  // data
+	g.emit("lsl x11, x22, #4")    // x11 = i * 16
+	g.emit("str x25, [x21, x11]") // data
 	g.emit("add x11, x11, #8")
-	g.emit("str x24, [x21, x11]")  // len (= strlen, heap form, top bit clear)
+	g.emit("str x24, [x21, x11]") // len (= strlen, heap form, top bit clear)
 	g.emit("add x22, x22, #1")
 	g.emit("b .Largs2w_loop")
 	g.label(".Largs2w_done")
@@ -3353,7 +3353,7 @@ func (g *generator) emitReadLineRuntime() {
 		g.emit("mov x19, x21") // stash data ptr
 		g.emit("mov x0, #24")
 		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")     // tag = 0 (Some)
+		g.emit("str wzr, [x0]")      // tag = 0 (Some)
 		g.emit("str x19, [x0, #8]")  // data
 		g.emit("str x20, [x0, #16]") // len
 		g.emit("b .Lrl_ret")
@@ -3361,7 +3361,7 @@ func (g *generator) emitReadLineRuntime() {
 		// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
 		g.emit("add x0, x20, #5")
 		g.emit("bl __fern_alloc")
-		g.emit("add x21, x0, #4")     // x21 = data ptr
+		g.emit("add x21, x0, #4")      // x21 = data ptr
 		g.emit("stur w20, [x21, #-4]") // length prefix
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")
@@ -3442,7 +3442,7 @@ func (g *generator) emitRandomBytesRuntime() {
 		// Legacy single-pointer: length prefix at [data-4].
 		g.emit("add x0, x20, #5")
 		g.emit("bl __fern_alloc")
-		g.emit("add x19, x0, #4")     // x19 = data ptr (past prefix)
+		g.emit("add x19, x0, #4")      // x19 = data ptr (past prefix)
 		g.emit("stur w20, [x19, #-4]") // length prefix
 	}
 	if g.darwin {
@@ -3543,13 +3543,13 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("mov x20, x1") // path
 
 	// Map errno → tag. Default = 6 (Other).
-	g.emit("cmp w19, #2")  // ENOENT
+	g.emit("cmp w19, #2") // ENOENT
 	g.emit("b.eq .Lioe_notfound")
 	g.emit("cmp w19, #13") // EACCES
 	g.emit("b.eq .Lioe_perm")
 	g.emit("cmp w19, #17") // EEXIST
 	g.emit("b.eq .Lioe_exists")
-	g.emit("cmp w19, #4")  // EINTR
+	g.emit("cmp w19, #4") // EINTR
 	g.emit("b.eq .Lioe_intr")
 
 	// Other(path, ""). The "" payload needs the SECOND string
@@ -3586,7 +3586,7 @@ func (g *generator) emitIoErrorRuntime() {
 	g.label(".Lioe_with_path")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str w19, [x0]")   // tag
+	g.emit("str w19, [x0]")     // tag
 	g.emit("str x20, [x0, #8]") // path
 	g.label(".Lioe_done")
 	g.emit("ldp x19, x20, [sp, #16]")
@@ -3638,13 +3638,13 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("mov x20, x1") // path_data
 	g.emit("mov x21, x2") // path_len
 	// errno → tag.
-	g.emit("cmp w19, #2")  // ENOENT
+	g.emit("cmp w19, #2") // ENOENT
 	g.emit("b.eq .Lioe2w_notfound")
 	g.emit("cmp w19, #13") // EACCES
 	g.emit("b.eq .Lioe2w_perm")
 	g.emit("cmp w19, #17") // EEXIST
 	g.emit("b.eq .Lioe2w_exists")
-	g.emit("cmp w19, #4")  // EINTR
+	g.emit("cmp w19, #4") // EINTR
 	g.emit("b.eq .Lioe2w_intr")
 	// Other(path, "") — 40-byte box, msg = empty inline pair.
 	g.emit("mov x0, #40")
@@ -3655,7 +3655,7 @@ func (g *generator) emitIoErrorRuntime2W() {
 	g.emit("str x21, [x0, #16]") // path_len
 	g.emit("str xzr, [x0, #24]") // msg_data = 0
 	g.emit("movz x1, #0x8000, lsl #48")
-	g.emit("str x1, [x0, #32]")  // msg_len = inline-empty
+	g.emit("str x1, [x0, #32]") // msg_len = inline-empty
 	g.emit("b .Lioe2w_done")
 	g.label(".Lioe2w_notfound")
 	g.emit("mov w19, #0")
@@ -3715,7 +3715,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
-	g.emit("mov x19, x0") // x19 = original path string value (heap or inline)
+	g.emit("mov x19, x0")              // x19 = original path string value (heap or inline)
 	g.emitStrDataPtr("x24", "x0", 208) // x24 = path byte ptr for openat; scratch lives at [x29 + 208]
 
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
@@ -3763,13 +3763,13 @@ func (g *generator) emitReadFileRuntime() {
 	// Build Result.Ok(string).
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]")    // tag=0 (Ok)
+	g.emit("str wzr, [x0]")     // tag=0 (Ok)
 	g.emit("str x21, [x0, #8]") // payload @ +8 — x21 is already the string data ptr
 	g.emit("b .Lrf_return")
 
 	g.label(".Lrf_err_close")
 	// errno = -x0, then close(fd), then build Err.
-	g.emit("neg x21, x0")     // x21 = errno (reuse slot)
+	g.emit("neg x21, x0") // x21 = errno (reuse slot)
 	g.emit("mov x0, x20")
 	g.syscall("close")
 	g.emit("b .Lrf_err_dispatch")
@@ -3871,9 +3871,9 @@ func (g *generator) emitReadFileRuntime2W() {
 	// pad@4, data@8, len@16}.
 	g.emit("mov x0, #24")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]")       // tag = 0 (Ok)
-	g.emit("str x22, [x0, #8]")    // payload data
-	g.emit("str x23, [x0, #16]")   // payload len
+	g.emit("str wzr, [x0]")      // tag = 0 (Ok)
+	g.emit("str x22, [x0, #8]")  // payload data
+	g.emit("str x23, [x0, #16]") // payload len
 	g.emit("b .Lrf2w_return")
 	g.label(".Lrf2w_err_close")
 	g.emit("neg x22, x0") // x22 = errno
@@ -3935,10 +3935,10 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
-	g.emit("mov x19, x0")                // x19 = ORIGINAL path string value (for io_error)
-	g.emitStrLen("w22", "x1")            // x22 = content_len (before content materialise)
-	g.emitStrDataPtr("x20", "x1", 72)    // x20 = content byte ptr
-	g.emitStrDataPtr("x24", "x19", 64)   // x24 = path byte ptr (preserves x19 = original)
+	g.emit("mov x19, x0")              // x19 = ORIGINAL path string value (for io_error)
+	g.emitStrLen("w22", "x1")          // x22 = content_len (before content materialise)
+	g.emitStrDataPtr("x20", "x1", 72)  // x20 = content byte ptr
+	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
 	g.emit("mov x0, #-100")
@@ -4007,8 +4007,9 @@ func (g *generator) emitWriteFileRuntime() {
 // Signature: `__fern_write_file(path_data, path_len,
 // content_data, content_len)` in (x0..x3). Returns
 // `Option[IoError]` heap-box ptr in x0:
-//   Some(IoError): 16-byte box {tag=0@0, payload=err@8}
-//   None:           8-byte box {tag=1@0}
+//
+//	Some(IoError): 16-byte box {tag=0@0, payload=err@8}
+//	None:           8-byte box {tag=1@0}
 func (g *generator) emitWriteFileRuntime2W() {
 	// Frame: 96 bytes. fp/lr (16) + 6 callee-saves (48) +
 	// 2× 16-byte inline-spill scratch for path + content (32).
@@ -4022,10 +4023,10 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov x21, x2") // content_data
 	g.emit("mov x22, x3") // content_len
 	// content byte length + byte ptr.
-	g.emitStrLen2W("w24", "x22")             // x24 = content byte length
+	g.emitStrLen2W("w24", "x22")                // x24 = content byte length
 	g.emitStrDataPtr2W("x23", "x21", "x22", 64) // x23 = content byte ptr; scratch at [x29+64]
 	// path byte ptr (separate scratch).
-	g.emitStrDataPtr2W("x0", "x19", "x20", 80)  // x0 = path byte ptr; scratch at [x29+80]
+	g.emitStrDataPtr2W("x0", "x19", "x20", 80) // x0 = path byte ptr; scratch at [x29+80]
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
 	g.emit("mov x1, x0")
 	g.emit("mov x0, #-100")
@@ -4042,9 +4043,9 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.label(".Lwf2w_loop")
 	g.emit("cmp x22, x24")
 	g.emit("b.ge .Lwf2w_done")
-	g.emit("mov x0, x21")        // fd
-	g.emit("add x1, x23, x22")   // buf + offset
-	g.emit("sub x2, x24, x22")   // remaining
+	g.emit("mov x0, x21")      // fd
+	g.emit("add x1, x23, x22") // buf + offset
+	g.emit("sub x2, x24, x22") // remaining
 	g.syscall("write")
 	g.emit("tbnz x0, #63, .Lwf2w_err_close")
 	g.emit("add x22, x22, x0")
@@ -4122,14 +4123,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
-	g.emit("mov w19, w0")   // stash fd
+	g.emit("mov w19, w0") // stash fd
 	g.emit("mov w0, #12")
 	g.emit("bl __fern_alloc")
 	g.emit("mov w1, #1")
-	g.emit("lsl w1, w1, #31")     // w1 = 0x80000000 (static sentinel)
-	g.emit("str w1, [x0]")        // sentinel at base + 0
-	g.emit("str w19, [x0, #8]")   // fd at base + 8 (= data + 0)
-	g.emit("add x0, x0, #8")      // return base + 8
+	g.emit("lsl w1, w1, #31")   // w1 = 0x80000000 (static sentinel)
+	g.emit("str w1, [x0]")      // sentinel at base + 0
+	g.emit("str w19, [x0, #8]") // fd at base + 8 (= data + 0)
+	g.emit("add x0, x0, #8")    // return base + 8
 	g.emit("ldr x19, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
@@ -4181,8 +4182,8 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x29, sp")
 			g.emit("stp x19, x20, [sp, #16]")
 			g.emit("str x21, [sp, #32]")
-			g.emit("mov x19, x0") // path_data
-			g.emit("mov x20, x1") // path_len
+			g.emit("mov x19, x0")                       // path_data
+			g.emit("mov x20, x1")                       // path_len
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			g.emit("mov x0, #-100")
 			g.emit("mov x1, x21")
@@ -4221,7 +4222,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("stp x29, x30, [sp, #-32]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0") // stash path
+		g.emit("mov x19, x0")   // stash path
 		g.emit("mov x0, #-100") // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
@@ -4235,7 +4236,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov x19, x0") // handle ptr (in callee-save)
 		g.emit("mov x0, #16")
 		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")    // tag=0 (Ok)
+		g.emit("str wzr, [x0]")     // tag=0 (Ok)
 		g.emit("str x19, [x0, #8]") // handle ptr
 		g.emit("b %s", ".Lorw_ret_"+e.sym)
 		g.label(".Lorw_err_" + e.sym)
@@ -4352,7 +4353,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("str x21, [sp, #32]")
 	g.emit("ldr w19, [x0]") // fd
-	g.emit("mov x20, x1")    // n
+	g.emit("mov x20, x1")   // n
 	if twoWord {
 		// Two-word heap form: alloc exactly n bytes (no
 		// prefix). Actual bytes read tracked in the Some
@@ -4385,7 +4386,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		// fewer bytes on a short read.
 		g.emit("add x0, x20, #4")
 		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0")     // base
+		g.emit("mov x21, x0") // base
 		g.emit("mov w0, w19")
 		g.emit("add x1, x21, #4")
 		g.emit("mov x2, x20")
@@ -4435,10 +4436,10 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emitStrLen2W("w22", "x2")
 		g.emitStrDataPtr2W("x20", "x1", "x2", 48) // x20 = byte ptr; scratch [x29+48]
 	} else {
-		g.emit("mov x20, x1")          // s data ptr
+		g.emit("mov x20, x1")      // s data ptr
 		g.emitStrLen("w22", "x20") // len
 	}
-	g.emit("mov x21, #0")          // bytes_written
+	g.emit("mov x21, #0") // bytes_written
 	g.label(".Lww_loop")
 	g.emit("cmp x21, x22")
 	g.emit("bge .Lww_done")
@@ -4651,8 +4652,8 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 			if stkSlotCounts[i] == 2 {
 				// String capture: store data at env+s.off,
 				// len at env+s.off+8.
-				g.emit("ldr x1, [sp, #%d]", topOff[i])                     // len (top)
-				g.emit("ldr x2, [sp, #%d]", topOff[i]+int32(slotBytes))    // data (below)
+				g.emit("ldr x1, [sp, #%d]", topOff[i])                  // len (top)
+				g.emit("ldr x2, [sp, #%d]", topOff[i]+int32(slotBytes)) // data (below)
 				if s.off == 0 {
 					g.emit("str x2, [x19]")
 				} else {
@@ -4789,10 +4790,10 @@ type generator struct {
 	// program reaches for the matching runtime helper. Each
 	// helper is gated so programs that don't need it pay
 	// nothing extra in binary size.
-	usesAlloc   bool
-	usesStrcat  bool
-	usesMemcpy  bool
-	usesStrcmp  bool
+	usesAlloc  bool
+	usesStrcat bool
+	usesMemcpy bool
+	usesStrcmp bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
 	// / __fern_tcp_send / __fern_tcp_close). Gated on call-
@@ -5219,11 +5220,11 @@ func (g *generator) emitStartRuntime() {
 				g.emit("str x1, [x3]")
 			}
 		} else {
-			g.emit("ldr x0, [sp]")            // argc
-			g.emit("add x1, sp, #8")          // argv = &sp[1]
+			g.emit("ldr x0, [sp]")   // argc
+			g.emit("add x1, sp, #8") // argv = &sp[1]
 			if g.usesEnv {
-				g.emit("add x2, x0, #1")          // argc + 1
-				g.emit("add x2, x1, x2, lsl #3")  // envp = argv + (argc+1)*8
+				g.emit("add x2, x0, #1")         // argc + 1
+				g.emit("add x2, x1, x2, lsl #3") // envp = argv + (argc+1)*8
 				g.adrpAdd("x3", "__fern_envp")
 				g.emit("str x2, [x3]")
 			}
@@ -5823,13 +5824,13 @@ func (g *generator) emitArrayLenStore(srcW, dstX string) {
 // through the AAPCS64 `(x0, x1)` return-register pair without
 // ever materialising a heap box.
 func (g *generator) emitPairFormMaker(width int, tag int) {
-	_ = width // payload width handled by the in-register move below
-	g.pop()                                   // payload → x0
-	g.emit("mov x1, x0")                      // save payload in x1
+	_ = width            // payload width handled by the in-register move below
+	g.pop()              // payload → x0
+	g.emit("mov x1, x0") // save payload in x1
 	g.emit("mov x0, #%d", tag)
-	g.push()                                  // push tag
-	g.emit("mov x0, x1")                      // restore payload
-	g.push()                                  // push payload
+	g.push()             // push tag
+	g.emit("mov x0, x1") // restore payload
+	g.push()             // push payload
 }
 
 func (g *generator) binPop() {
@@ -5919,6 +5920,7 @@ func (g *generator) fcmpPop(width int, cc string) {
 //   - OpBlock: br jumps to the end of the block (forward).
 //   - OpLoop:  br jumps to the start of the loop (backward).
 //   - OpIf:    br jumps to the end of the if/else.
+//
 // `endLabel` is always the post-scope label; `brTarget` is what
 // `br N` resolves to. For if-without-else we lazily define the
 // elseLabel at the end so the OpIf's `cbz` fall-through skips
@@ -6033,9 +6035,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// The function-side ABI is now register-pair — callers
 		// (OpCallDirectPair) consume `(x0, x1)` directly with
 		// no heap-box round trip.
-		g.pop()             // payload → x0
+		g.pop() // payload → x0
 		g.emit("mov x1, x0")
-		g.pop()             // tag → x0
+		g.pop() // tag → x0
 		g.emit("b %s", retLabel)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// Native fallback: heap-box layout matching
@@ -6229,9 +6231,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpStoreLocal:
 		off := g.slotOffsets[op.I32]
 		if g.slotIsString(op.I32) {
-			g.pop()                  // x0 = len (top)
-			g.frameStore("x0", off)  // store len
-			g.pop()                  // x0 = data
+			g.pop()                   // x0 = len (top)
+			g.frameStore("x0", off)   // store len
+			g.pop()                   // x0 = data
 			g.frameStore("x0", off+8) // store data
 		} else {
 			g.pop()
@@ -6244,15 +6246,15 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		off := g.slotOffsets[op.I32]
 		if g.slotIsString(op.I32) {
 			// Stack on entry: [..., data, len], top = len.
-			g.pop()                  // x0 = len
-			g.emit("mov x1, x0")     // x1 = len
-			g.pop()                  // x0 = data
+			g.pop()                   // x0 = len
+			g.emit("mov x1, x0")      // x1 = len
+			g.pop()                   // x0 = data
 			g.frameStore("x0", off+8) // store data
 			g.frameStore("x1", off)   // store len
 			// Re-push (data, len) so the value stays on the stack.
-			g.push()                 // push data (x0)
+			g.push() // push data (x0)
 			g.emit("mov x0, x1")
-			g.push()                 // push len
+			g.push() // push len
 		} else {
 			g.pop()
 			g.frameStore("x0", off)
@@ -6327,7 +6329,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// here ahead of the arm64 two-word flip so the gate
 		// flip in the IR layer becomes a one-liner.
 		if op.Width == ir.WidthString {
-			g.pop() // addr → x0
+			g.pop()                    // addr → x0
 			g.emit("ldr x1, [x0]")     // data @ +0
 			g.emit("ldr x0, [x0, #8]") // len @ +8
 			g.emit("mov x2, x0")       // save len
@@ -6659,7 +6661,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		g.push()
 	case ir.OpReinterpretI32F32, ir.OpReinterpretF32I32,
-			ir.OpReinterpretI64F64, ir.OpReinterpretF64I64:
+		ir.OpReinterpretI64F64, ir.OpReinterpretF64I64:
 		// Bit-cast between f32 and i32. The operand stack
 		// already stores both as raw 32-bit values (see
 		// OpConstF32 — f32 bit patterns land on the stack as
@@ -7235,7 +7237,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("mov x16, x1") // stash payload (x1 may be clobbered)
 		g.push()              // push x0 (tag)
 		g.emit("mov x0, x16")
-		g.push()              // push payload
+		g.push() // push payload
 
 	default:
 		return fmt.Errorf("arm64: unsupported IR op %s", op.Kind)

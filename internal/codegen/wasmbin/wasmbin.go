@@ -53,8 +53,8 @@ import (
 	"math"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/fernstring"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/imports"
@@ -1578,8 +1578,8 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			body = memory.InstI32Load(body, 2, 0)   // load data; stack: [data]
 			body = inst.InstLocalGet(body, addrIdx) // [data, addr]
 			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body)         // [data, addr+4]
-			body = memory.InstI32Load(body, 2, 0)   // [data, len]
+			body = numeric.InstI32Add(body)       // [data, addr+4]
+			body = memory.InstI32Load(body, 2, 0) // [data, len]
 			return body, nil
 		}
 		return memory.InstI32Load(body, 2, 0), nil
@@ -1790,11 +1790,11 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 // Names not in the map pass through unchanged.
 var CallDirectAliases = map[string]string{
 	// Synthetic runtime helpers.
-	"exit":       "__fern_exit",
-	"print":      "__fern_print",
-	"eprint":     "__fern_eprint",
-	"write":      "__fern_write",
-	"putchar":    "__fern_putchar",
+	"exit":         "__fern_exit",
+	"print":        "__fern_print",
+	"eprint":       "__fern_eprint",
+	"write":        "__fern_write",
+	"putchar":      "__fern_putchar",
 	"random_i32":   "__fern_random_i32",
 	"random_bytes": "__fern_random_bytes",
 	"now_ns":       "__fern_now_ns",
@@ -1814,14 +1814,14 @@ var CallDirectAliases = map[string]string{
 	"__floor_f64": "__fern_floor_f64",
 	"__ceil_f64":  "__fern_ceil_f64",
 	"__trunc_f64": "__fern_trunc_f64",
-	"env_count":  "__fern_env_count",
-	"arg_count":  "__fern_arg_count",
-	"arg_at":     "__fern_arg_at",
-	"env_at":     "__fern_env_at",
-	"args":       "__fern_args",
-	"env":        "__fern_env",
-	"read_byte":  "__fern_read_byte",
-	"read_line":  "__fern_read_line",
+	"env_count":   "__fern_env_count",
+	"arg_count":   "__fern_arg_count",
+	"arg_at":      "__fern_arg_at",
+	"env_at":      "__fern_env_at",
+	"args":        "__fern_args",
+	"env":         "__fern_env",
+	"read_byte":   "__fern_read_byte",
+	"read_line":   "__fern_read_line",
 
 	// Reader / Writer API. `stdin()` returns a real Reader
 	// struct (`{ fd: 0 }`); the `__method_Reader_*` helpers
@@ -2273,4 +2273,3 @@ func appendUleb(buf []byte, v uint32) []byte {
 		return append(buf, b)
 	}
 }
-

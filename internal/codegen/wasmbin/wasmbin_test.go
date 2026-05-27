@@ -40,11 +40,11 @@ func runUnderWasmtime(t *testing.T, bin []byte, export string) string {
 
 // i32 returns the polymorphic-free NumberType for i32 — what
 // ir.LowerWith produces for a settled i32 expression.
-func i32() ast.NumberType  { return ast.NumberType{Width: 32, Signed: true} }
-func i64() ast.NumberType  { return ast.NumberType{Width: 64, Signed: true} }
-func f32() ast.FloatType   { return ast.FloatType{Width: 32} }
-func f64() ast.FloatType   { return ast.FloatType{Width: 64} }
-func void() ast.VoidType   { return ast.VoidType{} }
+func i32() ast.NumberType { return ast.NumberType{Width: 32, Signed: true} }
+func i64() ast.NumberType { return ast.NumberType{Width: 64, Signed: true} }
+func f32() ast.FloatType  { return ast.FloatType{Width: 32} }
+func f64() ast.FloatType  { return ast.FloatType{Width: 64} }
+func void() ast.VoidType  { return ast.VoidType{} }
 
 // TestEmitConstReturn — `function main(): i32 { return 42 }`.
 // The simplest non-empty program: one i32 constant, implicit
@@ -302,9 +302,10 @@ func TestEmitTypeDedup(t *testing.T) {
 	}
 }
 
-// TestEmitIfElse — `function pick(a, b: i32): i32 {
-//   if a > b { return a } else { return b }
-// }`. Uses `if (result i32)` with branches that push the chosen
+//	TestEmitIfElse — `function pick(a, b: i32): i32 {
+//	  if a > b { return a } else { return b }
+//	}`. Uses `if (result i32)` with branches that push the chosen
+//
 // value. Exercises OpIf / OpElse / OpEnd + a result-typed block.
 func TestEmitIfElse(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
@@ -358,45 +359,48 @@ func TestEmitIfElse(t *testing.T) {
 	}
 }
 
-// TestEmitLoopBr — `function sum(n: i32): i32 {
-//   var acc = 0; var i = 0;
-//   loop {
-//     if !(i < n) break;
-//     acc = acc + i;
-//     i = i + 1;
-//     continue;
-//   }
-//   return acc;
-// }` — using the wasm block+loop+br_if idiom. Exercises OpBlock,
+//	TestEmitLoopBr — `function sum(n: i32): i32 {
+//	  var acc = 0; var i = 0;
+//	  loop {
+//	    if !(i < n) break;
+//	    acc = acc + i;
+//	    i = i + 1;
+//	    continue;
+//	  }
+//	  return acc;
+//	}` — using the wasm block+loop+br_if idiom. Exercises OpBlock,
+//
 // OpLoop, OpBr (back-edge), OpBrIf (forward exit).
 //
 // Shape (label depths in parens):
-//   block (void)         ; label 1 (forward exit)
-//     loop (void)         ; label 0 (back-edge target)
-//       i < n  →  br_if to label 0 if FALSE? No — we want:
-//       i >= n →  br to label 1 (exit outer)
-//     end loop
-//   end block
+//
+//	block (void)         ; label 1 (forward exit)
+//	  loop (void)         ; label 0 (back-edge target)
+//	    i < n  →  br_if to label 0 if FALSE? No — we want:
+//	    i >= n →  br to label 1 (exit outer)
+//	  end loop
+//	end block
 //
 // Concretely:
-//   block
-//     loop
-//       local.get i
-//       local.get n
-//       i32.ge_s
-//       br_if 1            ; if i >= n, exit outer block
-//       local.get acc
-//       local.get i
-//       i32.add
-//       local.set acc
-//       local.get i
-//       i32.const 1
-//       i32.add
-//       local.set i
-//       br 0               ; loop back
-//     end
-//   end
-//   local.get acc
+//
+//	block
+//	  loop
+//	    local.get i
+//	    local.get n
+//	    i32.ge_s
+//	    br_if 1            ; if i >= n, exit outer block
+//	    local.get acc
+//	    local.get i
+//	    i32.add
+//	    local.set acc
+//	    local.get i
+//	    i32.const 1
+//	    i32.add
+//	    local.set i
+//	    br 0               ; loop back
+//	  end
+//	end
+//	local.get acc
 func TestEmitLoopBr(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
 		Name:       "sum",
@@ -409,7 +413,7 @@ func TestEmitLoopBr(t *testing.T) {
 			{Kind: ir.OpLoadLocal, I32: 2}, // i
 			{Kind: ir.OpLoadLocal, I32: 0}, // n
 			{Kind: ir.OpGeS},
-			{Kind: ir.OpBrIf, I32: 1}, // exit outer block
+			{Kind: ir.OpBrIf, I32: 1},      // exit outer block
 			{Kind: ir.OpLoadLocal, I32: 1}, // acc
 			{Kind: ir.OpLoadLocal, I32: 2}, // i
 			{Kind: ir.OpAdd},
@@ -837,9 +841,10 @@ func TestEmitDirectCallWithArgs(t *testing.T) {
 	}
 }
 
-// TestEmitRecursion — `function fact(n: i32): i32 {
-//   if n <= 1 { return 1 } else { return n * fact(n - 1) }
-// }`. Direct self-call. Exercises call into the same funcidx,
+//	TestEmitRecursion — `function fact(n: i32): i32 {
+//	  if n <= 1 { return 1 } else { return n * fact(n - 1) }
+//	}`. Direct self-call. Exercises call into the same funcidx,
+//
 // combined with if/else from the control-flow slice.
 func TestEmitRecursion(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
@@ -1301,7 +1306,7 @@ func TestEmitStringParam(t *testing.T) {
 			ScratchTypes: []ast.Type{i32()},
 			ReturnType:   i32(),
 			Ops: []ir.Op{
-				{Kind: ir.OpLoadLocal, I32: 0}, // push (data, len)
+				{Kind: ir.OpLoadLocal, I32: 0},  // push (data, len)
 				{Kind: ir.OpStoreLocal, I32: 1}, // pop len → scratch
 				{Kind: ir.OpDrop},               // drop data
 				{Kind: ir.OpLoadLocal, I32: 1},  // push len back
@@ -1396,11 +1401,13 @@ func TestEmitStringReturn(t *testing.T) {
 
 // TestSlotIdxMixed — confirms wasm-slot indexing when string and
 // non-string slots are interleaved. Layout:
-//   IR slot 0: i32 param      → wasm slot 0
-//   IR slot 1: string param   → wasm slots 1, 2 (data, len)
-//   IR slot 2: i32 param      → wasm slot 3
-//   IR slot 3: string local   → wasm slots 4, 5
-//   IR slot 4: i32 scratch    → wasm slot 6
+//
+//	IR slot 0: i32 param      → wasm slot 0
+//	IR slot 1: string param   → wasm slots 1, 2 (data, len)
+//	IR slot 2: i32 param      → wasm slot 3
+//	IR slot 3: string local   → wasm slots 4, 5
+//	IR slot 4: i32 scratch    → wasm slot 6
+//
 // Body: store the len of the string param into the i32 scratch
 // via a tee-and-extract round-trip, then add the two i32 params.
 // Return scratch + a + c.
@@ -1427,10 +1434,10 @@ func TestSlotIdxMixed(t *testing.T) {
 			// Drop residual data on stack.
 			{Kind: ir.OpDrop},
 			// Now compute scratch + a + c.
-			{Kind: ir.OpLoadLocal, I32: 4},  // scratch (len)
-			{Kind: ir.OpLoadLocal, I32: 0},  // a
+			{Kind: ir.OpLoadLocal, I32: 4}, // scratch (len)
+			{Kind: ir.OpLoadLocal, I32: 0}, // a
 			{Kind: ir.OpAdd},
-			{Kind: ir.OpLoadLocal, I32: 2},  // c
+			{Kind: ir.OpLoadLocal, I32: 2}, // c
 			{Kind: ir.OpAdd},
 		},
 	}}}

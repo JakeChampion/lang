@@ -21,23 +21,23 @@ import (
 // the x86-64 emitter itself) — to gcc-assemblable, linkable asm.
 //
 // Three classes of wall used to block the bigger inputs, all fixed:
-//   1. The asm self-host's `s = s.out + text` output build was O(N²)
-//      — replaced on both backends by the amortised-O(1) global
-//      strbuf primitive (strbuf_reset / strbuf_append / strbuf_take);
-//      array.push is likewise amortised O(1) (geometric push-grow
-//      with an in-place rc==1 fast path).
-//   2. A family of parser non-advance runaways: parse_type_name and
-//      parse_pattern read only a single base identifier, so a
-//      qualified type name (`lexer.Token`) or qualified variant
-//      pattern (`lexer.TokNumber(n)`) left a stray `.` on the cursor
-//      and the surrounding loop spun, allocating until OOM. Since
-//      parser.fern is itself full of `lexer.*` qualified types and
-//      patterns, this blocked it from parsing its own source.
-//   3. The self-host emitter didn't implement the strbuf builtins, so
-//      a program that USES strbuf — asm.fern's own `write` does —
-//      linked with undefined `__fern_strbuf_*` references. The
-//      emitter now emits the strbuf runtime (a 16-byte-box string
-//      ABI) alongside the heap, so asm.fern self-compiles + links.
+//  1. The asm self-host's `s = s.out + text` output build was O(N²)
+//     — replaced on both backends by the amortised-O(1) global
+//     strbuf primitive (strbuf_reset / strbuf_append / strbuf_take);
+//     array.push is likewise amortised O(1) (geometric push-grow
+//     with an in-place rc==1 fast path).
+//  2. A family of parser non-advance runaways: parse_type_name and
+//     parse_pattern read only a single base identifier, so a
+//     qualified type name (`lexer.Token`) or qualified variant
+//     pattern (`lexer.TokNumber(n)`) left a stray `.` on the cursor
+//     and the surrounding loop spun, allocating until OOM. Since
+//     parser.fern is itself full of `lexer.*` qualified types and
+//     patterns, this blocked it from parsing its own source.
+//  3. The self-host emitter didn't implement the strbuf builtins, so
+//     a program that USES strbuf — asm.fern's own `write` does —
+//     linked with undefined `__fern_strbuf_*` references. The
+//     emitter now emits the strbuf runtime (a 16-byte-box string
+//     ABI) alongside the heap, so asm.fern self-compiles + links.
 //
 // The gate here is assemble + link, not execution — same bar the
 // lexer / parser probes are held to (their outputs aren't run

@@ -2540,6 +2540,7 @@ function main(): i32 {
 //     path halves, converts, then doubles).
 //   - f → u64: 2-step trick — if f >= 2^63, subtract 2^63, do a
 //     signed cvtt, then `btc rax, 63` adds 2^63 back.
+//
 // f32_bits / f32_from_bits expose IEEE-754 bit patterns
 // without value conversion. Both round-trip (float → bits →
 // float) and exact-bit-pattern (1.0 → 0x3F800000) must agree

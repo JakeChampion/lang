@@ -65,7 +65,9 @@ func TestInterpScriptFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`function fact(n: i32): i32 {
+	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+import "std/i32";
+function fact(n: i32): i32 {
     if (n == 0) { return 1; }
     return n * fact(n - 1);
 }
@@ -123,8 +125,10 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`function main(): i32 {
-    var s: string = read_all_stdin();
+	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+import "std/io";
+function main(): i32 {
+    var s: string = io.read_all_stdin();
     print("read: " + s);
     return s.len();
 }
@@ -219,7 +223,9 @@ function main(): i32 {
 func TestInterpScriptStringPrelude(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`function main(): i32 {
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
     if (bs.len() != 5) { return 1; }
@@ -263,18 +269,18 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 // We exercise four shapes of the same bug so a regression
 // shows up wherever it surfaces:
 //
-//   1. Explicit `import "core/int";` + bare `(n).to_string()`
-//      — the smallest reproducer.
-//   2. Explicit `import "std/json";` — drags in core/int
-//      transitively without the user reaching for it directly.
-//      This is what tripped over the std/test PR review.
-//   3. Direct `int.int_to_string(n)` qualified call against
-//      the explicit `core/int` import — same mangling, but
-//      the call site is the user's own qualified reference
-//      rather than the receiver-method dispatch hoist.
-//   4. The auto-prelude path (no extra imports) — sanity
-//      check that the alias doesn't break the original
-//      flat-load route.
+//  1. Explicit `import "core/int";` + bare `(n).to_string()`
+//     — the smallest reproducer.
+//  2. Explicit `import "std/json";` — drags in core/int
+//     transitively without the user reaching for it directly.
+//     This is what tripped over the std/test PR review.
+//  3. Direct `int.int_to_string(n)` qualified call against
+//     the explicit `core/int` import — same mangling, but
+//     the call site is the user's own qualified reference
+//     rather than the receiver-method dispatch hoist.
+//  4. The auto-prelude path (no extra imports) — sanity
+//     check that the alias doesn't break the original
+//     flat-load route.
 //
 // Each shape writes a `.fern` file to a tempdir and runs
 // `fern -interp FILE` rather than piping over stdin: the
@@ -287,7 +293,9 @@ func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {
 	}{
 		{
 			name: "explicit core/int + method dispatch",
-			source: `import "core/int";
+			source: `import "core/no_prelude";
+import "std/i32";
+import "core/int";
 
 function main(): i32 {
     var x: i32 = 5;
@@ -317,7 +325,9 @@ function main(): i32 {
 		},
 		{
 			name: "auto-prelude flat-load path (regression sanity)",
-			source: `function main(): i32 {
+			source: `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var x: i32 = 42;
     print(x.to_string());
     return 0;
@@ -674,7 +684,9 @@ func TestInterpScriptTimeTypes(t *testing.T) {
 	}{
 		{
 			name: "Instant from unix seconds",
-			source: `import "std/time";
+			source: `import "core/no_prelude";
+import "std/i64";
+import "std/time";
 function main(): i32 {
     var ts: Instant = time.instant_from_unix(1700000000 as i64);
     print(ts.sec.to_string());
@@ -715,7 +727,9 @@ function main(): i32 {
 		},
 		{
 			name: "Duration milliseconds splits sec + nsec",
-			source: `import "std/time";
+			source: `import "core/no_prelude";
+import "std/i64";
+import "std/time";
 function main(): i32 {
     var d: Duration = time.duration_millis(2500 as i64);
     print(d.sec.to_string());
@@ -1372,7 +1386,9 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration handles nsec carry",
-			source: `import "std/time";
+			source: `import "core/no_prelude";
+import "std/i64";
+import "std/time";
 function main(): i32 {
     // 1000.5 + 5.75 = 1006.25 (carry: 500e6 + 750e6 = 1.25e9 → +1 sec, 250e6 ns).
     var t1: Instant = Instant { sec: 1000 as i64, nsec: 500000000 };
@@ -1388,7 +1404,9 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration with negative shifts backward",
-			source: `import "std/time";
+			source: `import "core/no_prelude";
+import "std/i64";
+import "std/time";
 function main(): i32 {
     var t: Instant = Instant { sec: 1000 as i64, nsec: 0 };
     var back: Instant = t.add_duration(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
@@ -1399,7 +1417,9 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.duration_since computes signed delta with borrow",
-			source: `import "std/time";
+			source: `import "core/no_prelude";
+import "std/i64";
+import "std/time";
 function main(): i32 {
     var a: Instant = Instant { sec: 1000 as i64, nsec: 200000000 };
     var b: Instant = Instant { sec: 1005 as i64, nsec: 700000000 };
@@ -1732,7 +1752,9 @@ func TestInterpScriptMockPlatform(t *testing.T) {
 	}{
 		{
 			name: "record + call_count + indexed access",
-			source: `import "std/mock_platform";
+			source: `import "core/no_prelude";
+import "std/i32";
+import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
     m.record("fetch", "GET /users/42");

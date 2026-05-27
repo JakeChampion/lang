@@ -16,9 +16,9 @@ package convert
 
 // ---- Width conversions (0xA7, 0xAC, 0xAD) ----
 
-func InstI32WrapI64(buf []byte) []byte     { return append(buf, 0xa7) }
-func InstI64ExtendI32S(buf []byte) []byte  { return append(buf, 0xac) }
-func InstI64ExtendI32U(buf []byte) []byte  { return append(buf, 0xad) }
+func InstI32WrapI64(buf []byte) []byte    { return append(buf, 0xa7) }
+func InstI64ExtendI32S(buf []byte) []byte { return append(buf, 0xac) }
+func InstI64ExtendI32U(buf []byte) []byte { return append(buf, 0xad) }
 
 // ---- Float -> int truncations (0xA8..0xAB, 0xAE..0xB1) ----
 

@@ -78,8 +78,8 @@ func TestNotInOptimizePipeline(t *testing.T) {
 	entry.Ops[0].Imm = 5
 	b := f.AddOp(entry, OpConstInt)
 	entry.Ops[1].Imm = 5
-	cmp := f.AddOp(entry, OpEq, a, b)  // → const_bool 1
-	inner := f.AddOp(entry, OpNot, cmp) // → const_bool 0
+	cmp := f.AddOp(entry, OpEq, a, b)     // → const_bool 1
+	inner := f.AddOp(entry, OpNot, cmp)   // → const_bool 0
 	outer := f.AddOp(entry, OpNot, inner) // → const_bool 1
 	f.SetRet(entry, outer)
 

@@ -24,13 +24,13 @@ type completionList struct {
 
 // LSP CompletionItemKind values we hand out (a subset of the spec).
 const (
-	ciKindKeyword     = 14
-	ciKindVariable    = 6
-	ciKindParameter   = 6 // LSP has no Parameter kind; reuse Variable.
-	ciKindFunction    = 3
-	ciKindStruct      = 22
-	ciKindEnum        = 13
-	ciKindEnumMember  = 20
+	ciKindKeyword    = 14
+	ciKindVariable   = 6
+	ciKindParameter  = 6 // LSP has no Parameter kind; reuse Variable.
+	ciKindFunction   = 3
+	ciKindStruct     = 22
+	ciKindEnum       = 13
+	ciKindEnumMember = 20
 )
 
 type completionItem struct {

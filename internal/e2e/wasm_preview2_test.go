@@ -1944,4 +1944,3 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Errorf("POST body echo = %q; want %q", string(body), want)
 	}
 }
-

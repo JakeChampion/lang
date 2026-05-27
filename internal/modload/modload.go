@@ -607,13 +607,13 @@ func isRuntimeHelperName(name string) bool {
 
 // rewriteAll walks the module's AST applying two related rewrites:
 //
-//   1. `selfPrefix` is prepended to every top-level Func / Struct
-//      name and to every internal reference to one (call site,
-//      function-value reference, struct literal type name). For
-//      the entry module selfPrefix is empty so this is a no-op.
-//   2. `mod.fn(args)` and `mod.fn` (where `mod` is one of this
-//      module's imports) get rewritten to direct references to
-//      the imported module's mangled names.
+//  1. `selfPrefix` is prepended to every top-level Func / Struct
+//     name and to every internal reference to one (call site,
+//     function-value reference, struct literal type name). For
+//     the entry module selfPrefix is empty so this is a no-op.
+//  2. `mod.fn(args)` and `mod.fn` (where `mod` is one of this
+//     module's imports) get rewritten to direct references to
+//     the imported module's mangled names.
 //
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.
@@ -1272,17 +1272,57 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 	switch t := (*slot).(type) {
 	case ast.StructType:
 		newName := r.rewriteStructName(t.Name)
-		if newName != t.Name {
-			*slot = ast.StructType{Name: newName}
+		args := r.rewriteTypeArgs(t.Args)
+		if newName != t.Name || args != nil {
+			if args == nil {
+				args = t.Args
+			}
+			*slot = ast.StructType{Name: newName, Args: args}
+		}
+	case ast.EnumType:
+		newName := r.rewriteStructName(t.Name)
+		args := r.rewriteTypeArgs(t.Args)
+		if newName != t.Name || args != nil {
+			if args == nil {
+				args = t.Args
+			}
+			*slot = ast.EnumType{Name: newName, Args: args}
 		}
 	case ast.ArrayType:
 		elem := t.Elem
 		r.rewriteType(&elem)
 		*slot = ast.ArrayType{Elem: elem}
+	case ast.SliceType:
+		elem := t.Elem
+		r.rewriteType(&elem)
+		*slot = ast.SliceType{Elem: elem}
+	case ast.TupleType:
+		elems := make([]ast.Type, len(t.Elems))
+		copy(elems, t.Elems)
+		for i := range elems {
+			r.rewriteType(&elems[i])
+		}
+		*slot = ast.TupleType{Elems: elems}
 	case *ast.FuncType:
 		for i := range t.Params {
 			r.rewriteType(&t.Params[i])
 		}
 		r.rewriteType(&t.Result)
 	}
+}
+
+// rewriteTypeArgs rewrites each element of a generic type-argument
+// list (the `Args` on StructType / EnumType — `Map[K, V]`,
+// `Option[T]`). Returns nil when there are no args so callers can
+// cheaply detect "nothing to replace".
+func (r *rewriter) rewriteTypeArgs(args []ast.Type) []ast.Type {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]ast.Type, len(args))
+	copy(out, args)
+	for i := range out {
+		r.rewriteType(&out[i])
+	}
+	return out
 }

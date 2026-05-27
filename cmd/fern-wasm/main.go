@@ -3,8 +3,8 @@
 // cmd/fern-wasm — browser-side entry point that exposes the AST
 // interpreter to JavaScript. Build with:
 //
-//   GOOS=js GOARCH=wasm go build -o web/fern.wasm \
-//       github.com/jakechampion/lang/cmd/fern-wasm
+//	GOOS=js GOARCH=wasm go build -o web/fern.wasm \
+//	    github.com/jakechampion/lang/cmd/fern-wasm
 //
 // The companion `web/index.html` loads the produced `fern.wasm`
 // alongside Go's `wasm_exec.js` runtime and wires a textarea +
@@ -13,76 +13,76 @@
 // API surface (set as globals on `globalThis` so the page can
 // call them without an explicit binding step):
 //
-//   fernInterpret(src) -> {
-//       stdout: string,
-//       stderr: string,
-//       exit:   number,        // process exit code 0..255
-//       error:  string | null, // parse / check / runtime failure
-//   }
+//	fernInterpret(src) -> {
+//	    stdout: string,
+//	    stderr: string,
+//	    exit:   number,        // process exit code 0..255
+//	    error:  string | null, // parse / check / runtime failure
+//	}
 //
-//   fernLsp(jsonRpcRequestString) -> jsonRpcResponseString
-//     Routes a single LSP message into the in-process server in
-//     internal/lsp and returns the JSON-encoded response. Empty
-//     string for notifications (which have no response). The
-//     same Server instance persists across calls so document
-//     state carries between requests.
+//	fernLsp(jsonRpcRequestString) -> jsonRpcResponseString
+//	  Routes a single LSP message into the in-process server in
+//	  internal/lsp and returns the JSON-encoded response. Empty
+//	  string for notifications (which have no response). The
+//	  same Server instance persists across calls so document
+//	  state carries between requests.
 //
-//   fernLspOnNotify(callback)
-//     Installs a JS function the server invokes on every push
-//     notification (publishDiagnostics, etc). The callback gets
-//     (method: string, params: object).
+//	fernLspOnNotify(callback)
+//	  Installs a JS function the server invokes on every push
+//	  notification (publishDiagnostics, etc). The callback gets
+//	  (method: string, params: object).
 //
-//   fernCompile(src, target) -> {
-//       asm:    string,        // emitted assembly
-//       error:  string | null, // parse / check / codegen failure
-//   }
-//     Compiles src for one of the supported targets and returns
-//     the textual output the corresponding cmd/fern `-target`
-//     flag would have written. Targets: "arm64" (Linux ELF),
-//     "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF).
-//     The playground's "View assembly" pane consumes this for
-//     the Godbolt-style side-by-side experience. (The wasm
-//     target retired with the WAT backend — the wasmbin path
-//     emits binary bytes, not human-readable text.)
+//	fernCompile(src, target) -> {
+//	    asm:    string,        // emitted assembly
+//	    error:  string | null, // parse / check / codegen failure
+//	}
+//	  Compiles src for one of the supported targets and returns
+//	  the textual output the corresponding cmd/fern `-target`
+//	  flag would have written. Targets: "arm64" (Linux ELF),
+//	  "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF).
+//	  The playground's "View assembly" pane consumes this for
+//	  the Godbolt-style side-by-side experience. (The wasm
+//	  target retired with the WAT backend — the wasmbin path
+//	  emits binary bytes, not human-readable text.)
 //
-//   fernCompileComponent(src, world) -> {
-//       wasm:   string,        // base64 of the component binary
-//       world:  string,        // the world that was composed
-//       error:  string | null, // parse / check / compose failure
-//   }
-//     Compiles src to a Component Model binary — the same bytes
-//     `fern -target wasm` / `-target wasi-http` write — so the page
-//     can offer it for download and local `wasmtime` / jco runs.
-//     Worlds: "wasm" (a wasi:cli/run component) and "wasi-http" (a
-//     wasi:http/incoming-handler component). Bytes come back
-//     base64-encoded so they survive the syscall/js boundary as a
-//     plain string; the page decodes with atob into a Uint8Array.
+//	fernCompileComponent(src, world) -> {
+//	    wasm:   string,        // base64 of the component binary
+//	    world:  string,        // the world that was composed
+//	    error:  string | null, // parse / check / compose failure
+//	}
+//	  Compiles src to a Component Model binary — the same bytes
+//	  `fern -target wasm` / `-target wasi-http` write — so the page
+//	  can offer it for download and local `wasmtime` / jco runs.
+//	  Worlds: "wasm" (a wasi:cli/run component) and "wasi-http" (a
+//	  wasi:http/incoming-handler component). Bytes come back
+//	  base64-encoded so they survive the syscall/js boundary as a
+//	  plain string; the page decodes with atob into a Uint8Array.
 //
-//   fernCompileCoreWasm(src) -> {
-//       wasm:   string,        // base64 of a preview-1 core module
-//       error:  string | null, // parse / check / codegen failure
-//   }
-//     Compiles src to a raw preview-1 core WebAssembly command
-//     module (exported `_start` + `memory`, classic
-//     wasi_snapshot_preview1 imports). The page instantiates it
-//     directly via WebAssembly.instantiate against web/wasi-shim.js
-//     — no component / jco transpile step — to run the compiled
-//     backend (not the AST interpreter) in-browser. Base64-encoded
-//     like fernCompileComponent.
+//	fernCompileCoreWasm(src) -> {
+//	    wasm:   string,        // base64 of a preview-1 core module
+//	    error:  string | null, // parse / check / codegen failure
+//	}
+//	  Compiles src to a raw preview-1 core WebAssembly command
+//	  module (exported `_start` + `memory`, classic
+//	  wasi_snapshot_preview1 imports). The page instantiates it
+//	  directly via WebAssembly.instantiate against web/wasi-shim.js
+//	  — no component / jco transpile step — to run the compiled
+//	  backend (not the AST interpreter) in-browser. Base64-encoded
+//	  like fernCompileComponent.
 //
-//   fernCompileHttpHandlerCore(src) -> {
-//       wasm:   string,        // base64 of a wasi:http core module
-//       error:  string | null, // parse / check / codegen failure
-//   }
-//     Compiles a `handle(req: HttpRequest, plat: Platform):
-//     HttpResponse` program to the raw core module backing the
-//     wasi:http/incoming-handler component (exports
-//     `wasi:http/incoming-handler@0.2.0#handle` + `memory` +
-//     `cabi_realloc`). The page instantiates it against
-//     web/wasi-http-shim.js — a hand-written Canonical-ABI host that
-//     synthesises an incoming-request and reads back the response —
-//     to run a user HTTP handler in-browser with no jco. Base64-
-//     encoded like the others.
+//	fernCompileHttpHandlerCore(src) -> {
+//	    wasm:   string,        // base64 of a wasi:http core module
+//	    error:  string | null, // parse / check / codegen failure
+//	}
+//	  Compiles a `handle(req: HttpRequest, plat: Platform):
+//	  HttpResponse` program to the raw core module backing the
+//	  wasi:http/incoming-handler component (exports
+//	  `wasi:http/incoming-handler@0.2.0#handle` + `memory` +
+//	  `cabi_realloc`). The page instantiates it against
+//	  web/wasi-http-shim.js — a hand-written Canonical-ABI host that
+//	  synthesises an incoming-request and reads back the response —
+//	  to run a user HTTP handler in-browser with no jco. Base64-
+//	  encoded like the others.
 //
 // State is fresh per call for fernInterpret. Source is loaded
 // through modload.LoadSource (the entry is held in memory and the
@@ -109,8 +109,8 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/lsp"
-	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/wasm/playground"
 )
 

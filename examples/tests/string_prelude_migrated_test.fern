@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/string_prelude_migrated_test.fern —
 // Proof-of-concept Lang port of `TestInterpScriptStringPrelude`
 // from `internal/e2e/interp_script_test.go`.
@@ -7,7 +9,7 @@
 // checking the exit code + stdout. The migration replaces
 // that subprocess-and-grep shape with direct in-process
 // assertions: the program *IS* the test, and the
-// TestRunner reports each property as its own TAP case.
+// test.TestRunner reports each property as its own TAP case.
 //
 // Coverage matched against the Go version:
 //   1. `s.bytes()` length is 5
@@ -30,51 +32,51 @@
 function test_bytes_len_is_5(): Option[string] {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
-    return assert_eq_i32(bs.len(), 5);
+    return test.assert_eq_i32(bs.len(), 5);
 }
 
 function test_bytes_first_byte_is_H(): Option[string] {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
-    return assert_eq_i32(bs[0] as i32, 72);
+    return test.assert_eq_i32(bs[0] as i32, 72);
 }
 
 function test_bytes_last_byte_is_lowercase_o(): Option[string] {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
-    return assert_eq_i32(bs[4] as i32, 111);
+    return test.assert_eq_i32(bs[4] as i32, 111);
 }
 
 function test_as_bytes_len_is_5(): Option[string] {
     var s: string = "Hello";
     var ab: [u8] = s.as_bytes();
-    return assert_eq_i32(ab.len(), 5);
+    return test.assert_eq_i32(ab.len(), 5);
 }
 
 function test_as_bytes_first_byte_is_H(): Option[string] {
     var s: string = "Hello";
     var ab: [u8] = s.as_bytes();
-    return assert_eq_i32(ab[0] as i32, 72);
+    return test.assert_eq_i32(ab[0] as i32, 72);
 }
 
 function test_to_upper_HELLO(): Option[string] {
     var s: string = "Hello";
-    return assert_eq_string(s.to_upper(), "HELLO");
+    return test.assert_eq_string(s.to_upper(), "HELLO");
 }
 
 function test_to_lower_hello(): Option[string] {
     var s: string = "Hello";
-    return assert_eq_string(s.to_lower(), "hello");
+    return test.assert_eq_string(s.to_lower(), "hello");
 }
 
 function test_string_from_bytes_roundtrip(): Option[string] {
     var s: string = "Hello";
     var rt: string = string_from_bytes(s.bytes());
-    return assert_eq_string(rt, "Hello");
+    return test.assert_eq_string(rt, "Hello");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("string prelude (migrated)");
+    var r: test.TestRunner = test.test_new("string prelude (migrated)");
     r = r.it("s.bytes() length is 5",
              test_bytes_len_is_5());
     r = r.it("s.bytes()[0] is 'H' (72)",

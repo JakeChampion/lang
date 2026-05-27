@@ -45,6 +45,9 @@ import "std/i32";
 import "std/string";
 import "std/array";
 import "std/math";
+// std/fuzz hangs fuzz()/fuzz_shrink() methods off std/test's
+// TestRunner; import it so the receiver type resolves under no-prelude.
+import "std/test";
 
 // fuzz_default_iterations — used by callers that want the
 // default loop count without pulling in a config constant
@@ -89,40 +92,40 @@ function __fuzz_mutate(seed: string, mode: i32): string {
     // seed; every other strategy needs at least one byte.
     if (n == 0 && mode != 2) { return seed; }
     if (mode == 0) {
-        var i: i32 = random_int(0, n);
-        var b: i32 = random_int(0, 256);
+        var i: i32 = math.random_int(0, n);
+        var b: i32 = math.random_int(0, 256);
         return seed[0:i] + (b as i32).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 1) {
-        var i: i32 = random_int(0, n);
+        var i: i32 = math.random_int(0, n);
         return seed[0:i] + seed[i + 1:n];
     }
     if (mode == 2) {
-        var i: i32 = random_int(0, n + 1);
-        var b: i32 = random_int(0, 256);
+        var i: i32 = math.random_int(0, n + 1);
+        var b: i32 = math.random_int(0, 256);
         return seed[0:i] + (b as i32).to_ascii_string() + seed[i:n];
     }
     if (mode == 3) {
         // bit flip — pick a byte, XOR with a single-bit mask.
-        var i: i32 = random_int(0, n);
-        var bit: i32 = random_int(0, 8);
+        var i: i32 = math.random_int(0, n);
+        var bit: i32 = math.random_int(0, 8);
         var orig: i32 = seed[i];
         var flipped: i32 = orig ^ (1 << bit);
         return seed[0:i] + (flipped as i32).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 4) {
         // byte duplicate
-        var i: i32 = random_int(0, n);
+        var i: i32 = math.random_int(0, n);
         return seed[0:i] + seed[i:i + 1] + seed[i:n];
     }
     if (mode == 5) {
         // byte zero
-        var i: i32 = random_int(0, n);
+        var i: i32 = math.random_int(0, n);
         return seed[0:i] + (0 as i32).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 6) {
         // byte max (0xFF)
-        var i: i32 = random_int(0, n);
+        var i: i32 = math.random_int(0, n);
         return seed[0:i] + (255 as i32).to_ascii_string() + seed[i + 1:n];
     }
     // verbatim (mode 7 or higher)
@@ -207,7 +210,7 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = random_int(0, __fuzz_mutator_count());
+        var mode: i32 = math.random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
             Some(msg) => {
@@ -226,7 +229,7 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
 // target and report its outcome as a single TAP case.
 // Pass at most one fuzz target per `it`-equivalent line so
 // the failure attribution stays clean.
-pub function (r: TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
+pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): test.TestRunner {
     return r.it(name, fuzz_run(seeds, iterations, target));
 }
 
@@ -379,7 +382,7 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = random_int(0, __fuzz_mutator_count());
+        var mode: i32 = math.random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
             Some(msg) => {
@@ -414,7 +417,7 @@ function __fuzz_format_failure(origin: string, raw: string, minimised: string, m
 // TAP case; on failure the case message embeds the
 // minimised counter-example so CI logs preserve a clean
 // reproducer.
-pub function (r: TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): TestRunner {
+pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): test.TestRunner {
     return r.it(name, fuzz_run_shrink(seeds, iterations, target));
 }
 

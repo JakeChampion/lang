@@ -1,3 +1,6 @@
+import "core/no_prelude";
+import "std/fuzz";
+import "std/test";
 // examples/tests/fuzz_example_test.fern — `std/fuzz` walkthrough.
 //
 // Each fuzz target is a `(string) => Option[string]` function:
@@ -50,11 +53,11 @@ function check_trim_strips_spaces(input: string): Option[string] {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz examples");
+    var r: test.TestRunner = test.test_new("fuzz examples");
 
     r = r.fuzz("trivial",
                ["", "a", "hello world"],
-               fuzz_default_iterations(),
+               fuzz.fuzz_default_iterations(),
                check_always_ok);
 
     r = r.fuzz("len is non-negative",
