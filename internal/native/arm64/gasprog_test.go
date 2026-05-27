@@ -7,6 +7,30 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
+// TestAssembleProgramNegativeLiteral checks that a negative `ldr Rt, =v`
+// literal-pool load is reinterpreted as its two's-complement bit pattern
+// — `=-1` must match `=0xffffffffffffffff` (x) / `=0xffffffff` (w).
+func TestAssembleProgramNegativeLiteral(t *testing.T) {
+	cases := [][2]string{
+		{"\t.text\n\tldr x0, =-1\n\tret\n\t.ltorg\n", "\t.text\n\tldr x0, =0xffffffffffffffff\n\tret\n\t.ltorg\n"},
+		{"\t.text\n\tldr w0, =-1\n\tret\n\t.ltorg\n", "\t.text\n\tldr w0, =0xffffffff\n\tret\n\t.ltorg\n"},
+		{"\t.text\n\tldr x0, =-256\n\tret\n\t.ltorg\n", "\t.text\n\tldr x0, =0xffffffffffffff00\n\tret\n\t.ltorg\n"},
+	}
+	for _, c := range cases {
+		gotT, _, err := arm64.AssembleProgram(c[0], 0x400078)
+		if err != nil {
+			t.Fatalf("AssembleProgram(%q): %v", c[0], err)
+		}
+		wantT, _, err := arm64.AssembleProgram(c[1], 0x400078)
+		if err != nil {
+			t.Fatalf("AssembleProgram(%q): %v", c[1], err)
+		}
+		if !bytes.Equal(gotT, wantT) {
+			t.Errorf("%q text = % x, want (= %q) % x", c[0], gotT, c[1], wantT)
+		}
+	}
+}
+
 // TestAssembleProgramQuadSymbol checks that `.quad <symbol>` in .rodata
 // is filled with the symbol's absolute virtual address (function-pointer
 // / closure tables). Two .text functions at known indices plus a rodata
