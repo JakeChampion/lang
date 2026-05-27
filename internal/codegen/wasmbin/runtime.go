@@ -234,8 +234,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_stdin")
 				case "__fern_reader_read_line_fd":
 					// (r) → i32 — heap-form Option[string]. Reads
-					// from r.fd byte-by-byte until '\n' / EOF.
-					needs.add("__fern_alloc")
+					// from r.fd byte-by-byte until '\n' / EOF. The
+					// line buffer is the returned string → rc1.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_reader_read_line_fd")
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
@@ -296,8 +298,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// before it reaches path_open. WASI imports
 					// (path_open / fd_read / fd_close) get added by
 					// scanImports below once this helper is in the
-					// needs set.
-					needs.add("__fern_alloc")
+					// needs set. The file-content buffer is the
+					// returned string → rc1-headered for reclamation.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
