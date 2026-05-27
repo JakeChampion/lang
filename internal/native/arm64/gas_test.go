@@ -123,6 +123,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tldrb w0, [x22, x20]\n\tstrb w1, [x2, x3]\n\tldrh w0, [x1, x2]\n\tldrh w0, [x1, x2, lsl #1]\n\tstrh w4, [x5, x6]\n",
 		"float_unary_intrinsics": "" +
 			"\tfabs d0, d1\n\tfsqrt d0, d1\n\tfrintm d0, d1\n\tfrintp d0, d1\n\tfrintz d0, d1\n\tfrinta d0, d1\n",
+		"fp_load_store": "" +
+			"\tldr d1, [x12]\n\tldr d0, [sp, #8]\n\tstr d0, [sp, #8]\n\tldr d8, [sp], #16\n\tstr d8, [sp, #-16]!\n",
 		"addsub_shifted_extended": "" +
 			"\tadd x0, x1, x0, lsl #3\n\tadd x5, x6, x7, lsl #2\n\tsub x0, x1, x2, lsl #1\n\tadd w0, w1, w2, lsl #2\n" +
 			"\tadd x2, x0, w1, uxtw\n\tadd x2, x0, w1, uxtw #2\n\tadd x5, x6, w7, sxtw\n\tsub x2, x0, w1, uxtw #3\n",

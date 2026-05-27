@@ -817,6 +817,14 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 	sz := loadStoreSize[mnem]
 	is64LdrStr := mnem == "ldr" || mnem == "str"
 
+	// FP register form: `ldr/str Dt, <mem>`. Routed separately since
+	// SIMD&FP load/store has its own opcode space.
+	if is64LdrStr {
+		if vt, single, verr := parseVReg(ops[0]); verr == nil {
+			return asmLoadStoreFP(a, mnem, vt, single, ops)
+		}
+	}
+
 	rt, err := parseReg(ops[0])
 	if err != nil {
 		return err
@@ -886,6 +894,66 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return fmt.Errorf("%s negative offset needs the unscaled (ldur) form, not supported yet", mnem)
 	}
 	a.Emit(LoadStoreUnsigned(rt, m.base, uint32(m.off), size, sz.load))
+	return nil
+}
+
+// asmLoadStoreFP encodes `ldr/str Dt, <mem>` for a 64-bit FP
+// register in the unsigned-offset, post-index and pre-index modes
+// the transcendental helpers use. Single-precision (S) loads aren't
+// emitted by codegen, so they're a loud gap.
+func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []string) error {
+	if single {
+		return fmt.Errorf("%s of a single-precision register not supported yet", mnem)
+	}
+	load := mnem == "ldr"
+
+	// Post-index: `<op> Dt, [Xn], #imm9` (3 operands).
+	if len(ops) == 3 {
+		m, err := parseMem(ops[1])
+		if err != nil {
+			return err
+		}
+		if m.pre || m.off != 0 || m.hasIndex {
+			return fmt.Errorf("%s post-index base must be plain [Xn]", mnem)
+		}
+		off, err := parseImm(ops[2])
+		if err != nil {
+			return err
+		}
+		if load {
+			a.Emit(LdrFP64PostIdx(rt, m.base, int32(off)))
+		} else {
+			a.Emit(StrFP64PostIdx(rt, m.base, int32(off)))
+		}
+		return nil
+	}
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
+	m, err := parseMem(ops[1])
+	if err != nil {
+		return err
+	}
+	if m.hasIndex {
+		return fmt.Errorf("%s register-offset addressing not supported for FP yet", mnem)
+	}
+	if m.pre {
+		if load {
+			a.Emit(LdrFP64PreIdx(rt, m.base, int32(m.off)))
+		} else {
+			a.Emit(StrFP64PreIdx(rt, m.base, int32(m.off)))
+		}
+		return nil
+	}
+	if m.off < 0 || m.off%8 != 0 {
+		return fmt.Errorf("%s FP offset must be a non-negative multiple of 8, got %d", mnem, m.off)
+	}
+	imm12 := uint32(m.off) / 8
+	if load {
+		a.Emit(LdrFP64Unsigned(rt, m.base, imm12))
+	} else {
+		a.Emit(StrFP64Unsigned(rt, m.base, imm12))
+	}
 	return nil
 }
 

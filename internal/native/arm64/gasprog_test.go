@@ -2,6 +2,7 @@ package arm64_test
 
 import (
 	"bytes"
+	"math"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/arm64"
@@ -66,6 +67,35 @@ func TestAssembleProgramQuadSymbol(t *testing.T) {
 	}
 	if got, want := rd(16), rodataVAddr; got != want {
 		t.Errorf(".quad tbl = %#x, want %#x", got, want)
+	}
+}
+
+// TestAssembleProgramDouble checks that `.double` in .rodata emits the
+// 8-byte little-endian IEEE-754 representation — the polynomial
+// coefficient table for the f64 transcendental runtime helpers.
+func TestAssembleProgramDouble(t *testing.T) {
+	const textVAddr = 0x400078
+	src := "" +
+		"\t.text\n\tret\n" +
+		"\t.section .rodata\n\t.balign 8\n" +
+		"c0:\n\t.double 0.5\n" +
+		"c1:\n\t.double -0.16666666666666666\n" +
+		"c2:\n\t.double 1.4426950408889634\n"
+	_, rodata, err := arm64.AssembleProgram(src, textVAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rd := func(off int) uint64 {
+		var v uint64
+		for i := 0; i < 8; i++ {
+			v |= uint64(rodata[off+i]) << (8 * i)
+		}
+		return v
+	}
+	for i, want := range []float64{0.5, -0.16666666666666666, 1.4426950408889634} {
+		if got := rd(i * 8); got != math.Float64bits(want) {
+			t.Errorf(".double %v = %#x, want %#x", want, got, math.Float64bits(want))
+		}
 	}
 }
 

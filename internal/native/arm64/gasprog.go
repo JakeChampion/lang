@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -118,6 +119,10 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 		return emitInts(a, rest, 4)
 	case ".8byte", ".xword", ".quad", ".dword":
 		return emitInts(a, rest, 8)
+	case ".double", ".dc.d":
+		return emitDoubles(a, rest)
+	case ".float", ".single", ".dc.s":
+		return emitFloats(a, rest)
 	case ".space", ".skip":
 		// N zero bytes (used for .bss reservations like the freelist).
 		n, err := strconv.Atoi(strings.Fields(rest)[0])
@@ -153,6 +158,44 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 	default:
 		return fmt.Errorf("unsupported .rodata directive %q", d)
 	}
+}
+
+// emitDoubles appends comma-separated f64 values as 8-byte
+// little-endian IEEE-754 fields (`.double`).
+func emitDoubles(a *Assembler, rest string) error {
+	for _, tok := range strings.Split(rest, ",") {
+		tok = strings.TrimSpace(tok)
+		f, err := strconv.ParseFloat(tok, 64)
+		if err != nil {
+			return fmt.Errorf("bad double %q", tok)
+		}
+		uv := math.Float64bits(f)
+		b := make([]byte, 8)
+		for i := 0; i < 8; i++ {
+			b[i] = byte(uv >> (8 * i))
+		}
+		a.AppendRodata(b)
+	}
+	return nil
+}
+
+// emitFloats appends comma-separated f32 values as 4-byte
+// little-endian IEEE-754 fields (`.float`).
+func emitFloats(a *Assembler, rest string) error {
+	for _, tok := range strings.Split(rest, ",") {
+		tok = strings.TrimSpace(tok)
+		f, err := strconv.ParseFloat(tok, 32)
+		if err != nil {
+			return fmt.Errorf("bad float %q", tok)
+		}
+		uv := math.Float32bits(float32(f))
+		b := make([]byte, 4)
+		for i := 0; i < 4; i++ {
+			b[i] = byte(uv >> (8 * i))
+		}
+		a.AppendRodata(b)
+	}
+	return nil
 }
 
 // emitInts appends comma-separated integer values as width-byte

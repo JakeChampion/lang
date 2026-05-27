@@ -194,6 +194,39 @@ func TestArm64StringLiteralLen(t *testing.T) {
 	}
 }
 
+// arm64 f64 transcendentals (gcc-linked path). sin/cos/exp/log/pow
+// have no hardware instruction on arm64, so they lower to calls into
+// polynomial-approximation runtime helpers (range reduction + Horner
+// minimax/Taylor), pulled in via the .rodata coefficient table.
+// Tolerance contract — a few ulp, not bit-exact with the interp's Go
+// math. Mirrors TestX86_64Transcendentals.
+func TestArm64Transcendentals(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"sin_0", "function main(): i32 { return __sin_f64(0.0) as i32; }", 0},
+		{"cos_0", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
+		{"sin_halfpi", "function main(): i32 { var r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+		{"cos_pi", "function main(): i32 { var r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
+		{"exp_0", "function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
+		{"exp_2", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
+		{"log_10", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
+		{"exp_log_roundtrip", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
+		{"pow_int", "function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
+		{"pow_3_2", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
+		{"pow_sqrt", "function main(): i32 { var r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, code := compileAndRunArm64(t, c.src)
+			if code != c.want {
+				t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+			}
+		})
+	}
+}
+
 // arm64 string concat. Pulls in __fern_alloc + __fern_memcpy
 // + __fern_strcat — the entire string-runtime stack on the
 // arm64 target.
