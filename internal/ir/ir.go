@@ -10301,11 +10301,25 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	// Allocate (Map[K,V], bool) tuple: [mapPtr:ptrW | bool:4].
 	// Layout matches tupleElemLayout([(Map[K,V], bool)], ptrW):
 	// elem 0 = map at offset 0, elem 1 = bool at offset ptrW.
+	// The box carries an 8-byte rc header before the data (rc=1 at
+	// [base+0], data = base+8) exactly like emitEnumNew / a tuple
+	// literal — without it the scope-exit tuple drop reads heap
+	// metadata at [data-8] as the rc and underflows / corrupts.
+	const rcHeaderBytes = 8
 	size := int32(b.ptrW) + 4
-	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
+	baseSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__del_base_%d", baseSlot)] = baseSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
 	tupSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__del_tup_%d", tupSlot)] = tupSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: tupSlot})
 
 	// Store map pointer at offset 0 (pointer-width).
