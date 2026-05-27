@@ -763,9 +763,9 @@ function main(): i32 {
 //
 // Grammar:
 //
-//   if_stmt ::= "if" "(" expr ")" "{" stmt* "}"
-//             | "if" "(" expr ")" "{" stmt* "}" "else" "{" stmt* "}"
-//             | "if" "(" expr ")" "{" stmt* "}" "else" if_stmt
+//	if_stmt ::= "if" "(" expr ")" "{" stmt* "}"
+//	          | "if" "(" expr ")" "{" stmt* "}" "else" "{" stmt* "}"
+//	          | "if" "(" expr ")" "{" stmt* "}" "else" if_stmt
 //
 // The third arm — `else if` — desugars at parse time into a
 // nested IfSt as the else-branch's only statement. That gives
@@ -775,13 +775,13 @@ function main(): i32 {
 // threads the same way the if-then version did.
 //
 // Tests:
-//   1. Bare if-then (v3 sanity, unchanged).
-//   2. if/else dispatch — select between two return values.
-//   3. abs(x) via if/else — return -x or x.
-//   4. max(a, b) via if/else (using a comparison in cond).
-//   5. else-if chain — classify a number into three buckets.
-//   6. Nested if/else inside a function — recursive function
-//      that branches.
+//  1. Bare if-then (v3 sanity, unchanged).
+//  2. if/else dispatch — select between two return values.
+//  3. abs(x) via if/else — return -x or x.
+//  4. max(a, b) via if/else (using a comparison in cond).
+//  5. else-if chain — classify a number into three buckets.
+//  6. Nested if/else inside a function — recursive function
+//     that branches.
 func TestArm64StmtInterpElse(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/i32";
@@ -1275,9 +1275,9 @@ function main(): i32 {
 //
 // Grammar additions:
 //
-//   program ::= fn_def* stmt*
-//   fn_def  ::= "fn" name "(" param ("," param)* ")" "{" stmt* "}"
-//   expr    ::= ... | name "(" expr ("," expr)* ")"
+//	program ::= fn_def* stmt*
+//	fn_def  ::= "fn" name "(" param ("," param)* ")" "{" stmt* "}"
+//	expr    ::= ... | name "(" expr ("," expr)* ")"
 //
 // Call disambiguates at parse time on single-token lookahead
 // (matching interp v6/v7's split between Var and Call).
@@ -1289,17 +1289,17 @@ function main(): i32 {
 // main runs. Mutual recursion works for the same reason.
 //
 // Tests:
-//   1. Simple zero-arg function (`fn answer() { return 42; }`).
-//   2. Single-arg function (`fn double(x) { return x * 2; }`).
-//   3. Recursive factorial via if-then return — proves call
-//      machinery handles deep recursion.
-//   4. Iterative factorial — function body with while loop +
-//      local var + return.
-//   5. Multi-arg gcd via Euclidean algorithm — two-arg call,
-//      recursive.
-//   6. Mutual recursion (is_even / is_odd) — confirms the
-//      function table is closed-over.
-//   7. Function compose at top-level — call from main flow.
+//  1. Simple zero-arg function (`fn answer() { return 42; }`).
+//  2. Single-arg function (`fn double(x) { return x * 2; }`).
+//  3. Recursive factorial via if-then return — proves call
+//     machinery handles deep recursion.
+//  4. Iterative factorial — function body with while loop +
+//     local var + return.
+//  5. Multi-arg gcd via Euclidean algorithm — two-arg call,
+//     recursive.
+//  6. Mutual recursion (is_even / is_odd) — confirms the
+//     function table is closed-over.
+//  7. Function compose at top-level — call from main flow.
 func TestArm64StmtInterpFunctions(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/i32";
@@ -1783,10 +1783,10 @@ function main(): i32 {
 //
 // Grammar additions:
 //
-//   stmt ::= ... existing
-//          | "while" "(" expr ")" "{" stmt* "}"
-//   expr ::= comp
-//   comp ::= add (("=="|"!="|"<"|"<="|">"|">=") add)?
+//	stmt ::= ... existing
+//	       | "while" "(" expr ")" "{" stmt* "}"
+//	expr ::= comp
+//	comp ::= add (("=="|"!="|"<"|"<="|">"|">=") add)?
 //
 // Comparisons are NON-CHAINING: `a < b < c` is rejected by
 // the single-relation grammar (the parser produces left-assoc
@@ -1801,18 +1801,20 @@ function main(): i32 {
 // state)` per statement, propagating the done flag.
 //
 // Tests:
-//   1. Bare while with single body stmt — counter 1..N.
-//   2. While + var + assign — sum 1..10 = 55.
-//   3. Nested while — multiplication table sum.
-//   4. Early return inside loop body — short-circuits.
-//   5. False initial cond — body never runs.
-//   6. Comparisons in isolation (return a < b).
-//   7. Factorial via iterative loop — closes the
-//      recursion-free Turing-completeness gap.
+//  1. Bare while with single body stmt — counter 1..N.
+//  2. While + var + assign — sum 1..10 = 55.
+//  3. Nested while — multiplication table sum.
+//  4. Early return inside loop body — short-circuits.
+//  5. False initial cond — body never runs.
+//  6. Comparisons in isolation (return a < b).
+//  7. Factorial via iterative loop — closes the
+//     recursion-free Turing-completeness gap.
 //
 // Comparison opcodes (lexed as two-char punct, parser folds
 // into one op token):
-//   == → 1001, != → 1002, < → 1003, <= → 1004, > → 1005, >= → 1006
+//
+//	== → 1001, != → 1002, < → 1003, <= → 1004, > → 1005, >= → 1006
+//
 // (Outside the 0..127 ASCII range so they don't collide with
 // existing single-char arith ops.)
 func TestArm64StmtInterpWhile(t *testing.T) {
@@ -2182,11 +2184,11 @@ function main(): i32 {
 //
 // Grammar:
 //
-//   program ::= stmt* ;
-//   stmt    ::= "var" name "=" expr ";"     // declaration
-//             | "return" expr ";"            // exit
-//             | name "=" expr ";"            // reassignment
-//   expr    ::= existing arithmetic grammar
+//	program ::= stmt* ;
+//	stmt    ::= "var" name "=" expr ";"     // declaration
+//	          | "return" expr ";"            // exit
+//	          | name "=" expr ";"            // reassignment
+//	expr    ::= existing arithmetic grammar
 //
 // The exit-on-return semantics matches every real procedural
 // language. eval_block walks the statement list, looks for a
@@ -2203,18 +2205,18 @@ function main(): i32 {
 // pattern the env_lookup chain has used since interp v5.
 //
 // Properties tested:
-//   1. Bare return — `return 5;` → 5.
-//   2. Var + return — `var x = 5; return x;` → 5.
-//   3. Reassignment — `var x = 1; x = x + 1; return x;` → 2.
-//      Confirms the assign path rebinds the existing slot
-//      rather than shadowing.
-//   4. Multi-var arithmetic — `var x = 3; var y = 4; return
-//      x * 10 + y;` → 34.
-//   5. Early return — `var x = 1; return x; var y = 99; return
-//      y;` → 1. The second return is dead code; the first
-//      fires and the eval stops.
-//   6. Forward dependencies — `var x = 10; var y = x + 5;
-//      return y;` → 15. Later declarations see earlier ones.
+//  1. Bare return — `return 5;` → 5.
+//  2. Var + return — `var x = 5; return x;` → 5.
+//  3. Reassignment — `var x = 1; x = x + 1; return x;` → 2.
+//     Confirms the assign path rebinds the existing slot
+//     rather than shadowing.
+//  4. Multi-var arithmetic — `var x = 3; var y = 4; return
+//     x * 10 + y;` → 34.
+//  5. Early return — `var x = 1; return x; var y = 99; return
+//     y;` → 1. The second return is dead code; the first
+//     fires and the eval stops.
+//  6. Forward dependencies — `var x = 10; var y = x + 5;
+//     return y;` → 15. Later declarations see earlier ones.
 func TestArm64StmtInterpInLang(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/i32";
@@ -2520,9 +2522,10 @@ function main(): i32 {
 // AST → linear Op[] sequence consumed by codegen).
 //
 // Bytecode:
-//   PushConst v   — push integer constant onto the stack
-//   Load name     — push the value of named variable
-//   Bin op        — pop two, apply op (+, -, *, /), push result
+//
+//	PushConst v   — push integer constant onto the stack
+//	Load name     — push the value of named variable
+//	Bin op        — pop two, apply op (+, -, *, /), push result
 //
 // Compile is a post-order walk: emit child ops then the parent
 // op. The resulting linear sequence runs left-to-right on the
@@ -2531,20 +2534,20 @@ function main(): i32 {
 // dispatch loop in the codegen backends.
 //
 // Properties tested:
-//   1. Round-trip semantic equivalence — execute(compile(e), env)
-//      == eval(e, env) for the same env, on every shape exercised
-//      by the earlier spikes (literals, vars, all four binary
-//      operators, nesting, parens).
-//   2. Bytecode shape — `1 + 2 * 3` compiles to exactly:
-//      [PushConst 1, PushConst 2, PushConst 3, Bin *, Bin +].
-//      Five ops, post-order, in that order. The shape proves the
-//      compile walk is bottom-up + left-to-right.
-//   3. Stack discipline — after a successful execute(), the stack
-//      has exactly one element (the result). Tested by always
-//      reading the top and asserting on it.
-//   4. fold + compile integration — folding the AST FIRST makes
-//      the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
-//      one op (PushConst 7) instead of five.
+//  1. Round-trip semantic equivalence — execute(compile(e), env)
+//     == eval(e, env) for the same env, on every shape exercised
+//     by the earlier spikes (literals, vars, all four binary
+//     operators, nesting, parens).
+//  2. Bytecode shape — `1 + 2 * 3` compiles to exactly:
+//     [PushConst 1, PushConst 2, PushConst 3, Bin *, Bin +].
+//     Five ops, post-order, in that order. The shape proves the
+//     compile walk is bottom-up + left-to-right.
+//  3. Stack discipline — after a successful execute(), the stack
+//     has exactly one element (the result). Tested by always
+//     reading the top and asserting on it.
+//  4. fold + compile integration — folding the AST FIRST makes
+//     the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
+//     one op (PushConst 7) instead of five.
 func TestArm64StackVMInLang(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/i32";
@@ -2867,27 +2870,27 @@ function main(): i32 {
 // literal operands; strength reduction simplifies BinOps where
 // ONE operand is a known constant that triggers an identity:
 //
-//   x + 0   →   x      x - 0   →   x
-//   0 + x   →   x      0 * x   →   0
-//   x * 1   →   x      x * 0   →   0
-//   1 * x   →   x      x / 1   →   x
+//	x + 0   →   x      x - 0   →   x
+//	0 + x   →   x      0 * x   →   0
+//	x * 1   →   x      x * 0   →   0
+//	1 * x   →   x      x / 1   →   x
 //
 // The real `internal/ir/strength.go` runs these on IR (after
 // type-aware short-circuit handling); this spike runs them on
 // the toy Expr AST. Same shape, simpler representation.
 //
 // Properties tested:
-//   1. Identity rules fire — `x + 0` collapses to `x`, the
-//      enclosing BinOp disappears. count_binop drops by one.
-//   2. Absorbing rule for `* 0` — `x * 0` collapses to `0`.
-//      Note `x / 0` does NOT collapse — that's a runtime trap,
-//      not an algebraic identity.
-//   3. Combined with constfold — running fold + reduce in
-//      sequence on `(2 + 3) + (x * 1)` collapses to `5 + x`
-//      via two passes.
-//   4. Idempotence — reduce(reduce(e)) ≡ reduce(e).
-//   5. Semantic preservation — eval(reduce(e)) == eval(e) for
-//      any e and any env that doesn't divide-by-zero.
+//  1. Identity rules fire — `x + 0` collapses to `x`, the
+//     enclosing BinOp disappears. count_binop drops by one.
+//  2. Absorbing rule for `* 0` — `x * 0` collapses to `0`.
+//     Note `x / 0` does NOT collapse — that's a runtime trap,
+//     not an algebraic identity.
+//  3. Combined with constfold — running fold + reduce in
+//     sequence on `(2 + 3) + (x * 1)` collapses to `5 + x`
+//     via two passes.
+//  4. Idempotence — reduce(reduce(e)) ≡ reduce(e).
+//  5. Semantic preservation — eval(reduce(e)) == eval(e) for
+//     any e and any env that doesn't divide-by-zero.
 func TestArm64StrengthReduceInLang(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/i32";
@@ -3481,19 +3484,19 @@ function main(): i32 {
 // shape of internal/constfold in the real compiler.
 //
 // Test strategy:
-//   1. Parse "1 + 2 * 3" → BinOp(+, Num(1), BinOp(*, Num(2),
-//      Num(3))). Fold → Num(7). Confirms fully-constant
-//      expressions collapse to a single literal.
-//   2. Parse "x + 2 * 3" → fold partials: the 2 * 3 inside
-//      a BinOp collapses; the outer BinOp(+, Var(x), Num(6))
-//      stays since one operand is a Var.
-//   3. Parse "(1 + 2) + (3 + 4)" → Num(10). Confirms recursive
-//      folding through nested BinOps.
-//   4. Idempotence: fold(fold(e)) == fold(e). Real compilers
-//      run optimization passes in a loop; idempotence is the
-//      stable-fixpoint property they all need.
-//   5. Semantic preservation: eval(fold(e)) == eval(e). The
-//      pass must not change the program's meaning.
+//  1. Parse "1 + 2 * 3" → BinOp(+, Num(1), BinOp(*, Num(2),
+//     Num(3))). Fold → Num(7). Confirms fully-constant
+//     expressions collapse to a single literal.
+//  2. Parse "x + 2 * 3" → fold partials: the 2 * 3 inside
+//     a BinOp collapses; the outer BinOp(+, Var(x), Num(6))
+//     stays since one operand is a Var.
+//  3. Parse "(1 + 2) + (3 + 4)" → Num(10). Confirms recursive
+//     folding through nested BinOps.
+//  4. Idempotence: fold(fold(e)) == fold(e). Real compilers
+//     run optimization passes in a loop; idempotence is the
+//     stable-fixpoint property they all need.
+//  5. Semantic preservation: eval(fold(e)) == eval(e). The
+//     pass must not change the program's meaning.
 //
 // Counting helpers (`count_num`, `count_binop`) drive the
 // structural assertions — after folding the constant cases,
@@ -3788,8 +3791,8 @@ function main(): i32 {
 //
 // Grammar changes:
 //
-//   fn_def ::= "fn" name "(" param ("," param)* ")" "=" expr ";"
-//   call   ::= name "(" expr ("," expr)* ")"
+//	fn_def ::= "fn" name "(" param ("," param)* ")" "=" expr ";"
+//	call   ::= name "(" expr ("," expr)* ")"
 //
 // Storage: each function gets a `params: string[]` list (was a
 // single `string`) and each Call gets an `args: Expr[]` list
@@ -4089,9 +4092,9 @@ function main(): i32 {
 //
 // Grammar additions (single-arg for brevity):
 //
-//   program ::= fn_def* expr
-//   fn_def  ::= "fn" name "(" param ")" "=" expr ";"
-//   factor  ::= ... | name "(" expr ")"
+//	program ::= fn_def* expr
+//	fn_def  ::= "fn" name "(" param ")" "=" expr ";"
+//	factor  ::= ... | name "(" expr ")"
 //
 // Functions live in three parallel arrays — `fn_names`,
 // `fn_params`, `fn_bodies` — passed through every eval call.
@@ -4378,7 +4381,7 @@ function main(): i32 {
 // then a else b` expressions, layered on top of the arith /
 // relation grammar. The Expr union grows to five variants:
 //
-//   type Expr = Num | Var | BinOp | Let | If;
+//	type Expr = Num | Var | BinOp | Let | If;
 //
 // Identifier tokenisation joins the lexer — `let`, `in`, `if`,
 // `then`, `else` are recognised as keywords (still TokIdent at
@@ -4793,8 +4796,8 @@ function main(): i32 {
 // through tokenisation, AST construction, and recursive
 // evaluation — all in lang.
 //
-//   interp("1 + 2 * 3") → 7
-//   interp("(1 + 2) * 3") → 9
+//	interp("1 + 2 * 3") → 7
+//	interp("(1 + 2) * 3") → 9
 //
 // This is the smallest end-to-end "compiler-shaped" pipeline
 // the lang has ever run on itself. Closes the lex+parse half
@@ -5291,26 +5294,26 @@ function main(): i32 {
 //
 // New surface vs v5:
 //
-//   1. Line comments — `// ...` until newline (or EOF). Standard
-//      C-family comment lexing; the body is dropped, the closing
-//      newline is left for the whitespace branch to eat.
-//   2. Full keyword set — function / var / let / if / else /
-//      while / for / break / continue / return / true / false /
-//      match / struct / type + sized numeric type names. Matches
-//      the Go lexer's `keywords` map. The classifier is a chain
-//      of `==` comparisons; a Map lookup would be cleaner but
-//      Map[string,boolean] in script-mode interp is on the
-//      "blocked behind virtual heap" list.
-//   3. String literals with escapes — `\n` `\t` `\r` `\0` `\"`
-//      `\\` are decoded inline. Builds the body via repeated
-//      `s = s + ...` concat (one alloc per escape, one per run
-//      of plain bytes). Quadratic on long strings, fine for the
-//      lexer where token bodies are short.
-//   4. Underscore in identifiers — `is_digit`, `_pad`, etc.
-//      Real lang allows `[a-zA-Z_][a-zA-Z0-9_]*`. v5 only
-//      called `is_alpha()` / `is_alnum()`; v6 ORs in the
-//      underscore explicitly so `__alloc_u8` and friends lex
-//      as a single ident.
+//  1. Line comments — `// ...` until newline (or EOF). Standard
+//     C-family comment lexing; the body is dropped, the closing
+//     newline is left for the whitespace branch to eat.
+//  2. Full keyword set — function / var / let / if / else /
+//     while / for / break / continue / return / true / false /
+//     match / struct / type + sized numeric type names. Matches
+//     the Go lexer's `keywords` map. The classifier is a chain
+//     of `==` comparisons; a Map lookup would be cleaner but
+//     Map[string,boolean] in script-mode interp is on the
+//     "blocked behind virtual heap" list.
+//  3. String literals with escapes — `\n` `\t` `\r` `\0` `\"`
+//     `\\` are decoded inline. Builds the body via repeated
+//     `s = s + ...` concat (one alloc per escape, one per run
+//     of plain bytes). Quadratic on long strings, fine for the
+//     lexer where token bodies are short.
+//  4. Underscore in identifiers — `is_digit`, `_pad`, etc.
+//     Real lang allows `[a-zA-Z_][a-zA-Z0-9_]*`. v5 only
+//     called `is_alpha()` / `is_alnum()`; v6 ORs in the
+//     underscore explicitly so `__alloc_u8` and friends lex
+//     as a single ident.
 //
 // Closes a meaningful chunk of lexer-port parity — the only
 // remaining gaps vs `internal/lexer/lexer.go` are float
@@ -6315,6 +6318,7 @@ function main(): i32 {
 //   - no placeholders → identity (still cheap)
 //   - empty fmt → empty result
 //   - chained with to_string() for i32 args
+//
 // String-array methods — join / index_of / contains. All
 // three dispatch via the constrained-string-receiver pattern
 // in the checker; bodies live in the prelude as plain loops.
@@ -6391,17 +6395,19 @@ function main(): i32 {
 }
 
 // String surface additions per STDLIB-ROADMAP item #15:
-//   s.fields()                       — whitespace split, no empties
-//   s.eq_ignore_ascii_case(other)    — ASCII case-fold equality
-//   s.strip_prefix(p) / strip_suffix(s)  — Option[string] companions to
-//                                          starts_with / ends_with
+//
+//	s.fields()                       — whitespace split, no empties
+//	s.eq_ignore_ascii_case(other)    — ASCII case-fold equality
+//	s.strip_prefix(p) / strip_suffix(s)  — Option[string] companions to
+//	                                       starts_with / ends_with
 //
 // HTTP header parsing is the main motivator (case-insensitive
 // header-name compare, prefix-stripping path components,
 // whitespace-tolerant value tokenisation).
 // Radix parse/format per STDLIB-ROADMAP item #14:
-//   parse_int_radix(s, base) Option[i32]
-//   int_to_string_radix(n, base) string
+//
+//	parse_int_radix(s, base) Option[i32]
+//	int_to_string_radix(n, base) string
 //
 // Supported bases: 2..36 (digits 0-9 then a-z, case-insensitive
 // on parse). Covers hex addressing, binary debug dumps, octal
@@ -9814,7 +9820,7 @@ function main(): i32 {
 // i64. Native targets ignored the block type, so the bug
 // was wasm-only. The validator rejected:
 //
-//   "type mismatch: expected i32, found i64"
+//	"type mismatch: expected i32, found i64"
 //
 // Triggered when arm bodies aren't compile-time-constant
 // (e.g. a function-parameter `a: i64` referenced from an
@@ -9849,14 +9855,14 @@ function main(): i32 {
 // promoted the 32-bit slot to 64-bit on the operand
 // stack so the failures were wasm-only):
 //
-//   1. `x * 2^k` strength reduction → `x << k` emitted
-//      OpConstI32 for k regardless of the binary's
-//      resolved width. For an i64 LHS, the subsequent
-//      OpShl resolved to `i64.shl` and the i32 const on
-//      the stack failed validation.
-//   2. `x - x` / `x ^ x` self-identity fold emitted
-//      OpConstI32 0 regardless of the resolved width.
-//      Same i64.add / i64.sub consumer mismatch on wasm.
+//  1. `x * 2^k` strength reduction → `x << k` emitted
+//     OpConstI32 for k regardless of the binary's
+//     resolved width. For an i64 LHS, the subsequent
+//     OpShl resolved to `i64.shl` and the i32 const on
+//     the stack failed validation.
+//  2. `x - x` / `x ^ x` self-identity fold emitted
+//     OpConstI32 0 regardless of the resolved width.
+//     Same i64.add / i64.sub consumer mismatch on wasm.
 //
 // Fixes: emit OpConstI64 (and Width=64 on OpShl in the
 // strength-reduction path) when the binary's IntWidth is
@@ -9907,24 +9913,24 @@ function main(): i32 {
 // Two cross-target type-shape bugs that the wasm validator
 // caught and natives silently absorbed:
 //
-//   1. b.exprType(*ast.Binary) returned the IR's
-//      IntWidth-stamped NumberType even for comparison ops
-//      (==, !=, <, <=, >, >=). The OPERAND width is what
-//      drives codegen's `i64.eq` vs `i32.eq` selection, but
-//      the RESULT type is bool (i32). Without the
-//      comparison-op shortcut, `(a > b, a + b)` inside a
-//      `(boolean, i64)` tuple inferred its first slot as
-//      i64 — the tuple stride doubled, the i32 0/1 store
-//      overflowed into the i64 slot, and wasm rejected the
-//      load with "type mismatch: expected i64, found i32".
+//  1. b.exprType(*ast.Binary) returned the IR's
+//     IntWidth-stamped NumberType even for comparison ops
+//     (==, !=, <, <=, >, >=). The OPERAND width is what
+//     drives codegen's `i64.eq` vs `i32.eq` selection, but
+//     the RESULT type is bool (i32). Without the
+//     comparison-op shortcut, `(a > b, a + b)` inside a
+//     `(boolean, i64)` tuple inferred its first slot as
+//     i64 — the tuple stride doubled, the i32 0/1 store
+//     overflowed into the i64 slot, and wasm rejected the
+//     load with "type mismatch: expected i64, found i32".
 //
-//   2. settleNumeric had no `*ast.TryOp` case. The
-//      destination's hint applies to the inner expression's
-//      payload, not to the TryOp itself. Without a wrap of
-//      the hint in `Option[T]` / `Result[T, E]`,
-//      `var v: f64 = Some(3.14)?;` left 3.14 at the f32
-//      default and wasm rejected the f64 destination load
-//      ("type mismatch: expected f64, found f32").
+//  2. settleNumeric had no `*ast.TryOp` case. The
+//     destination's hint applies to the inner expression's
+//     payload, not to the TryOp itself. Without a wrap of
+//     the hint in `Option[T]` / `Result[T, E]`,
+//     `var v: f64 = Some(3.14)?;` left 3.14 at the f32
+//     default and wasm rejected the f64 destination load
+//     ("type mismatch: expected f64, found f32").
 //
 // Both fixes land in the same PR — they share the "the
 // surrounding type-shape needs to reach the inner
@@ -10045,7 +10051,7 @@ function main(): i32 {
 // polymorphic NumberLit and the other was a concrete i64
 // expression), and the if-expression rejected with:
 //
-//   branches differ: (i32, f32) vs (i64, f32)
+//	branches differ: (i32, f32) vs (i64, f32)
 //
 // Same story for `(i64, f64)` mixed with `(i64, f32)` —
 // any whole-tuple-Equal failure short-circuited the
@@ -10130,7 +10136,7 @@ function main(): i32 {
 // param returned `ParamType{"V"}` — `ast.Equal` saw them
 // as different and the user got the puzzling:
 //
-//   argument 3: expected V, got V
+//	argument 3: expected V, got V
 //
 // — with identical-looking sides.
 //
@@ -10170,12 +10176,12 @@ function main(): i32 {
 // EnumType variant call refresh from #540. The generic
 // struct literal needed:
 //
-//   1. settleNumeric(StructType{Args:[i64]}) walking
-//      each field with the substituted type
-//      (`Box.v` → i64), AND
-//   2. postSettleType refreshing the StructType.Args
-//      from the literal's TypeArgs stamp so the
-//      assignable check sees the resolved shape.
+//  1. settleNumeric(StructType{Args:[i64]}) walking
+//     each field with the substituted type
+//     (`Box.v` → i64), AND
+//  2. postSettleType refreshing the StructType.Args
+//     from the literal's TypeArgs stamp so the
+//     assignable check sees the resolved shape.
 //
 // Fix: settleNumeric's StructType case handles
 // `*ast.StructLit` with a generic StructDecl — builds
@@ -10198,23 +10204,23 @@ function main(): i32 {
 // literals included an empty inner array. Both were
 // hiding behind each other:
 //
-//   1. `ast.ArrayType.String()` panicked with "invalid
-//      memory address or nil pointer dereference" when
-//      `Elem == nil`. The error formatter for the
-//      checker's "array element type X, expected Y"
-//      message tried to format the empty-array literal's
-//      pre-settle type — which is `ArrayType{Elem: nil}`
-//      because the empty `[]` has no element. The result
-//      was a crash dump in the error message instead of
-//      the actual diagnostic. Same hole in `SliceType`.
-//   2. Even with the formatter fixed, the checker still
-//      rejected `var arr: i64[][] = [[1234567890123],
-//      [9876543210, 100], []];` as "array element type
-//      [], expected i64[]". The empty `[]`'s type
-//      doesn't carry an Elem; unifyIfArms had no rule
-//      for empty-array-vs-typed-array. Adding that rule
-//      lets the empty inner array inherit the outer's
-//      element type from a non-empty sibling.
+//  1. `ast.ArrayType.String()` panicked with "invalid
+//     memory address or nil pointer dereference" when
+//     `Elem == nil`. The error formatter for the
+//     checker's "array element type X, expected Y"
+//     message tried to format the empty-array literal's
+//     pre-settle type — which is `ArrayType{Elem: nil}`
+//     because the empty `[]` has no element. The result
+//     was a crash dump in the error message instead of
+//     the actual diagnostic. Same hole in `SliceType`.
+//  2. Even with the formatter fixed, the checker still
+//     rejected `var arr: i64[][] = [[1234567890123],
+//     [9876543210, 100], []];` as "array element type
+//     [], expected i64[]". The empty `[]`'s type
+//     doesn't carry an Elem; unifyIfArms had no rule
+//     for empty-array-vs-typed-array. Adding that rule
+//     lets the empty inner array inherit the outer's
+//     element type from a non-empty sibling.
 //
 // Fix:
 //   - ArrayType.String() and SliceType.String() return
@@ -10241,11 +10247,11 @@ func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 // scope's slot, so the outer reads silently saw the inner
 // store's value after the inner block returned:
 //
-//   var x: i64 = 100;
-//   if (true) {
-//       var x: i64 = 200;
-//   }
-//   print(x.to_string());  // printed 200, not 100
+//	var x: i64 = 100;
+//	if (true) {
+//	    var x: i64 = 200;
+//	}
+//	print(x.to_string());  // printed 200, not 100
 //
 // The IR's `b.locals` flat name → slot map keyed by the
 // AST name; two `var x` declarations both set `b.locals["x"]`
@@ -12954,8 +12960,10 @@ function main(): i32 {
 // the OLD value it held before the new value lands. Three
 // fresh arrays + two reassignments to the same slot let us
 // observe the sequence:
-//   arr1 = arr2 → arr2's rc 1→2; original arr1's rc 1→0
-//   arr1 = arr3 → arr3's rc 1→2; arr2 (= old arr1) rc 2→1
+//
+//	arr1 = arr2 → arr2's rc 1→2; original arr1's rc 1→0
+//	arr1 = arr3 → arr3's rc 1→2; arr2 (= old arr1) rc 2→1
+//
 // Mid-function read of arr2 sees rc=1 (post-overwrite dec);
 // read of arr3 sees rc=2 (post-inc). Sum = 3 = 1 + 2.
 func TestArm64RcDecOnOverwrite(t *testing.T) {

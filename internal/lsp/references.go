@@ -79,7 +79,6 @@ type occurrence struct {
 // name that resolves to the same symbol as the given hit. Scopes
 // correctly: a local var search stays within its enclosing function;
 // a top-level decl search spans every function body.
-//
 func collectOccurrences(state *docState, hit *nameHit) []occurrence {
 	if hit.methodCall != nil {
 		return collectMethod(state, hit.methodCall.Method)

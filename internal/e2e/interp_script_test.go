@@ -263,18 +263,18 @@ func TestInterpScriptStringPrelude(t *testing.T) {
 // We exercise four shapes of the same bug so a regression
 // shows up wherever it surfaces:
 //
-//   1. Explicit `import "core/int";` + bare `(n).to_string()`
-//      — the smallest reproducer.
-//   2. Explicit `import "std/json";` — drags in core/int
-//      transitively without the user reaching for it directly.
-//      This is what tripped over the std/test PR review.
-//   3. Direct `int.int_to_string(n)` qualified call against
-//      the explicit `core/int` import — same mangling, but
-//      the call site is the user's own qualified reference
-//      rather than the receiver-method dispatch hoist.
-//   4. The auto-prelude path (no extra imports) — sanity
-//      check that the alias doesn't break the original
-//      flat-load route.
+//  1. Explicit `import "core/int";` + bare `(n).to_string()`
+//     — the smallest reproducer.
+//  2. Explicit `import "std/json";` — drags in core/int
+//     transitively without the user reaching for it directly.
+//     This is what tripped over the std/test PR review.
+//  3. Direct `int.int_to_string(n)` qualified call against
+//     the explicit `core/int` import — same mangling, but
+//     the call site is the user's own qualified reference
+//     rather than the receiver-method dispatch hoist.
+//  4. The auto-prelude path (no extra imports) — sanity
+//     check that the alias doesn't break the original
+//     flat-load route.
 //
 // Each shape writes a `.fern` file to a tempdir and runs
 // `fern -interp FILE` rather than piping over stdin: the

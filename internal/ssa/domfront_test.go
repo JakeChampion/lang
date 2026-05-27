@@ -107,11 +107,11 @@ func TestDFLoop(t *testing.T) {
 // TestDFIfWithEarlyReturn — entry → {then-ret, after};
 // after → done.
 //
-//	     entry
-//	    /     \
-//	  then    after
-//	  ret      |
-//	          done
+//	   entry
+//	  /     \
+//	then    after
+//	ret      |
+//	        done
 //
 // After has empty frontier — only one predecessor, no join.
 // Then has empty frontier — it has no successor.
@@ -137,15 +137,15 @@ func TestDFIfWithEarlyReturn(t *testing.T) {
 // TestDFNestedDiamond — outer diamond with inner diamond
 // nested inside one branch.
 //
-//	      entry                              entry
-//	     /     \                            /     \
-//	   outerT  outerF                    outerT  outerF
-//	   /   \    |                        innerT innerF (etc.)
-//	  iT   iF   |
-//	   \   /    |
-//	    iM      |
-//	     \     /
-//	      merge
+//	    entry                              entry
+//	   /     \                            /     \
+//	 outerT  outerF                    outerT  outerF
+//	 /   \    |                        innerT innerF (etc.)
+//	iT   iF   |
+//	 \   /    |
+//	  iM      |
+//	   \     /
+//	    merge
 //
 // We expect DF[innerT] = DF[innerF] = {innerMerge};
 // DF[innerMerge] = {merge}; DF[outerF] = {merge}.

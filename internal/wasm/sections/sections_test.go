@@ -30,7 +30,7 @@ func TestEncodeTypeSection(t *testing.T) {
 	got := sections.EncodeTypeSection(nil, params, results)
 	want := []byte{
 		0x01, 0x0b, // id 1 (type), size 11
-		0x02,             // count
+		0x02,                   // count
 		0x60, 0x00, 0x01, 0x7f, // () -> i32
 		0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, // (i32,i32) -> i32
 	}
@@ -104,8 +104,8 @@ func TestEncodeGlobalSection(t *testing.T) {
 		[]byte{encode.ValtypeI32}, []byte{0x00}, [][]byte{initExpr})
 	want := []byte{
 		0x06, 0x06, // id 6 (global), size 6
-		0x01,             // count
-		0x7f, 0x00,       // i32, mut const
+		0x01,       // count
+		0x7f, 0x00, // i32, mut const
 		0x41, 0x2a, 0x0b, // i32.const 42; end
 	}
 	if !bytes.Equal(got, want) {
@@ -118,7 +118,7 @@ func TestEncodeExportSection(t *testing.T) {
 		[]string{"main"}, []byte{sections.ExportFunc}, []uint32{0})
 	want := []byte{
 		0x07, 0x08, // id 7 (export), size 8
-		0x01,                    // count
+		0x01,                     // count
 		0x04, 'm', 'a', 'i', 'n', // name
 		0x00, 0x00, // kind func, idx 0
 	}
@@ -138,7 +138,7 @@ func TestEncodeStartSection(t *testing.T) {
 func TestEncodeCodeSection(t *testing.T) {
 	// Two prebuilt bodies (already size-prefixed).
 	bodies := [][]byte{
-		{0x02, 0x00, 0x0b},       // size 2, no locals, end
+		{0x02, 0x00, 0x0b},             // size 2, no locals, end
 		{0x04, 0x00, 0x41, 0x2a, 0x0b}, // size 4, no locals, i32.const 42, end
 	}
 	got := sections.EncodeCodeSection(nil, bodies)

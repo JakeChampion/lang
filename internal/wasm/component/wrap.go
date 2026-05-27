@@ -197,4 +197,3 @@ func BuildWasiCliRunComponent(coreBytes []byte, coreExportName string) []byte {
 	buf = PutExportSectionOneInstance(buf, "wasi:cli/run@0.2.0", 0)
 	return buf
 }
-

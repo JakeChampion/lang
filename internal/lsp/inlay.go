@@ -21,7 +21,7 @@ type inlayHintParams struct {
 type inlayHint struct {
 	Position     Position `json:"position"`
 	Label        string   `json:"label"`
-	Kind         int      `json:"kind,omitempty"`         // 1 = Type, 2 = Parameter
+	Kind         int      `json:"kind,omitempty"` // 1 = Type, 2 = Parameter
 	PaddingLeft  bool     `json:"paddingLeft,omitempty"`
 	PaddingRight bool     `json:"paddingRight,omitempty"`
 }

@@ -31,9 +31,9 @@ import (
 // Spec: https://webassembly.github.io/spec/core/binary/instructions.html#binary-blocktype
 //
 // Blocktype is one of:
-//   * empty type:    0x40
-//   * single result: a valtype byte (0x7f/0x7e/0x7d/0x7c)
-//   * type index:    a signed leb128 (33-bit space)
+//   - empty type:    0x40
+//   - single result: a valtype byte (0x7f/0x7e/0x7d/0x7c)
+//   - type index:    a signed leb128 (33-bit space)
 //
 // The first two are a single byte; the typeidx form goes through
 // PutBlocktypeTypeidx for the sleb encoding.

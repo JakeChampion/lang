@@ -74,15 +74,15 @@ type Coded interface {
 // LabelKind tags a Label's role in a multi-label diagnostic
 // (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §1).
 //
-//   Primary   — the "error happens here" pointer; rendered with `^`.
-//   Secondary — context that informs the primary (e.g. "declared
-//               with this type" pointing at the original decl);
-//               rendered with `--` underline + "note:" prefix.
-//   Help      — actionable explanation or suggested fix; rendered
-//               with `--` + "help:" prefix. Distinct from
-//               Secondary so the IDE can surface help labels as
-//               CodeAction candidates while leaving Secondary as
-//               plain `relatedInformation`.
+//	Primary   — the "error happens here" pointer; rendered with `^`.
+//	Secondary — context that informs the primary (e.g. "declared
+//	            with this type" pointing at the original decl);
+//	            rendered with `--` underline + "note:" prefix.
+//	Help      — actionable explanation or suggested fix; rendered
+//	            with `--` + "help:" prefix. Distinct from
+//	            Secondary so the IDE can surface help labels as
+//	            CodeAction candidates while leaving Secondary as
+//	            plain `relatedInformation`.
 type LabelKind int
 
 const (

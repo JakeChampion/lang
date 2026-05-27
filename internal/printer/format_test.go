@@ -67,10 +67,10 @@ func TestFormatMinimalParens(t *testing.T) {
 		{`1 + 2 * 3`, `1 + 2 * 3`},
 		{`(1 + 2) * 3`, `(1 + 2) * 3`},
 		{`1 * 2 + 3`, `1 * 2 + 3`},
-		{`1 - 2 - 3`, `1 - 2 - 3`},                   // left-assoc, no parens
-		{`1 - (2 - 3)`, `1 - (2 - 3)`},               // right-of-left-assoc keeps parens
-		{`a && b || c`, `a && b || c`},               // && binds tighter than ||
-		{`a && (b || c)`, `a && (b || c)`},           // explicit grouping preserved
+		{`1 - 2 - 3`, `1 - 2 - 3`},         // left-assoc, no parens
+		{`1 - (2 - 3)`, `1 - (2 - 3)`},     // right-of-left-assoc keeps parens
+		{`a && b || c`, `a && b || c`},     // && binds tighter than ||
+		{`a && (b || c)`, `a && (b || c)`}, // explicit grouping preserved
 	}
 	for _, tc := range cases {
 		got := formatSrc(t, "function f(a: boolean, b: boolean, c: boolean): i32 { return "+tc.in+"; }")

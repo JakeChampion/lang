@@ -7,7 +7,7 @@ import (
 
 // TestPrintSimpleFunction — golden form for the canonical
 //
-//   func f(a, b) { return a + b; }
+//	func f(a, b) { return a + b; }
 //
 // shape. Whitespace-stable, single block, one Add + Ret.
 func TestPrintSimpleFunction(t *testing.T) {

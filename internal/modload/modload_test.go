@@ -725,7 +725,7 @@ function main(): i32 { return b.b_fn() + 1; }`,
 // Importer sees the method:
 func TestMethodVisibleAcrossExplicitImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"lib.fern":  `pub function (n: i32) my_method(): i32 { return n + 1; }`,
+		"lib.fern": `pub function (n: i32) my_method(): i32 { return n + 1; }`,
 		"main.fern": `import "./lib";
 function main(): i32 { return (5).my_method(); }`,
 	})

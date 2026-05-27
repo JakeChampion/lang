@@ -32,7 +32,7 @@ func TestPropagateCopiesKeepsLiveTee(t *testing.T) {
 		Ops: []Op{
 			{Kind: OpConstI32, I32: 5},
 			{Kind: OpTeeLocal, I32: 0},
-			{Kind: OpDrop}, // consume the tee's pushed value so the stack is balanced for the load
+			{Kind: OpDrop},              // consume the tee's pushed value so the stack is balanced for the load
 			{Kind: OpLoadLocal, I32: 0}, // later read of slot 0
 			{Kind: OpReturn},
 		},

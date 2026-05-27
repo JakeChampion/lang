@@ -111,27 +111,27 @@ var keywords = map[string]bool{
 	// Backed by `ast.NumberType{Width: WidthPtr}` so the
 	// checker and codegen route it through the same machinery
 	// that already sizes OpStore / OpLoad of heap pointer values.
-	"usize": true,
-	"f32": true,
-	"f64": true,
-	"as":  true,
-	"switch":   true,
-	"case":     true,
-	"default":  true,
-	"struct":   true,
-	"import":   true,
-	"pub":      true,
-	"const":    true,
-	"enum":     true,
+	"usize":   true,
+	"f32":     true,
+	"f64":     true,
+	"as":      true,
+	"switch":  true,
+	"case":    true,
+	"default": true,
+	"struct":  true,
+	"import":  true,
+	"pub":     true,
+	"const":   true,
+	"enum":    true,
 	// `type X = A | B | C;` declares a union of struct types —
 	// see UnionDecl in internal/ast. The checker desugars these
 	// to synthetic enums (`enum X { A(A), B(B), C(C) }`) so the
 	// rest of the pipeline doesn't need to know about them.
-	"type":     true,
-	"match":    true,
-	"when":     true,
-	"defer":    true,
-	"arena":    true,
+	"type":  true,
+	"match": true,
+	"when":  true,
+	"defer": true,
+	"arena": true,
 }
 
 // Keywords returns every reserved word the lexer recognises, in

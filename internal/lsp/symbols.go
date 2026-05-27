@@ -18,13 +18,13 @@ type documentSymbol struct {
 
 // LSP SymbolKind values we emit (subset of the spec).
 const (
-	symKindFunction = 12
-	symKindStruct   = 23
-	symKindEnum     = 10
-	symKindField    = 8
-	symKindVariable = 13
-	symKindConstant = 14
-	symKindNamespace = 3
+	symKindFunction   = 12
+	symKindStruct     = 23
+	symKindEnum       = 10
+	symKindField      = 8
+	symKindVariable   = 13
+	symKindConstant   = 14
+	symKindNamespace  = 3
 	symKindEnumMember = 22
 )
 

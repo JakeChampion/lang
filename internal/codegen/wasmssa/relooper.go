@@ -12,18 +12,18 @@
 //  3. Compute the innermost containing loop for each block.
 //     Compute, for each block needing a `block` wrap, the scope
 //     at which it should open:
-//       - non-loop blocks open at function start (outermost).
-//       - blocks whose innermost loop is L open inside L's
-//         `loop` wrap (just after L's `loop` opens).
+//     - non-loop blocks open at function start (outermost).
+//     - blocks whose innermost loop is L open inside L's
+//     `loop` wrap (just after L's `loop` opens).
 //  4. Walk RPO. For each block B:
-//      - Close any BlockScope on top targeting B.
-//      - If B is a loop header H of loop L, open L's exit
-//        `block` then `loop`, then L's body BlockScopes
-//        (reverse RPO).
-//      - Emit B's ops, lower its terminator (using scope stack
-//        to compute label depths).
-//      - If B is the last block of any loop(s) ending at this
-//        position, close those loops' scopes (innermost first).
+//     - Close any BlockScope on top targeting B.
+//     - If B is a loop header H of loop L, open L's exit
+//     `block` then `loop`, then L's body BlockScopes
+//     (reverse RPO).
+//     - Emit B's ops, lower its terminator (using scope stack
+//     to compute label depths).
+//     - If B is the last block of any loop(s) ending at this
+//     position, close those loops' scopes (innermost first).
 //  5. Terminators (TermRet / TermBr / TermBrIf) lower to
 //     `return` / `br $depth` / `br_if $depth`. Phi-args at
 //     branch targets are pre-written before the cond push.

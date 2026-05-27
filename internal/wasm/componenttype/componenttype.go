@@ -32,11 +32,12 @@ var httpPayload []byte
 //
 // Custom section wire format
 // (https://webassembly.github.io/spec/core/binary/modules.html#binary-customsec):
-//   id (0x00)
-//   size : uleb128       — over name-len + name + payload
-//   name-len : uleb128   — 14 (len of "component-type")
-//   name : 14 bytes      — "component-type"
-//   payload : N bytes    — world-specific, precomputed
+//
+//	id (0x00)
+//	size : uleb128       — over name-len + name + payload
+//	name-len : uleb128   — 14 (len of "component-type")
+//	name : 14 bytes      — "component-type"
+//	payload : N bytes    — world-specific, precomputed
 func Embed(core []byte, world string) ([]byte, error) {
 	payload, err := payloadFor(world)
 	if err != nil {

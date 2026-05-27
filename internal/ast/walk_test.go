@@ -195,9 +195,9 @@ func TestWalk_MatchArmGuardIsVisitedBeforeBody(t *testing.T) {
 	got := collectKinds(root)
 	want := []string{
 		"*ast.MatchExpr",
-		"*ast.Ident",                           // tag
+		"*ast.Ident",                                  // tag
 		"*ast.Binary", "*ast.Ident", "*ast.NumberLit", // guard
-		"*ast.Ident",                           // body
+		"*ast.Ident", // body
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("match-expr walk: got %v want %v", got, want)

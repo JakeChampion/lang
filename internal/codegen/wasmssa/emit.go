@@ -860,11 +860,11 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 	case ssa.OpAlloc:
 		// Bump allocator: push current heap_top (the result),
 		// push (heap_top + size), store back. Args[0] = size.
-		body = inst.InstGlobalGet(body, heapGlobalIdx)         // result (old top)
-		body = inst.InstGlobalGet(body, heapGlobalIdx)         // for the bump
-		body = pushValue(body, op.Args[0], ctx)                // size
-		body = append(body, 0x6a)                              // i32.add
-		body = inst.InstGlobalSet(body, heapGlobalIdx)         // heap_top = old + size
+		body = inst.InstGlobalGet(body, heapGlobalIdx) // result (old top)
+		body = inst.InstGlobalGet(body, heapGlobalIdx) // for the bump
+		body = pushValue(body, op.Args[0], ctx)        // size
+		body = append(body, 0x6a)                      // i32.add
+		body = inst.InstGlobalSet(body, heapGlobalIdx) // heap_top = old + size
 		return storeResult(body, op, ctx), nil
 	}
 	// Binary integer ops. Width comes from the op itself or
