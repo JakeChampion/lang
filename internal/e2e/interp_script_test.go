@@ -801,7 +801,9 @@ function main(): i32 {
 // mistakes without baking in a brittle exact value.
 func TestInterpScriptInstantNow(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := `import "std/time";
+	src := `import "core/no_prelude";
+import "std/string";
+import "std/time";
 
 function main(): i32 {
     var ts: Instant = time.instant_now();

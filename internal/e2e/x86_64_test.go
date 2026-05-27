@@ -323,7 +323,9 @@ function main(): i32 {
 // identical results on the third backend, picking up the same
 // per-byte index + slice paths as wasm / arm64.
 func TestX86_64StringLines(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
@@ -1575,7 +1577,9 @@ function main(): i32 {
 // recurses through FString.Desugared so captured-name idents
 // inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestX86_64ClosureFStringCapture(t *testing.T) {
-	src := `function makeNamer(name: string): () => string {
+	src := `import "core/no_prelude";
+import "std/string";
+function makeNamer(name: string): () => string {
     function build(): string { return f"hello, {name}!"; }
     return build;
 }

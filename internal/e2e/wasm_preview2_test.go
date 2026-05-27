@@ -1283,14 +1283,17 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http_response_ok("world");
+        return http.http_response_ok("world");
     }
     if (req.method == "POST") {
-        return http_response_ok(req.body_string());
+        return http.http_response_ok(req.body_string());
     }
-    return http_response_text(404, "not found");
+    return http.http_response_text(404, "not found");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1418,8 +1421,11 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var h: HeaderMap = header_map_new();
+	src := `import "core/no_prelude";
+import "std/headers";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var h: HeaderMap = headers.header_map_new();
     h.set("x-served-by", "fern");
     h.set("content-type", "text/plain");
     return HttpResponse { status: 201, body: "ok", headers: h };
@@ -1517,10 +1523,13 @@ func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (req.headers.get("x-echo")) {
-        Some(v) => { return http_response_ok(v); },
-        None => { return http_response_text(400, "no x-echo"); },
+        Some(v) => { return http.http_response_ok(v); },
+        None => { return http.http_response_text(400, "no x-echo"); },
     }
 }
 `
@@ -1616,9 +1625,12 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "logger.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     print(f"LOGLINE {req.method} {req.path}");
-    return http_response_ok("logged");
+    return http.http_response_ok("logged");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1720,12 +1732,15 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "clock.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var t: i64 = now_ns();
     var m: i64 = monotonic_ns();
     var r: i32 = random_i32();
-    if (t > 0) { return http_response_ok("clock-ok"); }
-    return http_response_ok("no-clock");
+    if (t > 0) { return http.http_response_ok("clock-ok"); }
+    return http.http_response_ok("no-clock");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1830,14 +1845,17 @@ func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http_response_ok("world");
+        return http.http_response_ok("world");
     }
     if (req.method == "POST") {
-        return http_response_ok(req.body_string());
+        return http.http_response_ok(req.body_string());
     }
-    return http_response_text(404, "not found");
+    return http.http_response_text(404, "not found");
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
