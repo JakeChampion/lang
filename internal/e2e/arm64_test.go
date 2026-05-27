@@ -27,6 +27,8 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
+	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -121,7 +123,18 @@ func compileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 		t.Fatalf("write asm: %v", err)
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+	// FERN_NATIVE_ASM=1 routes the assemble+link step through the pure-Go
+	// native backend instead of gcc — used to audit native coverage across
+	// the whole arm64 e2e suite. Default (unset) keeps the gcc path.
+	if os.Getenv("FERN_NATIVE_ASM") != "" {
+		text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
+		if err != nil {
+			t.Fatalf("NATIVE-ASM-FAIL: %v\n--- asm ---\n%s", err, asm)
+		}
+		if err := os.WriteFile(binPath, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
+			t.Fatalf("write native bin: %v", err)
+		}
+	} else if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 	cmd := runArm64Bin(qemu, binPath)
