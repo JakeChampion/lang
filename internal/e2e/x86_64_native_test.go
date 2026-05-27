@@ -102,6 +102,79 @@ function main(): i32 { return factorial(5); }`
 	}
 }
 
+// Strings: rodata (.asciz + 4-byte length prefix), rip-relative lea to a
+// data symbol, and the write(2) syscall path through __fern_puts.
+func TestX86_64NativeStrings(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{`import "core/no_prelude";
+function main(): i32 { print("Hello, world!"); return 0; }`, "Hello, world!\n"},
+		{`import "core/no_prelude";
+function main(): i32 { print("one"); print("two"); return 0; }`, "one\ntwo\n"},
+		{`import "core/no_prelude";
+import "std/string";
+function main(): i32 {
+  var a: string = "foo";
+  print(a + "bar");
+  print("foobar".replace("o", "0"));
+  return 0;
+}`, "foobar\nf00bar\n"},
+	}
+	for _, c := range cases {
+		if out, code := compileAndRunX86Native(t, c.src); out != c.want || code != 0 {
+			t.Errorf("%q → out=%q exit=%d, want out=%q exit=0", c.src, out, code, c.want)
+		}
+	}
+}
+
+// Closures and higher-order functions: rip-relative lea to a function
+// body, function-pointer tables (.quad <symbol>), and indirect call/jmp
+// through a register.
+func TestX86_64NativeClosures(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{`function makeAdder(n: i32): (i32) => i32 {
+  function add(x: i32): i32 { return x + n; }
+  return add;
+}
+function main(): i32 { var add5 = makeAdder(5); return add5(37); }`, 42},
+		{`function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { return apply(dbl, 21); }`, 42},
+	}
+	for _, c := range cases {
+		if _, code := compileAndRunX86Native(t, c.src); code != c.want {
+			t.Errorf("%q → exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
+// Maps exercise heap allocation, hashing, base+index addressing, and
+// Option-returning get via match.
+func TestX86_64NativeMap(t *testing.T) {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
+  var m: Map[i32, i32] = map_new(8);
+  m.set(7, 40);
+  m.set(11, 99);
+  m.set(7, 42);
+  if (m.len() != 2) { return 1; }
+  if (!m.has(11)) { return 2; }
+  match (m.get(7)) {
+    Some(v) => { return v; },
+    None => { return 3; }
+  }
+}`
+	if _, code := compileAndRunX86Native(t, src); code != 42 {
+		t.Errorf("map get → exit = %d, want 42", code)
+	}
+}
+
 // Integer arithmetic and comparison operators across the phase-1
 // instruction surface (add/sub/imul/idiv + cmp/setcc + branches).
 func TestX86_64NativeArithmetic(t *testing.T) {
