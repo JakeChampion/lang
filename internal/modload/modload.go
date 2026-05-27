@@ -26,10 +26,11 @@
 // reference and suggests the fix (with the right keyword for the
 // referenced decl kind).
 //
-// Limitations of this first cut:
-//
-//   - Aliasing (`import "./long/path" as p`) isn't supported;
-//     the local name always comes from the path basename.
+// Aliasing is supported: `import "std/test" as t;` binds the
+// qualifier to `t` (Import.LocalName carries the alias), so `t.foo()`
+// resolves through the same per-module import table as a basename
+// qualifier. Without an alias the local name comes from the path
+// basename.
 
 package modload
 

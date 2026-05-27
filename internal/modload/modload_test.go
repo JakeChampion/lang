@@ -138,6 +138,45 @@ function main(): i32 { return util.greet(); }`,
 	}
 }
 
+// An import alias binds the qualifier to the `as` name; modload keys
+// its per-module import table off Import.LocalName (= the alias), so
+// `u.greet()` resolves to the imported module exactly like the
+// basename qualifier would.
+func TestLoadResolvesImportAlias(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub function greet(): i32 { return 42; }`,
+		"main.fern": `import "./util" as u;
+function main(): i32 { return u.greet(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := findFunc(prog, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if !callsDirect(main, "util__greet") {
+		t.Errorf("aliased `u.greet()` should rewrite to util__greet; funcs: %v", funcNames(prog))
+	}
+}
+
+// Two imports bound to the same qualifier (whether by alias or
+// collision with a basename) are a load-time error — the qualifier
+// would be ambiguous.
+func TestLoadRejectsDuplicateAlias(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a.fern": `pub function f(): i32 { return 1; }`,
+		"b.fern": `pub function g(): i32 { return 2; }`,
+		"main.fern": `import "./a" as x;
+import "./b" as x;
+function main(): i32 { return x.f(); }`,
+	})
+	if _, _, err := modload.Load(filepath.Join(dir, "main.fern")); err == nil {
+		t.Fatal("expected a duplicate-qualifier error for two `as x` imports")
+	}
+}
+
 // Same-module function values get prefixed too: a non-callee
 // reference to an own-module function from a non-entry module is
 // still a reference to the now-mangled name.

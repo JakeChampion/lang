@@ -1660,9 +1660,16 @@ type ConstDecl struct {
 // the path's basename and is what qualified calls use as the
 // module prefix (`util.fn(args)`).
 type Import struct {
-	P         Position
-	Path      string
+	P    Position
+	Path string
+	// LocalName is the qualifier used in `mod.fn(...)` / `mod.Type`
+	// references — the alias if one was given, else the path's
+	// basename. modload keys its per-module import table off this.
 	LocalName string
+	// Alias is the explicit `as <name>` binding, or "" when the
+	// import used the default basename qualifier. Kept distinct from
+	// LocalName so the printer can round-trip the `as` clause.
+	Alias string
 }
 
 // Pos accessors for top-level declarations that aren't also Stmts.

@@ -515,3 +515,25 @@ function main(): i32 { return 0; }`)
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+// Format round-trips an import alias: `import "p" as a;` prints the
+// `as` clause, and re-parsing the output preserves the alias.
+func TestFormatImportAlias(t *testing.T) {
+	out := formatSrc(t, `import "std/test" as t;
+import "std/string";
+function main(): i32 { return 0; }`)
+	if !strings.Contains(out, `import "std/test" as t;`) {
+		t.Errorf("formatted output missing aliased import:\n%s", out)
+	}
+	if !strings.Contains(out, `import "std/string";`) {
+		t.Errorf("formatted output missing plain import:\n%s", out)
+	}
+	// Re-parse the formatted text; the alias must survive.
+	prog, err := parser.Parse(out)
+	if err != nil {
+		t.Fatalf("reparse formatted output: %v\n%s", err, out)
+	}
+	if prog.Imports[0].Alias != "t" {
+		t.Errorf("alias lost on round-trip: %+v", prog.Imports[0])
+	}
+}

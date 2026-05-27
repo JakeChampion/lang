@@ -994,3 +994,30 @@ func TestParseContextHonoursBackgroundLikeOldParse(t *testing.T) {
 		t.Errorf("got %+v, want single func named f", prog.Funcs)
 	}
 }
+
+// Import aliases: `import "path" as name;` binds the qualifier to
+// `name` (recorded in both LocalName and Alias); a plain import leaves
+// Alias empty and derives LocalName from the path basename.
+func TestImportAlias(t *testing.T) {
+	prog, err := Parse(`import "std/test" as t;
+import "std/string";
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.Imports) != 2 {
+		t.Fatalf("expected 2 imports, got %d", len(prog.Imports))
+	}
+	aliased := prog.Imports[0]
+	if aliased.Path != "std/test" || aliased.LocalName != "t" || aliased.Alias != "t" {
+		t.Errorf("aliased import = %+v, want Path=std/test LocalName=t Alias=t", aliased)
+	}
+	plain := prog.Imports[1]
+	if plain.Path != "std/string" || plain.LocalName != "string" || plain.Alias != "" {
+		t.Errorf("plain import = %+v, want Path=std/string LocalName=string Alias=\"\"", plain)
+	}
+	// `as` with no name is a parse error.
+	if _, err := Parse(`import "std/test" as;`); err == nil {
+		t.Error("`import ... as;` with no alias name should be a parse error")
+	}
+}
