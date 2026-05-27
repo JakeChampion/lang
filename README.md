@@ -16,9 +16,11 @@ servers. Targets so far:
   aarch64-linux-gnu-gcc` to opt out to an external assembler/linker.
 - **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs via `clang`
   + `ld64` (or `lld` when cross-compiling from Linux).
+- **x86-64 / amd64** Linux ELF — System V AMD64 ABI. Like arm64, assembled
+  and linked **in-process** by the pure-Go native backend (no external
+  toolchain); pass `-cc x86_64-linux-gnu-gcc` to opt out.
 - **WebAssembly** — a WASI Preview 2 Component Model component, ready for
   `wasmtime run` or `wasmtime serve` (`wasi:http/incoming-handler`).
-- x86-64 is on the roadmap.
 
 The pipeline is end-to-end — lexer → recursive-descent parser → type checker
 (aggregated errors, did-you-mean hints) → closure conversion → IR lowering →

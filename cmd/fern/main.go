@@ -50,6 +50,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
@@ -107,10 +108,10 @@ func formatLoadError(err error, srcs map[string]string, entryPath string) error 
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-progress; PR 1 supports `return N` only), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
-	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64 Linux defaults to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc). arm64-darwin uses clang; x86-64 uses x86_64-linux-gnu-gcc.")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
+	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64 and x86-64 Linux default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc). arm64-darwin uses clang.")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
-	native := flag.Bool("native", false, "with -target arm64: force the in-process pure-Go assembler+linker (internal/native). This is already the DEFAULT for arm64 Linux, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
+	native := flag.Bool("native", false, "with -target arm64 or x86-64: force the in-process pure-Go assembler+linker (internal/native). This is already the DEFAULT for arm64 and x86-64 Linux, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
@@ -618,22 +619,30 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			os.Remove(cleanupBin)
 		}
 	}()
-	if native && target != "arm64" {
-		return 1, fmt.Errorf("-native is only supported with -target arm64 (got %q)", target)
+	if native && target != "arm64" && target != "x86-64" {
+		return 1, fmt.Errorf("-native is only supported with -target arm64 or x86-64 (got %q)", target)
 	}
-	// arm64 Linux uses the pure-Go assembler+linker by default (no external
-	// toolchain). Pass -cc to opt out to an external assembler/linker.
-	useNative := native || (target == "arm64" && !ccExplicit)
-	if useNative {
+	// arm64 and x86-64 Linux use the pure-Go assembler+linker by default
+	// (no external toolchain). Pass -cc to opt out to an external
+	// assembler/linker.
+	useNative := native || (!ccExplicit && (target == "arm64" || target == "x86-64"))
+	switch {
+	case useNative && target == "x86-64":
+		if err := linkNativeX86(asm, binPath); err != nil {
+			return 1, err
+		}
+	case useNative:
 		if err := linkNative(asm, binPath); err != nil {
 			return 1, err
 		}
-	} else if darwin {
+	case darwin:
 		if err := linkDarwin(asm, binPath, cc); err != nil {
 			return 1, err
 		}
-	} else if err := link(asm, binPath, cc); err != nil {
-		return 1, err
+	default:
+		if err := link(asm, binPath, cc); err != nil {
+			return 1, err
+		}
 	}
 	if !runIt {
 		return 0, nil
@@ -767,6 +776,24 @@ func linkNative(asm, outPath string) error {
 	}
 	// WriteFile keeps existing permissions, and --run's temp binary is
 	// pre-created by CreateTemp at 0600 — chmod so it's executable.
+	if err := os.Chmod(outPath, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
+// linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and
+// links x86-64 assembly into a static ELF executable entirely in-process
+// via the pure-Go internal/native/x86_64 backend.
+func linkNativeX86(asm, outPath string) error {
+	text, rodata, err := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	bin := nativeelf.StaticExecutableDataX86(text, rodata)
+	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+		return err
+	}
 	if err := os.Chmod(outPath, 0o755); err != nil {
 		return err
 	}
