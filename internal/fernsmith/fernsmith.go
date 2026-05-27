@@ -663,6 +663,19 @@ var mainVarTypes = []gtype{
 // needing per-struct nominal-type tracking — Pair is fixed, so
 // the method names are fixed too.
 func (g *Generator) preludeDecls(b *strings.Builder) {
+	// The auto-prelude is gone (docs/PRELUDE-TO-MODULES.md phase 5),
+	// so generated programs must declare the stdlib they lean on:
+	// `.to_string()` (std/i32 / core/int), string + Map `.len()` and
+	// Map literals (core/map), array helpers (std/array), plus the
+	// `core/no_prelude` opt-out. Imports must precede all decls.
+	// Resolving them needs the modload path — the fernsmith tests
+	// load generated source through modload, not bare parser.Parse.
+	b.WriteString("import \"core/no_prelude\";\n")
+	b.WriteString("import \"std/i32\";\n")
+	b.WriteString("import \"std/string\";\n")
+	b.WriteString("import \"std/array\";\n")
+	b.WriteString("import \"core/int\";\n")
+	b.WriteString("import \"core/map\";\n")
 	b.WriteString("struct Pair { fst: i32, snd: i32 }\n")
 	// `Xyz` — heterogeneous struct with an i32 field and a
 	// boolean field. Exercises the per-field stride / offset

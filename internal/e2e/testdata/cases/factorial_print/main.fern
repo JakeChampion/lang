@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/i32";
 // 10! = 3628800, printed (exceeds the exit-code range).
 function fact(n: i32): i32 {
     if (n <= 1) { return 1; }

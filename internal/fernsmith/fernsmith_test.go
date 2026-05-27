@@ -13,7 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/fernsmith"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // sweepN returns the number of seeds / iterations a generator
@@ -50,6 +49,29 @@ func randBytes(r *rand.Rand, n int) []byte {
 	return out
 }
 
+// checkGenerated loads generated source through modload (so the
+// `import "std/…";` preamble fernsmith now emits resolves) and
+// type-checks it. Post-prelude-removal a bare parser.Parse no longer
+// pulls stdlib into scope, so generated programs must go through the
+// real module loader the same way the CLI does.
+func checkGenerated(t *testing.T, src string) error {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(p)
+	if err != nil {
+		return err
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return err
+	}
+	_, err = checker.Check(prog)
+	return err
+}
+
 // TestGenProducesValidPrograms is the deterministic counterpart to
 // FuzzGenerate_ParseRoundTrips — it walks a fixed range of seeds so
 // regressions show up in `go test ./...` without anyone having to
@@ -59,11 +81,7 @@ func TestGenProducesValidPrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
 		src := fernsmith.Gen(seed)
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("seed=%d failed to parse:\nsrc:\n%s\nerr: %v", seed, src, err)
-		}
-		if _, err := checker.Check(prog); err != nil {
+		if err := checkGenerated(t, src); err != nil {
 			t.Fatalf("seed=%d failed to type-check:\nsrc:\n%s\nerr: %v", seed, src, err)
 		}
 	}
@@ -144,11 +162,7 @@ func TestGenBytesProducesValidPrograms(t *testing.T) {
 		n := r.IntN(512) // 0..511 bytes; covers exhaustion path too
 		data := randBytes(r, n)
 		src := fernsmith.GenBytes(data)
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("i=%d len=%d failed to parse:\nsrc:\n%s\nerr: %v", i, n, src, err)
-		}
-		if _, err := checker.Check(prog); err != nil {
+		if err := checkGenerated(t, src); err != nil {
 			t.Fatalf("i=%d len=%d failed to type-check:\nsrc:\n%s\nerr: %v", i, n, src, err)
 		}
 	}
@@ -167,11 +181,7 @@ func TestGenMainBytesProducesRunnablePrograms(t *testing.T) {
 			t.Errorf("i=%d: missing main\nsrc:\n%s", i, src)
 			continue
 		}
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("i=%d failed to parse:\nsrc:\n%s\nerr: %v", i, src, err)
-		}
-		if _, err := checker.Check(prog); err != nil {
+		if err := checkGenerated(t, src); err != nil {
 			t.Fatalf("i=%d failed to type-check:\nsrc:\n%s\nerr: %v", i, src, err)
 		}
 	}

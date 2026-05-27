@@ -26,6 +26,10 @@
 // Phase 6: Span vs Duration calendar arithmetic.
 
 import "core/int";
+// std/time dispatches string methods (.index_of) when parsing
+// ISO timestamps; declare the source module so they resolve under
+// no-prelude (the auto-prelude used to make them universally visible).
+import "std/string";
 
 // Unit conversion constants — used everywhere; pull them out
 // so callers don't repeat magic numbers.

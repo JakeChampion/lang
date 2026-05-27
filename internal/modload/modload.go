@@ -68,6 +68,23 @@ func LoadWith(entryPath string, overrides map[string]string) (*ast.Program, map[
 	return loadCore(entryPath, overrides)
 }
 
+// LoadSource loads a program whose entry source is held in memory
+// rather than on disk — the shape every in-memory compile path needs
+// now that the auto-prelude is gone and `std/…` / `core/…` imports
+// must be resolved through modload (stdin / REPL / playground / the
+// wasm bundle). The synthetic entry path lets relative imports in src
+// resolve against the current working directory, the same as a file
+// named `<entry>.fern` there would. Returns the combined Program and
+// the source map for diagnostics.
+func LoadSource(src string) (*ast.Program, map[string]string, error) {
+	const entry = "<source>.fern"
+	abs, err := filepath.Abs(entry)
+	if err != nil {
+		return nil, nil, err
+	}
+	return loadCore(entry, map[string]string{abs: src})
+}
+
 func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
 	entryAbs, err := filepath.Abs(entryPath)
 	if err != nil {

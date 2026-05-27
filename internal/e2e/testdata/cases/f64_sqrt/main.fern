@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/float";
 // std/float sqrt(16.0) = 4.0. sqrt lowers to a libm call that the
 // `-nostdlib` native backends can't link, so this fixture opts out
 // of arm64/x86_64 via its `backends` file and runs on interp + wasm.

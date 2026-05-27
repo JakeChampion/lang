@@ -8891,7 +8891,10 @@ func TestArm64MapGetMatch(t *testing.T) {
 // the fix holds up in the realistic mix of slice keys (string
 // slicing from the tokenizer), Array.push, and Map iteration.
 func TestArm64MapGetMatchFullPipeline(t *testing.T) {
-	src := `function tokenize(s: string): string[] {
+	src := `import "core/no_prelude";
+import "core/map";
+import "std/array";
+function tokenize(s: string): string[] {
   var out: string[] = [];
   var i: i32 = 0;
   var sLen: i32 = s.len();
@@ -9513,7 +9516,9 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 //     node's KeyType / ValueType in place so the IR sees
 //     the post-settle widths.
 func TestArm64MapLitI64ValueSettle(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
     var v: i64 = m.get_or("a", 0);
     if (v == 1234567890123) { return 0; }
@@ -9674,7 +9679,9 @@ function main(): i32 {
 // Fix: recurse the Map-shaped StructType hint into IfExpr
 // Then/Else and MatchExpr arm bodies.
 func TestArm64SettleMapLitInCondArms(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var cond: boolean = true;
     var m: Map[string, i64] = if (cond) { Map { "a": 1234567890123 } } else { Map { "a": 0 } };
     var v: i64 = m.get_or("a", 0);
@@ -10144,7 +10151,9 @@ function main(): i32 {
 // local `Map[string, V]` literal — `mk[V](v) ->
 // Map[string, V]` round-trips a key/value via set + get.
 func TestArm64GenericLocalMapType(t *testing.T) {
-	src := `function mk[V](v: V): Map[string, V] {
+	src := `import "core/no_prelude";
+import "core/map";
+function mk[V](v: V): Map[string, V] {
     var m: Map[string, V] = map_new(0);
     m.set("k", v);
     return m;
@@ -10655,8 +10664,11 @@ func TestArm64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
 	prog, err := parser.Parse(src)
@@ -13396,7 +13408,9 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 // the existing `m.set(k, v)` statement form still works
 // (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -13469,7 +13483,9 @@ func TestArm64ArraySetAliasedCopies(t *testing.T) {
 // Phase 2c: m.delete(k) returns (Map[K,V], bool).
 // Tests tuple destructuring, bool-field access, and statement-position discard.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -13492,7 +13508,9 @@ func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 
 // Phase 2c: m.clear() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("x", 10);
     m = m.set("y", 20);
@@ -13515,7 +13533,9 @@ func TestArm64MapClearReturnsMap(t *testing.T) {
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
 // has rc=2, so m2.set(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
@@ -13532,7 +13552,9 @@ func TestArm64MapSetAliasedCopies(t *testing.T) {
 // Phase 2d: Map.delete / Map.clear copy-on-write — arm64 sibling
 // of TestX86_64MapDeleteClearAliasedCopies.
 func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);
     m1.set("b", 2);
@@ -13632,7 +13654,9 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 // only walked entries (no-op for empty) and the surrounding
 // assignable check saw the pre-settle default.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
-	src := `function take(m: Map[string, i32]): i32 { return m.len(); }
+	src := `import "core/no_prelude";
+import "core/map";
+function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
     // Var declaration: K=string, V=i32
@@ -13708,7 +13732,9 @@ function main(): i32 {
 // payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
 // helper's Option[usize] into a consumer-shaped Option[V].
 func TestArm64MapPointerShapedValues(t *testing.T) {
-	src := `struct P { x: i32, y: i32 }
+	src := `import "core/no_prelude";
+import "core/map";
+struct P { x: i32, y: i32 }
 function main(): i32 {
     // tuple value
     var mt: Map[string, (i32, i32)] = Map {};

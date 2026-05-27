@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/string";
 // Reads a line, trims the trailing newline, parses an i32, doubles
 // it. Fed "21\n" -> 42. Exercises stdin + parse_i32 across backends.
 function main(): i32 {

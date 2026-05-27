@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/i32";
 // Negative literals, unary minus, and abs(). 50 - 8 = 42.
 function main(): i32 {
     var x: i32 = 0 - 50;

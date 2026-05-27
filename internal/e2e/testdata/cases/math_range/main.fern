@@ -1,5 +1,8 @@
+import "core/no_prelude";
+import "std/array";
+import "std/math";
 // math.range(0, 5) yields [0,1,2,3,4]: len 5, sum 10 -> 15.
 function main(): i32 {
-    var r = range(0, 5);
+    var r = math.range(0, 5);
     return r.len() + r.sum();
 }

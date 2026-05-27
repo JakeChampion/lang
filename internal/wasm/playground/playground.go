@@ -6,8 +6,8 @@
 // It mirrors the two component-producing CLI targets in
 // cmd/fern/main.go:
 //
-//   world "wasm"      → a wasi:cli/run component (runnable as-is)
-//   world "wasi-http" → a wasi:http/incoming-handler@0.2.0 component
+//	world "wasm"      → a wasi:cli/run component (runnable as-is)
+//	world "wasi-http" → a wasi:http/incoming-handler@0.2.0 component
 //
 // The compose logic intentionally tracks cmd/fern's
 // buildPreview2Component / the wasi-http branch; if the
@@ -24,8 +24,8 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
@@ -106,7 +106,10 @@ func CompileHttpHandlerCore(src string) ([]byte, error) {
 // pipeline. Errors are formatted with diag so the playground shows
 // the same caret diagnostics it does for Run / View assembly.
 func frontEnd(src string) (*ast.Program, *checker.Info, error) {
-	prog, err := parser.Parse(src)
+	// modload (not bare parser.Parse) so the program's `std/…` /
+	// `core/…` imports resolve — the auto-prelude is gone, so stdlib
+	// is in scope only when imported.
+	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}

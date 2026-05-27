@@ -340,7 +340,24 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 // imports resolve against the on-disk layout.
 func loadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
 	t.Helper()
-	prog, _, err := modload.Load(mainPath)
+	// Ensure core/int is in the import closure so the wasm runner's
+	// BuildOptions.PrintMainResult wrapper can stringify main()'s i32
+	// return (int_to_string) — the auto-prelude used to supply that
+	// name. Injected via a LoadWith override on the entry file so
+	// relative `./sibling` imports still resolve against the real
+	// fixture directory; harmless (unused, tree-shaken) on the x86 /
+	// arm64 runners, which don't print the result. Negative `err_*`
+	// fixtures bypass this (they go through runFixtureCompileError).
+	abs, err := filepath.Abs(mainPath)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	orig, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	overrides := map[string]string{abs: "import \"core/int\";\n" + string(orig)}
+	prog, _, err := modload.LoadWith(mainPath, overrides)
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}

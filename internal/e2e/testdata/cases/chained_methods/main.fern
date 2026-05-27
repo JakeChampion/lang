@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/string";
 // Method chaining: trim then upper-case.
 function main(): i32 {
     print("  hello  ".trim().to_upper());

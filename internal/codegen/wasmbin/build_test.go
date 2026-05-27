@@ -9,9 +9,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
+
+// loadAndCheckModule mirrors the modload-backed pipeline the CLI runs:
+// it writes src to a temp module, resolves imports through modload
+// (so `import "std/…";` / `import "core/…";` actually load), then
+// const-folds, type-checks, and monomorphises. Use it for programs
+// that reference stdlib functions now that the auto-prelude is gone
+// (parser.Parse alone leaves stdlib imports unresolved).
+func loadAndCheckModule(t *testing.T, src string) (*ast.Program, *checker.Info) {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(p)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	return prog, info
+}
 
 // buildFromSource is a test helper that mirrors what the
 // `fern -target wasm-bin` CLI path does: parse + check the
@@ -404,15 +438,12 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
 // provides wasi_snapshot_preview1) and asserts the printed
 // decimal matches main's value.
 func TestBuildPrintMainResult(t *testing.T) {
-	src := `function main(): i32 { return 42; }`
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
+	// PrintMainResult's _start calls int_to_string (core/int); with
+	// the auto-prelude gone the program must import it explicitly.
+	src := `import "core/no_prelude";
+import "core/int";
+function main(): i32 { return 42; }`
+	prog, info := loadAndCheckModule(t, src)
 	bin, err := BuildWithOptions(prog, info, BuildOptions{
 		SynthStart:      true,
 		PrintMainResult: true,
@@ -639,21 +670,17 @@ function main(): i32 {
 // check; runtime exercise under `wasmtime serve` lives in the
 // e2e suite (TestWasmPreview2HttpHandler).
 func TestBuildHttpHandlerCompiles(t *testing.T) {
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http_response_ok("world");
+        return http.http_response_ok("world");
     }
-    return http_response_text(404, "not found");
+    return http.http_response_text(404, "not found");
 }
 `
-	prog, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
+	prog, info := loadAndCheckModule(t, src)
 	bin, err := BuildWithOptions(prog, info, BuildOptions{
 		ForceMemorySection: true,
 		HttpHandler:        true,
@@ -728,12 +755,14 @@ function main(): i32 {
 // load/store/alloc shims.
 func TestBuildMapReal(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = (Map { 1i32: 10i32 });
     return m.get_or(1i32, 0i32);
 }
 `
-	bin, err := buildFromSource(t, src)
+	prog, info := loadAndCheckModule(t, src)
+	bin, err := Build(prog, info)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

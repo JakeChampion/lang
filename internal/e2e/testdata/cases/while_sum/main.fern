@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/i32";
 // Sum 1..100 = 5050. Printed (not returned) because the value
 // exceeds the 0..255 exit-code range.
 function main(): i32 {
