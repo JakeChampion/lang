@@ -295,9 +295,11 @@ func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdo
 // for read-buffering off the socket; this test exercises the
 // pure-string parse step in isolation.
 func TestWASMHttpParseRequest(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     var raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
-    match (http_parse_request(raw)) {
+    match (http.http_parse_request(raw)) {
         Some(req) => {
             if (req.method != "POST") { return 1; }
             if (req.path != "/todos") { return 2; }
@@ -315,9 +317,11 @@ func TestWASMHttpParseRequest(t *testing.T) {
 // Parser handles a no-body GET request (Content-Length absent;
 // HTTP/1.1 §3.3.3 reads "no body" by default for safe methods).
 func TestWASMHttpParseRequestNoBody(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     var raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    match (http_parse_request(raw)) {
+    match (http.http_parse_request(raw)) {
         Some(req) => {
             if (req.method != "GET") { return 1; }
             if (req.path != "/hello?name=world") { return 2; }
@@ -336,9 +340,11 @@ func TestWASMHttpParseRequestNoBody(t *testing.T) {
 // yet terminated by \r\n\r\n) — the caller is expected to
 // keep recv'ing until parse succeeds.
 func TestWASMHttpParseRequestPartial(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     var raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
-    match (http_parse_request(raw)) {
+    match (http.http_parse_request(raw)) {
         Some(_) => { return 1; },
         None => { return 42; }
     }
@@ -353,9 +359,11 @@ func TestWASMHttpParseRequestPartial(t *testing.T) {
 // close + body. Verifies the byte layout the way a curl
 // client would consume it.
 func TestWASMHttpSerializeResponse(t *testing.T) {
-	src := `function main(): i32 {
-    var resp: HttpResponse = http_response_ok("hi");
-    var wire: string = http_serialize_response(resp);
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
+    var resp: HttpResponse = http.http_response_ok("hi");
+    var wire: string = http.http_serialize_response(resp);
     var expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
     if (wire != expected) { return 1; }
     return 42;
@@ -368,9 +376,11 @@ func TestWASMHttpSerializeResponse(t *testing.T) {
 // 404 status maps to the right reason phrase. Confirms the
 // status-code → reason-phrase table covers the common cases.
 func TestWASMHttpSerializeResponse404(t *testing.T) {
-	src := `function main(): i32 {
-    var resp: HttpResponse = http_response_text(404, "not found");
-    var wire: string = http_serialize_response(resp);
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
+    var resp: HttpResponse = http.http_response_text(404, "not found");
+    var wire: string = http.http_serialize_response(resp);
     if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
     return 42;
 }`
@@ -602,7 +612,9 @@ func TestWASMWriteBuiltin(t *testing.T) {
 // across multiple types (string, i32, computed expression) and
 // that brace escapes (`{{` / `}}`) reach stdout as literal braces.
 func TestWASMFStringInterpolation(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
 		var name: string = "world";
 		var n: i32 = 7;
 		print(f"hi {name}");
@@ -1411,7 +1423,9 @@ func TestWASMStringSlice(t *testing.T) {
 // wired through the same `__method_<TypeName>_<Name>` mangling
 // the rest of the language uses.
 func TestWASMStringMethods(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "hello world";
     if (!s.starts_with("hello")) { return 1; }
     if (!s.starts_with("h")) { return 2; }
@@ -1440,7 +1454,9 @@ func TestWASMStringMethods(t *testing.T) {
 
 // More string methods: index_of, trim, to_lower, to_upper.
 func TestWASMStringMethodsExtra(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "hello world";
     if (s.index_of("hello") != 0) { return 1; }
     if (s.index_of("world") != 6) { return 2; }
@@ -1473,7 +1489,9 @@ func TestWASMStringMethodsExtra(t *testing.T) {
 // occurrences of the separator. Empty separator splits into
 // single-char strings (matches JS String.split("")).
 func TestWASMStringSplit(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "a,b,c,d";
     var parts: string[] = s.split(",");
     if (parts.len() != 4) { return 1; }
@@ -1605,7 +1623,9 @@ function main(): i32 {
 // → LF), and drops the phantom empty line a final '\n' would
 // otherwise produce.
 func TestWASMStringLines(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // LF-only.
     var lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
@@ -1664,7 +1684,9 @@ func TestWASMStringLines(t *testing.T) {
 // String replace: substitutes every non-overlapping occurrence
 // of the old pattern with the new value.
 func TestWASMStringReplace(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     if ("hello world".replace("world", "Earth") != "hello Earth") { return 1; }
     if ("aaa".replace("a", "bb") != "bbbbbb") { return 2; }
     if ("xyz".replace("z", "") != "xy") { return 3; }
@@ -1683,7 +1705,12 @@ func TestWASMStringReplace(t *testing.T) {
 // a shared `__int_to_string_u64(magnitude, neg)` core that
 // handles every signed / unsigned / 32 / 64 case.
 func TestWASMNumberToString(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+function main(): i32 {
     var a: i32 = 42;
     if (a.to_string() != "42") { return 1; }
     var b: i32 = -123;
@@ -1713,7 +1740,9 @@ func TestWASMNumberToString(t *testing.T) {
 // `s.bytes(): u8[]` and the inverse `string_from_bytes(bs)`.
 // Round-trip should preserve content and length.
 func TestWASMStringBytes(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "hello";
     var bs: u8[] = s.bytes();
     if (bs.len() != 5) { return 1; }
@@ -1746,7 +1775,9 @@ func TestWASMStringBytes(t *testing.T) {
 // propagate back. Reads match the equivalent `bytes()`
 // values byte-for-byte.
 func TestWASMStringAsBytes(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "hello";
     var view: [u8] = s.as_bytes();
     if (view.len() != 5) { return 1; }
@@ -1781,7 +1812,9 @@ func TestWASMStringAsBytes(t *testing.T) {
 // case, n <= 0 → empty, n == 1 → identity, and a couple of
 // larger n values.
 func TestWASMStringIsEmptyAndRepeat(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
 		// is_empty
 		if (!"".is_empty()) { return 1; }
 		if ("x".is_empty()) { return 2; }
@@ -1817,7 +1850,9 @@ func TestWASMStringIsEmptyAndRepeat(t *testing.T) {
 // (empty, lone "-", non-digit, embedded space, overflow,
 // trailing garbage).
 func TestWASMParseInt(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
 		// Successes:
 		match ("42".parse_int()) {
 			Some(v) => { if (v != 42) { return 1; } },
@@ -1876,7 +1911,9 @@ func TestWASMParseInt(t *testing.T) {
 // decimal isn't bit-exact and we don't claim Steele/White
 // guarantees yet.
 func TestWASMParseFloat(t *testing.T) {
-	src := `function near(actual: f32, expected: f32, eps: f32): boolean {
+	src := `import "core/no_prelude";
+import "std/string";
+function near(actual: f32, expected: f32, eps: f32): boolean {
 		var diff: f32 = actual - expected;
 		if (diff < 0.0) { diff = 0.0 - diff; }
 		var bound: f32 = expected;
@@ -1955,7 +1992,9 @@ func TestWASMParseFloat(t *testing.T) {
 // `$string_from_bytes` inline output), and a longer heap-form
 // key for the bucket-collision dispatch path.
 func TestWASMMapStringKeysInlineSSO(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
 
     // Inline-form keys (≤ 3 bytes each).
@@ -1963,7 +2002,7 @@ func TestWASMMapStringKeysInlineSSO(t *testing.T) {
     m.set("ok", 2);
     m.set("GET", 3);
     m.set("404", 4);
-    m.set(int_to_string(42), 5);   // "42" inline via cascade
+    m.set(int.int_to_string(42), 5);   // "42" inline via cascade
 
     // Heap-form key alongside, same map.
     m.set("longer", 99);
@@ -1987,7 +2026,7 @@ func TestWASMMapStringKeysInlineSSO(t *testing.T) {
     if let Some(v) = m.get("42") {
         if (v != 5) { return 10; }
     } else { return 11; }
-    if let Some(v) = m.get(int_to_string(42)) {
+    if let Some(v) = m.get(int.int_to_string(42)) {
         if (v != 5) { return 12; }
     } else { return 13; }
     if let Some(v) = m.get("longer") {
@@ -2484,23 +2523,25 @@ func TestWASMBulkMemoryPrimitives(t *testing.T) {
 // +, /), no-padding (3-byte aligned), 1-byte-padding (length
 // % 3 == 1), and 2-byte-padding (length % 3 == 2) inputs.
 func TestWASMBase64(t *testing.T) {
-	src := `function main(): i32 {
-    if (base64_encode("") != "") { return 1; }
-    if (base64_encode("f") != "Zg==") { return 2; }
-    if (base64_encode("fo") != "Zm8=") { return 3; }
-    if (base64_encode("foo") != "Zm9v") { return 4; }
-    if (base64_encode("foob") != "Zm9vYg==") { return 5; }
-    if (base64_encode("fooba") != "Zm9vYmE=") { return 6; }
-    if (base64_encode("foobar") != "Zm9vYmFy") { return 7; }
-    if (base64_encode("hello world") != "aGVsbG8gd29ybGQ=") { return 8; }
-    if (base64_decode("") != "") { return 9; }
-    if (base64_decode("Zg==") != "f") { return 10; }
-    if (base64_decode("Zm8=") != "fo") { return 11; }
-    if (base64_decode("Zm9v") != "foo") { return 12; }
-    if (base64_decode("Zm9vYg==") != "foob") { return 13; }
-    if (base64_decode("Zm9vYmE=") != "fooba") { return 14; }
-    if (base64_decode("Zm9vYmFy") != "foobar") { return 15; }
-    if (base64_decode("aGVsbG8gd29ybGQ=") != "hello world") { return 16; }
+	src := `import "core/no_prelude";
+import "std/base64";
+function main(): i32 {
+    if (base64.base64_encode("") != "") { return 1; }
+    if (base64.base64_encode("f") != "Zg==") { return 2; }
+    if (base64.base64_encode("fo") != "Zm8=") { return 3; }
+    if (base64.base64_encode("foo") != "Zm9v") { return 4; }
+    if (base64.base64_encode("foob") != "Zm9vYg==") { return 5; }
+    if (base64.base64_encode("fooba") != "Zm9vYmE=") { return 6; }
+    if (base64.base64_encode("foobar") != "Zm9vYmFy") { return 7; }
+    if (base64.base64_encode("hello world") != "aGVsbG8gd29ybGQ=") { return 8; }
+    if (base64.base64_decode("") != "") { return 9; }
+    if (base64.base64_decode("Zg==") != "f") { return 10; }
+    if (base64.base64_decode("Zm8=") != "fo") { return 11; }
+    if (base64.base64_decode("Zm9v") != "foo") { return 12; }
+    if (base64.base64_decode("Zm9vYg==") != "foob") { return 13; }
+    if (base64.base64_decode("Zm9vYmE=") != "fooba") { return 14; }
+    if (base64.base64_decode("Zm9vYmFy") != "foobar") { return 15; }
+    if (base64.base64_decode("aGVsbG8gd29ybGQ=") != "hello world") { return 16; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -4588,7 +4629,9 @@ func TestWASMLambdaWithBodyLocals(t *testing.T) {
 // got pruned and the wasm module failed to validate /
 // reference the missing import.
 func TestWASMLambdaCallsMethodOnCapturedString(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "  hi  ";
     var f = function (): string { return s.trim(); };
     var got = f();
@@ -5050,7 +5093,9 @@ function main(): i32 {
 // per-entry MapLit.Entries[i].Key/Value (and TupleLit.Elems
 // while we're here — the cases were missing).
 func TestWASMClosureFStringCapture(t *testing.T) {
-	src := `function makeNamer(name: string): () => string {
+	src := `import "core/no_prelude";
+import "std/string";
+function makeNamer(name: string): () => string {
     function build(): string { return f"hello, {name}!"; }
     return build;
 }
@@ -5864,27 +5909,29 @@ func TestWASMTupleDestructure(t *testing.T) {
 // mid-way; the prefix length reflects what was actually
 // decoded so `len()` on the result gives the right answer.
 func TestWASMHex(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/hex";
+function main(): i32 {
 		// empty round-trips to empty
-		if ((hex_encode("")).len() != 0) { return 1; }
-		if ((hex_decode("")).len() != 0) { return 2; }
+		if ((hex.hex_encode("")).len() != 0) { return 1; }
+		if ((hex.hex_decode("")).len() != 0) { return 2; }
 
 		// "hi" -> "6869"
-		if (hex_encode("hi") != "6869") { return 3; }
-		if (hex_decode("6869") != "hi") { return 4; }
+		if (hex.hex_encode("hi") != "6869") { return 3; }
+		if (hex.hex_decode("6869") != "hi") { return 4; }
 
 		// every nibble: byte 0xab -> "ab"
-		if (hex_encode("hello world") != "68656c6c6f20776f726c64") { return 5; }
-		if (hex_decode("68656c6c6f20776f726c64") != "hello world") { return 6; }
+		if (hex.hex_encode("hello world") != "68656c6c6f20776f726c64") { return 5; }
+		if (hex.hex_decode("68656c6c6f20776f726c64") != "hello world") { return 6; }
 
 		// uppercase hex digits decode the same
-		if (hex_decode("48454C4C4F") != "HELLO") { return 7; }
+		if (hex.hex_decode("48454C4C4F") != "HELLO") { return 7; }
 
 		// odd-length tail and non-hex char both halt the decoder.
 		// "414" -> "A" (the trailing "4" is incomplete and dropped).
-		if (hex_decode("414") != "A") { return 8; }
+		if (hex.hex_decode("414") != "A") { return 8; }
 		// "41xx" -> "A" (decoder bails at the first non-hex byte).
-		if (hex_decode("41xx") != "A") { return 9; }
+		if (hex.hex_decode("41xx") != "A") { return 9; }
 
 		return 0;
 	}`
@@ -5900,9 +5947,11 @@ func TestWASMHex(t *testing.T) {
 // edge cases where a `:` appears in the path or a fragment
 // before a query is malformed-but-best-effort.
 func TestWASMUrlParse(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/url";
+function main(): i32 {
 		// Full URL with every section.
-		match (url_parse("https://example.com:8080/path/sub?q=1&r=2#section")) {
+		match (url.url_parse("https://example.com:8080/path/sub?q=1&r=2#section")) {
 			Some(u) => {
 				if (u.scheme != "https") { return 1; }
 				if (u.host != "example.com") { return 2; }
@@ -5915,7 +5964,7 @@ func TestWASMUrlParse(t *testing.T) {
 		}
 
 		// No port — port should default to 0.
-		match (url_parse("http://example.com/foo")) {
+		match (url.url_parse("http://example.com/foo")) {
 			Some(u) => {
 				if (u.scheme != "http") { return 10; }
 				if (u.host != "example.com") { return 11; }
@@ -5927,7 +5976,7 @@ func TestWASMUrlParse(t *testing.T) {
 
 		// Path-only / relative URL — no scheme, no host, port
 		// stays 0, path is the whole input.
-		match (url_parse("/just/a/path?q=hi")) {
+		match (url.url_parse("/just/a/path?q=hi")) {
 			Some(u) => {
 				if (u.scheme != "") { return 20; }
 				if (u.host != "") { return 21; }
@@ -5940,7 +5989,7 @@ func TestWASMUrlParse(t *testing.T) {
 		}
 
 		// Fragment without query.
-		match (url_parse("http://h/path#anchor")) {
+		match (url.url_parse("http://h/path#anchor")) {
 			Some(u) => {
 				if (u.path != "/path") { return 30; }
 				if (u.query != "") { return 31; }
@@ -5950,13 +5999,13 @@ func TestWASMUrlParse(t *testing.T) {
 		}
 
 		// Empty input -> None.
-		match (url_parse("")) {
+		match (url.url_parse("")) {
 			Some(_) => { return 40; },
 			None => {}
 		}
 
 		// Authority only (no path).
-		match (url_parse("http://localhost:3000")) {
+		match (url.url_parse("http://localhost:3000")) {
 			Some(u) => {
 				if (u.host != "localhost") { return 50; }
 				if (u.port != 3000) { return 51; }
@@ -5977,38 +6026,40 @@ func TestWASMUrlParse(t *testing.T) {
 // rest gets `%HH` (uppercase). Decoder is forgiving:
 // malformed `%` sequences pass through verbatim.
 func TestWASMUrlCoder(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/url";
+function main(): i32 {
 		// All-unreserved input round-trips byte-for-byte.
-		if (url_encode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 1; }
-		if (url_decode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 2; }
+		if (url.url_encode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 1; }
+		if (url.url_decode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 2; }
 
 		// Spaces become %20.
-		if (url_encode("hello world") != "hello%20world") { return 3; }
-		if (url_decode("hello%20world") != "hello world") { return 4; }
+		if (url.url_encode("hello world") != "hello%20world") { return 3; }
+		if (url.url_decode("hello%20world") != "hello world") { return 4; }
 
 		// Round-trip a query-style payload.
-		if (url_encode("k=v&x=1") != "k%3Dv%26x%3D1") { return 5; }
-		if (url_decode("k%3Dv%26x%3D1") != "k=v&x=1") { return 6; }
+		if (url.url_encode("k=v&x=1") != "k%3Dv%26x%3D1") { return 5; }
+		if (url.url_decode("k%3Dv%26x%3D1") != "k=v&x=1") { return 6; }
 
 		// Lowercase hex decodes too.
-		if (url_decode("a%2bb") != "a+b") { return 7; }
+		if (url.url_decode("a%2bb") != "a+b") { return 7; }
 
 		// Malformed percent sequences pass through verbatim
 		// (the decoder is forgiving rather than fatal).
-		if (url_decode("100%") != "100%") { return 8; }
-		if (url_decode("%xy") != "%xy") { return 9; }
-		if (url_decode("%2") != "%2") { return 10; }
+		if (url.url_decode("100%") != "100%") { return 8; }
+		if (url.url_decode("%xy") != "%xy") { return 9; }
+		if (url.url_decode("%2") != "%2") { return 10; }
 
 		// Empty round-trips to empty.
-		if (url_encode("") != "") { return 11; }
-		if (url_decode("") != "") { return 12; }
+		if (url.url_encode("") != "") { return 11; }
+		if (url.url_decode("") != "") { return 12; }
 
 		// Reserved-set chars (RFC 3986 gen-delims +
 		// sub-delims) all need encoding.
-		if (url_encode("/") != "%2F") { return 13; }
-		if (url_encode("?") != "%3F") { return 14; }
-		if (url_encode("#") != "%23") { return 15; }
-		if (url_decode("%2F%3F%23") != "/?#") { return 16; }
+		if (url.url_encode("/") != "%2F") { return 13; }
+		if (url.url_encode("?") != "%3F") { return 14; }
+		if (url.url_encode("#") != "%23") { return 15; }
+		if (url.url_decode("%2F%3F%23") != "/?#") { return 16; }
 
 		return 0;
 	}`
@@ -6024,10 +6075,12 @@ func TestWASMUrlCoder(t *testing.T) {
 // the same key collect into a string[] in insertion order.
 // Pair without `=` records single-element empty-string array.
 func TestWASMQueryParse(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/url";
+function main(): i32 {
 		// Standard pairs — each unique key has a 1-element
 		// string[] containing the decoded value.
-		var m: Map[string, string[]] = query_parse("a=1&b=2&c=hello%20world");
+		var m: Map[string, string[]] = url.query_parse("a=1&b=2&c=hello%20world");
 		if (m.len() != 3) { return 1; }
 		match (m.get("a")) {
 			Some(arr) => {
@@ -6044,14 +6097,14 @@ func TestWASMQueryParse(t *testing.T) {
 		}
 
 		// Encoded key.
-		var m2: Map[string, string[]] = query_parse("k%3D%26=v");
+		var m2: Map[string, string[]] = url.query_parse("k%3D%26=v");
 		match (m2.get("k=&")) {
 			Some(arr) => { if (arr[0] != "v") { return 10; } },
 			None => { return 11; }
 		}
 
 		// Pair without '=' -> single-element empty value.
-		var m3: Map[string, string[]] = query_parse("flag&x=1");
+		var m3: Map[string, string[]] = url.query_parse("flag&x=1");
 		if (m3.len() != 2) { return 20; }
 		match (m3.get("flag")) {
 			Some(arr) => {
@@ -6062,15 +6115,15 @@ func TestWASMQueryParse(t *testing.T) {
 		}
 
 		// Empty input -> empty map.
-		var m4: Map[string, string[]] = query_parse("");
+		var m4: Map[string, string[]] = url.query_parse("");
 		if (m4.len() != 0) { return 30; }
 
 		// Trailing '&' is ignored.
-		var m5: Map[string, string[]] = query_parse("a=1&");
+		var m5: Map[string, string[]] = url.query_parse("a=1&");
 		if (m5.len() != 1) { return 40; }
 
 		// Duplicate keys: all values preserved in order.
-		var m6: Map[string, string[]] = query_parse("tag=a&tag=b&tag=c");
+		var m6: Map[string, string[]] = url.query_parse("tag=a&tag=b&tag=c");
 		if (m6.len() != 1) { return 50; }
 		match (m6.get("tag")) {
 			Some(arr) => {
@@ -6083,7 +6136,7 @@ func TestWASMQueryParse(t *testing.T) {
 		}
 
 		// Mixed unique + duplicates.
-		var m7: Map[string, string[]] = query_parse("k=1&j=x&k=2");
+		var m7: Map[string, string[]] = url.query_parse("k=1&j=x&k=2");
 		if (m7.len() != 2) { return 60; }
 		match (m7.get("k")) {
 			Some(arr) => {
@@ -6113,39 +6166,41 @@ func TestWASMQueryParse(t *testing.T) {
 // Covers each variant, nested arrays/objects, and the
 // escape-encoding path for strings.
 func TestWASMJsonEncode(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/json";
+function main(): i32 {
 		// Primitives.
-		if (json_encode(JNull) != "null") { return 1; }
-		if (json_encode(JBool(true)) != "true") { return 2; }
-		if (json_encode(JBool(false)) != "false") { return 3; }
-		if (json_encode(JNumber("42")) != "42") { return 4; }
-		if (json_encode(JNumber("3.14")) != "3.14") { return 5; }
-		if (json_encode(JString("hi")) != "\"hi\"") { return 6; }
-		if (json_encode(JString("")) != "\"\"") { return 7; }
+		if (json.json_encode(JNull) != "null") { return 1; }
+		if (json.json_encode(JBool(true)) != "true") { return 2; }
+		if (json.json_encode(JBool(false)) != "false") { return 3; }
+		if (json.json_encode(JNumber("42")) != "42") { return 4; }
+		if (json.json_encode(JNumber("3.14")) != "3.14") { return 5; }
+		if (json.json_encode(JString("hi")) != "\"hi\"") { return 6; }
+		if (json.json_encode(JString("")) != "\"\"") { return 7; }
 
 		// String escapes.
-		if (json_encode(JString("a\"b")) != "\"a\\\"b\"") { return 10; }
-		if (json_encode(JString("a\\b")) != "\"a\\\\b\"") { return 11; }
-		if (json_encode(JString("line\nbreak")) != "\"line\\nbreak\"") { return 12; }
-		if (json_encode(JString("\t")) != "\"\\t\"") { return 13; }
-		if (json_encode(JString("\r")) != "\"\\r\"") { return 14; }
+		if (json.json_encode(JString("a\"b")) != "\"a\\\"b\"") { return 10; }
+		if (json.json_encode(JString("a\\b")) != "\"a\\\\b\"") { return 11; }
+		if (json.json_encode(JString("line\nbreak")) != "\"line\\nbreak\"") { return 12; }
+		if (json.json_encode(JString("\t")) != "\"\\t\"") { return 13; }
+		if (json.json_encode(JString("\r")) != "\"\\r\"") { return 14; }
 
 		// Empty object — empty array literal needs a type
 		// annotation that's awkward at construction site, so
 		// just exercise empty objects.
 		var emptyMap: Map[string, JsonValue] = map_new(4);
-		if (json_encode(JObject(emptyMap)) != "{}") { return 20; }
+		if (json.json_encode(JObject(emptyMap)) != "{}") { return 20; }
 
 		// Heterogeneous array.
 		var a: JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
-		if (json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
+		if (json.json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
 
 		// Object — insertion order preserved (IndexMap).
 		var m: Map[string, JsonValue] = map_new(4);
 		m.set("name", JString("alice"));
 		m.set("age", JNumber("30"));
 		m.set("admin", JBool(false));
-		if (json_encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
+		if (json.json_encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
 			return 40;
 		}
 
@@ -6153,7 +6208,7 @@ func TestWASMJsonEncode(t *testing.T) {
 		var inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
 		var outer: Map[string, JsonValue] = map_new(2);
 		outer.set("nums", JArray(inner));
-		if (json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
+		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 
 		return 0;
 	}`
@@ -6169,41 +6224,43 @@ func TestWASMJsonEncode(t *testing.T) {
 // most inputs (number formatting may not be identical, but
 // payload bytes match).
 func TestWASMJsonParse(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/json";
+function main(): i32 {
 		// Primitives.
-		match (json_parse("null")) {
+		match (json.json_parse("null")) {
 			Some(v) => { match (v) { JNull => {}, JBool(_) => { return 1; }, JNumber(_) => { return 1; }, JString(_) => { return 1; }, JArray(_) => { return 1; }, JObject(_) => { return 1; } } },
 			None => { return 2; }
 		}
-		match (json_parse("true")) {
+		match (json.json_parse("true")) {
 			Some(v) => { match (v) {
 				JBool(b) => { if (!b) { return 3; } },
 				JNull => { return 4; }, JNumber(_) => { return 4; }, JString(_) => { return 4; }, JArray(_) => { return 4; }, JObject(_) => { return 4; }
 			} },
 			None => { return 5; }
 		}
-		match (json_parse("false")) {
+		match (json.json_parse("false")) {
 			Some(v) => { match (v) {
 				JBool(b) => { if (b) { return 6; } },
 				JNull => { return 7; }, JNumber(_) => { return 7; }, JString(_) => { return 7; }, JArray(_) => { return 7; }, JObject(_) => { return 7; }
 			} },
 			None => { return 8; }
 		}
-		match (json_parse("42")) {
+		match (json.json_parse("42")) {
 			Some(v) => { match (v) {
 				JNumber(n) => { if (n != "42") { return 10; } },
 				JNull => { return 11; }, JBool(_) => { return 11; }, JString(_) => { return 11; }, JArray(_) => { return 11; }, JObject(_) => { return 11; }
 			} },
 			None => { return 12; }
 		}
-		match (json_parse("-3.14")) {
+		match (json.json_parse("-3.14")) {
 			Some(v) => { match (v) {
 				JNumber(n) => { if (n != "-3.14") { return 13; } },
 				JNull => { return 14; }, JBool(_) => { return 14; }, JString(_) => { return 14; }, JArray(_) => { return 14; }, JObject(_) => { return 14; }
 			} },
 			None => { return 15; }
 		}
-		match (json_parse("\"hi\"")) {
+		match (json.json_parse("\"hi\"")) {
 			Some(v) => { match (v) {
 				JString(s) => { if (s != "hi") { return 20; } },
 				JNull => { return 21; }, JBool(_) => { return 21; }, JNumber(_) => { return 21; }, JArray(_) => { return 21; }, JObject(_) => { return 21; }
@@ -6211,7 +6268,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 22; }
 		}
 		// String with escapes.
-		match (json_parse("\"a\\nb\\\"c\"")) {
+		match (json.json_parse("\"a\\nb\\\"c\"")) {
 			Some(v) => { match (v) {
 				JString(s) => { if (s != "a\nb\"c") { return 30; } },
 				JNull => { return 31; }, JBool(_) => { return 31; }, JNumber(_) => { return 31; }, JArray(_) => { return 31; }, JObject(_) => { return 31; }
@@ -6219,7 +6276,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 32; }
 		}
 		// Empty array.
-		match (json_parse("[]")) {
+		match (json.json_parse("[]")) {
 			Some(v) => { match (v) {
 				JArray(arr) => { if (arr.len() != 0) { return 40; } },
 				JNull => { return 41; }, JBool(_) => { return 41; }, JNumber(_) => { return 41; }, JString(_) => { return 41; }, JObject(_) => { return 41; }
@@ -6227,7 +6284,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 42; }
 		}
 		// Heterogeneous array.
-		match (json_parse("[1,\"two\",true,null]")) {
+		match (json.json_parse("[1,\"two\",true,null]")) {
 			Some(v) => { match (v) {
 				JArray(arr) => {
 					if (arr.len() != 4) { return 50; }
@@ -6239,7 +6296,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 56; }
 		}
 		// Empty object.
-		match (json_parse("{}")) {
+		match (json.json_parse("{}")) {
 			Some(v) => { match (v) {
 				JObject(m) => { if (m.len() != 0) { return 60; } },
 				JNull => { return 61; }, JBool(_) => { return 61; }, JNumber(_) => { return 61; }, JString(_) => { return 61; }, JArray(_) => { return 61; }
@@ -6247,7 +6304,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 62; }
 		}
 		// Object with string keys, mixed values.
-		match (json_parse("{\"a\":1,\"b\":\"two\"}")) {
+		match (json.json_parse("{\"a\":1,\"b\":\"two\"}")) {
 			Some(v) => { match (v) {
 				JObject(m) => {
 					if (m.len() != 2) { return 70; }
@@ -6261,7 +6318,7 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 75; }
 		}
 		// Whitespace tolerance.
-		match (json_parse("  [ 1 , 2 ] ")) {
+		match (json.json_parse("  [ 1 , 2 ] ")) {
 			Some(v) => { match (v) {
 				JArray(arr) => { if (arr.len() != 2) { return 80; } },
 				JNull => { return 81; }, JBool(_) => { return 81; }, JNumber(_) => { return 81; }, JString(_) => { return 81; }, JObject(_) => { return 81; }
@@ -6269,10 +6326,10 @@ func TestWASMJsonParse(t *testing.T) {
 			None => { return 82; }
 		}
 		// Garbage -> None.
-		match (json_parse("xyz")) { Some(_) => { return 90; }, None => {} }
-		match (json_parse("[1,]")) { Some(_) => { return 91; }, None => {} }
-		match (json_parse("{")) { Some(_) => { return 92; }, None => {} }
-		match (json_parse("")) { Some(_) => { return 93; }, None => {} }
+		match (json.json_parse("xyz")) { Some(_) => { return 90; }, None => {} }
+		match (json.json_parse("[1,]")) { Some(_) => { return 91; }, None => {} }
+		match (json.json_parse("{")) { Some(_) => { return 92; }, None => {} }
+		match (json.json_parse("")) { Some(_) => { return 93; }, None => {} }
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
@@ -6341,7 +6398,9 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 // integer values show no decimal point, fractions trim
 // trailing zeros, special values get canonical names.
 func TestWASMFloatToString(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/float";
+function main(): i32 {
 		// Integer values lose the decimal point entirely.
 		var a: f32 = 0.0;
 		if (a.to_string() != "0") { return 1; }
@@ -8115,7 +8174,9 @@ func TestWASMModuleValidatesUnderWasmTools(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -8271,7 +8332,9 @@ func runWasmModule(t *testing.T, mod []byte) string {
 // the byte-vector and wasm-tools-validate gates, this is the
 // final correctness check: the Lang-produced module is executable.
 func TestWASMModuleRunsConst42(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -8316,7 +8379,9 @@ function main(): i32 {
 // the numeric-opcode path (i32.add at 0x6A) as part of a
 // runnable module, not just a byte-vector match.
 func TestWASMModuleRunsAddition(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -8367,7 +8432,9 @@ function main(): i32 {
 // functions; with no imports here, callee = 0 and main = 1.
 // main exports as funcidx 1.
 func TestWASMModuleRunsTwoFunctions(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -8465,7 +8532,9 @@ func TestWASMComponentWraps(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -8556,7 +8625,9 @@ func TestWASMComponentCoreInstance(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -8655,7 +8726,9 @@ func TestWASMComponentAliasCoreFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -8745,7 +8818,9 @@ func TestWASMComponentAliasMultipleSorts(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -8841,7 +8916,9 @@ func TestWASMComponentInstanceTypeWithResult(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["len"];
     var vts: u8[] = [component.cvaltype_u64()];
@@ -8909,7 +8986,9 @@ func TestWASMComponentWasiMultiImportHelper(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
@@ -11314,7 +11393,9 @@ func TestWASMComponentGoLangByteEquivalence(t *testing.T) {
 	// identical print), and a separate test
 	// (TestWASMComponentWasiHelperBuildsValid) already validates the
 	// component is well-formed.
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
@@ -11440,7 +11521,9 @@ func TestWASMCoreEncoderGoLangByteEquivalence(t *testing.T) {
 	goBytes := mod.Build(goMod)
 
 	// --- Lang side: build the identical module via std/wasm/*.
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/memory";
 import "std/wasm/encode";
@@ -11521,7 +11604,9 @@ func TestWASMComponentWasiHelperBuildsValid(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
@@ -11622,7 +11707,9 @@ func TestWASMComponentWasiExitFullPipeline(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -11729,7 +11816,9 @@ func TestWASMComponentWasiStdMultiExport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["flush", "close"];
     var ps0: string[] = [];
@@ -11804,7 +11893,9 @@ func TestWASMComponentWasiExitImport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export "exit" (func (param "code" u32)) }
@@ -11877,7 +11968,9 @@ func TestWASMComponentCoreTypeFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var params: u8[] = [encode.valtype_i32()];
@@ -11945,7 +12038,9 @@ func TestWASMComponentTypeFuncU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
@@ -12010,7 +12105,9 @@ func TestWASMComponentTypeFuncWithParams(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["x", "y"];
     var valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
@@ -12082,7 +12179,9 @@ func TestWASMComponentTypeSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     // Two functypes:
     //   0: ()         -> u32
@@ -12161,7 +12260,9 @@ func TestWASMComponentTypeSectionEmbed(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     // Synthetic payload: 4 bytes of ASCII. wasm-tools doesn't
     // parse the inside of a component-type custom section so
@@ -12231,7 +12332,9 @@ func TestWASMComponentImportFunc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
@@ -12299,7 +12402,9 @@ func TestWASMComponentImportSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     // Two functypes:
     //   0: () -> u32
@@ -12391,7 +12496,9 @@ func TestWASMComponentCanonLower(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["x"];
     var valtypes: u8[] = [component.cvaltype_u32()];
@@ -12464,7 +12571,9 @@ func TestWASMComponentCanonLowersTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     // One functype: () -> u32. Both imports re-use it.
     var no_names: string[] = [];
@@ -12545,7 +12654,9 @@ func TestWASMComponentInstanceFromTwoFuncExports(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     // Two functypes (one each so we can have two distinct
     // lowered core funcs). Both () -> u32 for simplicity.
@@ -12634,7 +12745,9 @@ func TestWASMComponentInstantiateWithTwoInstanceArgs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -12757,7 +12870,9 @@ func TestWASMComponentImportLoweredIntoCoreModule(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -12862,7 +12977,9 @@ func TestWASMComponentExportSectionTwoFuncs(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var no_names: string[] = [];
     var no_valtypes: u8[] = [];
@@ -12949,7 +13066,9 @@ func TestWASMComponentCanonLiftMemRealloc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -13072,7 +13191,9 @@ func TestWASMComponentCanonLowerMemRealloc(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -13183,7 +13304,9 @@ func TestWASMComponentCanonLiftPostReturn(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -13299,7 +13422,9 @@ func TestWASMComponentLiftedExport(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -13396,7 +13521,9 @@ func TestWASMComponentCanonLiftUtf16(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -13501,7 +13628,9 @@ func TestWASMComponentTypeFuncNoResult(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["status"];
     var valtypes: u8[] = [component.cvaltype_u32()];
@@ -13576,7 +13705,9 @@ func TestWASMComponentStartSection(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var no_params: string[] = [];
     var no_valtypes: u8[] = [];
@@ -13650,7 +13781,9 @@ func TestWASMComponentResourceNewsRepsTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
@@ -13718,7 +13851,9 @@ func TestWASMComponentResourceDropsTwo(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
@@ -13784,7 +13919,9 @@ func TestWASMComponentResourceNewRep(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
@@ -13852,7 +13989,9 @@ func TestWASMComponentOwnBorrowHandles(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
@@ -13919,7 +14058,9 @@ func TestWASMComponentVariantMixed(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["ok", "err", "abort"];
     var has_payload: boolean[] = [true, true, false];
@@ -13987,7 +14128,9 @@ func TestWASMComponentRecordNameAge(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var names: string[] = ["name", "age"];
     var valtypes: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
@@ -14053,7 +14196,9 @@ func TestWASMComponentFlagsRWX(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var labels: string[] = ["read", "write", "execute"];
     var comp: u8[] = component.put_component_header([]);
@@ -14118,7 +14263,9 @@ func TestWASMComponentEnumColor(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var labels: string[] = ["red", "green", "blue"];
     var comp: u8[] = component.put_component_header([]);
@@ -14184,7 +14331,9 @@ func TestWASMComponentResultOkErr(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_result_ok_err(comp, component.cvaltype_u32(), component.cvaltype_string());
@@ -14250,7 +14399,9 @@ func TestWASMComponentTupleStringU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var elems: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
     var comp: u8[] = component.put_component_header([]);
@@ -14317,7 +14468,9 @@ func TestWASMComponentOptionOfU32(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_option(comp, component.cvaltype_u32());
@@ -14376,7 +14529,9 @@ func TestWASMComponentListOfU8(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_list(comp, component.cvaltype_u8());
@@ -14442,7 +14597,9 @@ func TestWASMComponentResourceDrop(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/component";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     var comp: u8[] = component.put_component_header([]);
@@ -14515,7 +14672,9 @@ func TestWASMComponentBuildHelperWithParamsRunnable(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -14603,7 +14762,9 @@ func TestWASMComponentBuildHelperRunnable(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -14688,7 +14849,9 @@ func TestWASMComponentRunnableViaWasmtime(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/component";
 import "std/wasm/inst";
 import "std/wasm/encode";
@@ -14771,7 +14934,9 @@ function main(): i32 {
 // result type. Exercises inst_if_start with a non-empty blocktype
 // (encode.valtype_i32) plus inst_else / inst_end.
 func TestWASMModuleRunsIfElse(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -14819,7 +14984,9 @@ function main(): i32 {
 // back. Exercises put_locals_one_group for declaring the local
 // plus inst_local_set / inst_local_get.
 func TestWASMModuleRunsLocalSetGet(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -14869,7 +15036,9 @@ function main(): i32 {
 // end terminator stack of depth 2 (if inside loop). Expected
 // result: 1+2+...+10 = 55.
 func TestWASMModuleRunsSumLoop(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -14975,7 +15144,9 @@ func TestWASMSectionsCustomInModule(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -15047,7 +15218,9 @@ function main(): i32 {
 // encode_memory_section, encode_data_section, and
 // inst_i32_load8_u + memarg as a runnable module.
 func TestWASMModuleRunsMemoryLoad(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/memory";
 import "std/wasm/encode";
@@ -15095,7 +15268,9 @@ function main(): i32 {
 // address 16 via i32.store8 then reads it back. Exercises the
 // writable-memory + store-then-load round-trip.
 func TestWASMModuleRunsMemoryStoreLoad(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/memory";
 import "std/wasm/encode";
@@ -15146,7 +15321,9 @@ function main(): i32 {
 // (returns 22). Proves the table section, the element section's
 // funcidx ordering, and call_indirect all line up end-to-end.
 func TestWASMModuleRunsCallIndirect(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -15211,7 +15388,9 @@ function main(): i32 {
 // the second copied byte. Exercises the 0xFC memory.copy op
 // end-to-end under wasmtime.
 func TestWASMModuleRunsMemoryCopy(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/memory";
 import "std/wasm/encode";
@@ -15265,7 +15444,9 @@ function main(): i32 {
 // value 9 then reads back a byte from the middle of the run.
 // Exercises the 0xFC memory.fill op end-to-end under wasmtime.
 func TestWASMModuleRunsMemoryFill(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/memory";
 import "std/wasm/encode";
@@ -15317,7 +15498,9 @@ function main(): i32 {
 // main() loads it via global.get 0. Exercises
 // encode_global_section + inst_global_get + init-expr shape.
 func TestWASMModuleRunsGlobalSection(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/imports";
 import "std/wasm/encode";
@@ -15367,7 +15550,9 @@ function main(): i32 {
 // mis-encoded opcode (0x6D vs 0x6E) that would silently produce
 // a huge u32 under div_u.
 func TestWASMModuleRunsDivision(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15411,7 +15596,9 @@ function main(): i32 {
 // low byte (255 = 0xFF -> -1). Exercises the post-MVP
 // sign-extension opcodes (0xC0+) at runtime.
 func TestWASMModuleRunsSignExtend(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/convert";
 import "std/wasm/encode";
@@ -15458,7 +15645,9 @@ function main(): i32 {
 //
 // 1_234_567_890_123 mod 2^32 = 1_912_276_171.
 func TestWASMModuleRunsI64Arithmetic(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/convert";
@@ -15505,7 +15694,9 @@ function main(): i32 {
 // opcodes that could be transposed). 12 & 10 = 8, 12 | 10 = 14,
 // 12 ^ 10 = 6, so any swap shows immediately.
 func TestWASMModuleRunsBitwise(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15551,7 +15742,9 @@ function main(): i32 {
 // lt_s, so result is 1. A swap with lt_u (0x49 vs 0x48) would
 // flip the result to 0.
 func TestWASMModuleRunsSignedVsUnsignedCmp(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15595,7 +15788,9 @@ function main(): i32 {
 // gives 16. Exercises the shift / rotate block (0x74..0x78)
 // which is otherwise only byte-vector tested.
 func TestWASMModuleRunsShiftRotate(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15642,7 +15837,9 @@ function main(): i32 {
 // = 2.0, returned via i32.reinterpret_f32 so wasmtime can print
 // the i32 bit pattern. f32 2.0 = 0x40000000 = 1073741824.
 func TestWASMModuleRunsF32Arithmetic(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/convert";
@@ -15689,7 +15886,9 @@ function main(): i32 {
 // (truthy) keeps the first operand, so result is 7. Exercises
 // inst_select.
 func TestWASMModuleRunsSelect(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
@@ -15734,7 +15933,9 @@ function main(): i32 {
 // fact(5) = 120. Exercises inst_call to a function index equal
 // to the calling function's own index.
 func TestWASMModuleRunsRecursion(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15800,7 +16001,9 @@ function main(): i32 {
 // wrapping to i32. f64 4.0 bit pattern: 0x4010000000000000;
 // high 32 bits = 0x40100000 = 1074790400.
 func TestWASMModuleRunsF64Arithmetic(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/convert";
@@ -15849,7 +16052,9 @@ function main(): i32 {
 // TestWASMModuleRunsClz: i32.clz of 16 = 27. Exercises the unary
 // numeric op block (0x67 clz, 0x68 ctz, 0x69 popcnt) at runtime.
 func TestWASMModuleRunsClz(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/encode";
@@ -15892,7 +16097,9 @@ function main(): i32 {
 // via a loop. Real-world-ish composition: data section + memory
 // load + loop counter + conditional break. [10,20,30,40] -> 100.
 func TestWASMModuleRunsArraySum(t *testing.T) {
-	src := `import "std/wasm/module";
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/wasm/module";
 import "std/wasm/inst";
 import "std/wasm/numeric";
 import "std/wasm/memory";
