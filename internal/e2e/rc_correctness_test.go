@@ -319,6 +319,30 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String-local reclamation (wasm). A fresh concat result (always a
+		// fresh headered heap buffer) in an owned local frees via
+		// __fern_str_dec at scope exit. The aliased `s2 = s1` taints both
+		// (no v1 two-word alias-inc → skipped, leaked, but safe). Churned
+		// 300x — a double-free / UAF / underflow on the freed concat
+		// buffer would trip the checksum or the underflow detector. (On
+		// native backends string reclamation is gated off; the checksum
+		// is backend-independent.) s.len() = 2 each; 300*(2+2)=1200.
+		name: "string_concat_local_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var pre: string = "v";
+    var s: string = pre + "x";
+    var n: i32 = s.len();
+    var s2: string = s;
+    return n + s2.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 300) { total = total + mk(k); k = k + 1; }
+    return (total - 1200) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the

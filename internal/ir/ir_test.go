@@ -1611,6 +1611,50 @@ function build(): i32 {
 	}
 }
 
+// TestLowerStringConcatLocalReclaim verifies a fresh owned string local
+// (a concat result — always a fresh headered heap buffer) reclaims via
+// __fern_str_dec at its last reference on wasm (ptrW=4). Aliases / views
+// / literals are tainted and skipped, so the dec only ever sees fresh
+// owned strings.
+func TestLowerStringConcatLocalReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var pre: string = "v";
+    var s: string = pre + "x";
+    return s.len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected fresh concat string local to reclaim via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringAliasNoReclaim verifies an ALIASED string (var s2 = s1)
+// taints the source so neither is freed (no two-word alias-inc in v1) —
+// __fern_str_dec must NOT be emitted (would double-free / UAF).
+func TestLowerStringAliasNoReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var s1: string = "a" + "b";
+    var s2: string = s1;
+    return s1.len() + s2.len();
+}`, 4)
+	if callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("aliased string must be tainted/skipped (no __fern_str_dec):\n%s", p)
+	}
+}
+
+// TestLowerStringNoReclaimOnNative verifies string reclamation is wasm-
+// only: on a native ptrW (8) — including the arm64 two-word override —
+// no __fern_str_dec is emitted (the helper is wasm-only).
+func TestLowerStringNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var pre: string = "v";
+    var s: string = pre + "x";
+    return s.len();
+}`, 8)
+	if callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) must not emit __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box
