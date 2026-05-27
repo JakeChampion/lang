@@ -491,7 +491,9 @@ func TestX86_64EmptyU8Sentinel(t *testing.T) {
     var s: string = string_from_bytes(bs);
     return s.len();
 }`, 0},
-		{"to-lower-empty-string", `function main(): i32 {
+		{"to-lower-empty-string", `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "".to_lower();
     return s.len();
 }`, 0},
@@ -1479,7 +1481,9 @@ func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 // (closureconv hoists it later), so `__method_string_trim`
 // got pruned and link died on the undefined reference.
 func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "  hi  ";
     var f = function (): string { return s.trim(); };
     var got = f();
@@ -1766,13 +1770,17 @@ func TestX86_64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `function main(): i32 {
+		{"to_string_round_trip", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 1234567890123;
     var s: string = n.to_string();
     if (s == "1234567890123") { return 0; }
     return 1;
 }`, 0},
-		{"i64_max_to_string", `function main(): i32 {
+		{"i64_max_to_string", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 9223372036854775807;
     var s: string = n.to_string();
     if (s == "9223372036854775807") { return 0; }
