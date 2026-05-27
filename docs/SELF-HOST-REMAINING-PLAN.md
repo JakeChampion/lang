@@ -404,7 +404,21 @@ planned order:
     `> 1e12` ms assertion in `self_host_clock_test.go` exceeds 32-bit
     range, proving it). Helpers are emitted unconditionally (they don't
     ride the `needs_heap` gate). arm64 mirror is CI-gated.
-  - ⬜ `f64__to_string` (float→decimal formatting; the largest).
+  - ✅ `f64__to_string` (float→decimal formatting) — emitted on both
+    backends as `__fern_f64_to_string`, a hand-asm transcription of
+    `std/float`'s `__float_to_string` with k=15: NaN → "NaN"; sign
+    split; Inf (`x != 0 && x*2 == x`) → "Inf"; integer part via
+    truncating float→int convert (`cvttsd2si` / `fcvtzs`); fraction
+    scaled by 1e15, truncated, zero-padded to 15 digits with trailing
+    zeros trimmed and the decimal point dropped when the fraction is 0.
+    `(x: f64).to_string()` / `(x: f32).to_string()` dispatch to it
+    (f32 collapses to the f64 tag in the self-host, so it formats with
+    k=15 rather than std/float's k=7 — the self-host has no distinct f32
+    value). Verified by a differential test whose expected output is
+    std/float's exact rendering — including the IEEE noise digits
+    (`123456.789000000004307`, `9999999.990000000223517`) —
+    (`self_host_f64_test.go`); arm64 mirror is CI-gated. With this the
+    runtime-builtin surface for `std/test` is complete.
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in
