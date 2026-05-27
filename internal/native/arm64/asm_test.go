@@ -7,6 +7,32 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
+// TestAssembleExprImmediate checks that a constant `+`/`-` expression in
+// an immediate (which GAS folds, and which the backend emits for some
+// frame offsets, e.g. `[x29, #96 + 48]`) assembles to the same bytes as
+// the pre-folded literal. Toolchain-free: it compares two Assemble runs.
+func TestAssembleExprImmediate(t *testing.T) {
+	cases := [][2]string{
+		{"\tldr x23, [x29, #96 + 48]\n", "\tldr x23, [x29, #144]\n"},
+		{"\tadd x0, x1, #8 + 4\n", "\tadd x0, x1, #12\n"},
+		{"\tsub x2, x3, #32 - 16\n", "\tsub x2, x3, #16\n"},
+		{"\tmov x0, #16 + 16\n", "\tmov x0, #32\n"},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c[0])
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c[0], err)
+		}
+		want, err := arm64.Assemble(c[1])
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c[1], err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q = % x, want (= %q) % x", c[0], got, c[1], want)
+		}
+	}
+}
+
 // TestAssemblerForwardBranch resolves a forward `b` that skips one
 // instruction. The GNU assembler encodes the same snippet as
 // 0x14000002 (offset = +2 instructions); see the reference in the
