@@ -3235,12 +3235,11 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 // (boxIntoCell at set). So per entry we load the cell pointer at the
 // column's byte offset (0 for keys, ptrW for values), and if non-null load
 // (data, len) from it via the two-word WidthString load and __fern_str_dec
-// the buffer (inline / literal strings no-op). The 8-byte cell itself is
-// NOT freed here (it leaks, like every boxed cell today — a minor
-// follow-up); the dominant allocation is the string buffer, which IS
-// reclaimed. The buf + handle are freed by the trailing __fern_map_drop the
-// caller emits. Mirrors genMapValDropFn's iteration: cap@buf+0, len@buf+4,
-// entries at buf+16+cap*4, entryStride = 2*ptrW.
+// the buffer (inline / literal strings no-op), then __fern_cell_free the
+// now-dead 16-byte cell itself back to the freelist. The buf + handle are
+// freed by the trailing __fern_map_drop the caller emits. Mirrors
+// genMapValDropFn's iteration: cap@buf+0, len@buf+4, entries at
+// buf+16+cap*4, entryStride = 2*ptrW.
 // Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase, 5=cellPtr.
 func genMapStrValDropFn(ptrW int) *Func {
 	return genMapStrColDropFn("__drop_map_str_values", int32(ptrW), ptrW)
@@ -3297,12 +3296,17 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpStoreLocal, I32: 5},
-		// if cellPtr != 0: __fern_str_dec(mem[cellPtr] as (data, len)); drop.
+		// if cellPtr != 0: __fern_str_dec(mem[cellPtr] as (data, len)) to
+		// reclaim the buffer, then __fern_cell_free(cellPtr) to free the
+		// now-dead 16-byte cell itself. Both results dropped.
 		{Kind: OpLoadLocal, I32: 5},
 		{Kind: OpIf, I32: BlockTypeVoid},
 		{Kind: OpLoadLocal, I32: 5},
 		{Kind: OpLoad, Width: WidthString},
 		{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 5},
+		{Kind: OpCallDirect, Str: "__fern_cell_free", I32: 1},
 		{Kind: OpDrop},
 		{Kind: OpEnd},
 		// i = i + 1; continue.
