@@ -783,7 +783,9 @@ function main(): i32 {
 //   6. Nested if/else inside a function — recursive function
 //      that branches.
 func TestArm64StmtInterpElse(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -1299,7 +1301,9 @@ function main(): i32 {
 //      function table is closed-over.
 //   7. Function compose at top-level — call from main flow.
 func TestArm64StmtInterpFunctions(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -1812,7 +1816,9 @@ function main(): i32 {
 // (Outside the 0..127 ASCII range so they don't collide with
 // existing single-char arith ops.)
 func TestArm64StmtInterpWhile(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -2210,7 +2216,9 @@ function main(): i32 {
 //   6. Forward dependencies — `var x = 10; var y = x + 5;
 //      return y;` → 15. Later declarations see earlier ones.
 func TestArm64StmtInterpInLang(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -2538,7 +2546,9 @@ function main(): i32 {
 //      the bytecode shorter. `compile(fold("1 + 2 * 3"))` is
 //      one op (PushConst 7) instead of five.
 func TestArm64StackVMInLang(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -2879,7 +2889,9 @@ function main(): i32 {
 //   5. Semantic preservation — eval(reduce(e)) == eval(e) for
 //      any e and any env that doesn't divide-by-zero.
 func TestArm64StrengthReduceInLang(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -3209,7 +3221,9 @@ function main(): i32 {
 // `print(fold(parse("1 + 2 * 3")))` should be "7" (the folded
 // Num spits out its value directly, no parens).
 func TestArm64PrinterInLang(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -3486,7 +3500,9 @@ function main(): i32 {
 // the node count is exactly 1; after the partial case it's
 // 1 BinOp + 1 Var + 1 Num.
 func TestArm64ConstfoldInLang(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -3791,7 +3807,9 @@ function main(): i32 {
 // Recursion still falls out from the closed-over fn table.
 // Mutual recursion works for the same reason.
 func TestArm64InterpV7MultiArg(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -4097,7 +4115,9 @@ function main(): i32 {
 // containers with the standard array runtime, no special
 // support needed.
 func TestArm64InterpV6Functions(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -4378,7 +4398,9 @@ function main(): i32 {
 // step but need named-callable storage, which is a bigger
 // jump.
 func TestArm64InterpV5LetIf(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -4588,7 +4610,9 @@ function main(): i32 {
 // branches — same workaround the prelude's `__map_hash`
 // already uses.
 func TestArm64InterpV4Comparisons(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
 struct TokDPunct { text: string }
 struct TokEof   { _pad: i32 }
@@ -4777,7 +4801,9 @@ function main(): i32 {
 // of the self-host validation arc; the next stages (checker,
 // IR, codegen) are bigger but architecturally similar shape.
 func TestArm64InterpV2(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
 
@@ -5095,7 +5121,9 @@ function main(): i32 {
 // is digit` rule handles both — `0.x` falls through (`x` isn't
 // a digit) so the `.` becomes a punctuator and `x` an ident.
 func TestArm64LexerV7(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokFloat { text: string }
 struct TokIdent { name: string }
 struct TokKw    { name: string }
@@ -5289,7 +5317,9 @@ function main(): i32 {
 // literals, f-strings, and the Number/Float kind split. Float
 // literals will land in v7.
 func TestArm64LexerV6(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokKw    { name: string }
 struct TokStr   { value: string }
@@ -5496,7 +5526,9 @@ function main(): i32 {
 // uses (see `__map_hash`'s "Single shared `h` declaration"
 // comment).
 func TestArm64LexerV5(t *testing.T) {
-	src := `struct TokInt   { value: i32, base: i32, suffix: string }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32, base: i32, suffix: string }
 struct TokIdent { name: string }
 struct TokKw    { name: string }
 struct TokStr   { value: string }
@@ -5644,7 +5676,9 @@ function main(): i32 {
 // `42i6` lexes as bare `42` followed by ident `i6`. Pattern
 // mirrors Rust's numeric-literal suffix recognition.
 func TestArm64LexerV4(t *testing.T) {
-	src := `struct TokInt   { value: i32, suffix: string }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32, suffix: string }
 struct TokIdent { name: string }
 struct TokKw    { name: string }
 struct TokStr   { value: string }
@@ -5768,7 +5802,9 @@ function main(): i32 {
 // shape now matches enough that the bigger port can land
 // incrementally without re-deriving the tokenisation skeleton.
 func TestArm64LexerV3(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokKw    { name: string }
 struct TokStr   { value: string }
@@ -6059,7 +6095,9 @@ function main(): i32 {
 // programs inline these today, this PR promotes them to
 // reusable prelude helpers.
 func TestArm64ByteClassifiers(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     if (!(48).is_digit()) { return 1; }      // '0'
     if (!(57).is_digit()) { return 2; }      // '9'
     if ((47).is_digit()) { return 3; }       // '/' is not a digit
@@ -8253,43 +8291,45 @@ function main(): i32 {
 }
 
 func TestArm64Paths(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/path";
+function main(): i32 {
     // path_join — simple, leading/trailing slashes, empty parts.
-    if (path_join(["a", "b", "c"]) != "a/b/c") { return 1; }
-    if (path_join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
-    if (path_join(["a", "", "b"]) != "a/b") { return 3; }
-    if (path_join(["a/", "b"]) != "a/b") { return 4; }
-    if (path_join(["a/", "/b"]) != "a/b") { return 5; }
-    if (path_join(["a", "/b"]) != "a/b") { return 6; }
-    if (path_join(["/", "a"]) != "/a") { return 7; }
-    if (path_join(["solo"]) != "solo") { return 8; }
+    if (path.path_join(["a", "b", "c"]) != "a/b/c") { return 1; }
+    if (path.path_join(["/usr", "local", "bin"]) != "/usr/local/bin") { return 2; }
+    if (path.path_join(["a", "", "b"]) != "a/b") { return 3; }
+    if (path.path_join(["a/", "b"]) != "a/b") { return 4; }
+    if (path.path_join(["a/", "/b"]) != "a/b") { return 5; }
+    if (path.path_join(["a", "/b"]) != "a/b") { return 6; }
+    if (path.path_join(["/", "a"]) != "/a") { return 7; }
+    if (path.path_join(["solo"]) != "solo") { return 8; }
     var empty: string[] = [];
-    if (path_join(empty) != "") { return 9; }
+    if (path.path_join(empty) != "") { return 9; }
 
     // path_parent — handle root and trailing-slash cases.
-    if (path_parent("/a/b/c") != "/a/b") { return 10; }
-    if (path_parent("a/b") != "a") { return 11; }
-    if (path_parent("a") != "") { return 12; }
-    if (path_parent("/") != "/") { return 13; }
-    if (path_parent("") != "") { return 14; }
-    if (path_parent("/a") != "/") { return 15; }
-    if (path_parent("/a/b/") != "/a") { return 16; }
+    if (path.path_parent("/a/b/c") != "/a/b") { return 10; }
+    if (path.path_parent("a/b") != "a") { return 11; }
+    if (path.path_parent("a") != "") { return 12; }
+    if (path.path_parent("/") != "/") { return 13; }
+    if (path.path_parent("") != "") { return 14; }
+    if (path.path_parent("/a") != "/") { return 15; }
+    if (path.path_parent("/a/b/") != "/a") { return 16; }
 
     // path_file_name — last component.
-    if (path_file_name("/a/b/c.txt") != "c.txt") { return 17; }
-    if (path_file_name("file") != "file") { return 18; }
-    if (path_file_name("/") != "") { return 19; }
-    if (path_file_name("") != "") { return 20; }
-    if (path_file_name("a/b/") != "b") { return 21; }
+    if (path.path_file_name("/a/b/c.txt") != "c.txt") { return 17; }
+    if (path.path_file_name("file") != "file") { return 18; }
+    if (path.path_file_name("/") != "") { return 19; }
+    if (path.path_file_name("") != "") { return 20; }
+    if (path.path_file_name("a/b/") != "b") { return 21; }
 
     // path_extension — last .X suffix on the last component.
-    if (path_extension("a.txt") != "txt") { return 22; }
-    if (path_extension("/path/to/file.log") != "log") { return 23; }
-    if (path_extension("multi.dot.tar.gz") != "gz") { return 24; }
-    if (path_extension("noext") != "") { return 25; }
-    if (path_extension(".hidden") != "") { return 26; }    // leading-dot file
-    if (path_extension("a.b/.hidden") != "") { return 27; }
-    if (path_extension("") != "") { return 28; }
+    if (path.path_extension("a.txt") != "txt") { return 22; }
+    if (path.path_extension("/path/to/file.log") != "log") { return 23; }
+    if (path.path_extension("multi.dot.tar.gz") != "gz") { return 24; }
+    if (path.path_extension("noext") != "") { return 25; }
+    if (path.path_extension(".hidden") != "") { return 26; }    // leading-dot file
+    if (path.path_extension("a.b/.hidden") != "") { return 27; }
+    if (path.path_extension("") != "") { return 28; }
 
     return 0;
 }`
@@ -8346,7 +8386,9 @@ function main(): i32 {
 }
 
 func TestArm64StringExtras(t *testing.T) {
-	src := `function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
+	src := `import "core/no_prelude";
+import "std/string";
+function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
 
 function main(): i32 {
     // fields — runs of whitespace as separator, no empties.
@@ -8393,7 +8435,9 @@ function main(): i32 {
 }
 
 func TestArm64StringLines(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
@@ -8946,7 +8990,9 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 // `op.Unsigned` from the start; this aligns arm64 with that
 // contract.
 func TestArm64UnsignedRightShift(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/u64";
+function main(): i32 {
     var n: u64 = 18446744073709551615 as u64;
     var r: u64 = n >> 1;
     var s: string = r.to_string();
@@ -9969,7 +10015,9 @@ function main(): i32 {
 // the i32 single-pointer string ABI); the actual win is
 // on wasm via the e2e suite.
 func TestArm64MatchExprStringResult(t *testing.T) {
-	src := `function fmt(o: Option[i64]): string {
+	src := `import "core/no_prelude";
+import "std/i64";
+function fmt(o: Option[i64]): string {
     return match (o) {
         Some(v) => f"got {v}",
         None => "none"
@@ -11617,7 +11665,9 @@ function main(): i32 {
 // recurses through FString.Desugared so captured-name idents
 // inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestArm64ClosureFStringCapture(t *testing.T) {
-	src := `function makeNamer(name: string): () => string {
+	src := `import "core/no_prelude";
+import "std/string";
+function makeNamer(name: string): () => string {
     function build(): string { return f"hello, {name}!"; }
     return build;
 }
