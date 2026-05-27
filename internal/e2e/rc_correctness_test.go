@@ -1073,9 +1073,8 @@ function main(): i32 {
 		// use) and fresh-concat keys (whose buffers must be freed exactly
 		// once, no double free). Per iter: get_or(alias 7) + get_or(fresh 7)
 		// + has(fresh 1) + has(alias 1) + get(fresh 7) + get(alias 7) +
-		// key.len()=3 = 33; 500x → 16500. NB delete is excluded: it has a
-		// pre-existing string-key double-free (see follow-up), independent
-		// of this slice.
+		// key.len()=3 = 33; 500x → 16500. (delete has its own
+		// case below — its result tuple now carries an rc header.)
 		name: "map_string_lookup_key_churn_free",
 		src: `import "core/no_prelude";
 import "core/map";
@@ -1099,6 +1098,56 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
     return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Map.delete returns a (Map, bool) tuple. The tuple box must
+		// carry the 8-byte rc header every heap box gets (rc=1 at
+		// [base+0], data = base+8) — without it the scope-exit tuple
+		// drop reads heap-allocator metadata at [data-8] as the rc and
+		// underflows (wasm) / corrupts the heap and segfaults (native).
+		// Exercises every shape that hit the bug: bound result, the
+		// `m = t.0` reassign idiom, delete-hit + delete-miss, and a
+		// discarded delete — over both string and i32 keys. Per iter
+		// the surviving "other"/2 entries stay readable: string side
+		// +5 (hit 2 + survivor 3), i32 side +8 (hit 2 + survivor 6) →
+		// 13; 500x → 6500.
+		name: "map_delete_tuple_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var acc: i32 = 0;
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.set("ke" + "y", 7);
+    sm = sm.set("ot" + "her", 3);
+    sm = sm.set("th" + "ird", 10);
+    var st = sm.delete("ke" + "y");   // bound delete-hit
+    sm = st.0;                        // reassign idiom
+    if (st.1) { acc = acc + 2; }
+    sm.delete("th" + "ird");          // discarded delete (hit)
+    var sm2 = sm.delete("zz" + "zz"); // bound delete-miss
+    sm = sm2.0;
+    if (sm2.1) { acc = acc + 100; }
+    acc = acc + sm.get_or("ot" + "her", 0); // surviving entry: +3
+    var im: Map[i32, i32] = map_new(8);
+    im = im.set(1, 4);
+    im = im.set(2, 6);
+    var it = im.delete(1);            // i32 delete-hit
+    im = it.0;
+    if (it.1) { acc = acc + 2; }
+    var im2 = im.delete(9);           // i32 delete-miss
+    im = im2.0;
+    if (im2.1) { acc = acc + 100; }
+    acc = acc + im.get_or(2, 0);      // surviving entry: +6
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 6500) + __rc_underflow_count();
 }`,
 	},
 	{
