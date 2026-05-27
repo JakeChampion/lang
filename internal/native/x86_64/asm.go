@@ -13,8 +13,10 @@
 // GPR<->xmm transfers, add/sub/mul/div/sqrt sd/ss, ucomis/comis,
 // cvtsi2s*/cvtts*2si conversions, movap*, roundsd) — enough to assemble
 // and run the whole fixture corpus (recursion, strings, maps,
-// closures/higher-order functions, json, enums, floating-point math).
-// x87 transcendentals (sin/cos/exp/log/pow) are the remaining phase; an
+// closures/higher-order functions, json, enums, floating-point math),
+// and the x87 FPU transcendentals (fsin/fcos/fyl2x/f2xm1/fscale/frndint
+// + the x87 stack/arith ops) that sin/cos/exp/log/pow lower to. This
+// covers the full instruction surface the code generator emits; an
 // unsupported instruction surfaces as a clear error rather than a
 // miscompile.
 package x86_64
@@ -30,6 +32,7 @@ const (
 	opImm
 	opMem
 	opLabel
+	opSt // x87 stack register st(i)
 )
 
 type operand struct {
@@ -38,12 +41,13 @@ type operand struct {
 	size int   // operand size in bits: 8, 16, 32, 64
 	imm  int64 // immediate value
 	// memory operand [base + index*scale + disp]:
-	base    int // base register number, or -1 if none
-	index   int // index register number, or -1 if none
-	scale   int // 1, 2, 4, or 8
-	disp    int64
-	memSize int // access size in bits from a "qword ptr" prefix, or 0 if unspecified
-	sym     string
+	base     int // base register number, or -1 if none
+	index    int // index register number, or -1 if none
+	scale    int // 1, 2, 4, or 8
+	disp     int64
+	memSize  int  // access size in bits from a "qword ptr" prefix, or 0 if unspecified
+	highByte bool // ah/ch/dh/bh: an 8-bit reg (4..7) that must NOT carry a REX prefix
+	sym      string
 }
 
 type relFixup struct {
@@ -377,6 +381,9 @@ func (a *Assembler) insn(line string) error {
 	if cc, ok := setccCode(mnem); ok {
 		return a.setcc(ops, cc)
 	}
+	if handled, err := a.x87(mnem, ops); handled {
+		return err
+	}
 	return fmt.Errorf("unsupported instruction %q", mnem)
 }
 
@@ -580,7 +587,7 @@ func (a *Assembler) rmReg(opBase byte, rm, reg operand) error {
 	if reg.size != 8 {
 		op |= 1
 	}
-	if rex := rexFor(w, reg.reg, rm.reg, byteRegNeedsRex(reg.size, reg.reg, rm.reg)); rex != 0 {
+	if rex := rexFor(w, reg.reg, rm.reg, needsRexByte(reg) || needsRexByte(rm)); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(op)
@@ -871,7 +878,7 @@ func (a *Assembler) movzx(ops []operand, signed bool) error {
 			a.encodeMem(dst.reg, src)
 		}
 	}
-	rexB8 := src.kind == opReg && byteRegNeedsRex(srcSize, dst.reg, src.reg)
+	rexB8 := needsRexByte(src) || needsRexByte(dst)
 	var rex byte
 	if src.kind == opMem {
 		rex = memRex(w, dst.reg, src)
@@ -987,10 +994,12 @@ func (a *Assembler) jcc(ops []operand, cc byte) error {
 	return nil
 }
 
-// byteRegNeedsRex reports whether an 8-bit operand forces a REX prefix
-// (to reach spl/bpl/sil/dil instead of ah/ch/dh/bh).
-func byteRegNeedsRex(size, reg, rm int) bool {
-	return size == 8 && (reg >= 4 && reg <= 7 || rm >= 4 && rm <= 7)
+// needsRexByte reports whether an 8-bit register operand forces a REX
+// prefix to address spl/bpl/sil/dil (regs 4..7). The high-byte registers
+// ah/ch/dh/bh share those numbers but must NOT carry REX, so they're
+// excluded.
+func needsRexByte(o operand) bool {
+	return o.kind == opReg && o.size == 8 && o.reg >= 4 && o.reg <= 7 && !o.highByte
 }
 
 func fitsInt8(v int64) bool  { return v >= -128 && v <= 127 }
