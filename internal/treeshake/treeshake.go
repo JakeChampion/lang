@@ -138,9 +138,7 @@ func Run(prog *ast.Program, extras ...string) {
 	hasEntry := reachable["main"] || reachable["handle"]
 	if !hasEntry {
 		for _, fn := range prog.Funcs {
-			if !fn.IsPrelude {
-				enqueue(fn.Name)
-			}
+			enqueue(fn.Name)
 		}
 	}
 	// Walk each reachable function's body, scanning for Call

@@ -430,6 +430,60 @@ function main(): i32 { return pickOrigin().x; }`,
 	}
 }
 
+// Module-local struct names inside compound type positions — tuples
+// and generic type-args — must get the `<mod>__` prefix too. Regression
+// guard for the flip-era bug where `function f(): (string, Local)`
+// left `Local` un-mangled (the return-type rewriter only recursed into
+// arrays + func types), so the tuple element didn't match the mangled
+// struct decl and the checker rejected the program.
+func TestLoadRewritesStructInsideCompoundTypes(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"box.fern": `pub struct Box { v: i32 }
+pub function pair(): (i32, Box) { return (0, Box { v: 1 }); }
+pub function maybe(): Option[Box] { return Some(Box { v: 2 }); }
+pub function many(): Box[] { return [Box { v: 3 }]; }`,
+		"main.fern": `import "./box";
+function main(): i32 {
+    var t = box.pair();
+    var arr = box.many();
+    match (box.maybe()) {
+        Some(b) => { return t.1.v + arr[0].v + b.v; },
+        None => { return 0; }
+    }
+}`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tuple element.
+	pair := findFunc(prog, "box__pair")
+	if pair == nil {
+		t.Fatal("box__pair not found")
+	}
+	tt, ok := pair.ReturnType.(ast.TupleType)
+	if !ok || len(tt.Elems) != 2 {
+		t.Fatalf("pair return type = %T, want 2-tuple", pair.ReturnType)
+	}
+	if st, ok := tt.Elems[1].(ast.StructType); !ok || st.Name != "box__Box" {
+		t.Errorf("tuple element 1 = %v, want StructType box__Box", tt.Elems[1])
+	}
+	// Generic type-arg (Option[Box]).
+	maybe := findFunc(prog, "box__maybe")
+	if et, ok := maybe.ReturnType.(ast.EnumType); !ok || len(et.Args) != 1 {
+		t.Fatalf("maybe return type = %T, want Option[...]", maybe.ReturnType)
+	} else if st, ok := et.Args[0].(ast.StructType); !ok || st.Name != "box__Box" {
+		t.Errorf("Option arg = %v, want box__Box", et.Args[0])
+	}
+	// Array element.
+	many := findFunc(prog, "box__many")
+	if at, ok := many.ReturnType.(ast.ArrayType); !ok {
+		t.Fatalf("many return type = %T, want array", many.ReturnType)
+	} else if st, ok := at.Elem.(ast.StructType); !ok || st.Name != "box__Box" {
+		t.Errorf("array elem = %v, want box__Box", at.Elem)
+	}
+}
+
 // Cross-module references to a non-`pub` function are a load-time
 // error. The diagnostic mentions the offending qualified name and
 // hints at the fix.
