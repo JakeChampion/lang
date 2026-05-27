@@ -209,6 +209,44 @@ differential fuzz and `__rc_underflow_count` guard.
   `__str_slice`, `string_from_bytes`, `int_to_string`, byte/HTTP
   marshaling, etc., per backend.
 
+## Producer audit findings (wasm, in progress)
+
+Surveyed while landing the carrier prerequisite. Headered so far
+(`__fern_alloc` → `__fern_alloc_rc1`, carrier-only, full gauntlet green):
+`__str_concat`, `__str_slice`, `__fern_string_from_bytes` (so
+`int_to_string` / `bytes_to_lang_string` reclaim transitively),
+`__fern_read_line`. `__fern_reader_read_line` delegates to read_line —
+covered transitively.
+
+Two complications the remaining producers raise:
+
+1. **Shared-buffer VIEW strings break the rc-header invariant.**
+   `__fern_args` (and `__fern_env`) return strings whose `data` points
+   *into a shared buffer* (`argv_buf` / cached `environ`), not an
+   individually-allocated buffer — so `data-8` is mid-buffer, not an rc
+   header. These strings can't carry per-string headers. Options:
+   (a) **copy** each into its own rc1 string at production (uniform, but
+   changes args/env to allocate); (b) a **dec-side immortal-region
+   check** that recognizes argv_buf/environ addresses and skips them.
+   (a) is cleaner and keeps the dec's invariant ("every non-inline,
+   non-low-address heap string has an rc header") intact — recommended.
+   Until resolved, the dec must NOT be turned on, or it will misread a
+   view string's `data-8`.
+
+2. **Multi-alloc builders need per-alloc classification.** e.g.
+   `buildReadFileBody` reuses one `alloc` for the path_open scratch, the
+   str-normalize temps, AND the file-content string. Swapping the shared
+   `alloc` var → rc1 over-headers the temps (harmless carrier-side) and
+   headers the content string — but only if the content is allocated via
+   that var and returned as the string data; confirm per builder rather
+   than swapping blindly.
+
+Remaining to classify/handle: `read_file` (P1/P2), `reader_read_line_fd`
+(P1/P2), `reader_read_chunk` (P1/P2 — returns string vs u8[]?),
+`__fern_args` (P1/P2, view — needs option (a)/(b)), `__fern_env` (view),
+the IR concat fast path. The dec can't turn on until all are headered or
+explicitly skipped.
+
 ## What this doc IS / IS NOT
 
 - IS: the sequencing + design for string reclamation, on the CURRENT
