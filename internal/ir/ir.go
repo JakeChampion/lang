@@ -1687,36 +1687,15 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[id.Name] = true
 		}
 	}
-	// taintStringAlias taints a string-typed bare Ident used as an
-	// alias / move-out source (`var s2 = s1`, `s2 = s1`, `return s`).
-	// The v1 string-reclamation slice has no two-word alias-inc, so two
-	// eligible locals sharing one heap buffer would double-free, and a
-	// returned/aliased buffer would be freed under a live reference.
-	// Tainting the source makes it (and, transitively, the alias)
-	// ineligible → skipped (leaked, but safe). Arrays/structs instead inc
-	// on alias, so this is string-only.
-	taintStringAlias := func(e ast.Expr) {
-		if id, ok := e.(*ast.Ident); ok {
-			if _, isStr := b.exprType(e).(ast.StringType); isStr {
-				tainted[id.Name] = true
-			}
-		}
-	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
 			if s.Init != nil {
 				assigns[s.Name] = append(assigns[s.Name], s.Init)
-				taintStringAlias(s.Init)
-			}
-		case *ast.Return:
-			if s.Value != nil {
-				taintStringAlias(s.Value)
 			}
 		case *ast.Assign:
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
-				taintStringAlias(s.Value)
 			} else {
 				// Storing into an existing element / field / capture
 				// (`grid[i] = row`, `p.items = arr`, `cap = arr`)
@@ -1989,13 +1968,14 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 		switch v.Type.(type) {
 		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
 			return true
+		case ast.StringType:
+			// wasm two-word strings now alias-inc (__fern_str_inc), so
+			// they participate in move-on-return / move-on-alias like the
+			// other rc types: a returned string local cancels its
+			// transfer-inc against the exit-sweep dec (no free under the
+			// caller). Gated ptrW==4 (wasm-only reclamation).
+			return b.ptrW == 4
 		}
-		// Strings are deliberately excluded: the v1 string-reclamation
-		// slice has no two-word alias-inc, so it does NOT use
-		// move-on-return / move-on-alias (which assume an inc/dec cancel).
-		// Instead, aliased / returned strings are escape-tainted (skipped,
-		// leaked) by computeFreeEligible — only fresh, locally-consumed
-		// concat/slice results are freed.
 		return false
 	}
 	return false
@@ -4601,7 +4581,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// above (no inc, sweep-excluded); this covers the
 			// remaining aliases (field / index loads), closures
 			// included now that they free their env at last reference.
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emitAliasInc(n.Value)
 		}
 		b.emitRcDecLocalsAtExit()
 		b.emit(Op{Kind: OpReturn})
@@ -4677,7 +4657,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// and the source is excluded from the exit sweep, so the
 		// inc/dec pair is elided.
 		if needsRcIncOnAlias(n.Init, b) && !b.moveSites[n] {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emitAliasInc(n.Init)
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
@@ -4703,7 +4683,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// and reads false, so the temp owns the sole reference and frees
 		// it normally. Mirrors the Var-binding alias inc.
 		if needsRcIncOnAlias(n.Init, b) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emitAliasInc(n.Init)
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
 		// Recover the tuple element types from the synthetic
@@ -5930,7 +5910,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// the Var / Assign / call-arg / struct-field /
 			// closure-capture sites.
 			if needsRcIncOnAlias(el, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emitAliasInc(el)
 			}
 			b.emit(storeOpAndWidth)
 		}
@@ -6026,7 +6006,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// alias site. See the StructLit case below for the
 			// gating rationale.
 			if needsRcIncOnAlias(elem, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emitAliasInc(elem)
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
 		}
@@ -6083,7 +6063,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// structs / enums / closures join in Phase 1e along
 			// with their matching drop handlers.
 			if needsRcIncOnAlias(f.Value, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emitAliasInc(f.Value)
 			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
@@ -6136,7 +6116,7 @@ func (b *builder) expr(e ast.Expr) error {
 				return err
 			}
 			if needsRcIncOnAlias(capExpr, b) {
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emitAliasInc(capExpr)
 			}
 		}
 		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
@@ -8152,7 +8132,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// new binding needs its own rc. Move-on-alias skips the inc
 		// at a move site (see the Var path).
 		if needsRcIncOnAlias(n.Value, b) && !b.moveSites[n] {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			b.emitAliasInc(n.Value)
 		}
 		// Phase 1d-vi: dec the old value of `y` before
 		// overwriting it. `y` previously held some array
@@ -8633,6 +8613,34 @@ func exprContainsCall(e ast.Expr) bool {
 	return found
 }
 
+// emitAliasInc emits the retain (inc) for an alias of expr `e` whose
+// value is already on the operand stack. For a wasm two-word string it
+// uses __fern_str_inc (consumes + returns the (data, len) pair, so the
+// value survives for the following store); everything else uses the
+// single-word __fern_rc_inc. The callers all pre-gate on
+// needsRcIncOnAlias(e), so this only fires for rc-tracked aliases.
+//
+// String safety: __fern_str_inc on a VIEW string (data pointing into the
+// shared argv_buf / environ heap buffers, as args()/env() produce) would
+// increment mid-buffer bytes and corrupt them. Views always reach a local
+// through a tainted RHS (FieldAccess / Index / Call), so they're never
+// free-eligible. We therefore emit the string inc ONLY when `e` is a bare
+// Ident of a free-eligible local — i.e. a fresh concat/slice result,
+// which is always a headered owned buffer. For any other string alias we
+// emit NO inc (the two-word value simply stays on the stack for the
+// following store, and the destination is itself tainted → skipped by the
+// dec sweep). This keeps __fern_str_inc/dec from ever touching a view or
+// literal, without needing an args/env range-skip.
+func (b *builder) emitAliasInc(e ast.Expr) {
+	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.ptrW == 4 {
+		if id, ok := e.(*ast.Ident); ok && b.freeEligible[id.Name] {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+		}
+		return
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+}
+
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index:
@@ -8677,6 +8685,15 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// strand the container's reference).
 	if _, isTuple := t.(ast.TupleType); isTuple {
 		return true
+	}
+	// wasm two-word strings: aliasing inc's the heap buffer's rc via
+	// __fern_str_inc (emitAliasInc picks the two-word helper). Lets two
+	// eligible string locals share a buffer safely (the dec's is_unique
+	// gate frees once) and protects a string flowing into a container
+	// that outlives the source. Gated ptrW==4 — __fern_str_inc is
+	// wasm-only; on natives strings stay un-inc'd (and unreclaimed).
+	if _, isStr := t.(ast.StringType); isStr {
+		return b.ptrW == 4
 	}
 	return false
 }

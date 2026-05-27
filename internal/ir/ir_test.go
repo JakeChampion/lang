@@ -1627,17 +1627,39 @@ func TestLowerStringConcatLocalReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerStringAliasNoReclaim verifies an ALIASED string (var s2 = s1)
-// taints the source so neither is freed (no two-word alias-inc in v1) —
-// __fern_str_dec must NOT be emitted (would double-free / UAF).
-func TestLowerStringAliasNoReclaim(t *testing.T) {
+// TestLowerStringAliasReclaim verifies that aliasing a fresh owned string
+// (var s2 = s1, where s1 is a concat result — a headered heap buffer)
+// retains the shared buffer via the two-word __fern_str_inc, and that both
+// locals reach __fern_str_dec at exit. The dec's rc==1 / is-unique gate
+// frees the buffer exactly once (the first dec sees rc=2 and only
+// decrements; the second sees rc=1 and frees).
+func TestLowerStringAliasReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s1: string = "a" + "b";
     var s2: string = s1;
     return s1.len() + s2.len();
 }`, 4)
-	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("aliased string must be tainted/skipped (no __fern_str_dec):\n%s", p)
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("expected aliased fresh string to retain via __fern_str_inc:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected aliased fresh string locals to reclaim via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringViewAliasNoInc verifies that aliasing a VIEW string — one
+// reached through a tainted RHS (here, an Index into a string array, whose
+// data points into a shared buffer with no per-string rc header) — does NOT
+// emit __fern_str_inc. Incrementing a view would corrupt mid-buffer bytes;
+// the eligibility gate in emitAliasInc keeps str_inc to fresh owned strings.
+func TestLowerStringViewAliasNoInc(t *testing.T) {
+	p := lowerSourceWith(t, `function build(xs: string[]): i32 {
+    var v: string = xs[0];
+    var v2: string = v;
+    return v.len() + v2.len();
+}`, 4)
+	if callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("view/tainted string alias must not emit __fern_str_inc:\n%s", p)
 	}
 }
 
