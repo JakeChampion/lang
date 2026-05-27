@@ -438,6 +438,12 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "Err" && c.args.len() == 1) { return "result:unknown"; }
                     if (id.name == "read_file") { return "result:string"; }
                     if (id.name == "write_file") { return "option:unknown"; }
+                    // now_unix_ms / monotonic_ns return i64. The self-host
+                    // has no distinct i64 tag — all integers live in 64-bit
+                    // rax slots and compare via cmpq — so "i32" routes them
+                    // through the integer path without truncation.
+                    if (id.name == "now_unix_ms") { return "i32"; }
+                    if (id.name == "monotonic_ns") { return "i32"; }
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
@@ -4173,6 +4179,22 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
+            // now_unix_ms() — wall-clock milliseconds since the Unix
+            // epoch (clock_gettime(CLOCK_REALTIME)). Returns an i64 in
+            // %rax; no heap.
+            if (name == "now_unix_ms" && c.args.len() == 0) {
+                s = s.write("    call __fern_now_unix_ms\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            // monotonic_ns() — nanoseconds from a monotonic clock
+            // (clock_gettime(CLOCK_MONOTONIC)). For elapsed-time
+            // measurement, not wall-clock. Returns an i64 in %rax.
+            if (name == "monotonic_ns" && c.args.len() == 0) {
+                s = s.write("    call __fern_monotonic_ns\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // f64 math intrinsics — the cheap subset that lowers to a
             // single SSE instruction. The -nostdlib native backends
             // can't link libm, so std/float's `__*_f64` primitives are
@@ -6197,6 +6219,46 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __fern_now_unix_ms / __fern_monotonic_ns: clock_gettime
+    // (x86-64 syscall 228) helpers. Emitted unconditionally — they
+    // don't touch the heap, so they can't ride the needs_heap gate
+    // that carries read_file/write_file, and a pure-scalar program
+    // that times something must still link. The kernel writes a
+    // `struct timespec { i64 tv_sec; i64 tv_nsec }` to the buffer.
+    // Errno is ignored: with a fixed clock id and a stack buffer we
+    // control, the realistic failures (EFAULT/EINVAL) can't fire.
+    // now_unix_ms: CLOCK_REALTIME=0 → tv_sec*1000 + tv_nsec/1e6.
+    s = s.write("__fern_now_unix_ms:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $0, %rdi\n");           // CLOCK_REALTIME
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %r10\n");       // tv_sec
+    s = s.write("    imulq $1000, %r10, %r10\n"); // sec * 1000
+    s = s.write("    movq 8(%rsp), %rax\n");      // tv_nsec
+    s = s.write("    movq $0, %rdx\n");
+    s = s.write("    movq $1000000, %rcx\n");
+    s = s.write("    divq %rcx\n");               // rax = nsec / 1e6
+    s = s.write("    addq %r10, %rax\n");
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
+    // monotonic_ns: CLOCK_MONOTONIC=1 → tv_sec*1e9 + tv_nsec.
+    s = s.write("__fern_monotonic_ns:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // timespec
+    s = s.write("    movq $1, %rdi\n");           // CLOCK_MONOTONIC
+    s = s.write("    movq %rsp, %rsi\n");         // &timespec
+    s = s.write("    movq $228, %rax\n");         // clock_gettime
+    s = s.write("    syscall\n");
+    s = s.write("    movq (%rsp), %rax\n");       // tv_sec
+    s = s.write("    imulq $1000000000, %rax, %rax\n"); // sec * 1e9
+    s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
+    s = s.write("    leave\n");
+    s = s.write("    ret\n");
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, then parses an optional leading `-`
     // followed by decimal digits. Returns the parsed value in
