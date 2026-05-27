@@ -2525,6 +2525,7 @@ func TestWASMBulkMemoryPrimitives(t *testing.T) {
 // % 3 == 1), and 2-byte-padding (length % 3 == 2) inputs.
 func TestWASMBase64(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/int";
 import "std/base64";
 function main(): i32 {
     if (base64.base64_encode("") != "") { return 1; }
@@ -5911,6 +5912,7 @@ func TestWASMTupleDestructure(t *testing.T) {
 // decoded so `len()` on the result gives the right answer.
 func TestWASMHex(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/int";
 import "std/hex";
 function main(): i32 {
 		// empty round-trips to empty
@@ -5949,6 +5951,7 @@ function main(): i32 {
 // before a query is malformed-but-best-effort.
 func TestWASMUrlParse(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/int";
 import "std/url";
 function main(): i32 {
 		// Full URL with every section.
@@ -6028,6 +6031,7 @@ function main(): i32 {
 // malformed `%` sequences pass through verbatim.
 func TestWASMUrlCoder(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/int";
 import "std/url";
 function main(): i32 {
 		// All-unreserved input round-trips byte-for-byte.
@@ -6077,6 +6081,7 @@ function main(): i32 {
 // Pair without `=` records single-element empty-string array.
 func TestWASMQueryParse(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/int";
 import "core/map";
 import "std/url";
 function main(): i32 {
