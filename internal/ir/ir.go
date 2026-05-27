@@ -1687,15 +1687,36 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[id.Name] = true
 		}
 	}
+	// taintStringAlias taints a string-typed bare Ident used as an
+	// alias / move-out source (`var s2 = s1`, `s2 = s1`, `return s`).
+	// The v1 string-reclamation slice has no two-word alias-inc, so two
+	// eligible locals sharing one heap buffer would double-free, and a
+	// returned/aliased buffer would be freed under a live reference.
+	// Tainting the source makes it (and, transitively, the alias)
+	// ineligible → skipped (leaked, but safe). Arrays/structs instead inc
+	// on alias, so this is string-only.
+	taintStringAlias := func(e ast.Expr) {
+		if id, ok := e.(*ast.Ident); ok {
+			if _, isStr := b.exprType(e).(ast.StringType); isStr {
+				tainted[id.Name] = true
+			}
+		}
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
 			if s.Init != nil {
 				assigns[s.Name] = append(assigns[s.Name], s.Init)
+				taintStringAlias(s.Init)
+			}
+		case *ast.Return:
+			if s.Value != nil {
+				taintStringAlias(s.Value)
 			}
 		case *ast.Assign:
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
+				taintStringAlias(s.Value)
 			} else {
 				// Storing into an existing element / field / capture
 				// (`grid[i] = row`, `p.items = arr`, `cap = arr`)
@@ -1859,6 +1880,16 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// borrow-aware taint as the others; box reclamation only
 			// (elements keep their own rc, freed where they're owned).
 			elig[v.Name] = true
+		case ast.StringType:
+			// A fresh owned heap string (concat / slice result —
+			// rhsTainted whitelists exactly those, since both COPY into a
+			// new headered buffer) frees at its last reference via
+			// __fern_str_dec. wasm32 only (ptrW==4 — __fern_str_dec is
+			// wasm-only); aliases / views / literals are tainted above and
+			// skipped.
+			if b.ptrW == 4 {
+				elig[v.Name] = true
+			}
 		}
 	}
 	return elig
@@ -1890,8 +1921,22 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return false
 	case *ast.Ident:
 		return tainted[x.Name]
-	case *ast.FieldAccess, *ast.Index, *ast.SliceExpr:
+	case *ast.FieldAccess, *ast.Index:
 		return true
+	case *ast.SliceExpr:
+		// A STRING slice copies its bytes into a fresh owned heap buffer
+		// (the wasm runtime always allocates), so it's reclaimable — not
+		// a view. Array / other slices share the source buffer → tainted.
+		if _, ok := b.exprType(x).(ast.StringType); ok {
+			return false
+		}
+		return true
+	case *ast.Binary:
+		// String concat (`a + b`) copies both operands into a fresh owned
+		// heap buffer regardless of operand provenance, so the result is
+		// always reclaimable. Non-concat binaries are scalar (never an
+		// rc-tracked local's RHS), so their value here is moot.
+		return !x.IsStringConcat
 	case *ast.Call:
 		// Map builtins return the MAP HANDLE, which aliases only the
 		// receiver (cow) — never the stored key/value args. The generic
@@ -1945,6 +1990,12 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
 			return true
 		}
+		// Strings are deliberately excluded: the v1 string-reclamation
+		// slice has no two-word alias-inc, so it does NOT use
+		// move-on-return / move-on-alias (which assume an inc/dec cancel).
+		// Instead, aliased / returned strings are escape-tainted (skipped,
+		// leaked) by computeFreeEligible — only fresh, locally-consumed
+		// concat/slice results are freed.
 		return false
 	}
 	return false
@@ -2161,6 +2212,27 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		// Two-word string reclamation (wasm). A string local occupies one
+		// IR logical slot that OpLoadLocal fans into (data, len); the
+		// catch-all rc_dec below would consume only one of the two values
+		// (corrupting the stack) and dec a two-word value as a single
+		// pointer, so strings MUST return here, never fall through. An
+		// ELIGIBLE string (a fresh owned concat/slice result — rhsTainted
+		// whitelists exactly those, both of which COPY into a new headered
+		// buffer) frees via __fern_str_dec (inline no-op / rc==1 box_free /
+		// else dec). Ineligible strings (aliases / views / literals,
+		// tainted) are SKIPPED entirely — never touched, so a view string
+		// can never be misread/freed.
+		if _, isStr := t.(ast.StringType); isStr {
+			// Gated on wasm32 (ptrW==4) — __fern_str_dec is wasm-only;
+			// the arm64 two-word override has no such helper.
+			if ast.RcFreeEnabled && eligible && b.ptrW == 4 {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes (data, len)
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop}) // drop the returned data ptr
+			}
 			return
 		}
 		// Tuple reclamation: an OWNED tuple local drops its pointer-shaped
@@ -2540,6 +2612,14 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// on wasm). All pointer-shaped; rc_inc/dec are safe.
 		if _, isFunc := t.(*ast.FuncType); isFunc {
 			return true
+		}
+		// wasm32 strings: a heap string carries an rc header (the producer
+		// prereq), and the emitDec string branch reclaims owned ones via
+		// __fern_str_dec. Gated strictly on wasm (ptrW==4) — natives,
+		// INCLUDING the arm64 two-word-string override, have no
+		// __fern_str_dec runtime helper.
+		if _, isStr := t.(ast.StringType); isStr {
+			return b.ptrW == 4
 		}
 		// Tuple values are always pointer-shaped headered boxes
 		// (TupleLit lowering); rc_inc/dec + box_free apply.
@@ -3462,6 +3542,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		if _, isTuple := t.(ast.TupleType); isTuple {
 			return true
 		}
+		// Two-word string locals: zero both slots so a never-initialised
+		// string local's exit dec sees (data=0, len=0) — __fern_str_dec
+		// null-guards data=0. wasm32 only (ptrW==4), matching the dec
+		// sweep's string gate.
+		if _, isStr := t.(ast.StringType); isStr {
+			return b.ptrW == 4
+		}
 		return false
 	}
 	for _, v := range info.Locals[fn] {
@@ -3475,6 +3562,11 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		slot, ok := b.locals[v.Name]
 		if !ok {
 			continue
+		}
+		// A two-word string slot consumes two operand values (data, len);
+		// push two zeros so OpStoreLocal balances.
+		if _, isStr := v.Type.(ast.StringType); isStr {
+			b.emit(Op{Kind: OpConstI32, I32: 0})
 		}
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})

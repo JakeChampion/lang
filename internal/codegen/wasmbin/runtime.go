@@ -100,6 +100,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// the synthetic helper. The trigger here uses
 				// the same alias so the helper actually exists.
 				switch callDirectAlias(op.Str) {
+				case "__fern_str_dec":
+					// Two-word string-local reclamation (emitDec
+					// string branch). Frees the heap buffer at the
+					// last reference; pulls in box_free (→ __free)
+					// and rc_dec.
+					needs.add("__free")
+					needs.add("__fern_box_free")
+					needs.add("__fern_rc_dec")
+					needs.add("__fern_str_dec")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -882,6 +891,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildClosureDropBody,
+	},
+	"__fern_str_dec": {
+		// (data, len) → data. Two-word string reclamation: inline
+		// strings (len top bit) are no-ops; heap strings free at rc==1
+		// (box_free, size at data-4) else dec. See buildStrDecBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrDecBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1851,6 +1868,65 @@ func buildClosureDropBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// else rc != 1 → rc_dec(f); its result is the return value
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcDec)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrDecBody — (data, len) → data. Two-word string reclamation: at
+// the owning local's last reference, free the heap buffer if uniquely
+// owned, else dec. Inline-form strings (len's top bit set) hold their
+// bytes in (data, len) — no heap, nothing to free → return immediately.
+// For heap form the logic mirrors __fern_closure_drop on `data`: null /
+// low-address / static-sentinel guarded, rc==1 → __fern_box_free(data,
+// size@data-4) (the rc1 header stashed the payload size), else
+// __fern_rc_dec. Static literals carry the 0x80000000 sentinel (their
+// rc read short-circuits in the helpers); the conservative IR wiring
+// only ever hands this fresh owned heap strings anyway.
+func buildStrDecBody(helperIdxs map[string]uint32) []byte {
+	boxFree := helperIdxs["__fern_box_free"]
+	rcDec := helperIdxs["__fern_rc_dec"]
+	var body []byte
+	// Inline form: if (len & 0x80000000) != 0 → return data (no heap).
+	body = inst.InstLocalGet(body, 1) // len
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// null guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// low-address guard → return data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0x10000)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// rc = mem[data-8]; if rc == 1 → box_free(data, mem[data-4]); return
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // rc
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0) // data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // size at data-4
+	body = inst.InstCall(body, boxFree)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// else rc != 1 (incl. sentinel) → rc_dec(data); result is the return.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, rcDec)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
