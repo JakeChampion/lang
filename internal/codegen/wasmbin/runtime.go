@@ -489,6 +489,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 						needs.add("__free")
 						needs.add("__fern_alloc")
 					}
+				case "__fern_drop_arr_str":
+					// string[] drop: walks two-word elements calling
+					// __fern_str_dec, then frees the buffer (flag-on).
+					needs.add("__fern_drop_arr_str")
+					needs.add("__fern_rc_dec")
+					needs.add("__fern_str_dec")
+					if ast.RcFreeEnabled {
+						needs.add("__free")
+						needs.add("__fern_alloc")
+					}
 				case "__fern_rc_is_unique":
 					needs.add("__fern_rc_is_unique")
 				case "__fern_rc_underflow_count":
@@ -997,6 +1007,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildDropArrPtrBody,
+	},
+	"__fern_drop_arr_str": {
+		// (ptr, stride) → ptr. Drop handler for string[] (two-word
+		// elements, stride=8 on wasm32). On the last reference (rc==1)
+		// __fern_str_dec's each (data, len) element, then frees the
+		// buffer (flag-on) / dec's. See buildDropArrStrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildDropArrStrBody,
 	},
 	"__fern_rc_is_unique": {
 		// (ptr) → i32. Phase 3 struct-drop helper: 1 iff ptr is a
@@ -2940,6 +2959,154 @@ func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
 	}
 	// Dec the array itself; __fern_rc_dec returns the ptr, which
 	// becomes this helper's return value.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcdec)
+	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildDropArrStrBody — (ptr, stride) → ptr. Drop handler for a
+// string[] whose two-word elements (stride=8 on wasm32) each need
+// __fern_str_dec. Mirrors buildDropArrPtrBody but the per-element walk
+// loads (data, len) and reclaims via __fern_str_dec instead of the
+// single-word __fern_rc_dec. On the last reference (rc==1) it frees each
+// element string then the buffer; otherwise it dec's the array box.
+// Same null / low-address / sentinel guards. Returns the input ptr.
+//
+// Locals: 0=ptr, 1=stride (params); 2=len, 3=i; (+4=headerBytes, 5=cap
+// when RcFreeEnabled).
+func buildDropArrStrBody(helperIdxs map[string]uint32) []byte {
+	rcdec := helperIdxs["__fern_rc_dec"]
+	strdec := helperIdxs["__fern_str_dec"]
+	var body []byte
+	// NULL guard.
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Low-address guard.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Static-sentinel guard (high rc bit set → never recurse).
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Only the last reference (rc==1) reclaims the elements.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// len = mem[ptr-4]
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 2)
+		// i = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// if i >= len: break
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 2)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstBrIf(body, 1)
+			// __fern_str_dec(mem[ptr+i*stride], mem[ptr+i*stride+4]); drop
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0) // data
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 4) // len (offset +4)
+			body = inst.InstCall(body, strdec)
+			body = inst.InstDrop(body)
+			// i = i + 1; continue
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 3)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+	}
+	body = inst.InstEnd(body) // if rc==1
+	nLocals := uint32(2)
+	if ast.RcFreeEnabled {
+		nLocals = 4 // + headerBytes (4), cap (5) below
+		free := helperIdxs["__free"]
+		// rc == 1 → free the buffer; else dec the array box.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// headerBytes = max(16, stride) → local 4
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 16)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstI32Const(body, 16)
+			body = numeric.InstI32GeS(body)
+			body = inst.InstSelect(body)
+			body = inst.InstLocalSet(body, 4)
+			// cap = mem[ptr-12] → local 5
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstI32Const(body, 12)
+			body = numeric.InstI32Sub(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, 5)
+			// __free(base = ptr - headerBytes, size = headerBytes + cap*stride)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, free)
+		}
+		body = inst.InstElse(body)
+		{
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstCall(body, rcdec)
+			body = inst.InstDrop(body)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 0)
+		locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+	// Flag-off: just dec the array box.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, rcdec)
 	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
