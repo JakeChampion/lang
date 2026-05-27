@@ -370,8 +370,16 @@ planned order:
     Some(_) on error, mirroring `__fern_read_file`'s Err shape).
     Verified x86 by a write→read round-trip through the self-host
     (`self_host_write_file_test.go`); arm64 mirror is CI-gated.
+  - ✅ `env(name): Option[string]` — emitted on both backends.
+    `_start` saves `envp` (the vector past argv's NULL terminator) into
+    `__fern_envp`; `__fern_env` walks it for a `NAME=` key and returns
+    `Some(value)` (a string box pointing straight at the immortal envp
+    bytes — no copy) or `None`. Gated on `needs_heap` (the helper
+    allocates, and any `env()` caller marks the heap). Verified by a
+    set/unset round-trip (`self_host_env_test.go`); arm64 mirror is
+    CI-gated.
   - ⬜ remaining OS syscalls: `read_dir` / `stat` / `temp_dir` /
-    `remove_dir_all` / `env`.
+    `remove_dir_all`.
   - ✅ time: `now_unix_ms` / `monotonic_ns` — emitted on both backends
     via `clock_gettime` (x86 syscall 228, arm64 113;
     `__fern_now_unix_ms` REALTIME→ms, `__fern_monotonic_ns` MONOTONIC
