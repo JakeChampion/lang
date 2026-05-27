@@ -163,7 +163,7 @@ func (c *Closure) String() string {
 	return "<closure>"
 }
 
-func (n Number) String() string  { return fmt.Sprintf("%d", int64(n)) }
+func (n Number) String() string { return fmt.Sprintf("%d", int64(n)) }
 func (f Float) String() string {
 	if f.Width == 32 {
 		return strconv.FormatFloat(float64(float32(f.V)), 'g', -1, 32)
@@ -176,8 +176,8 @@ func (b Bool) String() string {
 	}
 	return "false"
 }
-func (s String) String() string  { return string(s) }
-func (Void) String() string      { return "" }
+func (s String) String() string { return string(s) }
+func (Void) String() string     { return "" }
 func (a Array) String() string {
 	var b strings.Builder
 	b.WriteByte('[')
@@ -190,8 +190,8 @@ func (a Array) String() string {
 	b.WriteByte(']')
 	return b.String()
 }
-func (f Func) String() string    { return "function " + f.Decl.Name }
-func (Builtin) String() string   { return "<builtin>" }
+func (f Func) String() string  { return "function " + f.Decl.Name }
+func (Builtin) String() string { return "<builtin>" }
 func (s *Struct) String() string {
 	var b strings.Builder
 	b.WriteString(s.TypeName)
@@ -313,7 +313,7 @@ func New() *Interp {
 		Exiter:    os.Exit,
 		openFiles: map[int64]*os.File{},
 		nextFd:    100,
-		Global:   newEnv(nil),
+		Global:    newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}

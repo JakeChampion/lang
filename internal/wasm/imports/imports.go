@@ -3,7 +3,8 @@
 // section composers for the WebAssembly Core 1.0 binary format.
 //
 // Spec: https://webassembly.github.io/spec/core/binary/modules.html#import-section
-//       https://webassembly.github.io/spec/core/binary/modules.html#global-section
+//
+//	https://webassembly.github.io/spec/core/binary/modules.html#global-section
 //
 // The two outliers from the main sections package: imports
 // have a four-way descriptor union and globals carry an init

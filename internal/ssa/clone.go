@@ -76,7 +76,7 @@ func (f *Func) Clone() *Func {
 
 		// Terminator — rewrite pointer fields.
 		dst.Term = Terminator{
-			Kind:  src.Term.Kind,
+			Kind:   src.Term.Kind,
 			Cond:   src.Term.Cond,
 			Value:  src.Term.Value,
 			Value2: src.Term.Value2,

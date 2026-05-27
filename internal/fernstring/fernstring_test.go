@@ -60,9 +60,9 @@ func TestPackUnpackInlineWasmRoundTrip(t *testing.T) {
 // FitsInline* recognises in-cap lengths, rejects over-cap.
 func TestFitsInline(t *testing.T) {
 	cases := []struct {
-		n           int
-		fitsNative  bool
-		fitsWasm    bool
+		n          int
+		fitsNative bool
+		fitsWasm   bool
 	}{
 		{0, true, true},
 		{7, true, true},

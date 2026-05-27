@@ -590,13 +590,13 @@ func isRuntimeHelperName(name string) bool {
 
 // rewriteAll walks the module's AST applying two related rewrites:
 //
-//   1. `selfPrefix` is prepended to every top-level Func / Struct
-//      name and to every internal reference to one (call site,
-//      function-value reference, struct literal type name). For
-//      the entry module selfPrefix is empty so this is a no-op.
-//   2. `mod.fn(args)` and `mod.fn` (where `mod` is one of this
-//      module's imports) get rewritten to direct references to
-//      the imported module's mangled names.
+//  1. `selfPrefix` is prepended to every top-level Func / Struct
+//     name and to every internal reference to one (call site,
+//     function-value reference, struct literal type name). For
+//     the entry module selfPrefix is empty so this is a no-op.
+//  2. `mod.fn(args)` and `mod.fn` (where `mod` is one of this
+//     module's imports) get rewritten to direct references to
+//     the imported module's mangled names.
 //
 // Both rewrites happen in one walk so the mangled output is
 // consistent for the rest of the pipeline.

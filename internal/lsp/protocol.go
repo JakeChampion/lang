@@ -55,7 +55,7 @@ type Diagnostic struct {
 	Range    Range  `json:"range"`
 	Severity int    `json:"severity,omitempty"` // 1 = Error, 2 = Warning, 3 = Info, 4 = Hint
 	Source   string `json:"source,omitempty"`
-	Code     string `json:"code,omitempty"`     // stable error code (e.g. "E001") — see internal/diag/explanations/
+	Code     string `json:"code,omitempty"` // stable error code (e.g. "E001") — see internal/diag/explanations/
 	Message  string `json:"message"`
 }
 
@@ -91,17 +91,17 @@ type serverInfo struct {
 }
 
 type serverCapabilities struct {
-	TextDocumentSync       int                    `json:"textDocumentSync"`
-	HoverProvider          bool                   `json:"hoverProvider,omitempty"`
-	DefinitionProvider     bool                   `json:"definitionProvider,omitempty"`
-	CompletionProvider     *completionOptions     `json:"completionProvider,omitempty"`
-	SignatureHelpProvider  *signatureHelpOptions  `json:"signatureHelpProvider,omitempty"`
-	InlayHintProvider      bool                   `json:"inlayHintProvider,omitempty"`
-	DocumentSymbolProvider bool                   `json:"documentSymbolProvider,omitempty"`
-	SemanticTokensProvider *semanticTokensOptions `json:"semanticTokensProvider,omitempty"`
-	ReferencesProvider         bool `json:"referencesProvider,omitempty"`
-	RenameProvider             bool `json:"renameProvider,omitempty"`
-	DocumentFormattingProvider bool `json:"documentFormattingProvider,omitempty"`
+	TextDocumentSync           int                    `json:"textDocumentSync"`
+	HoverProvider              bool                   `json:"hoverProvider,omitempty"`
+	DefinitionProvider         bool                   `json:"definitionProvider,omitempty"`
+	CompletionProvider         *completionOptions     `json:"completionProvider,omitempty"`
+	SignatureHelpProvider      *signatureHelpOptions  `json:"signatureHelpProvider,omitempty"`
+	InlayHintProvider          bool                   `json:"inlayHintProvider,omitempty"`
+	DocumentSymbolProvider     bool                   `json:"documentSymbolProvider,omitempty"`
+	SemanticTokensProvider     *semanticTokensOptions `json:"semanticTokensProvider,omitempty"`
+	ReferencesProvider         bool                   `json:"referencesProvider,omitempty"`
+	RenameProvider             bool                   `json:"renameProvider,omitempty"`
+	DocumentFormattingProvider bool                   `json:"documentFormattingProvider,omitempty"`
 }
 
 // semanticTokensOptions advertises the legend the client uses to

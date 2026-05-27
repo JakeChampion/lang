@@ -1103,9 +1103,9 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // `assignable` permits the silent type-level hop.
 //
 // Held together by 3 relaxations:
-//   1. pointer-shape → usize / usize → pointer-shape
-//   2. usize ↔ any concrete int (for `var X: i32 = __alloc(...)`)
-//   3. enum-arg-pairwise assignable (for `Option[V]` ↔ `Option[usize]`)
+//  1. pointer-shape → usize / usize → pointer-shape
+//  2. usize ↔ any concrete int (for `var X: i32 = __alloc(...)`)
+//  3. enum-arg-pairwise assignable (for `Option[V]` ↔ `Option[usize]`)
 func TestUsizePreludeHelperSignaturesAcceptPointerArgs(t *testing.T) {
 	for _, src := range []string{
 		// String passed straight to a usize-typed param.

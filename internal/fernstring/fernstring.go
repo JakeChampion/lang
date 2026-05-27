@@ -186,4 +186,3 @@ func UnpackInlineWasm(data, length uint32) []byte {
 	}
 	return out
 }
-

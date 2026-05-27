@@ -35,9 +35,9 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 	// includes that node somewhere in the AST. The skip
 	// reason is documented inline when applicable.
 	cases := []struct {
-		node string  // AST type the case exercises
-		src  string  // minimal program
-		skip string  // non-empty = expected to be unsupported
+		node string // AST type the case exercises
+		src  string // minimal program
+		skip string // non-empty = expected to be unsupported
 	}{
 		// Expressions.
 		{node: "NumberLit", src: `function main(): i32 { return 42; }`},
@@ -128,9 +128,9 @@ function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.y; }`},
     n = 7;
     return n;
 }`,
-			// Defer doesn't affect the returned value in Lang
-			// (semantics: return value is evaluated before defers
-			// run) — body just exists to exercise the AST node.
+		// Defer doesn't affect the returned value in Lang
+		// (semantics: return value is evaluated before defers
+		// run) — body just exists to exercise the AST node.
 		},
 		{node: "Arena", src: `function main(): i32 { arena { var n: i32 = 7; return n; } return 0; }`},
 		{node: "Var", src: `function main(): i32 { var x: i32 = 7; return x; }`},

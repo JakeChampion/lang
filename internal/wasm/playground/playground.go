@@ -6,8 +6,8 @@
 // It mirrors the two component-producing CLI targets in
 // cmd/fern/main.go:
 //
-//   world "wasm"      → a wasi:cli/run component (runnable as-is)
-//   world "wasi-http" → a wasi:http/incoming-handler@0.2.0 component
+//	world "wasm"      → a wasi:cli/run component (runnable as-is)
+//	world "wasi-http" → a wasi:http/incoming-handler@0.2.0 component
 //
 // The compose logic intentionally tracks cmd/fern's
 // buildPreview2Component / the wasi-http branch; if the

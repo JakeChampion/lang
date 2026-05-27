@@ -28,19 +28,20 @@
 //
 // Frame layout per function (mirroring arm64):
 //
-//   push rbp                    ; save caller's frame pointer
-//   mov  rbp, rsp               ; rbp = saved-pair top
-//   sub  rsp, <localsSize>      ; reserve locals
-//   mov  [rbp-8],  rdi          ; spill register args
-//   mov  [rbp-16], rsi          ; ...
-//   ...
+//	push rbp                    ; save caller's frame pointer
+//	mov  rbp, rsp               ; rbp = saved-pair top
+//	sub  rsp, <localsSize>      ; reserve locals
+//	mov  [rbp-8],  rdi          ; spill register args
+//	mov  [rbp-16], rsi          ; ...
+//	...
 //
 // Local slot `i` lives at `[rbp - 8*(i+1)]` — 8 bytes per slot,
 // same encoding shape as arm64's `[x29, #-(i+1)*8]`.
 //
 // Syscalls: see Linux x86-64 asm-generic table —
-//   read=0  write=1  close=3  mmap=9  socket=41  accept=43
-//   bind=49 listen=50 exit_group=231
+//
+//	read=0  write=1  close=3  mmap=9  socket=41  accept=43
+//	bind=49 listen=50 exit_group=231
 package x86_64
 
 import (
@@ -66,8 +67,8 @@ const (
 	sysAccept    = 43
 	sysBind      = 49
 	sysListen    = 50
-	sysExitGroup    = 231
-	sysGetrandom    = 318
+	sysExitGroup = 231
+	sysGetrandom = 318
 	// clock_gettime(2): x86-64 syscall 228.
 	// Used by `__fern_now_unix_ms` for the wall-clock-now
 	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
@@ -394,7 +395,7 @@ type generator struct {
 	// &ts)` syscall (#228). Returns
 	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
 	// Backs `time.instant_now()` on x86_64 Linux.
-	usesNowUnixMs bool
+	usesNowUnixMs       bool
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
@@ -431,7 +432,7 @@ type generator struct {
 	// returns instead of allocating a fresh length-only block.
 	// Mirrors the .LStr_Empty pattern for the array seam.
 	usesArrEmpty bool
-	usesStdin           bool
+	usesStdin    bool
 	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
 	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
 	// the lang Map runtime uses for its mixed bucket-index +
@@ -711,12 +712,12 @@ func (g *generator) emitStartRuntime() {
 	}
 	if g.usesEnv {
 		g.emit("mov rax, [rsp]")             // argc
-		g.emit("lea rdi, [rsp + 8]")          // rdi = &argv[0]
-		g.emit("lea rdi, [rdi + rax*8 + 8]")  // skip argv + NULL terminator
+		g.emit("lea rdi, [rsp + 8]")         // rdi = &argv[0]
+		g.emit("lea rdi, [rdi + rax*8 + 8]") // skip argv + NULL terminator
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit("call main")
-	g.emit("mov edi, eax")            // exit code = main's return value
+	g.emit("mov edi, eax") // exit code = main's return value
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall")
 }
@@ -886,9 +887,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// function-side ABI is now register-pair — callers
 		// (OpCallDirectPair) consume `(rax, rdx)` directly,
 		// no heap-box round trip.
-		g.pop()             // payload → rax
+		g.pop() // payload → rax
 		g.emit("mov rdx, rax")
-		g.pop()             // tag → rax
+		g.pop() // tag → rax
 		g.emit(fmt.Sprintf("jmp %s", retLabel))
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// Native fallback — same heap-box shape as emitEnumNew.
@@ -1642,8 +1643,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		argc := int(op.I32)
 		g.emit("mov r10, [rsp]") // r10 = pair pointer (caller-save scratch)
 		g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
-		g.emit("mov r11, [r10]")        // r11 = fn_ptr (= [pair + 0])
-		g.emit("mov rax, [r10 + 8]")   // rax = env_ptr (= [pair + 8])
+		g.emit("mov r11, [r10]")     // r11 = fn_ptr (= [pair + 0])
+		g.emit("mov rax, [r10 + 8]") // rax = env_ptr (= [pair + 8])
 		// Push env_ptr onto the operand stack so the args-load
 		// helper picks it up in the (argc+1)th register slot.
 		g.emit(fmt.Sprintf("sub rsp, %d", slotBytes))
@@ -1805,7 +1806,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
 		g.emit("mov rax, r10")
-		g.push()               // push payload
+		g.push() // push payload
 
 	default:
 		return fmt.Errorf("x86_64: unsupported IR op %s", op.Kind)
@@ -1828,13 +1829,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 // SysV `(rax, rdx)` return-register pair without ever
 // materialising a heap box.
 func (g *generator) emitPairFormMaker(width int, tag int) {
-	_ = width // payload width handled by the in-register move below
-	g.pop()                                     // payload → rax
-	g.emit("mov rcx, rax")                      // save payload
+	_ = width              // payload width handled by the in-register move below
+	g.pop()                // payload → rax
+	g.emit("mov rcx, rax") // save payload
 	g.emit(fmt.Sprintf("mov rax, %d", tag))
-	g.push()                                    // push tag
-	g.emit("mov rax, rcx")                      // restore payload
-	g.push()                                    // push payload
+	g.push()               // push tag
+	g.emit("mov rax, rcx") // restore payload
+	g.push()               // push payload
 }
 
 func (g *generator) binPop() {
@@ -2296,7 +2297,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	g.emit("mov rcx, [rsp]") // env_ptr from the operand-stack save
 	g.emit("mov [rax + 8], rcx")
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes)) // drop env_ptr save
-	g.push() // pair ptr
+	g.push()                                      // pair ptr
 	return nil
 }
 
@@ -2655,9 +2656,9 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("mov rdx, [rcx + rax*8]") // head
 		g.emit("test rdx, rdx")
 		g.emit("jz .Lalloc_bump")
-		g.emit("mov r8, [rdx]")          // head.next
-		g.emit("mov [rcx + rax*8], r8")  // heads[idx] = next
-		g.emit("mov rax, rdx")           // return reused block
+		g.emit("mov r8, [rdx]")         // head.next
+		g.emit("mov [rcx + rax*8], r8") // heads[idx] = next
+		g.emit("mov rax, rdx")          // return reused block
 		g.emit("pop r13")
 		g.emit("pop r12")
 		g.emit("pop rbx")
@@ -2910,8 +2911,8 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.label("__fern_box_free")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // save caller rbx; holds data across the __fern_free call
-	g.emit("push r12") // 16-byte alignment padding for the call
+	g.emit("push rbx")     // save caller rbx; holds data across the __fern_free call
+	g.emit("push r12")     // 16-byte alignment padding for the call
 	g.emit("mov rax, rdi") // default return = data
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lboxfree_ret")
@@ -3021,10 +3022,10 @@ func (g *generator) emitMemcpyRuntime() {
 	g.line(".globl __fern_memcpy")
 	g.line(".type __fern_memcpy, @function")
 	g.label("__fern_memcpy")
-	g.emit("mov rax, rdi")  // save dst for return
-	g.emit("mov rcx, rdx")  // count → rcx for `rep movsb`
-	g.emit("cld")            // direction-flag = forward
-	g.emit("rep movsb")     // [rdi++] = [rsi++], rcx times
+	g.emit("mov rax, rdi") // save dst for return
+	g.emit("mov rcx, rdx") // count → rcx for `rep movsb`
+	g.emit("cld")          // direction-flag = forward
+	g.emit("rep movsb")    // [rdi++] = [rsi++], rcx times
 	g.emit("ret")
 	g.line(".size __fern_memcpy, .-__fern_memcpy")
 }
@@ -3179,7 +3180,7 @@ func (g *generator) emitAllocRc1Runtime() {
 	g.emit("add edi, 8") // size + rc header
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("sub rsp, 16")            // scratch slot (keeps 16-alignment)
+	g.emit("sub rsp, 16")                  // scratch slot (keeps 16-alignment)
 	g.emit("mov dword ptr [rbp - 8], edi") // save size+8 across the call
 	g.emit("call __fern_alloc")
 	g.emit("mov edi, dword ptr [rbp - 8]") // restore size+8
@@ -3231,8 +3232,8 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("push r13")
 	g.emit("push r14")
 	g.emit("push r15")
-	g.emit("sub rsp, 8") // pad to 16-byte alignment
-	g.emit("mov rbx, rdi") // rbx = arr
+	g.emit("sub rsp, 8")    // pad to 16-byte alignment
+	g.emit("mov rbx, rdi")  // rbx = arr
 	g.emit("mov r12d, esi") // r12d = oldLen
 	g.emit("mov r13d, edx") // r13d = stride
 	g.emit("mov r14d, esi")
@@ -3250,8 +3251,8 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("jle .Lpush_hdr_set")
 	g.emit("mov ecx, r13d")
 	g.label(".Lpush_hdr_set")
-	g.emit("push rcx")    // stash headerBytes (rsp now off by 8 again)
-	g.emit("sub rsp, 8")  // re-pad to 16 alignment (24 + 8 = 32, /16 = aligned)
+	g.emit("push rcx")   // stash headerBytes (rsp now off by 8 again)
+	g.emit("sub rsp, 8") // re-pad to 16 alignment (24 + 8 = 32, /16 = aligned)
 	// allocSize = headerBytes + newCap * stride. eax scratch.
 	g.emit("mov eax, r15d")
 	g.emit("imul eax, r13d")
@@ -3322,7 +3323,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("push r13")
 	g.emit("push r14")
 	g.emit("push r15")
-	g.emit("sub rsp, 8") // pad to 16-byte align
+	g.emit("sub rsp, 8")                     // pad to 16-byte align
 	g.emit("mov rbx, rdi")                   // rbx = arr
 	g.emit("mov r12d, esi")                  // r12d = stride
 	g.emit("mov r13d, dword ptr [rdi - 4]")  // r13d = len
@@ -3703,12 +3704,12 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
-	g.emit("sub rsp, 16") // 8 bytes scratch for emitStrDataPtr + 8 alignment
-	g.emit("mov r12, rdi")        // r12 = original string value (saved for return)
+	g.emit("sub rsp, 16")  // 8 bytes scratch for emitStrDataPtr + 8 alignment
+	g.emit("mov r12, rdi") // r12 = original string value (saved for return)
 	// write(1, s, len(s))
-	g.emitStrLen("edx", "rdi")    // length
+	g.emitStrLen("edx", "rdi") // length
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
-	g.emit("mov edi, 1")          // fd = stdout
+	g.emit("mov edi, 1") // fd = stdout
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
 	// write(1, "\n", 1)
@@ -3717,7 +3718,7 @@ func (g *generator) emitPutsRuntime() {
 	g.emit("mov edi, 1")
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
-	g.emit("mov rax, r12")        // return the original string value (heap or inline)
+	g.emit("mov rax, r12") // return the original string value (heap or inline)
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
 	g.emit("pop rbp")
@@ -3738,13 +3739,13 @@ func (g *generator) emitWriteRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("sub rsp, 16")
-	g.emit("mov [rbp - 8], rdi")  // save original
-	g.emitStrLen("edx", "rdi")    // length
+	g.emit("mov [rbp - 8], rdi") // save original
+	g.emitStrLen("edx", "rdi")   // length
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
-	g.emit("mov edi, 1")          // fd = stdout
+	g.emit("mov edi, 1") // fd = stdout
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
-	g.emit("mov rax, [rbp - 8]")  // return original
+	g.emit("mov rax, [rbp - 8]") // return original
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -3762,11 +3763,11 @@ func (g *generator) emitEprintRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push r12")
-	g.emit("sub rsp, 16") // 8 bytes scratch for emitStrDataPtr + 8 alignment
-	g.emit("mov r12, rdi")        // r12 = original string value (preserved for return)
+	g.emit("sub rsp, 16")  // 8 bytes scratch for emitStrDataPtr + 8 alignment
+	g.emit("mov r12, rdi") // r12 = original string value (preserved for return)
 	g.emitStrLen("edx", "rdi")
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
-	g.emit("mov edi, 2")          // fd = stderr
+	g.emit("mov edi, 2") // fd = stderr
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
 	g.emit("lea rsi, [rip + .LLangNewline]")
@@ -3785,13 +3786,13 @@ func (g *generator) emitEprintRuntime() {
 // emitStrBufRuntime emits the three global mutable-string-builder
 // helpers and the BSS scratch they share.
 //
-//   __fern_strbuf_data: .skip 64 MiB
-//   __fern_strbuf_len:  .quad 0 (current byte count)
+//	__fern_strbuf_data: .skip 64 MiB
+//	__fern_strbuf_len:  .quad 0 (current byte count)
 //
-//   __fern_strbuf_reset()       — len = 0
-//   __fern_strbuf_append(s)     — memcpy s past current tail, bump len
-//   __fern_strbuf_take() -> str — allocate fresh string of accumulated
-//                                 bytes, copy, reset len, return it
+//	__fern_strbuf_reset()       — len = 0
+//	__fern_strbuf_append(s)     — memcpy s past current tail, bump len
+//	__fern_strbuf_take() -> str — allocate fresh string of accumulated
+//	                              bytes, copy, reset len, return it
 //
 // Built for the asm self-host backend's emit_module — the
 // `s = s.out + text` per write pattern allocates O(N²) bytes
@@ -3835,7 +3836,7 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("push r12")
 	g.emit("sub rsp, 16") // 8 spill for inline data + 8 align
 	g.emit("mov r12, rdi")
-	g.emitStrLen("ebx", "r12")             // ebx = src len
+	g.emitStrLen("ebx", "r12")                   // ebx = src len
 	g.emitStrDataPtr("r12", "r12", "[rbp - 32]") // r12 = src data ptr
 	// dst = strbuf_data + strbuf_len
 	g.emit("mov rcx, qword ptr [rip + __fern_strbuf_len]")
@@ -3867,8 +3868,8 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("push r12")
-	g.emit("sub rsp, 8")                                       // align
-	g.emit("mov r12, qword ptr [rip + __fern_strbuf_len]")     // r12 = current len
+	g.emit("sub rsp, 8")                                   // align
+	g.emit("mov r12, qword ptr [rip + __fern_strbuf_len]") // r12 = current len
 	// alloc len + 5 bytes
 	g.emit("lea rdi, [r12 + 5]")
 	g.emit("call __fern_alloc")
@@ -3933,18 +3934,18 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.label("__fern_now_unix_ms")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("sub rsp, 24") // 16 timespec + 8 alignment
+	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
 	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
 	g.emit("mov rsi, rsp") // &timespec
 	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
 	g.emit("syscall")
-	g.emit("mov r10, [rsp]")        // r10 = tv_sec
-	g.emit("imul r10, r10, 1000")   // sec * 1000
-	g.emit("xor edx, edx")          // clear high for div
-	g.emit("mov rax, [rsp + 8]")    // rax = tv_nsec (positive)
+	g.emit("mov r10, [rsp]")      // r10 = tv_sec
+	g.emit("imul r10, r10, 1000") // sec * 1000
+	g.emit("xor edx, edx")        // clear high for div
+	g.emit("mov rax, [rsp + 8]")  // rax = tv_nsec (positive)
 	g.emit("mov rcx, 1000000")
-	g.emit("div rcx")               // rax = nsec / 1e6
-	g.emit("add rax, r10")          // result
+	g.emit("div rcx")      // rax = nsec / 1e6
+	g.emit("add rax, r10") // result
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -3960,11 +3961,11 @@ func (g *generator) emitPutcharRuntime() {
 	g.label("__fern_putchar")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("sub rsp, 16")        // 1 byte slot + alignment
-	g.emit("mov [rsp], dil")     // byte value
-	g.emit("mov edi, 1")         // fd = stdout
-	g.emit("mov rsi, rsp")       // buf = &slot
-	g.emit("mov edx, 1")         // count = 1
+	g.emit("sub rsp, 16")    // 1 byte slot + alignment
+	g.emit("mov [rsp], dil") // byte value
+	g.emit("mov edi, 1")     // fd = stdout
+	g.emit("mov rsi, rsp")   // buf = &slot
+	g.emit("mov edx, 1")     // count = 1
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
 	g.emit("add rsp, 16")
@@ -3989,10 +3990,10 @@ func (g *generator) emitTcpListenRuntime() {
 	g.label("__fern_tcp_listen")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // callee-save scratch
-	g.emit("push r12") // callee-save: port
-	g.emit("sub rsp, 16") // sockaddr_in (16 bytes) — also keeps rsp 16-aligned for the syscall
-	g.emit("mov r12d, edi")  // r12 = port
+	g.emit("push rbx")      // callee-save scratch
+	g.emit("push r12")      // callee-save: port
+	g.emit("sub rsp, 16")   // sockaddr_in (16 bytes) — also keeps rsp 16-aligned for the syscall
+	g.emit("mov r12d, edi") // r12 = port
 	// socket(AF_INET=2, SOCK_STREAM=1, 0)
 	g.emit("mov edi, 2")
 	g.emit("mov esi, 1")
@@ -4009,7 +4010,7 @@ func (g *generator) emitTcpListenRuntime() {
 	//   sin_zero=0 (8 bytes)
 	g.emit("mov word ptr [rsp], 2")
 	g.emit("mov eax, r12d")
-	g.emit("xchg al, ah")         // htons low 16
+	g.emit("xchg al, ah") // htons low 16
 	g.emit("mov word ptr [rsp+2], ax")
 	g.emit("mov dword ptr [rsp+4], 0")
 	g.emit("mov qword ptr [rsp+8], 0")
@@ -4070,12 +4071,12 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.label("__fern_tcp_recv")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // max
-	g.emit("push r13") // data ptr
-	g.emit("sub rsp, 8") // align
-	g.emit("mov ebx, edi")    // rbx = fd
-	g.emit("mov r12d, esi")   // r12 = max
+	g.emit("push rbx")      // fd
+	g.emit("push r12")      // max
+	g.emit("push r13")      // data ptr
+	g.emit("sub rsp, 8")    // align
+	g.emit("mov ebx, edi")  // rbx = fd
+	g.emit("mov r12d, esi") // r12 = max
 	// Allocate max + 5 bytes (4 prefix + max data + 1 NUL).
 	g.emit("lea edi, [r12 + 5]")
 	g.emit("call __fern_alloc")
@@ -4091,7 +4092,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("jns .Ltcp_recv_ok")
 	g.emit("xor eax, eax")
 	g.label(".Ltcp_recv_ok")
-	g.emitStrLenStore("eax", "r13") // length prefix
+	g.emitStrLenStore("eax", "r13")       // length prefix
 	g.emit("mov byte ptr [r13 + rax], 0") // trailing NUL
 	g.emit("mov rax, r13")
 	g.emit("add rsp, 8")
@@ -4120,7 +4121,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("sub rsp, 16")
-	g.emitStrLen("edx", "rsi")                 // length from data
+	g.emitStrLen("edx", "rsi")                  // length from data
 	g.emitStrDataPtr("rsi", "rsi", "[rbp - 8]") // byte pointer for syscall
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("syscall")
@@ -4156,13 +4157,13 @@ func (g *generator) emitEnvRuntime() {
 	g.label("__fern_env")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // envp cursor
-	g.emit("push r12") // name byte ptr (materialised, see below)
-	g.emit("push r13") // name length
-	g.emit("push r14") // value data ptr (post-strcat)
-	g.emit("push r15") // value length
-	g.emit("sub rsp, 24") // 8 bytes scratch for emitStrDataPtr + 16 padding
-	g.emitStrLen("r13d", "rdi")              // r13 = name length (rdi = caller's value)
+	g.emit("push rbx")                           // envp cursor
+	g.emit("push r12")                           // name byte ptr (materialised, see below)
+	g.emit("push r13")                           // name length
+	g.emit("push r14")                           // value data ptr (post-strcat)
+	g.emit("push r15")                           // value length
+	g.emit("sub rsp, 24")                        // 8 bytes scratch for emitStrDataPtr + 16 padding
+	g.emitStrLen("r13d", "rdi")                  // r13 = name length (rdi = caller's value)
 	g.emitStrDataPtr("r12", "rdi", "[rbp - 48]") // r12 = name byte pointer
 	g.emit("mov rbx, [rip + __fern_envp]")
 	g.label(".Lenv_loop")
@@ -4234,7 +4235,7 @@ func (g *generator) emitEnvRuntime() {
 // `__fern_args_cache` so repeat calls are O(1). Same shape
 // arm64 uses (PR #267 ptr-width-stride layout):
 //
-//   [pad:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
+//	[pad:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
 //
 // data ptr = base + 8 (8-aligned). length prefix at
 // `data - 4`. Element stride 8 bytes, one full pointer per
@@ -4246,11 +4247,11 @@ func (g *generator) emitArgsRuntime() {
 	g.label("__fern_args")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")  // argc
-	g.emit("push r12")  // argv (char**)
-	g.emit("push r13")  // i (loop)
-	g.emit("push r14")  // result data ptr
-	g.emit("push r15")  // current argv[i] / strlen
+	g.emit("push rbx")   // argc
+	g.emit("push r12")   // argv (char**)
+	g.emit("push r13")   // i (loop)
+	g.emit("push r14")   // result data ptr
+	g.emit("push r15")   // current argv[i] / strlen
 	g.emit("sub rsp, 8") // align
 	// Fast path: cached?
 	g.emit("mov rax, [rip + __fern_args_cache]")
@@ -4265,14 +4266,14 @@ func (g *generator) emitArgsRuntime() {
 	// (Phase 2-prep layout).
 	g.emit("lea rdi, [rbx * 8 + 16]")
 	g.emit("call __fern_alloc")
-	g.emit("lea r14, [rax + 16]")  // r14 = data ptr (16-aligned)
+	g.emit("lea r14, [rax + 16]")           // r14 = data ptr (16-aligned)
 	g.emit("mov dword ptr [r14 - 12], ebx") // cap = argc (Phase 2-prep)
 	g.emit("mov dword ptr [r14 - 8], 1")    // rc = 1
 	// Outer string[] container length via the array seam (the
 	// per-element string stores in the loop below use
 	// emitStrLenStore).
 	g.emitArrayLenStore("ebx", "r14")
-	g.emit("xor r13d, r13d")       // i = 0
+	g.emit("xor r13d, r13d") // i = 0
 	g.label(".Largs_loop")
 	g.emit("cmp r13, rbx")
 	g.emit("jge .Largs_done")
@@ -4288,7 +4289,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("jmp .Largs_strlen")
 	g.label(".Largs_strlen_done")
 	// rcx = strlen. alloc(strlen + 5).
-	g.emit("mov rdx, rcx")          // save strlen (r15 is C ptr; need it for memcpy)
+	g.emit("mov rdx, rcx") // save strlen (r15 is C ptr; need it for memcpy)
 	g.emit("lea edi, [rcx + 5]")
 	g.emit("push rdx")
 	g.emit("call __fern_alloc")
@@ -4296,7 +4297,7 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("edx", "rdi") // length prefix
 	// memcpy(data, argv[i], strlen + 1) — include NUL.
-	g.emit("mov rsi, r15")           // src = argv[i]
+	g.emit("mov rsi, r15") // src = argv[i]
 	g.emit("lea rdx, [rdx + 1]")
 	g.emit("push rax")
 	g.emit("call __fern_memcpy")
@@ -4334,14 +4335,14 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.label("__fern_random_bytes")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")  // n
-	g.emit("push r12")  // data ptr
-	g.emit("mov ebx, edi")  // rbx = n
+	g.emit("push rbx")     // n
+	g.emit("push r12")     // data ptr
+	g.emit("mov ebx, edi") // rbx = n
 	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
 	g.emit("lea edi, [rbx + 5]")
 	g.emit("call __fern_alloc")
-	g.emit("lea r12, [rax + 4]")     // r12 = data ptr
-	g.emitStrLenStore("ebx", "r12")  // length prefix
+	g.emit("lea r12, [rax + 4]")    // r12 = data ptr
+	g.emitStrLenStore("ebx", "r12") // length prefix
 	// getrandom(buf=r12, n=rbx, flags=0)
 	g.emit("mov rdi, r12")
 	g.emit("mov rsi, rbx")
@@ -4382,12 +4383,12 @@ func (g *generator) emitReadLineRuntime() {
 	g.label("__fern_read_line")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")  // buf base
-	g.emit("push r12")  // bytes-read counter
-	g.emit("push r13")  // stash (str ptr across alloc, etc.)
+	g.emit("push rbx") // buf base
+	g.emit("push r12") // bytes-read counter
+	g.emit("push r13") // stash (str ptr across alloc, etc.)
 	g.emit("sub rsp, 8")
 	g.emit("lea rbx, [rip + __fern_read_line_buf]")
-	g.emit("xor r12d, r12d")  // bytes read = 0
+	g.emit("xor r12d, r12d") // bytes read = 0
 	g.label(".Lrl_loop")
 	g.emit("cmp r12, 4096")
 	g.emit("jge .Lrl_done")
@@ -4404,7 +4405,7 @@ func (g *generator) emitReadLineRuntime() {
 	// access via [rbx + r12].
 	g.emit("mov al, [rbx + r12]")
 	g.emit("inc r12")
-	g.emit("cmp al, 10")  // '\n'
+	g.emit("cmp al, 10") // '\n'
 	g.emit("je .Lrl_done")
 	g.emit("jmp .Lrl_loop")
 	g.label(".Lrl_done")
@@ -4413,7 +4414,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("jnz .Lrl_some")
 	g.emit("mov edi, 4")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 1")  // tag = 1 (None)
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
 	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
@@ -4431,8 +4432,8 @@ func (g *generator) emitReadLineRuntime() {
 	// Build Option[string]: 16 bytes [tag=0, pad, ptr@+8].
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 0")  // tag = 0 (Some)
-	g.emit("mov [rax + 8], r13")       // payload at +8 (8-byte slot)
+	g.emit("mov dword ptr [rax], 0") // tag = 0 (Some)
+	g.emit("mov [rax + 8], r13")     // payload at +8 (8-byte slot)
 	g.label(".Lrl_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop r13")
@@ -4494,7 +4495,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
-	g.emit("mov ebx, edi")     // rbx = n
+	g.emit("mov ebx, edi") // rbx = n
 	// Short-circuit on n == 0: return the shared static empty-
 	// array sentinel rather than allocating a fresh header-only
 	// buffer.
@@ -4506,7 +4507,7 @@ func (g *generator) emitAllocU8Runtime() {
 	g.label(".Lallocu8_alloc")
 	g.emit("lea edi, [rbx + 16]")
 	g.emit("call __fern_alloc")
-	g.emit("lea rax, [rax + 16]") // rax = data ptr (past 16-byte header)
+	g.emit("lea rax, [rax + 16]")           // rax = data ptr (past 16-byte header)
 	g.emit("mov dword ptr [rax - 12], ebx") // cap = n (Phase 2-prep)
 	g.emit("mov dword ptr [rax - 8], 1")    // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("ebx", "rax")
@@ -4560,15 +4561,15 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.label(".Lsfb_heap")
 	g.emit("lea edi, [r12 + 4]")
 	g.emit("call __fern_alloc")
-	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
+	g.emit("lea rdi, [rax + 4]")     // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r12d", "rdi") // length prefix
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
-	g.emit("push rdi")            // save data ptr across memcpy
-	g.emit("sub rsp, 8")          // align
+	g.emit("push rdi")   // save data ptr across memcpy
+	g.emit("sub rsp, 8") // align
 	g.emit("call __fern_memcpy")
 	g.emit("add rsp, 8")
-	g.emit("pop rax")             // rax = data ptr (return value)
+	g.emit("pop rax") // rax = data ptr (return value)
 	g.label(".Lsfb_ret")
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
@@ -4596,10 +4597,10 @@ func (g *generator) emitStrSliceRuntime() {
 	// 16 bytes scratch: [rbp - 40] for emitStrDataPtr(base) and
 	// [rbp - 48] for the inline output buffer.
 	g.emit("sub rsp, 16")
-	g.emit("mov rbx, rdi")        // base (possibly inline-tagged)
-	g.emit("mov r12, rsi")        // low
-	g.emit("mov r13, rdx")        // high
-	g.emitStrLen("r14d", "rbx")   // src_len
+	g.emit("mov rbx, rdi")      // base (possibly inline-tagged)
+	g.emit("mov r12, rsi")      // low
+	g.emit("mov r13, rdx")      // high
+	g.emitStrLen("r14d", "rbx") // src_len
 	// Bounds checks: low < 0 OR high > src_len OR low > high → trap.
 	g.emit("test r12, r12")
 	g.emit("js .Lstrslice_trap")
@@ -4644,15 +4645,15 @@ func (g *generator) emitStrSliceRuntime() {
 	// --- Heap output path ---
 	g.emit("lea edi, [r14 + 4]")
 	g.emit("call __fern_alloc")
-	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
+	g.emit("lea rdi, [rax + 4]")     // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r14d", "rdi") // length prefix
-	g.emit("lea rsi, [rbx + r12]") // src = base_byte_ptr + low
+	g.emit("lea rsi, [rbx + r12]")   // src = base_byte_ptr + low
 	g.emit("mov rdx, r14")
-	g.emit("push rdi")              // save data ptr
+	g.emit("push rdi")   // save data ptr
 	g.emit("sub rsp, 8") // align
 	g.emit("call __fern_memcpy")
 	g.emit("add rsp, 8")
-	g.emit("pop rax")               // rax = data ptr
+	g.emit("pop rax") // rax = data ptr
 	g.label(".Lstrslice_ret")
 	g.emit("add rsp, 16")
 	g.emit("pop r14")
@@ -4754,9 +4755,9 @@ func (g *generator) emitMemsetRuntime() {
 	g.line(".globl __memset")
 	g.line(".type __memset, @function")
 	g.label("__memset")
-	g.emit("movzx ecx, sil")          // ecx = byte (zero-extended)
+	g.emit("movzx ecx, sil") // ecx = byte (zero-extended)
 	g.emit("mov rax, 0x0101010101010101")
-	g.emit("imul rax, rcx")           // rax = byte replicated 8x
+	g.emit("imul rax, rcx") // rax = byte replicated 8x
 	g.label(".Lmset_word")
 	g.emit("cmp rdx, 8")
 	g.emit("jb .Lmset_tail")
@@ -4803,9 +4804,9 @@ func (g *generator) emitIoErrorRuntime() {
 	g.label("__fern_io_error")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")  // callee-save
-	g.emit("push r12")  // callee-save
-	g.emit("sub rsp, 8") // 16-byte align
+	g.emit("push rbx")     // callee-save
+	g.emit("push r12")     // callee-save
+	g.emit("sub rsp, 8")   // 16-byte align
 	g.emit("mov ebx, edi") // ebx = errno
 	g.emit("mov r12, rsi") // r12 = path
 
@@ -4897,7 +4898,7 @@ func (g *generator) emitReadFileRuntime() {
 	// at [rbp - 48] + 16 bytes padding. Keeps rsp 16-aligned
 	// at all call sites below.
 	g.emit("sub rsp, 168")
-	g.emit("mov [rbp - 56], rdi") // save original path string value for the err path
+	g.emit("mov [rbp - 56], rdi")                // save original path string value for the err path
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr for openat
 
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
@@ -4938,7 +4939,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("syscall")
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
-	g.emit("jz .Lrf_done")  // EOF (file shrunk between fstat and read)
+	g.emit("jz .Lrf_done") // EOF (file shrunk between fstat and read)
 	g.emit("add r15, rax")
 	g.emit("jmp .Lrf_loop")
 
@@ -5005,14 +5006,14 @@ func (g *generator) emitWriteFileRuntime() {
 	g.label("__fern_write_file")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // path byte ptr (materialised)
-	g.emit("push r12") // content byte ptr (materialised)
-	g.emit("push r13") // fd
-	g.emit("push r14") // content_len
-	g.emit("push r15") // bytes_written
-	g.emit("sub rsp, 24") // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
-	g.emit("mov [rbp - 64], rdi") // save original path string value for __fern_io_error
-	g.emitStrLen("r14d", "rsi") // content_len (from caller's rsi before materialise)
+	g.emit("push rbx")                           // path byte ptr (materialised)
+	g.emit("push r12")                           // content byte ptr (materialised)
+	g.emit("push r13")                           // fd
+	g.emit("push r14")                           // content_len
+	g.emit("push r15")                           // bytes_written
+	g.emit("sub rsp, 24")                        // 16 bytes scratch (path + content emitStrDataPtr) + 8 for original path value.
+	g.emit("mov [rbp - 64], rdi")                // save original path string value for __fern_io_error
+	g.emitStrLen("r14d", "rsi")                  // content_len (from caller's rsi before materialise)
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 48]") // path byte ptr
 	g.emitStrDataPtr("r12", "rsi", "[rbp - 56]") // content byte ptr
 
@@ -5139,9 +5140,9 @@ func (g *generator) emitReaderWriterRuntime() {
 
 	// open_reader / open_writer / open_appender.
 	for _, e := range []struct {
-		sym       string
-		flags     int
-		mode      int
+		sym   string
+		flags int
+		mode  int
 	}{
 		{"__fern_open_reader", 0, 0},
 		{"__fern_open_writer", 577, 0644},
@@ -5153,8 +5154,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.label(e.sym)
 		g.emit("push rbp")
 		g.emit("mov rbp, rsp")
-		g.emit("push rbx") // path
-		g.emit("push r12") // handle / errno scratch
+		g.emit("push rbx")     // path
+		g.emit("push r12")     // handle / errno scratch
 		g.emit("mov rbx, rdi") // path
 		// openat(AT_FDCWD, path, flags, mode)
 		g.emit("mov edi, -100")
@@ -5176,10 +5177,10 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("jmp .Lorw_ret_" + e.sym)
 		g.label(".Lorw_err_" + e.sym)
 		g.emit("neg rax")
-		g.emit("mov edi, eax")    // errno
-		g.emit("mov rsi, rbx")    // path
+		g.emit("mov edi, eax") // errno
+		g.emit("mov rsi, rbx") // path
 		g.emit("call __fern_io_error")
-		g.emit("mov r12, rax")    // IoError ptr
+		g.emit("mov r12, rax") // IoError ptr
 		g.emit("mov edi, 16")
 		g.emit("call __fern_alloc_box")
 		g.emit("mov dword ptr [rax], 1") // Err
@@ -5199,10 +5200,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label("__fern_reader_read_line")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // buf base
-	g.emit("push r13") // bytes_read
-	g.emit("push r14") // last byte
+	g.emit("push rbx")       // fd
+	g.emit("push r12")       // buf base
+	g.emit("push r13")       // bytes_read
+	g.emit("push r14")       // last byte
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("lea r12, [rip + __fern_read_line_buf]")
 	g.emit("xor r13, r13")
@@ -5232,7 +5233,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label(".Lrrl_some")
 	g.emit("lea rdi, [r13 + 5]")
 	g.emit("call __fern_alloc")
-	g.emit("mov [rax], r13d") // length prefix
+	g.emit("mov [rax], r13d")    // length prefix
 	g.emit("lea r14, [rax + 4]") // data ptr
 	g.emit("mov rdi, r14")
 	g.emit("mov rsi, r12")
@@ -5240,7 +5241,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("call __fern_memcpy")
 	// trailing NUL
 	g.emit("mov byte ptr [r14 + r13], 0")
-	g.emit("mov rbx, r14")    // stash str ptr (rbx no longer needed for fd)
+	g.emit("mov rbx, r14") // stash str ptr (rbx no longer needed for fd)
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
@@ -5266,7 +5267,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r13") // base ptr
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, [rdi]") // fd
-	g.emit("mov r12, rsi")    // n
+	g.emit("mov r12, rsi")   // n
 	// alloc n + 4
 	g.emit("lea rdi, [r12 + 4]")
 	g.emit("call __fern_alloc")
@@ -5280,8 +5281,8 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
 	g.emit("mov [r13], eax")
-	g.emit("mov r12, rax") // r12 = bytes_read
-	g.emit("lea rbx, [r13 + 4]") // data ptr
+	g.emit("mov r12, rax")                // r12 = bytes_read
+	g.emit("lea rbx, [r13 + 4]")          // data ptr
 	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
@@ -5308,10 +5309,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label("__fern_writer_write")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // s data ptr
-	g.emit("push r13") // remaining bytes
-	g.emit("push r14") // bytes_written
+	g.emit("push rbx")       // fd
+	g.emit("push r12")       // s data ptr
+	g.emit("push r13")       // remaining bytes
+	g.emit("push r14")       // bytes_written
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")
 	g.emitStrLen("r13d", "r12") // len
@@ -5364,7 +5365,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov edi, [rdi]") // fd
-	g.emit("mov eax, 3") // close
+	g.emit("mov eax, 3")     // close
 	g.emit("syscall")
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")

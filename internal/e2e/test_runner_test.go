@@ -377,12 +377,12 @@ func TestRunnerFilesystemOpsExample(t *testing.T) {
 // run the test against it, and `finish()` calls
 // `remove_dir_all` on every registered path before the
 // process exits. We verify this end-to-end by:
-//   1. running an inline test program that creates a fresh
-//      temp dir, writes a file into it, registers the dir
-//      for cleanup, then runs an assertion against the file
-//   2. confirming exit=0 + the expected TAP output
-//   3. confirming the directory no longer exists on the host
-//      filesystem afterward (cleanup actually fired)
+//  1. running an inline test program that creates a fresh
+//     temp dir, writes a file into it, registers the dir
+//     for cleanup, then runs an assertion against the file
+//  2. confirming exit=0 + the expected TAP output
+//  3. confirming the directory no longer exists on the host
+//     filesystem afterward (cleanup actually fired)
 //
 // We don't pin the exact tempdir path — `os.MkdirTemp`
 // picks a random suffix — but we DO grep the test output
@@ -457,11 +457,11 @@ function main(): i32 {
 // e2e suite will adopt.
 //
 // We exercise both paths the example handles:
-//   1. With `$LANG_BIN` pointing at a fresh build of the
-//      compiler — every case runs and passes.
-//   2. With `$LANG_BIN` unset — the suite skips cleanly
-//      rather than failing, so dev laptops without an
-//      explicit env setup don't see false negatives.
+//  1. With `$LANG_BIN` pointing at a fresh build of the
+//     compiler — every case runs and passes.
+//  2. With `$LANG_BIN` unset — the suite skips cleanly
+//     rather than failing, so dev laptops without an
+//     explicit env setup don't see false negatives.
 func TestRunnerLangBinaryE2EExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern")

@@ -21,16 +21,16 @@ func InstI32Eqz(buf []byte) []byte    { return append(buf, 0x45) }
 
 // ---- i32 comparison ----
 
-func InstI32Eq(buf []byte) []byte   { return append(buf, 0x46) }
-func InstI32Ne(buf []byte) []byte   { return append(buf, 0x47) }
-func InstI32LtS(buf []byte) []byte  { return append(buf, 0x48) }
-func InstI32LtU(buf []byte) []byte  { return append(buf, 0x49) }
-func InstI32GtS(buf []byte) []byte  { return append(buf, 0x4a) }
-func InstI32GtU(buf []byte) []byte  { return append(buf, 0x4b) }
-func InstI32LeS(buf []byte) []byte  { return append(buf, 0x4c) }
-func InstI32LeU(buf []byte) []byte  { return append(buf, 0x4d) }
-func InstI32GeS(buf []byte) []byte  { return append(buf, 0x4e) }
-func InstI32GeU(buf []byte) []byte  { return append(buf, 0x4f) }
+func InstI32Eq(buf []byte) []byte  { return append(buf, 0x46) }
+func InstI32Ne(buf []byte) []byte  { return append(buf, 0x47) }
+func InstI32LtS(buf []byte) []byte { return append(buf, 0x48) }
+func InstI32LtU(buf []byte) []byte { return append(buf, 0x49) }
+func InstI32GtS(buf []byte) []byte { return append(buf, 0x4a) }
+func InstI32GtU(buf []byte) []byte { return append(buf, 0x4b) }
+func InstI32LeS(buf []byte) []byte { return append(buf, 0x4c) }
+func InstI32LeU(buf []byte) []byte { return append(buf, 0x4d) }
+func InstI32GeS(buf []byte) []byte { return append(buf, 0x4e) }
+func InstI32GeU(buf []byte) []byte { return append(buf, 0x4f) }
 
 // ---- i32 binary ----
 

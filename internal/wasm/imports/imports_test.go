@@ -71,8 +71,8 @@ func TestEncodeGlobalSection(t *testing.T) {
 		[]byte{encode.ValtypeI32}, []byte{imports.MutConst}, [][]byte{initExpr})
 	want := []byte{
 		0x06, 0x06, // id 6 (global), size 6
-		0x01,             // count
-		0x7f, 0x00,       // i32, mut const
+		0x01,       // count
+		0x7f, 0x00, // i32, mut const
 		0x41, 0x07, 0x0b, // i32.const 7; end
 	}
 	if !bytes.Equal(got, want) {

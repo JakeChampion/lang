@@ -33,8 +33,8 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/fernsmith"
+	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
@@ -81,11 +81,11 @@ func diffOracleArtifactDir() string {
 // normally), and the path to the asm artifact for later
 // inspection. Helpers below fill it out.
 type diagInfo struct {
-	out      string
-	code     int
-	signal   string // e.g. "SIGSEGV" — empty if exited normally
-	asmPath  string
-	binPath  string
+	out     string
+	code    int
+	signal  string // e.g. "SIGSEGV" — empty if exited normally
+	asmPath string
+	binPath string
 }
 
 // describeSignal turns a Go ExitError's WaitStatus into a
