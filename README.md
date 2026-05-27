@@ -11,8 +11,9 @@ in Go, built for fast-startup CLI tools and short-lived edge-function HTTP
 servers. Targets so far:
 
 - **ARM64 / aarch64** Linux ELF — the **default** target (Raspberry Pi 4+,
-  AWS Graviton, Android, qemu-aarch64); default cross-compiler is
-  `aarch64-linux-gnu-gcc`.
+  AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
+  by the pure-Go native backend — no external toolchain needed. Pass `-cc
+  aarch64-linux-gnu-gcc` to opt out to an external assembler/linker.
 - **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs via `clang`
   + `ld64` (or `lld` when cross-compiling from Linux).
 - **WebAssembly** — a WASI Preview 2 Component Model component, ready for
@@ -177,8 +178,9 @@ collapses to a single `const.i32 27 ; return` after the pipeline.
 
 ## Calling conventions
 
-**ARM64**: standard AAPCS64, libc-free — linked with `gcc -static -nostdlib`
-(Linux) or `clang -nostdlib` (Darwin), with our own `_start` that sets up
+**ARM64**: standard AAPCS64, libc-free — linked in-process by the native
+backend on Linux (or `gcc -static -nostdlib` via `-cc`; `clang -nostdlib`
+on Darwin), with our own `_start` that sets up
 argc/argv/envp and the bump heap before calling `main`. I/O bottoms out in
 direct syscalls. Heap-backed values come from `__fern_alloc`, a bump arena
 over a 64 MiB mmap region with no per-allocation header and no `free`; strings
