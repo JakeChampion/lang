@@ -68,7 +68,7 @@ const (
 	wasiRightFdSeek    int64 = 0x01
 	wasiRightFdWrite   int64 = 0x40
 	wasiRightPathOpen  int64 = 0x2000
-	wasiRightFdAllRead = wasiRightFdRead | wasiRightFdSeek | wasiRightPathOpen
+	wasiRightFdAllRead       = wasiRightFdRead | wasiRightFdSeek | wasiRightPathOpen
 )
 
 // WASI preview-1 `oflags` bits for path_open.
@@ -245,7 +245,10 @@ func buildBuildIoErrorBody(idxs map[string]uint32) []byte {
 //	14: $path_byte_len      decoded byte length of the path
 //	15: $i_path             str-normalize loop counter
 func buildReadFileBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// Reused for path_open scratch / str-normalize temps AND the file
+	// content string buffer → rc1 so the returned string reclaims
+	// (over-headering the temps is harmless carrier-side).
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	pathOpen := idxs["wasi_path_open"]
@@ -271,15 +274,15 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 	//                    oflags=0, fs_rights_base=RIGHT_FD_READ,
 	//                    fs_rights_inheriting=RIGHT_FD_READ,
 	//                    fdflags=0, retptr=scratch)
-	body = inst.InstI32Const(body, preopenDirfd)        // dirfd
-	body = inst.InstI32Const(body, 1)                   // dirflags (symlink_follow)
-	body = inst.InstLocalGet(body, 13)                  // path_buf
-	body = inst.InstLocalGet(body, 14)                  // path_byte_len
-	body = inst.InstI32Const(body, 0)                   // oflags
+	body = inst.InstI32Const(body, preopenDirfd)                    // dirfd
+	body = inst.InstI32Const(body, 1)                               // dirflags (symlink_follow)
+	body = inst.InstLocalGet(body, 13)                              // path_buf
+	body = inst.InstLocalGet(body, 14)                              // path_byte_len
+	body = inst.InstI32Const(body, 0)                               // oflags
 	body = inst.InstI64Const(body, wasiRightFdRead|wasiRightFdSeek) // fs_rights_base
 	body = inst.InstI64Const(body, wasiRightFdRead|wasiRightFdSeek) // fs_rights_inheriting
-	body = inst.InstI32Const(body, 0)                   // fdflags
-	body = inst.InstLocalGet(body, 2)                   // retptr → scratch[0..3]
+	body = inst.InstI32Const(body, 0)                               // fdflags
+	body = inst.InstLocalGet(body, 2)                               // retptr → scratch[0..3]
 	body = inst.InstCall(body, pathOpen)
 	body = inst.InstLocalTee(body, 3) // $errno
 
@@ -356,7 +359,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 4) // fd
 		body = inst.InstLocalGet(body, 2) // scratch
 		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body) // scratch+4 (iov_ptr)
+		body = numeric.InstI32Add(body)   // scratch+4 (iov_ptr)
 		body = inst.InstI32Const(body, 1) // iovs_count
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstI32Const(body, 12)
@@ -442,7 +445,7 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 12)
 	body = inst.InstI32Const(body, 12)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 7) // cur
+	body = inst.InstLocalGet(body, 7)      // cur
 	body = memory.InstI32Store(body, 2, 0) // len @ +12
 
 	body = inst.InstLocalGet(body, 12)
@@ -476,7 +479,9 @@ func buildReadFileBody(idxs map[string]uint32) []byte {
 // 11=chunk_ptr, 12=chunk_len, 13=box/tmp, 14=strnorm scratch,
 // 15=ioerr.
 func buildReadFileBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// Reused for acc/chunk scratch AND the file content string buffer →
+	// rc1 for reclamation (over-headering the temps is harmless).
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
 	getDirs := idxs["wasi_get_directories_p2"]
@@ -1993,7 +1998,10 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 //	9: $strbuf
 //	10: $result
 func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// Reused for the iov scratch AND the line accumulation buffer that
+	// becomes the returned Some(line) string data → rc1 so the string
+	// reclaims (scratch over-headering is harmless carrier-side).
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
@@ -2166,7 +2174,10 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 // Locals (after 1 param r): 1=retbuf(12), 2=handle, 3=buf,
 // 4=buf_size, 5=cur, 6=byte, 7=newbuf, 8=newsize, 9=strbuf, 10=box.
 func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// Reused for retbuf/buf scratch AND the strbuf that becomes the
+	// returned string data → rc1 for reclamation (over-headering the
+	// scratch is harmless carrier-side).
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 
