@@ -97,6 +97,33 @@ func SUBreg(rd, rn, rm uint32) uint32 {
 	return 0xCB000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// ADDregShift / SUBregShift encode the shifted-register forms
+// `add/sub Xd, Xn, Xm, <shift> #amount`. shiftType is 0=LSL, 1=LSR,
+// 2=ASR (bits 23:22); amount is the 6-bit shift count (bits 15:10). The
+// no-shift encoders above are the shiftType=0, amount=0 special case.
+// The backend emits `add Xd, Xn, Xm, lsl #N` to scale an array index by
+// the element size when computing an element address — dropping the
+// shift (as the plain ADDreg path did) corrupts every element past [0].
+func ADDregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0x8B000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SUBregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xCB000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ADDextReg / SUBextReg encode the extended-register forms
+// `add/sub Xd, Xn, Wm, <extend> {#amount}`. option is the 3-bit extend
+// selector (bits 15:13): UXTW=0b010 / SXTW=0b110 are the ones the
+// backend emits to widen a 32-bit array index to a 64-bit address;
+// amount is the 0..4 left-shift (bits 12:10). The form is marked by
+// bit 21.
+func ADDextReg(rd, rn, rm, option, amount uint32) uint32 {
+	return 0x8B200000 | ((rm & regMask) << 16) | ((option & 7) << 13) | ((amount & 7) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SUBextReg(rd, rn, rm, option, amount uint32) uint32 {
+	return 0xCB200000 | ((rm & regMask) << 16) | ((option & 7) << 13) | ((amount & 7) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // MOVreg encodes `mov Xd, Xm` — register-to-register move, which
 // AArch64 expresses as `orr Xd, XZR, Xm`.
 //
