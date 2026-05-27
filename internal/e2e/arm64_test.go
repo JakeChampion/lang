@@ -6084,29 +6084,31 @@ func TestArm64ByteClassifiers(t *testing.T) {
 // sort. Locks the prelude's first sort helper before the
 // generic `sort_by[T](arr, cmp)` infrastructure lands.
 func TestArm64SortI32(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/sort";
+function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
-    var asc: i32[] = sort_i32_asc(xs);
+    var asc: i32[] = sort.sort_i32_asc(xs);
     if (asc.len() != 9) { return 1; }
     if (asc[0] != 1) { return 2; }
     if (asc[1] != 1) { return 3; }
     if (asc[8] != 9) { return 4; }
     if (xs[0] != 3) { return 5; }  // input untouched
 
-    var desc: i32[] = sort_i32_desc(xs);
+    var desc: i32[] = sort.sort_i32_desc(xs);
     if (desc[0] != 9) { return 6; }
     if (desc[8] != 1) { return 7; }
 
     var empty: i32[] = [];
-    if ((sort_i32_asc(empty)).len() != 0) { return 8; }
+    if ((sort.sort_i32_asc(empty)).len() != 0) { return 8; }
 
     var one: i32[] = [42];
-    var one_sorted: i32[] = sort_i32_asc(one);
+    var one_sorted: i32[] = sort.sort_i32_asc(one);
     if (one_sorted.len() != 1) { return 9; }
     if (one_sorted[0] != 42) { return 10; }
 
     var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
-    var n_sorted: i32[] = sort_i32_asc(negs);
+    var n_sorted: i32[] = sort.sort_i32_asc(negs);
     if (n_sorted[0] != 0 - 5) { return 11; }
     if (n_sorted[4] != 3) { return 12; }
     return 0;
@@ -6277,7 +6279,10 @@ function main(): i32 {
 // array, not-found returns -1 from index_of and false from
 // contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+import "std/array";
+function main(): i32 {
     if (["alice", "bob", "ciri"].join(", ") != "alice, bob, ciri") { return 1; }
     if (["a", "b", "c"].join("") != "abc") { return 2; }
     var empty: string[] = [];
@@ -6323,14 +6328,17 @@ func TestArm64ArrayJoin(t *testing.T) {
 }
 
 func TestArm64Format(t *testing.T) {
-	src := `function main(): i32 {
-    if (format("hello {}, age {}", ["alice", "30"]) != "hello alice, age 30") { return 1; }
-    if (format("{}-{}-{}", ["a", "b", "c"]) != "a-b-c") { return 2; }
-    if (format("{} and {}", ["only"]) != "only and {}") { return 3; }
-    if (format("just {}", ["one", "two", "three"]) != "just one") { return 4; }
-    if (format("no holes here", ["unused"]) != "no holes here") { return 5; }
-    if (format("", ["x"]) != "") { return 6; }
-    if (format("count = {}", [(42).to_string()]) != "count = 42") { return 7; }
+	src := `import "core/no_prelude";
+import "std/format";
+import "std/i32";
+function main(): i32 {
+    if (format.format("hello {}, age {}", ["alice", "30"]) != "hello alice, age 30") { return 1; }
+    if (format.format("{}-{}-{}", ["a", "b", "c"]) != "a-b-c") { return 2; }
+    if (format.format("{} and {}", ["only"]) != "only and {}") { return 3; }
+    if (format.format("just {}", ["one", "two", "three"]) != "just one") { return 4; }
+    if (format.format("no holes here", ["unused"]) != "no holes here") { return 5; }
+    if (format.format("", ["x"]) != "") { return 6; }
+    if (format.format("count = {}", [(42).to_string()]) != "count = 42") { return 7; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
