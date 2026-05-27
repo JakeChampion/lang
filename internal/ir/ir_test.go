@@ -2096,3 +2096,54 @@ func TestLowerMapStringValueNoReclaimOnNative(t *testing.T) {
 		t.Errorf("native (ptrW=8) must not generate __drop_map_str_values:\n%s", p)
 	}
 }
+
+// TestLowerMapStringKeyReclaim verifies a Map[string, V] (wasm) reclaims
+// its string KEYS: the map local's drop routes through the generated
+// __drop_map_str_keys column walk, which __fern_str_dec's each boxed
+// (data, len) key buffer.
+func TestLowerMapStringKeyReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("foo" + "bar", 10);
+    return 0;
+}`, 4)
+	if !funcExists(p, "__drop_map_str_keys") {
+		t.Fatalf("expected generated __drop_map_str_keys:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_map_str_keys") {
+		t.Errorf("expected map local drop to route through __drop_map_str_keys:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_map_str_keys", "__fern_str_dec") {
+		t.Errorf("expected __drop_map_str_keys to reclaim each key via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerMapStringKeyAndValueReclaim verifies a Map[string, string]
+// (wasm) reclaims BOTH columns: independent key + value walks both run at
+// the map's drop.
+func TestLowerMapStringKeyAndValueReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, string] = map_new(8);
+    m = m.set("foo" + "bar", "baz" + "qux");
+    return 0;
+}`, 4)
+	if !callsDirect(p, "build", "__drop_map_str_keys") {
+		t.Errorf("expected key-column drop via __drop_map_str_keys:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_map_str_values") {
+		t.Errorf("expected value-column drop via __drop_map_str_values:\n%s", p)
+	}
+}
+
+// TestLowerMapStringKeyNoReclaimOnNative verifies map string-key
+// reclamation is wasm-only: ptrW=8 emits no __drop_map_str_keys.
+func TestLowerMapStringKeyNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("foo" + "bar", 10);
+    return 0;
+}`, 8)
+	if funcExists(p, "__drop_map_str_keys") {
+		t.Errorf("native (ptrW=8) must not generate __drop_map_str_keys:\n%s", p)
+	}
+}
