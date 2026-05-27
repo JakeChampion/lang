@@ -1191,6 +1191,44 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map.keys() / .values() snapshot a column into a fresh array.
+		// That array must use the standard 16-byte rc-array header
+		// (capacity@data-12, rc=1@data-8, length@data-4, data@base+16)
+		// — the i32 path (__map_column in core/map.fern) and the wide
+		// i64/u64/f64 path (emitWideMapKeys/Values) both built a
+		// length-only header, so the snapshot's scope-exit drop read
+		// heap metadata at data-8 as the rc and underflowed (even when
+		// consumed — the array drops at exit regardless). Exercises
+		// unused + consumed snapshots on the i32 (runtime-helper) and
+		// i64 (IR wide-builder) paths. Consumed i32 keys anchor the
+		// value: len 3 + (1+2+3) = 9 per iter; 500x → 4500.
+		name: "map_keys_values_header_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function mk(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 10);
+    m = m.set(2, 20);
+    m = m.set(3, 30);
+    var ks = m.keys();      // unused i32[] snapshot, dropped at exit
+    var vs = m.values();    // unused i32[] snapshot, dropped at exit
+    var wm: Map[i64, i64] = map_new(8);
+    wm = wm.set(5, 50);
+    wm = wm.set(6, 60);
+    var wks = wm.keys();    // unused i64[] (IR wide path), dropped at exit
+    var wvs = wm.values();  // unused i64[] (IR wide path), dropped at exit
+    var ks2 = m.keys();     // consumed snapshot anchors the value
+    return ks2.len() + ks2[0] + ks2[1] + ks2[2];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 4500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
