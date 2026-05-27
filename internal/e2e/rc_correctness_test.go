@@ -588,6 +588,30 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String CLOSURE CAPTURE reclamation (wasm). A closure captures a
+		// fresh string; MakeClosure retains it (__fern_str_inc) and the
+		// per-closure __closure_drop_<name> thunk dec's it (__fern_str_dec)
+		// when the closure's env frees at its last reference. The closure
+		// ESCAPES (returned from make_box), so the capture must survive
+		// until the returned closure is dropped by the caller. 200x churn;
+		// "ab"+"cd" = 4. 200*4=800.
+		name: "string_closure_capture_churn_free",
+		src: `function make_box(seed: i32): () => i32 {
+    var s: string = "ab" + "cd";
+    return function (): i32 { return s.len(); };
+}
+function mk(seed: i32): i32 {
+    var f: () => i32 = make_box(seed);
+    return f();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 800) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the

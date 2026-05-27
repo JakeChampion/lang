@@ -223,8 +223,16 @@ differential fuzz and `__rc_underflow_count` guard.
    frees it. Match bindings that extract the payload into an outliving
    local co-own correctly (verified by a churn corpus entry). Enums built
    from a borrowed local stay ineligible and leak (safe), as before.
-6. **String CLOSURE captures** — the closure drop thunk decs captured
-   strings.
+6. **String CLOSURE captures** — **DONE.** `hasRcCapture` now counts a
+   string capture (so the per-closure `__closure_drop_<name>` thunk is
+   generated), and the thunk dec's it via a two-word `WidthString` load +
+   `__fern_str_dec` (capture offsets already use the string-aware
+   `irCaptureSlotSize`). MakeClosure retains the alias-shaped capture via
+   the uniform `emitAliasInc`. The `thunkSafe` gate was widened to
+   strings: a string capture not inc'd at MakeEnv (e.g. a CaptureRef in a
+   nested closure) forces the generic env-only drop so the thunk never
+   over-releases it (the capture leaks then — safe). Verified for both
+   scope-local and escaping (returned) closures.
 7. **`Map[K, string]` VALUES** — generalize `mapValHasDrop` to a
    string-per-value drop in `__drop_map_via_*` + set/get retain +
    overwrite pre-drop.
