@@ -92,10 +92,15 @@ self-contained:
    rc-headered allocator (`__fern_alloc_rc1` exists; wasmbin's bare
    `__fern_alloc` paths switch to it), so `data-8` always holds a real
    rc. Length readers keep reading their existing offset.
-2. **Static-literal sentinel header**: `OpConstStr` emits interned
-   literals with a `0x80000000` rc-sentinel header (like enum
-   sentinels), so `__fern_rc_inc/dec` short-circuit on them rather than
-   relying on a fragile low-address guard.
+2. **Static-literal sentinel header** — **DONE (wasm).** `internString`
+   now prefixes every interned heap-form literal with an 8-byte
+   `0x80000000` rc-sentinel header (mirroring `internEnumSentinel`), so
+   `__fern_str_inc/dec` short-circuit on them. This was load-bearing:
+   literals intern at 1024+, ABOVE the low-address guard (1024), so the
+   guard alone never covered them — a container-stored or aliased
+   literal reaching the dec would have misread mid-data-segment bytes as
+   an rc. With the header, uniform string inc/dec is safe over literals,
+   unblocking the container-field reclamation slices.
 
 These are per-backend runtime/codegen changes (wasm + x86-64 + arm64),
 self-contained and shippable one backend at a time (reclamation can go
