@@ -89,6 +89,18 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tstr x0, [sp, #-16]!\n\tldr x0, [sp], #16\n\tstr x1, [x2, #8]!\n\tldr x3, [x4], #-8\n\tmov sp, x29\n\tmov x0, sp\n",
 		"signed_loads": "" +
 			"\tldrsb x0, [x1]\n\tldrsb w0, [x1, #1]\n\tldrsh x0, [x1, #2]\n\tldrsh w0, [x1, #2]\n\tldrsw x0, [x1, #4]\n",
+		"register_offset": "" +
+			"\tldr x3, [x2, x1, lsl #3]\n\tldr x0, [x1, x2]\n\tstr x3, [x2, x1, lsl #3]\n",
+		"cmn_imm": "" +
+			"\tcmn x0, #0\n\tcmn x1, #5\n\tcmn w2, #5\n",
+		"shift_imm_w": "" +
+			"\tlsl w1, w1, #31\n\tlsr w0, w1, #4\n\tasr w0, w1, #4\n\tlsl w2, w3, #1\n",
+		"ldst_indexed": "" +
+			"\tldrb w4, [x1], #1\n\tstrb w4, [x1], #1\n\tldrb w0, [x2, #1]!\n\tldrh w0, [x1], #2\n\tstrh w0, [x1, #2]!\n",
+		"pair_modes": "" +
+			"\tstp x19, x20, [sp, #16]\n\tldp x19, x20, [sp, #16]\n\tstp x29, x30, [sp]\n",
+		"mov_immediate": "" +
+			"\tmov x4, #-1\n\tmov x0, #-16\n\tmov x1, #-256\n\tmov w2, #-1\n\tmov x0, #65536\n",
 		"unscaled": "" +
 			"\tldur x0, [x1, #-8]\n\tstur x0, [x1, #-8]\n\tldur x2, [x3, #15]\n\tstur x4, [x5]\n\tldurb w0, [x1, #-1]\n\tsturb w0, [x1, #-1]\n",
 		"branch_regs": "" +

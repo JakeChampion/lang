@@ -127,7 +127,7 @@ func assembleInsn(a *Assembler, line string) error {
 	case "cset":
 		return asmCset(a, ops)
 	case "cmn":
-		return asm2Reg(a, ops, CMN)
+		return asmCmn(a, ops)
 	case "neg":
 		return asm2Reg(a, ops, NEG)
 	case "msub":
@@ -221,11 +221,8 @@ func asmMov(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
-		if imm < 0 || imm > 0xffff {
-			return fmt.Errorf("mov #%d out of movz range (use movz/movk)", imm)
-		}
-		a.Emit(clearSF(MOVZ(rd, uint16(imm), 0), is32(ops[0])))
-		return nil
+		w := is32(ops[0])
+		return emitMovImm(a, rd, uint64(imm), w, ops[1])
 	}
 	rm, err := parseReg(ops[1])
 	if err != nil {
@@ -239,6 +236,48 @@ func asmMov(a *Assembler, ops []string) error {
 	}
 	a.Emit(clearSF(MOVreg(rd, rm), is32(ops[0])))
 	return nil
+}
+
+// emitMovImm encodes `mov Rd, #v` as a single instruction, mirroring
+// the assembler's pseudo-op expansion: MOVZ when v is one 16-bit lane,
+// MOVN when ~v is, else ORR-bitmask. Errors when v needs a multi-
+// instruction movz/movk sequence (the backend uses `ldr =` for those).
+func emitMovImm(a *Assembler, rd uint32, v uint64, w bool, disp string) error {
+	if w {
+		v = uint64(uint32(v))
+	}
+	maxShift := uint32(48)
+	if w {
+		maxShift = 16
+	}
+	if c, sh, ok := singleLane(v, maxShift); ok {
+		a.Emit(clearSF(MOVZ(rd, c, sh), w))
+		return nil
+	}
+	inv := ^v
+	if w {
+		inv = uint64(^uint32(v))
+	}
+	if c, sh, ok := singleLane(inv, maxShift); ok {
+		a.Emit(clearSF(MOVN(rd, c, sh), w))
+		return nil
+	}
+	if insn, ok := ORRimm(rd, 31, v, !w); ok { // mov Rd,#v = orr Rd,xzr,#v
+		a.Emit(insn)
+		return nil
+	}
+	return fmt.Errorf("mov %s: immediate needs a movz/movk sequence (not supported yet)", disp)
+}
+
+// singleLane returns (imm16, shift, ok): ok when v has at most one
+// nonzero 16-bit lane, at a shift in {0,16,...,maxShift}.
+func singleLane(v uint64, maxShift uint32) (uint16, uint32, bool) {
+	for sh := uint32(0); sh <= maxShift; sh += 16 {
+		if v&^(uint64(0xffff)<<sh) == 0 {
+			return uint16(v >> sh), sh, true
+		}
+	}
+	return 0, 0, false
 }
 
 func asmMoveWide(a *Assembler, mnem string, ops []string) error {
@@ -472,21 +511,31 @@ func asmShift(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	if strings.HasPrefix(ops[2], "#") {
-		if is32(ops[0]) {
-			return fmt.Errorf("32-bit immediate shift not supported yet")
-		}
 		imm, err := parseImm(ops[2])
 		if err != nil {
 			return err
 		}
 		sh := uint32(imm)
+		w := is32(ops[0])
 		switch mnem {
 		case "lsl":
-			a.Emit(LSLimm(rd, rn, sh))
+			if w {
+				a.Emit(LSLimmW(rd, rn, sh))
+			} else {
+				a.Emit(LSLimm(rd, rn, sh))
+			}
 		case "lsr":
-			a.Emit(LSRimm(rd, rn, sh))
+			if w {
+				a.Emit(LSRimmW(rd, rn, sh))
+			} else {
+				a.Emit(LSRimm(rd, rn, sh))
+			}
 		case "asr":
-			a.Emit(ASRimm(rd, rn, sh))
+			if w {
+				a.Emit(ASRimmW(rd, rn, sh))
+			} else {
+				a.Emit(ASRimm(rd, rn, sh))
+			}
 		}
 		return nil
 	}
@@ -562,15 +611,27 @@ func asmExtend(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
-// asmLoadStore handles the single-register loads and stores. For ldr/
-// str it supports the unsigned scaled-offset form plus pre-index
-// (`[Xn, #o]!`) and post-index (`[Xn], #o`) writeback (signed imm9).
-// The narrow forms (ldrb/strb/ldrh/strh) stay unsigned-offset only.
+// loadStoreSize maps a mnemonic to its access size (0=byte, 1=half,
+// 3=doubleword) and load/store direction.
+var loadStoreSize = map[string]struct {
+	size uint32
+	load bool
+}{
+	"ldr": {3, true}, "str": {3, false},
+	"ldrb": {0, true}, "strb": {0, false},
+	"ldrh": {1, true}, "strh": {1, false},
+}
+
+// asmLoadStore handles the single-register loads and stores in every
+// addressing form: unsigned scaled offset, pre-index (`[Xn, #o]!`) and
+// post-index (`[Xn], #o`) writeback (signed imm9, all sizes), and the
+// register offset `[Xn, Xm{, lsl #3}]` (ldr/str only).
 func asmLoadStore(a *Assembler, mnem string, ops []string) error {
+	sz := loadStoreSize[mnem]
 	is64LdrStr := mnem == "ldr" || mnem == "str"
 
 	// Post-index: `<op> Rt, [Xn], #imm` (3 operands).
-	if is64LdrStr && len(ops) == 3 {
+	if len(ops) == 3 {
 		rt, err := parseReg(ops[0])
 		if err != nil {
 			return err
@@ -579,18 +640,14 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		if err != nil {
 			return err
 		}
-		if m.pre || m.off != 0 {
+		if m.pre || m.off != 0 || m.hasIndex {
 			return fmt.Errorf("%s post-index base must be plain [Xn]", mnem)
 		}
 		off, err := parseImm(ops[2])
 		if err != nil {
 			return err
 		}
-		if mnem == "ldr" {
-			a.Emit(LDRpost(rt, m.base, int32(off)))
-		} else {
-			a.Emit(STRpost(rt, m.base, int32(off)))
-		}
+		a.Emit(IdxLoadStore(rt, m.base, int32(off), sz.size, sz.load, false))
 		return nil
 	}
 
@@ -606,16 +663,31 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 
-	// Pre-index writeback: `<op> Rt, [Xn, #imm]!` (ldr/str only).
-	if m.pre {
+	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #3}]` (ldr/str, 64-bit).
+	if m.hasIndex {
 		if !is64LdrStr {
-			return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
+			return fmt.Errorf("%s register-offset addressing not supported yet", mnem)
+		}
+		var scaled bool
+		switch m.indexShift {
+		case 0:
+			scaled = false
+		case 3:
+			scaled = true
+		default:
+			return fmt.Errorf("%s register-offset shift must be lsl #0 or lsl #3", mnem)
 		}
 		if mnem == "ldr" {
-			a.Emit(LDRpre(rt, m.base, int32(m.off)))
+			a.Emit(LDRreg(rt, m.base, m.index, scaled))
 		} else {
-			a.Emit(STRpre(rt, m.base, int32(m.off)))
+			a.Emit(STRreg(rt, m.base, m.index, scaled))
 		}
+		return nil
+	}
+
+	// Pre-index writeback: `<op> Rt, [Xn, #imm]!` (all sizes).
+	if m.pre {
+		a.Emit(IdxLoadStore(rt, m.base, int32(m.off), sz.size, sz.load, true))
 		return nil
 	}
 
@@ -708,9 +780,9 @@ func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
-// asmPair handles the load/store-pair frame idiom in its pre-index
-// (`stp Rt, Rt2, [Xn, #imm]!`) and post-index (`ldp Rt, Rt2, [Xn], #imm`)
-// forms — the only pair forms the encoders cover.
+// asmPair handles stp/ldp in all three addressing modes: signed offset
+// (`[Xn, #imm]`), pre-index (`[Xn, #imm]!`), and post-index
+// (`[Xn], #imm`).
 func asmPair(a *Assembler, mnem string, ops []string) error {
 	if len(ops) < 3 {
 		return fmt.Errorf("%s expects two registers and a memory operand", mnem)
@@ -727,12 +799,13 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	load := mnem == "ldp"
 	var off int64
+	var mode uint32
 	switch {
-	case m.pre && len(ops) == 3:
-		off = m.off // [Xn, #imm]!
-	case !m.pre && len(ops) == 4:
-		// post-index: base is [Xn], displacement is the trailing operand.
+	case m.pre && len(ops) == 3: // [Xn, #imm]!
+		off, mode = m.off, PairPre
+	case !m.pre && len(ops) == 4: // [Xn], #imm
 		if m.off != 0 {
 			return fmt.Errorf("%s post-index base must be plain [Xn]", mnem)
 		}
@@ -740,21 +813,13 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 		if err != nil {
 			return err
 		}
-		off = v
+		off, mode = v, PairPost
+	case !m.pre && len(ops) == 3: // [Xn, #imm] or [Xn]
+		off, mode = m.off, PairOffset
 	default:
-		return fmt.Errorf("%s supports only pre-index ([Xn,#imm]!) or post-index ([Xn],#imm)", mnem)
+		return fmt.Errorf("%s: unsupported pair addressing", mnem)
 	}
-	if mnem == "stp" {
-		if !m.pre {
-			return fmt.Errorf("stp post-index not supported yet")
-		}
-		a.Emit(STPpre(rt, rt2, m.base, int32(off)))
-	} else {
-		if m.pre {
-			return fmt.Errorf("ldp pre-index not supported yet")
-		}
-		a.Emit(LDPpost(rt, rt2, m.base, int32(off)))
-	}
+	a.Emit(PairLoadStore(rt, rt2, m.base, int32(off), load, mode))
 	return nil
 }
 
@@ -992,6 +1057,32 @@ func asmFcvtToInt(a *Assembler, ops []string, encD, encS func(rd, rn uint32) uin
 	return nil
 }
 
+// asmCmn handles `cmn Xn, Xm` and `cmn Xn, #imm`.
+func asmCmn(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("cmn expects 2 operands")
+	}
+	rn, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	w := is32(ops[0])
+	if strings.HasPrefix(ops[1], "#") {
+		imm, err := parseImm(ops[1])
+		if err != nil {
+			return err
+		}
+		a.Emit(clearSF(CMNimm(rn, uint16(imm), false), w))
+		return nil
+	}
+	rm, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(clearSF(CMN(rn, rm), w))
+	return nil
+}
+
 func asmCmp(a *Assembler, ops []string) error {
 	if len(ops) < 2 {
 		return fmt.Errorf("cmp expects 2 operands")
@@ -1105,10 +1196,15 @@ type memOperand struct {
 	base uint32
 	off  int64
 	pre  bool // pre-index ("[Xn, #imm]!"): writeback before access
+
+	// Register-offset form ("[Xn, Xm{, lsl #s}]").
+	hasIndex   bool
+	index      uint32
+	indexShift uint32
 }
 
-// parseMem parses a bracketed memory operand. A trailing "!" marks
-// pre-index writeback. A missing offset means 0.
+// parseMem parses a bracketed memory operand: [Xn], [Xn, #imm],
+// [Xn, #imm]! (pre-index), or the register-offset [Xn, Xm{, lsl #s}].
 func parseMem(s string) (memOperand, error) {
 	s = strings.TrimSpace(s)
 	var m memOperand
@@ -1124,7 +1220,7 @@ func parseMem(s string) (memOperand, error) {
 		return m, fmt.Errorf("unterminated memory operand %q", s)
 	}
 	inner := splitOperands(strings.TrimPrefix(s, "["))
-	if len(inner) == 0 || len(inner) > 2 {
+	if len(inner) == 0 || len(inner) > 3 {
 		return m, fmt.Errorf("bad memory operand")
 	}
 	base, err := parseReg(inner[0])
@@ -1132,12 +1228,33 @@ func parseMem(s string) (memOperand, error) {
 		return m, err
 	}
 	m.base = base
-	if len(inner) == 2 {
+	if len(inner) == 1 {
+		return m, nil
+	}
+	// Second operand: an immediate offset or a register index.
+	if strings.HasPrefix(inner[1], "#") {
+		if len(inner) != 2 {
+			return m, fmt.Errorf("bad memory operand")
+		}
 		off, err := parseImm(inner[1])
 		if err != nil {
 			return m, err
 		}
 		m.off = off
+		return m, nil
+	}
+	idx, err := parseReg(inner[1])
+	if err != nil {
+		return m, err
+	}
+	m.hasIndex = true
+	m.index = idx
+	if len(inner) == 3 {
+		sh, err := parseShiftField(inner, 2, "lsl")
+		if err != nil {
+			return m, err
+		}
+		m.indexShift = sh
 	}
 	return m, nil
 }

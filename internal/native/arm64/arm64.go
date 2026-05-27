@@ -362,6 +362,27 @@ func STURB(rt, rn uint32, off int32) uint32 {
 // base back BEFORE the access (`[Xn, #off]!`); LDPpost updates it
 // AFTER (`[Xn], #off`).
 
+// Pair addressing modes for PairLoadStore (the 24:23 index field).
+const (
+	PairPost   uint32 = 1 // [Xn], #imm
+	PairOffset uint32 = 2 // [Xn, #imm]  (no writeback)
+	PairPre    uint32 = 3 // [Xn, #imm]!
+)
+
+// PairLoadStore encodes a 64-bit stp/ldp in any addressing mode.
+// byteOffset is a signed multiple of 8 (scaled to the 7-bit immediate).
+// Encoding: base 0xA8000000 | (load?0x00400000) | mode<<23 | imm7<<15 |
+// Rt2<<10 | Rn<<5 | Rt.
+func PairLoadStore(rt, rt2, rn uint32, byteOffset int32, load bool, mode uint32) uint32 {
+	base := uint32(0xA8000000)
+	if load {
+		base |= 0x00400000
+	}
+	base |= mode << 23
+	imm7 := uint32(byteOffset/8) & 0x7f
+	return base | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 // STPpre: `stp Xt, Xt2, [Xn, #byteOffset]!` (64-bit, pre-index).
 // Encoding: base 0xA9800000 | imm7<<15 | Rt2<<10 | Rn<<5 | Rt.
 func STPpre(rt, rt2, rn uint32, byteOffset int32) uint32 {
@@ -410,6 +431,23 @@ func ASRimm(rd, rn, shift uint32) uint32 {
 	return sbfmX(rd, rn, shift, 63)
 }
 
+// 32-bit (W) bitfield-move bases (sf=0, N=0): immr/imms in 0..31.
+func ubfmW(rd, rn, immr, imms uint32) uint32 {
+	return 0x53000000 | ((immr & 0x1f) << 16) | ((imms & 0x1f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func sbfmW(rd, rn, immr, imms uint32) uint32 {
+	return 0x13000000 | ((immr & 0x1f) << 16) | ((imms & 0x1f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// LSLimmW / LSRimmW / ASRimmW — 32-bit immediate shifts `<op> Wd, Wn,
+// #shift` (shift in 1..31).
+func LSLimmW(rd, rn, shift uint32) uint32 {
+	shift &= 0x1f
+	return ubfmW(rd, rn, (32-shift)&0x1f, 31-shift)
+}
+func LSRimmW(rd, rn, shift uint32) uint32 { shift &= 0x1f; return ubfmW(rd, rn, shift, 31) }
+func ASRimmW(rd, rn, shift uint32) uint32 { shift &= 0x1f; return sbfmW(rd, rn, shift, 31) }
+
 // SXTB / SXTH / SXTW encode `sxt<b|h|w> Xd, Wn` — sign-extend the low
 // 8 / 16 / 32 bits of Wn into the 64-bit Xd (SBFM aliases with immr=0).
 func SXTB(rd, rn uint32) uint32 { return sbfmX(rd, rn, 0, 7) }
@@ -441,6 +479,16 @@ func CSET(rd, cond uint32) uint32 {
 // Encoding: base 0xAB000000 | Rm<<16 | Rn<<5 | 31.
 func CMN(rn, rm uint32) uint32 {
 	return 0xAB000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | 31
+}
+
+// CMNimm encodes `cmn Xn, #imm12{, lsl #12}` — the ADDS XZR, Xn, #imm
+// alias (compare-negative against an immediate).
+func CMNimm(rn uint32, imm12 uint16, shift12 bool) uint32 {
+	var sh uint32
+	if shift12 {
+		sh = 1
+	}
+	return 0xB1000000 | (sh << 22) | ((uint32(imm12) & 0xfff) << 10) | ((rn & regMask) << 5) | 31
 }
 
 // NEG encodes `neg Xd, Xm` — negate (SUB Xd, XZR, Xm).
@@ -579,23 +627,49 @@ func ADRP(rd uint32, pageDelta int32) uint32 {
 	return 0x90000000 | (immlo << 29) | (immhi << 5) | (rd & regMask)
 }
 
+// ---- Register-offset loads/stores ----
+//
+// `ldr Xt, [Xn, Xm{, lsl #3}]` — address = Xn + (Xm << (3 if scaled)).
+// option is always LSL/UXTX (3); scaled sets the S bit (index scaled by
+// the 8-byte access size). The no-shift form passes scaled=false.
+
+func LDRreg(rt, rn, rm uint32, scaled bool) uint32 {
+	insn := uint32(0xF8600800) | (3 << 13) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
+	if scaled {
+		insn |= 1 << 12
+	}
+	return insn
+}
+
+func STRreg(rt, rn, rm uint32, scaled bool) uint32 {
+	insn := uint32(0xF8200800) | (3 << 13) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
+	if scaled {
+		insn |= 1 << 12
+	}
+	return insn
+}
+
 // ---- Single-register pre/post-indexed loads/stores ----
 //
 // The writeback forms used for stack pushes/pops: `str Xt, [Xn, #o]!`
 // (pre-index) and `ldr Xt, [Xn], #o` (post-index). Signed 9-bit
 // unscaled offset, like LDUR/STUR, but with the index/writeback bits.
 
-func STRpre(rt, rn uint32, off int32) uint32 {
-	return 0xF8000C00 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
-func STRpost(rt, rn uint32, off int32) uint32 {
-	return 0xF8000400 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
-func LDRpre(rt, rn uint32, off int32) uint32 {
-	return 0xF8400C00 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
-func LDRpost(rt, rn uint32, off int32) uint32 {
-	return 0xF8400400 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+// IdxLoadStore encodes a pre/post-indexed load or store across sizes.
+// size: 0=byte, 1=half, 2=word(w), 3=doubleword(x). load selects ldr
+// vs str; pre selects [Xn, #off]! (pre-index) vs [Xn], #off (post). off
+// is the signed 9-bit unscaled byte displacement.
+//
+// base = (size<<30) | 0x38000400 | (load?0x00400000) | (pre?0x800).
+func IdxLoadStore(rt, rn uint32, off int32, size uint32, load, pre bool) uint32 {
+	base := (size << 30) | 0x38000400
+	if load {
+		base |= 0x00400000
+	}
+	if pre {
+		base |= 0x800
+	}
+	return base | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
 // SVC encodes `svc #imm16` — supervisor call (syscall) trap.
