@@ -1993,6 +1993,7 @@ function near(actual: f32, expected: f32, eps: f32): boolean {
 // key for the bucket-collision dispatch path.
 func TestWASMMapStringKeysInlineSSO(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/map";
 import "core/int";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -6076,6 +6077,7 @@ function main(): i32 {
 // Pair without `=` records single-element empty-string array.
 func TestWASMQueryParse(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/map";
 import "std/url";
 function main(): i32 {
 		// Standard pairs — each unique key has a 1-element
@@ -6167,6 +6169,7 @@ function main(): i32 {
 // escape-encoding path for strings.
 func TestWASMJsonEncode(t *testing.T) {
 	src := `import "core/no_prelude";
+import "core/map";
 import "std/json";
 function main(): i32 {
 		// Primitives.
