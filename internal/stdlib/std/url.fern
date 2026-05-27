@@ -14,6 +14,8 @@
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
 
+import "core/map";
+
 function __url_unreserved(b: i32): boolean {
     if (b >= 65 && b <= 90)  { return true; }   // A-Z
     if (b >= 97 && b <= 122) { return true; }   // a-z

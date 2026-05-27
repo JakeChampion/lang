@@ -22,6 +22,37 @@ func TestEmptyFunction(t *testing.T) {
 	}
 }
 
+// A type-name keyword that's also a stdlib module basename
+// (`string`, `i32`, …) parses as a module qualifier in expression
+// position when followed by `.` — `string.repeat_char(...)`. Without
+// this, std/string's free functions are unreachable under no-prelude.
+func TestKeywordModuleQualifier(t *testing.T) {
+	prog, err := Parse(`function f(): string { return string.repeat_char(120, 4); }`)
+	if err != nil {
+		t.Fatalf("string.repeat_char should parse: %v", err)
+	}
+	call, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+	if !ok {
+		t.Fatalf("expected a Call, got %T", prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value)
+	}
+	fa, ok := call.Callee.(*ast.FieldAccess)
+	if !ok {
+		t.Fatalf("callee should be FieldAccess (qualified ref), got %T", call.Callee)
+	}
+	id, ok := fa.Target.(*ast.Ident)
+	if !ok || id.Name != "string" {
+		t.Errorf("qualifier should be Ident `string`, got %v", fa.Target)
+	}
+	if fa.Field != "repeat_char" {
+		t.Errorf("field should be `repeat_char`, got %q", fa.Field)
+	}
+	// A bare type keyword NOT followed by `.` is still not an
+	// expression (stays a type-only token).
+	if _, err := Parse(`function f(): i32 { return string; }`); err == nil {
+		t.Error("bare `string` in expression position should still be a parse error")
+	}
+}
+
 func TestPrecedence(t *testing.T) {
 	// 1 + 2 * 3 should parse as 1 + (2 * 3)
 	prog, err := Parse("function f(): i32 { return 1 + 2 * 3; }")

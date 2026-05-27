@@ -232,6 +232,24 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 // end-to-end: each `+` lowers to `OpCallDirect __fern_strcat`,
 // which mmaps the heap on first call, copies both operands
 // in, and returns a fresh data pointer.
+// string.repeat_char — a std/string FREE function, reachable now that
+// the parser accepts the keyword-named `string` module qualifier
+// (docs/POST-PRELUDE-CLEANUP.md item 4). Pins parse + check + codegen +
+// runtime end-to-end.
+func TestX86_64StringRepeatChar(t *testing.T) {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
+    if (string.repeat_char(120, 4) != "xxxx") { return 1; }
+    if (string.repeat_char(45, 3) != "---") { return 2; }
+    if (string.repeat_char(120, 0) != "") { return 3; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("string.repeat_char: got exit %d, want 0", code)
+	}
+}
+
 func TestX86_64StringConcat(t *testing.T) {
 	for _, c := range []struct {
 		src  string

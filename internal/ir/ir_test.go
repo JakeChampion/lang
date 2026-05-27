@@ -30,13 +30,6 @@ func lowerSourceWith(t *testing.T, src string, ptrW int) *Program {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	user := prog.Funcs[:0]
-	for _, fn := range prog.Funcs {
-		if !fn.IsPrelude {
-			user = append(user, fn)
-		}
-	}
-	prog.Funcs = user
 	ir, err := LowerWith(prog, info, ptrW)
 	if err != nil {
 		t.Fatalf("lower: %v", err)

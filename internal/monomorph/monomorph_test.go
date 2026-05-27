@@ -25,7 +25,9 @@ func TestRunRewritesGenericCallSitesInsideEveryExprShape(t *testing.T) {
 	}{
 		{
 			name: "MapLit value position",
-			src: `function id[T](x: T): T { return x; }
+			src: `import "core/no_prelude";
+import "core/map";
+function id[T](x: T): T { return x; }
 function main(): i32 {
     var m: Map[i32, i32] = Map { 1: id(42) };
     return 0;
@@ -33,7 +35,9 @@ function main(): i32 {
 		},
 		{
 			name: "MapLit key position",
-			src: `function id[T](x: T): T { return x; }
+			src: `import "core/no_prelude";
+import "core/map";
+function id[T](x: T): T { return x; }
 function main(): i32 {
     var m: Map[i32, i32] = Map { id(1): 42 };
     return 0;
@@ -257,7 +261,9 @@ function main(): i32 {
     var p: P = P { x: id(1), y: id(2) };
     return p.x + p.y;
 }`},
-		{node: "MapLit.Key+Value", src: `function id[T](x: T): T { return x; }
+		{node: "MapLit.Key+Value", src: `import "core/no_prelude";
+import "core/map";
+function id[T](x: T): T { return x; }
 function main(): i32 {
     var m: Map[i32, i32] = Map { id(1): id(10) };
     return m.len();

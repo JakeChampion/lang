@@ -1417,12 +1417,6 @@ type FuncDecl struct {
 	// callee's signature to infer the missing parameter type.
 	// Nil otherwise.
 	UseInferSource *Call
-	// IsPrelude is true for declarations sourced from the
-	// auto-injected lang prelude (internal/prelude/prelude.fern).
-	// The flag is set at injection time so tests / dump tools
-	// can filter prelude noise out of "user code" listings; it
-	// has no semantic effect on type-checking, IR, or codegen.
-	IsPrelude bool
 	// SourceModule is the canonical module path that declared this
 	// function. modload stamps every FuncDecl as it loads each
 	// module — disk paths get their absolute path; stdlib paths

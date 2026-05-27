@@ -23,6 +23,7 @@
 //     additional duplicates further down.
 
 import "std/string";
+import "core/map";
 
 // `header_map_new()` — empty HeaderMap. Use when constructing
 // HttpRequest / HttpResponse from lang code (the wasi-http

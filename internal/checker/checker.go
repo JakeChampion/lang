@@ -677,6 +677,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		variantOf: map[string][]variantRef{},
 	}
+	// Map operations need core/map linked. If the program came through
+	// modload (LoadedStdlibPaths populated) but didn't pull core/map
+	// into its closure, flag Map use as a clean type error instead of
+	// a codegen link failure. Programs constructed without modload
+	// (bare parser.Parse — single-file probes) can't import anything,
+	// so they're exempt.
+	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
+		c.requireMapImport = true
+	}
 
 	// Surface shadow-attempts on reserved built-in type names
 	// recorded above. We report on the user's decl position so
@@ -1797,6 +1806,18 @@ type checker struct {
 	loopDepth   int
 	switchDepth int
 
+	// requireMapImport is set when the program was loaded through
+	// modload (LoadedStdlibPaths != nil) but `core/map` isn't in the
+	// import closure. Map operations (`map_new`, a `Map { … }`
+	// literal) lower to core/map's runtime helpers (map_new_impl /
+	// __map_*_impl), so without the import the build links against
+	// undefined symbols — a failure the checker should catch up front
+	// rather than leave for codegen. mapErrReported keeps it to one
+	// diagnostic per program. Single-file callers (no modload, nil
+	// LoadedStdlibPaths) are exempt — they have no import mechanism.
+	requireMapImport bool
+	mapErrReported   bool
+
 	// variantOf maps a variant's bare name (`Some`, `Err`, `Red`) to
 	// every enum that declares it. Built during the enum
 	// registration pass. Most names have exactly one entry — the
@@ -2624,6 +2645,18 @@ func assignable(dst, src ast.Type) bool {
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
+}
+
+// needCoreMap flags a Map construction site (map_new / Map literal)
+// when core/map isn't imported. Reported once per program — Map's
+// runtime helpers all come from the same module, so one diagnostic
+// covers every use.
+func (c *checker) needCoreMap(pos ast.Position) {
+	if !c.requireMapImport || c.mapErrReported {
+		return
+	}
+	c.mapErrReported = true
+	c.errfCode(pos, "E001", "Map operations require `import \"core/map\";`")
 }
 
 // errIdent reports an unresolved-name error and tries to attach a
@@ -4276,6 +4309,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
+			c.needCoreMap(n.P)
+		}
 		// Variant constructor: `Some(x)` / `Square(2.0, 3.0)`.
 		// Resolved purely by name so we can type the result as
 		// the owning enum and check argument count + payload
@@ -5156,6 +5192,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.TupleType{Elems: elems}
 	case *ast.MapLit:
+		c.needCoreMap(n.P)
 		// Pick K and V from the first entry's key / value
 		// types, then check the rest against those. Empty
 		// literals fall back to `Map[i32, i32]` so that a

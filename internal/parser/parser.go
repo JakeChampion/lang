@@ -2796,6 +2796,18 @@ func (p *parser) parseMapLit(pos ast.Position) (ast.Expr, error) {
 	return &ast.MapLit{P: pos, Entries: entries}, nil
 }
 
+// keywordModuleQualifier is the set of type-name keywords that are also
+// stdlib module basenames (`std/string`, `std/i32`, …). In expression
+// position followed by `.`, parsePrimary treats them as a module
+// qualifier so keyword-named modules' free functions are reachable.
+var keywordModuleQualifier = map[string]bool{
+	"string": true,
+	"i32":    true,
+	"i64":    true,
+	"u32":    true,
+	"u64":    true,
+}
+
 func (p *parser) parsePrimary() (ast.Expr, error) {
 	t := p.peek()
 	switch t.Kind {
@@ -2931,6 +2943,20 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// only when `function` appears mid-expression — RHS
 			// of `var x = ...`, an argument, a return value, etc.
 			return p.parseLambda()
+		}
+		// A builtin type-name keyword in expression position followed
+		// by `.` is a *module* qualifier, not a type. The std modules
+		// `std/string` / `std/i32` / `std/i64` / `std/u32` / `std/u64`
+		// have basenames that collide with type keywords, so a free
+		// function like `string.repeat_char(...)` would otherwise be a
+		// parse error. Treat the keyword as a bare module-name Ident
+		// and let postfix `.field` / call parsing + modload's `mod.Foo`
+		// rewrite resolve it like any other qualified reference.
+		if keywordModuleQualifier[t.Text] &&
+			p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "." {
+			p.advance()
+			return &ast.Ident{P: t.Pos, Name: t.Text}, nil
 		}
 	case lexer.Ident:
 		p.advance()
