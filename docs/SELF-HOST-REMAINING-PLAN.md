@@ -319,10 +319,24 @@ planned order:
   both of which looped back to expect another field after the comma and
   cascaded into a run of `ExprUnknown`. Both now allow the trailing
   comma (`self_host_trailing_comma_test.go`, shared parser → both
-  backends). Remaining for a full link/run: import resolution / module
-  bundling of the `std/*` deps these modules pull in (`sort`, `json`,
-  `http`) — a driver-level effort (`bundle_run` / prelude injection),
-  not a language-feature gap.
+  backends). Remaining for a full link/run: prelude injection for the
+  auto-prelude-dependent modules (`std/test`'s bare-name `TestRunner` /
+  `assert_*`) — a driver-level effort, not a language-feature gap.
+- ✅ **Stdlib import resolution in the file-loading driver.**
+  `asm_load_run.fern` now takes an optional stdlib root as its second
+  argument and resolves `std/…` / `core/…` imports under it
+  (`<root>/std/foo.fern`), loading them transitively through the same
+  worklist + `flatten.bundle` machinery it already used for local
+  `./…` imports (the worklist tracks full import paths, not just
+  basenames). `core/no_prelude` is treated as a directive, not a file.
+  With no root given, std/core imports are skipped — identical to the
+  prior behaviour, so the file-driven fixpoint is untouched. Proven
+  end-to-end by `self_host_stdlib_import_test.go`: a program
+  `import "std/math"` (leaf) and `import "std/sort"` (transitive →
+  `std/string`) compile + run correctly through the self-host. The
+  remaining piece for the auto-prelude-dependent modules (`std/test`'s
+  bare-name `TestRunner` / `assert_*`) is replicating the prelude
+  injector's flat-namespace seeding in the driver.
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in
