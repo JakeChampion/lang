@@ -437,8 +437,10 @@ func parseRegShift(op string) (shiftType, amount uint32, err error) {
 		shiftType = 1
 	case "asr":
 		shiftType = 2
+	case "ror":
+		shiftType = 3
 	default:
-		return 0, 0, fmt.Errorf("unsupported add/sub shift %q", f[0])
+		return 0, 0, fmt.Errorf("unsupported shift %q", f[0])
 	}
 	n, err := parseImm(f[1])
 	if err != nil {
@@ -507,7 +509,7 @@ func parseExtend(op string) (option, amount uint32, err error) {
 }
 
 func asm3Reg(a *Assembler, mnem string, ops []string) error {
-	if len(ops) != 3 {
+	if len(ops) < 3 {
 		return fmt.Errorf("%s expects 3 operands", mnem)
 	}
 	rd, err := parseReg(ops[0])
@@ -545,6 +547,25 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 	rm, err := parseReg(ops[2])
 	if err != nil {
 		return err
+	}
+	// Optional shifted-register form for the logical ops, e.g.
+	// `orr w3, w1, w1, lsl #8`. mul/udiv/sdiv take no shift.
+	if len(ops) > 3 {
+		st, amt, serr := parseRegShift(ops[3])
+		if serr != nil {
+			return serr
+		}
+		switch mnem {
+		case "and":
+			a.Emit(clearSF(ANDregShift(rd, rn, rm, st, amt), w))
+		case "orr":
+			a.Emit(clearSF(ORRregShift(rd, rn, rm, st, amt), w))
+		case "eor":
+			a.Emit(clearSF(EORregShift(rd, rn, rm, st, amt), w))
+		default:
+			return fmt.Errorf("%s does not take a shifted register operand", mnem)
+		}
+		return nil
 	}
 	switch mnem {
 	case "and":
