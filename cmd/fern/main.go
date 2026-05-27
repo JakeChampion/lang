@@ -50,6 +50,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	nativemacho "github.com/jakechampion/lang/internal/native/macho"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -619,14 +620,19 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			os.Remove(cleanupBin)
 		}
 	}()
-	if native && target != "arm64" && target != "x86-64" {
-		return 1, fmt.Errorf("-native is only supported with -target arm64 or x86-64 (got %q)", target)
+	if native && target != "arm64" && target != "x86-64" && target != "arm64-darwin" {
+		return 1, fmt.Errorf("-native is only supported with -target arm64, x86-64, or arm64-darwin (got %q)", target)
 	}
 	// arm64 and x86-64 Linux use the pure-Go assembler+linker by default
 	// (no external toolchain). Pass -cc to opt out to an external
-	// assembler/linker.
+	// assembler/linker. arm64-darwin still defaults to clang; the in-
+	// process Mach-O path is opt-in via -native while it's experimental.
 	useNative := native || (!ccExplicit && (target == "arm64" || target == "x86-64"))
 	switch {
+	case native && darwin:
+		if err := linkNativeDarwin(asm, binPath); err != nil {
+			return 1, err
+		}
 	case useNative && target == "x86-64":
 		if err := linkNativeX86(asm, binPath); err != nil {
 			return 1, err
@@ -812,6 +818,26 @@ func linkNativeX86(asm, outPath string) error {
 		return fmt.Errorf("native assembler: %w", err)
 	}
 	bin := nativeelf.StaticExecutableDataX86(text, rodata)
+	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(outPath, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
+// linkNativeDarwin assembles arm64 asm and wraps it in a static, ad-hoc-
+// signed Mach-O executable entirely in-process (internal/native/macho) —
+// no clang/ld64. Experimental: covers the integer/control-flow surface
+// the assembler handles; @PAGE/@PAGEOFF data addressing (strings, heap)
+// is not yet supported and surfaces as a clear assembler error.
+func linkNativeDarwin(asm, outPath string) error {
+	text, rodata, err := nativearm64.AssembleProgram(asm, nativemacho.TextVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	bin := nativemacho.StaticExecutable(text, rodata, nil, filepath.Base(outPath))
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
