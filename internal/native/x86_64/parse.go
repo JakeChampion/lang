@@ -38,10 +38,30 @@ func parseOperand(s string) (operand, error) {
 	if r, ok := regTable[low]; ok {
 		return operand{kind: opReg, reg: r.num, size: r.size}, nil
 	}
+	// High-byte registers ah/ch/dh/bh share numbers 4..7 with spl/bpl/sil/dil
+	// but mean the high byte and cannot be encoded with a REX prefix.
+	switch low {
+	case "ah":
+		return operand{kind: opReg, reg: 4, size: 8, highByte: true}, nil
+	case "ch":
+		return operand{kind: opReg, reg: 5, size: 8, highByte: true}, nil
+	case "dh":
+		return operand{kind: opReg, reg: 6, size: 8, highByte: true}, nil
+	case "bh":
+		return operand{kind: opReg, reg: 7, size: 8, highByte: true}, nil
+	}
 	if strings.HasPrefix(low, "xmm") {
 		if n, err := strconv.Atoi(low[3:]); err == nil && n >= 0 && n < 16 {
 			// SSE register; size 128 marks it as an xmm operand.
 			return operand{kind: opReg, reg: n, size: 128}, nil
+		}
+	}
+	if low == "st" {
+		return operand{kind: opSt, reg: 0}, nil
+	}
+	if strings.HasPrefix(low, "st(") && strings.HasSuffix(low, ")") {
+		if n, err := strconv.Atoi(low[3 : len(low)-1]); err == nil && n >= 0 && n < 8 {
+			return operand{kind: opSt, reg: n}, nil
 		}
 	}
 	if strings.Contains(s, "[") {

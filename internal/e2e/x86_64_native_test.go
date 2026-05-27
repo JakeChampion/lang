@@ -212,6 +212,30 @@ function main(): i32 {
 	}
 }
 
+// x87 FPU transcendentals: __sin/__cos/__exp/__log/__pow_f64 lower to
+// fsin/fcos/fyl2x/f2xm1/fscale/frndint and the x87 stack ops.
+func TestX86_64NativeTranscendentals(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
+		{"function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
+		{"function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
+		{"function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
+		{"function main(): i32 { return __log_f64(10.0) as i32; }", 2},
+		{"function main(): i32 { var r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
+		{"function main(): i32 { var r: f64 = __log_f64(2.0); if (r > 0.69 && r < 0.70) { return 7; } return 0; }", 7},
+		{"function main(): i32 { var r: f64 = __sin_f64(0.0); if (r > -0.01 && r < 0.01) { return 7; } return 0; }", 7},
+		{"function main(): i32 { var r: f64 = __cos_f64(0.0); if (r > 0.99 && r < 1.01) { return 7; } return 0; }", 7},
+	}
+	for _, c := range cases {
+		if _, code := compileAndRunX86Native(t, c.src); code != c.want {
+			t.Errorf("%q → exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // Integer arithmetic and comparison operators across the phase-1
 // instruction surface (add/sub/imul/idiv + cmp/setcc + branches).
 func TestX86_64NativeArithmetic(t *testing.T) {
