@@ -1229,6 +1229,39 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String-keyed / string-valued keys()/values() go through
+		// __map_string_column, which builds a `string[]` local and
+		// returns `out as usize`. That cast severs the escape analysis,
+		// so the rc pass dropped `out` at function exit even though it
+		// escapes via the return — the caller then double-freed the
+		// buffer (one underflow per snapshot call, regardless of entry
+		// count). __map_string_column now retains the buffer once before
+		// returning so the exit-drop balances. Long keys/values force
+		// real heap strings (short strings inline with no buffer).
+		// Exercises keys + values + string->string, unused + consumed.
+		// Consumed anchors: ks.len()=2 + ks[0].len()=24 + ks[1].len()=24
+		// = 50 per iter; 500x → 25000.
+		name: "map_string_column_escape_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var m: Map[string, string] = map_new(8);
+    m = m.set("longkeyaaaaaaaaaaaaaaaa1", "longvalbbbbbbbbbbbbbbbb1");
+    m = m.set("longkeyaaaaaaaaaaaaaaaa2", "longvalbbbbbbbbbbbbbbbb2");
+    var vs = m.values();    // unused string[] snapshot, dropped at exit
+    var ks = m.keys();      // consumed snapshot anchors the value
+    return ks.len() + ks[0].len() + ks[1].len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 25000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

@@ -559,7 +559,12 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
         out = out.push(s);
         i = i + 1;
     }
-    return out as usize;
+    // `out as usize` severs the escape analysis, so the rc pass drops
+    // `out` (a string[] local) at function exit even though it escapes
+    // via the return. Retain the buffer once so that exit-drop balances
+    // and the caller receives a live array. __map_column / __map_ptr_column
+    // dodge this by returning a raw __alloc pointer, not a typed local.
+    return __fern_rc_inc(out as usize);
 }
 
 // __map_drop_values frees the array-typed value column when a Map
