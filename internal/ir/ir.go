@@ -9406,8 +9406,12 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpStoreLocal, I32: strideSlot})
 
-	// arr = __alloc(4 + len * 8); *arr = len; data = arr + 4
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	// arr = __alloc(16 + len*8): standard rc-array layout — a 16-byte
+	// header carrying capacity (data-12), rc=1 (data-8) and length
+	// (data-4); data = hdr + 16. Without the cap/rc slots the snapshot's
+	// scope-exit drop reads heap metadata at data-8 as the rc and
+	// underflows.
+	b.emit(Op{Kind: OpConstI32, I32: 16})
 	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 8})
 	b.emit(Op{Kind: OpMul})
@@ -9417,14 +9421,29 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.locals[fmt.Sprintf("__mv_hdr_%d", hdrSlot)] = hdrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
 
+	// capacity at hdr+4 (= data-12)
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpStore})
+	// rc = 1 at hdr+8 (= data-8)
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// length at hdr+12 (= data-4)
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 12})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 	b.emit(Op{Kind: OpStore})
 
 	dataSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_data_%d", dataSlot)] = dataSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpConstI32, I32: 16})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
 
@@ -9558,15 +9577,14 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	b.emit(Op{Kind: OpMul})
 	b.emit(Op{Kind: OpStoreLocal, I32: strideSlot})
 
-	// `i64[]` layout has headerBytes = max(4, stride) = 8 on
-	// natives; wasm32 ignores stride alignment so 4 also
-	// works there. Use the canonical `max(4, 8) = 8` for both
-	// so the array layout matches what ArrayLit would emit
-	// (data pointer 8-byte stride-aligned). Length prefix
-	// lives at `data - 4`.
+	// Standard rc-array layout: a 16-byte header carrying capacity
+	// (data-12), rc=1 (data-8) and length (data-4); data = hdr + 16,
+	// 8-byte stride-aligned, matching what ArrayLit emits for `i64[]`.
+	// Without the cap/rc slots the snapshot's scope-exit drop reads heap
+	// metadata at data-8 as the rc and underflows.
 	hdrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_hdr_%d", hdrSlot)] = hdrSlot
-	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpConstI32, I32: 16})
 	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 8})
 	b.emit(Op{Kind: OpMul})
@@ -9574,9 +9592,21 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: hdrSlot})
 
-	// *(hdr + 4) = len  — length prefix at data - 4.
+	// capacity at hdr+4 (= data-12)
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
+	b.emit(Op{Kind: OpStore})
+	// rc = 1 at hdr+8 (= data-8)
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// length at hdr+12 (= data-4)
+	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 12})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 	b.emit(Op{Kind: OpStore})
@@ -9584,7 +9614,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	dataSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_data_%d", dataSlot)] = dataSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: hdrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 8})
+	b.emit(Op{Kind: OpConstI32, I32: 16})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
 
