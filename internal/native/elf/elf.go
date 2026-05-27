@@ -29,31 +29,42 @@ const (
 // references (adrp / :lo12:); pass it to arm64.AssembleProgram.
 const TextVAddr = baseVAddr + ehSize + phSize
 
-// StaticExecutableData wraps .text + .rodata into a runnable static
-// ELF-64 executable. Both live in a single R+X PT_LOAD (the rodata is
-// mapped executable too — harmless for this no-PIE, fixed-address
-// posture, and it keeps the loader to one segment). .rodata is placed
-// immediately after .text, 8-byte aligned, matching the layout
+// StaticExecutableData wraps .text + a data blob (rodata followed by
+// the zero-initialised .bss globals, which AssembleProgram appends) into
+// a runnable static ELF-64 executable. Both live in a single PT_LOAD,
+// with the data placed 8-byte aligned after .text — matching the layout
 // arm64.AssembleProgram assumes when it resolves adrp/:lo12: against
-// TextVAddr. Entry is the first instruction of .text.
-func StaticExecutableData(text, rodata []byte) []byte {
-	pad := (8 - len(text)%8) % 8
-	body := make([]byte, 0, len(text)+pad+len(rodata))
-	body = append(body, text...)
-	for i := 0; i < pad; i++ {
-		body = append(body, 0)
+// TextVAddr. The segment is mapped R+W+X: the .bss globals (allocator
+// cursors / freelist) must be writable, and a single segment keeps the
+// loader simple; W^X separation is a future refinement for this
+// no-PIE, fixed-address experimental backend. Entry is the first
+// instruction of .text.
+func StaticExecutableData(text, data []byte) []byte {
+	body := padTo8(append([]byte(nil), text...))
+	body = append(body, data...)
+	return image(body, 7) // PF_R | PF_W | PF_X
+}
+
+func padTo8(b []byte) []byte {
+	for len(b)%8 != 0 {
+		b = append(b, 0)
 	}
-	body = append(body, rodata...)
-	return StaticExecutable(body)
+	return b
 }
 
 // StaticExecutable wraps a flat .text blob (a sequence of encoded
 // machine instructions) into a runnable static ELF-64 executable for
-// arm64 Linux. Execution begins at the first byte of text; the
+// arm64 Linux (R+X). Execution begins at the first byte of text; the
 // program is responsible for its own startup and for exiting via a
 // syscall (there is no libc / crt0).
 func StaticExecutable(text []byte) []byte {
-	total := uint64(ehSize + phSize + len(text))
+	return image(text, 5) // PF_R | PF_X
+}
+
+// image emits the ELF header + one PT_LOAD (with the given p_flags)
+// covering the whole file, followed by the body.
+func image(body []byte, flags uint32) []byte {
+	total := uint64(ehSize + phSize + len(body))
 	entry := uint64(baseVAddr + ehSize + phSize)
 
 	buf := make([]byte, 0, total)
@@ -78,7 +89,7 @@ func StaticExecutable(text []byte) []byte {
 
 	// ---- Program header (56 bytes): one PT_LOAD covering the file ----
 	buf = le32(buf, 1)         // p_type  = PT_LOAD
-	buf = le32(buf, 5)         // p_flags = PF_R | PF_X
+	buf = le32(buf, flags)     // p_flags
 	buf = le64(buf, 0)         // p_offset
 	buf = le64(buf, baseVAddr) // p_vaddr
 	buf = le64(buf, baseVAddr) // p_paddr
@@ -86,8 +97,7 @@ func StaticExecutable(text []byte) []byte {
 	buf = le64(buf, total)     // p_memsz
 	buf = le64(buf, pageAlign) // p_align
 
-	// ---- .text ----
-	return append(buf, text...)
+	return append(buf, body...)
 }
 
 func le16(buf []byte, v uint16) []byte {

@@ -267,35 +267,43 @@ func MUL(rd, rn, rm uint32) uint32 {
 // … for byte). The offset must be a multiple of the access size and
 // fit the scaled 12-bit field.
 
-// LDRimm: `ldr Xt, [Xn, #byteOffset]` (64-bit, scale 8).
-// Encoding: base 0xF9400000 | (byteOffset/8)<<10 | Rn<<5 | Rt.
-func LDRimm(rt, rn, byteOffset uint32) uint32 {
-	return 0xF9400000 | (((byteOffset / 8) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+// LoadStoreUnsigned encodes a load/store with an unsigned scaled
+// offset for any size (0=byte, 1=half, 2=word, 3=doubleword). The byte
+// offset is scaled by the access size to the 12-bit immediate.
+// base = (size<<30) | 0x39000000 | (load?0x00400000).
+func LoadStoreUnsigned(rt, rn, byteOffset, size uint32, load bool) uint32 {
+	base := (size << 30) | 0x39000000
+	if load {
+		base |= 0x00400000
+	}
+	return base | (((byteOffset >> size) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
-// STRimm: `str Xt, [Xn, #byteOffset]` (64-bit, scale 8).
-func STRimm(rt, rn, byteOffset uint32) uint32 {
-	return 0xF9000000 | (((byteOffset / 8) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+// LoadStoreReg encodes a register-offset load/store `[Xn, Xm{, lsl #s}]`
+// for any size. option is LSL/UXTX (3); scaled sets S (Xm scaled by the
+// access size).
+func LoadStoreReg(rt, rn, rm, size uint32, load, scaled bool) uint32 {
+	base := (size << 30) | 0x38200800 | (3 << 13)
+	if load {
+		base |= 0x00400000
+	}
+	if scaled {
+		base |= 1 << 12
+	}
+	return base | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
-// LDRBimm: `ldrb Wt, [Xn, #byteOffset]` (byte, zero-extend, scale 1).
-func LDRBimm(rt, rn, byteOffset uint32) uint32 {
-	return 0x39400000 | ((byteOffset & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
-}
-
-// STRBimm: `strb Wt, [Xn, #byteOffset]` (byte, scale 1).
+// The size-specific helpers below wrap the general encoders.
+func LDRimm(rt, rn, byteOffset uint32) uint32  { return LoadStoreUnsigned(rt, rn, byteOffset, 3, true) }
+func STRimm(rt, rn, byteOffset uint32) uint32  { return LoadStoreUnsigned(rt, rn, byteOffset, 3, false) }
+func LDRBimm(rt, rn, byteOffset uint32) uint32 { return LoadStoreUnsigned(rt, rn, byteOffset, 0, true) }
 func STRBimm(rt, rn, byteOffset uint32) uint32 {
-	return 0x39000000 | ((byteOffset & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+	return LoadStoreUnsigned(rt, rn, byteOffset, 0, false)
 }
 
-// LDRHimm: `ldrh Wt, [Xn, #byteOffset]` (halfword, zero-extend, scale 2).
-func LDRHimm(rt, rn, byteOffset uint32) uint32 {
-	return 0x79400000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
-}
-
-// STRHimm: `strh Wt, [Xn, #byteOffset]` (halfword, scale 2).
+func LDRHimm(rt, rn, byteOffset uint32) uint32 { return LoadStoreUnsigned(rt, rn, byteOffset, 1, true) }
 func STRHimm(rt, rn, byteOffset uint32) uint32 {
-	return 0x79000000 | (((byteOffset / 2) & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+	return LoadStoreUnsigned(rt, rn, byteOffset, 1, false)
 }
 
 // ---- Sign-extending loads (unsigned scaled offset) ----
@@ -334,26 +342,21 @@ func LDRSW(rt, rn, byteOffset uint32) uint32 {
 // so they reach negative and non-size-aligned displacements that the
 // scaled LDRimm/STRimm forms can't. off must fit the 9-bit field.
 
-// LDUR: `ldur Xt, [Xn, #off]` (64-bit unscaled).
-// Encoding: base 0xF8400000 | imm9<<12 | Rn<<5 | Rt.
-func LDUR(rt, rn uint32, off int32) uint32 {
-	return 0xF8400000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+// LoadStoreUnscaled encodes a load/store with a signed 9-bit unscaled
+// offset for any size (0=byte … 3=doubleword).
+// base = (size<<30) | 0x38000000 | (load?0x00400000).
+func LoadStoreUnscaled(rt, rn uint32, off int32, size uint32, load bool) uint32 {
+	base := (size << 30) | 0x38000000
+	if load {
+		base |= 0x00400000
+	}
+	return base | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
-// STUR: `stur Xt, [Xn, #off]` (64-bit unscaled).
-func STUR(rt, rn uint32, off int32) uint32 {
-	return 0xF8000000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
-
-// LDURB: `ldurb Wt, [Xn, #off]` (byte, unscaled, zero-extend).
-func LDURB(rt, rn uint32, off int32) uint32 {
-	return 0x38400000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
-
-// STURB: `sturb Wt, [Xn, #off]` (byte, unscaled).
-func STURB(rt, rn uint32, off int32) uint32 {
-	return 0x38000000 | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
-}
+func LDUR(rt, rn uint32, off int32) uint32  { return LoadStoreUnscaled(rt, rn, off, 3, true) }
+func STUR(rt, rn uint32, off int32) uint32  { return LoadStoreUnscaled(rt, rn, off, 3, false) }
+func LDURB(rt, rn uint32, off int32) uint32 { return LoadStoreUnscaled(rt, rn, off, 0, true) }
+func STURB(rt, rn uint32, off int32) uint32 { return LoadStoreUnscaled(rt, rn, off, 0, false) }
 
 // ---- Load/store pair, pre/post-indexed ----
 //
@@ -634,19 +637,11 @@ func ADRP(rd uint32, pageDelta int32) uint32 {
 // the 8-byte access size). The no-shift form passes scaled=false.
 
 func LDRreg(rt, rn, rm uint32, scaled bool) uint32 {
-	insn := uint32(0xF8600800) | (3 << 13) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
-	if scaled {
-		insn |= 1 << 12
-	}
-	return insn
+	return LoadStoreReg(rt, rn, rm, 3, true, scaled)
 }
 
 func STRreg(rt, rn, rm uint32, scaled bool) uint32 {
-	insn := uint32(0xF8200800) | (3 << 13) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
-	if scaled {
-		insn |= 1 << 12
-	}
-	return insn
+	return LoadStoreReg(rt, rn, rm, 3, false, scaled)
 }
 
 // ---- Single-register pre/post-indexed loads/stores ----

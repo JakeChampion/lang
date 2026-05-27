@@ -68,6 +68,39 @@ func TestAssembleProgramLiteralPool(t *testing.T) {
 	}
 }
 
+// TestAssembleProgramBss checks that a .bss section is materialised as
+// zero bytes alongside .rodata and its symbols resolve (no undefined-
+// symbol error from the adrp/:lo12: that reference them).
+func TestAssembleProgramBss(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tadrp x0, g\n" +
+		"\tadd x0, x0, :lo12:g\n" +
+		"\tret\n" +
+		"\t.section .rodata\n" +
+		"msg:\n\t.asciz \"hi\"\n" + // 3 bytes
+		"\t.section .bss\n" +
+		"\t.align 3\n" +
+		"g:\n\t.quad 0\n" + // 8 zero bytes (after 3 rodata + 5 align pad = offset 8)
+		"\t.space 16\n" // 16 more zero bytes
+	text, data, err := arm64.AssembleProgram(src, 0x400078)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(text) != 3*4 {
+		t.Fatalf("text = %d bytes, want 12", len(text))
+	}
+	// data: "hi\0" (3) + align to 8 (5 pad) + .quad 0 (8) + .space 16 = 32.
+	if len(data) != 32 {
+		t.Fatalf("data = %d bytes, want 32", len(data))
+	}
+	for i, b := range data[3:] { // everything after the string is zero
+		if b != 0 {
+			t.Fatalf("data[%d] = %d, want 0", i+3, b)
+		}
+	}
+}
+
 // TestAssembleProgramUndefinedSymbol surfaces a reference to a missing
 // symbol as an error.
 func TestAssembleProgramUndefinedSymbol(t *testing.T) {

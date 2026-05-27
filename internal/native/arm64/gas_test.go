@@ -89,6 +89,9 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tstr x0, [sp, #-16]!\n\tldr x0, [sp], #16\n\tstr x1, [x2, #8]!\n\tldr x3, [x4], #-8\n\tmov sp, x29\n\tmov x0, sp\n",
 		"signed_loads": "" +
 			"\tldrsb x0, [x1]\n\tldrsb w0, [x1, #1]\n\tldrsh x0, [x1, #2]\n\tldrsh w0, [x1, #2]\n\tldrsw x0, [x1, #4]\n",
+		"word32_ldst": "" +
+			"\tldr w0, [x1]\n\tldr w2, [x3, #8]\n\tstr w0, [x1, #4]\n\tldr w0, [x1, x2, lsl #2]\n\tldr w0, [x1, x2]\n" +
+			"\tstr w3, [x4], #4\n\tldr w5, [x6, #4]!\n\tldur w2, [x0, #-8]\n\tstur w1, [x0, #-8]\n",
 		"register_offset": "" +
 			"\tldr x3, [x2, x1, lsl #3]\n\tldr x0, [x1, x2]\n\tstr x3, [x2, x1, lsl #3]\n",
 		"cmn_imm": "" +

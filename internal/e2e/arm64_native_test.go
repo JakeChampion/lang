@@ -29,21 +29,36 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 	if qemu == "" {
 		t.Skip("qemu-aarch64 not on PATH")
 	}
-	asm := compileToArm64Asm(t, `function main(): i32 { print("hello native"); return 0; }`)
-	text, rodata, err := na.AssembleProgram(asm, elf.TextVAddr)
-	if err != nil {
-		t.Fatalf("AssembleProgram: %v", err)
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"string", `function main(): i32 { print("hello native"); return 0; }`, "hello native\n"},
+		{"int", `function main(): i32 { print((42).to_string()); return 0; }`, "42\n"},
+		{"negint", `function main(): i32 { print((0 - 42).to_string()); return 0; }`, "-42\n"},
+		{"concat", `function main(): i32 { print("x=" + (42).to_string()); return 0; }`, "x=42\n"},
+		{"loopsum", `function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 9) { s = s + i; i = i + 1; } print(s.to_string()); return 0; }`, "36\n"},
 	}
-	path := filepath.Join(t.TempDir(), "prog")
-	if err := os.WriteFile(path, elf.StaticExecutableData(text, rodata), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(qemu, path).Output()
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if got := string(out); got != "hello native\n" {
-		t.Fatalf("stdout = %q, want %q", got, "hello native\n")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			asm := compileToArm64Asm(t, c.src)
+			text, data, err := na.AssembleProgram(asm, elf.TextVAddr)
+			if err != nil {
+				t.Fatalf("AssembleProgram: %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "prog")
+			if err := os.WriteFile(path, elf.StaticExecutableData(text, data), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(qemu, path).Output()
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if got := string(out); got != c.want {
+				t.Fatalf("stdout = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

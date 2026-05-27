@@ -630,12 +630,24 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 	sz := loadStoreSize[mnem]
 	is64LdrStr := mnem == "ldr" || mnem == "str"
 
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	// For ldr/str the access size follows the register width: a
+	// w-register is a 32-bit word (size 2), an x-register 64-bit
+	// (size 3). The narrow mnemonics (ldrb/ldrh) fix their own size.
+	size := sz.size
+	if is64LdrStr {
+		if is32(ops[0]) {
+			size = 2
+		} else {
+			size = 3
+		}
+	}
+
 	// Post-index: `<op> Rt, [Xn], #imm` (3 operands).
 	if len(ops) == 3 {
-		rt, err := parseReg(ops[0])
-		if err != nil {
-			return err
-		}
 		m, err := parseMem(ops[1])
 		if err != nil {
 			return err
@@ -647,68 +659,47 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		if err != nil {
 			return err
 		}
-		a.Emit(IdxLoadStore(rt, m.base, int32(off), sz.size, sz.load, false))
+		a.Emit(IdxLoadStore(rt, m.base, int32(off), size, sz.load, false))
 		return nil
 	}
 
 	if len(ops) != 2 {
 		return fmt.Errorf("%s expects a register and a memory operand", mnem)
 	}
-	rt, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
 	m, err := parseMem(ops[1])
 	if err != nil {
 		return err
 	}
 
-	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #3}]` (ldr/str, 64-bit).
+	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #s}]` (ldr/str). The
+	// scaled shift, when present, must equal log2(access size).
 	if m.hasIndex {
 		if !is64LdrStr {
 			return fmt.Errorf("%s register-offset addressing not supported yet", mnem)
 		}
 		var scaled bool
-		switch m.indexShift {
-		case 0:
+		switch {
+		case m.indexShift == 0:
 			scaled = false
-		case 3:
+		case m.indexShift == size:
 			scaled = true
 		default:
-			return fmt.Errorf("%s register-offset shift must be lsl #0 or lsl #3", mnem)
+			return fmt.Errorf("%s register-offset shift must be lsl #0 or lsl #%d", mnem, size)
 		}
-		if mnem == "ldr" {
-			a.Emit(LDRreg(rt, m.base, m.index, scaled))
-		} else {
-			a.Emit(STRreg(rt, m.base, m.index, scaled))
-		}
+		a.Emit(LoadStoreReg(rt, m.base, m.index, size, sz.load, scaled))
 		return nil
 	}
 
 	// Pre-index writeback: `<op> Rt, [Xn, #imm]!` (all sizes).
 	if m.pre {
-		a.Emit(IdxLoadStore(rt, m.base, int32(m.off), sz.size, sz.load, true))
+		a.Emit(IdxLoadStore(rt, m.base, int32(m.off), size, sz.load, true))
 		return nil
 	}
 
 	if m.off < 0 {
 		return fmt.Errorf("%s negative offset needs the unscaled (ldur) form, not supported yet", mnem)
 	}
-	off := uint32(m.off)
-	switch mnem {
-	case "ldr":
-		a.Emit(LDRimm(rt, m.base, off))
-	case "str":
-		a.Emit(STRimm(rt, m.base, off))
-	case "ldrb":
-		a.Emit(LDRBimm(rt, m.base, off))
-	case "strb":
-		a.Emit(STRBimm(rt, m.base, off))
-	case "ldrh":
-		a.Emit(LDRHimm(rt, m.base, off))
-	case "strh":
-		a.Emit(STRHimm(rt, m.base, off))
-	}
+	a.Emit(LoadStoreUnsigned(rt, m.base, uint32(m.off), size, sz.load))
 	return nil
 }
 
@@ -768,10 +759,13 @@ func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 	}
 	off := int32(m.off)
 	switch mnem {
-	case "ldur":
-		a.Emit(LDUR(rt, m.base, off))
-	case "stur":
-		a.Emit(STUR(rt, m.base, off))
+	case "ldur", "stur":
+		// Access size follows the register width (w=32-bit, x=64-bit).
+		size := uint32(3)
+		if is32(ops[0]) {
+			size = 2
+		}
+		a.Emit(LoadStoreUnscaled(rt, m.base, off, size, mnem == "ldur"))
 	case "ldurb":
 		a.Emit(LDURB(rt, m.base, off))
 	case "sturb":

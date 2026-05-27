@@ -77,11 +77,14 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		// Flush the literal pool here (off the execution path).
 		a.FlushLiterals()
 		return sec, nil
-	case ".rodata":
+	case ".rodata", ".bss":
+		// .bss is zero-initialised data; we materialise it as zero
+		// bytes in the (writable) data region right alongside .rodata.
 		return secRodata, nil
 	case ".section":
-		// e.g. ".section .rodata" / ".section .text" / ".section
-		// .note.GNU-stack,...". Anything else we don't materialise.
+		// e.g. ".section .rodata" / ".section .bss" / ".section .text" /
+		// ".section .note.GNU-stack,...". Anything else we don't
+		// materialise.
 		arg := ""
 		if len(fields) > 1 {
 			arg = fields[1]
@@ -89,7 +92,7 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		switch {
 		case strings.Contains(arg, ".text"):
 			return secText, nil
-		case strings.Contains(arg, ".rodata"):
+		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"):
 			return secRodata, nil
 		default:
 			return secIgnore, nil
@@ -115,6 +118,14 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 		return emitInts(a, rest, 4)
 	case ".8byte", ".xword", ".quad", ".dword":
 		return emitInts(a, rest, 8)
+	case ".space", ".skip":
+		// N zero bytes (used for .bss reservations like the freelist).
+		n, err := strconv.Atoi(strings.Fields(rest)[0])
+		if err != nil {
+			return fmt.Errorf("bad .space/.skip size %q", rest)
+		}
+		a.AppendRodata(make([]byte, n))
+		return nil
 	case ".ascii", ".asciz", ".string":
 		s, err := strconv.Unquote(strings.TrimSpace(rest))
 		if err != nil {
