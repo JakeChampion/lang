@@ -7,6 +7,53 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
+// TestAssembleProgramQuadSymbol checks that `.quad <symbol>` in .rodata
+// is filled with the symbol's absolute virtual address (function-pointer
+// / closure tables). Two .text functions at known indices plus a rodata
+// label exercise both text- and rodata-symbol resolution.
+func TestAssembleProgramQuadSymbol(t *testing.T) {
+	const textVAddr = 0x400078
+	src := "" +
+		"\t.text\n" +
+		"fn0:\n\tret\n" + // index 0 -> textVAddr
+		"fn1:\n\tret\n" + // index 1 -> textVAddr+4
+		"\t.section .rodata\n" +
+		"\t.balign 8\n" +
+		"tbl:\n\t.quad fn0\n\t.quad fn1\n\t.quad tbl\n"
+	text, rodata, err := arm64.AssembleProgram(src, textVAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// .text is 2 instructions (8 bytes); .rodata starts 8-aligned right
+	// after, so rodataVAddr = textVAddr + 8.
+	rodataVAddr := uint64(textVAddr + len(text))
+	rd := func(off int) uint64 {
+		var v uint64
+		for i := 0; i < 8; i++ {
+			v |= uint64(rodata[off+i]) << (8 * i)
+		}
+		return v
+	}
+	if got, want := rd(0), uint64(textVAddr); got != want {
+		t.Errorf(".quad fn0 = %#x, want %#x", got, want)
+	}
+	if got, want := rd(8), uint64(textVAddr+4); got != want {
+		t.Errorf(".quad fn1 = %#x, want %#x", got, want)
+	}
+	if got, want := rd(16), rodataVAddr; got != want {
+		t.Errorf(".quad tbl = %#x, want %#x", got, want)
+	}
+}
+
+// TestAssembleProgramQuadUndefinedSymbol surfaces a `.quad` of a missing
+// symbol as an error rather than silently emitting zero.
+func TestAssembleProgramQuadUndefinedSymbol(t *testing.T) {
+	src := "\t.text\n\tret\n\t.section .rodata\n\t.quad nope\n"
+	if _, _, err := arm64.AssembleProgram(src, 0x400078); err == nil {
+		t.Fatal("expected an error for .quad of undefined symbol")
+	}
+}
+
 // TestAssembleProgramStringWithSlashes checks that a `//` inside a
 // .asciz string literal is NOT treated as a line comment (which would
 // truncate the string into an unterminated literal). This is the shape
