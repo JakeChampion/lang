@@ -190,10 +190,16 @@ differential fuzz and `__rc_underflow_count` guard.
    reachable field would be freed → UAF; it leaks there instead, which
    is safe). `needsRcIncOnAlias` already retains alias-shaped field
    initialisers; fresh values (concat / literal / call) are moved in and
-   freed by the drop. NOTE: other container constructions (array / tuple
-   / enum / closure) now also retain strings uniformly but don't yet
-   dec them on drop → they LEAK (safe, no over-release) until their own
-   slice below lands. **TUPLE elements** still pending (next).
+   freed by the drop. NOTE: other container constructions (array / enum
+   / closure) now also retain strings uniformly but don't yet dec them
+   on drop → they LEAK (safe, no over-release) until their own slice
+   below lands. **TUPLE elements** — **DONE** (follow-up): tuple-local
+   deep-drop dec's string elements (`WidthString` + `__fern_str_dec`,
+   rc==1 guard), the destructure projection dups them via
+   `__fern_str_inc` so the binding co-owns, and `tup.N` direct reads
+   retain through `needsRcIncOnAlias`. Nested tuples (tuple in a struct /
+   array / tuple) have no generated drop fn yet, so their strings still
+   leak.
 4. **String ARRAY elements** (`string[]`) — array drop deep-decs string
    elements; `string[]` buffer + each element string freed.
 5. **String ENUM payloads** (`enum E { S(string) }`) — the enum

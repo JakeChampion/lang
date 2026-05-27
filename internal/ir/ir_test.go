@@ -1730,6 +1730,53 @@ function build(s: string): i32 {
 	}
 }
 
+// TestLowerStringTupleElemReclaim verifies a string tuple element is
+// reclaimed: the owned tuple local's deep-drop dec's the element via the
+// two-word __fern_str_dec at the tuple's last reference, and the alias-
+// shaped element initialiser retains via __fern_str_inc. Gated wasm.
+func TestLowerStringTupleElemReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(s: string): i32 {
+    var t: (string, i32) = (s, 1);
+    return t.0.len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected tuple local reclamation to dec its string element via __fern_str_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("expected alias-shaped string tuple element init to retain via __fern_str_inc:\n%s", p)
+	}
+}
+
+// TestLowerStringTupleDestructureDup verifies destructuring a string out
+// of a tuple dups it via __fern_str_inc so the binding co-owns the
+// buffer alongside the tuple box (without it, the tuple's deep-drop
+// __fern_str_dec would free the buffer under the live binding → UAF).
+func TestLowerStringTupleDestructureDup(t *testing.T) {
+	p := lowerSourceWith(t, `function build(s: string): i32 {
+    var t: (string, i32) = (s, 1);
+    var (a, b) = t;
+    return a.len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("expected destructure dup of a string element to emit __fern_str_inc:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected tuple + binding string reclamation via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringTupleElemNoReclaimOnNative verifies the tuple string
+// element reclamation is wasm-only (ptrW=8 emits no __fern_str_dec).
+func TestLowerStringTupleElemNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(s: string): i32 {
+    var t: (string, i32) = (s, 1);
+    return t.0.len();
+}`, 8)
+	if callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) tuple drop must not emit __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box
