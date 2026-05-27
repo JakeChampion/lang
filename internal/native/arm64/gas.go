@@ -49,9 +49,33 @@ func Assemble(src string) ([]byte, error) {
 	return a.Bytes()
 }
 
+// stripComment removes a trailing `//` line comment, but only when the
+// `//` sits outside a double-quoted string literal — otherwise the `//`
+// inside a `.asciz "a // b"` operand would truncate the string and leave
+// an unterminated literal. Backslash escapes inside the string are
+// honoured so an escaped quote (\") doesn't end the literal early.
 func stripComment(s string) string {
-	if i := strings.Index(s, "//"); i >= 0 {
-		s = s[:i]
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if c == '\\' {
+				i++ // skip the escaped byte
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			continue
+		}
+		if c == '/' && i+1 < len(s) && s[i+1] == '/' {
+			s = s[:i]
+			break
+		}
 	}
 	return strings.TrimSpace(s)
 }

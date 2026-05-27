@@ -43,6 +43,7 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 		{"negfloat", `function main(): i32 { print((0.0 - 2.25).to_string()); return 0; }`, "-2.25\n"},
 		{"wholefloat", `function main(): i32 { print((42.0).to_string()); return 0; }`, "42\n"},
 		{"floatarith", `function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; print((x * y).to_string()); return 0; }`, "3\n"},
+		{"slashstring", `function main(): i32 { print("x: i32 = 1; // comment"); return 0; }`, "x: i32 = 1; // comment\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -7,6 +7,29 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
+// TestAssembleProgramStringWithSlashes checks that a `//` inside a
+// .asciz string literal is NOT treated as a line comment (which would
+// truncate the string into an unterminated literal). This is the shape
+// a self-hosted lexer/compiler emits constantly — test inputs full of
+// "// comment" snippets — so the comment stripper must be string-aware.
+// Also exercises an escaped quote (\") so the literal isn't ended early.
+func TestAssembleProgramStringWithSlashes(t *testing.T) {
+	src := "" +
+		"\t.text\n" +
+		"\tret\n" +
+		"\t.section .rodata\n" +
+		"msg:\n" +
+		"\t.asciz \"a: i32 // c\\n\\\"q\\\"\" // trailing comment\n"
+	_, rodata, err := arm64.AssembleProgram(src, 0x400078)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte("a: i32 // c\n\"q\""), 0)
+	if !bytes.Equal(rodata, want) {
+		t.Fatalf("rodata = %q, want %q", rodata, want)
+	}
+}
+
 // TestAssembleProgramRodata checks the data section is parsed into the
 // expected bytes and that symbol references assemble without error.
 func TestAssembleProgramRodata(t *testing.T) {
