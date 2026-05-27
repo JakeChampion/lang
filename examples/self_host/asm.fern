@@ -447,6 +447,14 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // env(name): Option[string] — Some(value) if the
                     // variable is set (including empty), None otherwise.
                     if (id.name == "env") { return "option:string"; }
+                    // Filesystem builtins. temp_dir → Result[string];
+                    // read_dir → Result[string[]]; stat → Result[FileStat]
+                    // (payload struct, handled by shape dispatch);
+                    // remove_dir_all → Option[IoError].
+                    if (id.name == "temp_dir") { return "result:string"; }
+                    if (id.name == "read_dir") { return "result:array_string"; }
+                    if (id.name == "stat") { return "result:unknown"; }
+                    if (id.name == "remove_dir_all") { return "option:unknown"; }
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
@@ -689,6 +697,8 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                         return infer_expr_type(c.args[0], s);
                     }
                     if (id.name == "read_file" || id.name == "read_all_stdin") { return "string"; }
+                    if (id.name == "temp_dir") { return "string"; }
+                    if (id.name == "read_dir") { return "array_string"; }
                     return "unknown";
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -4208,6 +4218,46 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
+            // temp_dir(prefix) — make a uniquely-named directory under
+            // /tmp. Returns Result[string]: Ok(path) or Err(_).
+            if (name == "temp_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");        // prefix box
+                s = s.write("    call __fern_temp_dir\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // read_dir(path) — list a directory's base-name children.
+            // Returns Result[string[]]: Ok(names) or Err(_).
+            if (name == "read_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");        // path box
+                s = s.write("    call __fern_read_dir\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // stat(path) — file metadata. Returns Result[FileStat]:
+            // Ok(FileStat{is_file, is_dir, size}) or Err(_).
+            if (name == "stat" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");        // path box
+                s = s.write("    call __fern_stat\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // remove_dir_all(path) — recursive rm -rf. Returns
+            // Option[IoError]: None on success (incl. missing), Some(_).
+            if (name == "remove_dir_all" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");        // path box
+                s = s.write("    call __fern_remove_dir_all\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
             // f64 math intrinsics — the cheap subset that lowers to a
             // single SSE instruction. The -nostdlib native backends
             // can't link libm, so std/float's `__*_f64` primitives are
@@ -7345,6 +7395,15 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted
+    // after this pool, inside the needs_heap block) can reference its
+    // shape-name label. The helper's own add_string_lit dedups to this
+    // slot; without the early intern the label would be undefined for
+    // programs that never mention stat() themselves.
+    if (s.needs_heap) {
+        var fsPre: StringLitOut = add_string_lit(s, "FileStat");
+        s = fsPre.state;
+    }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
     // sequences in the quoted string, so a `\n` byte in the
@@ -7834,6 +7893,529 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_env, .-__fern_env\n");
+
+        // __fern_temp_dir(%rdi = prefix box) → Result[string]: makes a
+        // uniquely-named directory "/tmp/<prefix>-<monotonic_ns>" and
+        // returns Ok(its path) or Err(_). Uniqueness rides the
+        // nanosecond monotonic clock (single mkdir attempt). The Ok box
+        // points at the heap path buffer; the box length excludes the
+        // NUL the buffer also carries (kept for the mkdirat syscall).
+        s = s.write(".globl __fern_temp_dir\n");
+        s = s.write(".type __fern_temp_dir, @function\n");
+        s = s.write("__fern_temp_dir:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // prefix box
+        s = s.write("    pushq %r12\n");           // prefix len
+        s = s.write("    pushq %r13\n");           // path base
+        s = s.write("    pushq %r14\n");           // cursor / total len
+        s = s.write("    pushq %r15\n");           // ns
+        s = s.write("    movq %rdi, %rbx\n");       // prefix box
+        s = s.write("    call __fern_monotonic_ns\n");
+        s = s.write("    movq %rax, %r15\n");       // ns (unique suffix)
+        s = s.write("    movq 8(%rbx), %r12\n");    // prefix len
+        s = s.write("    leaq 27(%r12), %rdi\n");   // 5+plen+1+20+1
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");       // path base
+        s = s.write("    movb $47, 0(%r13)\n");     // '/'
+        s = s.write("    movb $116, 1(%r13)\n");    // 't'
+        s = s.write("    movb $109, 2(%r13)\n");    // 'm'
+        s = s.write("    movb $112, 3(%r13)\n");    // 'p'
+        s = s.write("    movb $47, 4(%r13)\n");     // '/'
+        s = s.write("    movq $5, %r14\n");         // cursor
+        s = s.write("    movq (%rbx), %rcx\n");      // prefix data
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write(".Ltd_pcopy:\n");
+        s = s.write("    cmpq %r12, %rdx\n");
+        s = s.write("    jge .Ltd_pdone\n");
+        s = s.write("    movb (%rcx,%rdx,1), %al\n");
+        s = s.write("    movb %al, (%r13,%r14,1)\n");
+        s = s.write("    incq %r14\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    jmp .Ltd_pcopy\n");
+        s = s.write(".Ltd_pdone:\n");
+        s = s.write("    movb $45, (%r13,%r14,1)\n"); // '-'
+        s = s.write("    incq %r14\n");
+        // Count decimal digits of ns → %r8 (ns==0 → 1).
+        s = s.write("    movq %r15, %rax\n");
+        s = s.write("    movq $0, %r8\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jne .Ltd_cnt\n");
+        s = s.write("    movq $1, %r8\n");
+        s = s.write("    jmp .Ltd_cntdone\n");
+        s = s.write(".Ltd_cnt:\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    je .Ltd_cntdone\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Ltd_cnt\n");
+        s = s.write(".Ltd_cntdone:\n");
+        // Write digits least-significant-first into [cursor .. cursor+D-1].
+        s = s.write("    leaq -1(%r14,%r8,1), %r9\n");  // last digit pos
+        s = s.write("    movq %r15, %rax\n");
+        s = s.write(".Ltd_wr:\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    addq $48, %rdx\n");
+        s = s.write("    movb %dl, (%r13,%r9,1)\n");
+        s = s.write("    decq %r9\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jne .Ltd_wr\n");
+        s = s.write("    addq %r8, %r14\n");         // total len
+        s = s.write("    movb $0, (%r13,%r14,1)\n"); // NUL
+        // mkdirat(AT_FDCWD=-100, pathz, 0700=448)
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $448, %rdx\n");
+        s = s.write("    movq $258, %rax\n");        // mkdirat
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jnz .Ltd_err\n");
+        s = s.write("    movq $16, %rdi\n");         // string box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");      // data
+        s = s.write("    movq %r14, 8(%rax)\n");     // len
+        s = s.write("    movq %rax, %r13\n");        // strbox
+        s = s.write("    movq $16, %rdi\n");         // Result Ok box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");        // Ok
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    jmp .Ltd_ret\n");
+        s = s.write(".Ltd_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");        // Err
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Ltd_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_temp_dir, .-__fern_temp_dir\n");
+
+        // __fern_stat(%rdi = path box) → Result[FileStat]. newfstatat
+        // (syscall 262) into a stack buffer; reads st_mode (offset 24
+        // on x86-64) and st_size (offset 48), builds a FileStat struct
+        // [shape, is_file@8, is_dir@16, size@24] whose shape pointer is
+        // the interned "FileStat" name (so field access matches it),
+        // and wraps it in Result Ok / Err.
+        var fsLit: StringLitOut = add_string_lit(s, "FileStat");
+        s = fsLit.state;
+        s = s.write(".globl __fern_stat\n");
+        s = s.write(".type __fern_stat, @function\n");
+        s = s.write("__fern_stat:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // path data / st_size
+        s = s.write("    pushq %r12\n");           // is_file
+        s = s.write("    pushq %r13\n");           // pathz / struct ptr
+        s = s.write("    pushq %r14\n");           // is_dir
+        s = s.write("    pushq %r15\n");           // path len
+        s = s.write("    subq $160, %rsp\n");       // statbuf (144) + slack
+        s = s.write("    movq (%rdi), %rbx\n");     // path data
+        s = s.write("    movq 8(%rdi), %r15\n");    // path len
+        s = s.write("    leaq 1(%r15), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");       // pathz
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lstat_copy:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    jge .Lstat_cpd\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lstat_copy\n");
+        s = s.write(".Lstat_cpd:\n");
+        s = s.write("    movb $0, (%r13,%r15,1)\n");
+        // newfstatat(AT_FDCWD, pathz, statbuf=%rsp, 0)
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq %rsp, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $262, %rax\n");        // newfstatat
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    js .Lstat_err\n");
+        s = s.write("    movl 24(%rsp), %eax\n");    // st_mode
+        s = s.write("    andl $61440, %eax\n");      // & S_IFMT (0xF000)
+        s = s.write("    movq $0, %r12\n");
+        s = s.write("    cmpl $32768, %eax\n");      // S_IFREG (0x8000)
+        s = s.write("    jne .Lstat_nf\n");
+        s = s.write("    movq $1, %r12\n");
+        s = s.write(".Lstat_nf:\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write("    cmpl $16384, %eax\n");      // S_IFDIR (0x4000)
+        s = s.write("    jne .Lstat_nd\n");
+        s = s.write("    movq $1, %r14\n");
+        s = s.write(".Lstat_nd:\n");
+        s = s.write("    movq 48(%rsp), %rbx\n");    // st_size
+        s = s.write("    movq $32, %rdi\n");         // FileStat struct
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    leaq .S" + i32_to_string(fsLit.idx) + "(%rip), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");      // shape
+        s = s.write("    movq %r12, 8(%rax)\n");     // is_file
+        s = s.write("    movq %r14, 16(%rax)\n");    // is_dir
+        s = s.write("    movq %rbx, 24(%rax)\n");    // size
+        s = s.write("    movq %rax, %r13\n");        // struct ptr
+        s = s.write("    movq $16, %rdi\n");         // Result Ok box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");        // Ok
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    jmp .Lstat_ret\n");
+        s = s.write(".Lstat_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");        // Err
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lstat_ret:\n");
+        s = s.write("    addq $160, %rsp\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_stat, .-__fern_stat\n");
+
+        // __fern_read_dir(%rdi = path box) → Result[string[]]. Opens the
+        // directory (O_RDONLY|O_DIRECTORY), reads all entries via
+        // getdents64 (217) into a 1 MiB heap buffer, then makes two
+        // passes: count valid entries (skipping "." / ".."), allocate
+        // the [cap, len, e0…] array, and fill it with string boxes whose
+        // data points straight at the immortal getdents buffer.
+        s = s.write(".globl __fern_read_dir\n");
+        s = s.write(".type __fern_read_dir, @function\n");
+        s = s.write("__fern_read_dir:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // offset cursor
+        s = s.write("    pushq %r12\n");           // fd / array ptr
+        s = s.write("    pushq %r13\n");           // buf base
+        s = s.write("    pushq %r14\n");           // total
+        s = s.write("    pushq %r15\n");           // path len / count / index
+        s = s.write("    movq (%rdi), %rbx\n");     // path data
+        s = s.write("    movq 8(%rdi), %r15\n");    // path len
+        s = s.write("    leaq 1(%r15), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r12\n");       // pathz (temp)
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrd_copy:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    jge .Lrd_cpd\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%r12,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrd_copy\n");
+        s = s.write(".Lrd_cpd:\n");
+        s = s.write("    movb $0, (%r12,%r15,1)\n");
+        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=65536, 0)
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r12, %rsi\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $257, %rax\n");        // openat
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    js .Lrd_err\n");
+        s = s.write("    movq %rax, %r12\n");        // fd
+        s = s.write("    movq $1048576, %rdi\n");    // 1 MiB buffer
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");        // buf base
+        s = s.write("    movq $0, %r14\n");          // total
+        s = s.write(".Lrd_g:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    leaq (%r13,%r14,1), %rsi\n");
+        s = s.write("    movq $1048576, %rdx\n");
+        s = s.write("    subq %r14, %rdx\n");
+        s = s.write("    movq $217, %rax\n");        // getdents64
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lrd_gd\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    jmp .Lrd_g\n");
+        s = s.write(".Lrd_gd:\n");
+        s = s.write("    movq %r12, %rdi\n");        // close(fd)
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        // pass 1: count valid entries → %r15
+        s = s.write("    movq $0, %r15\n");          // count
+        s = s.write("    movq $0, %rbx\n");          // offset
+        s = s.write(".Lrd_c1:\n");
+        s = s.write("    cmpq %r14, %rbx\n");
+        s = s.write("    jge .Lrd_c1d\n");
+        s = s.write("    leaq 19(%r13,%rbx,1), %rax\n"); // name ptr
+        s = s.write("    movb (%rax), %cl\n");
+        s = s.write("    cmpb $46, %cl\n");          // '.'
+        s = s.write("    jne .Lrd_c1n\n");
+        s = s.write("    movb 1(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrd_c1s\n");            // "." → skip
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrd_c1n\n");
+        s = s.write("    movb 2(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrd_c1s\n");            // ".." → skip
+        s = s.write(".Lrd_c1n:\n");
+        s = s.write("    incq %r15\n");
+        s = s.write(".Lrd_c1s:\n");
+        s = s.write("    movzwq 16(%r13,%rbx,1), %rax\n"); // d_reclen
+        s = s.write("    addq %rax, %rbx\n");
+        s = s.write("    jmp .Lrd_c1\n");
+        s = s.write(".Lrd_c1d:\n");
+        s = s.write("    leaq 2(%r15), %rdi\n");     // (count+2)*8
+        s = s.write("    shlq $3, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r15, (%rax)\n");      // cap
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %r15, (%rax)\n");      // len
+        s = s.write("    movq %rax, %r12\n");        // array ptr P
+        // pass 2: fill
+        s = s.write("    movq $0, %rbx\n");          // offset
+        s = s.write("    movq $0, %r15\n");          // element index
+        s = s.write(".Lrd_p2:\n");
+        s = s.write("    cmpq %r14, %rbx\n");
+        s = s.write("    jge .Lrd_p2d\n");
+        s = s.write("    leaq 19(%r13,%rbx,1), %rax\n"); // name ptr
+        s = s.write("    movb (%rax), %cl\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrd_p2t\n");
+        s = s.write("    movb 1(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrd_p2a\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrd_p2t\n");
+        s = s.write("    movb 2(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrd_p2a\n");
+        s = s.write(".Lrd_p2t:\n");
+        s = s.write("    movq $0, %rdx\n");          // strlen
+        s = s.write(".Lrd_p2sl:\n");
+        s = s.write("    movb (%rax,%rdx,1), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrd_p2sd\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    jmp .Lrd_p2sl\n");
+        s = s.write(".Lrd_p2sd:\n");
+        s = s.write("    pushq %rax\n");             // name ptr
+        s = s.write("    pushq %rdx\n");             // len
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    popq %rcx\n");              // name ptr
+        s = s.write("    movq %rcx, (%rax)\n");      // box.data
+        s = s.write("    movq %rdx, 8(%rax)\n");     // box.len
+        s = s.write("    movq %r15, %rcx\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    movq %rax, (%r12,%rcx,8)\n"); // P[index+1] = box
+        s = s.write("    incq %r15\n");
+        s = s.write(".Lrd_p2a:\n");
+        s = s.write("    movzwq 16(%r13,%rbx,1), %rax\n");
+        s = s.write("    addq %rax, %rbx\n");
+        s = s.write("    jmp .Lrd_p2\n");
+        s = s.write(".Lrd_p2d:\n");
+        s = s.write("    movq $16, %rdi\n");         // Result Ok box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");        // Ok
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    jmp .Lrd_ret\n");
+        s = s.write(".Lrd_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");        // Err
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lrd_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_read_dir, .-__fern_read_dir\n");
+
+        // __fern_remove_dir_all(%rdi = path box) → Option[IoError].
+        // Recursive rm -rf: open the path as a directory; ENOENT → None
+        // (already gone), ENOTDIR → unlink the file, success → recurse
+        // into each child (path + "/" + name) then rmdir. Best-effort:
+        // returns None except when the initial open fails for a reason
+        // other than ENOENT/ENOTDIR. Child paths are freshly heap-built
+        // string boxes; getdents uses a 64 KiB per-level buffer.
+        s = s.write(".globl __fern_remove_dir_all\n");
+        s = s.write(".type __fern_remove_dir_all, @function\n");
+        s = s.write("__fern_remove_dir_all:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // pathz
+        s = s.write("    pushq %r12\n");           // fd
+        s = s.write("    pushq %r13\n");           // buf base
+        s = s.write("    pushq %r14\n");           // total
+        s = s.write("    pushq %r15\n");           // offset cursor
+        s = s.write("    movq (%rdi), %r12\n");     // path data
+        s = s.write("    movq 8(%rdi), %r13\n");    // path len
+        s = s.write("    leaq 1(%r13), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");       // pathz
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrda_copy:\n");
+        s = s.write("    cmpq %r13, %rcx\n");
+        s = s.write("    jge .Lrda_cpd\n");
+        s = s.write("    movb (%r12,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%rbx,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_copy\n");
+        s = s.write(".Lrda_cpd:\n");
+        s = s.write("    movb $0, (%rbx,%r13,1)\n");
+        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY)
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $257, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jns .Lrda_dir\n");
+        s = s.write("    cmpq $-2, %rax\n");         // -ENOENT
+        s = s.write("    je .Lrda_none\n");
+        s = s.write("    cmpq $-20, %rax\n");        // -ENOTDIR → file
+        s = s.write("    jne .Lrda_some\n");
+        s = s.write("    movq $-100, %rdi\n");       // unlinkat(file)
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $263, %rax\n");        // unlinkat
+        s = s.write("    syscall\n");
+        s = s.write("    jmp .Lrda_none\n");
+        s = s.write(".Lrda_dir:\n");
+        s = s.write("    movq %rax, %r12\n");        // fd
+        s = s.write("    movq $65536, %rdi\n");      // 64 KiB getdents buffer
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");        // buf
+        s = s.write("    movq $0, %r14\n");          // total
+        s = s.write(".Lrda_g:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    leaq (%r13,%r14,1), %rsi\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    subq %r14, %rdx\n");
+        s = s.write("    movq $217, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lrda_gd\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    jmp .Lrda_g\n");
+        s = s.write(".Lrda_gd:\n");
+        s = s.write("    movq $0, %r15\n");          // offset
+        s = s.write(".Lrda_it:\n");
+        s = s.write("    cmpq %r14, %r15\n");
+        s = s.write("    jge .Lrda_itd\n");
+        s = s.write("    leaq 19(%r13,%r15,1), %rax\n"); // name ptr
+        s = s.write("    movb (%rax), %cl\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrda_ch\n");
+        s = s.write("    movb 1(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_adv\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrda_ch\n");
+        s = s.write("    movb 2(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_adv\n");
+        s = s.write(".Lrda_ch:\n");
+        s = s.write("    movq %rax, %r8\n");          // name ptr
+        s = s.write("    movq $0, %r9\n");            // plen = strlen(pathz)
+        s = s.write(".Lrda_pl:\n");
+        s = s.write("    movb (%rbx,%r9,1), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_pld\n");
+        s = s.write("    incq %r9\n");
+        s = s.write("    jmp .Lrda_pl\n");
+        s = s.write(".Lrda_pld:\n");
+        s = s.write("    movq $0, %r10\n");           // nlen = strlen(name)
+        s = s.write(".Lrda_nl:\n");
+        s = s.write("    movb (%r8,%r10,1), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_nld\n");
+        s = s.write("    incq %r10\n");
+        s = s.write("    jmp .Lrda_nl\n");
+        s = s.write(".Lrda_nld:\n");
+        s = s.write("    pushq %r8\n");               // name ptr
+        s = s.write("    pushq %r9\n");               // plen
+        s = s.write("    pushq %r10\n");              // nlen
+        s = s.write("    leaq 1(%r9,%r10,1), %rdi\n"); // plen+nlen+1
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rsi\n");         // child data buf
+        s = s.write("    popq %r10\n");
+        s = s.write("    popq %r9\n");
+        s = s.write("    popq %r8\n");
+        s = s.write("    movq $0, %rcx\n");           // copy pathz
+        s = s.write(".Lrda_cc1:\n");
+        s = s.write("    cmpq %r9, %rcx\n");
+        s = s.write("    jge .Lrda_cc1d\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%rsi,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_cc1\n");
+        s = s.write(".Lrda_cc1d:\n");
+        s = s.write("    movb $47, (%rsi,%r9,1)\n");  // '/'
+        s = s.write("    movq $0, %rcx\n");           // copy name at plen+1
+        s = s.write(".Lrda_cc2:\n");
+        s = s.write("    cmpq %r10, %rcx\n");
+        s = s.write("    jge .Lrda_cc2d\n");
+        s = s.write("    movb (%r8,%rcx,1), %dl\n");
+        s = s.write("    leaq 1(%r9,%rcx,1), %rax\n");
+        s = s.write("    movb %dl, (%rsi,%rax,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_cc2\n");
+        s = s.write(".Lrda_cc2d:\n");
+        s = s.write("    leaq 1(%r9,%r10,1), %r11\n"); // child len = plen+nlen+1
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %r11\n");
+        s = s.write("    movq $16, %rdi\n");          // string box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %r11\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    movq %rsi, (%rax)\n");       // data
+        s = s.write("    movq %r11, 8(%rax)\n");      // len
+        s = s.write("    movq %rax, %rdi\n");
+        s = s.write("    call __fern_remove_dir_all\n"); // recurse
+        s = s.write(".Lrda_adv:\n");
+        s = s.write("    movzwq 16(%r13,%r15,1), %rax\n");
+        s = s.write("    addq %rax, %r15\n");
+        s = s.write("    jmp .Lrda_it\n");
+        s = s.write(".Lrda_itd:\n");
+        s = s.write("    movq %r12, %rdi\n");         // close(fd)
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq $-100, %rdi\n");        // rmdir via unlinkat
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $512, %rdx\n");         // AT_REMOVEDIR
+        s = s.write("    movq $263, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write(".Lrda_none:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");         // None
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    jmp .Lrda_ret\n");
+        s = s.write(".Lrda_some:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");         // Some
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lrda_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
 
         // __fern_alloc_u8(%rdi = n) → fresh n-element array (this
         // emitter's layout: [cap, len, e0…] at base B, returned B+8,
