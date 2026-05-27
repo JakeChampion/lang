@@ -1476,11 +1476,69 @@ func parseReg(s string) (uint32, error) {
 func parseImm(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "#")
-	v, err := strconv.ParseInt(s, 0, 64)
-	if err != nil {
-		return 0, fmt.Errorf("bad immediate %q", s)
+	return evalIntExpr(s)
+}
+
+// evalIntExpr evaluates a constant integer expression made of `+` / `-`
+// terms (left to right), matching the subset of GAS expressions the
+// backend emits in immediates — e.g. a frame offset like `#96 + 48`,
+// which GNU as folds to 144. Each term is an integer literal in any
+// base. Plain literals (including a leading sign / hex) take the fast
+// path through ParseInt.
+func evalIntExpr(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty immediate")
 	}
-	return v, nil
+	if v, err := strconv.ParseInt(s, 0, 64); err == nil {
+		return v, nil
+	}
+	var total int64
+	op := byte('+')
+	first := true
+	i, n := 0, len(s)
+	for i < n {
+		for i < n && s[i] == ' ' {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		if first && (s[i] == '+' || s[i] == '-') {
+			op = s[i]
+			i++
+			for i < n && s[i] == ' ' {
+				i++
+			}
+		}
+		first = false
+		start := i
+		for i < n && s[i] != '+' && s[i] != '-' && s[i] != ' ' {
+			i++
+		}
+		term := s[start:i]
+		v, err := strconv.ParseInt(term, 0, 64)
+		if err != nil {
+			return 0, fmt.Errorf("bad immediate term %q", term)
+		}
+		if op == '+' {
+			total += v
+		} else {
+			total -= v
+		}
+		for i < n && s[i] == ' ' {
+			i++
+		}
+		if i < n {
+			if s[i] == '+' || s[i] == '-' {
+				op = s[i]
+				i++
+			} else {
+				return 0, fmt.Errorf("bad immediate %q", s)
+			}
+		}
+	}
+	return total, nil
 }
 
 // condOf maps a conditional-branch mnemonic (b.eq or the beq alias) to
