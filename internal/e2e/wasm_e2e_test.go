@@ -6346,9 +6346,11 @@ function main(): i32 {
 // U+FFFD REPLACEMENT CHARACTER (EF BF BD), matching Go's
 // encoding/json + most strict UTF-8 emitters.
 func TestWASMJsonParseSurrogatePairs(t *testing.T) {
-	src := "function main(): i32 {\n" +
+	src := "import \"core/no_prelude\";\n" +
+		"import \"std/json\";\n" +
+		"function main(): i32 {\n" +
 		"    // Astral pair: \\uD83D\\uDE00 = U+1F600 = F0 9F 98 80.\n" +
-		"    match (json_parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
+		"    match (json.json_parse(\"\\\"\\\\uD83D\\\\uDE00\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 4) { return 1; }\n" +
@@ -6362,7 +6364,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"        None => { return 7; }\n" +
 		"    }\n" +
 		"    // Lone high surrogate: emits U+FFFD = EF BF BD.\n" +
-		"    match (json_parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
+		"    match (json.json_parse(\"\\\"\\\\uD800x\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 4) { return 8; }\n" +
@@ -6376,7 +6378,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 		"        None => { return 14; }\n" +
 		"    }\n" +
 		"    // Lone low surrogate: emits U+FFFD too.\n" +
-		"    match (json_parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
+		"    match (json.json_parse(\"\\\"\\\\uDC00\\\"\")) {\n" +
 		"        Some(v) => { match (v) {\n" +
 		"            JString(s) => {\n" +
 		"                if (s.len() != 3) { return 15; }\n" +
