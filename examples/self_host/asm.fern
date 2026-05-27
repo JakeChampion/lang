@@ -380,6 +380,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             return "fn_" + ret_tag_of(lm.ret_type);
         },
         parser.ExprIdent(id) => {
+            if (id.name == "None") { return "option:unknown"; }
             if (s.has_local(id.name)) { return s.local_type_of(id.name); }
             // A bare ident may name a zero-arg function (a `const`);
             // report its return type so const-typed exprs dispatch.
@@ -428,6 +429,14 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // runtime, so we keep those as "unknown".
             match (c.callee) {
                 parser.ExprIdent(id) => {
+                    if (id.name == "Some" && c.args.len() == 1) {
+                        return "option:" + infer_expr_type(c.args[0], s);
+                    }
+                    if (id.name == "Ok" && c.args.len() == 1) {
+                        return "result:" + infer_expr_type(c.args[0], s);
+                    }
+                    if (id.name == "Err" && c.args.len() == 1) { return "result:unknown"; }
+                    if (id.name == "read_file") { return "result:string"; }
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
@@ -493,6 +502,10 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // we can find a single FuncDecl that
                     // matches name + receiver_type).
                     var rt: string = infer_expr_type(fa.obj, s);
+                    if (fa.field == "read_chunk") { return "option:string"; }
+                    if (is_map(rt) && fa.field == "get") {
+                        return "option:" + map_value_part(rt);
+                    }
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
@@ -552,10 +565,12 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                             && (fa.field == "sum" || fa.field == "product")) {
                         return "i32";
                     }
-                    // `.min()` / `.max()` return Option[i32] (None on an
-                    // empty array); the payload binds via
-                    // match_payload_type. Standalone infer is the coarse
-                    // Option box ("unknown").
+                    // `.min()` / `.max()` on an i32 array → Option[i32]
+                    // (None on empty); the Some payload binds as i32 via
+                    // match_payload_type.
+                    if (rt == "array_i32" && (fa.field == "min" || fa.field == "max")) {
+                        return "option:i32";
+                    }
                     if (rt == "array_string" && fa.field == "join") {
                         return "string";
                     }
@@ -713,6 +728,16 @@ function ret_tag_of(name: string): string {
         return "map:" + generic_value_tag(name, 4);
     }
     if (name.len() >= 3 && name[0:3] == "Map") { return "map:unknown"; }
+    // Option[T] / Result[T, E] → first-class wrapper tags. Must precede
+    // the trailing-`]` → "array" fallback below (both end in `]`). The
+    // payload of Result is left "unknown" — the checker only compares the
+    // wrapper-ness, never the error arm.
+    if (name.len() >= 8 && name[0:7] == "Option[") {
+        return "option:" + ret_tag_of(name[7:name.len() - 1]);
+    }
+    if (name.len() >= 8 && name[0:7] == "Result[") {
+        return "result:unknown";
+    }
     if (name.len() > 0 && name[name.len() - 1] == 93) {
         // Trailing `]` → other `T[]` shapes (struct[] etc.)
         // or Map[..]. Treat as plain array.
@@ -5821,6 +5846,187 @@ function escape_for_ascii(s: string): string {
     return out;
 }
 
+// === Type-checking pass (Option/Result vs. concrete) ===
+//
+// The self-host emitter assumes well-typed input; this pass catches the
+// one error class that otherwise miscompiles silently — a wrapped value
+// (Option/Result) used where a concrete scalar/array is expected, or vice
+// versa (e.g. `function f(): i32 { return xs.max(); }`, since `.max()` is
+// Option[i32]). It is deliberately narrow: the coarse string-tag type
+// system + position-less AST make a full checker infeasible, and the Go
+// checker owns scalar-vs-scalar / arity / field errors. See
+// docs/SELFHOST-CHECKER.md.
+
+struct CheckCtx { st: EmitState, errs: string }
+
+function is_wrapper(tag: string): boolean {
+    if (tag.len() >= 7 && tag[0:7] == "option:") { return true; }
+    if (tag.len() >= 7 && tag[0:7] == "result:") { return true; }
+    return false;
+}
+
+function is_concrete(tag: string): boolean {
+    return tag == "i32" || tag == "string" || tag == "bool" || tag == "f64"
+        || tag == "array_i32" || tag == "array_string" || tag == "array";
+}
+
+// Conservative: reject ONLY when exactly one side is an Option/Result
+// wrapper and the other is a confidently-inferred concrete type. Both
+// wrappers (payload inference is too coarse to compare), any "unknown",
+// and scalar-vs-scalar are all accepted.
+function assignable(want: string, got: string): boolean {
+    if (want == got) { return true; }
+    if (want == "unknown" || got == "unknown") { return true; }
+    var ww: boolean = is_wrapper(want);
+    var gw: boolean = is_wrapper(got);
+    if (ww && gw) { return true; }
+    if (ww || gw) {
+        var other: string = want;
+        if (ww) { other = got; }
+        if (is_concrete(other)) { return false; }
+        return true;
+    }
+    return true;
+}
+
+// Render an internal tag back to source-like syntax for diagnostics.
+function friendly_type(tag: string): string {
+    if (tag.len() >= 7 && tag[0:7] == "option:") {
+        return "Option[" + friendly_type(tag[7:tag.len()]) + "]";
+    }
+    if (tag.len() >= 7 && tag[0:7] == "result:") {
+        return "Result[" + friendly_type(tag[7:tag.len()]) + ", _]";
+    }
+    if (tag == "array_i32") { return "i32[]"; }
+    if (tag == "array_string") { return "string[]"; }
+    return tag;
+}
+
+function check_stmt(st: parser.Stmt, want: string, fname: string, ctx: CheckCtx): CheckCtx {
+    match (st) {
+        parser.StmtReturn(r) => {
+            var got: string = infer_expr_type(r.value, ctx.st);
+            if (!assignable(want, got)) {
+                return CheckCtx {
+                    st: ctx.st,
+                    errs: ctx.errs + "error[E002]: in fn '" + fname
+                        + "': returns " + friendly_type(want)
+                        + " but expression has type " + friendly_type(got) + "\n"
+                };
+            }
+            return ctx;
+        },
+        parser.StmtVar(v) => {
+            var got: string = infer_expr_type(v.init, ctx.st);
+            var bind_ty: string = got;
+            if (v.type_name.len() > 0) {
+                var declared: string = ret_tag_of(v.type_name);
+                bind_ty = declared;
+                if (!assignable(declared, got)) {
+                    ctx = CheckCtx {
+                        st: ctx.st,
+                        errs: ctx.errs + "error[E003]: in fn '" + fname
+                            + "': variable '" + v.name + "' declared "
+                            + friendly_type(declared) + " but initializer has type "
+                            + friendly_type(got) + "\n"
+                    };
+                }
+            }
+            return CheckCtx { st: ctx.st.bind_local_typed(v.name, bind_ty), errs: ctx.errs };
+        },
+        parser.StmtAssign(a) => {
+            var got: string = infer_expr_type(a.value, ctx.st);
+            var tt: string = ctx.st.local_type_of(a.target);
+            if (!assignable(tt, got)) {
+                return CheckCtx {
+                    st: ctx.st,
+                    errs: ctx.errs + "error[E004]: in fn '" + fname
+                        + "': assignment to '" + a.target + "' of type "
+                        + friendly_type(tt) + " from expression of type "
+                        + friendly_type(got) + "\n"
+                };
+            }
+            return ctx;
+        },
+        parser.StmtIf(f) => {
+            ctx = check_stmts(f.then_body, want, fname, ctx);
+            return check_stmts(f.else_body, want, fname, ctx);
+        },
+        parser.StmtWhile(w) => {
+            return check_stmts(w.body, want, fname, ctx);
+        },
+        parser.StmtFor(fo) => {
+            var it: string = infer_expr_type(fo.iter, ctx.st);
+            var elem: string = "unknown";
+            if (it == "array_i32") { elem = "i32"; }
+            if (it == "array_string") { elem = "string"; }
+            ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), errs: ctx.errs };
+            return check_stmts(fo.body, want, fname, ctx);
+        },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var actx: CheckCtx = ctx;
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => {
+                        if ((pv.type_name == "Some" || pv.type_name == "Ok")
+                                && pv.binding.len() > 0) {
+                            actx = CheckCtx {
+                                st: ctx.st.bind_local_typed(pv.binding,
+                                    match_payload_type(m.scrutinee, ctx.st)),
+                                errs: ctx.errs
+                            };
+                        }
+                    },
+                    parser.PatWildcard(_) => { }
+                }
+                actx = check_stmts(m.arms[ai].body, want, fname, actx);
+                // Keep accumulated errors; drop arm-local bindings.
+                ctx = CheckCtx { st: ctx.st, errs: actx.errs };
+                ai = ai + 1;
+            }
+            return ctx;
+        },
+        _ => { return ctx; }
+    }
+    return ctx;
+}
+
+function check_stmts(stmts: parser.Stmt[], want: string, fname: string, ctx: CheckCtx): CheckCtx {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        ctx = check_stmt(stmts[i], want, fname, ctx);
+        i = i + 1;
+    }
+    return ctx;
+}
+
+function check_func(fd: parser.FuncDecl, s: EmitState): string {
+    var want: string = ret_tag_of(fd.ret_type);
+    var s2: EmitState = s.reset_locals();
+    if (fd.receiver_type.len() > 0) {
+        s2 = s2.bind_local_typed(fd.receiver_name, ret_tag_of(fd.receiver_type));
+    }
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        s2 = s2.bind_local_typed(fd.params[pi].name, ret_tag_of(fd.params[pi].type_name));
+        pi = pi + 1;
+    }
+    var ctx: CheckCtx = CheckCtx { st: s2, errs: "" };
+    ctx = check_stmts(fd.body, want, fd.name, ctx);
+    return ctx.errs;
+}
+
+function check_module(mod: parser.Module, s: EmitState): string {
+    var errs: string = "";
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        errs = errs + check_func(mod.funcs[fi], s);
+        fi = fi + 1;
+    }
+    return errs;
+}
+
 pub function emit_module(mod: parser.Module): string {
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
@@ -5870,6 +6076,14 @@ pub function emit_module(mod: parser.Module): string {
         needs_str_reverse: s.needs_str_reverse,
         needs_i32_pow: s.needs_i32_pow
     };
+    // Type-check before codegen. On any diagnostic, report and abort —
+    // emitting assembly for ill-typed input would miscompile silently.
+    var check_errs: string = check_module(mod, s);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
     // Emit each function body first. Each gets its own label
