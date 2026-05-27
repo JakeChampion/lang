@@ -10146,6 +10146,14 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	b.emit(Op{Kind: OpStoreLocal, I32: optPtrSlot})
 	resultSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__map_get_res_%d", resultSlot)] = resultSlot
+	// The rebuilt Option box carries the same 8-byte rc header every
+	// heap box gets (rc=1 at [base+0], data = base+8) — like emitEnumNew
+	// / a Some(..) literal. Without it the scope-exit drop of an unused
+	// `var o = m.get(k)` reads heap metadata at [data-8] as the rc and
+	// underflows.
+	const rcHeaderBytes = 8
+	baseSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_get_base_%d", baseSlot)] = baseSlot
 	// `if` runs the then-arm when the i32 cond is non-zero.
 	// Some has tag 0, so we'd want eq-zero before the if to
 	// route Some → then-arm; doing the equivalent by routing
@@ -10154,8 +10162,15 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	b.emit(Op{Kind: OpLoad}) // tag at +0
 	b.emit(Op{Kind: OpIf, I32: int32(BlockTypeVoid)})
 	// --- tag != 0 (None on this side): 4-byte tag-only Option.
-	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpConstI32, I32: 4 + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1}) // rc = 1
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1}) // tag = None
@@ -10163,8 +10178,15 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	b.emit(Op{Kind: OpElse})
 	// --- tag == 0 (Some): build the user-shaped Option<V>.
 	offsets, size := payloadLayout([]ast.Type{vType}, 1, b.ptrW)
-	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1}) // rc = 1
+	b.emit(Op{Kind: OpStore})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 0}) // tag = Some
