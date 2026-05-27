@@ -19,7 +19,7 @@ func buildExit(t *testing.T, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	return StaticExecutable(text, []byte("ro\x00"), data, "fern-test")
+	return StaticExecutable(text, data, "fern-test")
 }
 
 func TestMachOStructure(t *testing.T) {
@@ -47,8 +47,8 @@ func TestMachOStructure(t *testing.T) {
 			t.Errorf("missing segment %s", name)
 		}
 	}
-	if f.Section("__text") == nil || f.Section("__const") == nil {
-		t.Errorf("missing __text/__const sections")
+	if f.Section("__text") == nil {
+		t.Errorf("missing __text section")
 	}
 }
 

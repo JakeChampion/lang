@@ -24,6 +24,20 @@ const (
 )
 
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a.BytesProgram(textVAddr)
+}
+
+// ParseProgram parses and encodes the program (instructions + data
+// directives + symbol/relocation bookkeeping) but does not resolve
+// vaddr-dependent fixups. The caller finishes with BytesProgram (ELF,
+// contiguous .rodata) or LinkMachO (Mach-O, separate __DATA segment).
+// It accepts both ELF (`:lo12:`, `.rodata`/`.bss`) and Mach-O
+// (`@PAGE`/`@PAGEOFF`, `__TEXT,__const` / `__DATA,__bss`) assembly syntax.
+func ParseProgram(src string) (*Assembler, error) {
 	a := NewAssembler()
 	sec := secText
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -47,7 +61,7 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 		if strings.HasPrefix(line, ".") {
 			newSec, derr := handleProgDirective(a, line, sec)
 			if derr != nil {
-				return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
+				return nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
 			}
 			sec = newSec
 			continue
@@ -55,15 +69,15 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 		switch sec {
 		case secText:
 			if derr := assembleProgInsn(a, line); derr != nil {
-				return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
+				return nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
 			}
 		case secRodata:
-			return nil, nil, fmt.Errorf("line %d: %q: unexpected non-directive in .rodata", lineno+1, strings.TrimSpace(raw))
+			return nil, fmt.Errorf("line %d: %q: unexpected non-directive in data section", lineno+1, strings.TrimSpace(raw))
 		case secIgnore:
 			// dropped
 		}
 	}
-	return a.BytesProgram(textVAddr)
+	return a, nil
 }
 
 // handleProgDirective handles section switches and .rodata data
@@ -84,16 +98,20 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		return secRodata, nil
 	case ".section":
 		// e.g. ".section .rodata" / ".section .bss" / ".section .text" /
-		// ".section .note.GNU-stack,...". Anything else we don't
+		// ".section .note.GNU-stack,...". Mach-O variants name a segment
+		// and section: ".section __TEXT,__text" / "__TEXT,__const" /
+		// "__DATA,__bss" / "__DATA,__data". Anything else we don't
 		// materialise.
 		arg := ""
 		if len(fields) > 1 {
 			arg = fields[1]
 		}
 		switch {
-		case strings.Contains(arg, ".text"):
+		case strings.Contains(arg, ".text"), strings.Contains(arg, "__text"):
 			return secText, nil
-		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"):
+		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"),
+			strings.Contains(arg, "__const"), strings.Contains(arg, "__cstring"),
+			strings.Contains(arg, "__data"), strings.Contains(arg, "__bss"):
 			return secRodata, nil
 		default:
 			return secIgnore, nil
@@ -261,9 +279,11 @@ func assembleProgInsn(a *Assembler, line string) error {
 		if err != nil {
 			return err
 		}
-		a.ADRPsym(rd, ops[1])
+		// ELF `adrp Xd, sym` and Mach-O `adrp Xd, sym@PAGE` are the same
+		// relocation (the high 21 bits of the symbol's page address).
+		a.ADRPsym(rd, strings.TrimSuffix(ops[1], "@PAGE"))
 		return nil
-	case mnem == "add" && len(ops) == 3 && isLo12(ops[2]):
+	case mnem == "add" && len(ops) == 3 && (isLo12(ops[2]) || strings.HasSuffix(ops[2], "@PAGEOFF")):
 		rd, err := parseReg(ops[0])
 		if err != nil {
 			return err
@@ -272,7 +292,13 @@ func assembleProgInsn(a *Assembler, line string) error {
 		if err != nil {
 			return err
 		}
-		a.AddLo12(rd, rn, lo12Sym(ops[2]))
+		// `:lo12:sym` (ELF) and `sym@PAGEOFF` (Mach-O) both name the low
+		// 12 bits of the symbol address.
+		sym := lo12Sym(ops[2])
+		if strings.HasSuffix(ops[2], "@PAGEOFF") {
+			sym = strings.TrimSuffix(ops[2], "@PAGEOFF")
+		}
+		a.AddLo12(rd, rn, sym)
 		return nil
 	}
 	return assembleInsn(a, line)

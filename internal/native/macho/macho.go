@@ -5,9 +5,10 @@
 // generator emits (-static, no dyld, raw `svc #0x80` syscalls).
 //
 // The file is a fixed-address, non-PIE executable: __PAGEZERO, a r-x
-// __TEXT segment holding the Mach-O header + load commands + machine code
-// (+ read-only constants), an optional r/w __DATA segment, and a
-// __LINKEDIT segment carrying an ad-hoc code signature. Apple Silicon's
+// __TEXT segment holding the Mach-O header + load commands + machine code,
+// an optional r/w __DATA segment (string constants + writable globals,
+// merged), and a __LINKEDIT segment carrying an ad-hoc code signature.
+// Apple Silicon's
 // kernel refuses to execute an unsigned arm64 binary, so the signature is
 // mandatory; "ad-hoc" means there is no CMS/certificate — the code
 // directory's page hashes are the identity.
@@ -43,65 +44,82 @@ const (
 	armThreadState64Cnt = 68 // count in uint32 units (272 bytes)
 )
 
-// TextVAddr is the __TEXT segment base address, passed to the assembler so
-// it can resolve absolute (adrp @PAGE) references. Integer/control-flow
-// programs don't use absolute data addressing, so they're independent of
-// it; @PAGE/@PAGEOFF support (which needs the precise __text/__data
-// addresses) is a later phase.
-const TextVAddr = baseVAddr
+// layout fixes the file/virtual-address layout of a Mach-O image given
+// the code and data sizes. The assembler and the container must agree on
+// it, so both go through layoutFor.
+type layout struct {
+	textOff         int // file offset of code within __TEXT (after header+loadcmds)
+	textLen         int
+	dataLen         int
+	textVMSize      int    // page-aligned __TEXT segment size
+	dataFileLen     int    // page-aligned __DATA segment size (0 if no data)
+	linkeditFileOff int    // == codeLimit; signature starts here
+	textVAddr       uint64 // address of the first code byte (== entry)
+	dataVAddr       uint64 // __DATA segment base
+}
 
-// StaticExecutable wraps machine code (and optional read-only const data
-// and writable data) into a runnable, ad-hoc-signed static arm64 Mach-O
-// executable. text/rodata occupy the r-x __TEXT segment; data (if any)
-// occupies a r/w __DATA segment. Execution begins at the first byte of
-// text (the code generator's `_main`). identifier is the code-signing
-// identifier (any short stable string, e.g. the program name).
-func StaticExecutable(text, rodata, data []byte, identifier string) []byte {
-	// __TEXT section layout: [header+loadcmds][__text][__const].
-	hdrSize := machHeaderLen + loadCommandsLen(len(data) > 0)
-	textOff := hdrSize
-	constOff := alignUp(textOff+len(text), 8)
-	textVMSize := alignUp(constOff+len(rodata), pageSize)
-
+func layoutFor(textLen, dataLen int) layout {
+	hasData := dataLen > 0
+	textOff := machHeaderLen + loadCommandsLen(hasData)
+	textVMSize := alignUp(textOff+textLen, pageSize)
 	dataFileLen := 0
-	if len(data) > 0 {
-		dataFileLen = alignUp(len(data), pageSize)
+	if hasData {
+		dataFileLen = alignUp(dataLen, pageSize)
 	}
+	return layout{
+		textOff:         textOff,
+		textLen:         textLen,
+		dataLen:         dataLen,
+		textVMSize:      textVMSize,
+		dataFileLen:     dataFileLen,
+		linkeditFileOff: textVMSize + dataFileLen,
+		textVAddr:       baseVAddr + uint64(textOff),
+		dataVAddr:       baseVAddr + uint64(textVMSize),
+	}
+}
 
-	linkeditFileOff := textVMSize + dataFileLen
-	codeLimit := linkeditFileOff
+// SegmentAddrs returns the code (== entry) address and the __DATA segment
+// base for the given code/data sizes. The assembler resolves adrp @PAGE /
+// @PAGEOFF references against these before StaticExecutable lays the same
+// blobs out at the same addresses.
+func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
+	lo := layoutFor(textLen, dataLen)
+	return lo.textVAddr, lo.dataVAddr
+}
 
-	sig := codeSignature(nil, identifier, codeLimit, textVMSize) // size probe (hashes filled later)
+// StaticExecutable wraps machine code and a data blob into a runnable,
+// ad-hoc-signed static arm64 Mach-O executable. Code occupies the r-x
+// __TEXT segment; data (read-only constants + writable globals, merged by
+// the assembler) occupies a r/w __DATA segment. Execution begins at the
+// first code byte (the code generator's `_main`). The text/data sizes
+// must match those passed to SegmentAddrs so addresses line up.
+func StaticExecutable(text, data []byte, identifier string) []byte {
+	lo := layoutFor(len(text), len(data))
+	codeLimit := lo.linkeditFileOff
+
+	sig := codeSignature(nil, identifier, codeLimit, lo.textVMSize) // size probe
 	sigLen := len(sig)
 	linkeditVMSize := alignUp(sigLen, pageSize)
+	linkeditVAddr := lo.dataVAddr + uint64(lo.dataFileLen)
 
-	textVAddr := uint64(baseVAddr)
-	dataVAddr := textVAddr + uint64(textVMSize)
-	linkeditVAddr := dataVAddr + uint64(dataFileLen)
-	entry := textVAddr + uint64(textOff)
-
-	// ---- assemble the file image up to the signature ----
-	buf := make([]byte, linkeditFileOff)
-	// header + load commands
+	buf := make([]byte, lo.linkeditFileOff)
 	mh := newImage(buf)
-	mh.machHeader(len(data) > 0)
-	mh.segmentText(textVAddr, uint64(textVMSize), uint64(textOff), len(text), uint64(constOff), len(rodata))
+	mh.machHeader()
+	mh.segmentText(uint64(lo.textOff), len(text))
 	if len(data) > 0 {
-		mh.segmentData(dataVAddr, uint64(dataFileLen), uint64(textVMSize), len(data))
+		mh.segmentData(lo.dataVAddr, uint64(lo.dataFileLen), uint64(lo.textVMSize), len(data))
 	}
-	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(linkeditFileOff), sigLen)
-	mh.unixThread(entry)
-	mh.codeSig(uint32(linkeditFileOff), uint32(sigLen))
+	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(lo.linkeditFileOff), sigLen)
+	mh.unixThread(lo.textVAddr)
+	mh.codeSig(uint32(lo.linkeditFileOff), uint32(sigLen))
 	mh.done()
 
-	copy(buf[textOff:], text)
-	copy(buf[constOff:], rodata)
+	copy(buf[lo.textOff:], text)
 	if len(data) > 0 {
-		copy(buf[textVMSize:], data)
+		copy(buf[lo.textVMSize:], data)
 	}
 
-	// ---- code signature over file[0:codeLimit] ----
-	sig = codeSignature(buf[:codeLimit], identifier, codeLimit, textVMSize)
+	sig = codeSignature(buf[:codeLimit], identifier, codeLimit, lo.textVMSize)
 	return append(buf, sig...)
 }
 
@@ -115,12 +133,13 @@ const (
 	codeSigCmdLen = 16
 )
 
-// loadCommandsLen returns the total size of all load commands.
+// loadCommandsLen returns the total size of all load commands:
+// __PAGEZERO + __TEXT (1 section: __text) + optional __DATA (1 section) +
+// __LINKEDIT + LC_UNIXTHREAD + LC_CODE_SIGNATURE.
 func loadCommandsLen(hasData bool) int {
-	// __PAGEZERO (no sects) + __TEXT (2 sects) + __LINKEDIT (no sects)
-	n := segCmdLen + (segCmdLen + 2*sectLen) + segCmdLen
+	n := segCmdLen + (segCmdLen + sectLen) + segCmdLen
 	if hasData {
-		n += segCmdLen + sectLen // __DATA (1 sect)
+		n += segCmdLen + sectLen
 	}
 	n += unixThreadLen + codeSigCmdLen
 	return n
