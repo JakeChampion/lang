@@ -338,10 +338,31 @@ planned order:
   prior behaviour, so the file-driven fixpoint is untouched. Proven
   end-to-end by `self_host_stdlib_import_test.go`: a program
   `import "std/math"` (leaf) and `import "std/sort"` (transitive →
-  `std/string`) compile + run correctly through the self-host. The
-  remaining piece for the auto-prelude-dependent modules (`std/test`'s
-  bare-name `TestRunner` / `assert_*`) is replicating the prelude
-  injector's flat-namespace seeding in the driver.
+  `std/string`) compile + run correctly through the self-host.
+- ✅ **Low-level memory + RC intrinsics** (`__alloc` / `__free` /
+  `__load_i32` / `__store_i32` / `__load_i64` / `__load_ptr` /
+  `__store_ptr` / `__ptr_width` / `__memset` + `__fern_rc_inc` /
+  `__fern_arr_dec` / `__fern_drop_arr_ptr`). `std/json` imports
+  `core/map`, whose open-addressing source pokes raw memory through
+  these names; before, a `std/json`-importing program failed to link
+  with undefined `__fn___alloc` &c. They're now emitted as plain
+  runtime functions on both backends under the self-host's stack-arg
+  ABI (param[0] at `16(%rbp)` / `[x29,#16]`, result in the return
+  register). `__alloc` forwards to `__fern_alloc`; the memory pokes
+  are real; `__free` and the three RC intrinsics are no-ops, consistent
+  with the leak-everything bump heap (nothing is ever reclaimed). Note
+  the self-host's own `Map[K,V]` lowers to the *native* `__fern_map_*`
+  runtime, so `core/map`'s bodies are compiled-but-dead — the symbols
+  only need to resolve. Proven by the `std-json-intrinsics` case in
+  `self_host_stdlib_import_test.go` (a `std/json`-importing program
+  links + runs: 10+32=42).
+- ⏳ **`std/test` end-to-end** still needs more of the runtime builtin
+  surface: beyond the map intrinsics above it transitively pulls in OS
+  syscalls (`write_file` / `read_dir` / `stat` / `temp_dir` /
+  `remove_dir_all` / `env`), time (`now_unix_ms` / `monotonic_ns`), and
+  `f64__to_string`. Those are the next batch of self-host runtime
+  helpers — independent of the prelude question (the test runner is
+  used via explicit `import "std/test"; test.test_new(...)`).
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in

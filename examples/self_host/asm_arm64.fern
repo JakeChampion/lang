@@ -6442,6 +6442,91 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
+        // Low-level memory intrinsics (`__alloc` / `__free` / the
+        // `__load_*` / `__store_*` pokes / `__ptr_width` / `__memset`)
+        // and the RC intrinsics (`__fern_rc_inc` / `__fern_arr_dec` /
+        // `__fern_drop_arr_ptr`). Plain runtime functions under the
+        // self-host's stack-arg ABI (param[0] at [x29, #16], result in
+        // x0). They exist so a program that imports `std/json` /
+        // `core/map` links: that map implementation's source pokes raw
+        // memory through these names. The self-host's own `Map[K,V]`
+        // lowers to the native `__fern_map_*` runtime, so the
+        // `core/map` bodies are never actually called — but their
+        // symbols must resolve. RC + `__free` are no-ops, consistent
+        // with the leak-everything bump heap (nothing is reclaimed).
+        s = s.write("__fn___alloc:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___free:\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___memset:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");     // dst
+        s = s.write("    ldr x1, [x29, #32]\n");     // fill byte
+        s = s.write("    ldr x2, [x29, #48]\n");     // count
+        s = s.write("    cbz x2, .Lfnmemset_done\n");
+        s = s.write(".Lfnmemset_loop:\n");
+        s = s.write("    strb w1, [x0], #1\n");
+        s = s.write("    subs x2, x2, #1\n");
+        s = s.write("    bne .Lfnmemset_loop\n");
+        s = s.write(".Lfnmemset_done:\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___load_i32:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");
+        s = s.write("    ldrsw x0, [x0]\n");          // i32 load, sign-extended
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___store_i32:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");     // addr
+        s = s.write("    ldr x1, [x29, #32]\n");     // val
+        s = s.write("    str w1, [x0]\n");            // store low 4 bytes
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___load_i64:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");
+        s = s.write("    ldr x0, [x0]\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___load_ptr:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");
+        s = s.write("    ldr x0, [x0]\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___store_ptr:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    ldr x0, [x29, #16]\n");     // addr
+        s = s.write("    ldr x1, [x29, #32]\n");     // val
+        s = s.write("    str x1, [x0]\n");            // store 8 bytes
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___ptr_width:\n");
+        s = s.write("    mov x0, #8\n");
+        s = s.write("    ret\n");
+        // RC intrinsics — no-ops (leak-everything heap). __fern_rc_inc
+        // passes its argument through in x0 in case a caller chains.
+        s = s.write("__fn___fern_rc_inc:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___fern_arr_dec:\n");
+        s = s.write("    ret\n");
+        s = s.write("__fn___fern_drop_arr_ptr:\n");
+        s = s.write("    ret\n");
+
         // __fern_reader_read_chunk(x0 = fd, x1 = n) → Option[string].
         // Reads up to n bytes; Some(string) on a non-empty read — an
         // Option box [tag=0, strbox@8] wrapping a {data@0, len@8}
