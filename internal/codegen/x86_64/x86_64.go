@@ -1663,6 +1663,11 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.push()
 			return nil
 		}
+		if target == "__pow_f64" {
+			g.emitF64Pow()
+			g.push()
+			return nil
+		}
 		switch target {
 		case "__alloc":
 			target = "__fern_alloc"
@@ -1840,7 +1845,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 // |frac| ≥ 0.5. That reproduces ties-away for every input.
 func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 	switch name {
-	case "__abs_f64", "__sqrt_f64", "__floor_f64", "__ceil_f64", "__trunc_f64", "__round_f64":
+	case "__abs_f64", "__sqrt_f64", "__floor_f64", "__ceil_f64", "__trunc_f64", "__round_f64",
+		"__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
 	default:
 		return false
 	}
@@ -1889,8 +1895,73 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 		g.emit("addsd xmm1, xmm5") // r += copysign(1, x)
 		g.label(done)
 		g.emit("movq rax, xmm1")
+	case "__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
+		// Transcendentals via the x87 FPU — no libm. x87 loads from
+		// memory, so the value (in rax) routes through an 8-byte
+		// scratch slot. Mirrors the self-hosted compiler's lowering.
+		g.emit("sub rsp, 8")
+		g.emit("mov [rsp], rax")
+		switch name {
+		case "__sin_f64":
+			g.emit("fld qword ptr [rsp]")
+			g.emit("fsin")
+			g.emit("fstp qword ptr [rsp]")
+		case "__cos_f64":
+			g.emit("fld qword ptr [rsp]")
+			g.emit("fcos")
+			g.emit("fstp qword ptr [rsp]")
+		case "__log_f64":
+			// ln(x) = ln2 · log2(x) via fyl2x.
+			g.emit("fldln2")              // st0 = ln2
+			g.emit("fld qword ptr [rsp]") // st0 = x, st1 = ln2
+			g.emit("fyl2x")               // st0 = ln2·log2(x) = ln(x)
+			g.emit("fstp qword ptr [rsp]")
+		default: // __exp_f64
+			// exp(x) = 2^(x·log2 e). Split the exponent into integer
+			// n and fraction f, do 2^f via f2xm1, then fscale by 2^n.
+			g.emit("fldl2e")               // st0 = log2(e)
+			g.emit("fmul qword ptr [rsp]") // st0 = t = x·log2 e
+			g.emit("fld st(0)")            // st0=t, st1=t
+			g.emit("frndint")              // st0=n, st1=t
+			g.emit("fsub st(1), st(0)")    // st1 = t - n = f
+			g.emit("fxch st(1)")           // st0=f, st1=n
+			g.emit("f2xm1")                // st0 = 2^f - 1
+			g.emit("fld1")
+			g.emit("faddp")  // st0 = 2^f, st1=n
+			g.emit("fscale") // st0 = 2^f · 2^n = 2^t
+			g.emit("fstp st(1)")
+			g.emit("fstp qword ptr [rsp]")
+		}
+		g.emit("mov rax, [rsp]")
+		g.emit("add rsp, 8")
 	}
 	return true
+}
+
+// emitF64Pow lowers __pow_f64(x, y) = x^y = 2^(y·log2 x) via the x87
+// FPU (fyl2x + the f2xm1/fscale 2^t reconstruction), matching the
+// self-hosted compiler. Both args ride the operand stack; binPop
+// leaves x in rax and y in rcx. Result is left in rax (caller pushes).
+func (g *generator) emitF64Pow() {
+	g.binPop() // rax = x, rcx = y
+	g.emit("sub rsp, 16")
+	g.emit("mov [rsp], rax")        // x
+	g.emit("mov [rsp+8], rcx")      // y
+	g.emit("fld qword ptr [rsp+8]") // st0 = y
+	g.emit("fld qword ptr [rsp]")   // st0 = x, st1 = y
+	g.emit("fyl2x")                 // st0 = y·log2(x) = t
+	g.emit("fld st(0)")             // st0=t, st1=t
+	g.emit("frndint")               // st0=n, st1=t
+	g.emit("fsub st(1), st(0)")     // st1 = t - n = f
+	g.emit("fxch st(1)")            // st0=f, st1=n
+	g.emit("f2xm1")                 // st0 = 2^f - 1
+	g.emit("fld1")
+	g.emit("faddp")  // st0 = 2^f, st1=n
+	g.emit("fscale") // st0 = 2^f · 2^n = 2^t
+	g.emit("fstp st(1)")
+	g.emit("fstp qword ptr [rsp]")
+	g.emit("mov rax, [rsp]")
+	g.emit("add rsp, 16")
 }
 
 // binPop pops two operand-stack values: rhs (top) → rcx, lhs
