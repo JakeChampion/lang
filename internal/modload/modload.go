@@ -73,17 +73,14 @@ func LoadWith(entryPath string, overrides map[string]string) (*ast.Program, map[
 // rather than on disk — the shape every in-memory compile path needs
 // now that the auto-prelude is gone and `std/…` / `core/…` imports
 // must be resolved through modload (stdin / REPL / playground / the
-// wasm bundle). The synthetic entry path lets relative imports in src
-// resolve against the current working directory, the same as a file
-// named `<entry>.fern` there would. Returns the combined Program and
-// the source map for diagnostics.
+// wasm bundle). The synthetic entry path is absolute so filepath.Abs
+// (here and in loadCore) short-circuits without calling os.Getwd —
+// which is unimplemented under GOOS=js, where the browser playground
+// and cmd/fern-wasm run. In-memory callers only import stdlib (served
+// from the embedded FS), so the synthetic directory is never read.
 func LoadSource(src string) (*ast.Program, map[string]string, error) {
-	const entry = "<source>.fern"
-	abs, err := filepath.Abs(entry)
-	if err != nil {
-		return nil, nil, err
-	}
-	return loadCore(entry, map[string]string{abs: src})
+	const entry = "/__fern_source__/main.fern"
+	return loadCore(entry, map[string]string{entry: src})
 }
 
 func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {

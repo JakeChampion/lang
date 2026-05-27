@@ -1121,3 +1121,38 @@ function main(): i32 {
 		t.Fatalf("expected check to succeed (map runtime helpers resolve), got %v", err)
 	}
 }
+
+// LoadSource must not depend on os.Getwd — it's unimplemented under
+// GOOS=js, where the browser playground / cmd/fern-wasm run every
+// in-memory compile. Regression guard for the bug where LoadSource
+// resolved a relative synthetic entry via filepath.Abs (→ os.Getwd),
+// breaking the playground with "getwd: not implemented on js". Simulate
+// a missing cwd on linux by chdir'ing into a temp dir and removing it,
+// so os.Getwd() errors; LoadSource should still succeed.
+func TestLoadSourceDoesNotNeedGetwd(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(orig)
+	tmp, err := os.MkdirTemp("", "nowd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	// Unlink the cwd so os.Getwd() now fails (ENOENT). Best-effort:
+	// if the platform refuses, the test still exercises LoadSource.
+	_ = os.Remove(tmp)
+	if _, err := os.Getwd(); err == nil {
+		t.Skip("could not make cwd unresolvable on this platform; skipping getwd guard")
+	}
+
+	src := `import "core/no_prelude";
+import "std/i32";
+function main(): i32 { return (5).abs(); }`
+	if _, _, err := modload.LoadSource(src); err != nil {
+		t.Errorf("LoadSource must not depend on os.Getwd; got: %v", err)
+	}
+}
