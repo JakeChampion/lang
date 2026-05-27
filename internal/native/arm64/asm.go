@@ -19,10 +19,11 @@ type Assembler struct {
 	fixups []fixup
 
 	// Data section + symbol addressing (used by AssembleProgram).
-	rodata     []byte
-	syms       map[string]symbol
-	adrpFixups []symFixup
-	lo12Fixups []symFixup
+	rodata        []byte
+	syms          map[string]symbol
+	adrpFixups    []symFixup
+	lo12Fixups    []symFixup
+	quadSymFixups []quadSymFixup
 
 	// Literal pool (ldr Xt, =value): pending literals awaiting the next
 	// flush (.ltorg or end), and the placed literals to relocate.
@@ -58,6 +59,15 @@ type symFixup struct {
 	rn    uint32 // add-lo12 only
 }
 
+// quadSymFixup records a `.quad <symbol>` slot in .rodata: the 8 bytes
+// at offset `at` must hold the absolute virtual address of `label`,
+// resolved once section addresses are fixed. Used for function-pointer /
+// closure tables (a non-PIE static executable, so absolute is fine).
+type quadSymFixup struct {
+	at    int // byte offset within rodata
+	label string
+}
+
 type branchKind int
 
 const (
@@ -87,6 +97,14 @@ func (a *Assembler) TextLabel(name string) {
 // RodataLabel marks a .rodata symbol at the current rodata offset.
 func (a *Assembler) RodataLabel(name string) {
 	a.syms[name] = symbol{inText: false, val: len(a.rodata)}
+}
+
+// AppendQuadSym appends an 8-byte .rodata slot that will hold the
+// absolute virtual address of sym, filled in by BytesProgram. Backs
+// `.quad <symbol>` (function-pointer / closure tables).
+func (a *Assembler) AppendQuadSym(sym string) {
+	a.quadSymFixups = append(a.quadSymFixups, quadSymFixup{at: len(a.rodata), label: sym})
+	a.AppendRodata(make([]byte, 8))
 }
 
 // AppendRodata appends raw bytes to the .rodata blob.
@@ -301,6 +319,17 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 			return nil, nil, fmt.Errorf("arm64: :lo12: of undefined symbol %q", f.label)
 		}
 		a.insns[f.at] = ADDimm(f.rd, f.rn, uint16(sv&0xfff), false)
+	}
+
+	// .quad <symbol> → absolute 8-byte virtual address in .rodata.
+	for _, f := range a.quadSymFixups {
+		sv, ok := symVAddr(f.label)
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: .quad of undefined symbol %q", f.label)
+		}
+		for i := 0; i < 8; i++ {
+			a.rodata[f.at+i] = byte(sv >> (8 * i))
+		}
 	}
 
 	for _, insn := range a.insns {

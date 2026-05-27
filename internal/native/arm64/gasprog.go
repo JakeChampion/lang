@@ -159,11 +159,18 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 // little-endian fields.
 func emitInts(a *Assembler, rest string, width int) error {
 	for _, tok := range strings.Split(rest, ",") {
-		v, err := strconv.ParseInt(strings.TrimSpace(tok), 0, 64)
+		tok = strings.TrimSpace(tok)
+		v, err := strconv.ParseInt(tok, 0, 64)
 		if err != nil {
 			// allow unsigned hex like 0x80000000 that overflows int64-as-signed
-			u, uerr := strconv.ParseUint(strings.TrimSpace(tok), 0, 64)
+			u, uerr := strconv.ParseUint(tok, 0, 64)
 			if uerr != nil {
+				// A `.quad <symbol>` slot: emit the symbol's absolute
+				// 8-byte address (function-pointer / closure tables).
+				if width == 8 && isIdent(tok) {
+					a.AppendQuadSym(tok)
+					continue
+				}
 				return fmt.Errorf("bad integer %q", tok)
 			}
 			v = int64(u)
