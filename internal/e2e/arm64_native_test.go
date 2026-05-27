@@ -119,6 +119,14 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"i32arr_iter", "function main(): i32 { var a: i32[] = [1, 2, 3, 36]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 42},
 		{"structarr_index", "struct P { x: i32, y: i32 } function main(): i32 { var ps: P[] = [P{x:1,y:2}, P{x:40,y:2}]; return ps[1].x + ps[1].y; }", 42},
 		{"structarr_iter", "struct P { v: i32 } function main(): i32 { var ps: P[] = [P{v:20}, P{v:22}]; var s: i32 = 0; for p in ps { s = s + p.v; } return s; }", 42},
+		// Cheap f64 math intrinsics lower to single FP instructions
+		// (fabs/fsqrt/frintm/frintp/frintz/frinta) — no libm.
+		{"abs_f64", "function main(): i32 { return __abs_f64(0.0 - 42.0) as i32; }", 42},
+		{"sqrt_f64", "function main(): i32 { return __sqrt_f64(1764.0) as i32; }", 42},
+		{"floor_f64", "function main(): i32 { return __floor_f64(42.9) as i32; }", 42},
+		{"ceil_f64", "function main(): i32 { return __ceil_f64(41.1) as i32; }", 42},
+		{"trunc_f64", "function main(): i32 { return __trunc_f64(42.9) as i32; }", 42},
+		{"round_f64", "function main(): i32 { return __round_f64(41.5) as i32; }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
