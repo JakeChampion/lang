@@ -10022,6 +10022,15 @@ func isStringForBoxing(t ast.Type, ptrW int) bool {
 // scalars) into a single i32 the helper can carry through its
 // entries array.
 func (b *builder) boxIntoCell(arg ast.Expr, t ast.Type, slotLabel string) error {
+	_, err := b.boxIntoCellSlot(arg, t, slotLabel)
+	return err
+}
+
+// boxIntoCellSlot is boxIntoCell that also returns the function-local
+// slot holding the cell pointer, so a caller can reclaim the cell after
+// the helper call that consumes it (see freeLookupKeyCell for the
+// transient read-method lookup-key path).
+func (b *builder) boxIntoCellSlot(arg ast.Expr, t ast.Type, slotLabel string) (int32, error) {
 	cellSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("%s_%d", slotLabel, cellSlot)] = cellSlot
 	// Cell size matches the value's slot size: 8 bytes for
@@ -10033,11 +10042,36 @@ func (b *builder) boxIntoCell(arg ast.Expr, t ast.Type, slotLabel string) error 
 	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	if err := b.expr(arg); err != nil {
-		return err
+		return 0, err
 	}
 	b.emit(payloadStoreOpFor(t, b.ptrW))
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
-	return nil
+	return cellSlot, nil
+}
+
+// freeLookupKeyCell reclaims the transient boxed lookup-key cell after a
+// READ-ONLY Map method (get / has / delete / get_or) has consumed it —
+// the read helpers never retain the key cell (only set stores it). The
+// helper's result sits underneath on the operand stack and is left
+// untouched (the free ops are stack-balanced: load, call→returns cell,
+// drop). When the key was a FRESH owned temporary (a concat / literal /
+// call rather than an Ident / field / index alias the caller still
+// owns), its string buffer is also reclaimed via __fern_str_dec first.
+// wasm-only: cellSlot is only produced when the key was boxed (string K
+// on wasm32). A cellSlot < 0 (unboxed native key) is a no-op.
+func (b *builder) freeLookupKeyCell(cellSlot int32, keyArg ast.Expr, kType ast.Type) {
+	if cellSlot < 0 || b.ptrW != 4 {
+		return
+	}
+	if _, isStr := kType.(ast.StringType); isStr && !needsRcIncOnAlias(keyArg, b) {
+		b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthString})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_cell_free", I32: 1})
+	b.emit(Op{Kind: OpDrop})
 }
 
 // pushMapMethodArg evaluates one argument to a Map method,
@@ -10096,7 +10130,14 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		return err
 	}
 	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
-	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_get_kbox"); err != nil {
+	keyCell := int32(-1)
+	if boxK {
+		var err error
+		keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__map_get_kbox")
+		if err != nil {
+			return err
+		}
+	} else if err := b.expr(n.Args[1]); err != nil {
 		return err
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get", I32: 2})
@@ -10155,6 +10196,9 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// narrows / widens to the V slot correctly.
 	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpEnd})
+	// get doesn't retain the key cell — reclaim the transient (the
+	// operand stack is empty here, before the result is pushed).
+	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	return nil
 }
@@ -10183,7 +10227,8 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	if err := b.boxIntoCell(n.Args[1], kType, "__map_kbox"); err != nil {
+	keyCell, err := b.boxIntoCellSlot(n.Args[1], kType, "__map_kbox")
+	if err != nil {
 		return err
 	}
 	for i := 2; i < len(n.Args); i++ {
@@ -10192,6 +10237,11 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 		}
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: methodName, I32: argCount})
+	// Read-only methods (has / get_or) don't retain the key cell — only
+	// set does, and set never routes here. Reclaim the transient cell.
+	if methodName != "__method_Map_set" {
+		b.freeLookupKeyCell(keyCell, n.Args[1], kType)
+	}
 	return nil
 }
 
@@ -10227,8 +10277,11 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	// Push map and key for the delete call, boxing key when needed.
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	needBoxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
+	keyCell := int32(-1)
 	if needBoxK {
-		if err := b.boxIntoCell(n.Args[1], kType, "__del_kbox"); err != nil {
+		var err error
+		keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__del_kbox")
+		if err != nil {
 			return err
 		}
 	} else {
@@ -10242,6 +10295,8 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	boolSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__del_ok_%d", boolSlot)] = boolSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: boolSlot})
+	// delete doesn't retain the key cell — reclaim the transient.
+	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
 
 	// Allocate (Map[K,V], bool) tuple: [mapPtr:ptrW | bool:4].
 	// Layout matches tupleElemLayout([(Map[K,V], bool)], ptrW):
@@ -10309,7 +10364,14 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 		return err
 	}
 	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
-	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_or_kbox"); err != nil {
+	keyCell := int32(-1)
+	if boxK {
+		var err error
+		keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__map_or_kbox")
+		if err != nil {
+			return err
+		}
+	} else if err := b.expr(n.Args[1]); err != nil {
 		return err
 	}
 	if err := b.boxIntoCell(n.Args[2], vType, "__map_or_box"); err != nil {
@@ -10317,6 +10379,11 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
 	b.emit(payloadLoadOpFor(vType, b.ptrW))
+	// get_or doesn't retain the key cell — reclaim the transient (the
+	// loaded result value sits underneath; the free ops are balanced).
+	// NB the fallback value cell (__map_or_box) is a separate temporary
+	// that still leaks — same fresh-arg-temporary class as elsewhere.
+	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
 	return nil
 }
 
