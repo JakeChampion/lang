@@ -321,8 +321,9 @@ function main(): i32 {
 	{
 		// String-local reclamation (wasm). A fresh concat result (always a
 		// fresh headered heap buffer) in an owned local frees via
-		// __fern_str_dec at scope exit. The aliased `s2 = s1` taints both
-		// (no v1 two-word alias-inc → skipped, leaked, but safe). Churned
+		// __fern_str_dec at scope exit. The aliased `s2 = s1` now retains
+		// the shared buffer via the two-word __fern_str_inc, so both locals
+		// reach the dec sweep; the rc==1 / is-unique gate frees once. Churned
 		// 300x — a double-free / UAF / underflow on the freed concat
 		// buffer would trip the checksum or the underflow detector. (On
 		// native backends string reclamation is gated off; the checksum
@@ -340,6 +341,30 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 300) { total = total + mk(k); k = k + 1; }
     return (total - 1200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// String alias-inc stress (wasm). A single fresh concat buffer is
+		// shared across THREE owned locals (s, s2, s3) — two alias-incs take
+		// its rc to 3. At scope exit three __fern_str_dec calls fire; the
+		// rc==1 / is-unique gate must decrement twice and free exactly once.
+		// Over-counting (freeing while rc>1) corrupts the still-live aliases;
+		// under-counting leaks. Churned 250x so any drift in the shared-buffer
+		// rc accounting surfaces in the checksum or underflow detector. Each
+		// .len() = 2; 250*(2+2+2)=1500.
+		name: "string_alias_shared_buffer_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var pre: string = "a";
+    var s: string = pre + "b";
+    var s2: string = s;
+    var s3: string = s2;
+    return s.len() + s2.len() + s3.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 250) { total = total + mk(k); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
 }`,
 	},
 	{

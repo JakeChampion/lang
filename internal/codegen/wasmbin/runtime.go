@@ -109,6 +109,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_box_free")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
+				case "__fern_str_inc":
+					// Two-word string alias retain (Var / Assign /
+					// return-transfer / element-init). Pulls in rc_inc.
+					needs.add("__fern_rc_inc")
+					needs.add("__fern_str_inc")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -899,6 +904,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrDecBody,
+	},
+	"__fern_str_inc": {
+		// (data, len) → (data, len). Two-word string retain: inline
+		// no-op; heap incs data's rc (rc_inc guards). Returns the pair
+		// so the value survives for the alias store. See buildStrIncBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrIncBody,
 	},
 	"__fern_rc_inc": {
 		// (ptr) → ptr — refcount inc helper. Returns the input
@@ -1929,6 +1942,33 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 	// else rc != 1 (incl. sentinel) → rc_dec(data); result is the return.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, rcDec)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrIncBody — (data, len) → (data, len). Two-word string retain:
+// inline strings (len's top bit) have no heap, return unchanged; heap
+// strings inc data's rc via __fern_rc_inc (which null / low-address /
+// static-sentinel short-circuits, so literals are no-ops). The (data,
+// len) pair is returned so the value stays on the operand stack for the
+// alias store that follows the inc.
+func buildStrIncBody(helperIdxs map[string]uint32) []byte {
+	rcInc := helperIdxs["__fern_rc_inc"]
+	var body []byte
+	// Inline form: if (len & 0x80000000) != 0 → return (data, len).
+	body = inst.InstLocalGet(body, 1) // len
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Heap: rc_inc(data) (guards null / low-addr / sentinel); it returns
+	// data, so the result IS the first return word. Push len for the
+	// second.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcInc)
+	body = inst.InstLocalGet(body, 1)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
