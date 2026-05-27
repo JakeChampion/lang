@@ -519,6 +519,52 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String ARRAY ELEMENT reclamation (wasm). A string[] frees each
+		// element string via the two-word walk in __fern_drop_arr_str
+		// before returning the buffer, instead of leaking the elements
+		// (buffer-only __fern_arr_dec). Built from a literal of two fresh
+		// concats; 200x churn. A leaked / double-freed element buffer
+		// drifts the checksum or trips the underflow detector.
+		// arr[0].len()+arr[1].len() = 2+2 = 4; 200*4=800.
+		name: "string_array_elem_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var a: string = "a" + "x";
+    var b: string = "b" + "y";
+    var arr: string[] = [a, b];
+    return arr[0].len() + arr[1].len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 800) + __rc_underflow_count();
+}`,
+	},
+	{
+		// String[] grown by push then reclaimed: each pushed element moves
+		// into the array (source escapes → not separately freed); the
+		// array's __fern_drop_arr_str frees all of them at the last
+		// reference. Exercises the push/grow + element-walk interaction.
+		// 5 pushes/iter, arr[3].len()=2; 100x. 100*2=200.
+		name: "string_array_push_churn_free",
+		src: `function mk(seed: i32): i32 {
+    var arr: string[] = [];
+    var k: i32 = 0;
+    while (k < 5) {
+        var s: string = "v" + "x";
+        arr = arr.push(s);
+        k = k + 1;
+    }
+    return arr[3].len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var j: i32 = 0;
+    while (j < 100) { total = total + mk(j); j = j + 1; }
+    return (total - 200) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the

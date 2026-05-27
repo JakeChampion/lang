@@ -200,8 +200,17 @@ differential fuzz and `__rc_underflow_count` guard.
    retain through `needsRcIncOnAlias`. Nested tuples (tuple in a struct /
    array / tuple) have no generated drop fn yet, so their strings still
    leak.
-4. **String ARRAY elements** (`string[]`) — array drop deep-decs string
-   elements; `string[]` buffer + each element string freed.
+4. **String ARRAY elements** (`string[]`) — **DONE.** New runtime helper
+   `__fern_drop_arr_str` (mirrors `__fern_drop_arr_ptr`): on the array's
+   last reference walks the two-word elements calling `__fern_str_dec`,
+   then frees the buffer. Wired at the array-drop sites (`emitDec` array
+   local, `dropStructField`, `appendChildDrop`) for `string[]` on wasm,
+   gated eligible. Construction / push retain is the uniform alias-inc +
+   escape-move machinery (pushed elements move in; the source escapes →
+   not separately freed). Covers `string[]` locals, `string[]` struct
+   fields, and read-out aliases (`var s = arr[i]` retains via
+   `needsRcIncOnAlias`). `string[][]` inner buffers still flat-dec (a
+   later array-of-array slice).
 5. **String ENUM payloads** (`enum E { S(string) }`) — the enum
    variant-plan deep-drops string payloads.
 6. **String CLOSURE captures** — the closure drop thunk decs captured

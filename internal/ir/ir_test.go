@@ -1778,6 +1778,46 @@ func TestLowerStringTupleElemNoReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerStringArrayElemReclaim verifies a string[] local reclaims its
+// element strings: the array drop routes through __fern_drop_arr_str
+// (which walks the two-word elements calling __fern_str_dec, then frees
+// the buffer) rather than the buffer-only __fern_arr_dec. Gated wasm.
+func TestLowerStringArrayElemReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
+    var arr: string[] = [a, b];
+    return arr[0].len() + arr[1].len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("expected string[] local reclamation via __fern_drop_arr_str:\n%s", p)
+	}
+}
+
+// TestLowerStringArrayInStructFieldReclaim verifies a string[] struct
+// field also routes through __fern_drop_arr_str when the struct drops.
+func TestLowerStringArrayInStructFieldReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Tags { items: string[] }
+function build(a: string): i32 {
+    var t: Tags = Tags { items: [a] };
+    return t.items[0].len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("expected string[] struct field reclamation via __fern_drop_arr_str:\n%s", p)
+	}
+}
+
+// TestLowerStringArrayElemNoReclaimOnNative verifies string[] element
+// reclamation is wasm-only: ptrW=8 keeps the buffer-only __fern_arr_dec
+// and emits no __fern_drop_arr_str.
+func TestLowerStringArrayElemNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
+    var arr: string[] = [a, b];
+    return arr[0].len();
+}`, 8)
+	if callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("native (ptrW=8) must not emit __fern_drop_arr_str:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box
