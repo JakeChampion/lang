@@ -444,6 +444,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // through the integer path without truncation.
                     if (id.name == "now_unix_ms") { return "i32"; }
                     if (id.name == "monotonic_ns") { return "i32"; }
+                    // env(name): Option[string] — Some(value) if the
+                    // variable is set (including empty), None otherwise.
+                    if (id.name == "env") { return "option:string"; }
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
@@ -4195,6 +4198,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
+            // env(name) — look up an environment variable. Returns
+            // Option[string]: Some(value) if set, None otherwise.
+            if (name == "env" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");        // name box
+                s = s.write("    call __fern_env\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
             // f64 math intrinsics — the cheap subset that lowers to a
             // single SSE instruction. The -nostdlib native backends
             // can't link libm, so std/float's `__*_f64` primitives are
@@ -6143,6 +6156,16 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    leaq 8(%rsp), %rax\n");
         s = s.write("    movq %rax, __fern_argv(%rip)\n");
     }
+    // Save envp for env(). It follows argv's NULL terminator on the
+    // entry stack: envp = rsp + 16 + argc*8 (argc at [rsp], argv at
+    // rsp+8 with argc+1 slots incl. the NULL). Gated on needs_heap —
+    // the env() runtime helper allocates, so it only links when the
+    // heap is present, and any program calling env() marks the heap.
+    if (s.needs_heap) {
+        s = s.write("    movq (%rsp), %rax\n");            // argc
+        s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");   // envp base
+        s = s.write("    movq %rax, __fern_envp(%rip)\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     if (has_main(mod)) {
@@ -7728,6 +7751,89 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_write_file, .-__fern_write_file\n");
+
+        // __fern_env(%rdi = name string box) → Option[string]:
+        // a [tag@0, payload@8] box — tag=0 Some(value string box) if
+        // the variable is set, tag=1 None otherwise. Walks __fern_envp
+        // (saved by _start) looking for an entry whose key matches the
+        // first name.len bytes followed by '='. The value box points
+        // directly at the envp bytes (kernel-provided, immortal) so no
+        // copy is needed. Same 5-callee-saved-pushes shape as
+        // __fern_read_file (__fern_alloc preserves rbx/r12..r15).
+        s = s.write(".section .bss\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__fern_envp: .quad 0\n");
+        s = s.write(".section .text\n");
+        s = s.write(".globl __fern_env\n");
+        s = s.write(".type __fern_env, @function\n");
+        s = s.write("__fern_env:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // envp cursor
+        s = s.write("    pushq %r12\n");           // name data ptr
+        s = s.write("    pushq %r13\n");           // name len
+        s = s.write("    pushq %r14\n");           // value data ptr / strbox
+        s = s.write("    pushq %r15\n");           // value len
+        s = s.write("    movq (%rdi), %r12\n");     // name data
+        s = s.write("    movq 8(%rdi), %r13\n");    // name len
+        s = s.write("    movq __fern_envp(%rip), %rbx\n");
+        s = s.write(".Lenv_loop:\n");
+        s = s.write("    movq (%rbx), %rdi\n");     // envp[i]
+        s = s.write("    testq %rdi, %rdi\n");
+        s = s.write("    jz .Lenv_none\n");
+        // Compare the first name.len bytes of the entry with the name.
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lenv_cmp:\n");
+        s = s.write("    cmpq %r13, %rcx\n");
+        s = s.write("    jge .Lenv_cmpdone\n");
+        s = s.write("    movb (%rdi,%rcx,1), %al\n");
+        s = s.write("    movb (%r12,%rcx,1), %dl\n");
+        s = s.write("    cmpb %dl, %al\n");
+        s = s.write("    jne .Lenv_next\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lenv_cmp\n");
+        s = s.write(".Lenv_cmpdone:\n");
+        // Require '=' immediately after the matched key bytes.
+        s = s.write("    movb (%rdi,%r13,1), %al\n");
+        s = s.write("    cmpb $61, %al\n");          // '='
+        s = s.write("    jne .Lenv_next\n");
+        // value start = entry + name.len + 1; strlen it.
+        s = s.write("    leaq 1(%rdi,%r13,1), %r14\n");
+        s = s.write("    movq $0, %r15\n");
+        s = s.write(".Lenv_strlen:\n");
+        s = s.write("    movb (%r14,%r15,1), %al\n");
+        s = s.write("    testb %al, %al\n");
+        s = s.write("    jz .Lenv_strlen_done\n");
+        s = s.write("    incq %r15\n");
+        s = s.write("    jmp .Lenv_strlen\n");
+        s = s.write(".Lenv_strlen_done:\n");
+        s = s.write("    movq $16, %rdi\n");         // string box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r14, (%rax)\n");      // data@0
+        s = s.write("    movq %r15, 8(%rax)\n");     // len@8
+        s = s.write("    movq %rax, %r14\n");        // strbox
+        s = s.write("    movq $16, %rdi\n");         // Option Some box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");        // tag = Some
+        s = s.write("    movq %r14, 8(%rax)\n");     // payload = strbox
+        s = s.write("    jmp .Lenv_ret\n");
+        s = s.write(".Lenv_next:\n");
+        s = s.write("    addq $8, %rbx\n");
+        s = s.write("    jmp .Lenv_loop\n");
+        s = s.write(".Lenv_none:\n");
+        s = s.write("    movq $16, %rdi\n");         // Option None box
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");        // tag = None
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lenv_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_env, .-__fern_env\n");
 
         // __fern_alloc_u8(%rdi = n) → fresh n-element array (this
         // emitter's layout: [cap, len, e0…] at base B, returned B+8,
