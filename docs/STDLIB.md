@@ -10,13 +10,10 @@ The lang stdlib lives in two namespaces:
   written backwards, `__memcpy` plumbing) live here. User code
   normally shouldn't reach for these.
 
-During the prelude-to-modules migration the magic
-`internal/prelude/prelude.fern` `import`s every module below
-automatically, so existing programs that call helpers by bare
-name keep working. Phase 5 of the migration (see
-[`docs/PRELUDE-TO-MODULES.md`](./PRELUDE-TO-MODULES.md)) drops
-the auto-import — user programs declare what they need via
-`import "std/…";` lines.
+The magic auto-injected prelude is gone (Phase 5 of
+[`docs/PRELUDE-TO-MODULES.md`](./PRELUDE-TO-MODULES.md)) — a
+program sees only the modules it declares via `import "std/…";` /
+`import "core/…";` lines.
 
 ## `std/`
 
@@ -658,10 +655,9 @@ the no-prelude path the default; until then this is the
 opt-out for programs that want to verify their imports are
 complete.
 
-Free-function calls into stdlib become qualified under
-no-prelude — `int.int_to_string_radix(s, 16)` rather than
-the bare `int_to_string_radix(s, 16)` the auto-prelude
-flattens. Bare receiver-method calls (`.abs()`,
+Free-function calls into stdlib are qualified —
+`int.int_to_string_radix(s, 16)` rather than a bare
+`int_to_string_radix(s, 16)`. Bare receiver-method calls (`.abs()`,
 `.to_string()`, `.pad_start(...)`) stay unchanged: the
 checker dispatches them by receiver type through the
 Methods map regardless of import path.

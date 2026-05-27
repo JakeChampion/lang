@@ -1,10 +1,15 @@
 # Prelude → modules migration
 
+> **Status: complete.** All six phases have landed — the auto-injected
+> prelude and the `internal/prelude` package were removed in #1561.
+> Programs now declare their `std/` + `core/` imports explicitly. The
+> rest of this document is kept as the historical migration record.
+
 ## Problem
 
-`internal/prelude/prelude.fern` is currently auto-injected into every
-program at checker time (`injectPrelude` in `internal/checker/checker.go`).
-It's a ~6000-line grab-bag covering string / array / i32 methods, HTTP
+`internal/prelude/prelude.fern` was auto-injected into every program at
+checker time (`injectPrelude` in `internal/checker/checker.go`). It was
+a ~6000-line grab-bag covering string / array / i32 methods, HTTP
 parsers, JSON, sort, format, URL, log, TCP, allocators, and more.
 
 The "magic prelude" approach has bitten us:
@@ -223,7 +228,10 @@ Tasks:
       - `internal/prelude/prelude.fern` is now a bare import
         block — every helper / receiver method / runtime
         function lives in a module.
-- [ ] Phase 5 — drop auto-injection. Foundation fully landed:
+- [x] Phase 5 — drop auto-injection. **Done** — `injectPrelude`
+      and the `internal/prelude` package are gone (#1561);
+      programs declare their `std/` + `core/` imports
+      explicitly. Foundation that landed first:
       `import "core/no_prelude";` is the opt-out sentinel
       (#498). `modload.LoadStdlibFlat` /
       `LoadStdlibFlatSkipping` route the auto-prelude through
@@ -254,19 +262,20 @@ Tasks:
       suites (#514 / #515). Every `examples/*.fern` and
       `examples/wasm/*.fern` program migrated to declare
       explicit imports (#517 / #518 / #519 / #520 / #521 /
-      #522). Remaining work:
-      - Convert every internal/e2e test program to declare
-        its imports explicitly. The shape mirrors the
-        examples migration: add `import "core/no_prelude";`
-        plus one `import "std/X";` line per stdlib module
-        the test touches. Free-function calls become
-        qualified (`int.int_to_string_radix(s, 16)`); bare
-        receiver methods (`.abs()`, `.to_string()`) stay
-        unchanged. ~389 tests in arm64_test.go /
-        x86_64_test.go / wasm_e2e_test.go, each with its
-        own source string — the migration is mechanical
-        but bulky.
-      - Once the suite passes with no-prelude as the default,
-        flip the switch and remove `injectPrelude` + the
-        `internal/prelude` package.
+      #522). The internal/e2e test programs were then migrated
+      the same way (add `import "core/no_prelude";` + one
+      `import "std/X";` per module touched; free-function calls
+      qualified to `module.fn`, bare receiver methods unchanged)
+      across batches #1547 / #1549 / #1550 / #1551 / #1554 /
+      #1555, and the switch was flipped in #1561. The flip also
+      surfaced and fixed: a modload type-mangling gap (tuple /
+      slice / generic-arg positions didn't get the `<mod>__`
+      prefix); three stdlib modules missing dependency imports
+      the prelude had masked (`std/time` → `std/string`,
+      `std/test` → `std/float`, `std/fuzz` → `std/test` +
+      qualified `math.random_int`); and the in-memory compile
+      paths (stdin / REPL / playground / the wasm bundle) which
+      now load through the new `modload.LoadSource`. A checker
+      test pins that an unimported `.split` is a clean type
+      error rather than silently resolving.
 - [x] Phase 6 — docs (`docs/STDLIB.md`).

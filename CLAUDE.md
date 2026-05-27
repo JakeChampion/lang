@@ -127,9 +127,12 @@ flow rather than driving manual CI checks after the fact.
 
 `internal/stdlib/std/test.fern` is the pure-Fern test runner —
 the shape the project plans to migrate to once the compiler is
-self-hosted and Go-side `*_test.go` files retire. It's part of
-the auto-prelude, so test programs reach for `TestRunner`,
-`test_new`, `assert_eq_i32`, etc. by bare name. Output is
+self-hosted and Go-side `*_test.go` files retire. With the
+auto-prelude gone (Phase 5), test programs `import "std/test";`
+and call its functions qualified (`test.test_new`,
+`test.assert_eq_i32`, `test.fail`, …) with the runner type
+written `test.TestRunner`; receiver methods (`.it`, `.finish`)
+stay bare. Output is
 TAP-13. Examples under `examples/tests/` (`arithmetic_test.fern`,
 `strings_test.fern`, `runner_self_test.fern`) — the self-test
 walks every assertion helper on both pass + fail paths. The
@@ -142,19 +145,24 @@ both the passing and failing path — the failure-reporting
 contract (predicate name in the message, actual + expected
 both quoted) is the runner's most regression-prone surface.
 
-Module loading: every stdlib module is loaded flat-namespace
-by the prelude injector, and the injected decls dedupe against
-`ast.Program.LoadedStdlibPaths` (see `internal/prelude/prelude.fern`)
-so a user program that explicitly `import`s a stdlib module
-already pulled in by the prelude doesn't get a duplicate copy
-or a "method redeclared" error. That dedupe also closed an
-older bug where an explicit `import "std/foo";` of a module
-that transitively imports another (e.g. `std/json` → `core/int`)
-sent bare-name method dispatch (`(n).to_string()`) through the
-mangled `int__int_to_string` name and crashed the interpreter
-with "cast from interp.Array to i32 not supported". It's fixed
-and guarded by `TestInterpScriptInteropIntToStringViaMangling`
+Module loading: there is no prelude injector anymore — a program
+sees only what it `import`s. `modload` loads each imported
+`std/`/`core/` module (and its transitive imports), mangles
+non-entry decls to `<mod>__name`, and rewrites qualified call
+sites; `ast.Program.LoadedStdlibPaths` records what was loaded so
+a module pulled in twice (directly + transitively) dedupes rather
+than redeclaring methods. That dedupe also closed an older bug
+where an explicit `import "std/foo";` of a module that
+transitively imports another (e.g. `std/json` → `core/int`) sent
+bare-name method dispatch (`(n).to_string()`) through the mangled
+`int__int_to_string` name and crashed the interpreter with "cast
+from interp.Array to i32 not supported". It's fixed and guarded by
+`TestInterpScriptInteropIntToStringViaMangling`
 (`internal/e2e/interp_script_test.go`), which exercises the
-explicit-import, transitive-import, qualified-call, and
-auto-prelude shapes — extend it if you touch the mangling /
-alias path.
+explicit-import, transitive-import, and qualified-call shapes —
+extend it if you touch the mangling / alias path.
+
+In-memory source (stdin, REPL, the wasm playground bundle) loads
+through `modload.LoadSource`, not bare `parser.Parse`, so those
+paths resolve stdlib imports the same way the file-based driver
+does.
