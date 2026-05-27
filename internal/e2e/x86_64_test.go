@@ -756,6 +756,44 @@ func TestX86_64Floats(t *testing.T) {
 	}
 }
 
+// Cheap f64 math intrinsics — abs/sqrt/floor/ceil/trunc lower to
+// SSE one-liners; round is round-half-away-from-zero (matching the
+// interpreter's math.Round and arm64's frinta), implemented via the
+// trunc + exact-frac sequence. Mirrors TestArm64NativeBackendRunsUnderQemu's
+// f64 cases and adds the rounding edge cases x86's roundsd can't do
+// directly (ties-away on negatives, and the x+0.5 representability
+// trap the naive formula falls into).
+func TestX86_64FloatIntrinsics(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"abs", "function main(): i32 { return __abs_f64(0.0 - 42.0) as i32; }", 42},
+		{"sqrt", "function main(): i32 { return __sqrt_f64(1764.0) as i32; }", 42},
+		{"floor", "function main(): i32 { return __floor_f64(42.9) as i32; }", 42},
+		{"ceil", "function main(): i32 { return __ceil_f64(41.1) as i32; }", 42},
+		{"trunc", "function main(): i32 { return __trunc_f64(42.9) as i32; }", 42},
+		// round: ties away from zero.
+		{"round_tie_up", "function main(): i32 { return __round_f64(41.5) as i32; }", 42},
+		{"round_down", "function main(): i32 { return __round_f64(42.4) as i32; }", 42},
+		{"round_25", "function main(): i32 { return __round_f64(2.5) as i32; }", 3},
+		// Negative ties away: round(-2.5) == -3, +45 == 42.
+		{"round_neg_tie", "function main(): i32 { return (__round_f64(0.0 - 2.5) as i32) + 45; }", 42},
+		// The largest double below 0.5 must round to 0, not 1 — the
+		// naive trunc(x+0.5) gets this wrong because x+0.5 rounds up
+		// to 1.0. +42 == 42 proves we return 0.
+		{"round_below_half", "function main(): i32 { return (__round_f64(0.49999999999999994) as i32) + 42; }", 42},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, code := compileAndRunX86_64(t, c.src)
+			if code != c.want {
+				t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
+			}
+		})
+	}
+}
+
 // End-to-end x86-64 HTTP handler. Same shape as
 // `TestArm64HttpHandler` — compiles a tiny `handle` program
 // (no manual main; the checker synthesises one calling
