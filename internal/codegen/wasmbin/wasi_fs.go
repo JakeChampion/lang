@@ -2326,7 +2326,9 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 //	5: $nread
 //	6: $result
 func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// $buf (the n-byte chunk) is returned as the Some(chunk) string data
+	// → rc1 for reclamation (scratch over-headering is harmless).
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	fdRead := idxs["wasi_fd_read"]
 
@@ -2423,7 +2425,8 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 // Locals (after 2 params r, n): 2=retbuf(12), 3=handle,
 // 4=chunk_ptr, 5=chunk_len, 6=box.
 func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
+	// chunk buffer returned as Some(chunk) string data → rc1.
+	alloc := idxs["__fern_alloc_rc1"]
 	allocBox := idxs["__fern_alloc_box"]
 	blockingRead := idxs["wasi_io_blocking_read"]
 

@@ -241,8 +241,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_reader_read_line_fd")
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
-					// bytes into a fresh n-byte heap buffer.
-					needs.add("__fern_alloc")
+					// bytes into a fresh n-byte heap buffer,
+					// returned as Some(chunk) string → rc1.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_reader_read_chunk")
 				case "__fern_reader_close_fd":
 					// (r) → i32 — fd_close on r.fd; returns
