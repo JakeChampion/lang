@@ -211,8 +211,18 @@ differential fuzz and `__rc_underflow_count` guard.
    fields, and read-out aliases (`var s = arr[i]` retains via
    `needsRcIncOnAlias`). `string[][]` inner buffers still flat-dec (a
    later array-of-array slice).
-5. **String ENUM payloads** (`enum E { S(string) }`) — the enum
-   variant-plan deep-drops string payloads.
+5. **String ENUM payloads** (`enum E { S(string) }`) — **DONE.** Both
+   enum drop plans (`uniformEnumDropLoads`, `enumVariantDropPlan`) now
+   classify a string payload (dropKind 3), and the three payload-drop
+   emitters (`decValueOnStack`, `dropStructField`, `appendChildDrop`)
+   reclaim it via the two-word `__fern_str_dec` (the payload load already
+   uses the string-aware `payloadLoadOpFor`). No construction inc is
+   needed: an eligible enum can only carry fresh/inline payloads (any
+   alias-shaped arg — Ident / FieldAccess / Index — taints the variant
+   `Call` ineligible), so the payload is always moved in and the drop
+   frees it. Match bindings that extract the payload into an outliving
+   local co-own correctly (verified by a churn corpus entry). Enums built
+   from a borrowed local stay ineligible and leak (safe), as before.
 6. **String CLOSURE captures** — the closure drop thunk decs captured
    strings.
 7. **`Map[K, string]` VALUES** — generalize `mapValHasDrop` to a

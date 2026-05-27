@@ -2082,6 +2082,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// those leak for now — safe under no-free, no over-release).
 	// Both helpers carry the null / low-address / sentinel guards.
 	decValueOnStack := func(t ast.Type, mayFree bool) {
+		// Two-word string value (wasm): the caller loaded (data, len) via
+		// payloadLoadOpFor, so reclaim via the two-word __fern_str_dec.
+		// Reached from the enum payload drop (struct / tuple string
+		// fields are handled inline before reaching here).
+		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 4 {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		// `mayFree` is the borrow-aware permission to return this
 		// value's buffer to the freelist. It's true only for OWNED
 		// top-level array locals (computeFreeEligible); struct fields
@@ -2125,6 +2134,14 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// shared or not. Every other field type (arrays, enums/unions,
 	// closures, Map) keeps the flat one-level dec.
 	dropStructField := func(t ast.Type) {
+		// Two-word string value (wasm): caller loaded (data, len), reclaim
+		// via __fern_str_dec. Reached from the enum variant-plan payload
+		// drop (struct / tuple string fields are handled inline).
+		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 4 {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		if isMapType(t) {
 			// A Map-typed field (e.g. struct Request { headers:
 			// Map[..] }) reclaims the whole map structure on the owning
@@ -3176,6 +3193,15 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
 func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) []Op {
+	// Two-word string value (wasm): the caller loaded (data, len) via a
+	// string-aware load (payloadLoadOpFor), so reclaim via __fern_str_dec.
+	// Reached from genEnumDropFn's payload drop (struct string fields are
+	// handled inline in genStructDropFn before reaching here).
+	if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+			Op{Kind: OpDrop})
+	}
 	if isMapType(t) {
 		return appendMapDrop(ops)
 	}
@@ -3368,6 +3394,9 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 		if arrElemIsRcTracked(t) {
 			return 2, true // flat dec (struct / enum / closure)
 		}
+		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+			return 3, true // two-word string dec (__fern_str_dec)
+		}
 		return 0, false
 	}
 	var want []enumDropLoad
@@ -3467,6 +3496,9 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 		}
 		if arrElemIsRcTracked(t) {
 			return 2, true // flat dec (struct / enum / closure)
+		}
+		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+			return 3, true // two-word string dec (__fern_str_dec)
 		}
 		return 0, false // scalar — nothing to drop
 	}

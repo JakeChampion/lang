@@ -1818,6 +1818,40 @@ func TestLowerStringArrayElemNoReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerStringEnumPayloadReclaim verifies a string enum payload is
+// reclaimed: the owned enum local's deep-drop dec's the payload via the
+// two-word __fern_str_dec at the enum's last reference. The payload is
+// a fresh inline concat (moved into the box, so no construction inc —
+// any alias-shaped payload would taint the enum ineligible). Non-uniform
+// enum → variant-plan path (dropStructField). Gated wasm.
+func TestLowerStringEnumPayloadReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
+function build(): i32 {
+    var m: Msg = Text("hello" + "world");
+    var got: i32 = 0;
+    match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
+    return got;
+}`, 4)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected enum string payload reclamation via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringEnumPayloadNoReclaimOnNative verifies enum string
+// payload reclamation is wasm-only (ptrW=8 emits no __fern_str_dec).
+func TestLowerStringEnumPayloadNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
+function build(): i32 {
+    var m: Msg = Text("hello" + "world");
+    var got: i32 = 0;
+    match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
+    return got;
+}`, 8)
+	if callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) enum drop must not emit __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box
