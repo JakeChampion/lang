@@ -218,8 +218,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_read_line":
 					// Reads bytes via __fern_read_byte until '\n'
 					// or EOF, accumulates into a growable buffer,
-					// then builds an Option[string] heap box.
-					needs.add("__fern_alloc")
+					// then builds an Option[string] heap box. The
+					// accumulation buffer is the returned string's
+					// data → rc1-headered for reclamation.
+					needs.add("__fern_alloc") // rc1 calls it
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_read_byte")
 					needs.add("__fern_read_line")
 				case "__fern_stdin":
@@ -3378,7 +3381,11 @@ func buildStrSliceBody(helperIdxs map[string]uint32) []byte {
 //	5: $box    — Option box pointer for return
 //	6: $copy_i — byte-copy loop counter
 func buildReadLineBody(helperIdxs map[string]uint32) []byte {
-	alloc := helperIdxs["__fern_alloc"]
+	// The accumulation buffer becomes the returned string's data (stored
+	// directly into the Some box below), so header it with rc1 for
+	// reclamation. Grown copies are also rc1 (abandoned intermediates
+	// leak as before — harmless).
+	alloc := helperIdxs["__fern_alloc_rc1"]
 	allocBox := helperIdxs["__fern_alloc_box"]
 	readByte := helperIdxs["__fern_read_byte"]
 	var body []byte
