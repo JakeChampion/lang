@@ -21,6 +21,7 @@ const (
 	baseVAddr = 0x400000 // load address; multiple of pageAlign
 	pageAlign = 0x10000  // arm64 max page size (16 KiB) for p_align
 	emAArch64 = 183      // EM_AARCH64 (e_machine)
+	emX86_64  = 62       // EM_X86_64 (e_machine)
 )
 
 // TextVAddr is the virtual address at which .text begins in the
@@ -40,9 +41,21 @@ const TextVAddr = baseVAddr + ehSize + phSize
 // no-PIE, fixed-address experimental backend. Entry is the first
 // instruction of .text.
 func StaticExecutableData(text, data []byte) []byte {
+	return staticExecutableData(text, data, emAArch64)
+}
+
+// StaticExecutableDataX86 is the x86-64 counterpart of
+// StaticExecutableData: identical single-segment layout, only the ELF
+// e_machine field differs (EM_X86_64). The x86-64 native assembler lays
+// .text at TextVAddr and .rodata immediately after, same as arm64.
+func StaticExecutableDataX86(text, data []byte) []byte {
+	return staticExecutableData(text, data, emX86_64)
+}
+
+func staticExecutableData(text, data []byte, machine uint16) []byte {
 	body := padTo8(append([]byte(nil), text...))
 	body = append(body, data...)
-	return image(body, 7) // PF_R | PF_W | PF_X
+	return image(body, 7, machine) // PF_R | PF_W | PF_X
 }
 
 func padTo8(b []byte) []byte {
@@ -58,12 +71,12 @@ func padTo8(b []byte) []byte {
 // program is responsible for its own startup and for exiting via a
 // syscall (there is no libc / crt0).
 func StaticExecutable(text []byte) []byte {
-	return image(text, 5) // PF_R | PF_X
+	return image(text, 5, emAArch64) // PF_R | PF_X
 }
 
 // image emits the ELF header + one PT_LOAD (with the given p_flags)
 // covering the whole file, followed by the body.
-func image(body []byte, flags uint32) []byte {
+func image(body []byte, flags uint32, machine uint16) []byte {
 	total := uint64(ehSize + phSize + len(body))
 	entry := uint64(baseVAddr + ehSize + phSize)
 
@@ -74,7 +87,7 @@ func image(body []byte, flags uint32) []byte {
 	buf = append(buf, 2, 1, 1, 0)             // class=ELF64, data=LE, version=1, osabi=SysV
 	buf = append(buf, 0, 0, 0, 0, 0, 0, 0, 0) // EI_PAD
 	buf = le16(buf, 2)                        // e_type    = ET_EXEC
-	buf = le16(buf, emAArch64)                // e_machine = EM_AARCH64
+	buf = le16(buf, machine)                  // e_machine
 	buf = le32(buf, 1)                        // e_version = EV_CURRENT
 	buf = le64(buf, entry)                    // e_entry
 	buf = le64(buf, ehSize)                   // e_phoff (program headers follow the ELF header)
