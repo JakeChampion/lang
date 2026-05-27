@@ -175,6 +175,43 @@ function main(): i32 {
 	}
 }
 
+// SSE scalar f64: arithmetic (movq GPR<->xmm, mulsd/addsd/subsd/divsd),
+// ordered compare (ucomisd), and int<->float conversion (cvtsi2sd /
+// cvttsd2si via the `as` casts).
+func TestX86_64NativeFloat(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{`import "core/no_prelude";
+function main(): i32 {
+  var a: f64 = 3.0; var b: f64 = 4.0;
+  return ((a * a + b * b) as i32);
+}`, 25},
+		{`import "core/no_prelude";
+function main(): i32 {
+  var a: f64 = 10.0; var b: f64 = 4.0;
+  return ((a - b) as i32);
+}`, 6},
+		{`import "core/no_prelude";
+function main(): i32 {
+  var a: f64 = 84.0; var b: f64 = 2.0;
+  return ((a / b) as i32);
+}`, 42},
+		{`import "core/no_prelude";
+function main(): i32 {
+  var a: f64 = 1.5; var b: f64 = 2.5;
+  if (a < b) { return 7; }
+  return 0;
+}`, 7},
+	}
+	for _, c := range cases {
+		if _, code := compileAndRunX86Native(t, c.src); code != c.want {
+			t.Errorf("%q → exit = %d, want %d", c.src, code, c.want)
+		}
+	}
+}
+
 // Integer arithmetic and comparison operators across the phase-1
 // instruction surface (add/sub/imul/idiv + cmp/setcc + branches).
 func TestX86_64NativeArithmetic(t *testing.T) {

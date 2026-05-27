@@ -8,12 +8,15 @@
 //
 // Covered so far: the integer / control-flow / call surface, plus
 // .rodata/.bss data, rip-relative addressing (to data and function
-// symbols), .quad symbol pointer tables, indirect call/jmp, and the
-// rep string ops (movs/stos/cmps) — enough to assemble and run the
-// whole non-floating-point fixture corpus (recursion, strings, maps,
-// closures/higher-order functions, json, enums). SSE scalar floats and
-// x87 transcendentals are the remaining phase; an unsupported
-// instruction surfaces as a clear error rather than a miscompile.
+// symbols), .quad symbol pointer tables, indirect call/jmp, the rep
+// string ops (movs/stos/cmps), and SSE scalar floats (movq/movd
+// GPR<->xmm transfers, add/sub/mul/div/sqrt sd/ss, ucomis/comis,
+// cvtsi2s*/cvtts*2si conversions, movap*, roundsd) — enough to assemble
+// and run the whole fixture corpus (recursion, strings, maps,
+// closures/higher-order functions, json, enums, floating-point math).
+// x87 transcendentals (sin/cos/exp/log/pow) are the remaining phase; an
+// unsupported instruction surfaces as a clear error rather than a
+// miscompile.
 package x86_64
 
 import (
@@ -340,6 +343,33 @@ func (a *Assembler) insn(line string) error {
 		return a.jmp(ops)
 	case "call":
 		return a.call(ops)
+	}
+	switch mnem {
+	case "movq":
+		return a.movqd(ops, false)
+	case "movd":
+		return a.movqd(ops, true)
+	case "movsd":
+		return a.movsdss(0xF2, ops)
+	case "movss":
+		return a.movsdss(0xF3, ops)
+	case "cvtsi2sd":
+		return a.cvtsi2s(0xF2, ops)
+	case "cvtsi2ss":
+		return a.cvtsi2s(0xF3, ops)
+	case "cvttsd2si":
+		return a.cvtt2si(0xF2, 0x2C, ops)
+	case "cvttss2si":
+		return a.cvtt2si(0xF3, 0x2C, ops)
+	case "cvtsd2si":
+		return a.cvtt2si(0xF2, 0x2D, ops)
+	case "cvtss2si":
+		return a.cvtt2si(0xF3, 0x2D, ops)
+	case "roundsd":
+		return a.roundsd(ops)
+	}
+	if s, ok := sseOps[mnem]; ok {
+		return a.sseOp(s.prefix, s.op, ops)
 	}
 	if cc, ok := jccCode(mnem); ok {
 		return a.jcc(ops, cc)
