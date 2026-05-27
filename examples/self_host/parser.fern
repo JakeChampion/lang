@@ -1643,6 +1643,18 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_variant(structs, "Interrupted", "");
     structs = add_builtin_variant(structs, "Unsupported", "");
     structs = add_builtin_variant(structs, "Other", "string");
+    // FileStat: the builtin struct returned by stat(path). Injected so
+    // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
+    // size@24]) — the __fern_stat runtime helper builds a struct whose
+    // shape pointer is the interned "FileStat" name, matching the arm
+    // that field access emits for is_file / is_dir / size.
+    if (!struct_declared(structs, "FileStat")) {
+        var fsf: StructFieldDecl[] = [];
+        fsf = fsf.push(StructFieldDecl { name: "is_file", type_name: "boolean" });
+        fsf = fsf.push(StructFieldDecl { name: "is_dir", type_name: "boolean" });
+        fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
+        structs = structs.push(StructDecl { name: "FileStat", fields: fsf });
+    }
     return structs;
 }
 

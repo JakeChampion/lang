@@ -378,8 +378,23 @@ planned order:
     allocates, and any `env()` caller marks the heap). Verified by a
     set/unset round-trip (`self_host_env_test.go`); arm64 mirror is
     CI-gated.
-  - ⬜ remaining OS syscalls: `read_dir` / `stat` / `temp_dir` /
-    `remove_dir_all`.
+  - ✅ filesystem syscalls: `temp_dir` / `read_dir` / `stat` /
+    `remove_dir_all` — emitted on both backends (these were
+    interpreter-only before; no Go *native* backend implements them, so
+    this was new ground, not a mirror). `temp_dir` mkdirs
+    `/tmp/<prefix>-<monotonic_ns>`; `read_dir` walks `getdents64` into a
+    1 MiB buffer and builds a `[cap, len, …]` array of base-name boxes
+    (skipping `.`/`..`); `stat` `newfstatat`s into a stack buffer and
+    builds a `FileStat` struct (`{is_file, is_dir, size}`);
+    `remove_dir_all` recurses (open as dir → recurse children → rmdir;
+    ENOTDIR → unlink; ENOENT → None). `stat` needs a synthetic
+    `FileStat` struct decl (injected in `parser.inject_builtin_enums`)
+    so field access knows the layout, and "FileStat" is pre-interned
+    before the `.rodata` pool so the helper's shape pointer resolves
+    even in programs that never mention `stat`. The arm64 `struct stat`
+    `st_mode` sits at offset 16 (vs 24 on x86-64). Verified end-to-end
+    by a make/write/stat/list/remove round-trip
+    (`self_host_fs_test.go`); arm64 mirror is CI-gated.
   - ✅ time: `now_unix_ms` / `monotonic_ns` — emitted on both backends
     via `clock_gettime` (x86 syscall 228, arm64 113;
     `__fern_now_unix_ms` REALTIME→ms, `__fern_monotonic_ns` MONOTONIC
