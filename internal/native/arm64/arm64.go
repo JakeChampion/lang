@@ -151,6 +151,22 @@ func EORreg(rd, rn, rm uint32) uint32 {
 	return 0xCA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// ANDregShift / ORRregShift / EORregShift encode the shifted-register
+// logical forms `<op> Rd, Rn, Rm, <shift> #amount`. shiftType is bits
+// 23:22 (0=LSL, 1=LSR, 2=ASR, 3=ROR); amount is the 6-bit count (bits
+// 15:10). The no-shift encoders above are the shiftType=0, amount=0
+// case. The backend emits e.g. `orr w3, w1, w1, lsl #8` to splice bytes
+// when building a wider integer.
+func ANDregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0x8A000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func ORRregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xAA000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func EORregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xCA000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // encodeBitmask computes the (N, immr, imms) logical-immediate fields
 // for imm at the given register size (32 or 64). ok is false when imm
 // is not a valid bitmask immediate — 0, all-ones, or not a rotated run
