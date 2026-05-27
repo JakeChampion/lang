@@ -274,7 +274,9 @@ function main(): i32 {
 // the offending name in the message, mirroring how the real
 // checker emits "unknown identifier x" diagnostics.
 func TestArm64ParserV4WithVars(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokIdent { name: string }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -539,7 +541,9 @@ function main(): i32 {
 // Successes still parse correctly under the new Result-shaped
 // control flow.
 func TestArm64ParserV3WithResult(t *testing.T) {
-	src := `struct TokInt   { value: i32 }
+	src := `import "core/no_prelude";
+import "std/i32";
+struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
 type Token = TokInt | TokPunct | TokEof;
@@ -6213,7 +6217,8 @@ function main(): i32 {
 // AST-style code where the consumer code keeps constructing
 // `Add { l: 1, r: 2 }` and letting the type system route it.
 func TestArm64UnionImplicitWrap(t *testing.T) {
-	src := `struct Add { l: i32, r: i32 }
+	src := `import "core/no_prelude";
+struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
 struct Lit { v: i32 }
 
@@ -6806,7 +6811,10 @@ func TestArm64StdlibBundle27(t *testing.T) {
 // the way overload resolution would. Once we have generic
 // `Array.count[T]` they collapse to one helper.
 func TestArm64StdlibBundle26(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/math";
+function main(): i32 {
     // starts_with_any
     if (!"hello world".starts_with_any(["foo", "hello", "bar"])) { return 1; }
     if ("hello".starts_with_any(["x", "y", "z"])) { return 2; }
@@ -6820,7 +6828,7 @@ func TestArm64StdlibBundle26(t *testing.T) {
     var nosuf: string[] = [];
     if ("anything".ends_with_any(nosuf)) { return 12; }
 
-    // range (i32[])
+    // math.range(i32[])
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
     match (xs.range()) {
         Some(r) => { if (r != 8) { return 20; } },
@@ -6854,9 +6862,9 @@ func TestArm64StdlibBundle26(t *testing.T) {
     if (("".lines_non_empty()).len() != 0) { return 54; }
 
     // http builders
-    var r1: HttpResponse = http_response_redirect("/login");
+    var r1: HttpResponse = http.http_response_redirect("/login");
     if (r1.status != 302 || r1.body != "/login") { return 60; }
-    var r2: HttpResponse = http_response_no_content();
+    var r2: HttpResponse = http.http_response_no_content();
     if (r2.status != 204 || r2.body != "") { return 61; }
     return 0;
 }`
@@ -6938,7 +6946,9 @@ func TestArm64StdlibBundle25(t *testing.T) {
 // backend (the string-header load folds incorrectly). The
 // workaround round-trips through a regular string local.
 func TestArm64StdlibBundle24(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     // is_ipv4
     if (!"127.0.0.1".is_ipv4()) { return 1; }
     if (!"0.0.0.0".is_ipv4()) { return 2; }
@@ -6979,9 +6989,9 @@ func TestArm64StdlibBundle24(t *testing.T) {
     if (empty.any_contains("x")) { return 42; }
 
     // HTTP response builders
-    var r1: HttpResponse = http_response_bad_request("missing field");
+    var r1: HttpResponse = http.http_response_bad_request("missing field");
     if (r1.status != 400 || r1.body != "missing field") { return 50; }
-    var r2: HttpResponse = http_response_internal_error("server boom");
+    var r2: HttpResponse = http.http_response_internal_error("server boom");
     if (r2.status != 500 || r2.body != "server boom") { return 51; }
     return 0;
 }`
@@ -7096,7 +7106,10 @@ func TestArm64StdlibBundle22(t *testing.T) {
 // wrap, string[] take / drop, pack_rgb, byte is_printable /
 // is_control. 8 helpers.
 func TestArm64StdlibBundle21(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/math";
+import "std/string";
+function main(): i32 {
     // is_int / is_float
     if (!"42".is_int()) { return 1; }
     if (!"-42".is_int()) { return 2; }
@@ -7123,11 +7136,11 @@ func TestArm64StdlibBundle21(t *testing.T) {
     if (d.len() != 3 || d[0] != "c") { return 15; }
     if ((arr.drop(100)).len() != 0) { return 16; }
 
-    // pack_rgb (+ round-trip via to_rgb_hex)
-    if (pack_rgb(255, 0, 0) != 16711680) { return 17; }
-    if (pack_rgb(0, 255, 0) != 65280) { return 18; }
-    if (pack_rgb(255, 0, 0).to_rgb_hex() != "#ff0000") { return 19; }
-    if (pack_rgb(0, 128, 64).to_rgb_hex() != "#008040") { return 20; }
+    // math.pack_rgb(+ round-trip via to_rgb_hex)
+    if (math.pack_rgb(255, 0, 0) != 16711680) { return 17; }
+    if (math.pack_rgb(0, 255, 0) != 65280) { return 18; }
+    if (math.pack_rgb(255, 0, 0).to_rgb_hex() != "#ff0000") { return 19; }
+    if (math.pack_rgb(0, 128, 64).to_rgb_hex() != "#008040") { return 20; }
 
     // is_printable / is_control
     if (!(32).is_printable()) { return 21; }
@@ -7150,7 +7163,9 @@ func TestArm64StdlibBundle21(t *testing.T) {
 // escape_shell / snake_case / kebab_case / is_valid_identifier,
 // is_valid_http_status. 6 helpers.
 func TestArm64StdlibBundle20(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     // divmod — (quotient, remainder)
     var p1: (i32, i32) = (10).divmod(3);
     if (p1.0 != 3 || p1.1 != 1) { return 1; }
@@ -7182,11 +7197,11 @@ func TestArm64StdlibBundle20(t *testing.T) {
     if ("".is_valid_identifier()) { return 17; }
 
     // is_valid_http_status
-    if (!is_valid_http_status(200)) { return 18; }
-    if (!is_valid_http_status(100)) { return 19; }
-    if (!is_valid_http_status(599)) { return 20; }
-    if (is_valid_http_status(99)) { return 21; }
-    if (is_valid_http_status(600)) { return 22; }
+    if (!http.is_valid_http_status(200)) { return 18; }
+    if (!http.is_valid_http_status(100)) { return 19; }
+    if (!http.is_valid_http_status(599)) { return 20; }
+    if (http.is_valid_http_status(99)) { return 21; }
+    if (http.is_valid_http_status(600)) { return 22; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7199,7 +7214,9 @@ func TestArm64StdlibBundle20(t *testing.T) {
 // string count_byte, http_url_path_only,
 // http_user_agent_is_bot, i32 to_string_with_sep. 6 helpers.
 func TestArm64StdlibBundle19(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     // digit_value
     if ((48).digit_value() != 0) { return 1; }
     if ((57).digit_value() != 9) { return 2; }
@@ -7217,15 +7234,15 @@ func TestArm64StdlibBundle19(t *testing.T) {
     if ("aaaaa".count_byte(97) != 5) { return 10; }
 
     // http_url_path_only
-    if (http_url_path_only("/api/users") != "/api/users") { return 11; }
-    if (http_url_path_only("/api/users?id=42") != "/api/users") { return 12; }
-    if (http_url_path_only("?foo=bar") != "") { return 13; }
+    if (http.http_url_path_only("/api/users") != "/api/users") { return 11; }
+    if (http.http_url_path_only("/api/users?id=42") != "/api/users") { return 12; }
+    if (http.http_url_path_only("?foo=bar") != "") { return 13; }
 
     // http_user_agent_is_bot
-    if (!http_user_agent_is_bot("Googlebot/2.1")) { return 14; }
-    if (!http_user_agent_is_bot("Mozilla/5.0 (compatible; bingbot/2.0)")) { return 15; }
-    if (http_user_agent_is_bot("Mozilla/5.0 (X11; Linux x86_64) Chrome/91")) { return 16; }
-    if (!http_user_agent_is_bot("yahoo slurp")) { return 17; }
+    if (!http.http_user_agent_is_bot("Googlebot/2.1")) { return 14; }
+    if (!http.http_user_agent_is_bot("Mozilla/5.0 (compatible; bingbot/2.0)")) { return 15; }
+    if (http.http_user_agent_is_bot("Mozilla/5.0 (X11; Linux x86_64) Chrome/91")) { return 16; }
+    if (!http.http_user_agent_is_bot("yahoo slurp")) { return 17; }
 
     // to_string_with_sep
     if ((1000).to_string_with_sep(",") != "1,000") { return 18; }
@@ -7245,7 +7262,9 @@ func TestArm64StdlibBundle19(t *testing.T) {
 // round_down_to, string remove_prefix / remove_suffix /
 // is_uuid, format_duration_ms. 7 helpers.
 func TestArm64StdlibBundle18(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/format";
+function main(): i32 {
     // ceil_div
     if ((10).ceil_div(3) != 4) { return 1; }
     if ((9).ceil_div(3) != 3) { return 2; }
@@ -7272,12 +7291,12 @@ func TestArm64StdlibBundle18(t *testing.T) {
     if ("file.txt".remove_suffix(".log") != "file.txt") { return 17; }
 
     // format_duration_ms
-    if (format_duration_ms(0) != "0ms") { return 18; }
-    if (format_duration_ms(500) != "500ms") { return 19; }
-    if (format_duration_ms(1500) != "1s 500ms") { return 20; }
-    if (format_duration_ms(90000) != "1m 30s") { return 21; }
-    if (format_duration_ms(3661000) != "1h 1m 1s") { return 22; }
-    if (format_duration_ms(0 - 1500) != "-1s 500ms") { return 23; }
+    if (format.format_duration_ms(0) != "0ms") { return 18; }
+    if (format.format_duration_ms(500) != "500ms") { return 19; }
+    if (format.format_duration_ms(1500) != "1s 500ms") { return 20; }
+    if (format.format_duration_ms(90000) != "1m 30s") { return 21; }
+    if (format.format_duration_ms(3661000) != "1h 1m 1s") { return 22; }
+    if (format.format_duration_ms(0 - 1500) != "-1s 500ms") { return 23; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7344,7 +7363,10 @@ func TestArm64StdlibBundle17(t *testing.T) {
 // i32 rotate_left / rotate_right, csv_parse_line,
 // http_header_value. 6 helpers.
 func TestArm64StdlibBundle16(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/csv";
+import "std/http";
+function main(): i32 {
     // center
     if ("hi".center(6, "-") != "--hi--") { return 1; }
     if ("hi".center(7, "-") != "--hi---") { return 2; }   // odd → right
@@ -7365,27 +7387,27 @@ func TestArm64StdlibBundle16(t *testing.T) {
     if ((123).rotate_left(7).rotate_right(7) != 123) { return 13; }
 
     // csv_parse_line
-    var f: string[] = csv_parse_line("a,b,c");
+    var f: string[] = csv.csv_parse_line("a,b,c");
     if (f.len() != 3 || f[0] != "a" || f[2] != "c") { return 14; }
-    var fq: string[] = csv_parse_line("\"a,b\",c");
+    var fq: string[] = csv.csv_parse_line("\"a,b\",c");
     if (fq.len() != 2 || fq[0] != "a,b") { return 15; }
-    var fe: string[] = csv_parse_line("\"a\"\"b\",c");
+    var fe: string[] = csv.csv_parse_line("\"a\"\"b\",c");
     if (fe.len() != 2 || fe[0] != "a\"b") { return 16; }
-    if ((csv_parse_line("")).len() != 1) { return 17; }
-    var fmt: string[] = csv_parse_line("a,,b");
+    if ((csv.csv_parse_line("")).len() != 1) { return 17; }
+    var fmt: string[] = csv.csv_parse_line("a,,b");
     if (fmt.len() != 3 || fmt[1] != "") { return 18; }
 
     // http_header_value
     var hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
-    match (http_header_value(hdrs, "content-type")) {
+    match (http.http_header_value(hdrs, "content-type")) {
         Some(v) => { if (v != "text/html") { return 19; } },
         None => { return 20; },
     }
-    match (http_header_value(hdrs, "X-FOO")) {
+    match (http.http_header_value(hdrs, "X-FOO")) {
         Some(v) => { if (v != "bar") { return 21; } },
         None => { return 22; },
     }
-    match (http_header_value(hdrs, "x-missing")) { Some(_) => { return 23; }, None => { } }
+    match (http.http_header_value(hdrs, "x-missing")) { Some(_) => { return 23; }, None => { } }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7399,7 +7421,9 @@ func TestArm64StdlibBundle16(t *testing.T) {
 // to_ascii_string, string hash_djb2, http_path_segments.
 // 7 helpers.
 func TestArm64StdlibBundle15(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+function main(): i32 {
     // distinct / distinct_count
     var d: string[] = ["a", "b", "a", "c", "b"].distinct();
     if (d.len() != 3) { return 1; }
@@ -7431,11 +7455,11 @@ func TestArm64StdlibBundle15(t *testing.T) {
     if ("hello".hash_djb2() != "hello".hash_djb2()) { return 18; }
 
     // http_path_segments
-    var ps: string[] = http_path_segments("/api/users/42");
+    var ps: string[] = http.http_path_segments("/api/users/42");
     if (ps.len() != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
-    if ((http_path_segments("/")).len() != 0) { return 20; }
-    if ((http_path_segments("")).len() != 0) { return 21; }
-    if ((http_path_segments("/api?q=1")).len() != 1) { return 22; }
+    if ((http.http_path_segments("/")).len() != 0) { return 20; }
+    if ((http.http_path_segments("")).len() != 0) { return 21; }
+    if ((http.http_path_segments("/api?q=1")).len() != 1) { return 22; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7447,7 +7471,11 @@ func TestArm64StdlibBundle15(t *testing.T) {
 // Fourteenth stdlib bundle: trim_start_chars / trim_end_chars,
 // random_int, format_bytes, csv_escape / csv_join. 6 helpers.
 func TestArm64StdlibBundle14(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/csv";
+import "std/format";
+import "std/math";
+function main(): i32 {
     // trim_start_chars / trim_end_chars
     if ("==hello".trim_start_chars("=") != "hello") { return 1; }
     if ("hello==".trim_end_chars("=") != "hello") { return 2; }
@@ -7456,25 +7484,25 @@ func TestArm64StdlibBundle14(t *testing.T) {
     if ("===".trim_start_chars("=") != "") { return 5; }
 
     // random_int — range checks
-    var r: i32 = random_int(0, 100);
+    var r: i32 = math.random_int(0, 100);
     if (r < 0 || r >= 100) { return 6; }
-    if (random_int(10, 11) != 10) { return 7; }
-    if (random_int(5, 5) != 5) { return 8; }
-    if (random_int(10, 1) != 10) { return 9; }
+    if (math.random_int(10, 11) != 10) { return 7; }
+    if (math.random_int(5, 5) != 5) { return 8; }
+    if (math.random_int(10, 1) != 10) { return 9; }
 
     // format_bytes — binary prefixes
-    if (format_bytes(0) != "0 B") { return 10; }
-    if (format_bytes(512) != "512 B") { return 11; }
-    if (format_bytes(1024) != "1 KiB") { return 12; }
-    if (format_bytes(1024 * 1024) != "1 MiB") { return 13; }
-    if (format_bytes(0 - 512) != "-512 B") { return 14; }
+    if (format.format_bytes(0) != "0 B") { return 10; }
+    if (format.format_bytes(512) != "512 B") { return 11; }
+    if (format.format_bytes(1024) != "1 KiB") { return 12; }
+    if (format.format_bytes(1024 * 1024) != "1 MiB") { return 13; }
+    if (format.format_bytes(0 - 512) != "-512 B") { return 14; }
 
     // csv_escape / csv_join — RFC 4180
-    if (csv_escape("simple") != "simple") { return 15; }
-    if (csv_escape("has,comma") != "\"has,comma\"") { return 16; }
-    if (csv_escape("has\"quote") != "\"has\"\"quote\"") { return 17; }
-    if (csv_join(["a", "b", "c"]) != "a,b,c") { return 18; }
-    if (csv_join(["has,comma", "plain"]) != "\"has,comma\",plain") { return 19; }
+    if (csv.csv_escape("simple") != "simple") { return 15; }
+    if (csv.csv_escape("has,comma") != "\"has,comma\"") { return 16; }
+    if (csv.csv_escape("has\"quote") != "\"has\"\"quote\"") { return 17; }
+    if (csv.csv_join(["a", "b", "c"]) != "a,b,c") { return 18; }
+    if (csv.csv_join(["has,comma", "plain"]) != "\"has,comma\",plain") { return 19; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7537,7 +7565,10 @@ func TestArm64StdlibBundle13(t *testing.T) {
 // toggle), byte newline predicate, count_lines, HTTP
 // response builders, log_info/warn/error. 12 helpers.
 func TestArm64StdlibBundle12(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/log";
+function main(): i32 {
     // Bit accessors
     if ((5).bit(0) != true) { return 1; }
     if ((5).bit(1) != false) { return 2; }
@@ -7568,19 +7599,19 @@ func TestArm64StdlibBundle12(t *testing.T) {
     if ("\n".count_lines() != 1) { return 20; }
 
     // HTTP response builders
-    var r1: HttpResponse = http_response_ok("hello");
+    var r1: HttpResponse = http.http_response_ok("hello");
     if (r1.status != 200 || r1.body != "hello") { return 21; }
-    var r2: HttpResponse = http_response_not_found();
+    var r2: HttpResponse = http.http_response_not_found();
     if (r2.status != 404 || r2.body != "Not Found") { return 22; }
-    var r3: HttpResponse = http_response_text(500, "boom");
+    var r3: HttpResponse = http.http_response_text(500, "boom");
     if (r3.status != 500 || r3.body != "boom") { return 23; }
 
     // Log helpers — sanity-check they don't crash; output
     // goes to stderr so the e2e harness exit-code check still
     // sees the program's intended return value.
-    log_info("test info");
-    log_warn("test warn");
-    log_error("test error");
+    log.log_info("test info");
+    log.log_warn("test warn");
+    log.log_error("test error");
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7593,7 +7624,9 @@ func TestArm64StdlibBundle12(t *testing.T) {
 // drop / chunks on strings, case-insensitive sort, i32
 // to_binary / to_oct. 11 helpers.
 func TestArm64StdlibBundle11(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/sort";
+function main(): i32 {
     // splitn
     var s1: string[] = "a=b=c=d".splitn("=", 2);
     if (s1.len() != 2 || s1[0] != "a" || s1[1] != "b=c=d") { return 1; }
@@ -7629,10 +7662,10 @@ func TestArm64StdlibBundle11(t *testing.T) {
     if (c4.len() != 1 || c4[0] != "abc") { return 20; }
 
     // case-insensitive sort + cmp
-    var asc: string[] = sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
+    var asc: string[] = sort.sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
     if (asc[0] != "apple" || asc[1] != "Banana" || asc[2] != "Cherry") { return 21; }
-    if (string_cmp_ci("APPLE", "apple") != 0) { return 22; }
-    if (string_cmp_ci("apple", "banana") != (0 - 1)) { return 23; }
+    if (sort.string_cmp_ci("APPLE", "apple") != 0) { return 22; }
+    if (sort.string_cmp_ci("apple", "banana") != (0 - 1)) { return 23; }
 
     // to_binary / to_oct
     if ((5).to_binary() != "101") { return 24; }
@@ -7653,11 +7686,14 @@ func TestArm64StdlibBundle11(t *testing.T) {
 // trim_end), trim_chars, case-insensitive prefix/suffix,
 // string sort, and string_cmp. 11 helpers.
 func TestArm64StdlibBundle10(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/math";
+import "std/sort";
+function main(): i32 {
     // Range constants
-    if (i32_max() != 2147483647) { return 1; }
-    if (i32_min() != (0 - 2147483647 - 1)) { return 2; }
-    if (i64_max() != 9223372036854775807) { return 3; }
+    if (math.i32_max() != 2147483647) { return 1; }
+    if (math.i32_min() != (0 - 2147483647 - 1)) { return 2; }
+    if (math.i64_max() != 9223372036854775807) { return 3; }
 
     // trim_start / trim_end
     if ("  hello  ".trim_start() != "hello  ") { return 4; }
@@ -7679,19 +7715,19 @@ func TestArm64StdlibBundle10(t *testing.T) {
     if ("hello".ends_with_ci("WORLD")) { return 16; }
 
     // string_cmp + sort_strings_asc/desc
-    if (string_cmp("apple", "banana") != (0 - 1)) { return 17; }
-    if (string_cmp("banana", "apple") != 1) { return 18; }
-    if (string_cmp("same", "same") != 0) { return 19; }
-    if (string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
+    if (sort.string_cmp("apple", "banana") != (0 - 1)) { return 17; }
+    if (sort.string_cmp("banana", "apple") != 1) { return 18; }
+    if (sort.string_cmp("same", "same") != 0) { return 19; }
+    if (sort.string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
 
     var unsorted: string[] = ["banana", "apple", "cherry"];
-    var asc: string[] = sort_strings_asc(unsorted);
+    var asc: string[] = sort.sort_strings_asc(unsorted);
     if (asc[0] != "apple" || asc[1] != "banana" || asc[2] != "cherry") { return 21; }
     if (unsorted[0] != "banana") { return 22; }   // original untouched
-    var desc: string[] = sort_strings_desc(unsorted);
+    var desc: string[] = sort.sort_strings_desc(unsorted);
     if (desc[0] != "cherry" || desc[2] != "apple") { return 23; }
     var empty: string[] = [];
-    if ((sort_strings_asc(empty)).len() != 0) { return 24; }
+    if ((sort.sort_strings_asc(empty)).len() != 0) { return 24; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7853,7 +7889,11 @@ func TestArm64StdlibBundle7(t *testing.T) {
 // i32, range / range_step generators, repeat_with_sep. 11
 // new methods. Pure-prelude.
 func TestArm64StdlibBundle6(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/i64";
+import "std/math";
+function main(): i32 {
     // count_ones — population count
     if ((0).count_ones() != 0) { return 1; }
     if ((1).count_ones() != 1) { return 2; }
@@ -7880,14 +7920,14 @@ func TestArm64StdlibBundle6(t *testing.T) {
     if ((4 as i64).lcm(6 as i64) != (12 as i64)) { return 15; }
 
     // range — half-open
-    var r1: i32[] = range(0, 5);
+    var r1: i32[] = math.range(0, 5);
     if (r1.len() != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
-    if ((range(5, 5)).len() != 0) { return 17; }   // empty when start >= end
+    if ((math.range(5, 5)).len() != 0) { return 17; }   // empty when start >= end
 
     // range_step — step <= 0 returns empty
-    var rs: i32[] = range_step(0, 10, 2);
+    var rs: i32[] = math.range_step(0, 10, 2);
     if (rs.len() != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
-    if ((range_step(0, 10, 0)).len() != 0) { return 19; }
+    if ((math.range_step(0, 10, 0)).len() != 0) { return 19; }
 
     // repeat_with_sep
     if ("x".repeat_with_sep(3, ", ") != "x, x, x") { return 20; }
@@ -8214,37 +8254,40 @@ func TestArm64Paths(t *testing.T) {
 }
 
 func TestArm64Radix(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/int";
+import "std/format";
+function main(): i32 {
     // Parse — bases 2 / 8 / 10 / 16 / 36.
-    match (parse_int_radix("ff", 16))   { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
-    match (parse_int_radix("FF", 16))   { Some(v) => { if (v != 255) { return 3; } }, None => { return 4; }, }
-    match (parse_int_radix("1010", 2))  { Some(v) => { if (v != 10) { return 5; } }, None => { return 6; }, }
-    match (parse_int_radix("777", 8))   { Some(v) => { if (v != 511) { return 7; } }, None => { return 8; }, }
-    match (parse_int_radix("12345", 10)){ Some(v) => { if (v != 12345) { return 9; } }, None => { return 10; }, }
-    match (parse_int_radix("z", 36))    { Some(v) => { if (v != 35) { return 11; } }, None => { return 12; }, }
+    match (int.parse_int_radix("ff", 16))   { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
+    match (int.parse_int_radix("FF", 16))   { Some(v) => { if (v != 255) { return 3; } }, None => { return 4; }, }
+    match (int.parse_int_radix("1010", 2))  { Some(v) => { if (v != 10) { return 5; } }, None => { return 6; }, }
+    match (int.parse_int_radix("777", 8))   { Some(v) => { if (v != 511) { return 7; } }, None => { return 8; }, }
+    match (int.parse_int_radix("12345", 10)){ Some(v) => { if (v != 12345) { return 9; } }, None => { return 10; }, }
+    match (int.parse_int_radix("z", 36))    { Some(v) => { if (v != 35) { return 11; } }, None => { return 12; }, }
 
     // Sign handling.
-    match (parse_int_radix("-ff", 16))  { Some(v) => { if (v != (0 - 255)) { return 13; } }, None => { return 14; }, }
-    match (parse_int_radix("+ff", 16))  { Some(v) => { if (v != 255) { return 15; } }, None => { return 16; }, }
+    match (int.parse_int_radix("-ff", 16))  { Some(v) => { if (v != (0 - 255)) { return 13; } }, None => { return 14; }, }
+    match (int.parse_int_radix("+ff", 16))  { Some(v) => { if (v != 255) { return 15; } }, None => { return 16; }, }
 
     // Malformed input — None for every shape.
-    match (parse_int_radix("", 10))     { Some(_) => { return 17; }, None => { } }
-    match (parse_int_radix("-", 10))    { Some(_) => { return 18; }, None => { } }
-    match (parse_int_radix("gg", 16))   { Some(_) => { return 19; }, None => { } }
-    match (parse_int_radix("12", 1))    { Some(_) => { return 20; }, None => { } }
-    match (parse_int_radix("12", 37))   { Some(_) => { return 21; }, None => { } }
+    match (int.parse_int_radix("", 10))     { Some(_) => { return 17; }, None => { } }
+    match (int.parse_int_radix("-", 10))    { Some(_) => { return 18; }, None => { } }
+    match (int.parse_int_radix("gg", 16))   { Some(_) => { return 19; }, None => { } }
+    match (int.parse_int_radix("12", 1))    { Some(_) => { return 20; }, None => { } }
+    match (int.parse_int_radix("12", 37))   { Some(_) => { return 21; }, None => { } }
 
     // Format — same base spread, plus sign + zero + negative.
-    if (int_to_string_radix(255, 16) != "ff") { return 22; }
-    if (int_to_string_radix(10, 2) != "1010") { return 23; }
-    if (int_to_string_radix(511, 8) != "777") { return 24; }
-    if (int_to_string_radix(12345, 10) != "12345") { return 25; }
-    if (int_to_string_radix(35, 36) != "z") { return 26; }
-    if (int_to_string_radix(0, 16) != "0") { return 27; }
-    if (int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
+    if (int.int_to_string_radix(255, 16) != "ff") { return 22; }
+    if (int.int_to_string_radix(10, 2) != "1010") { return 23; }
+    if (int.int_to_string_radix(511, 8) != "777") { return 24; }
+    if (int.int_to_string_radix(12345, 10) != "12345") { return 25; }
+    if (int.int_to_string_radix(35, 36) != "z") { return 26; }
+    if (int.int_to_string_radix(0, 16) != "0") { return 27; }
+    if (int.int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
 
-    // Round-trip — parse(format(n)) == Some(n).
-    match (parse_int_radix(int_to_string_radix(0 - 12345, 16), 16)) {
+    // Round-trip — parse(format.format(n)) == Some(n).
+    match (int.parse_int_radix(int.int_to_string_radix(0 - 12345, 16), 16)) {
         Some(v) => { if (v != (0 - 12345)) { return 29; } },
         None => { return 30; },
     }
@@ -11389,7 +11432,9 @@ function main(): i32 {
 // the lambda) gets pruned. Link then fires "undefined
 // reference to __method_string_trim".
 func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "  hi  ";
     var f = function (): string { return s.trim(); };
     var got = f();
