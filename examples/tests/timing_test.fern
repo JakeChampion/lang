@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/timing_test.fern — exercises the time
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers.
@@ -16,7 +18,7 @@ function test_now_unix_ms_advances(): Option[string] {
     sleep_ms(2 as i64);
     var b: i64 = now_unix_ms();
     if (b < a) {
-        return fail("now_unix_ms went backwards: " +
+        return test.fail("now_unix_ms went backwards: " +
                     a.to_string() + " then " + b.to_string());
     }
     return None;
@@ -26,7 +28,7 @@ function test_monotonic_ns_advances(): Option[string] {
     var a: i64 = monotonic_ns();
     var b: i64 = monotonic_ns();
     if (b < a) {
-        return fail("monotonic_ns went backwards");
+        return test.fail("monotonic_ns went backwards");
     }
     return None;
 }
@@ -40,7 +42,7 @@ function test_sleep_actually_sleeps(): Option[string] {
     sleep_ms(5 as i64);
     var elapsed_ms: i64 = (monotonic_ns() - start_ns) / (1000000 as i64);
     if (elapsed_ms < (4 as i64)) {
-        return fail("sleep_ms(5) only elapsed " + elapsed_ms.to_string() + "ms");
+        return test.fail("sleep_ms(5) only elapsed " + elapsed_ms.to_string() + "ms");
     }
     return None;
 }
@@ -51,24 +53,24 @@ function test_assert_elapsed_lt_ms_pass(): Option[string] {
     var sum: i32 = 0;
     var i: i32 = 0;
     while (i < 1000) { sum = sum + i; i = i + 1; }
-    return assert_elapsed_lt_ms(start, 100 as i64);
+    return test.assert_elapsed_lt_ms(start, 100 as i64);
 }
 
 function test_assert_elapsed_lt_ms_fail_message(): Option[string] {
     var start: i64 = monotonic_ns();
     sleep_ms(10 as i64);
     // Deadline of 1ms — guaranteed to miss after a 10ms sleep.
-    match (assert_elapsed_lt_ms(start, 1 as i64)) {
+    match (test.assert_elapsed_lt_ms(start, 1 as i64)) {
         Some(msg) => {
             if (!msg.contains("ms elapsed")) {
-                return fail("missing `ms elapsed` in: " + msg);
+                return test.fail("missing `ms elapsed` in: " + msg);
             }
             if (!msg.contains("expected < 1ms")) {
-                return fail("missing expected bound in: " + msg);
+                return test.fail("missing expected bound in: " + msg);
             }
             return None;
         },
-        None => { return fail("expected elapsed-bound to fail"); }
+        None => { return test.fail("expected elapsed-bound to fail"); }
     }
     return None;
 }
@@ -76,11 +78,11 @@ function test_assert_elapsed_lt_ms_fail_message(): Option[string] {
 function test_negative_sleep_is_immediate(): Option[string] {
     var start: i64 = monotonic_ns();
     sleep_ms(0 - 5 as i64);
-    return assert_elapsed_lt_ms(start, 50 as i64);
+    return test.assert_elapsed_lt_ms(start, 50 as i64);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("timing");
+    var r: test.TestRunner = test.test_new("timing");
     r = r.it("now_unix_ms advances",                test_now_unix_ms_advances());
     r = r.it("monotonic_ns is non-decreasing",      test_monotonic_ns_advances());
     r = r.it("sleep_ms actually sleeps",            test_sleep_actually_sleeps());

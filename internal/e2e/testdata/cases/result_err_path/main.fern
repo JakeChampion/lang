@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/string";
 // Exercises the Err arm of a Result and string-equality on the
 // error payload.
 function parse_positive(s: string): Result[i32, string] {

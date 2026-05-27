@@ -1,5 +1,7 @@
-// format() substitutes positional `{}` placeholders from a string[].
+import "core/no_prelude";
+import "std/format";
+// format.format() substitutes positional `{}` placeholders from a string[].
 function main(): i32 {
-    print(format("{} + {} = {}", [(40).to_string(), (2).to_string(), (42).to_string()]));
+    print(format.format("{} + {} = {}", [(40).to_string(), (2).to_string(), (42).to_string()]));
     return 0;
 }

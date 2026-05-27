@@ -7,6 +7,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -40,7 +41,9 @@ function main(): i32 {
 		},
 		{
 			name: "FString interpolant",
-			src: `function id[T](x: T): T { return x; }
+			src: `import "core/no_prelude";
+import "std/i32";
+function id[T](x: T): T { return x; }
 function main(): i32 {
     var s: string = f"hello {id(42)} world";
     return 0;
@@ -74,9 +77,9 @@ function main(): i32 {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog, err := parser.Parse(c.src)
+			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatalf("load: %v", err)
 			}
 			info, err := checker.Check(prog)
 			if err != nil {
@@ -155,9 +158,9 @@ function main(): i32 {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog, err := parser.Parse(c.src)
+			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatalf("load: %v", err)
 			}
 			info, err := checker.Check(prog)
 			if err != nil {
@@ -259,7 +262,9 @@ function main(): i32 {
     var m: Map[i32, i32] = Map { id(1): id(10) };
     return m.len();
 }`},
-		{node: "FString.Interpolant", src: `function id[T](x: T): T { return x; }
+		{node: "FString.Interpolant", src: `import "core/no_prelude";
+import "std/i32";
+function id[T](x: T): T { return x; }
 function main(): i32 {
     var s: string = f"x={id(42)}";
     return s.len();
@@ -380,9 +385,9 @@ function main(): i32 {
 			if c.src == "" {
 				t.Fatalf("%s: missing src", c.node)
 			}
-			prog, err := parser.Parse(c.src)
+			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
-				t.Fatalf("parse: %v\nsrc:\n%s", err, c.src)
+				t.Fatalf("load: %v\nsrc:\n%s", err, c.src)
 			}
 			info, err := checker.Check(prog)
 			if err != nil {

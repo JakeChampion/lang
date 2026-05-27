@@ -1,3 +1,6 @@
+import "core/no_prelude";
+import "core/map";
+import "std/test";
 import "std/headers";
 
 // examples/tests/header_map_migrated_test.fern —
@@ -19,7 +22,7 @@ import "std/headers";
 function test_case_insensitive_get(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
     h.set("Content-Type", "application/json");
-    return assert_is_some_eq_string(h.get("CONTENT-TYPE"),
+    return test.assert_is_some_eq_string(h.get("CONTENT-TYPE"),
                                     "application/json");
 }
 
@@ -32,7 +35,7 @@ function test_get_all_preserves_insertion_order(): Option[string] {
     // stdout; here we assert the returned array directly
     // so the failure message localises the first
     // divergence by index.
-    return assert_eq_string_array(h.get_all("set-cookie"),
+    return test.assert_eq_string_array(h.get_all("set-cookie"),
                                   ["a=1", "b=2", "c=3"]);
 }
 
@@ -44,7 +47,7 @@ function test_set_replaces_then_size_2(): Option[string] {
     h.set("x", "replaced");
     // After set("x"), X has exactly one value
     // ("replaced") and Y is still there → size == 2.
-    return assert_eq_i32(h.len(), 2);
+    return test.assert_eq_i32(h.len(), 2);
 }
 
 function test_set_replaces_get_returns_new(): Option[string] {
@@ -53,23 +56,23 @@ function test_set_replaces_get_returns_new(): Option[string] {
     h.append("Y", "y1");
     h.append("X", "second");
     h.set("x", "replaced");
-    return assert_is_some_eq_string(h.get("x"), "replaced");
+    return test.assert_is_some_eq_string(h.get("x"), "replaced");
 }
 
 function test_set_on_absent_appends(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
     h.set("X-First", "1");
-    return assert_eq_i32(h.len(), 1);
+    return test.assert_eq_i32(h.len(), 1);
 }
 
 function test_get_all_on_missing_is_empty(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
     h.append("X", "1");
-    return assert_eq_i32((h.get_all("Y")).len(), 0);
+    return test.assert_eq_i32((h.get_all("Y")).len(), 0);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("HeaderMap (migrated)");
+    var r: test.TestRunner = test.test_new("HeaderMap (migrated)");
     r = r.it("case-insensitive get",
              test_case_insensitive_get());
     r = r.it("get_all preserves insertion order",

@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/array";
 // Empty-collection edge case: sum() of an empty i32[] is 0 and
 // max() returns None.
 function main(): i32 {

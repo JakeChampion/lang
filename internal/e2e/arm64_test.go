@@ -8506,7 +8506,9 @@ func TestArm64EmptyU8Sentinel(t *testing.T) {
     var s: string = string_from_bytes(bs);
     return s.len();
 }`, 0},
-		{"to-lower-empty-string", `function main(): i32 {
+		{"to-lower-empty-string", `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "".to_lower();
     return s.len();
 }`, 0},
@@ -8797,13 +8799,17 @@ func TestArm64Map(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 8) {
@@ -8814,7 +8820,9 @@ func TestArm64Map(t *testing.T) {
     if (m.get_or(7, -1) != 70) { return 2; }
     return 42;
 }`, 42},
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("alpha", 1);
     m.set("beta", 2);
@@ -8851,7 +8859,9 @@ func TestArm64MapGetMatch(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"some_branch", `function main(): i32 {
+		{"some_branch", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(7, 42);
     match (m.get(7)) {
@@ -8860,7 +8870,9 @@ func TestArm64MapGetMatch(t *testing.T) {
     }
     return 1;
 }`, 42},
-		{"none_branch", `function main(): i32 {
+		{"none_branch", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     match (m.get(7)) {
         Some(v) => { return 99; },
@@ -8868,7 +8880,9 @@ func TestArm64MapGetMatch(t *testing.T) {
     }
     return 1;
 }`, 0},
-		{"string_key", `function main(): i32 {
+		{"string_key", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("hello", 42);
     match (m.get("hello")) {
@@ -8897,7 +8911,10 @@ func TestArm64MapGetMatch(t *testing.T) {
 // the fix holds up in the realistic mix of slice keys (string
 // slicing from the tokenizer), Array.push, and Map iteration.
 func TestArm64MapGetMatchFullPipeline(t *testing.T) {
-	src := `function tokenize(s: string): string[] {
+	src := `import "core/no_prelude";
+import "core/map";
+import "std/array";
+function tokenize(s: string): string[] {
   var out: string[] = [];
   var i: i32 = 0;
   var sLen: i32 = s.len();
@@ -8964,13 +8981,17 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `function main(): i32 {
+		{"to_string_round_trip", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 1234567890123;
     var s: string = n.to_string();
     if (s == "1234567890123") { return 0; }
     return 1;
 }`, 0},
-		{"i64_max_to_string", `function main(): i32 {
+		{"i64_max_to_string", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 9223372036854775807;
     var s: string = n.to_string();
     if (s == "9223372036854775807") { return 0; }
@@ -9519,7 +9540,9 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 //     node's KeyType / ValueType in place so the IR sees
 //     the post-settle widths.
 func TestArm64MapLitI64ValueSettle(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
     var v: i64 = m.get_or("a", 0);
     if (v == 1234567890123) { return 0; }
@@ -9680,7 +9703,9 @@ function main(): i32 {
 // Fix: recurse the Map-shaped StructType hint into IfExpr
 // Then/Else and MatchExpr arm bodies.
 func TestArm64SettleMapLitInCondArms(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var cond: boolean = true;
     var m: Map[string, i64] = if (cond) { Map { "a": 1234567890123 } } else { Map { "a": 0 } };
     var v: i64 = m.get_or("a", 0);
@@ -10150,7 +10175,9 @@ function main(): i32 {
 // local `Map[string, V]` literal — `mk[V](v) ->
 // Map[string, V]` round-trips a key/value via set + get.
 func TestArm64GenericLocalMapType(t *testing.T) {
-	src := `function mk[V](v: V): Map[string, V] {
+	src := `import "core/no_prelude";
+import "core/map";
+function mk[V](v: V): Map[string, V] {
     var m: Map[string, V] = map_new(0);
     m.set("k", v);
     return m;
@@ -10617,8 +10644,10 @@ func TestArm64TcpListen(t *testing.T) {
 // arm64 (Linux); Darwin gets caught by the pre-scan
 // "not-yet-ported" guard.
 func TestArm64InstantNow(t *testing.T) {
-	_, code := compileAndRunArm64(t, `function main(): i32 {
-    var ts: Instant = instant_now();
+	_, code := compileAndRunArm64(t, `import "core/no_prelude";
+import "std/time";
+function main(): i32 {
+    var ts: Instant = time.instant_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;
@@ -10661,13 +10690,22 @@ func TestArm64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
-	prog, err := parser.Parse(src)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	// modload (not bare parser.Parse) so std/http + std/tcp resolve.
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
@@ -10689,7 +10727,6 @@ func TestArm64HttpHandler(t *testing.T) {
 		t.Fatalf("emit: %v", err)
 	}
 
-	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
@@ -10874,7 +10911,11 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// bytes on arm64) so the buf pointer round-trips
 		// correctly even when macOS hands us heap addresses
 		// above 4 GiB.
-		{"map_i32", `function main(): i32 {
+		{"map_i32", `import "core/no_prelude";
+import "core/map";
+import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
@@ -10893,7 +10934,9 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// (FNV-1a hash + byte-wise string compare) finds
 		// the entry even when the heap is above 4 GiB. The
 		// returned i32 value rides x0 untruncated.
-		{"map_str_key", `function main(): i32 {
+		{"map_str_key", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("hello", 42);
     m.set("world", 99);
@@ -10904,7 +10947,11 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// the i32-typed return rides x0 as a full 64-bit
 		// pointer, and len(s) reads s's length prefix at
 		// the correct (high-bit-preserved) address.
-		{"map_str_val", `function main(): i32 {
+		{"map_str_val", `import "core/no_prelude";
+import "core/map";
+import "std/i32";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     m.set(1, "abc");
     m.set(2, "abcdef");
@@ -10914,7 +10961,10 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// pointer-width. End-to-end check that the entry
 		// stride doubled to 2*ptr_width on arm64 (16 bytes)
 		// without breaking the bucket arithmetic.
-		{"map_str_str", `function main(): i32 {
+		{"map_str_str", `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[string, string] = map_new(4);
     m.set("k1", "ab");
     m.set("k2", "abcde");
@@ -10926,7 +10976,9 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// the pointer-width key load (even though we don't
 		// inspect keys here, the iterator's address math
 		// must use the same entryStride or it'd walk off).
-		{"map_str_iter", `function main(): i32 {
+		{"map_str_iter", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("a", 10);
     m.set("b", 20);
@@ -10944,7 +10996,10 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// __store_ptr on the moved entry's K/V slots. After
 		// removing "b" and "c", get_or("a") still finds the
 		// remaining entry.
-		{"map_str_delete", `function main(): i32 {
+		{"map_str_delete", `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("a", 1);
     m.set("b", 2);
@@ -11013,7 +11068,10 @@ function main(): i32 {
 		// K), so iterating the keys() result and calling
 		// len() on each returns valid lengths instead of
 		// segfaulting on truncated pointers.
-		{"map_keys_str", `function main(): i32 {
+		{"map_keys_str", `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("alpha", 1);
     m.set("beta", 2);
@@ -11031,7 +11089,10 @@ function main(): i32 {
 		// side. valKind is now tracked at buf+12 so
 		// __map_values_impl picks destStride correctly per-
 		// instance without per-V monomorphisation.
-		{"map_values_str", `function main(): i32 {
+		{"map_values_str", `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     m.set(1, "one");
     m.set(2, "two");
@@ -11058,7 +11119,10 @@ function main(): i32 {
 		// to `usize` so the full 8-byte address survives. The
 		// previous `t.Skip` on Darwin has been removed —
 		// macOS CI now exercises this case alongside Linux.
-		{"map_heap_value_probe", `function main(): i32 {
+		{"map_heap_value_probe", `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, string] = map_new(4);
     var v1: string = "alp" + "ha";
     var v2: string = "be" + "ta";
@@ -11070,9 +11134,11 @@ function main(): i32 {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog, err := parser.Parse(c.src)
+			// modload.LoadSource (not bare parser.Parse) so the
+			// programs' std/ + core/ imports resolve under no-prelude.
+			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				t.Fatalf("load: %v", err)
 			}
 			if err := constfold.Fold(prog); err != nil {
 				t.Fatalf("constfold: %v", err)
@@ -11889,12 +11955,16 @@ func TestArm64FStringInterpolation(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"interpolated i32", `function main(): i32 {
+		{"interpolated i32", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
     return s.len();
 }`, 7},
-		{"interpolated string", `function main(): i32 {
+		{"interpolated string", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var who: string = "world";
     var s: string = f"hello, {who}!";
     return s.len();
@@ -12032,32 +12102,44 @@ func TestArm64WideScalarMap(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"Map[i64, i32]", `function main(): i32 {
+		{"Map[i64, i32]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
-		{"Map[i32, f64]", `function main(): i32 {
+		{"Map[i32, f64]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
     m.set(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
-		{"Map[i64, string]", `function main(): i32 {
+		{"Map[i64, string]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
-		{"Map[string, i64]", `function main(): i32 {
+		{"Map[string, i64]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i64] = map_new(4);
     m.set("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
-		{"Map[u64, i32]", `function main(): i32 {
+		{"Map[u64, i32]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
     m.set(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
-		{"distinct high-bit i64 keys", `function main(): i32 {
+		{"distinct high-bit i64 keys", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
@@ -12075,7 +12157,9 @@ func TestArm64WideScalarMap(t *testing.T) {
 		// result. Without it, every key gets its upper 32 bits
 		// dropped — distinct high-bit keys collide into the same
 		// snapshot value.
-		{"keys() preserves 8-byte values", `function main(): i32 {
+		{"keys() preserves 8-byte values", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
@@ -12654,7 +12738,9 @@ func TestArm64FeatureParity(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"defer_basic", `function inner(trace: Map[string, i32]): i32 {
+		{"defer_basic", `import "core/no_prelude";
+import "core/map";
+function inner(trace: Map[string, i32]): i32 {
     trace.set("body-start", 1);
     defer trace.set("first-defer", 10);
     defer trace.set("second-defer", 20);
@@ -12697,7 +12783,9 @@ function main(): i32 {
     if (sum == 8) { return 0; }
     return 1;
 }`},
-		{"fstring_interp", `function main(): i32 {
+		{"fstring_interp", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var x: i32 = 42;
     var s: string = f"x is {x}";
     if (s.len() == 7) { return 0; }
@@ -13025,7 +13113,9 @@ function main(): i32 {
 // __fern_rc_underflow_count). Mirrors TestX86_64RcUnderflowDetector
 // — pins the mechanism and that map self-assign is drift-free.
 func TestArm64RcUnderflowDetector(t *testing.T) {
-	selfAssign := `function main(): i32 {
+	selfAssign := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -13404,7 +13494,9 @@ func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 // the existing `m.set(k, v)` statement form still works
 // (return discarded).
 func TestArm64MapSetReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -13477,7 +13569,9 @@ func TestArm64ArraySetAliasedCopies(t *testing.T) {
 // Phase 2c: m.delete(k) returns (Map[K,V], bool).
 // Tests tuple destructuring, bool-field access, and statement-position discard.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -13500,7 +13594,9 @@ func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 
 // Phase 2c: m.clear() returns Map[K,V].
 func TestArm64MapClearReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("x", 10);
     m = m.set("y", 20);
@@ -13523,7 +13619,9 @@ func TestArm64MapClearReturnsMap(t *testing.T) {
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
 // has rc=2, so m2.set(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
@@ -13540,7 +13638,9 @@ func TestArm64MapSetAliasedCopies(t *testing.T) {
 // Phase 2d: Map.delete / Map.clear copy-on-write — arm64 sibling
 // of TestX86_64MapDeleteClearAliasedCopies.
 func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);
     m1.set("b", 2);
@@ -13640,7 +13740,9 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 // only walked entries (no-op for empty) and the surrounding
 // assignable check saw the pre-settle default.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
-	src := `function take(m: Map[string, i32]): i32 { return m.len(); }
+	src := `import "core/no_prelude";
+import "core/map";
+function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
     // Var declaration: K=string, V=i32
@@ -13716,7 +13818,9 @@ function main(): i32 {
 // payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
 // helper's Option[usize] into a consumer-shaped Option[V].
 func TestArm64MapPointerShapedValues(t *testing.T) {
-	src := `struct P { x: i32, y: i32 }
+	src := `import "core/no_prelude";
+import "core/map";
+struct P { x: i32, y: i32 }
 function main(): i32 {
     // tuple value
     var mt: Map[string, (i32, i32)] = Map {};

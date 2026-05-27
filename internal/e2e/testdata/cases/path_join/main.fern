@@ -1,5 +1,7 @@
+import "core/no_prelude";
+import "std/path";
 // path_join concatenates path segments with a single separator.
 function main(): i32 {
-    print(path_join(["usr", "local", "bin"]));
+    print(path.path_join(["usr", "local", "bin"]));
     return 0;
 }

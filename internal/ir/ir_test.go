@@ -1101,7 +1101,8 @@ func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
 // outputs cascade through `$string_from_bytes`'s inline path.
 // Pin the lowering here so the regression can't slip back in.
 func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
-	prog := lowerSource(t, `function f(n: i32): i32 { return (int_to_string(n)).len(); }`)
+	prog := lowerSource(t, `function g(): string { return "abcd"; }
+function f(n: i32): i32 { return (g()).len(); }`)
 	mustContainOp(t, prog, "f", OpStrLen)
 	fn := findFunc(prog, "f")
 	for i := 0; i+2 < len(fn.Ops); i++ {

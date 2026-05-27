@@ -84,11 +84,14 @@
 //	  to run a user HTTP handler in-browser with no jco. Base64-
 //	  encoded like the others.
 //
-// State is fresh per call for fernInterpret. Imports aren't
-// supported (modload reads files from disk; the browser has
-// none). TCP / file I/O builtins on the Fern side would error at
-// runtime — that's fine for the playground use case (showcase,
-// REPL-style demo).
+// State is fresh per call for fernInterpret. Source is loaded
+// through modload.LoadSource (the entry is held in memory and the
+// embedded std/ + core/ FS resolves stdlib imports), so `import
+// "std/…";` / `import "core/…";` work in-browser — required now
+// that the auto-prelude is gone. Relative-path imports still can't
+// resolve (the browser has no disk). TCP / file I/O builtins on the
+// Fern side would error at runtime — that's fine for the playground
+// use case (showcase, REPL-style demo).
 package main
 
 import (
@@ -106,8 +109,8 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/lsp"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/wasm/playground"
 )
 
@@ -130,7 +133,7 @@ func interpret(src string) map[string]any {
 		}
 	}()
 
-	prog, err := parser.Parse(src)
+	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		result["exit"] = 1
@@ -239,7 +242,7 @@ func compile(src, target string) map[string]any {
 		}
 	}()
 
-	prog, err := parser.Parse(src)
+	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result

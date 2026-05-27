@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "core/map";
 // Map literal `Map { k: v, ... }` with string keys, read back via get.
 function main(): i32 {
     var m: Map[string, i32] = Map { "a": 40, "b": 2 };

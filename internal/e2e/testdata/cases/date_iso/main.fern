@@ -1,6 +1,9 @@
+import "core/no_prelude";
+import "std/string";
+import "std/time";
 // Date.format_iso() renders YYYY-MM-DD with zero-padding.
 function main(): i32 {
-    var d = date_make(2026, 5, 24);
+    var d = time.date_make(2026, 5, 24);
     print(d.format_iso());
     return 0;
 }

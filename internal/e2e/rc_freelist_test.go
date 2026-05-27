@@ -13,7 +13,6 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // --- Phase 3 step-4 flip-readiness gate ---------------------------
@@ -182,9 +181,18 @@ function main(): i32 {
 func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
-	prog, err := parser.Parse(src)
+	// Route through modload (not bare parser.Parse) so the program's
+	// std/ + core/ imports resolve — without it core/map's runtime
+	// impls (map_new_impl / __map_*_impl) never load and the link
+	// fails. Mirrors compileAndRunX86_64 / compileAndRunArm64FreeOn.
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
@@ -204,7 +212,6 @@ func compileAndRunX86_64FreeOn(t *testing.T, src string) (string, int) {
 	if emitErr != nil {
 		t.Fatalf("emit: %v", emitErr)
 	}
-	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {

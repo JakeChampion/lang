@@ -32,8 +32,11 @@ func TestCompileComponentHttpHandlerStructure(t *testing.T) {
 	// A minimal wasi:http/incoming-handler. The handler signature is
 	// what -target wasi-http expects; the body just echoes a fixed
 	// 200 response.
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-  return http_response_ok("ok");
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  return http.http_response_ok("ok");
 }`
 	bin, err := CompileComponent(src, "wasi-http")
 	if err != nil {
@@ -176,8 +179,11 @@ func TestCompileCoreWasmRunsUnderWasmtime(t *testing.T) {
 }
 
 func TestCompileHttpHandlerCoreStructure(t *testing.T) {
-	src := `function handle(req: HttpRequest, plat: Platform): HttpResponse {
-  return http_response_ok("hi");
+	src := `import "core/no_prelude";
+import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  return http.http_response_ok("hi");
 }`
 	bin, err := CompileHttpHandlerCore(src)
 	if err != nil {

@@ -14,10 +14,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/parser"
-	"github.com/jakechampion/lang/internal/prelude"
-	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 type Error struct {
@@ -563,133 +559,6 @@ func builtinStructDecls() []*ast.StructDecl {
 	}
 }
 
-// injectPrelude parses the embedded prelude source (from
-// internal/prelude/prelude.fern) and appends its top-level
-// declarations to `prog`. Idempotent — re-running on a program
-// whose Funcs already contain a prelude marker is a no-op.
-//
-// The prelude lang code goes through the same parser /
-// checker / IR / codegen pipeline as user code, so it
-// participates in IR-level optimisations (peephole, dce,
-// inlining) and works on every backend without backend-
-// specific shims. See docs/LANGUAGE-DIRECTION.md "Stdlib
-// implementation strategy" for the rationale.
-//
-// The prelude is re-parsed on each `Check` call rather than
-// cached + cloned. The source is small (a couple hundred
-// lines of lang code at most) and parsing it twice is cheap
-// next to type-checking; caching would require deep-cloning
-// the FuncDecl AST per-call to avoid mutation aliasing
-// (receiver-hoisting rewrites the FuncDecl in place).
-func injectPrelude(prog *ast.Program) error {
-	// Idempotency: if any function in prog.Funcs is already
-	// flagged IsPrelude, assume the prelude is injected and
-	// skip. Lets `Check` be re-entrant on the same AST —
-	// monomorph re-checks the program after rewriting,
-	// which would otherwise duplicate the prelude.
-	for _, f := range prog.Funcs {
-		if f.IsPrelude {
-			return nil
-		}
-	}
-	// Opt-out: a program that `import "core/no_prelude";`s
-	// signals it doesn't want the auto-prelude. The module
-	// itself is empty — the import statement is the signal.
-	// Used for explicit-imports test programs and (eventually,
-	// per docs/PRELUDE-TO-MODULES.md phase 5) for every program
-	// once the auto-prelude is retired.
-	//
-	// modload's `combine` doesn't copy entry-module imports into
-	// the combined Program (it flattens decls only), so we read
-	// the signal off the LoadedStdlibPaths set instead. Single-
-	// file checker callers that bypass modload (and therefore
-	// leave LoadedStdlibPaths nil) can't opt out today — but
-	// they also don't import stdlib paths, so the auto-prelude
-	// is the right behaviour for them.
-	if prog.LoadedStdlibPaths["stdlib://core/no_prelude.fern"] {
-		return nil
-	}
-	pre, err := parser.Parse(prelude.Source)
-	if err != nil {
-		return fmt.Errorf("prelude: %w", err)
-	}
-	// Phase 3 of docs/PRELUDE-TO-MODULES.md: as methods migrate
-	// out of the magic prelude into `std/…` modules, the prelude
-	// file `import "std/foo";`s them back in so existing programs
-	// keep working unchanged. Auto-prelude's imports are routed
-	// through `modload.LoadStdlibFlat`, which loads each path
-	// (and every stdlib module it transitively imports) and runs
-	// modload's rewriter in flat-namespace mode — qualified call
-	// sites inside stdlib bodies (`int.foo()` →) rewrite to bare
-	// calls (`foo()`), so a stdlib module can use `import
-	// "core/int";` plus `int.foo(...)` to call across-module
-	// without breaking the auto-prelude path's "all decls bare-
-	// named" invariant.
-	//
-	// Top-level dedup: paths already loaded by the user's entry
-	// program through `modload.Load` are filtered out here. The
-	// user's modload-loaded copy has mangled names; loading the
-	// same module via auto-prelude again would create a second
-	// bare-named copy and the checker's receiver-method
-	// redeclaration check would fire on every method imported
-	// by both paths.
-	wantPaths := make([]string, 0, len(pre.Imports))
-	for _, imp := range pre.Imports {
-		if !stdlib.IsStdlibPath(imp.Path) {
-			continue
-		}
-		key := imp.Path
-		if !strings.HasSuffix(key, ".fern") {
-			key += ".fern"
-		}
-		canonical := "stdlib://" + key
-		if prog.LoadedStdlibPaths[canonical] {
-			continue
-		}
-		wantPaths = append(wantPaths, imp.Path)
-	}
-	if len(wantPaths) > 0 {
-		// LoadStdlibFlatSkipping recursively loads stdlib paths
-		// the user didn't explicitly import. Transitive imports
-		// inside stdlib may reach back to a path the entry program
-		// already loaded through modload's mangling path (e.g.
-		// std/string now imports std/array, so an entry program
-		// importing `std/array` would surface duplicate
-		// `__method_Array_*` decls without the skip). Passing the
-		// already-loaded paths suppresses their flat-namespace
-		// contribution.
-		stdProg, err := modload.LoadStdlibFlatSkipping(wantPaths, prog.LoadedStdlibPaths)
-		if err != nil {
-			return fmt.Errorf("prelude: %w", err)
-		}
-		for _, fn := range stdProg.Funcs {
-			fn.IsPrelude = true
-			prog.Funcs = append(prog.Funcs, fn)
-		}
-		prog.Structs = append(prog.Structs, stdProg.Structs...)
-		prog.Enums = append(prog.Enums, stdProg.Enums...)
-		prog.Unions = append(prog.Unions, stdProg.Unions...)
-		prog.Consts = append(prog.Consts, stdProg.Consts...)
-		if prog.LoadedStdlibPaths == nil {
-			prog.LoadedStdlibPaths = map[string]bool{}
-		}
-		for p := range stdProg.LoadedStdlibPaths {
-			prog.LoadedStdlibPaths[p] = true
-		}
-	}
-	// The prelude file itself has no decls today (all its content
-	// moved into std/* + core/* modules), but the prelude path is
-	// kept open in case a future change needs to add a helper
-	// that doesn't sit cleanly in a single module.
-	for _, fn := range pre.Funcs {
-		fn.IsPrelude = true
-		prog.Funcs = append(prog.Funcs, fn)
-	}
-	prog.Structs = append(prog.Structs, pre.Structs...)
-	prog.Enums = append(prog.Enums, pre.Enums...)
-	return nil
-}
-
 // Check type-checks the program. It returns an aggregated error if any
 // problems were found.
 func Check(prog *ast.Program) (*Info, error) {
@@ -790,13 +659,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		if len(inject) > 0 {
 			prog.Structs = append(inject, prog.Structs...)
 		}
-	}
-	// Inject the lang-source prelude (small stdlib helpers
-	// expressed in lang itself; see internal/prelude). Runs
-	// after enums/structs since prelude functions may reference
-	// the auto-injected types.
-	if err := injectPrelude(prog); err != nil {
-		return nil, err
 	}
 	c := &checker{
 		info: &Info{

@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/string";
 // split_once returns Option[(string, string)]; destructure via tuple
 // field access on the bound value.
 function main(): i32 {

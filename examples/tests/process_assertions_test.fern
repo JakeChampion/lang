@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/process_assertions_test.fern — end-to-end
 // spawn + assert flow using `exec`, `temp_dir`, and the
 // std/test process assertion helpers. This is the shape the
@@ -13,34 +15,34 @@
 
 function test_echo_stdout_eq(): Option[string] {
     var r: ProcessResult = subprocess("echo", ["hello"], "");
-    return assert_stdout_eq(r, "hello\n");
+    return test.assert_stdout_eq(r, "hello\n");
 }
 
 function test_echo_exit_code(): Option[string] {
     var r: ProcessResult = subprocess("echo", ["x"], "");
-    return assert_exit(r, 0);
+    return test.assert_exit(r, 0);
 }
 
 function test_cat_passthrough(): Option[string] {
     var r: ProcessResult = subprocess("cat", [], "piped\n");
-    return assert_process(r, 0, "piped");
+    return test.assert_process(r, 0, "piped");
 }
 
 function test_sh_nonzero_exit(): Option[string] {
     var r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
-    return assert_exit(r, 7);
+    return test.assert_exit(r, 7);
 }
 
 function test_sh_stderr_contains(): Option[string] {
     var r: ProcessResult = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
-    return assert_stderr_contains(r, "err-line");
+    return test.assert_stderr_contains(r, "err-line");
 }
 
 function test_spawn_missing_binary(): Option[string] {
     var r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
     // Spawn failure → exit_code = 127 per POSIX convention,
     // with the OS error message in stderr.
-    return assert_exit(r, 127);
+    return test.assert_exit(r, 127);
 }
 
 function test_temp_dir_writes_and_reads(): Option[string] {
@@ -53,7 +55,7 @@ function test_temp_dir_writes_and_reads(): Option[string] {
             }
             // Confirm `cat` reads what we just wrote.
             var r: ProcessResult = subprocess("cat", [path], "");
-            return assert_process(r, 0, "hello tempdir");
+            return test.assert_process(r, 0, "hello tempdir");
         },
         Err(_) => { return Some("temp_dir returned Err"); }
     }
@@ -61,7 +63,7 @@ function test_temp_dir_writes_and_reads(): Option[string] {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("process assertions");
+    var r: test.TestRunner = test.test_new("process assertions");
 
     // Gate the whole suite on having a POSIX shell — every
     // case here spawns `echo` / `cat` / `sh`. On hosts where

@@ -85,10 +85,25 @@ type runOpts struct {
 // Model component. PrintMainResult is on so `_start` appends
 // main()'s i32 result to stdout via int_to_string + print. Skips
 // the test if the preview-2 toolchain is unavailable.
+// withResultPrinter guarantees `core/int` is in the import closure so
+// the BuildOptions.PrintMainResult wrapper can stringify main()'s i32
+// return via int_to_string. The auto-prelude used to supply that name
+// to every program; with the prelude gone (docs/PRELUDE-TO-MODULES.md
+// phase 5) the test harness — which is what turns main()'s result into
+// the stdout line runWasm parses — has to pull it in itself rather than
+// make all ~400 wasm programs declare an import they don't otherwise
+// use. Imports may appear in any order and modload dedups, so an
+// unconditional prepend is safe whether or not the program already
+// imports core/int (or core/no_prelude).
+func withResultPrinter(src string) string {
+	return "import \"core/int\";\n" + src
+}
+
 func buildComponent(t *testing.T, src string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
 
+	src = withResultPrinter(src)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -128,6 +143,11 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 
 	dir := t.TempDir()
 	for path, contents := range files {
+		if path == entry {
+			// core/int for the PrintMainResult wrapper's int_to_string
+			// (see withResultPrinter) — the entry is what defines main.
+			contents = withResultPrinter(contents)
+		}
 		full := filepath.Join(dir, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -930,7 +950,9 @@ function main(): i32 {
 // generic K / V and the IndexMap fingerprint-table layout
 // land in follow-ups.
 func TestWASMMapBasics(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
     if (m.len() != 0) { return 1; }
     if (m.has(7)) { return 2; }
@@ -974,7 +996,9 @@ func TestWASMMapBasics(t *testing.T) {
 // (2 → 4 → 8 → 16) and the wrapper's data pointer follows
 // along.
 func TestWASMMapResize(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(2);
     var i: i32 = 0;
     while (i < 12) {
@@ -1003,7 +1027,9 @@ func TestWASMMapResize(t *testing.T) {
 // length-prefixed `i32[]` values — `len()`, indexing, and
 // `for` work the way they do on any other array.
 func TestWASMMapKeysValues(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(10, 100);
     m.set(20, 200);
@@ -1041,7 +1067,9 @@ func TestWASMMapKeysValues(t *testing.T) {
 // and `__memcpy`s the 8 payload bytes into a real wide-stride
 // `i64[]` / `f64[]` result.
 func TestWASMMapValuesWideI64(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i64] = map_new(4);
     m.set(1, 1000000000000i64);
     m.set(2, 2000000000000i64);
@@ -1058,7 +1086,9 @@ func TestWASMMapValuesWideI64(t *testing.T) {
 }
 
 func TestWASMMapValuesWideF64(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
     m.set(1, 1.5f64);
     m.set(2, 2.5f64);
@@ -1083,7 +1113,9 @@ func TestWASMMapValuesWideF64(t *testing.T) {
 // already 8 bytes so the raw-stored keyKind=0 path keeps
 // working (see TestX86_64WideScalarMap / TestArm64WideScalarMap).
 func TestWASMWideKeyMapBasic(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 100);
     m.set(2i64, 200);
@@ -1095,7 +1127,9 @@ func TestWASMWideKeyMapBasic(t *testing.T) {
 }
 
 func TestWASMWideKeyMapHasDelete(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(7i64, 100);
     m.set(42i64, 200);
@@ -1113,7 +1147,9 @@ func TestWASMWideKeyMapHasDelete(t *testing.T) {
 }
 
 func TestWASMWideKeyMapOverwrite(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 100);
     m.set(1i64, 999);
@@ -1126,7 +1162,9 @@ func TestWASMWideKeyMapOverwrite(t *testing.T) {
 }
 
 func TestWASMWideKeyMapGrow(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     var i: i32 = 0;
     while (i < 20) {
@@ -1153,7 +1191,9 @@ func TestWASMWideKeyMapGrow(t *testing.T) {
 // doesn't collide on the trivial low-32 truncation. Folds the
 // upper / lower halves via XOR before Wang's mix.
 func TestWASMWideKeyMapHighBitsDistinct(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
@@ -1167,7 +1207,9 @@ func TestWASMWideKeyMapHighBitsDistinct(t *testing.T) {
 }
 
 func TestWASMWideKeyMapU64(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
     m.set(1u64, 100);
     return m.get_or(1u64, 0);
@@ -1178,7 +1220,9 @@ func TestWASMWideKeyMapU64(t *testing.T) {
 }
 
 func TestWASMWideKeyMapStringV(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
     return (m.get_or(1i64, "")).len();
@@ -1198,7 +1242,9 @@ func TestWASMWideKeyMapStringV(t *testing.T) {
 // `__map_keys_impl` would use a 4-byte destStride and the
 // upper 4 bytes of every key would be lost.
 func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
@@ -1220,7 +1266,9 @@ func TestWASMWideKeyMapKeysSnapshot(t *testing.T) {
 // present/missing behaviour, that len decrements, and that
 // subsequent lookups return None.
 func TestWASMMapDelete(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 10);
     m.set(2, 20);
@@ -1262,7 +1310,9 @@ func TestWASMMapDelete(t *testing.T) {
 // set calls. The capacity is sized to the entry count so the
 // initial fill never triggers a resize.
 func TestWASMMapLiteral(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
     if (m.len() != 3) { return 1; }
     if let Some(v) = m.get(2) {
@@ -2103,7 +2153,9 @@ function main(): i32 {
 // equality at the runtime layer dispatches to byte-level
 // strcmp via the buffer's keyKind tag.
 func TestWASMMapStringKeys(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m.set("hello", 1);
     m.set("world", 2);
@@ -2147,7 +2199,9 @@ func TestWASMMapStringKeys(t *testing.T) {
 
 // Map[string, string]. Both K and V are pointer-sized.
 func TestWASMMapStringStringValues(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var headers: Map[string, string] = map_new(4);
     headers.set("content-type", "text/plain");
     headers.set("x-trace-id", "abc123");
@@ -2180,7 +2234,9 @@ func TestWASMMapStringStringValues(t *testing.T) {
 // avoid them at scale), resize-on-load-factor, and
 // tombstone handling on delete.
 func TestWASMMapHashStress(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 100) {
@@ -2259,7 +2315,9 @@ func TestWASMMapHashStress(t *testing.T) {
 // generator to exercise the FNV-1a path's collision
 // behaviour at scale.
 func TestWASMMapStringHashStress(t *testing.T) {
-	src := `function digit(n: i32): string {
+	src := `import "core/no_prelude";
+import "core/map";
+function digit(n: i32): string {
     if (n == 0) { return "0"; }
     if (n == 1) { return "1"; }
     if (n == 2) { return "2"; }
@@ -2304,7 +2362,9 @@ function main(): i32 {
 // advance. The MapIter struct is allocated once per loop;
 // each step is just a load + arithmetic.
 func TestWASMMapIter(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map { 10: 100, 20: 200, 30: 300, 40: 400 };
     var sum_keys: i32 = 0;
     var sum_vals: i32 = 0;
@@ -2339,7 +2399,9 @@ func TestWASMMapIter(t *testing.T) {
 // Step slot, so `continue` jumps to the step before
 // re-checking the cond).
 func TestWASMForTupleInMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30, 4: 40 };
     var sum_keys: i32 = 0;
     var sum_vals: i32 = 0;
@@ -2391,7 +2453,9 @@ func TestWASMForTupleInMap(t *testing.T) {
 func TestWASMMapValueI64(t *testing.T) {
 	// 4294967296 = 2^32 — picks the entire upper word so a
 	// truncating store would visibly clear the high bits.
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i64] = map_new(8);
     m.set(1, 4294967296 as i64);
     m.set(2, 8589934592 as i64);
@@ -2422,7 +2486,9 @@ func TestWASMMapValueI64(t *testing.T) {
 // f64.store / f64.load on the wide-V cell + the wide-payload
 // Option[f64] return projection.
 func TestWASMMapValueF64(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, f64] = map_new(8);
     m.set("pi", 3.14 as f64);
     m.set("e", 2.71 as f64);
@@ -2456,7 +2522,9 @@ func TestWASMMapValueF64(t *testing.T) {
 // for each entry's value before calling the shared
 // `__method_Map_set` helper.
 func TestWASMMapLiteralWideValue(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
     match (m.get(2)) {
         Some(v) => { if (v == (8589934592 as i64)) { return 0; } },
@@ -2473,7 +2541,9 @@ func TestWASMMapLiteralWideValue(t *testing.T) {
 // pointer (wat side stays i32), and the IR unboxes it on the
 // way out.
 func TestWASMMapIterValueWide(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i64] = Map { 1: 4294967296 as i64, 2: 8589934592 as i64 };
     var sum: i64 = 0 as i64;
     var it: MapIter[i32, i64] = m.iter();
@@ -2493,7 +2563,9 @@ func TestWASMMapIterValueWide(t *testing.T) {
 // type-system substitution returns string-typed key /
 // i32-typed value at the call site.
 func TestWASMMapIterStringKeys(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     var concat: string = "";
     var sum: i32 = 0;
@@ -2595,7 +2667,9 @@ function main(): i32 {
 // that didn't fire) are no-ops via per-defer "active" flags.
 // Side-effect observation goes through a Map passed by ref.
 func TestWASMDeferBasic(t *testing.T) {
-	src := `function inner(trace: Map[string, i32]): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function inner(trace: Map[string, i32]): i32 {
     trace.set("body-start", 1);
     defer trace.set("first-defer", 10);
     defer trace.set("second-defer", 20);
@@ -2621,7 +2695,9 @@ function main(): i32 {
 // Conditionally-registered defer: a defer inside an
 // if-branch that doesn't run shouldn't fire at function exit.
 func TestWASMDeferConditional(t *testing.T) {
-	src := `function run(fired: Map[i32, i32], taken: boolean): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function run(fired: Map[i32, i32], taken: boolean): i32 {
     if (taken) {
         defer fired.set(1, 100);
     }
@@ -2646,7 +2722,9 @@ function main(): i32 {
 
 // Defer fires before each return, even early returns.
 func TestWASMDeferEarlyReturn(t *testing.T) {
-	src := `function early(counts: Map[string, i32], branch: i32): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function early(counts: Map[string, i32], branch: i32): i32 {
     defer counts.set("count", counts.get_or("count", 0) + 1);
     if (branch == 1) {
         return 10;
@@ -2673,7 +2751,9 @@ function main(): i32 {
 // supplied default. Saves the `if let Some(v) = m.get(k) {
 // v } else { d }` ceremony for the common-case lookup.
 func TestWASMMapGetOr(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var counts: Map[string, i32] = Map { "apple": 3, "banana": 5 };
     if (counts.get_or("apple", 0) != 3) { return 1; }
     if (counts.get_or("banana", 0) != 5) { return 2; }
@@ -2694,7 +2774,9 @@ func TestWASMMapGetOr(t *testing.T) {
 // the kv buffer. Subsequent inserts reuse the existing
 // allocation and re-grow if needed.
 func TestWASMMapClear(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     if (m.len() != 3) { return 1; }
     m.clear();
@@ -2727,7 +2809,9 @@ func TestWASMMapClear(t *testing.T) {
 // String-keyed Map literal — KeyType is inferred from the
 // first key, so the IR's map_new call gets keyKind=1.
 func TestWASMMapStringKeyLiteral(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
     if (m.len() != 3) { return 1; }
     if let Some(v) = m.get("b") {
@@ -3973,7 +4057,9 @@ func TestWASMIfExpr(t *testing.T) {
 // None early. Surrounding return type must be Option[_]; enforced
 // by the checker.
 func TestWASMOptionTryHappyPath(t *testing.T) {
-	src := `function chained(m: Map[i32, i32], k: i32): Option[i32] {
+	src := `import "core/no_prelude";
+import "core/map";
+function chained(m: Map[i32, i32], k: i32): Option[i32] {
     var v: i32 = m.get(k)?;
     return Some(v + 1);
 }
@@ -3993,7 +4079,9 @@ function main(): i32 {
 // On a None value, `?` skips the rest of the function and returns
 // None. The caller observes the early-return outcome.
 func TestWASMOptionTryNoneEarlyReturn(t *testing.T) {
-	src := `function chained(m: Map[i32, i32], k: i32): Option[i32] {
+	src := `import "core/no_prelude";
+import "core/map";
+function chained(m: Map[i32, i32], k: i32): Option[i32] {
     var v: i32 = m.get(k)?;
     return Some(v + 1);
 }
@@ -5150,7 +5238,9 @@ function main(): i32 {
 }
 
 func TestWASMClosureMapLitCapture(t *testing.T) {
-	src := `function makeMap(k: i32, v: i32): () => Map[i32, i32] {
+	src := `import "core/no_prelude";
+import "core/map";
+function makeMap(k: i32, v: i32): () => Map[i32, i32] {
     function build(): Map[i32, i32] { return Map { k: v }; }
     return build;
 }
@@ -11021,8 +11111,10 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randint.fern")
-	src := []byte(`function main(): i32 {
-    var r: i32 = random_int(0, 100);
+	src := []byte(`import "core/no_prelude";
+import "std/math";
+function main(): i32 {
+    var r: i32 = math.random_int(0, 100);
     if (r >= 0 && r < 100) { return 0; }
     return 1;
 }`)
@@ -16257,6 +16349,8 @@ func TestWASMLebCrossValidates(t *testing.T) {
 	// byte sequence per expect-row.
 	var sb strings.Builder
 	sb.WriteString(`import "std/wasm/leb128";
+import "std/i32";
+import "std/string";
 
 function dump(bs: u8[]): string {
     var s: string = "";
@@ -16491,6 +16585,8 @@ func TestWASMModuleBuildCross(t *testing.T) {
 import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
+import "std/i32";
+import "std/string";
 function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
@@ -16628,7 +16724,9 @@ function main(): i32 {
 //   - a deliberate double-dec (1->0 healthy, then 0-> under) is
 //     caught and counted exactly once.
 func TestWASMRcUnderflowDetector(t *testing.T) {
-	clean := `function main(): i32 {
+	clean := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m.set("a", 1);
     m.set("b", 2);
@@ -16657,7 +16755,9 @@ func TestWASMRcUnderflowDetector(t *testing.T) {
 // the call returned a different one. On a uniquely-held map the
 // handle is unchanged → no dec → no 1->0 then 0->-1 over-release.
 func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -16678,7 +16778,9 @@ func TestWASMRcMapSelfAssignNoUnderflow(t *testing.T) {
 	// path (old handle differs from the fresh copy) so the source
 	// alias's rc is released rather than leaked — and still no
 	// over-release. m1 keeps its entry, m2 gets the mutated copy.
-	aliased := `function main(): i32 {
+	aliased := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);
     var m2 = m1;                  // alias → rc 2
@@ -17046,7 +17148,9 @@ func TestWASMArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64MapSetReturnsMap.
 func TestWASMMapSetReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -17111,7 +17215,9 @@ func TestWASMArraySetAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64MapDeleteReturnsMapBool.
 func TestWASMMapDeleteReturnsMapBool(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
@@ -17132,7 +17238,9 @@ func TestWASMMapDeleteReturnsMapBool(t *testing.T) {
 
 // Mirror of TestArm64MapClearReturnsMap.
 func TestWASMMapClearReturnsMap(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("x", 10);
     m = m.set("y", 20);
@@ -17154,7 +17262,9 @@ func TestWASMMapClearReturnsMap(t *testing.T) {
 // TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
 // has rc=2, so m2.set(...) copies and leaves m1 intact.
 func TestWASMMapSetAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);                 // in-place (rc==1)
     var m2 = m1;                    // alias → rc=2
@@ -17171,7 +17281,9 @@ func TestWASMMapSetAliasedCopies(t *testing.T) {
 // Phase 2d: Map.delete / Map.clear copy-on-write — wasm sibling
 // of TestX86_64MapDeleteClearAliasedCopies.
 func TestWASMMapDeleteClearAliasedCopies(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
     m1.set("a", 1);
     m1.set("b", 2);
@@ -17257,7 +17369,9 @@ func TestWASMLexerChainedTupleNumericAccess(t *testing.T) {
 
 // Mirror of TestArm64EmptyMapDestinationInference.
 func TestWASMEmptyMapDestinationInference(t *testing.T) {
-	src := `function take(m: Map[string, i32]): i32 { return m.len(); }
+	src := `import "core/no_prelude";
+import "core/map";
+function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
     var a: Map[string, i32] = Map {};
@@ -17312,7 +17426,9 @@ function main(): i32 {
 
 // Mirror of TestArm64MapPointerShapedValues.
 func TestWASMMapPointerShapedValues(t *testing.T) {
-	src := `struct P { x: i32, y: i32 }
+	src := `import "core/no_prelude";
+import "core/map";
+struct P { x: i32, y: i32 }
 function main(): i32 {
     var mt: Map[string, (i32, i32)] = Map {};
     mt = mt.set("a", (3, 4));

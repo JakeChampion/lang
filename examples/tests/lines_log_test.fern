@@ -1,8 +1,10 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/lines_log_test.fern — exercises the
 // `assert_lines_eq` multi-line comparison helper + the
 // `(r).log(msg)` chainable TAP-comment emitter.
 //
-// `assert_lines_eq(actual, expected_lines)` splits `actual`
+// `test.assert_lines_eq(actual, expected_lines)` splits `actual`
 // on `\n` and compares to `expected_lines: string[]` line-
 // by-line, so the expected side reads as a vector of lines
 // instead of one long backslash-escaped literal. Friendlier
@@ -15,41 +17,41 @@
 
 function test_lines_match(): Option[string] {
     var actual: string = "line 1\nline 2\nline 3\n";
-    return assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
+    return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
 }
 
 function test_lines_line_count_mismatch(): Option[string] {
-    match (assert_lines_eq("a\nb\nc\n", ["a", "b"])) {
+    match (test.assert_lines_eq("a\nb\nc\n", ["a", "b"])) {
         Some(msg) => {
             if (!msg.contains("line count differs")) {
-                return fail("missing reason in: " + msg);
+                return test.fail("missing reason in: " + msg);
             }
             return None;
         },
-        None => { return fail("expected line-count mismatch to fail"); }
+        None => { return test.fail("expected line-count mismatch to fail"); }
     }
     return None;
 }
 
 function test_lines_first_diff_localised(): Option[string] {
-    match (assert_lines_eq("a\nB\nc\n", ["a", "b", "c"])) {
+    match (test.assert_lines_eq("a\nB\nc\n", ["a", "b", "c"])) {
         Some(msg) => {
             if (!msg.contains("line 2")) {
-                return fail("missing line 2 in: " + msg);
+                return test.fail("missing line 2 in: " + msg);
             }
             return None;
         },
-        None => { return fail("expected mismatch on line 2"); }
+        None => { return test.fail("expected mismatch on line 2"); }
     }
     return None;
 }
 
 function test_lines_empty_input(): Option[string] {
-    return assert_lines_eq("", []);
+    return test.assert_lines_eq("", []);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("lines+log");
+    var r: test.TestRunner = test.test_new("lines+log");
 
     // r.log emits TAP comments; the test stream interleaves
     // them with `ok`/`not ok` lines so the log breadcrumbs

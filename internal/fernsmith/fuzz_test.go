@@ -4,9 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/fernsmith"
-	"github.com/jakechampion/lang/internal/parser"
 )
 
 // FuzzGenerate_ParseRoundTrips is the wasm-smith-style oracle: every
@@ -27,12 +25,10 @@ func FuzzGenerate_ParseRoundTrips(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		src := fernsmith.GenBytes(data)
-		prog, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("generated program failed to parse:\ndata=%x\nsrc:\n%s\nerr: %v", data, src, err)
-		}
-		if _, err := checker.Check(prog); err != nil {
-			t.Fatalf("generated program failed to type-check:\ndata=%x\nsrc:\n%s\nerr: %v", data, src, err)
+		// modload (not bare parser.Parse) resolves the stdlib import
+		// preamble the generator emits now that the prelude is gone.
+		if err := checkGenerated(t, src); err != nil {
+			t.Fatalf("generated program failed to parse/type-check:\ndata=%x\nsrc:\n%s\nerr: %v", data, src, err)
 		}
 	})
 }

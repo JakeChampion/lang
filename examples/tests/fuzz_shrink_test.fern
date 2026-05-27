@@ -1,3 +1,6 @@
+import "core/no_prelude";
+import "std/fuzz";
+import "std/test";
 // examples/tests/fuzz_shrink_test.fern — `r.fuzz_shrink`
 // walkthrough. Same shape as the base `r.fuzz` but on a
 // failure the harness minimises the offending input before
@@ -46,7 +49,7 @@ function check_to_lower_no_upper(input: string): Option[string] {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz shrink");
+    var r: test.TestRunner = test.test_new("fuzz shrink");
 
     r = r.fuzz_shrink("len non-negative",
                       ["", "x", "abc"], 50,
@@ -54,7 +57,7 @@ function main(): i32 {
 
     r = r.fuzz_shrink("reverse_bytes idempotent",
                       ["", "a", "abc", "hello world"],
-                      fuzz_default_iterations(),
+                      fuzz.fuzz_default_iterations(),
                       check_reverse_idempotent);
 
     r = r.fuzz_shrink("to_lower has no uppercase",

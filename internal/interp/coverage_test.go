@@ -7,7 +7,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestInterpHandlesEveryASTNode is the load-bearing "no silent
@@ -44,7 +44,9 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 		{node: "CastExpr", src: `function main(): i64 { var n: i32 = 7; return n as i64; }`},
 		{node: "BoolLit", src: `function main(): boolean { return true; }`},
 		{node: "StringLit", src: `function main(): string { return "hi"; }`},
-		{node: "FString", src: `function main(): string { return f"x={42}"; }`},
+		{node: "FString", src: `import "core/no_prelude";
+import "std/i32";
+function main(): string { return f"x={42}"; }`},
 		{node: "FloatLit",
 			skip: "interp doesn't model floats — owns the f32 / f64 paths via wasm + arm64 backends only",
 		},
@@ -171,9 +173,12 @@ function main(): i32 {
 			if c.src == "" {
 				t.Fatalf("%s: missing src", c.node)
 			}
-			prog, err := parser.Parse(c.src)
+			// modload (not bare parser.Parse) so the FString case's
+			// `import "std/i32";` resolves — the auto-prelude is gone,
+			// so .to_string() is in scope only when imported.
+			prog, _, err := modload.LoadSource(c.src)
 			if err != nil {
-				t.Fatalf("parse: %v\nsrc:\n%s", err, c.src)
+				t.Fatalf("load: %v\nsrc:\n%s", err, c.src)
 			}
 			// Run the checker so method-call rewrites, FString
 			// desugaring, and variant-call IsVariantCall flags

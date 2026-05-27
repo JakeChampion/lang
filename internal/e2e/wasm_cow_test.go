@@ -96,7 +96,9 @@ func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
     if (ys[1] != 999) { return 2; }
     return 0;
 }`},
-		{"map_set", `function main(): i32 {
+		{"map_set", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     var n = m;
@@ -153,7 +155,9 @@ function main(): i32 {
     return (build() - 8) + __rc_underflow_count();
 }`},
 		// Overwrite-set frees the prior value; no over-release.
-		{"dec_on_overwrite", `function main(): i32 {
+		{"dec_on_overwrite", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
     while (i < 64) { m = m.set(7, [i, i + 1, i + 2]); i = i + 1; }

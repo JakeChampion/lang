@@ -291,7 +291,10 @@ func runInterp(srcPath string, argv []string) (int, error) {
 			return 1, fmt.Errorf("read stdin: %w", err)
 		}
 		src = string(buf)
-		p, err := parser.Parse(src)
+		// modload.LoadSource (not bare parser.Parse) so a piped
+		// program's std/ + core/ imports resolve — the auto-prelude
+		// is gone, so stdlib is in scope only when imported.
+		p, _, err := modload.LoadSource(src)
 		if err != nil {
 			return 1, fmt.Errorf("%s", diag.Format("<stdin>", src, err))
 		}
@@ -370,7 +373,9 @@ func runCheck(srcPath string) error {
 			return fmt.Errorf("read stdin: %w", err)
 		}
 		src = string(buf)
-		p, err := parser.Parse(src)
+		// modload.LoadSource so a piped program's std/ + core/
+		// imports resolve now that the auto-prelude is gone.
+		p, _, err := modload.LoadSource(src)
 		if err != nil {
 			return fmt.Errorf("%s", diag.Format("<stdin>", src, err))
 		}

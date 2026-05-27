@@ -139,17 +139,19 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 func TestRunnerFailingSuiteExitsOne(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/test";
+
 function test_passing(): Option[string] {
-    return assert_eq_i32(1 + 1, 2);
+    return test.assert_eq_i32(1 + 1, 2);
 }
 
 function test_failing(): Option[string] {
-    return assert_eq_i32(2 + 2, 5);
+    return test.assert_eq_i32(2 + 2, 5);
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("failure-shape");
+    var r: test.TestRunner = test.test_new("failure-shape");
     r = r.it("passing", test_passing());
     r = r.it("failing", test_failing());
     return r.finish();
@@ -246,14 +248,17 @@ func TestRunnerFuzzExample(t *testing.T) {
 func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/fuzz";
+import "std/test";
+
 function detect_bad(input: string): Option[string] {
     if (input.contains("BAD")) { return Some("forbidden pattern"); }
     return None;
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz-failure");
+    var r: test.TestRunner = test.test_new("fuzz-failure");
     r = r.fuzz("detect", ["good", "BAD seed", "another"], 5, detect_bad);
     return r.finish();
 }
@@ -391,20 +396,22 @@ func TestRunnerFilesystemOpsExample(t *testing.T) {
 func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/test";
+
 function main(): i32 {
-    var r: TestRunner = test_new("cleanup");
+    var r: test.TestRunner = test.test_new("cleanup");
     match (temp_dir("fern-cleanup-probe")) {
         Ok(dir) => {
             print("# tempdir: " + dir);
             r = r.defer_cleanup(dir);
             match (write_file(dir + "/x.txt", "x")) {
                 None => { },
-                Some(_) => { r = r.it("write", fail("write failed")); return r.finish(); }
+                Some(_) => { r = r.it("write", test.fail("write failed")); return r.finish(); }
             }
             match (read_file(dir + "/x.txt")) {
-                Ok(s) => { r = r.it("roundtrip", assert_eq_string(s, "x")); },
-                Err(_) => { r = r.it("roundtrip", fail("read failed")); }
+                Ok(s) => { r = r.it("roundtrip", test.assert_eq_string(s, "x")); },
+                Err(_) => { r = r.it("roundtrip", test.fail("read failed")); }
             }
         },
         Err(_) => { r = r.skip("setup", "temp_dir failed"); }
@@ -641,14 +648,17 @@ func TestRunnerFuzzShrinkExample(t *testing.T) {
 func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/fuzz";
+import "std/test";
+
 function detect_bad(input: string): Option[string] {
     if (input.contains("BAD")) { return Some("forbidden"); }
     return None;
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("shrink-failure");
+    var r: test.TestRunner = test.test_new("shrink-failure");
     r = r.fuzz_shrink("detect",
                       ["lots of padding here BAD lots more padding"],
                       5, detect_bad);
@@ -1934,9 +1944,11 @@ func TestRunnerQuietModeExample(t *testing.T) {
 func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`
+	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+import "std/test";
+
 function main(): i32 {
-    var r: TestRunner = test_new("empty");
+    var r: test.TestRunner = test.test_new("empty");
     return r.finish();
 }
 `)

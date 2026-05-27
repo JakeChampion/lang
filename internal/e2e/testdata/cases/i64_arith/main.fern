@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/i64";
 // 64-bit arithmetic beyond the i32 range: 1e9 * 3 = 3e9, printed
 // via i64.to_string().
 function main(): i32 {

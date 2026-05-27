@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/strings_test.fern — exercise the string
 // receiver methods from std/string via the test runner.
 //
@@ -7,55 +9,55 @@
 // main(), single TAP-13 stream on stdout.
 
 function test_uppercase(): Option[string] {
-    return assert_eq_string("hello".to_upper(), "HELLO");
+    return test.assert_eq_string("hello".to_upper(), "HELLO");
 }
 
 function test_lowercase(): Option[string] {
-    return assert_eq_string("HELLO".to_lower(), "hello");
+    return test.assert_eq_string("HELLO".to_lower(), "hello");
 }
 
 function test_contains_substring(): Option[string] {
-    return assert_contains("hello world", "world");
+    return test.assert_contains("hello world", "world");
 }
 
 function test_not_contains(): Option[string] {
-    return assert_not_contains("hello world", "xyz");
+    return test.assert_not_contains("hello world", "xyz");
 }
 
 function test_starts_with(): Option[string] {
-    return assert_starts_with("foobar", "foo");
+    return test.assert_starts_with("foobar", "foo");
 }
 
 function test_ends_with(): Option[string] {
-    return assert_ends_with("foobar", "bar");
+    return test.assert_ends_with("foobar", "bar");
 }
 
 function test_concat(): Option[string] {
-    return assert_eq_string("foo" + "bar", "foobar");
+    return test.assert_eq_string("foo" + "bar", "foobar");
 }
 
 function test_split_join_roundtrip(): Option[string] {
     var parts: string[] = "a,b,c,d".split(",");
-    return assert_eq_string(parts.join("|"), "a|b|c|d");
+    return test.assert_eq_string(parts.join("|"), "a|b|c|d");
 }
 
 // Length assertion + array-of-string assertion in one test.
 // Both pass; folded together to keep the test list short.
 function test_split_yields_four_parts(): Option[string] {
     var parts: string[] = "a,b,c,d".split(",");
-    return assert_len_string(parts, 4);
+    return test.assert_len_string(parts, 4);
 }
 
 function test_empty_string(): Option[string] {
-    return assert_empty_string("");
+    return test.assert_empty_string("");
 }
 
 function test_non_empty_string(): Option[string] {
-    return assert_non_empty_string("x");
+    return test.assert_non_empty_string("x");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("strings");
+    var r: test.TestRunner = test.test_new("strings");
     r = r.it("to_upper", test_uppercase());
     r = r.it("to_lower", test_lowercase());
     r = r.it("contains substring", test_contains_substring());

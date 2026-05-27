@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/test";
 // examples/tests/runner_self_test.fern — meta-test of the
 // `std/test` runner itself. Verifies that:
 //   - passing assertions return None
@@ -17,7 +19,7 @@
 function expect_none(o: Option[string]): Option[string] {
     match (o) {
         None => { return None; },
-        Some(msg) => { return fail("expected None, got Some(" + msg + ")"); }
+        Some(msg) => { return test.fail("expected None, got Some(" + msg + ")"); }
     }
 }
 
@@ -29,9 +31,9 @@ function expect_some_containing(o: Option[string], needle: string): Option[strin
     match (o) {
         Some(msg) => {
             if (msg.contains(needle)) { return None; }
-            return fail("Some(\"" + msg + "\") does not contain \"" + needle + "\"");
+            return test.fail("Some(\"" + msg + "\") does not contain \"" + needle + "\"");
         },
-        None => { return fail("expected Some, got None"); }
+        None => { return test.fail("expected Some, got None"); }
     }
 }
 
@@ -41,111 +43,111 @@ function expect_some_containing(o: Option[string], needle: string): Option[strin
 // message.
 
 function test_assert_true_pass(): Option[string] {
-    return expect_none(assert_true(true));
+    return expect_none(test.assert_true(true));
 }
 
 function test_assert_true_fail(): Option[string] {
-    return expect_some_containing(assert_true(false), "assert_true");
+    return expect_some_containing(test.assert_true(false), "assert_true");
 }
 
 function test_assert_false_pass(): Option[string] {
-    return expect_none(assert_false(false));
+    return expect_none(test.assert_false(false));
 }
 
 function test_assert_false_fail(): Option[string] {
-    return expect_some_containing(assert_false(true), "assert_false");
+    return expect_some_containing(test.assert_false(true), "assert_false");
 }
 
 function test_eq_i32_pass(): Option[string] {
-    return expect_none(assert_eq_i32(42, 42));
+    return expect_none(test.assert_eq_i32(42, 42));
 }
 
 function test_eq_i32_fail_message(): Option[string] {
     // The message must contain BOTH "expected 5" and "got 4"
     // — that's the contract callers will read in CI logs.
-    var o: Option[string] = assert_eq_i32(4, 5);
+    var o: Option[string] = test.assert_eq_i32(4, 5);
     match (o) {
         Some(msg) => {
             if (!msg.contains("expected 5")) {
-                return fail("missing 'expected 5' in \"" + msg + "\"");
+                return test.fail("missing 'expected 5' in \"" + msg + "\"");
             }
             if (!msg.contains("got 4")) {
-                return fail("missing 'got 4' in \"" + msg + "\"");
+                return test.fail("missing 'got 4' in \"" + msg + "\"");
             }
             return None;
         },
-        None => { return fail("assert_eq_i32(4, 5) should fail"); }
+        None => { return test.fail("assert_eq_i32(4, 5) should fail"); }
     }
 }
 
 function test_eq_string_pass(): Option[string] {
-    return expect_none(assert_eq_string("hello", "hello"));
+    return expect_none(test.assert_eq_string("hello", "hello"));
 }
 
 function test_eq_string_fail(): Option[string] {
-    var o: Option[string] = assert_eq_string("a", "b");
+    var o: Option[string] = test.assert_eq_string("a", "b");
     return expect_some_containing(o, "assert_eq_string");
 }
 
 function test_neq_i32(): Option[string] {
-    return expect_none(assert_neq_i32(1, 2));
+    return expect_none(test.assert_neq_i32(1, 2));
 }
 
 function test_contains_pass(): Option[string] {
-    return expect_none(assert_contains("hello world", "world"));
+    return expect_none(test.assert_contains("hello world", "world"));
 }
 
 function test_contains_fail(): Option[string] {
     return expect_some_containing(
-        assert_contains("hello world", "xyz"),
+        test.assert_contains("hello world", "xyz"),
         "assert_contains");
 }
 
 function test_starts_with_pass(): Option[string] {
-    return expect_none(assert_starts_with("foobar", "foo"));
+    return expect_none(test.assert_starts_with("foobar", "foo"));
 }
 
 function test_starts_with_fail(): Option[string] {
     return expect_some_containing(
-        assert_starts_with("foobar", "bar"),
+        test.assert_starts_with("foobar", "bar"),
         "assert_starts_with");
 }
 
 function test_ends_with_pass(): Option[string] {
-    return expect_none(assert_ends_with("foobar", "bar"));
+    return expect_none(test.assert_ends_with("foobar", "bar"));
 }
 
 function test_len_i32_pass(): Option[string] {
-    return expect_none(assert_len_i32([1, 2, 3], 3));
+    return expect_none(test.assert_len_i32([1, 2, 3], 3));
 }
 
 function test_len_i32_fail(): Option[string] {
     return expect_some_containing(
-        assert_len_i32([1, 2, 3], 5),
+        test.assert_len_i32([1, 2, 3], 5),
         "expected length 5");
 }
 
 function test_eq_i32_array_pass(): Option[string] {
-    return expect_none(assert_eq_i32_array([1, 2, 3], [1, 2, 3]));
+    return expect_none(test.assert_eq_i32_array([1, 2, 3], [1, 2, 3]));
 }
 
 function test_eq_i32_array_fail_index(): Option[string] {
     // First mismatch is at index 1 (2 vs 9); the message
     // must localise that index.
-    var o: Option[string] = assert_eq_i32_array([1, 2, 3], [1, 9, 3]);
+    var o: Option[string] = test.assert_eq_i32_array([1, 2, 3], [1, 9, 3]);
     return expect_some_containing(o, "index 1");
 }
 
 function test_pass_returns_none(): Option[string] {
-    return expect_none(pass());
+    return expect_none(test.pass());
 }
 
 function test_fail_returns_some(): Option[string] {
-    return expect_some_containing(fail("custom message"), "custom message");
+    return expect_some_containing(test.fail("custom message"), "custom message");
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("runner self-test");
+    var r: test.TestRunner = test.test_new("runner self-test");
     r = r.it("assert_true pass", test_assert_true_pass());
     r = r.it("assert_true fail message", test_assert_true_fail());
     r = r.it("assert_false pass", test_assert_false_pass());

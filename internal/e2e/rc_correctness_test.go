@@ -23,7 +23,9 @@ var rcCorpus = []struct {
 	{
 		// Array of structs: build, read back, drop at exit.
 		name: "array_of_structs",
-		src: `struct P { x: i32, y: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct P { x: i32, y: i32 }
 function main(): i32 {
     var ps: P[] = [P{x: 1, y: 2}, P{x: 3, y: 4}];
     return (ps[1].y - 4) + __rc_underflow_count();
@@ -32,7 +34,9 @@ function main(): i32 {
 	{
 		// Struct holding arrays, aliased then reassigned.
 		name: "struct_of_arrays_aliased",
-		src: `struct Holder { a: i32[], b: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Holder { a: i32[], b: i32[] }
 function main(): i32 {
     var h1: Holder = Holder { a: [1, 2], b: [3, 4, 5] };
     var h2: Holder = h1;
@@ -43,7 +47,9 @@ function main(): i32 {
 	{
 		// Deeply nested arrays.
 		name: "nested_arrays",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var cube: i32[][][] = [[[1, 2], [3]], [[4, 5, 6]]];
     return (cube[1][0][2] - 6) + __rc_underflow_count();
 }`,
@@ -51,7 +57,10 @@ function main(): i32 {
 	{
 		// Union: build a variant, match it, drop at exit.
 		name: "union_build_match",
-		src: `struct VInt { v: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct VInt { v: i32 }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function wrap(xs: i32[]): Value { return VArr { v: xs }; }
@@ -69,7 +78,10 @@ function main(): i32 {
 		// Non-uniform enum: pointer payload in one arm, scalar in
 		// another (falls through to plain dec — leaks, no underflow).
 		name: "enum_non_uniform",
-		src: `enum E { Arr(i32[]), Num(i32) }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
     var e: E = Arr([1, 2, 3, 4]);
     var n: E = Num(99);
@@ -82,7 +94,9 @@ function main(): i32 {
 		// Closure capturing an array (capture leaks under no-free —
 		// must not over-release).
 		name: "closure_capture_array",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var xs: i32[] = [5, 6, 7];
     var f = function (d: i32): i32 { return xs[2] + d; };
     var got: i32 = f(0);
@@ -92,7 +106,9 @@ function main(): i32 {
 	{
 		// Closure capturing a scalar (no pointer capture).
 		name: "closure_capture_scalar",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var k: i32 = 42;
     var f = function (x: i32): i32 { return x + k; };
     return (f(0) - 42) + __rc_underflow_count();
@@ -104,7 +120,9 @@ function main(): i32 {
 		// loop-body scope exit and the next alloc reuses it; the
 		// counter must stay 0 (no over-release). sum_{1..100} = 5050.
 		name: "closure_churn_free",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var sum: i32 = 0;
     var i: i32 = 0;
     while (i < 100) {
@@ -122,7 +140,9 @@ function main(): i32 {
 		// main owns the surviving closure and frees it at exit. f(5)
 		// with n=10 → 15.
 		name: "closure_escapes_return",
-		src: `function makeAdder(n: i32): (i32) => i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
     return add;
 }
@@ -138,7 +158,9 @@ function main(): i32 {
 		// must stay 0 (the array was inc'd once on capture, dropped
 		// once on closure death). acc = sum_{i=0..99}(i+2) = 5150.
 		name: "closure_array_capture_churn",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 100) {
@@ -157,7 +179,9 @@ function main(): i32 {
 		// unconditional capture-drop would over-release it. outer(0) →
 		// inner(1) → xs[2] + 0 + 1 = 31. Counter must stay 0.
 		name: "closure_nested_capture",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var outer = function (a: i32): i32 {
         var inner = function (b: i32): i32 { return xs[2] + a + b; };
@@ -169,7 +193,11 @@ function main(): i32 {
 	{
 		// Map with string keys/values: build, read, drop.
 		name: "map_string_kv",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[string, string] = map_new(8);
     m = m.set("hello", "world");
     m = m.set("foo", "bar");
@@ -181,7 +209,11 @@ function main(): i32 {
 		// O(N) push loop building an array of structs (push CoW +
 		// dec-on-overwrite interplay).
 		name: "push_loop_structs",
-		src: `struct Node { id: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/array";
+import "std/string";
+struct Node { id: i32 }
 function main(): i32 {
     var ns: Node[] = [];
     var i: i32 = 0;
@@ -195,7 +227,10 @@ function main(): i32 {
 	{
 		// Array-reassignment chain (dec-on-overwrite).
 		name: "array_reassign_chain",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function main(): i32 {
     var xs: i32[] = [1];
     xs = [2, 2];
     xs = [3, 3, 3];
@@ -206,7 +241,9 @@ function main(): i32 {
 		// Borrowed parameter: function reads an array through a
 		// borrow; caller still owns it afterward.
 		name: "borrow_param",
-		src: `function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; }
+		src: `import "core/no_prelude";
+import "core/int";
+function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; }
 function main(): i32 {
     var xs: i32[] = [4, 5, 6];
     var s: i32 = sum3(xs);
@@ -218,7 +255,10 @@ function main(): i32 {
 		// Mixed deep nesting: array of structs that hold arrays +
 		// a union, exercised then dropped.
 		name: "deep_mixed",
-		src: `struct Row { cells: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Row { cells: i32[] }
 struct Grid { rows: Row[] }
 function main(): i32 {
     var g: Grid = Grid { rows: [Row { cells: [1, 2] }, Row { cells: [3, 4, 5] }] };
@@ -231,7 +271,9 @@ function main(): i32 {
 		// repeatedly; the underflow counter must stay 0 across all
 		// iterations (a per-iteration over-release would accumulate).
 		name: "churn_loop_structs",
-		src: `struct P { x: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct P { x: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -248,7 +290,11 @@ function main(): i32 {
 		// literal doesn't widen mixed variants to the union type),
 		// indexed + matched.
 		name: "array_of_unions",
-		src: `struct VInt { v: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/array";
+import "std/string";
+struct VInt { v: i32 }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function vi(n: i32): Value { return VInt { v: n }; }
@@ -266,7 +312,10 @@ function main(): i32 {
 	{
 		// Struct holding both a union and an array.
 		name: "struct_union_and_array",
-		src: `struct VInt { v: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct VInt { v: i32 }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 struct Box { tag: Value, data: i32[] }
@@ -279,7 +328,9 @@ function main(): i32 {
 		// Closure capturing a struct (pointer capture; leaks under
 		// no-free, must not over-release).
 		name: "closure_capture_struct",
-		src: `struct S { v: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct S { v: i32 }
 function main(): i32 {
     var s: S = S { v: 21 };
     var f = function (d: i32): i32 { return s.v + d; };
@@ -289,7 +340,9 @@ function main(): i32 {
 	{
 		// Array of closures, each capturing the same array.
 		name: "array_of_closures",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var base: i32[] = [10, 20, 30];
     var f = function (i: i32): i32 { return base[i]; };
     var g = function (i: i32): i32 { return base[i] + 1; };
@@ -300,7 +353,10 @@ function main(): i32 {
 		// Generic enum (Option) wrapping a pointer — falls through
 		// to plain dec (leaks, no underflow).
 		name: "option_of_array",
-		src: `function pick(xs: i32[]): Option[i32[]] {
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function pick(xs: i32[]): Option[i32[]] {
     if (xs.len() > 0) { return Some(xs); }
     return None;
 }
@@ -313,7 +369,9 @@ function main(): i32 {
 	{
 		// Tuple of arrays, destructured.
 		name: "tuple_of_arrays",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var t: (i32[], i32[]) = ([1, 2], [3, 4, 5]);
     return (t.0[1] - 2) + (t.1[2] - 5) + __rc_underflow_count();
 }`,
@@ -329,7 +387,10 @@ function main(): i32 {
 		// native backends string reclamation is gated off; the checksum
 		// is backend-independent.) s.len() = 2 each; 300*(2+2)=1200.
 		name: "string_concat_local_churn_free",
-		src: `function mk(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(seed: i32): i32 {
     var pre: string = "v";
     var s: string = pre + "x";
     var n: i32 = s.len();
@@ -466,7 +527,9 @@ function main(): i32 {
 		// or over-release drifts the checksum / underflow count.
 		// mk(seed) = 2*seed + 1; sum_{0..199}(2k+1) = 2*19900 + 200.
 		name: "tuple_scalar_box_churn_free",
-		src: `function mk(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(seed: i32): i32 {
     var t: (i32, i32) = (seed, seed + 1);
     return t.0 + t.1;
 }
@@ -484,7 +547,9 @@ function main(): i32 {
 		// box frees at scope exit — extracting a/b (scalar here) doesn't
 		// alias the box. a + b = 2i + 1; sum_{0..199} = 40000.
 		name: "tuple_destructure_box_churn_free",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) {
@@ -502,7 +567,9 @@ function main(): i32 {
 		// the caller. Churn forces same-size reuse that would corrupt a
 		// strayed read. t.0 + t.1 = 7 + 8 = 15.
 		name: "tuple_returned_escapes",
-		src: `function mk(n: i32): (i32, i32) { return (n, n + 1); }
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(n: i32): (i32, i32) { return (n, n + 1); }
 function main(): i32 {
     var t: (i32, i32) = mk(7);
     var c: i32 = 0;
@@ -517,7 +584,9 @@ function main(): i32 {
 		// box_free's). Without the alias inc this double-frees.
 		// t1.0 + t2.1 = 2*seed + 1; sum_{0..199} = 40000.
 		name: "tuple_alias_box_churn_free",
-		src: `function mk(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(seed: i32): i32 {
     var t1: (i32, i32) = (seed, seed + 1);
     var t2: (i32, i32) = t1;
     return t1.0 + t2.1;
@@ -539,7 +608,9 @@ function main(): i32 {
 		// deep-drop would free arrA out from under the return (UAF).
 		// a = [10, 20]; r[1] = 20; sum_{0..99} 20 = 2000.
 		name: "tuple_destructure_array_escapes",
-		src: `function mk(): i32[] {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(): i32[] {
     var (a, b) = ([10, 20], [30, 40, 50]);
     return a;
 }
@@ -562,7 +633,9 @@ function main(): i32 {
 		// nondeterministic heap corruption / OOB). The underflow detector
 		// + churn catch the missing inc. a + b = 2*seed + 1; sum = 40000.
 		name: "tuple_alias_destructure_churn_free",
-		src: `function mk(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(seed: i32): i32 {
     var t: (i32, i32) = (seed, seed + 1);
     var (a, b) = t;
     return a + b;
@@ -582,7 +655,9 @@ function main(): i32 {
 		// (the TestWASMTupleNestedTuple OOB regression). Churned to surface
 		// freelist corruption. a + c + d = 3*seed + 3; sum_{0..199} = 60300.
 		name: "tuple_nested_destructure_churn_free",
-		src: `function mk(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(seed: i32): i32 {
     var t: (i32, (i32, i32)) = (seed, (seed + 1, seed + 2));
     var (a, b) = t;
     var (c, d) = b;
@@ -605,7 +680,9 @@ function main(): i32 {
 		// and a miscount would drift the underflow detector. a[1] = k+1,
 		// b[2] = k+4; sum_{0..199}(2k+5) = 2*19900 + 1000 = 40800.
 		name: "tuple_destructure_arrays_reclaim_churn",
-		src: `function mk(k: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(k: i32): i32 {
     var (a, b) = ([k, k + 1], [k + 2, k + 3, k + 4]);
     return a[1] + b[2];
 }
@@ -619,7 +696,11 @@ function main(): i32 {
 	{
 		// Map with i32 keys and array values (rc-tracked values).
 		name: "map_array_values",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(8);
     m = m.set(1, [10, 20]);
     m = m.set(2, [30, 40, 50]);
@@ -637,7 +718,10 @@ function main(): i32 {
 		// drifts the underflow detector. it.xs[1] = seed+1;
 		// sum_{0..199}(k+1) = 19900 + 200 = 20100.
 		name: "map_struct_values_churn_free",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item] = map_new(8);
     m = m.set(seed, Item { xs: [seed, seed + 1] });
@@ -658,7 +742,10 @@ function main(): i32 {
 		// helper's exit. The returned Item must stay valid + uncorrupted
 		// across 200 churn iterations. it.xs[1] = c+1; sum = 20100.
 		name: "map_struct_value_escapes",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
 function mk(n: i32): Item {
     var m: Map[i32, Item] = map_new(4);
     m = m.set(0, Item { xs: [n, n + 1] });
@@ -683,7 +770,10 @@ function main(): i32 {
 		// retains balancing it. Churned 200x. got = a.v[1] = seed+1;
 		// sum_{0..199}(k+1) = 20100.
 		name: "map_enum_values_churn_free",
-		src: `struct VI { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct VI { v: i32[] }
 struct VA { v: i32[] }
 type Value = VI | VA;
 function mk(seed: i32): i32 {
@@ -709,7 +799,10 @@ function main(): i32 {
 		// __drop_struct_Item per element. Churned 200x. vs[0].xs[1] =
 		// seed+1; sum_{0..199}(k+1) = 20100.
 		name: "map_arr_struct_values_churn_free",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item[]] = map_new(8);
     m = m.set(seed, [Item { xs: [seed, seed + 1] }, Item { xs: [seed + 2] }]);
@@ -731,7 +824,10 @@ function main(): i32 {
 		// map's last reference, retained on set/get. Churned 200x. it.xs[1]
 		// = seed+1; sum_{0..199}(k+1) = 20100.
 		name: "map_generic_enum_values_churn_free",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Option[Item]] = map_new(8);
     m = m.set(seed, Some(Item { xs: [seed, seed + 1] }));
@@ -756,7 +852,10 @@ function main(): i32 {
 		// live value is the LAST set: it.xs[0] = seed+4;
 		// sum_{0..299}(k+4) = 44850 + 1200 = 46050.
 		name: "map_overwrite_struct_churn_free",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
 function mk(seed: i32): i32 {
     var m: Map[i32, Item] = map_new(8);
     m = m.set(0, Item { xs: [seed, seed + 1] });
@@ -781,7 +880,11 @@ function main(): i32 {
 		// corrupt the value the map still points at. Mirrors
 		// std/url's __query_pair, the case that blocked the flip.
 		name: "escape_array_into_map_value",
-		src: `function add_pair(m: Map[i32, i32[]], k: i32) {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function add_pair(m: Map[i32, i32[]], k: i32) {
     var arr: i32[] = [k * 10, k * 10 + 1];
     m.set(k, arr);
 }
@@ -802,7 +905,10 @@ function main(): i32 {
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
 		name: "escape_array_into_struct_field",
-		src: `struct Box { items: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Box { items: i32[] }
 function mk(n: i32): Box {
     var arr: i32[] = [n, n + 1, n + 2];
     return Box { items: arr };
@@ -826,7 +932,10 @@ function main(): i32 {
 		// reclaims same-size blocks and accumulates a distinctive
 		// value so a reused-block corruption reads back wrong.
 		name: "escape_array_into_enum_payload",
-		src: `enum Wrap { Arr(i32[]), Empty }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+enum Wrap { Arr(i32[]), Empty }
 function mk(n: i32): Wrap {
     var arr: i32[] = [n, n + 1, n + 2, n + 3];
     return Arr(arr);
@@ -852,7 +961,11 @@ function main(): i32 {
 		// pushed into a grid escapes uncounted and must survive the
 		// helper's exit. Churn forces reuse of any freed block.
 		name: "escape_array_into_pushed_element",
-		src: `function add_row(grid: i32[][], n: i32): i32[][] {
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/array";
+import "std/string";
+function add_row(grid: i32[][], n: i32): i32[][] {
     var row: i32[] = [n, n + 1, n + 2, n + 3];
     return grid.push(row);
 }
@@ -875,7 +988,9 @@ function main(): i32 {
 		// inc, so the owned inner array must survive the helper's
 		// exit. Churn forces reuse of any freed block.
 		name: "escape_array_into_index_assign",
-		src: `function fill(grid: i32[][], n: i32) {
+		src: `import "core/no_prelude";
+import "core/int";
+function fill(grid: i32[][], n: i32) {
     var row: i32[] = [n, n + 1, n + 2, n + 3];
     grid[0] = row;
 }
@@ -896,7 +1011,9 @@ function main(): i32 {
 		// (`b.items = arr`): the store retains the value without an
 		// inc, so the owned array must survive the helper's exit.
 		name: "escape_array_into_field_assign",
-		src: `struct Box { items: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Box { items: i32[] }
 function fill(b: Box, n: i32) {
     var arr: i32[] = [n, n + 1, n + 2, n + 3];
     b.items = arr;
@@ -919,7 +1036,10 @@ function main(): i32 {
 		// corrupted reuse or over-release would drift the checksum.
 		// sum_{k=0..49} (16k + 120) = 16*1225 + 6000 = 25600.
 		name: "map_owned_churn_free",
-		src: `function build(seed: i32): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function build(seed: i32): i32 {
     var m: Map[i32, i32] = map_new(8);
     var i: i32 = 0;
     while (i < 16) { m = m.set(i, seed + i); i = i + 1; }
@@ -942,7 +1062,10 @@ function main(): i32 {
 		// buf/handle out from under the caller. sum_{k=0..49}(k+2k) =
 		// 3*1225 = 3675.
 		name: "map_returned_not_freed",
-		src: `function make_map(n: i32): Map[i32, i32] {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function make_map(n: i32): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(4);
     m = m.set(1, n);
     m = m.set(2, n * 2);
@@ -968,7 +1091,9 @@ function main(): i32 {
 		// per mk(seed): (a+b) + xs[2] + n = (2*seed+1) + (seed+2) + seed
 		//   = 4*seed + 3.  sum_{0..199} (4k+3) = 4*19900 + 600 = 80200.
 		name: "struct_box_churn_free",
-		src: `struct Pair { a: i32, b: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Pair { a: i32, b: i32 }
 struct Holder { xs: i32[], n: i32 }
 function mk(seed: i32): i32 {
     var p: Pair = Pair { a: seed, b: seed + 1 };
@@ -989,7 +1114,9 @@ function main(): i32 {
 		// out from under the caller. per k: xs[1] + n = (k+1) + k =
 		// 2k+1.  sum_{0..49} (2k+1) = 2*1225 + 50 = 2500.
 		name: "struct_returned_not_freed",
-		src: `struct Holder { xs: i32[], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Holder { xs: i32[], n: i32 }
 function make_holder(k: i32): Holder {
     var h: Holder = Holder { xs: [k, k + 1], n: k };
     return h;
@@ -1012,7 +1139,9 @@ function main(): i32 {
 		// the box size class; a corrupted reuse or over-release drifts
 		// the checksum. mk(seed)=seed+2; sum_{0..199}(k+2)=19900+400.
 		name: "enum_box_churn_free",
-		src: `enum Wrap { A(i32[]), B(i32[]) }
+		src: `import "core/no_prelude";
+import "core/int";
+enum Wrap { A(i32[]), B(i32[]) }
 function mk(seed: i32): i32 {
     var w: Wrap = A([seed, seed + 1, seed + 2]);
     var got: i32 = 0;
@@ -1035,7 +1164,9 @@ function main(): i32 {
 		// make_w's exit drop does NOT free the box out from under the
 		// caller. xs[1] = k+1; sum_{0..49}(k+1) = 1225 + 50 = 1275.
 		name: "enum_returned_not_freed",
-		src: `enum Wrap { A(i32[]), B(i32[]) }
+		src: `import "core/no_prelude";
+import "core/int";
+enum Wrap { A(i32[]), B(i32[]) }
 function make_w(k: i32): Wrap {
     var w: Wrap = A([k, k + 1, k + 2]);
     return w;
@@ -1062,7 +1193,9 @@ function main(): i32 {
 		// v=A => xs[1]=seed+1; w=I => +seed; got=2*seed+1;
 		// sum_{0..199}(2k+1) = 2*19900 + 200 = 40000.
 		name: "enum_nonuniform_box_free",
-		src: `enum V { I(i32), A(i32[]) }
+		src: `import "core/no_prelude";
+import "core/int";
+enum V { I(i32), A(i32[]) }
 function mk(seed: i32): i32 {
     var v: V = A([seed, seed + 1]);
     var w: V = I(seed);
@@ -1084,9 +1217,14 @@ function main(): i32 {
 		// escape-out path + string[] values). Round-trips a few keys
 		// and checks the underflow counter stays 0 under free.
 		name: "stdlib_query_parse_roundtrip",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+import "std/url";
+function main(): i32 {
     var bad: i32 = 0;
-    var m: Map[string, string[]] = query_parse("a=1&b=2&tag=x&tag=y");
+    var m: Map[string, string[]] = url.query_parse("a=1&b=2&tag=x&tag=y");
     if (m.len() != 3) { bad = bad + 1; }
     match (m.get("tag")) {
         Some(arr) => { if (arr.len() != 2) { bad = bad + 10; } },
@@ -1105,9 +1243,13 @@ function main(): i32 {
 		// json_encode walks it back. Exercises the per-tag enum drop +
 		// map drop together; the underflow counter must stay 0.
 		name: "stdlib_json_roundtrip",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/json";
+import "std/string";
+function main(): i32 {
     var bad: i32 = 0;
-    match (json_parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
+    match (json.json_parse("{\"a\":[1,2,3],\"b\":\"hi\"}")) {
         Some(v) => {
             match (v) {
                 JObject(m) => { if (m.len() != 2) { bad = bad + 1; } },
@@ -1117,7 +1259,7 @@ function main(): i32 {
         None => { bad = bad + 100; }
     }
     var arr: JsonValue[] = [JNumber("1"), JBool(true)];
-    if (json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
+    if (json.json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
     return bad + __rc_underflow_count();
 }`,
 	},
@@ -1128,7 +1270,10 @@ function main(): i32 {
 		// underflow counter catch a corrupted copy or a freed buffer
 		// that was still referenced. sum_{0..99} 2i = 2*4950 = 9900.
 		name: "map_growth_buffer_free",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 100) { m = m.set(i, i * 2); i = i + 1; }
@@ -1144,7 +1289,10 @@ function main(): i32 {
 		// get_or results bind to locals (inc-on-get balanced by the
 		// local's exit-sweep dec); map_drop_values frees each value.
 		name: "map_i32_array_values",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.set(1, [10, 20, 30]);
     m = m.set(2, [40, 50]);
@@ -1159,7 +1307,11 @@ function main(): i32 {
 		// → arr_dec frees the buffer; the strings themselves leak, as
 		// in standalone array reclamation).
 		name: "map_string_array_values",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[string, string[]] = map_new(4);
     m = m.set("a", ["x", "yy", "zzz"]);
     var v: string[] = m.get_or("a", []);
@@ -1172,7 +1324,11 @@ function main(): i32 {
 		// i32[], then frees the outer buffer). Exercises the rc-elem
 		// value free path the other map cases don't.
 		name: "map_nested_array_values",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, i32[][]] = map_new(4);
     m = m.set(1, [[1, 2], [3, 4, 5]]);
     var v: i32[][] = m.get_or(1, []);
@@ -1184,7 +1340,10 @@ function main(): i32 {
 		// (needsRcIncOnAlias → inc-on-set), so the source local's
 		// exit dec and the map's drop balance to a single free.
 		name: "map_aliased_array_value",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var arr: i32[] = [7, 8, 9];
     m = m.set(5, arr);
@@ -1198,7 +1357,10 @@ function main(): i32 {
 		// alive (rc survives the owner map's drop in main); the caller
 		// local owns the surviving reference.
 		name: "map_value_escapes_return",
-		src: `function lookup(m: Map[i32, i32[]], k: i32): i32[] {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function lookup(m: Map[i32, i32[]], k: i32): i32[] {
     return m.get_or(k, []);
 }
 function main(): i32 {
@@ -1215,7 +1377,12 @@ function main(): i32 {
 		// decrements; the final plain borrow-dec leaks it. Either way
 		// the counter must stay 0 (no over-release).
 		name: "map_get_push_overwrite",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/array";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.set(1, [10]);
     match (m.get(1)) {
@@ -1232,7 +1399,10 @@ function main(): i32 {
 		// value at rc==1 → the freelist recycles, memory stays bounded,
 		// and the counter stays 0. Last write is [199,200,201].
 		name: "map_overwrite_churn_free",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
     while (i < 200) { m = m.set(7, [i, i + 1, i + 2]); i = i + 1; }
@@ -1246,7 +1416,10 @@ function main(): i32 {
 		// overwrite (rc 2→1, no free). The borrow stays readable; the
 		// counter stays 0.
 		name: "map_overwrite_with_live_borrow",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.set(1, [10, 11]);
     var borrow: i32[] = m.get_or(1, []);
@@ -1261,7 +1434,11 @@ function main(): i32 {
 		// retained (the snapshot co-owns), so dropping the snapshot
 		// and the map balances to a single free per value.
 		name: "map_values_array_snapshot",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.set(1, [3, 4]);
     m = m.set(2, [5, 6, 7]);
@@ -1280,7 +1457,11 @@ function main(): i32 {
 		// indexing reads a mangled element on wasm32 (the array header's
 		// length word interpreted as a pointer) and traps.
 		name: "map_values_array_elem_read",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     m = m.set(1, [3, 4]);
     m = m.set(2, [5, 6, 7]);
@@ -1307,7 +1488,9 @@ function main(): i32 {
 		// the now-freed Inner box would accumulate on the underflow
 		// counter. sum_{i=0..99}(i+2) = 4950 + 200 = 5150.
 		name: "nested_struct_churn_free",
-		src: `struct Inner { vals: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Inner { vals: i32[] }
 struct Outer { inner: Inner, tag: i32 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -1328,7 +1511,11 @@ function main(): i32 {
 		// struct box + its array) rather than flat-dec'ing the
 		// payload. sum_{i=0..99}(i+1) = 4950 + 100 = 5050.
 		name: "enum_of_struct_churn_free",
-		src: `struct VInt { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/no_prelude";
+import "core/int";
+struct VInt { v: i32[] }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
@@ -1351,7 +1538,9 @@ function main(): i32 {
 		// Inner) live, so the churn loop's same-size reuse must not
 		// corrupt the surviving Inner.vals.
 		name: "nested_struct_escapes_return",
-		src: `struct Inner { vals: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function mk(n: i32): Outer { return Outer { inner: Inner { vals: [n, n + 1] } }; }
 function main(): i32 {
@@ -1371,7 +1560,9 @@ function main(): i32 {
 		// The is_unique gate inside __drop_struct_Inner is what makes
 		// this safe; a premature free would corrupt the second read.
 		name: "shared_nested_struct_no_free",
-		src: `struct Inner { vals: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
     var shared: Inner = Inner { vals: [7, 8, 9] };
@@ -1394,7 +1585,11 @@ function main(): i32 {
 		// self-host suite, whose parser threads structs through result
 		// shapes in a way no small corpus program reproduces.)
 		name: "escaped_struct_nested_field_no_free",
-		src: `struct Inner { vals: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/array";
+import "std/string";
+struct Inner { vals: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
     var shared: Inner = Inner { vals: [1, 2, 3] };
@@ -1420,7 +1615,9 @@ function main(): i32 {
 		// accumulate on the underflow counter. sum_{i=0..99}((i+1)+(i+2))
 		// = 2*4950 + 300 = 10200.
 		name: "arr_of_struct_deep_churn_free",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { tags: i32[] }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1439,7 +1636,9 @@ function main(): i32 {
 		// reclaims element boxes that drop_arr_ptr's flat dec leaked).
 		// sum_{i=0..99}(i+1) = 5050.
 		name: "arr_of_childless_struct_churn_free",
-		src: `struct P { x: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct P { x: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1457,7 +1656,10 @@ function main(): i32 {
 		// constructor's exit, so its element boxes survive. The churn
 		// loop forces same-size reuse that would corrupt a strayed read.
 		name: "arr_of_struct_escapes_return",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Item { tags: i32[] }
 function mk(n: i32): Item[] {
     var xs: Item[] = [Item { tags: [n, n + 1] }, Item { tags: [n + 2] }];
     return xs;
@@ -1479,7 +1681,9 @@ function main(): i32 {
 		// frees its box each iteration; an over-release would drift the
 		// counter. sum_{i=0..99}(i+1) = 5050.
 		name: "struct_literal_local_churn_free",
-		src: `struct Pt { xs: i32[], y: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Pt { xs: i32[], y: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1499,7 +1703,9 @@ function main(): i32 {
 		// that would corrupt a strayed read. Reads both to keep the
 		// alias live.
 		name: "ifexpr_alias_struct_no_free",
-		src: `struct Pt { xs: i32[], y: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Pt { xs: i32[], y: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1518,7 +1724,9 @@ function main(): i32 {
 		// fix. `a1` aliases `a0` through the match arms; a0 must survive
 		// until both are read. Churned to force block reuse.
 		name: "matchexpr_alias_array_no_free",
-		src: `function pick_arr(o: Option[i32], a0: i32[]): i32[] {
+		src: `import "core/no_prelude";
+import "core/int";
+function pick_arr(o: Option[i32], a0: i32[]): i32[] {
     return match (o) { Some(x) => a0, None => a0 };
 }
 function main(): i32 {
@@ -1542,7 +1750,9 @@ function main(): i32 {
 		// now that composite-literal RHS (Item{...} fed to the Leaf
 		// constructor) is free-eligible. sum_{i=0..99}(i+1) = 5050.
 		name: "nonuniform_enum_struct_payload_churn_free",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function mk(n: i32): Node { return Leaf(Item { tags: [n, n + 1] }); }
 function main(): i32 {
@@ -1564,7 +1774,11 @@ function main(): i32 {
 		// swept. Churn forces same-size reuse that would corrupt a
 		// strayed read.
 		name: "enum_struct_payload_escapes",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/array";
+import "std/string";
+struct Item { tags: i32[] }
 enum Node { Leaf(Item), Branch(i32) }
 function main(): i32 {
     var keep: Node[] = [];
@@ -1587,7 +1801,9 @@ function main(): i32 {
 		// per-iteration over-release would accumulate. sum_{i=0..99}(i+1)
 		// = 5050.
 		name: "childless_nested_struct_field_free",
-		src: `struct Pt { x: i32, y: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Pt { x: i32, y: i32 }
 struct Outer { inner: Pt, tag: i32 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -1605,7 +1821,9 @@ function main(): i32 {
 		// box must NOT be freed at the constructor's exit; the returned
 		// Outer still references it. Churn forces same-size reuse.
 		name: "childless_nested_struct_escapes",
-		src: `struct Pt { x: i32, y: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Pt { x: i32, y: i32 }
 struct Outer { inner: Pt, tag: i32 }
 function mk(n: i32): Outer { return Outer { inner: Pt { x: n, y: n + 1 }, tag: n }; }
 function main(): i32 {
@@ -1626,7 +1844,9 @@ function main(): i32 {
 		// capture was inc'd at MakeEnv, so this is balanced. Churned:
 		// an over-release would accumulate. sum_{i=0..99}(i+1) = 5050.
 		name: "closure_captures_struct_churn_free",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { tags: i32[] }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1645,7 +1865,10 @@ function main(): i32 {
 		// (Stage B loop) at the closure's death, not just the buffer.
 		// Two elements per iter → f() returns len 2.
 		name: "closure_captures_arr_of_struct_churn_free",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Item { tags: i32[] }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1667,7 +1890,11 @@ function main(): i32 {
 		// deep-drops the exact payload type via __drop_struct_<T>.
 		// sum_{i=0..99}(i+1) = 5050.
 		name: "uniform_union_struct_payload_churn_free",
-		src: `struct VInt { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/no_prelude";
+import "core/int";
+struct VInt { v: i32[] }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
@@ -1687,7 +1914,9 @@ function main(): i32 {
 		// enum is tainted (not free-eligible), so the variant struct
 		// payload must NOT be deep-freed; the caller still holds it.
 		name: "uniform_union_struct_escapes",
-		src: `struct VInt { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct VInt { v: i32[] }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 function mk(n: i32): Value { return VArr { v: [n, n + 1, n + 2] }; }
@@ -1711,7 +1940,11 @@ function main(): i32 {
 		// that leaked it. Both helpers self-guard on the map's rc==1.
 		// Churned 50x: an over-release would drift the counter.
 		name: "struct_map_field_churn_free",
-		src: `struct Req { headers: Map[string, string], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+struct Req { headers: Map[string, string], n: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1730,7 +1963,11 @@ function main(): i32 {
 		// survive the constructor — the returned struct still owns it.
 		// Churn forces same-size reuse that would corrupt a strayed read.
 		name: "struct_map_field_escapes",
-		src: `struct Req { headers: Map[string, string], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+struct Req { headers: Map[string, string], n: i32 }
 function mk(): Req {
     var m: Map[string, string] = map_new(8);
     m = m.set("k", "vv");
@@ -1756,7 +1993,9 @@ function main(): i32 {
 		// adopted when the substituted payload is a struct (so the
 		// instantiation is heap-boxed, not pair-form). sum_{0..99}(i+1)=5050.
 		name: "option_struct_payload_churn_free",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { tags: i32[] }
 function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
 function main(): i32 {
     var acc: i32 = 0;
@@ -1775,7 +2014,9 @@ function main(): i32 {
 		// payload, so it keeps the generic decl and the flat dec. A
 		// stray box_free here would corrupt. sum_{0..99}(i) = 4950.
 		name: "option_scalar_pairform_unaffected",
-		src: `function main(): i32 {
+		src: `import "core/no_prelude";
+import "core/int";
+function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 100) {
@@ -1791,7 +2032,9 @@ function main(): i32 {
 		// survive the constructor; the caller still owns it. Churn forces
 		// same-size reuse.
 		name: "option_struct_escapes_return",
-		src: `struct Item { tags: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { tags: i32[] }
 function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
 function main(): i32 {
     var o: Option[Item] = mk(7);
@@ -1818,7 +2061,9 @@ function main(): i32 {
 		// from the stashed substituted decl. Churned 100x.
 		// sum_{0..99}(i+1) = 5050.
 		name: "generic_enum_struct_field_churn_free",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { xs: i32[] }
 struct Holder { b: Option[Item], n: i32 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -1837,7 +2082,9 @@ function main(): i32 {
 		// drop (the struct return-inc protects it). Churn forces same-size
 		// reuse that would corrupt a strayed read after an over-release.
 		name: "generic_enum_struct_field_escapes",
-		src: `struct Item { xs: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Item { xs: i32[] }
 struct Holder { b: Option[Item], n: i32 }
 function mk(n: i32): Holder { return Holder { b: Some(Item { xs: [n, n + 1] }), n: n }; }
 function main(): i32 {
@@ -1860,7 +2107,9 @@ function main(): i32 {
 		// instead of the flat dec that leaked them. Churned 100x.
 		// sum_{0..99}(i+1) = 5050.
 		name: "struct_field_arr_of_struct_churn_free",
-		src: `struct Row { cells: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Row { cells: i32[] }
 struct Grid { rows: Row[], tag: i32 }
 function main(): i32 {
     var acc: i32 = 0;
@@ -1878,7 +2127,10 @@ function main(): i32 {
 		// array + its Row boxes must survive the constructor. Churn
 		// forces same-size reuse that would corrupt a strayed read.
 		name: "struct_field_arr_of_struct_escapes",
-		src: `struct Row { cells: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Row { cells: i32[] }
 struct Grid { rows: Row[], tag: i32 }
 function mk(n: i32): Grid { return Grid { rows: [Row { cells: [n, n + 1] }], tag: n }; }
 function main(): i32 {
@@ -1899,7 +2151,9 @@ function main(): i32 {
 		// tag picks the exact per-variant payload type, then box_free's
 		// with that variant's size). Churned 100x. sum_{0..99}(i+1)=5050.
 		name: "struct_enum_field_churn_free",
-		src: `struct VInt { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct VInt { v: i32[] }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 struct Holder { val: Value, n: i32 }
@@ -1918,7 +2172,9 @@ function main(): i32 {
 		// Enum-typed field that ESCAPES (Holder returned): the enum box
 		// + payload must survive the constructor. Churn forces reuse.
 		name: "struct_enum_field_escapes",
-		src: `struct VInt { v: i32[] }
+		src: `import "core/no_prelude";
+import "core/int";
+struct VInt { v: i32[] }
 struct VArr { v: i32[] }
 type Value = VInt | VArr;
 struct Holder { val: Value, n: i32 }
@@ -1943,7 +2199,9 @@ function main(): i32 {
 		// owner's last reference (is_unique-gated). Churned 100x.
 		// sum_{0..99}(i+1) = 5050.
 		name: "struct_plain_array_field_churn_free",
-		src: `struct Buf { data: i32[], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Buf { data: i32[], n: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1960,7 +2218,9 @@ function main(): i32 {
 		// freed via __fern_drop_arr_ptr (inner buffers are array-of-array,
 		// a later slice — still leak, no over-release). sum_{0..99}(i+1).
 		name: "struct_arr_of_arr_field_churn_free",
-		src: `struct Mat { rows: i32[][], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+struct Mat { rows: i32[][], n: i32 }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -1976,7 +2236,10 @@ function main(): i32 {
 		// Plain-array field that ESCAPES (Buf returned): the buffer must
 		// survive the constructor. Churn forces same-size reuse.
 		name: "struct_plain_array_field_escapes",
-		src: `struct Buf { data: i32[], n: i32 }
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Buf { data: i32[], n: i32 }
 function mk(n: i32): Buf { return Buf { data: [n, n + 1, n + 2], n: n }; }
 function main(): i32 {
     var b: Buf = mk(7);
@@ -1997,7 +2260,9 @@ function main(): i32 {
 		// of the flat dec the uniform path used. Generic Option[i32[]],
 		// churned. sum_{0..99}(i+1) = 5050.
 		name: "option_array_payload_churn_free",
-		src: `function mk(n: i32): Option[i32[]] { return Some([n, n + 1]); }
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(n: i32): Option[i32[]] { return Some([n, n + 1]); }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -2015,7 +2280,9 @@ function main(): i32 {
 		// the array buffer; now it steers to variant-plan and frees it
 		// per tag-guarded arm. Churned.
 		name: "uniform_enum_array_payload_churn_free",
-		src: `enum E { A(i32[]), B(i32[]) }
+		src: `import "core/no_prelude";
+import "core/int";
+enum E { A(i32[]), B(i32[]) }
 function mk(n: i32): E { return A([n, n + 1]); }
 function main(): i32 {
     var acc: i32 = 0;
@@ -2032,7 +2299,9 @@ function main(): i32 {
 		// Option[array] that ESCAPES (returned): the box + array must
 		// survive the constructor. Churn forces same-size reuse.
 		name: "option_array_payload_escapes",
-		src: `function mk(n: i32): Option[i32[]] { return Some([n, n + 1, n + 2]); }
+		src: `import "core/no_prelude";
+import "core/int";
+function mk(n: i32): Option[i32[]] { return Some([n, n + 1, n + 2]); }
 function main(): i32 {
     var o: Option[i32[]] = mk(7);
     var c: i32 = 0;

@@ -1,3 +1,5 @@
+import "core/no_prelude";
+import "std/i32";
 // Tail-recursive accumulator over 1..10000 = 50005000. Relies on
 // the tail-call pass keeping stack depth O(1); a naive frame per
 // call would blow the stack well before 10000.

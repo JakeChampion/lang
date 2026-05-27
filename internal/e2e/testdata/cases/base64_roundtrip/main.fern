@@ -1,7 +1,9 @@
+import "core/no_prelude";
+import "std/base64";
 // base64 encode/decode round-trip from the prelude.
 function main(): i32 {
     var s: string = "Fern!";
-    if (base64_decode(base64_encode(s)) == s) {
+    if (base64.base64_decode(base64.base64_encode(s)) == s) {
         return 42;
     }
     return 1;

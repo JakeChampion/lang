@@ -1,7 +1,9 @@
+import "core/no_prelude";
+import "std/hex";
 // hex encode/decode round-trip from the prelude.
 function main(): i32 {
     var s: string = "Hi there";
-    if (hex_decode(hex_encode(s)) == s) {
+    if (hex.hex_decode(hex.hex_encode(s)) == s) {
         return 42;
     }
     return 1;

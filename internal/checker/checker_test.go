@@ -79,6 +79,24 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
+// Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
+// prelude: stdlib methods are no longer in scope unless their module
+// is imported. A program that calls `.split` without `import
+// "std/string";` should get a clean type error rather than silently
+// resolving against a magic prelude.
+func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
+	err := checkSource(t, `function main(): i32 {
+    var xs: string[] = "a,b,c".split(",");
+    return len(xs);
+}`)
+	if err == nil {
+		t.Fatal("expected a type error for .split() without import \"std/string\", got nil")
+	}
+	if !strings.Contains(err.Error(), "non-struct value of type string") {
+		t.Errorf("error %q does not look like the expected unresolved-method diagnostic", err.Error())
+	}
+}
+
 // The checker should accumulate multiple errors and report them all in
 // a single diag.Errors aggregate.
 func TestMultipleErrorsAreReported(t *testing.T) {
@@ -1246,7 +1264,15 @@ function main(): i32 {
 // must continue to work despite being skipped by the
 // auto-discovery loop.
 func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
-	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
+	// Post-flip there's no auto-prelude, so the discoverable
+	// `__method_Array_*` functions are supplied inline here — the
+	// same shape std/array ships. Auto-discovery should register
+	// each as an `Array.<name>` method without a hand-written
+	// entry in checker.go, while the synthetic `Array.push`
+	// (registered by hand, IR-intercepted) keeps working.
+	prog, err := parser.Parse(`function __method_Array_join(xs: i32[], sep: string): string { return ""; }
+function __method_Array_sum(xs: i32[]): i32 { return 0; }
+function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1265,8 +1291,6 @@ func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
 		// method-dispatch map.
 		{"Array.join", "__method_Array_join"},
 		{"Array.sum", "__method_Array_sum"},
-		{"Array.median", "__method_Array_median"},
-		{"Array.min_max", "__method_Array_min_max"},
 	}
 	for _, c := range cases {
 		got, ok := info.Methods[c.key]
@@ -1579,7 +1603,9 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 // synthesis prepends a call to `init()` BEFORE the
 // `tcp_serve` accept loop.
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
-	prog, err := parser.Parse(`function init() { print("starting"); }
+	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+function init() { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }`)
@@ -1620,7 +1646,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // compat: programs without init() still get the original
 // single-stmt synth main (just the tcp_serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
-	prog, err := parser.Parse(`function handle(req: HttpRequest, plat: Platform): HttpResponse {
+	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }`)
 	if err != nil {
