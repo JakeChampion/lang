@@ -167,6 +167,14 @@ func EORregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
 	return 0xCA000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// REV16 reverses the byte order within each 16-bit halfword of Rn into
+// Rd — the byte-swap the backend emits for 16-bit network/endian
+// conversions. This is the 64-bit base (0xDAC00400); a 32-bit `rev16
+// Wd, Wn` clears the sf bit via clearSF.
+func REV16(rd, rn uint32) uint32 {
+	return 0xDAC00400 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // encodeBitmask computes the (N, immr, imms) logical-immediate fields
 // for imm at the given register size (32 or 64). ok is false when imm
 // is not a valid bitmask immediate — 0, all-ones, or not a rotated run

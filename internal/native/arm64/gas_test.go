@@ -117,6 +117,10 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 		"logical_shifted_reg": "" +
 			"\torr w3, w1, w1, lsl #8\n\torr x3, x1, x2, lsl #16\n\tand w0, w1, w2, lsl #4\n\teor x0, x1, x2, lsr #1\n" +
 			"\tand x5, x6, x7, asr #2\n\teor w0, w1, w2, ror #3\n",
+		"rev16": "" +
+			"\trev16 w0, w19\n\trev16 w5, w6\n\trev16 x2, x3\n",
+		"narrow_reg_offset": "" +
+			"\tldrb w0, [x22, x20]\n\tstrb w1, [x2, x3]\n\tldrh w0, [x1, x2]\n\tldrh w0, [x1, x2, lsl #1]\n\tstrh w4, [x5, x6]\n",
 		"addsub_shifted_extended": "" +
 			"\tadd x0, x1, x0, lsl #3\n\tadd x5, x6, x7, lsl #2\n\tsub x0, x1, x2, lsl #1\n\tadd w0, w1, w2, lsl #2\n" +
 			"\tadd x2, x0, w1, uxtw\n\tadd x2, x0, w1, uxtw #2\n\tadd x5, x6, w7, sxtw\n\tsub x2, x0, w1, uxtw #3\n",

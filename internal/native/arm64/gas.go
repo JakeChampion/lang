@@ -178,6 +178,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
 		return asmExtend(a, mnem, ops)
+	case "rev16":
+		return asm2Reg(a, ops, REV16)
 	case "ubfx", "sbfx":
 		return asmBitfieldExtract(a, mnem, ops)
 	case "cmp":
@@ -844,12 +846,11 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 
-	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #s}]` (ldr/str). The
-	// scaled shift, when present, must equal log2(access size).
+	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #s}]`, for every access
+	// width (LoadStoreReg is size-general). The scaled shift, when
+	// present, must equal log2(access size) — for a byte load that is 0,
+	// so `ldrb w0, [x22, x20]` takes the unscaled form.
 	if m.hasIndex {
-		if !is64LdrStr {
-			return fmt.Errorf("%s register-offset addressing not supported yet", mnem)
-		}
 		var scaled bool
 		switch {
 		case m.indexShift == 0:
