@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -1911,4 +1912,28 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			}
 		})
 	}
+
+	// Negative: the self-host type-check pass must REJECT a program that
+	// uses an Option[i32] (`.max()`) where an i32 is declared, rather than
+	// silently emitting a box pointer. The driver should exit non-zero and
+	// print an E002 diagnostic; no asm is produced.
+	t.Run("rejects-option-as-i32", func(t *testing.T) {
+		var cmd *exec.Cmd
+		if len(x86runner) == 0 {
+			cmd = exec.Command(driverBin)
+		} else {
+			cmd = exec.Command(x86runner[0], append(x86runner[1:], driverBin)...)
+		}
+		bad := "function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.max(); }"
+		cmd.Stdin = bytes.NewReader([]byte(bad))
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err == nil {
+			t.Fatalf("expected driver to reject Option-as-i32, but it exited 0\n--- asm ---\n%s", out)
+		}
+		if !strings.Contains(stderr.String(), "E002") || !strings.Contains(stderr.String(), "Option[i32]") {
+			t.Errorf("expected E002 / Option[i32] diagnostic, got stderr:\n%s", stderr.String())
+		}
+	})
 }
