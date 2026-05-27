@@ -994,6 +994,37 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map[K, string] VALUE reclamation (wasm). String values are stored
+		// boxed (an 8-byte (data, len) cell); the map's drop walks the value
+		// column via __drop_map_str_values and __fern_str_dec's each value
+		// buffer. set retains an aliased value, get retains the returned
+		// string, and a key OVERWRITE pre-drops the replaced buffer. Here
+		// key 1 is overwritten (firstval → secondvalue) and the surviving
+		// value is gotten into an outliving binding. 200x churn; a double-
+		// free / UAF / leak on a value buffer trips the checksum or the
+		// underflow detector. out.len()=11 ("secondvalue"); 200*11=2200.
+		name: "map_string_values_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(seed: i32): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "first" + "val");
+    m = m.set(2, "other" + "entry");
+    m = m.set(1, "second" + "value");
+    var out: string = "";
+    match (m.get(1)) { Some(v) => { out = v; }, None => { out = "z"; } }
+    return out.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 2200) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

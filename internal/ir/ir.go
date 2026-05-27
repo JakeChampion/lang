@@ -782,6 +782,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
+					op.Str == "__drop_map_str_values" ||
 					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
@@ -799,6 +800,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if name == "__drop_map_str_values" {
+				fn = genMapStrValDropFn(ptrW)
 			} else if perVal := strings.TrimPrefix(name, "__drop_map_via_"); perVal != name {
 				// Map value-column drop loop; its body calls the embedded
 				// per-value drop (__drop_struct_<V> / __drop_enum_<V>), which
@@ -2321,6 +2324,13 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			dropValues := "__map_drop_values"
 			if name, ok := mapValDropName(st, b.info, b.genEnumDrops); ok {
 				dropValues = name
+			} else if len(st.Args) >= 2 {
+				// Map[K, string] (wasm): each value is a boxed (data, len)
+				// cell; reclaim each value's string buffer via the
+				// __fern_str_dec column walk before freeing the buf + handle.
+				if _, isStr := st.Args[1].(ast.StringType); isStr && b.ptrW == 4 {
+					dropValues = "__drop_map_str_values"
+				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
@@ -3202,9 +3212,96 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 	}
 }
 
-// appendChildDrop appends the ops that drop one NESTED field whose
-// pointer is already on the operand stack. A concrete-struct field with
-// a generated recursive drop function recurses through it; every other
+// genMapStrValDropFn builds __drop_map_str_values(m): on the map's last
+// reference (rc==1) it walks the value column and reclaims each string
+// value's heap buffer via __fern_str_dec. A Map[K, string] value is
+// stored BOXED — the column holds an 8-byte cell pointer whose contents
+// are the two-word (data, len) pair (boxIntoCell at set). So per entry we
+// load the cell pointer, and if non-null load (data, len) from it via the
+// two-word WidthString load and __fern_str_dec the buffer (inline /
+// literal strings no-op). The 8-byte cell itself is NOT freed here (it
+// leaks, like every boxed-value cell today — a minor follow-up); the
+// dominant allocation is the string buffer, which IS reclaimed. The buf +
+// handle are freed by the trailing __fern_map_drop the caller emits.
+// Mirrors genMapValDropFn's iteration: cap@buf+0, len@buf+4, entries at
+// buf+16+cap*4, value (cell ptr) at entry+ptrW, entryStride = 2*ptrW.
+// Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase, 5=cellPtr.
+func genMapStrValDropFn(ptrW int) *Func {
+	pw := int32(ptrW)
+	entryStride := 2 * pw
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		// buf = mem[m]
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpStoreLocal, I32: 1},
+		// len = mem[buf+4]
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpAdd},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		// entriesBase = buf + 16 + cap*4   (cap = mem[buf])
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 16},
+		{Kind: OpAdd},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoad},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 4},
+		// i = 0
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 3},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		// if i >= len: break (depth 1).
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// cellPtr = mem[entriesBase + i*entryStride + ptrW]
+		{Kind: OpLoadLocal, I32: 4},
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpConstI32, I32: entryStride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpConstI32, I32: pw},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpStoreLocal, I32: 5},
+		// if cellPtr != 0: __fern_str_dec(mem[cellPtr] as (data, len)); drop.
+		{Kind: OpLoadLocal, I32: 5},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 5},
+		{Kind: OpLoad, Width: WidthString},
+		{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpEnd},
+		// i = i + 1; continue.
+		{Kind: OpLoadLocal, I32: 3},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 3},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         "__drop_map_str_values",
+		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
 // pointer-shaped field (arrays, enums/unions, closures, Map, childless
 // structs) takes a flat one-level __fern_rc_dec — matching the
 // pre-transitive behaviour for those shapes (deep array-element,
@@ -8017,6 +8114,23 @@ func (b *builder) callBody(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
+	// Map[K, string] (wasm) set retain: a string value's heap buffer is
+	// co-owned by the map's boxed (data, len) cell, so retain an aliased
+	// string before it's stored (__fern_str_inc), balancing the
+	// __fern_str_dec at map drop / overwrite. Fresh strings (concat /
+	// literal / call) aren't aliases (needsRcIncOnAlias == false) → moved
+	// in with no inc. Strings stay valKind 1 at runtime (unchanged) — the
+	// retain is driven by the static type, not the stored tag.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
+		b.ptrW == 4 && needsRcIncOnAlias(n.Args[2], b) {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			if err := b.expr(n.Args[2]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	}
 	// Overwrite reclamation: `m.set(k, v)` REPLACES any existing value at
 	// k. For a single-box pointer value (struct / enum / generic-enum,
 	// kind 4) the type-erased runtime overwrite-dec (__map_dec_value) is a
@@ -8048,6 +8162,37 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpCallDirect, Str: perVal, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+		}
+	}
+	// Map[K, string] (wasm) overwrite pre-drop: m.set(k, v) replacing an
+	// existing string value must reclaim the old buffer (the runtime's
+	// type-erased overwrite-dec is a no-op for valKind 1). Look up the old
+	// value cell (non-retaining) and, if present, __fern_str_dec the
+	// (data, len) it holds. The old cell itself leaks (as on map drop).
+	// Scoped to the non-boxed-key fast path; m / k must be call-free (the
+	// set below re-evaluates them — same idempotence as the kind-4 path).
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
+		ast.RcFreeEnabled && b.ptrW == 4 && !needBoxK &&
+		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			if err := b.expr(n.Args[0]); err != nil { // m
+				return err
+			}
+			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
+			oldSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__map_overwrite_oldstr_%d", oldSlot)] = oldSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+			// if oldCell != 0: __fern_str_dec the (data, len) in the cell.
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpLoad, Width: WidthString})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
@@ -9952,6 +10097,13 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		// Payload is a cell pointer — dereference to load the
 		// real V (wide scalar / two-word string) out of the cell.
 		b.emit(payloadLoadOpFor(vType, b.ptrW))
+		// Map[K, string] get retain: the returned Option now co-owns the
+		// string buffer alongside the map's cell, so __fern_str_inc (which
+		// returns the (data, len) pair for the store below). Balanced by the
+		// caller's dec of the gotten string and the map's drop dec.
+		if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+		}
 	}
 	// Non-boxed: the payload IS the V value (an i32 in the low
 	// bits, or a pointer-shaped V address). payloadStoreOpFor

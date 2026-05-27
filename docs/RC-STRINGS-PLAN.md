@@ -233,9 +233,18 @@ differential fuzz and `__rc_underflow_count` guard.
    nested closure) forces the generic env-only drop so the thunk never
    over-releases it (the capture leaks then — safe). Verified for both
    scope-local and escaping (returned) closures.
-7. **`Map[K, string]` VALUES** — generalize `mapValHasDrop` to a
-   string-per-value drop in `__drop_map_via_*` + set/get retain +
-   overwrite pre-drop.
+7. **`Map[K, string]` VALUES** — **DONE.** A `Map[K, string]` value is
+   stored BOXED — the value column holds an 8-byte `(data, len)` cell
+   pointer (`boxIntoCell` at set). Reclamation is driven by the IR static
+   type (the runtime valKind stays 1, so `.values()` / runtime overwrite
+   are undisturbed): a generated `__drop_map_str_values` column walk
+   `__fern_str_dec`s each value's buffer at the map's last reference; the
+   set retains an aliased value (`__fern_str_inc`), `m.get` retains the
+   returned string, and a key OVERWRITE pre-drops the replaced buffer via
+   `__map_lookup_val` + `__fern_str_dec`. The 8-byte cell itself leaks
+   (like every boxed-value cell today — a minor follow-up); the dominant
+   string buffer is reclaimed. Verified across set/get/overwrite/escape +
+   churn.
 8. **`Map[string, V]` KEYS** — the column-walk also decs the string
    keys (keys leak today for ALL key types; strings are the only
    heap key). Likely a dedicated `__drop_map_keys` walk.
