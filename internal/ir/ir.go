@@ -783,6 +783,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
 					op.Str == "__drop_map_str_values" ||
+					op.Str == "__drop_map_str_keys" ||
 					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
@@ -802,6 +803,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				fn = genArrStructDropFn(elem, ptrW)
 			} else if name == "__drop_map_str_values" {
 				fn = genMapStrValDropFn(ptrW)
+			} else if name == "__drop_map_str_keys" {
+				fn = genMapStrKeyDropFn(ptrW)
 			} else if perVal := strings.TrimPrefix(name, "__drop_map_via_"); perVal != name {
 				// Map value-column drop loop; its body calls the embedded
 				// per-value drop (__drop_struct_<V> / __drop_enum_<V>), which
@@ -2335,6 +2338,18 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
 			b.emit(Op{Kind: OpDrop})
+			// Map[string, V] (wasm): the KEY column also holds boxed
+			// (data, len) cells; reclaim each key buffer via the
+			// __fern_str_dec key-column walk. Independent of the value
+			// walk above (both self-guard on rc==1); runs before the buf
+			// + handle free.
+			if len(st.Args) >= 1 {
+				if _, isStr := st.Args[0].(ast.StringType); isStr && b.ptrW == 4 {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+				}
+			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -3212,21 +3227,30 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 	}
 }
 
-// genMapStrValDropFn builds __drop_map_str_values(m): on the map's last
-// reference (rc==1) it walks the value column and reclaims each string
-// value's heap buffer via __fern_str_dec. A Map[K, string] value is
-// stored BOXED — the column holds an 8-byte cell pointer whose contents
-// are the two-word (data, len) pair (boxIntoCell at set). So per entry we
-// load the cell pointer, and if non-null load (data, len) from it via the
-// two-word WidthString load and __fern_str_dec the buffer (inline /
-// literal strings no-op). The 8-byte cell itself is NOT freed here (it
-// leaks, like every boxed-value cell today — a minor follow-up); the
-// dominant allocation is the string buffer, which IS reclaimed. The buf +
-// handle are freed by the trailing __fern_map_drop the caller emits.
-// Mirrors genMapValDropFn's iteration: cap@buf+0, len@buf+4, entries at
-// buf+16+cap*4, value (cell ptr) at entry+ptrW, entryStride = 2*ptrW.
+// genMapStrValDropFn / genMapStrKeyDropFn build the wasm string-column
+// reclamation walks for a Map whose VALUE (resp. KEY) is a string: on the
+// map's last reference (rc==1) the walk reclaims each string's heap buffer
+// via __fern_str_dec. A string K/V is stored BOXED — the column holds an
+// 8-byte cell pointer whose contents are the two-word (data, len) pair
+// (boxIntoCell at set). So per entry we load the cell pointer at the
+// column's byte offset (0 for keys, ptrW for values), and if non-null load
+// (data, len) from it via the two-word WidthString load and __fern_str_dec
+// the buffer (inline / literal strings no-op). The 8-byte cell itself is
+// NOT freed here (it leaks, like every boxed cell today — a minor
+// follow-up); the dominant allocation is the string buffer, which IS
+// reclaimed. The buf + handle are freed by the trailing __fern_map_drop the
+// caller emits. Mirrors genMapValDropFn's iteration: cap@buf+0, len@buf+4,
+// entries at buf+16+cap*4, entryStride = 2*ptrW.
 // Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase, 5=cellPtr.
 func genMapStrValDropFn(ptrW int) *Func {
+	return genMapStrColDropFn("__drop_map_str_values", int32(ptrW), ptrW)
+}
+
+func genMapStrKeyDropFn(ptrW int) *Func {
+	return genMapStrColDropFn("__drop_map_str_keys", 0, ptrW)
+}
+
+func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 	pw := int32(ptrW)
 	entryStride := 2 * pw
 	ops := []Op{
@@ -3263,13 +3287,13 @@ func genMapStrValDropFn(ptrW int) *Func {
 		{Kind: OpLoadLocal, I32: 2},
 		{Kind: OpGeS},
 		{Kind: OpBrIf, I32: 1},
-		// cellPtr = mem[entriesBase + i*entryStride + ptrW]
+		// cellPtr = mem[entriesBase + i*entryStride + colOff]
 		{Kind: OpLoadLocal, I32: 4},
 		{Kind: OpLoadLocal, I32: 3},
 		{Kind: OpConstI32, I32: entryStride},
 		{Kind: OpMul},
 		{Kind: OpAdd},
-		{Kind: OpConstI32, I32: pw},
+		{Kind: OpConstI32, I32: colOff},
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpStoreLocal, I32: 5},
@@ -3294,7 +3318,7 @@ func genMapStrValDropFn(ptrW int) *Func {
 		{Kind: OpReturn},
 	}
 	return &Func{
-		Name:         "__drop_map_str_values",
+		Name:         name,
 		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
@@ -8125,6 +8149,23 @@ func (b *builder) callBody(n *ast.Call) error {
 		b.ptrW == 4 && needsRcIncOnAlias(n.Args[2], b) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[2]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	}
+	// Map[string, V] (wasm) set KEY retain: the key column co-owns an
+	// aliased string key's buffer (boxed (data, len) cell), so __fern_str_inc
+	// it, balancing the __fern_str_dec in the __drop_map_str_keys walk at map
+	// drop. Fresh keys (concat / literal / call) are moved in with no inc. An
+	// OVERWRITE discards the freshly-boxed key (the runtime keeps the
+	// existing one), so an aliased overwrite key leaks its inc — safe (no
+	// double free), bounded, and keys already leaked entirely pre-slice.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
+		b.ptrW == 4 && needsRcIncOnAlias(n.Args[1], b) {
+		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
+			if err := b.expr(n.Args[1]); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
