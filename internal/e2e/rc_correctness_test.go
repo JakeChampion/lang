@@ -1025,6 +1025,43 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map[string, V] KEY reclamation (wasm). String keys are stored
+		// boxed (an 8-byte (data, len) cell), like values; the map's drop
+		// walks the KEY column via __drop_map_str_keys and __fern_str_dec's
+		// each key buffer. Here a Map[string, string] exercises BOTH column
+		// walks at once, a fresh key (concat, moved) and an aliased key (the
+		// `key` local, retained) are inserted, and the aliased key is
+		// re-set (overwrite — the runtime keeps the existing key, discarding
+		// the freshly-boxed one; the discarded key leaks but must not double
+		// free). Both values are gotten back via match. Per iter: out.len()=5
+		// ("value") + key.len()=3 ("key") + other.len()=3 ("xyz") = 11; 200x
+		// churn → 2200. A double-free / UAF on a key or value buffer trips
+		// the checksum or the underflow detector.
+		name: "map_string_keys_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(seed: i32): i32 {
+    var m: Map[string, string] = map_new(8);
+    var key: string = "k" + "ey";
+    m = m.set(key, "va" + "lue");
+    m = m.set("other" + "k", "x" + "yz");
+    m = m.set(key, "val" + "ue");
+    var out: string = "";
+    match (m.get(key)) { Some(v) => { out = v; }, None => { out = "zz"; } }
+    var other: string = "";
+    match (m.get("otherk")) { Some(v) => { other = v; }, None => { other = "q"; } }
+    return out.len() + key.len() + other.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 2200) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

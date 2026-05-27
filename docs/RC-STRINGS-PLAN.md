@@ -245,9 +245,24 @@ differential fuzz and `__rc_underflow_count` guard.
    (like every boxed-value cell today — a minor follow-up); the dominant
    string buffer is reclaimed. Verified across set/get/overwrite/escape +
    churn.
-8. **`Map[string, V]` KEYS** — the column-walk also decs the string
-   keys (keys leak today for ALL key types; strings are the only
-   heap key). Likely a dedicated `__drop_map_keys` walk.
+8. **`Map[string, V]` KEYS** — **DONE.** String keys are stored boxed
+   in the KEY column (an 8-byte `(data, len)` cell), like values. A
+   generated `__drop_map_str_keys` column walk (the value walk
+   parameterised on the column byte-offset: 0 for keys, `ptrW` for
+   values) `__fern_str_dec`s each key buffer at the map's last
+   reference, emitted alongside the value walk in the `emitDec` Map
+   branch (both self-guard on rc==1). `set` retains an aliased string
+   key (`__fern_str_inc`). Known accepted leak: an OVERWRITE discards
+   the freshly-boxed key (the runtime keeps the existing one), so the
+   discarded key buffer leaks — safe (no double free), bounded, and
+   keys leaked entirely pre-slice. The 8-byte cell also leaks (as for
+   all boxed cells). Verified across fresh / aliased / overwrite keys,
+   `Map[string, string]` (both columns) + churn.
+
+   NB: the `wasmtime` CLI reports a **non-zero exit code** from a
+   component as `invalid expected discriminant` (the WASI `run`
+   `result` Err variant) — this is NOT a crash. RC corpus programs
+   must return 0 on success (`(checksum - expected) + underflow`).
 
 ## Risks
 
