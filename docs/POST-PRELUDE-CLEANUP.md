@@ -102,9 +102,25 @@ self-contained.
 
 ## Checklist
 
-- [ ] 1 — checker requires `core/map` import for Map use
-- [ ] 2 — standalone-import CI gate for stdlib modules
+- [x] 1 — checker requires `core/map` import for Map construction
+      (also fixed std/headers/http/url/test/json missing the import)
+- [x] 2 — standalone-import gate for stdlib modules
 - [~] 3 — std/test ergonomics (deferred, pending bare-export decision)
-- [ ] 4 — parser keyword-qualified module references
-- [ ] 5 — self-contained `PrintMainResult`
-- [ ] 6 — hygiene (REPL → LoadSource; drop `IsPrelude`; modload type test)
+- [x] 4 — parser keyword-qualified module references
+- [~] 5 — self-contained `PrintMainResult` (deferred — see below)
+- [x] 6 — hygiene: drop `IsPrelude`; modload compound-type test
+      (REPL → LoadSource sub-item deferred — needs real
+      import-accumulation design, not a one-line reroute)
+
+### Why 5 is deferred
+
+The harness already injects `core/int` transparently
+(`withResultPrinter` + the fixture/multi-file injection), so no program
+*author* ever sees the coupling — it's a contained test-harness detail,
+not a user-facing wart. Making `_start` self-contained means
+hand-writing the i32→decimal-string *and the string-value
+construction ABI* (alloc + header layout that `__fern_print` expects)
+inline in wasm bytecode; getting it subtly wrong breaks the entire wasm
+e2e suite. The risk/value trade doesn't favour doing it in a cleanup
+pass. Revisit as a focused change if the injection ever becomes a real
+maintenance pain.
