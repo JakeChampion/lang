@@ -60,6 +60,10 @@ on:
       # Driver wiring + example surface.
       - "cmd/fern/**"
       - "examples/**"
+      # The in-process Mach-O emitter (native arm64-darwin path):
+      # only the macOS runner can confirm a binary it produces
+      # actually launches and runs.
+      - "internal/native/**"
       # This workflow itself + go module declarations.
       - ".github/workflows/macos.yml"
       - "go.mod"
