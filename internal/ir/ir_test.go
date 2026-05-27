@@ -1852,6 +1852,54 @@ function build(): i32 {
 	}
 }
 
+// closureDropCallsDirect reports whether any generated __closure_drop_*
+// thunk calls `callee`.
+func closureDropCallsDirect(p *Program, callee string) bool {
+	for _, fn := range p.Funcs {
+		if !strings.HasPrefix(fn.Name, "__closure_drop_") {
+			continue
+		}
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && op.Str == callee {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestLowerStringClosureCaptureReclaim verifies a string captured by a
+// closure is reclaimed: the generated __closure_drop_<name> thunk dec's
+// the capture via the two-word __fern_str_dec at the closure's last
+// reference, and MakeClosure retains the alias-shaped capture via
+// __fern_str_inc. Gated wasm.
+func TestLowerStringClosureCaptureReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var s: string = "cap" + "tured";
+    var f = function (): i32 { return s.len(); };
+    return f();
+}`, 4)
+	if !closureDropCallsDirect(p, "__fern_str_dec") {
+		t.Errorf("expected a __closure_drop_* thunk to reclaim the string capture via __fern_str_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("expected MakeClosure to retain the string capture via __fern_str_inc:\n%s", p)
+	}
+}
+
+// TestLowerStringClosureCaptureNoReclaimOnNative verifies the closure
+// string-capture drop is wasm-only (no __fern_str_dec on ptrW=8).
+func TestLowerStringClosureCaptureNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var s: string = "cap" + "tured";
+    var f = function (): i32 { return s.len(); };
+    return f();
+}`, 8)
+	if closureDropCallsDirect(p, "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) closure drop must not emit __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box

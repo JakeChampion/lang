@@ -2597,7 +2597,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
 			dropFn := "__fern_closure_drop"
 			tgt := b.closureTarget[name]
-			if tgt != "" && hasRcCapture(b.closureCaps[tgt]) {
+			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW) {
 				dropFn = "__closure_drop_" + tgt
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -2747,9 +2747,12 @@ func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
 // inc'd at MakeEnv and so needs dropping when the closure dies).
-func hasRcCapture(caps []ast.Param) bool {
+func hasRcCapture(caps []ast.Param, ptrW int) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
+			return true
+		}
+		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
 			return true
 		}
 	}
@@ -2766,7 +2769,7 @@ func hasRcCapture(caps []ast.Param) bool {
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
 func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl) *Func {
-	if !hasRcCapture(caps) {
+	if !hasRcCapture(caps, ptrW) {
 		return nil
 	}
 	ops := []Op{
@@ -2777,6 +2780,22 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 	off := int32(0)
 	for _, c := range caps {
 		slot := irCaptureSlotSize(c.Type, ptrW)
+		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
+			// Two-word string capture: load (data, len) from [env+off]
+			// and reclaim via __fern_str_dec (balances the __fern_str_inc
+			// at MakeEnv). Inside the env's is_unique branch, so the
+			// capture is this closure's owned reference; inline / literal
+			// strings no-op.
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthString},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			off += slot
+			continue
+		}
 		if arrElemIsRcTracked(c.Type) {
 			// Load the capture pointer from [env+off]. The thunk only
 			// runs when every rc-tracked capture was inc'd at MakeEnv
@@ -4725,7 +4744,15 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// such closures fall back to the generic env-only drop.
 			thunkSafe := true
 			for _, capExpr := range mc.Captures {
-				if arrElemIsRcTracked(b.exprType(capExpr)) && !needsRcIncOnAlias(capExpr, b) {
+				ct := b.exprType(capExpr)
+				rcTracked := arrElemIsRcTracked(ct)
+				if _, isStr := ct.(ast.StringType); isStr && b.ptrW == 4 {
+					// A two-word string capture is dropped by the thunk
+					// (__fern_str_dec), so it must have been inc'd at MakeEnv
+					// or the thunk would over-release it.
+					rcTracked = true
+				}
+				if rcTracked && !needsRcIncOnAlias(capExpr, b) {
 					thunkSafe = false
 					break
 				}
