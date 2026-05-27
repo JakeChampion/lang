@@ -109,6 +109,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_box_free")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
+				case "__fern_cell_free":
+					// Map boxed-cell reclamation (the column walk frees
+					// each dead K/V cell after str_dec'ing its buffer).
+					// Pushes the raw 16-byte cell onto the freelist.
+					needs.add("__fern_cell_free")
+					needs.add("__free")
 				case "__fern_str_inc":
 					// Two-word string alias retain (Var / Assign /
 					// return-transfer / element-init). Pulls in rc_inc.
@@ -918,6 +924,21 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildBoxFreeBody,
+	},
+	"__fern_cell_free": {
+		// (cell) → cell. Map boxed-cell reclamation: a string/wide
+		// K or V is stored in a raw 16-byte freelist-class cell (an
+		// 8-byte OpAlloc rounded up by the allocator); the buffer it
+		// pointed at is reclaimed separately (__fern_str_dec in the
+		// column walk). At the map's last reference the walk frees
+		// the now-dead cell back to its 16-byte size class. Unlike
+		// __fern_box_free the cell has NO rc header (it's a raw
+		// alloc), so free base = cell, size = 16. Returns cell — the
+		// uniform-result shape the IR OpDrop relies on. NULL /
+		// low-address guarded. See buildCellFreeBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCellFreeBody,
 	},
 	"__fern_closure_drop": {
 		// (f) → f. Closure env/pair reclamation: at the last
@@ -1875,6 +1896,45 @@ func buildBoxFreeBody(helperIdxs map[string]uint32) []byte {
 	body = numeric.InstI32Add(body) // size + 8
 	body = inst.InstCall(body, free)
 	// return data
+	body = inst.InstLocalGet(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildCellFreeBody — (cell) → cell. Map boxed-cell reclamation. The
+// IR column walk pre-gates on the map's rc==1 and the non-null cell
+// pointer, and has already reclaimed the buffer the cell pointed at
+// (__fern_str_dec); this returns the raw 16-byte-class cell to the
+// freelist and returns cell — the uniform-result shape the IR OpDrop
+// relies on. The cell is a raw OpAlloc (no rc header), so the freed
+// base IS cell (no data-8 adjustment) and the size is a fixed 16 (an
+// 8-byte payload slot rounded to the 16-byte class by both
+// __fern_alloc and __free). NULL / low-address guards keep a stray
+// call safe.
+//
+// Locals: 0=cell (param).
+func buildCellFreeBody(helperIdxs map[string]uint32) []byte {
+	free := helperIdxs["__free"]
+	var body []byte
+	// null guard → return cell
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// low-address guard → return cell
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// __free(base = cell, size = 16)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, free)
+	// return cell
 	body = inst.InstLocalGet(body, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }

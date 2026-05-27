@@ -2116,6 +2116,24 @@ func TestLowerMapStringKeyReclaim(t *testing.T) {
 	if !callsDirect(p, "__drop_map_str_keys", "__fern_str_dec") {
 		t.Errorf("expected __drop_map_str_keys to reclaim each key via __fern_str_dec:\n%s", p)
 	}
+	if !callsDirect(p, "__drop_map_str_keys", "__fern_cell_free") {
+		t.Errorf("expected __drop_map_str_keys to free each dead key cell via __fern_cell_free:\n%s", p)
+	}
+}
+
+// TestLowerMapStringColDropFreesCell verifies the string-column drop walk
+// frees the boxed K/V cell itself (__fern_cell_free) in addition to
+// reclaiming the buffer (__fern_str_dec) — the cell is a raw 16-byte
+// freelist-class alloc that leaked before this slice.
+func TestLowerMapStringColDropFreesCell(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "hello" + "world");
+    return 0;
+}`, 4)
+	if !callsDirect(p, "__drop_map_str_values", "__fern_cell_free") {
+		t.Errorf("expected __drop_map_str_values to free each dead value cell via __fern_cell_free:\n%s", p)
+	}
 }
 
 // TestLowerMapStringKeyAndValueReclaim verifies a Map[string, string]
