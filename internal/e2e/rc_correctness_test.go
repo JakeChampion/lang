@@ -368,6 +368,72 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String STRUCT FIELD reclamation (wasm). A struct holds a string
+		// field initialised from a fresh concat aliased into the field
+		// (__fern_str_inc on construction); at the struct local's last
+		// reference its drop dec's the field (__fern_str_dec), freeing the
+		// shared buffer once after the source local also decs. Churned
+		// 300x — a double-free / UAF / underflow on the field buffer trips
+		// the checksum or underflow detector. s.len()=2, h.name.len()=2;
+		// 300*(2+2)=1200.
+		name: "string_struct_field_churn_free",
+		src: `struct Holder { name: string }
+function mk(seed: i32): i32 {
+    var pre: string = "v";
+    var s: string = pre + "x";
+    var h: Holder = Holder { name: s };
+    return h.name.len() + s.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 300) { total = total + mk(k); k = k + 1; }
+    return (total - 1200) + __rc_underflow_count();
+}`,
+	},
+	{
+		// String struct field from a LITERAL (wasm). The field is moved a
+		// heap-form string literal (no construction inc); the struct drop's
+		// __fern_str_dec must be a no-op on it (the 0x80000000 data-segment
+		// sentinel header short-circuits), never freeing the immortal
+		// literal. 200x churn; an over-release of the literal trips the
+		// underflow detector. "a literal value" = 15 bytes.
+		name: "string_struct_field_literal_churn",
+		src: `struct Holder { name: string }
+function mk(seed: i32): i32 {
+    var h: Holder = Holder { name: "a literal value" };
+    return h.name.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 3000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// String struct field ESCAPES into an array, then the array's
+		// array-of-struct deep drop (__drop_arr_struct_Holder →
+		// __drop_struct_Holder) reclaims each struct's string field. 50
+		// structs pushed; arr's last-reference drop frees every element box
+		// + its field buffer. A missed / double field-free drifts the
+		// checksum or underflow count. arr[10].name.len() = 2.
+		name: "string_struct_field_escapes_into_array",
+		src: `struct Holder { name: string }
+function main(): i32 {
+    var arr: Holder[] = [];
+    var k: i32 = 0;
+    while (k < 50) {
+        var pre: string = "x";
+        var s: string = pre + "y";
+        arr = arr.push(Holder { name: s });
+        k = k + 1;
+    }
+    var got: i32 = arr[10].name.len();
+    return (got - 2) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the

@@ -1647,19 +1647,22 @@ func TestLowerStringAliasReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerStringViewAliasNoInc verifies that aliasing a VIEW string — one
-// reached through a tainted RHS (here, an Index into a string array, whose
-// data points into a shared buffer with no per-string rc header) — does NOT
-// emit __fern_str_inc. Incrementing a view would corrupt mid-buffer bytes;
-// the eligibility gate in emitAliasInc keeps str_inc to fresh owned strings.
-func TestLowerStringViewAliasNoInc(t *testing.T) {
+// TestLowerStringAliasIncIsUniform verifies that aliasing a string read
+// out of a container (here, an Index into a string array) emits
+// __fern_str_inc — string retain is now UNCONDITIONAL (the old
+// eligibility gate that skipped non-fresh sources is gone). Views no
+// longer exist (args()/env() copy into owned strings), so a borrowed
+// read must co-own the buffer: without the inc, a later container drop
+// would free it out from under the alias. Inline / literal strings make
+// the inc a runtime no-op, so the unconditional emit is safe.
+func TestLowerStringAliasIncIsUniform(t *testing.T) {
 	p := lowerSourceWith(t, `function build(xs: string[]): i32 {
     var v: string = xs[0];
     var v2: string = v;
     return v.len() + v2.len();
 }`, 4)
-	if callsDirect(p, "build", "__fern_str_inc") {
-		t.Errorf("view/tainted string alias must not emit __fern_str_inc:\n%s", p)
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("aliasing a container-read string must emit __fern_str_inc (uniform retain):\n%s", p)
 	}
 }
 
@@ -1674,6 +1677,56 @@ func TestLowerStringNoReclaimOnNative(t *testing.T) {
 }`, 8)
 	if callsDirect(p, "build", "__fern_str_dec") {
 		t.Errorf("native (ptrW=8) must not emit __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringStructFieldReclaim verifies a string struct field is
+// reclaimed. A top-level struct LOCAL reclaims inline at its last
+// reference (the emitDec struct branch), so `build` itself dec's the
+// string field via the two-word __fern_str_dec; the alias-shaped field
+// initialiser (`Holder { name: s }`) retains via __fern_str_inc on
+// construction so the dec balances. Gated wasm (ptrW=4).
+func TestLowerStringStructFieldReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Holder { name: string }
+function build(s: string): i32 {
+    var h: Holder = Holder { name: s };
+    return h.name.len();
+}`, 4)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("expected struct local reclamation to dec its string field via __fern_str_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("expected alias-shaped string field init to retain via __fern_str_inc:\n%s", p)
+	}
+}
+
+// TestLowerStringNestedStructFieldReclaim verifies the generated
+// __drop_struct_<T> path: an Inner struct nested as a field of Outer
+// reclaims through Outer's drop recursing into __drop_struct_Inner,
+// which dec's Inner's string field via __fern_str_dec.
+func TestLowerStringNestedStructFieldReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Inner { name: string }
+struct Outer { inner: Inner }
+function build(s: string): i32 {
+    var o: Outer = Outer { inner: Inner { name: s } };
+    return o.inner.name.len();
+}`, 4)
+	if !callsDirect(p, "__drop_struct_Inner", "__fern_str_dec") {
+		t.Errorf("expected __drop_struct_Inner to reclaim its string field via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringStructFieldNoReclaimOnNative verifies the string struct
+// field drop is wasm-only: on a native ptrW (8) the struct drop must not
+// emit __fern_str_dec (the helper is wasm-only).
+func TestLowerStringStructFieldNoReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `struct Holder { name: string }
+function build(s: string): i32 {
+    var h: Holder = Holder { name: s };
+    return h.name.len();
+}`, 8)
+	if callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) struct drop must not emit __fern_str_dec:\n%s", p)
 	}
 }
 
