@@ -147,12 +147,19 @@ func TestCrossModuleVariantPatternArm64(t *testing.T) {
 // scrutinee enum lives in `tokens` should be a checker-time error,
 // not silently accepted. Confirms the SourceModule comparison in
 // checker.go fires.
-func TestCrossModuleVariantPatternQualifierMismatch(t *testing.T) {
+// Once import aliases landed, a module can be referred to by both an
+// alias and its basename, and a variant pattern qualified with either
+// name resolves to the same module. (Before aliases this shape was
+// rejected — `import ... as lexer;` was a parse error — and this test
+// guarded against silently accepting a genuine qualifier mismatch.)
+// The aliased qualifier `lexer.TokA` and the basename `tokens.Tok` now
+// both denote ./tokens, so the program is valid and type-checks.
+func TestCrossModuleVariantPatternAliasQualifier(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "tokens.fern"), []byte(crossModuleVariantTokens), 0o644); err != nil {
 		t.Fatalf("write tokens.fern: %v", err)
 	}
-	bad := `import "core/no_prelude";
+	src := `import "core/no_prelude";
 import "./tokens" as lexer;
 import "./tokens";
 
@@ -165,21 +172,17 @@ function main(): i32 {
     return 99;
 }
 `
-	if err := os.WriteFile(filepath.Join(dir, "main.fern"), []byte(bad), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.fern"), []byte(src), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
-		// modload may surface an import-name collision before the
-		// checker gets to run — that's also a valid rejection of
-		// this shape. Either error path is acceptable; what we
-		// must NOT have is a silent accept that produces a binary.
-		return
+		t.Fatalf("alias + basename import of the same module should load: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
-		return
+		t.Fatalf("constfold: %v", err)
 	}
-	if _, err := checker.Check(prog); err == nil {
-		t.Errorf("expected a check-time error for a mismatched module qualifier on a variant pattern, got none")
+	if _, err := checker.Check(prog); err != nil {
+		t.Errorf("alias qualifier `lexer.TokA` should resolve to ./tokens like the basename does; got: %v", err)
 	}
 }
