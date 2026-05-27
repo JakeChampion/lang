@@ -324,9 +324,13 @@ planned order:
   both of which looped back to expect another field after the comma and
   cascaded into a run of `ExprUnknown`. Both now allow the trailing
   comma (`self_host_trailing_comma_test.go`, shared parser → both
-  backends). Remaining for a full link/run: prelude injection for the
-  auto-prelude-dependent modules (`std/test`'s bare-name `TestRunner` /
-  `assert_*`) — a driver-level effort, not a language-feature gap.
+  backends). **Update (post-prelude-removal):** the old "needs prelude
+  injection for `std/test`'s bare-name `TestRunner` / `assert_*`"
+  blocker is **obsolete** — the auto-prelude is gone, so `std/test` is
+  now used the same way as any module (`import "std/test"; t :=
+  test.test_new(...); test.assert_eq_i32(...)`), and the self-host's
+  stdlib-import resolution (see the ✅ item below) already handles that.
+  What remains is purely the **runtime-builtin surface** (next item).
 - ✅ **Stdlib import resolution in the file-loading driver.**
   `asm_load_run.fern` now takes an optional stdlib root as its second
   argument and resolves `std/…` / `core/…` imports under it
@@ -356,13 +360,22 @@ planned order:
   only need to resolve. Proven by the `std-json-intrinsics` case in
   `self_host_stdlib_import_test.go` (a `std/json`-importing program
   links + runs: 10+32=42).
-- ⏳ **`std/test` end-to-end** still needs more of the runtime builtin
-  surface: beyond the map intrinsics above it transitively pulls in OS
-  syscalls (`write_file` / `read_dir` / `stat` / `temp_dir` /
-  `remove_dir_all` / `env`), time (`now_unix_ms` / `monotonic_ns`), and
-  `f64__to_string`. Those are the next batch of self-host runtime
-  helpers — independent of the prelude question (the test runner is
-  used via explicit `import "std/test"; test.test_new(...)`).
+- 🔧 **`std/test` end-to-end** still needs more of the runtime builtin
+  surface. Used via explicit `import "std/test"; test.test_new(...)`
+  (the prelude question is gone — see the update above). The batch,
+  with progress:
+  - ✅ `write_file(path, content): Option[IoError]` — emitted on both
+    backends (`__fern_write_file`: NUL-terminate path, openat
+    O_WRONLY|O_CREAT|O_TRUNC, write loop, close; None on success,
+    Some(_) on error, mirroring `__fern_read_file`'s Err shape).
+    Verified x86 by a write→read round-trip through the self-host
+    (`self_host_write_file_test.go`); arm64 mirror is CI-gated.
+  - ⬜ remaining OS syscalls: `read_dir` / `stat` / `temp_dir` /
+    `remove_dir_all` / `env`.
+  - ⬜ time: `now_unix_ms` / `monotonic_ns` (i64 — needs the i64
+    compare/width path checked, unlike the Result/Option-returning
+    file builtins).
+  - ⬜ `f64__to_string` (float→decimal formatting; the largest).
 
 Aside (Go backend, separate subsystem): the Go *native* backend
 mishandles compound assignment to a struct field (`a.v += n`) — fixed in
