@@ -408,6 +408,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArena {
 		g.emitArenaRuntime()
 	}
+	if g.usesFloatTranscendentals {
+		g.emitFloatTranscendentalsRuntime()
+	}
 	if g.usesReadLine {
 		g.emitReadLineRuntime()
 	}
@@ -3298,6 +3301,262 @@ func (g *generator) emitArenaRuntime() {
 	g.line(".ltorg")
 }
 
+// emitFloatTranscendentalsRuntime emits the f64 transcendental
+// bundle — __fern_{sin,cos,exp,log,pow}_f64 — plus the shared
+// .rodata table of polynomial coefficients. arm64 has no hardware
+// transcendental instruction, so each is a range reduction followed
+// by a minimax/Taylor polynomial evaluated by Horner's method (a few
+// ulp, not bit-exact with the interpreter's Go math — the test
+// contract is tolerance-based). Faithfully ported from the
+// self-hosted compiler's asm_arm64.fern.
+func (g *generator) emitFloatTranscendentalsRuntime() {
+	// ldc loads an 8-byte constant from .rodata into an FP register
+	// via adrp/add/ldr (x12 scratch). Mirrors asm_arm64's emit_ldc.
+	ldc := func(reg, lbl string) {
+		g.adrpAdd("x12", lbl)
+		g.emit("ldr %s, [x12]", reg)
+	}
+
+	g.line("")
+	if g.darwin {
+		g.line(".section __TEXT,__const")
+	} else {
+		g.line(".section .rodata")
+	}
+	g.line(".align 3")
+	for _, c := range []struct{ lbl, val string }{
+		{".Lfc_log2e", "1.4426950408889634"},
+		{".Lfc_ln2", "0.6931471805599453"},
+		{".Lfc_halfpi", "1.5707963267948966"},
+		{".Lfc_sqrt2", "1.4142135623730951"},
+		{".Lfc_one", "1.0"},
+		{".Lfc_half", "0.5"},
+		{".Lfc_e7", "0.00019841269841269841"},
+		{".Lfc_e6", "0.0013888888888888889"},
+		{".Lfc_e5", "0.0083333333333333332"},
+		{".Lfc_e4", "0.041666666666666664"},
+		{".Lfc_e3", "0.16666666666666666"},
+		{".Lfc_s7", "-0.00019841269841269841"},
+		{".Lfc_s5", "0.0083333333333333332"},
+		{".Lfc_s3", "-0.16666666666666666"},
+		{".Lfc_c6", "-0.0013888888888888889"},
+		{".Lfc_c4", "0.041666666666666664"},
+		{".Lfc_c2", "-0.5"},
+		{".Lfc_l11", "0.090909090909090912"},
+		{".Lfc_l9", "0.1111111111111111"},
+		{".Lfc_l7", "0.14285714285714285"},
+		{".Lfc_l5", "0.2"},
+		{".Lfc_l3", "0.33333333333333331"},
+	} {
+		g.label(c.lbl)
+		g.line("\t.double " + c.val)
+	}
+	g.line(".text")
+
+	// __fern_exp_f64(d0=x) → e^x = 2^k · poly(r), k = round(x·log2 e),
+	// r = x − k·ln2 ∈ [−ln2/2, ln2/2], poly = degree-7 Taylor of e^r.
+	g.line("")
+	g.line(".global __fern_exp_f64")
+	g.typeDirective("__fern_exp_f64")
+	g.label("__fern_exp_f64")
+	ldc("d1", ".Lfc_log2e")
+	g.emit("fmul d2, d0, d1") // t = x*log2e
+	g.emit("frinta d3, d2")   // kf = round(t)
+	g.emit("fcvtzs x10, d3")  // ki
+	ldc("d4", ".Lfc_ln2")
+	g.emit("fmul d5, d3, d4") // kf*ln2
+	g.emit("fsub d0, d0, d5") // r
+	ldc("d6", ".Lfc_e7")
+	ldc("d7", ".Lfc_e6")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_e5")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_e4")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_e3")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_half")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_one")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7")
+	g.emit("fmul d6, d6, d0")
+	g.emit("fadd d6, d6, d7") // poly(r) = e^r
+	g.emit("add x10, x10, #1023")
+	g.emit("lsl x10, x10, #52")
+	g.emit("fmov d1, x10") // 2^ki
+	g.emit("fmul d0, d6, d1")
+	g.emit("ret")
+	g.sizeDirective("__fern_exp_f64")
+
+	// __fern_log_f64(d0=x) → ln x (x>0). x = m·2^e, m∈[1,2) normalised
+	// to [√2/2,√2); f = (m−1)/(m+1); ln(m)=2·(f+f³/3+…+f¹¹/11);
+	// ln(x) = e·ln2 + ln(m).
+	g.line("")
+	g.line(".global __fern_log_f64")
+	g.typeDirective("__fern_log_f64")
+	g.label("__fern_log_f64")
+	g.emit("fmov x10, d0") // bits
+	g.emit("lsr x11, x10, #52")
+	g.emit("and x11, x11, #0x7ff")
+	g.emit("sub x11, x11, #1023") // e
+	g.emit("mov x13, #1")
+	g.emit("lsl x13, x13, #52")
+	g.emit("sub x13, x13, #1")  // mask (1<<52)-1
+	g.emit("and x10, x10, x13") // mantissa
+	g.emit("mov x14, #1023")
+	g.emit("lsl x14, x14, #52")
+	g.emit("orr x10, x10, x14")
+	g.emit("fmov d1, x10") // m in [1,2)
+	ldc("d2", ".Lfc_sqrt2")
+	g.emit("fcmp d1, d2")
+	g.emit("b.le .Llog_nohalf")
+	ldc("d3", ".Lfc_half")
+	g.emit("fmul d1, d1, d3")
+	g.emit("add x11, x11, #1")
+	g.label(".Llog_nohalf")
+	ldc("d4", ".Lfc_one")
+	g.emit("fsub d5, d1, d4") // m-1
+	g.emit("fadd d6, d1, d4") // m+1
+	g.emit("fdiv d0, d5, d6") // f
+	g.emit("fmul d7, d0, d0") // f2
+	ldc("d2", ".Lfc_l11")
+	ldc("d3", ".Lfc_l9")
+	g.emit("fmul d2, d2, d7")
+	g.emit("fadd d2, d2, d3")
+	ldc("d3", ".Lfc_l7")
+	g.emit("fmul d2, d2, d7")
+	g.emit("fadd d2, d2, d3")
+	ldc("d3", ".Lfc_l5")
+	g.emit("fmul d2, d2, d7")
+	g.emit("fadd d2, d2, d3")
+	ldc("d3", ".Lfc_l3")
+	g.emit("fmul d2, d2, d7")
+	g.emit("fadd d2, d2, d3")
+	g.emit("fmul d2, d2, d7")
+	g.emit("fadd d2, d2, d4") // poly + 1
+	g.emit("fmul d2, d2, d0") // f*poly
+	g.emit("fadd d2, d2, d2") // 2*f*poly = ln(m)
+	g.emit("scvtf d3, x11")   // e
+	ldc("d4", ".Lfc_ln2")
+	g.emit("fmul d3, d3, d4") // e*ln2
+	g.emit("fadd d0, d3, d2")
+	g.emit("ret")
+	g.sizeDirective("__fern_log_f64")
+
+	// __fern_sin_f64(d0=x) → sin x. k=round(x/(π/2)), r=x−k·(π/2)∈
+	// [−π/4,π/4]; quadrant q=k&3 selects ±sin(r)/±cos(r).
+	g.line("")
+	g.line(".global __fern_sin_f64")
+	g.typeDirective("__fern_sin_f64")
+	g.label("__fern_sin_f64")
+	g.emitSinCosReduction(ldc)
+	g.emit("cmp x10, #0")
+	g.emit("b.eq .Lsin_sr")
+	g.emit("cmp x10, #1")
+	g.emit("b.eq .Lsin_cr")
+	g.emit("cmp x10, #2")
+	g.emit("b.eq .Lsin_nsr")
+	g.emit("fneg d0, d16") // q3: -cos(r)
+	g.emit("ret")
+	g.label(".Lsin_sr")
+	g.emit("fmov d0, d6")
+	g.emit("ret")
+	g.label(".Lsin_cr")
+	g.emit("fmov d0, d16")
+	g.emit("ret")
+	g.label(".Lsin_nsr")
+	g.emit("fneg d0, d6")
+	g.emit("ret")
+	g.sizeDirective("__fern_sin_f64")
+
+	// __fern_cos_f64(d0=x) → cos x. Same reduction; quadrant selects
+	// cos(r)/−sin(r)/−cos(r)/sin(r).
+	g.line("")
+	g.line(".global __fern_cos_f64")
+	g.typeDirective("__fern_cos_f64")
+	g.label("__fern_cos_f64")
+	g.emitSinCosReduction(ldc)
+	g.emit("cmp x10, #0")
+	g.emit("b.eq .Lcos_cr")
+	g.emit("cmp x10, #1")
+	g.emit("b.eq .Lcos_nsr")
+	g.emit("cmp x10, #2")
+	g.emit("b.eq .Lcos_ncr")
+	g.emit("fmov d0, d6") // q3: sin(r)
+	g.emit("ret")
+	g.label(".Lcos_cr")
+	g.emit("fmov d0, d16")
+	g.emit("ret")
+	g.label(".Lcos_nsr")
+	g.emit("fneg d0, d6")
+	g.emit("ret")
+	g.label(".Lcos_ncr")
+	g.emit("fneg d0, d16")
+	g.emit("ret")
+	g.sizeDirective("__fern_cos_f64")
+
+	// __fern_pow_f64(d0=x, d1=y) → x^y = exp(y·ln x), x>0. Non-leaf:
+	// stashes y in callee-saved d8 across the log call.
+	g.line("")
+	g.line(".global __fern_pow_f64")
+	g.typeDirective("__fern_pow_f64")
+	g.label("__fern_pow_f64")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("str d8, [sp, #-16]!")
+	g.emit("fmov d8, d1")       // y
+	g.emit("bl __fern_log_f64") // d0 = ln(x)
+	g.emit("fmul d0, d8, d0")   // y*ln(x)
+	g.emit("bl __fern_exp_f64")
+	g.emit("ldr d8, [sp], #16")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_pow_f64")
+	g.line(".ltorg")
+}
+
+// emitSinCosReduction emits the shared argument-reduction +
+// sin(r)/cos(r) polynomial prologue for __fern_sin_f64 /
+// __fern_cos_f64. On exit: x10 = quadrant (k&3), d6 = sin(r),
+// d16 = cos(r), with r ∈ [−π/4, π/4].
+func (g *generator) emitSinCosReduction(ldc func(reg, lbl string)) {
+	ldc("d1", ".Lfc_halfpi")
+	g.emit("fdiv d2, d0, d1")
+	g.emit("frinta d3, d2")
+	g.emit("fcvtzs x10, d3")
+	g.emit("fmul d4, d3, d1")
+	g.emit("fsub d0, d0, d4")  // r
+	g.emit("and x10, x10, #3") // quadrant
+	g.emit("fmul d5, d0, d0")  // r2
+	ldc("d6", ".Lfc_s7")
+	ldc("d7", ".Lfc_s5")
+	g.emit("fmul d6, d6, d5")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_s3")
+	g.emit("fmul d6, d6, d5")
+	g.emit("fadd d6, d6, d7")
+	ldc("d7", ".Lfc_one")
+	g.emit("fmul d6, d6, d5")
+	g.emit("fadd d6, d6, d7")
+	g.emit("fmul d6, d6, d0") // sin(r)
+	ldc("d16", ".Lfc_c6")
+	ldc("d17", ".Lfc_c4")
+	g.emit("fmul d16, d16, d5")
+	g.emit("fadd d16, d16, d17")
+	ldc("d17", ".Lfc_c2")
+	g.emit("fmul d16, d16, d5")
+	g.emit("fadd d16, d16, d17")
+	ldc("d17", ".Lfc_one")
+	g.emit("fmul d16, d16, d5")
+	g.emit("fadd d16, d16, d17") // cos(r)
+}
+
 // emitReadLineRuntime emits `__fern_read_line()` — reads stdin
 // one byte at a time into the 4 KiB `__fern_read_line_buf`,
 // stops at '\n' (kept in the result) or 4 KiB or EOF/error.
@@ -4960,6 +5219,13 @@ type generator struct {
 	// — bump-cursor snapshot/rewind helpers. Two leaf functions,
 	// one ldr / str each. Cheap scope-bounded reclaim.
 	usesArena bool
+	// usesFloatTranscendentals pulls in the f64 transcendental
+	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
+	// shared .rodata polynomial-coefficient table. arm64 has no
+	// hardware sin/cos/exp/log, so these are range-reduction +
+	// minimax-polynomial approximations (a few ulp), ported from
+	// the self-hosted compiler's asm_arm64.fern.
+	usesFloatTranscendentals bool
 	// usesReadLine pulls in `__fern_read_line()` — stdin
 	// one-byte reader. Returns Option[string]: Some(line)
 	// when at least one byte was read (line preserves its
@@ -6883,6 +7149,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.pop()
 			g.emit("fmov d0, x0")
 			g.emit("%s d0, d0", inst)
+			g.emit("fmov x0, d0")
+			g.push()
+			return nil
+		}
+		// f64 transcendentals — arm64 has no hardware sin/cos/exp/log,
+		// so these call into polynomial-approximation runtime helpers
+		// (emitFloatTranscendentalsRuntime). The arg(s) ride the
+		// operand stack as bit patterns; move into d0 (and d1 for
+		// pow) per AAPCS64, call, read the result out of d0.
+		switch target {
+		case "__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
+			g.usesFloatTranscendentals = true
+			g.pop()
+			g.emit("fmov d0, x0")
+			g.emit("bl __fern_%s", strings.TrimPrefix(target, "__"))
+			g.emit("fmov x0, d0")
+			g.push()
+			return nil
+		case "__pow_f64":
+			g.usesFloatTranscendentals = true
+			g.pop() // y (top)
+			g.emit("fmov d1, x0")
+			g.pop() // x
+			g.emit("fmov d0, x0")
+			g.emit("bl __fern_pow_f64")
 			g.emit("fmov x0, d0")
 			g.push()
 			return nil

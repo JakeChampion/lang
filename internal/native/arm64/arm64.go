@@ -600,6 +600,32 @@ func FNEG(rd, rn uint32) uint32 {
 // back the cheap f64 math intrinsics — abs, sqrt, floor (round toward
 // -inf), ceil (+inf), trunc (toward zero), round (nearest, ties away).
 // Each is a single FP instruction; no libm.
+// FP load/store of a 64-bit D register (used by the transcendental
+// runtime helpers — coefficient loads from .rodata and the d8
+// spill/restore in __fern_pow_f64). Three addressing modes:
+//
+//	unsigned offset : LDR Dt, [Xn, #imm]   imm scaled by 8
+//	post-index      : LDR Dt, [Xn], #imm9  (signed, unscaled)
+//	pre-index       : STR Dt, [Xn, #imm9]! (signed, unscaled)
+func LdrFP64Unsigned(rt, rn, imm12 uint32) uint32 {
+	return 0xFD400000 | ((imm12 & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP64Unsigned(rt, rn, imm12 uint32) uint32 {
+	return 0xFD000000 | ((imm12 & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LdrFP64PostIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC400400 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP64PostIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC000400 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LdrFP64PreIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC400C00 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP64PreIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC000C00 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 func FABS(rd, rn uint32) uint32   { return 0x1E60C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FSQRT(rd, rn uint32) uint32  { return 0x1E61C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FRINTM(rd, rn uint32) uint32 { return 0x1E654000 | ((rn & regMask) << 5) | (rd & regMask) }

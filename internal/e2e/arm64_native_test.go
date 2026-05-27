@@ -127,6 +127,15 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"ceil_f64", "function main(): i32 { return __ceil_f64(41.1) as i32; }", 42},
 		{"trunc_f64", "function main(): i32 { return __trunc_f64(42.9) as i32; }", 42},
 		{"round_f64", "function main(): i32 { return __round_f64(41.5) as i32; }", 42},
+		// f64 transcendentals via polynomial-approximation runtime
+		// helpers (arm64 has no hardware sin/cos/exp/log). Tolerance
+		// contract; exit codes pin the integer-truncated result.
+		{"exp_f64", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
+		{"log_f64", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
+		{"sin_f64", "function main(): i32 { var r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 42; } return 0; }", 42},
+		{"cos_f64", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
+		{"pow_f64", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
+		{"exp_log_roundtrip_f64", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 42; } return 0; }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
