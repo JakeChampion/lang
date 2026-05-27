@@ -1114,6 +1114,60 @@ func TestEmitConstStrHeapForm(t *testing.T) {
 	}
 }
 
+// TestEmitConstStrLiteralRcSentinel verifies a heap-form string LITERAL
+// carries the 0x80000000 rc-sentinel header so __fern_str_dec is a no-op
+// on it (literals are immortal data-segment values). `underflow` dec's
+// the same literal 8 times and returns __rc_underflow_count(): the
+// sentinel short-circuits every dec, so no buffer is freed and the
+// over-release counter stays 0. Without the header the dec would misread
+// the mid-data-segment bytes at [data-8] as an rc and decrement them,
+// eventually tripping the underflow guard / corrupting the segment.
+// `survives` dec's the literal then reads its first byte — it must still
+// be intact ('h' = 104), proving the dec didn't free / clobber it.
+func TestEmitConstStrLiteralRcSentinel(t *testing.T) {
+	decOnce := []ir.Op{
+		{Kind: ir.OpConstStr, Str: "hello, world"},
+		{Kind: ir.OpCallDirect, Str: "__fern_str_dec", I32: 1},
+		{Kind: ir.OpDrop},
+	}
+	var underflowOps []ir.Op
+	for i := 0; i < 8; i++ {
+		underflowOps = append(underflowOps, decOnce...)
+	}
+	underflowOps = append(underflowOps,
+		ir.Op{Kind: ir.OpCallDirect, Str: "__fern_rc_underflow_count", I32: 0})
+	prog := &ir.Program{Funcs: []*ir.Func{
+		{
+			Name:       "underflow",
+			ReturnType: i32(),
+			Ops:        underflowOps,
+		},
+		{
+			Name:       "survives",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				// dec the literal, then re-load it and read byte 0.
+				{Kind: ir.OpConstStr, Str: "hello, world"},
+				{Kind: ir.OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpConstStr, Str: "hello, world"},
+				{Kind: ir.OpDrop},     // drop len
+				{Kind: ir.OpLoadByte}, // i32.load8_u at data ptr
+			},
+		},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if got := runUnderWasmtime(t, bin, "underflow"); got != "0" {
+		t.Fatalf("underflow = %q, want 0 (sentinel makes str_dec a no-op on a literal)", got)
+	}
+	if got := runUnderWasmtime(t, bin, "survives"); got != "104" {
+		t.Fatalf("survives first byte = %q, want 104 ('h' — literal intact after dec)", got)
+	}
+}
+
 // TestEmitConstStrInlineForm — short ASCII string (≤7 bytes) takes
 // the inline-form path via fernstring.PackInlineWasm: no data
 // section, no memory section. The function drops both pushed
@@ -1204,8 +1258,13 @@ func TestEmitConstStrInterning(t *testing.T) {
 	if len(segs) != 1 {
 		t.Fatalf("data segments: got %d, want 1", len(segs))
 	}
-	if string(segs[0]) != "shared-literal-string" {
-		t.Fatalf("segment 0: got %q, want %q", segs[0], "shared-literal-string")
+	// Each interned heap-form literal is prefixed with the 8-byte
+	// rc-sentinel header (rc=0x80000000 LE, then pad); the single
+	// shared segment is that header followed by the unique literal.
+	want := append([]byte{0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00},
+		[]byte("shared-literal-string")...)
+	if !bytes.Equal(segs[0], want) {
+		t.Fatalf("segment 0: got %q, want sentinel header + %q", segs[0], "shared-literal-string")
 	}
 	for _, name := range []string{"a", "b"} {
 		if got := runUnderWasmtime(t, bin, name); got != "21" {
@@ -1734,10 +1793,11 @@ func TestEmitAllocSeedRespectsStringPool(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	got := runUnderWasmtime(t, bin, "ptr")
-	// stringStart=1024, len 13 → ends at 1037; round up to 1040
-	// (next multiple of 8). The bump cursor starts there.
-	if got != "1040" {
-		t.Fatalf("alloc pointer = %q, want 1040 (string pool end rounded to 8)", got)
+	// stringStart=1024, 8-byte rc-sentinel header (1024..1031), data at
+	// 1032, len 13 → ends at 1045; round up to 1048 (next multiple of
+	// 8). The bump cursor starts there.
+	if got != "1048" {
+		t.Fatalf("alloc pointer = %q, want 1048 (string pool end rounded to 8)", got)
 	}
 }
 
