@@ -372,9 +372,15 @@ planned order:
     (`self_host_write_file_test.go`); arm64 mirror is CI-gated.
   - ⬜ remaining OS syscalls: `read_dir` / `stat` / `temp_dir` /
     `remove_dir_all` / `env`.
-  - ⬜ time: `now_unix_ms` / `monotonic_ns` (i64 — needs the i64
-    compare/width path checked, unlike the Result/Option-returning
-    file builtins).
+  - ✅ time: `now_unix_ms` / `monotonic_ns` — emitted on both backends
+    via `clock_gettime` (x86 syscall 228, arm64 113;
+    `__fern_now_unix_ms` REALTIME→ms, `__fern_monotonic_ns` MONOTONIC
+    →ns). Both return an i64 in the accumulator; the self-host has no
+    distinct i64 tag, but all integers live in 64-bit slots and compare
+    via `cmpq`/`cmp`, so the values round-trip without truncation (the
+    `> 1e12` ms assertion in `self_host_clock_test.go` exceeds 32-bit
+    range, proving it). Helpers are emitted unconditionally (they don't
+    ride the `needs_heap` gate). arm64 mirror is CI-gated.
   - ⬜ `f64__to_string` (float→decimal formatting; the largest).
 
 Aside (Go backend, separate subsystem): the Go *native* backend
