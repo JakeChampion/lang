@@ -6378,7 +6378,9 @@ func TestArm64Format(t *testing.T) {
 // and last byte from {", `, '}); it doesn't validate
 // escaping or interior quote pairing.
 func TestArm64StdlibBundle31(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     match ("hello world foo".word_at(0)) {
         Some(w) => { if (w != "hello") { return 1; } },
         None => { return 2; },
@@ -6478,7 +6480,9 @@ func TestArm64StdlibBundle31(t *testing.T) {
 // `shift_byte` is a Caesar-style byte rotation — useful for
 // puzzles / toy obfuscation, not security.
 func TestArm64StdlibBundle30(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     if ("aXbXc".replace_first("X", "_") != "a_bXc") { return 1; }
     if ("none here".replace_first("x", "y") != "none here") { return 2; }
     if ("".replace_first("a", "b") != "") { return 3; }
@@ -6565,7 +6569,9 @@ func TestArm64StdlibBundle30(t *testing.T) {
 // is vacuously true on the empty string but false on a
 // non-empty string with an empty set.
 func TestArm64StdlibBundle29(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
     match ([3, 1, 4, 1, 5, 9, 2, 6].min_max()) {
         Some(t) => { if (t.0 != 1 || t.1 != 9) { return 1; } },
         None => { return 2; },
@@ -6643,7 +6649,9 @@ func TestArm64StdlibBundle29(t *testing.T) {
 // truncate hard-truncates the source. Use ellipsis when you
 // want truncation always to be visually marked.
 func TestArm64StdlibBundle28(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5];
     var a: i32[] = xs.sorted_asc();
     if (a[0] != 1 || a[1] != 1 || a[2] != 3 || a[3] != 4 || a[4] != 5) { return 1; }
@@ -6717,7 +6725,9 @@ func TestArm64StdlibBundle28(t *testing.T) {
 // only upper-folds the first byte after each space; "FOX"
 // stays "FOX".
 func TestArm64StdlibBundle27(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
     // median
     match ([5, 1, 3, 4, 2].median()) {
         Some(m) => { if (m != 3) { return 1; } },
@@ -6872,7 +6882,9 @@ func TestArm64StdlibBundle26(t *testing.T) {
 // the string ones — they sit as plain receiver-typed prelude
 // fns, like is_ipv4 / is_email_like).
 func TestArm64StdlibBundle25(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // is_url_like
     if (!"http://example.com".is_url_like()) { return 1; }
     if (!"https://x.y/z".is_url_like()) { return 2; }
@@ -6995,7 +7007,9 @@ func TestArm64StdlibBundle24(t *testing.T) {
 // after / between, i32 is_between, byte is_letter, string[]
 // all_non_empty. 7 helpers.
 func TestArm64StdlibBundle23(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // remove_all
     if ("aXbXc".remove_all("X") != "abc") { return 1; }
     if ("XXX".remove_all("X") != "") { return 2; }
@@ -7049,7 +7063,9 @@ func TestArm64StdlibBundle23(t *testing.T) {
 // is_in_range, matches_any, reverse_digits, is_palindrome,
 // to_array. 7 helpers.
 func TestArm64StdlibBundle22(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // parse_hex_int / parse_bin_int
     match ("ff".parse_hex_int()) { Some(v) => { if (v != 255) { return 1; } }, None => { return 2; }, }
     match ("1010".parse_bin_int()) { Some(v) => { if (v != 10) { return 3; } }, None => { return 4; }, }
@@ -7290,7 +7306,9 @@ func TestArm64StdlibBundle18(t *testing.T) {
 // i32 log2_floor / sqrt_floor / to_rgb_hex, byte is_vowel,
 // string rstrip_newline. 7 helpers.
 func TestArm64StdlibBundle17(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/array";
+function main(): i32 {
     // max_by_len / sum_lens
     match (["a", "abc", "xy"].max_by_len()) {
         Some(s) => { if (s != "abc") { return 1; } },
@@ -7487,7 +7505,9 @@ func TestArm64StdlibBundle14(t *testing.T) {
 // count_non_empty, string word_count / escape_html /
 // strip_quotes, i32 to_string_padded. 6 helpers.
 func TestArm64StdlibBundle13(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // filter_non_empty / count_non_empty
     var src: string[] = "a,,b,,,c".split(",");
     if (src.len() != 6) { return 1; }
@@ -7705,7 +7725,9 @@ func TestArm64StdlibBundle10(t *testing.T) {
 // (pad_start_str / pad_end_str), truncate with ellipsis,
 // digit count, pluralize. 7 new methods.
 func TestArm64StdlibBundle9(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // Case-insensitive search
     if ("Hello World".index_of_ci("WORLD") != 6) { return 1; }
     if ("Hello World".index_of_ci("world") != 6) { return 2; }
@@ -7751,7 +7773,9 @@ func TestArm64StdlibBundle9(t *testing.T) {
 // so the prelude sticks to pure-i32 ops), string parse_bool,
 // (i32).to_hex(), HTTP method classifiers. 9 helpers.
 func TestArm64StdlibBundle8(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     // Saturating add / sub — clamp at MAX / MIN
     if ((100).saturating_add(50) != 150) { return 1; }
     if ((2147483647).saturating_add(1) != 2147483647) { return 2; }
@@ -7906,7 +7930,10 @@ func TestArm64StdlibBundle6(t *testing.T) {
 // i32 + i64, pow, gcd, lcm), string search (last_index_of),
 // string casing (capitalize). 11 new methods. Pure-prelude.
 func TestArm64StdlibBundle5(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+import "std/i64";
+function main(): i32 {
     // Parity i32 + i64
     if (!(4).is_even()) { return 1; }
     if ((4).is_odd()) { return 2; }
@@ -7964,7 +7991,9 @@ func TestArm64StdlibBundle5(t *testing.T) {
 // methods. All pure-prelude, no IR / checker work — sidesteps
 // the generic-prelude-function monomorph regression.
 func TestArm64StdlibBundle4(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     // is_punct
     if (!(33).is_punct()) { return 1; }
     if (!(126).is_punct()) { return 2; }
@@ -8016,7 +8045,12 @@ func TestArm64StdlibBundle4(t *testing.T) {
 // (abs only on i64; min/max/clamp on all three), plus three
 // string helpers (at / chars / reverse_bytes). 13 new methods.
 func TestArm64StdlibBundle3(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+import "std/string";
+function main(): i32 {
     // i64 abs / min / max / clamp.
     var i: i64 = 0 - 42 as i64;
     if (i.abs() != (42 as i64)) { return 1; }
@@ -8064,7 +8098,9 @@ func TestArm64StdlibBundle3(t *testing.T) {
 // whole-string ASCII predicates (is_ascii_only / is_numeric /
 // is_alpha_only / is_alnum_only). 12 new methods total.
 func TestArm64StdlibBundle2(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     // Byte-level case classifiers + flippers.
     if (!(65).is_upper()) { return 1; }
     if ((65).is_lower()) { return 2; }
@@ -8108,7 +8144,9 @@ func TestArm64StdlibBundle2(t *testing.T) {
 }
 
 func TestArm64StdlibBundle(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     // pad_start / pad_end
     if ("42".pad_start(5, "0") != "00042") { return 1; }
     if ("42".pad_end(5, " ") != "42   ") { return 2; }
