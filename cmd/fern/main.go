@@ -653,6 +653,13 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		// arm64 only and can't load Mach-O.
 		return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", binPath)
 	}
+	// Run the binary directly when its target matches the host
+	// architecture — no emulator (or qemu install) needed. Only fall back
+	// to a user-mode emulator for the cross case.
+	if (target == "arm64" && runtime.GOARCH == "arm64") ||
+		(target == "x86-64" && runtime.GOARCH == "amd64") {
+		return execDirect(binPath, progArgs)
+	}
 	// If the user left -qemu at its default but built for
 	// x86-64, swap to qemu-x86_64 so --run picks the right
 	// emulator without manual flag-flipping.
@@ -660,6 +667,20 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		qemu = "qemu-x86_64"
 	}
 	return execUnderQemu(qemu, binPath, progArgs)
+}
+
+// execDirect runs binPath natively (host arch matches the build target),
+// returning the program's exit code so the caller can mirror it.
+func execDirect(binPath string, progArgs []string) (int, error) {
+	cmd := exec.Command(binPath, progArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if cmd.ProcessState != nil {
+		return cmd.ProcessState.ExitCode(), nil
+	}
+	return 1, err
 }
 
 // linkDarwin writes asm to a temp .s file and invokes clang with
