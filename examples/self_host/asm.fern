@@ -7050,11 +7050,12 @@ pub function emit_module(mod: parser.Module): string {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.needs_heap) {
+        var heap_size: string = "1073741824";   // 1 GiB
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip 1073741824\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
+        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost)
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
@@ -7071,9 +7072,27 @@ pub function emit_module(mod: parser.Module): string {
         // Result = current ptr; advance ptr by %rdi (the size).
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    addq %rax, %rdi\n");
+        // Bounds check: a bump heap has no GC, so an overflow would
+        // silently run past the buffer into adjacent .bss (e.g. the
+        // strbuf output accumulator) and corrupt it. Trap with a clean,
+        // recognisable exit code (137) instead of corrupting memory.
+        // %rcx is saved/restored so __fern_alloc keeps its original
+        // clobber contract (only %rax + %rdi) — callers hold live values
+        // in other registers across the call (e.g. to_ascii_string keeps
+        // the byte in %rcx). popq doesn't disturb the cmp's flags.
+        s = s.write("    pushq %rcx\n");
+        s = s.write("    leaq __fern_heap(%rip), %rcx\n");
+        s = s.write("    addq $" + heap_size + ", %rcx\n");
+        s = s.write("    cmpq %rcx, %rdi\n");
+        s = s.write("    popq %rcx\n");
+        s = s.write("    ja .Lalloc_oom\n");
         s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
+        s = s.write(".Lalloc_oom:\n");
+        s = s.write("    movq $60, %rax\n");
+        s = s.write("    movq $137, %rdi\n");
+        s = s.write("    syscall\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
         // __fern_reader_read_chunk(%rdi = fd, %rsi = n) →

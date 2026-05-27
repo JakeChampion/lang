@@ -258,9 +258,14 @@ planned order:
   exhausted the self-host's 256 MiB bump heap when compiling the larger
   bundle, overflowing into the adjacent output buffer and corrupting
   emitted strings (no GC, no bounds check) — **fixed by enlarging the
-  heap to 1 GiB** (zero-page .bss, both backends). A latent fragility
-  for any future growth of the compiler; a hard bounds-check/trap is a
-  follow-up.
+  heap to 1 GiB** (zero-page .bss, both backends). The follow-up hard
+  **bounds-check/trap is now in `__fern_alloc`** (both backends): an
+  allocation that would run past the heap end traps with a clean,
+  recognisable exit code (137) instead of silently corrupting adjacent
+  .bss. The check preserves `__fern_alloc`'s original register-clobber
+  contract (only the return + size registers), so callers that hold
+  live values across the call (e.g. `to_ascii_string` keeps the byte in
+  `%rcx`) are unaffected (`self_host_alloc_trap_test.go`).
 - ✅ **Function types `(T) => R`** → higher-order functions. The
   parser consumes the `(T1, …) => R` type spelling (returning a coarse
   "fn" tag); a function referenced by name as a value lowers to a

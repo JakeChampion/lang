@@ -6394,11 +6394,12 @@ pub function emit_module(mod: parser.Module): string {
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.needs_heap) {
+        var heap_size: string = "1073741824";   // 1 GiB
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip 1073741824\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
+        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
@@ -6415,10 +6416,30 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lalloc_inited:\n");
         s = s.write("    ldr x2, [x1]\n");
         s = s.write("    add x3, x2, x0\n");
+        // Bounds check: a bump heap has no GC, so an overflow would
+        // silently run past the buffer into adjacent .bss (e.g. the
+        // strbuf output accumulator) and corrupt it. Trap with a clean,
+        // recognisable exit code (137) instead of corrupting memory.
+        // x0 is free now (size consumed into x3); x4 is saved/restored
+        // so __fern_alloc keeps its original clobber contract (x0..x3) —
+        // callers hold live values in higher registers across the call.
+        // The ldr restoring x4 doesn't disturb the cmp's flags.
+        s = s.write("    str x4, [sp, #-16]!\n");
+        s = s.write("    ldr x4, =" + heap_size + "\n");
+        s = s.write("    adrp x0, __fern_heap\n");
+        s = s.write("    add x0, x0, :lo12:__fern_heap\n");
+        s = s.write("    add x0, x0, x4\n");
+        s = s.write("    cmp x3, x0\n");
+        s = s.write("    ldr x4, [sp], #16\n");
+        s = s.write("    b.hi .Lalloc_oom\n");
         s = s.write("    str x3, [x1]\n");
         s = s.write("    mov x0, x2\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        s = s.write(".Lalloc_oom:\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    mov x0, #137\n");
+        s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
         // __fern_reader_read_chunk(x0 = fd, x1 = n) → Option[string].
