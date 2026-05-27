@@ -71,6 +71,21 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"jmp rax", "ffe0"},
 		{"repe cmpsb", "f3a6"},
 		{"rep stosq", "f348ab"},
+		// SSE scalar floats
+		{"movq xmm0, rax", "66480f6ec0"},
+		{"movq rax, xmm0", "66480f7ec0"},
+		{"movd xmm0, eax", "660f6ec0"},
+		{"addsd xmm1, xmm0", "f20f58c8"},
+		{"subsd xmm1, xmm0", "f20f5cc8"},
+		{"mulsd xmm1, xmm0", "f20f59c8"},
+		{"divsd xmm1, xmm0", "f20f5ec8"},
+		{"sqrtsd xmm0, xmm0", "f20f51c0"},
+		{"ucomisd xmm1, xmm0", "660f2ec8"},
+		{"cvtsi2sd xmm0, rax", "f2480f2ac0"},
+		{"cvtsi2sd xmm0, eax", "f20f2ac0"},
+		{"cvttsd2si rax, xmm0", "f2480f2cc0"},
+		{"cvtsd2ss xmm0, xmm1", "f20f5ac1"},
+		{"roundsd xmm0, xmm1, 0", "660f3a0bc100"},
 	}
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {

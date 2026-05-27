@@ -38,6 +38,12 @@ func parseOperand(s string) (operand, error) {
 	if r, ok := regTable[low]; ok {
 		return operand{kind: opReg, reg: r.num, size: r.size}, nil
 	}
+	if strings.HasPrefix(low, "xmm") {
+		if n, err := strconv.Atoi(low[3:]); err == nil && n >= 0 && n < 16 {
+			// SSE register; size 128 marks it as an xmm operand.
+			return operand{kind: opReg, reg: n, size: 128}, nil
+		}
+	}
 	if strings.Contains(s, "[") {
 		// All memory operands carry brackets; a size prefix ("qword ptr")
 		// only ever precedes them. (Checking for the bare substring "ptr"
