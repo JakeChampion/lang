@@ -327,11 +327,34 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	w := is32(ops[0])
+	// and/orr/eor take a logical (bitmask) immediate as the third
+	// operand; the others are register-only.
+	if strings.HasPrefix(ops[2], "#") && (mnem == "and" || mnem == "orr" || mnem == "eor") {
+		imm, err := parseImm(ops[2])
+		if err != nil {
+			return err
+		}
+		var insn uint32
+		var ok bool
+		switch mnem {
+		case "and":
+			insn, ok = ANDimm(rd, rn, uint64(imm), !w)
+		case "orr":
+			insn, ok = ORRimm(rd, rn, uint64(imm), !w)
+		case "eor":
+			insn, ok = EORimm(rd, rn, uint64(imm), !w)
+		}
+		if !ok {
+			return fmt.Errorf("%s: %s is not an encodable bitmask immediate", mnem, ops[2])
+		}
+		a.Emit(insn)
+		return nil
+	}
 	rm, err := parseReg(ops[2])
 	if err != nil {
 		return err
 	}
-	w := is32(ops[0])
 	switch mnem {
 	case "and":
 		a.Emit(clearSF(ANDreg(rd, rn, rm), w))

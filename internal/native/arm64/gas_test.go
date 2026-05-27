@@ -2,6 +2,7 @@ package arm64_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +109,31 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 				t.Fatalf("bytes differ from aarch64-linux-gnu-as:\n got  % x\n want % x", got, want)
 			}
 		})
+	}
+}
+
+// TestLogicalImmAgainstGNUAs validates the bitmask-immediate encoder
+// across a spread of patterns (runs of ones, rotations, replicated
+// elements, and the negative #-16 the backend emits for alignment) by
+// assembling `and/orr/eor x0, x0, #v` both with Assemble and with
+// aarch64-linux-gnu-as and comparing the bytes.
+func TestLogicalImmAgainstGNUAs(t *testing.T) {
+	as, objcopy := findBinutils(t)
+	vals := []int64{0xf, 0xff, 0xf0, -16, 0x3, 0x7, 0xffff, 0xfffff,
+		0x5555555555555555, -6148914691236517206 /* 0xaaaa... */, 0x6, 1, -2}
+	for _, op := range []string{"and", "orr", "eor"} {
+		for _, v := range vals {
+			src := fmt.Sprintf("\t%s x0, x0, #%d\n", op, v)
+			got, err := arm64.Assemble(src)
+			if err != nil {
+				t.Errorf("%s #%d: Assemble: %v", op, v, err)
+				continue
+			}
+			want := gnuAsText(t, as, objcopy, ".text\n"+src)
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s #%d: got % x, want % x", op, v, got, want)
+			}
+		}
 	}
 }
 
