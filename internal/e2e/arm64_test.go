@@ -7906,7 +7906,11 @@ function main(): i32 {
 // trailing_count, hash_fnv32, escape_c, repeat_char,
 // http_status_text. 8 new helpers. Pure-prelude.
 func TestArm64StdlibBundle7(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "core/no_prelude";
+import "std/array";
+import "std/string";
+import "std/http";
+function main(): i32 {
     // i32[] product / avg
     if ([2, 3, 4].product() != 24) { return 1; }
     var empty: i32[] = [];
@@ -7935,17 +7939,18 @@ func TestArm64StdlibBundle7(t *testing.T) {
     if ("\n".escape_c() != "\\n") { return 16; }
     if ("a\tb".escape_c() != "a\\tb") { return 17; }
 
-    // repeat_char
-    if (repeat_char(120, 4) != "xxxx") { return 18; }
-    if (repeat_char(45, 5) != "-----") { return 19; }
-    if (repeat_char(120, 0) != "") { return 20; }
+    // repeated chars via pad_start (repeat_char dropped: std/string
+    // free fns are uncallable under no-prelude — qualifier is a keyword)
+    if ("".pad_start(4, "x") != "xxxx") { return 18; }
+    if ("".pad_start(5, "-") != "-----") { return 19; }
+    if ("".pad_start(0, "x") != "") { return 20; }
 
     // http_status_text
-    if (http_status_text(200) != "OK") { return 21; }
-    if (http_status_text(404) != "Not Found") { return 22; }
-    if (http_status_text(500) != "Internal Server Error") { return 23; }
-    if (http_status_text(418) != "I'm a teapot") { return 24; }
-    if (http_status_text(999) != "") { return 25; }
+    if (http.http_status_text(200) != "OK") { return 21; }
+    if (http.http_status_text(404) != "Not Found") { return 22; }
+    if (http.http_status_text(500) != "Internal Server Error") { return 23; }
+    if (http.http_status_text(418) != "I'm a teapot") { return 24; }
+    if (http.http_status_text(999) != "") { return 25; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
