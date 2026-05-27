@@ -64,8 +64,10 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	})
 
 	t.Run("run_flag_native", func(t *testing.T) {
-		if qemu == "" {
-			if _, err := exec.LookPath("qemu-x86_64"); err != nil && runtime.GOARCH != "amd64" {
+		// On a native amd64 host the CLI execs directly; on a cross host it
+		// shells out to qemu-x86_64, so skip there if it's unavailable.
+		if runtime.GOARCH != "amd64" {
+			if _, err := exec.LookPath("qemu-x86_64"); err != nil {
 				t.Skip("--run on this host needs qemu-x86_64")
 			}
 		}
