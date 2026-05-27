@@ -833,11 +833,19 @@ func linkNativeX86(asm, outPath string) error {
 // the assembler handles; @PAGE/@PAGEOFF data addressing (strings, heap)
 // is not yet supported and surfaces as a clear assembler error.
 func linkNativeDarwin(asm, outPath string) error {
-	text, rodata, err := nativearm64.AssembleProgram(asm, nativemacho.TextVAddr)
+	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativemacho.StaticExecutable(text, rodata, nil, filepath.Base(outPath))
+	// Code lives in __TEXT, data (string constants + globals) in a separate
+	// __DATA segment; the assembler resolves adrp @PAGE / @PAGEOFF against
+	// the addresses the Mach-O layout will place them at.
+	textVAddr, dataVAddr := nativemacho.SegmentAddrs(a.MachOTextLen(), a.MachODataLen())
+	text, data, err := a.LinkMachO(textVAddr, dataVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	bin := nativemacho.StaticExecutable(text, data, filepath.Base(outPath))
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}

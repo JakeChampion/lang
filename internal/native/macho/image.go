@@ -30,7 +30,7 @@ func (m *image) name16(s string) {
 	m.off += 16
 }
 
-func (m *image) machHeader(hasData bool) {
+func (m *image) machHeader() {
 	m.u32(mhMagic64)
 	m.u32(cpuArm64)
 	m.u32(cpuSubAll)
@@ -73,16 +73,19 @@ func (m *image) section(sect, seg string, addr uint64, size int, offset uint32, 
 	m.u32(0) // reserved3
 }
 
-func (m *image) segmentText(vaddr, vmsize, textOff uint64, textLen int, constOff uint64, constLen int) {
-	// One __PAGEZERO must precede __TEXT.
-	m.segment("__PAGEZERO", 0, baseVAddr, 0, 0, 0, 0, 0)
-	m.segment("__TEXT", vaddr, vmsize, 0, vmsize, vmProtRead|vmProtExecute, vmProtRead|vmProtExecute, 2)
+// segmentText writes __PAGEZERO and the r-x __TEXT segment, which holds
+// the Mach-O header + load commands + the __text (code) section. textOff
+// is the file offset of code within the segment (== after the header +
+// load commands).
+func (m *image) segmentText(textOff uint64, textLen int) {
 	const (
 		sAttrPureInstrs = 0x80000000
 		sAttrSomeInstrs = 0x00000400
 	)
-	m.section("__text", "__TEXT", vaddr+textOff, textLen, uint32(textOff), 2, sAttrPureInstrs|sAttrSomeInstrs)
-	m.section("__const", "__TEXT", vaddr+constOff, constLen, uint32(constOff), 3, 0 /*S_REGULAR*/)
+	textVMSize := uint64(alignUp(int(textOff)+textLen, pageSize))
+	m.segment("__PAGEZERO", 0, baseVAddr, 0, 0, 0, 0, 0)
+	m.segment("__TEXT", baseVAddr, textVMSize, 0, textVMSize, vmProtRead|vmProtExecute, vmProtRead|vmProtExecute, 1)
+	m.section("__text", "__TEXT", baseVAddr+textOff, textLen, uint32(textOff), 2, sAttrPureInstrs|sAttrSomeInstrs)
 }
 
 func (m *image) segmentData(vaddr, vmsize, fileoff uint64, dataLen int) {
