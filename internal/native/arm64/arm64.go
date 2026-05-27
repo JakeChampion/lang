@@ -16,6 +16,8 @@
 // full ~67-mnemonic instruction surface lands.
 package arm64
 
+import "math/bits"
+
 // regMask keeps a register number in the 5-bit field range (x0-x30;
 // 31 is xzr/sp depending on context).
 const regMask uint32 = 0x1f
@@ -120,6 +122,91 @@ func ORRreg(rd, rn, rm uint32) uint32 {
 
 func EORreg(rd, rn, rm uint32) uint32 {
 	return 0xCA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// encodeBitmask computes the (N, immr, imms) logical-immediate fields
+// for imm at the given register size (32 or 64). ok is false when imm
+// is not a valid bitmask immediate — 0, all-ones, or not a rotated run
+// of ones replicated across a power-of-two element. Mirrors LLVM's
+// processLogicalImmediate; validated against aarch64-linux-gnu-as.
+func encodeBitmask(imm uint64, regSize int) (n, immr, imms uint32, ok bool) {
+	if imm == 0 || imm == ^uint64(0) ||
+		(regSize != 64 && (imm>>uint(regSize) != 0 || imm == (^uint64(0)>>(64-uint(regSize))))) {
+		return 0, 0, 0, false
+	}
+	size := regSize
+	for {
+		size /= 2
+		mask := (uint64(1) << uint(size)) - 1
+		if (imm & mask) != ((imm >> uint(size)) & mask) {
+			size *= 2
+			break
+		}
+		if size <= 2 {
+			break
+		}
+	}
+	mask := (^uint64(0)) >> (64 - uint(size))
+	imm &= mask
+	isShifted := func(v uint64) bool {
+		if v == 0 {
+			return false
+		}
+		m := (v - 1) | v
+		return ((m + 1) & m) == 0
+	}
+	var i, cto uint32
+	if isShifted(imm) {
+		ii := bits.TrailingZeros64(imm)
+		i = uint32(ii)
+		cto = uint32(bits.TrailingZeros64(^(imm >> uint(ii))))
+	} else {
+		imm |= ^mask
+		if !isShifted(^imm) {
+			return 0, 0, 0, false
+		}
+		clo := bits.LeadingZeros64(^imm)
+		i = uint32(64 - clo)
+		cto = uint32(clo) + uint32(bits.TrailingZeros64(^imm)) - uint32(64-size)
+	}
+	immr = (uint32(size) - i) & (uint32(size) - 1)
+	nimms := (^uint32(size - 1)) << 1
+	nimms |= cto - 1
+	n = ((nimms >> 6) & 1) ^ 1
+	imms = nimms & 0x3f
+	return n, immr, imms, true
+}
+
+// logicalImm builds a logical-immediate instruction from its 64-bit
+// base opcode, clearing the sf bit for the 32-bit form. ok is false
+// when imm isn't an encodable bitmask.
+func logicalImm(base64, rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
+	regSize := 32
+	if sf {
+		regSize = 64
+	}
+	n, immr, imms, ok := encodeBitmask(imm, regSize)
+	if !ok {
+		return 0, false
+	}
+	insn := base64 | (n << 22) | (immr << 16) | (imms << 10) | ((rn & regMask) << 5) | (rd & regMask)
+	if !sf {
+		insn &^= 1 << 31
+	}
+	return insn, true
+}
+
+// ANDimm / ORRimm / EORimm encode the logical-immediate ops
+// `<op> Rd, Rn, #imm`. The second return is false when imm is not an
+// encodable AArch64 bitmask immediate.
+func ANDimm(rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
+	return logicalImm(0x92000000, rd, rn, imm, sf)
+}
+func ORRimm(rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
+	return logicalImm(0xB2000000, rd, rn, imm, sf)
+}
+func EORimm(rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
+	return logicalImm(0xD2000000, rd, rn, imm, sf)
 }
 
 // LSLV / LSRV / ASRV encode the 64-bit variable (register) shifts
