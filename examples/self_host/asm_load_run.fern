@@ -44,8 +44,9 @@ function module_name(import_path: string): string {
     return import_path;
 }
 
-// is_local is true for `./…` / `../…` imports (loaded from disk),
-// false for `core/…` / `std/…` (skipped — provided by builtins).
+// is_local is true for `./…` / `../…` imports (loaded from the entry's
+// directory), false for `core/…` / `std/…` (resolved under the stdlib
+// root, when one is configured).
 function is_local(import_path: string): boolean {
     if (import_path.len() == 0) { return false; }
     return import_path[0] == 46;   // '.'
@@ -66,29 +67,58 @@ function contains_name(xs: string[], n: string): boolean {
     return false;
 }
 
-// add_local_imports appends each of mod's local import names to names
-// (deduped), returning the grown list.
-function add_local_imports(names: string[], mod: parser.Module): string[] {
+// should_load decides whether an import path names a module file to
+// load. Local (`./…`) imports always load (from the entry's dir).
+// `std/…` / `core/…` imports load only when a stdlib root is given;
+// `core/no_prelude` is a directive, not a module file, so it's never
+// loaded. With no root the std/core paths are skipped — identical to
+// the pre-stdlib-root behaviour.
+function should_load(import_path: string, root: string): boolean {
+    if (import_path.len() == 0) { return false; }
+    if (is_local(import_path)) { return true; }
+    if (root.len() == 0) { return false; }
+    if (import_path == "core/no_prelude") { return false; }
+    return true;
+}
+
+// resolve_path maps an import path to a file on disk. Local imports
+// resolve to `<entry_dir>/<name>.fern`; std/core imports resolve to
+// `<root>/<import_path>.fern` (e.g. `std/math` → `<root>/std/math.fern`).
+function resolve_path(import_path: string, entry_dir: string, root: string): string {
+    if (is_local(import_path)) {
+        return join_path(entry_dir, module_name(import_path));
+    }
+    return root + "/" + import_path + ".fern";
+}
+
+// add_imports appends each of mod's loadable import paths to paths
+// (deduped by full path), returning the grown list.
+function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (is_local(ip)) {
-            var nm: string = module_name(ip);
-            if (!contains_name(names, nm)) { names = names.push(nm); }
+        if (should_load(ip, root) && !contains_name(paths, ip)) {
+            paths = paths.push(ip);
         }
         i = i + 1;
     }
-    return names;
+    return paths;
 }
 
 function main(): i32 {
     var av: string[] = args();
     if (av.len() < 2) {
-        eprint("usage: asm_load_run <entry.fern>\n");
+        eprint("usage: asm_load_run <entry.fern> [stdlib-root]\n");
         return 2;
     }
     var entry_path: string = av[1];
     var dir: string = dir_of(entry_path);
+    // Optional stdlib root: when given, `std/…` / `core/…` imports are
+    // resolved under it (`<root>/std/foo.fern`). Without it those
+    // imports are skipped (the entry must be self-contained over local
+    // modules + builtins).
+    var root: string = "";
+    if (av.len() >= 3) { root = av[2]; }
 
     var esrc: string = "";
     var eok: boolean = false;
@@ -102,18 +132,20 @@ function main(): i32 {
     }
     var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
-    // Worklist of module names to load (seeded from the entry's
+    // Worklist of import PATHS to load (seeded from the entry's
     // imports, grown as each loaded module's imports are discovered).
-    var names: string[] = add_local_imports([], entry_mod);
+    // Tracking the full path — not just the basename — lets std/core
+    // paths resolve under the stdlib root.
+    var paths: string[] = add_imports([], entry_mod, root);
     var loaded: flatten.LoadedModule[] = [];
     var done: string[] = [];
     var j: i32 = 0;
-    while (j < names.len()) {
-        var name: string = names[j];
+    while (j < paths.len()) {
+        var ipath: string = paths[j];
         j = j + 1;
-        if (!contains_name(done, name)) {
-            done = done.push(name);
-            var mpath: string = join_path(dir, name);
+        if (!contains_name(done, ipath)) {
+            done = done.push(ipath);
+            var mpath: string = resolve_path(ipath, dir, root);
             var msrc: string = "";
             var mok: boolean = false;
             match (read_file(mpath)) {
@@ -127,8 +159,8 @@ function main(): i32 {
                 return 1;
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.push(flatten.LoadedModule { name: name, mod: m });
-            names = add_local_imports(names, m);
+            loaded = loaded.push(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            paths = add_imports(paths, m, root);
         }
     }
 
