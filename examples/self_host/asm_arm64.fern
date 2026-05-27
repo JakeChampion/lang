@@ -1620,6 +1620,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     }
                     if (id.name == "Err" && c.args.len() == 1) { return "result:unknown"; }
                     if (id.name == "read_file") { return "result:string"; }
+                    if (id.name == "write_file") { return "option:unknown"; }
                     if (id.name == "len") { return "i32"; }
                     if (id.name == "read_int") { return "i32"; }
                     if (id.name == "read_line") { return "string"; }
@@ -3972,6 +3973,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_read_file\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // write_file(path, content) — write content to the named
+            // file. Returns Option[IoError]: None ok, Some(_) on error.
+            if (name == "write_file" && c.args.len() == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");   // content box
+                s = s.write("    ldr x0, [sp], #16\n");   // path box
+                s = s.write("    bl __fern_write_file\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
                 return s;
@@ -7049,6 +7062,89 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_read_file, .-__fern_read_file\n");
+
+        // __fern_write_file(x0 = path box, x1 = content box) →
+        // Option[IoError]: tag=1 None on success, tag=0 Some(_) on any
+        // I/O error (payload 0, like __fern_read_file's Err). NUL-
+        // terminates the path, openat(AT_FDCWD, O_WRONLY|O_CREAT|
+        // O_TRUNC=577, 0644), writes the content bytes, closes. Linux
+        // arm64: openat=56, write=64, close=57.
+        s = s.write(".globl __fern_write_file\n");
+        s = s.write(".type __fern_write_file, %function\n");
+        s = s.write("__fern_write_file:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    ldr x19, [x1]\n");          // content data ptr
+        s = s.write("    ldr x20, [x1, #8]\n");       // content len
+        s = s.write("    ldr x21, [x0]\n");          // path data ptr
+        s = s.write("    ldr x22, [x0, #8]\n");       // path len
+        s = s.write("    add x0, x22, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x23, x0\n");            // pathz
+        s = s.write("    mov x9, #0\n");
+        s = s.write(".Lwf_copy:\n");
+        s = s.write("    cmp x9, x22\n");
+        s = s.write("    b.ge .Lwf_copydone\n");
+        s = s.write("    ldrb w10, [x21, x9]\n");
+        s = s.write("    strb w10, [x23, x9]\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lwf_copy\n");
+        s = s.write(".Lwf_copydone:\n");
+        s = s.write("    mov w10, #0\n");
+        s = s.write("    strb w10, [x23, x22]\n");   // NUL terminator
+        // openat(AT_FDCWD=-100, pathz, O_WRONLY|O_CREAT|O_TRUNC=577, 0644=420)
+        s = s.write("    mov x0, #-100\n");
+        s = s.write("    mov x1, x23\n");
+        s = s.write("    mov x2, #577\n");
+        s = s.write("    mov x3, #420\n");
+        s = s.write("    mov x8, #56\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Lwf_err\n");
+        s = s.write("    mov x23, x0\n");            // fd (pathz no longer needed)
+        s = s.write("    mov x24, #0\n");            // bytes written
+        s = s.write(".Lwf_loop:\n");
+        s = s.write("    cmp x24, x20\n");
+        s = s.write("    b.ge .Lwf_done\n");
+        s = s.write("    mov x0, x23\n");            // fd
+        s = s.write("    add x1, x19, x24\n");       // content data + written
+        s = s.write("    sub x2, x20, x24\n");       // remaining
+        s = s.write("    mov x8, #64\n");            // write
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Lwf_err_close\n");
+        s = s.write("    add x24, x24, x0\n");
+        s = s.write("    b .Lwf_loop\n");
+        s = s.write(".Lwf_done:\n");
+        s = s.write("    mov x0, x23\n");
+        s = s.write("    mov x8, #57\n");            // close
+        s = s.write("    svc #0\n");
+        s = s.write("    mov x0, #16\n");            // None box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");           // tag = None
+        s = s.write("    b .Lwf_ret\n");
+        s = s.write(".Lwf_err_close:\n");
+        s = s.write("    mov x0, x23\n");
+        s = s.write("    mov x8, #57\n");            // close, ignore result
+        s = s.write("    svc #0\n");
+        s = s.write(".Lwf_err:\n");
+        s = s.write("    mov x0, #16\n");            // Some box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0]\n");           // tag = Some
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0, #8]\n");        // payload 0
+        s = s.write(".Lwf_ret:\n");
+        s = s.write("    ldp x23, x24, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_write_file, .-__fern_write_file\n");
 
         // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
         // 8-byte slots, returned base+8). Elements start zero (.bss).
