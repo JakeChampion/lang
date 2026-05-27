@@ -8851,7 +8851,9 @@ func TestArm64MapGetMatch(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"some_branch", `function main(): i32 {
+		{"some_branch", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(7, 42);
     match (m.get(7)) {
@@ -8860,7 +8862,9 @@ func TestArm64MapGetMatch(t *testing.T) {
     }
     return 1;
 }`, 42},
-		{"none_branch", `function main(): i32 {
+		{"none_branch", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     match (m.get(7)) {
         Some(v) => { return 99; },
@@ -8868,7 +8872,9 @@ func TestArm64MapGetMatch(t *testing.T) {
     }
     return 1;
 }`, 0},
-		{"string_key", `function main(): i32 {
+		{"string_key", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("hello", 42);
     match (m.get("hello")) {
@@ -8967,13 +8973,17 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `function main(): i32 {
+		{"to_string_round_trip", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 1234567890123;
     var s: string = n.to_string();
     if (s == "1234567890123") { return 0; }
     return 1;
 }`, 0},
-		{"i64_max_to_string", `function main(): i32 {
+		{"i64_max_to_string", `import "core/no_prelude";
+import "std/i64";
+function main(): i32 {
     var n: i64 = 9223372036854775807;
     var s: string = n.to_string();
     if (s == "9223372036854775807") { return 0; }
@@ -10626,8 +10636,10 @@ func TestArm64TcpListen(t *testing.T) {
 // arm64 (Linux); Darwin gets caught by the pre-scan
 // "not-yet-ported" guard.
 func TestArm64InstantNow(t *testing.T) {
-	_, code := compileAndRunArm64(t, `function main(): i32 {
-    var ts: Instant = instant_now();
+	_, code := compileAndRunArm64(t, `import "core/no_prelude";
+import "std/time";
+function main(): i32 {
+    var ts: Instant = time.instant_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;
@@ -10677,9 +10689,15 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
-	prog, err := parser.Parse(src)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	// modload (not bare parser.Parse) so std/http + std/tcp resolve.
+	prog, _, err := modload.Load(srcPath)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("modload: %v", err)
 	}
 	if err := constfold.Fold(prog); err != nil {
 		t.Fatalf("constfold: %v", err)
@@ -10701,7 +10719,6 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatalf("emit: %v", err)
 	}
 
-	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
 	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
@@ -11928,12 +11945,16 @@ func TestArm64FStringInterpolation(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"interpolated i32", `function main(): i32 {
+		{"interpolated i32", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
     return s.len();
 }`, 7},
-		{"interpolated string", `function main(): i32 {
+		{"interpolated string", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var who: string = "world";
     var s: string = f"hello, {who}!";
     return s.len();
@@ -12071,32 +12092,44 @@ func TestArm64WideScalarMap(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"Map[i64, i32]", `function main(): i32 {
+		{"Map[i64, i32]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
-		{"Map[i32, f64]", `function main(): i32 {
+		{"Map[i32, f64]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
     m.set(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
-		{"Map[i64, string]", `function main(): i32 {
+		{"Map[i64, string]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m.set(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
-		{"Map[string, i64]", `function main(): i32 {
+		{"Map[string, i64]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i64] = map_new(4);
     m.set("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
-		{"Map[u64, i32]", `function main(): i32 {
+		{"Map[u64, i32]", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
     m.set(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
-		{"distinct high-bit i64 keys", `function main(): i32 {
+		{"distinct high-bit i64 keys", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
     var k1: i64 = 0i64;
     var k2: i64 = 1i64 << 33i64;
@@ -12114,7 +12147,9 @@ func TestArm64WideScalarMap(t *testing.T) {
 		// result. Without it, every key gets its upper 32 bits
 		// dropped — distinct high-bit keys collide into the same
 		// snapshot value.
-		{"keys() preserves 8-byte values", `function main(): i32 {
+		{"keys() preserves 8-byte values", `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m.set(1i64, 10);
     m.set(1000000000000i64, 20);
