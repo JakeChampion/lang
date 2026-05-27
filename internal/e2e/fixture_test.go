@@ -61,6 +61,8 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
 
 type fixtureSpec struct {
@@ -288,7 +290,22 @@ func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	if err != nil {
 		t.Fatalf("x86_64 emit: %v", err)
 	}
-	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib", "-no-pie")
+	var bin string
+	// FERN_NATIVE_ASM=1 routes the assemble+link step through the pure-Go
+	// x86-64 native backend instead of gcc — used to audit native coverage
+	// across the fixture suite. Default (unset) keeps the gcc path.
+	if os.Getenv("FERN_NATIVE_ASM") != "" {
+		text, rodata, aerr := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
+		if aerr != nil {
+			t.Fatalf("NATIVE-ASM-FAIL: %v", aerr)
+		}
+		bin = filepath.Join(t.TempDir(), "prog")
+		if werr := os.WriteFile(bin, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); werr != nil {
+			t.Fatalf("write native bin: %v", werr)
+		}
+	} else {
+		bin = linkAsm(t, gcc, asm, "-static", "-nostdlib", "-no-pie")
+	}
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(bin)

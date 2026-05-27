@@ -6,10 +6,13 @@
 // executable via internal/native/elf.StaticExecutableDataX86 — no
 // external assembler or linker.
 //
-// Phase 1 covers the integer / control-flow / call surface (enough to
-// assemble and run recursion + arithmetic + comparisons end to end).
-// SSE scalar floats, x87 transcendentals, string ops (rep movs/stos)
-// and rip-relative data addressing are later phases; an unsupported
+// Covered so far: the integer / control-flow / call surface, plus
+// .rodata/.bss data, rip-relative addressing (to data and function
+// symbols), .quad symbol pointer tables, indirect call/jmp, and the
+// rep string ops (movs/stos/cmps) — enough to assemble and run the
+// whole non-floating-point fixture corpus (recursion, strings, maps,
+// closures/higher-order functions, json, enums). SSE scalar floats and
+// x87 transcendentals are the remaining phase; an unsupported
 // instruction surfaces as a clear error rather than a miscompile.
 package x86_64
 
@@ -31,8 +34,10 @@ type operand struct {
 	reg  int   // register number 0..15
 	size int   // operand size in bits: 8, 16, 32, 64
 	imm  int64 // immediate value
-	// memory operand [base + disp] (no scaled index in phase 1):
-	base    int // base register number, or -1
+	// memory operand [base + index*scale + disp]:
+	base    int // base register number, or -1 if none
+	index   int // index register number, or -1 if none
+	scale   int // 1, 2, 4, or 8
 	disp    int64
 	memSize int // access size in bits from a "qword ptr" prefix, or 0 if unspecified
 	sym     string
@@ -43,6 +48,13 @@ type relFixup struct {
 	sym string // target text label
 }
 
+// ripFixup records a rip-relative disp32 field (lea/mov [rip+sym]) to be
+// resolved against a .rodata label once the section layout is final.
+type ripFixup struct {
+	at  int
+	sym string
+}
+
 // Assembler accumulates encoded machine code and resolves text-label
 // branch/call targets in a final pass.
 type Assembler struct {
@@ -51,6 +63,16 @@ type Assembler struct {
 	textLabels   map[string]int
 	rodataLabels map[string]int
 	relFixups    []relFixup
+	ripFixups    []ripFixup
+	quadSyms     []quadSymFixup
+}
+
+// quadSymFixup records a ".quad <symbol>" slot in .rodata (a function- or
+// data-pointer table entry) to be filled with the symbol's absolute
+// virtual address once layout is final.
+type quadSymFixup struct {
+	at  int // offset in rodata
+	sym string
 }
 
 func newAssembler() *Assembler {
@@ -87,6 +109,7 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 			}
 			line = strings.TrimSpace(rest)
 		}
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
@@ -111,23 +134,65 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 			return nil, nil, fmt.Errorf("undefined label %q", f.sym)
 		}
 		rel := int32(dst - (f.at + 4))
-		a.text[f.at] = byte(rel)
-		a.text[f.at+1] = byte(rel >> 8)
-		a.text[f.at+2] = byte(rel >> 16)
-		a.text[f.at+3] = byte(rel >> 24)
+		putLE32(a.text, f.at, uint32(rel))
+	}
+	// Resolve rip-relative data references. StaticExecutableDataX86 pads
+	// .text to 8 bytes and appends .rodata, so .rodata begins at
+	// align8(len(text)) within the segment; the textVAddr base cancels
+	// in (symVAddr - ripEnd), leaving a layout-only computation.
+	rodataBase := align8(len(a.text))
+	for _, f := range a.ripFixups {
+		var symOff int
+		if off, ok := a.rodataLabels[f.sym]; ok {
+			symOff = rodataBase + off
+		} else if off, ok := a.textLabels[f.sym]; ok {
+			symOff = off // text symbol: a function address (e.g. a closure body)
+		} else {
+			return nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
+		}
+		disp := int32(symOff - (f.at + 4))
+		putLE32(a.text, f.at, uint32(disp))
+	}
+	// Fill ".quad <symbol>" pointer-table slots with absolute addresses.
+	rodataVAddr := textVAddr + uint64(rodataBase)
+	for _, f := range a.quadSyms {
+		var abs uint64
+		if off, ok := a.textLabels[f.sym]; ok {
+			abs = textVAddr + uint64(off)
+		} else if off, ok := a.rodataLabels[f.sym]; ok {
+			abs = rodataVAddr + uint64(off)
+		} else {
+			return nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
+		}
+		for i := 0; i < 8; i++ {
+			a.rodata[f.at+i] = byte(abs >> (8 * i))
+		}
 	}
 	return a.text, a.rodata, nil
 }
+
+func putLE32(b []byte, at int, v uint32) {
+	b[at] = byte(v)
+	b[at+1] = byte(v >> 8)
+	b[at+2] = byte(v >> 16)
+	b[at+3] = byte(v >> 24)
+}
+
+func align8(n int) int { return (n + 7) &^ 7 }
 
 // directive handles section switches and the no-op metadata directives
 // the code generator emits. Returns the section in effect afterwards.
 func (a *Assembler) directive(line, sec string) (string, error) {
 	fields := strings.Fields(line)
-	switch fields[0] {
+	d := fields[0]
+	switch d {
 	case ".text":
 		return "text", nil
-	case ".intel_syntax", ".globl", ".global", ".type", ".size", ".p2align", ".align", ".balign", ".file", ".ident":
-		return sec, nil
+	case ".rodata", ".bss", ".data":
+		// .bss / .data are zero-/value-initialised writable globals
+		// (allocator cursors, freelist). The single program segment is
+		// mapped R+W+X, so they live in the same blob as .rodata.
+		return "rodata", nil
 	case ".section":
 		arg := ""
 		if len(fields) > 1 {
@@ -136,18 +201,27 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 		switch {
 		case strings.Contains(arg, ".text"):
 			return "text", nil
-		case strings.Contains(arg, ".rodata"):
+		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"), strings.Contains(arg, ".data"):
 			return "rodata", nil
 		default:
 			return "ignore", nil // e.g. .note.GNU-stack
 		}
-	case ".rodata":
-		return "rodata", nil
+	case ".intel_syntax", ".globl", ".global", ".type", ".size", ".file", ".ident":
+		return sec, nil
 	}
 	if sec == "ignore" {
 		return "ignore", nil
 	}
-	return sec, fmt.Errorf("unsupported directive %q", fields[0])
+	if sec == "rodata" {
+		return "rodata", a.appendRodataDirective(d, strings.TrimSpace(strings.TrimPrefix(line, d)))
+	}
+	// In .text, alignment directives are advisory for this flat,
+	// single-segment layout (correctness doesn't depend on padding).
+	switch d {
+	case ".align", ".balign", ".p2align":
+		return "text", nil
+	}
+	return sec, fmt.Errorf("unsupported directive %q", d)
 }
 
 // insn parses and encodes one .text instruction.
@@ -177,6 +251,42 @@ func (a *Assembler) insn(line string) error {
 		return nil
 	case "cld":
 		a.emit(0xFC)
+		return nil
+	case "rep", "repe", "repz":
+		a.emit(0xF3)
+		return a.insn(rest)
+	case "repne", "repnz":
+		a.emit(0xF2)
+		return a.insn(rest)
+	case "movsb":
+		a.emit(0xA4)
+		return nil
+	case "movsw":
+		a.emit(0x66, 0xA5)
+		return nil
+	case "movsq":
+		a.emit(0x48, 0xA5)
+		return nil
+	case "stosb":
+		a.emit(0xAA)
+		return nil
+	case "stosw":
+		a.emit(0x66, 0xAB)
+		return nil
+	case "stosq":
+		a.emit(0x48, 0xAB)
+		return nil
+	case "cmpsb":
+		a.emit(0xA6)
+		return nil
+	case "cmpsq":
+		a.emit(0x48, 0xA7)
+		return nil
+	case "scasb":
+		a.emit(0xAE)
+		return nil
+	case "lodsb":
+		a.emit(0xAC)
 		return nil
 	case "push":
 		return a.pushPop(ops, 0x50)
@@ -270,21 +380,86 @@ func modrmReg(reg, rm int) byte {
 // a memory operand addressed as [base + disp], with the given ModRM.reg
 // field value.
 func (a *Assembler) encodeMem(regField int, m operand) {
-	base := m.base
-	mod, dispBytes := memMod(m)
-	switch base & 7 {
-	case 4: // rsp / r12: ModRM.rm=100 means a SIB byte follows
-		a.emit(byte(mod<<6) | byte((regField&7)<<3) | 4)
-		a.emit(0x24) // SIB: scale=0, index=100 (none), base=rsp/r12
-	default:
-		a.emit(byte(mod<<6) | byte((regField&7)<<3) | byte(base&7))
+	if m.base < 0 && m.sym != "" {
+		// rip-relative: ModRM mod=00, rm=101 means [rip + disp32].
+		a.emit(byte((regField&7)<<3) | 5)
+		a.ripFixups = append(a.ripFixups, ripFixup{at: len(a.text), sym: m.sym})
+		a.emit32(0)
+		return
 	}
+	if m.index >= 0 || (m.base&7) == 4 {
+		a.encodeMemSIB(regField, m)
+		return
+	}
+	mod, dispBytes := memMod(m)
+	a.emit(byte(mod<<6) | byte((regField&7)<<3) | byte(m.base&7))
+	a.emitDisp(dispBytes, m.disp)
+}
+
+// encodeMemSIB emits a ModRM (rm=100) + SIB byte for [base + index*scale +
+// disp] and the displacement. Used whenever there is an index register, or
+// the base is rsp/r12 (whose rm=100 encoding mandates a SIB byte).
+func (a *Assembler) encodeMemSIB(regField int, m operand) {
+	index := m.index
+	if index < 0 {
+		index = 4 // SIB index=100 means "no index"
+	}
+	var mod, dispBytes int
+	var baseField int
+	if m.base < 0 {
+		// index-only: SIB base=101 with mod=00 means a disp32 and no base.
+		mod, dispBytes, baseField = 0, 4, 5
+	} else {
+		mod, dispBytes = memMod(m)
+		baseField = m.base & 7
+	}
+	a.emit(byte(mod<<6) | byte((regField&7)<<3) | 4)
+	a.emit(byte(scaleBits(m.scale)<<6) | byte((index&7)<<3) | byte(baseField&7))
+	a.emitDisp(dispBytes, m.disp)
+}
+
+func (a *Assembler) emitDisp(dispBytes int, disp int64) {
 	switch dispBytes {
 	case 1:
-		a.emit(byte(m.disp))
+		a.emit(byte(disp))
 	case 4:
-		a.emit32(uint32(m.disp))
+		a.emit32(uint32(disp))
 	}
+}
+
+func scaleBits(scale int) int {
+	switch scale {
+	case 2:
+		return 1
+	case 4:
+		return 2
+	case 8:
+		return 3
+	default:
+		return 0 // scale 1 (or unset)
+	}
+}
+
+// memRex computes the REX prefix for an instruction with a memory operand,
+// accounting for base and index register extensions (REX.B / REX.X).
+func memRex(w bool, reg int, m operand) byte {
+	var r byte
+	if w {
+		r |= 0x08
+	}
+	if reg >= 8 {
+		r |= 0x04
+	}
+	if m.index >= 8 {
+		r |= 0x02
+	}
+	if m.base >= 8 {
+		r |= 0x01
+	}
+	if r != 0 {
+		return 0x40 | r
+	}
+	return 0
 }
 
 // memMod picks the ModRM mod field and displacement width for [base+disp].
@@ -355,13 +530,13 @@ func (a *Assembler) mov(ops []operand, abs bool) error {
 	case dst.kind == opMem && src.kind == opImm:
 		w := dst.memSize == 64
 		if w {
-			a.emit(rexFor(true, 0, dst.base, false))
-		} else if rex := rexFor(false, 0, dst.base, false); rex != 0 {
+			a.emit(memRex(true, 0, dst))
+		} else if rex := memRex(false, 0, dst); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0xC7)
 		a.encodeMem(0, dst)
-		a.emit32(uint32(dst.imm))
+		a.emit32(uint32(src.imm))
 		return nil
 	}
 	return fmt.Errorf("unsupported mov form")
@@ -389,7 +564,7 @@ func (a *Assembler) memReg(opBase byte, reg, mem operand) error {
 	if reg.size != 8 {
 		op |= 1
 	}
-	if rex := rexFor(w, reg.reg, mem.base, false); rex != 0 {
+	if rex := memRex(w, reg.reg, mem); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(op)
@@ -403,7 +578,7 @@ func (a *Assembler) regMem(opBase byte, reg, mem operand) error {
 	if reg.size != 8 {
 		op |= 1
 	}
-	if rex := rexFor(w, reg.reg, mem.base, false); rex != 0 {
+	if rex := memRex(w, reg.reg, mem); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(op)
@@ -446,7 +621,7 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 	case dst.kind == opMem && src.kind == opImm:
 		w := dst.memSize == 64
 		if fitsInt8(src.imm) {
-			if rex := rexFor(w, 0, dst.base, false); rex != 0 {
+			if rex := memRex(w, 0, dst); rex != 0 {
 				a.emit(rex)
 			}
 			a.emit(0x83)
@@ -454,25 +629,51 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 			a.emit(byte(src.imm))
 			return nil
 		}
-		if rex := rexFor(w, 0, dst.base, false); rex != 0 {
+		if rex := memRex(w, 0, dst); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0x81)
 		a.encodeMem(ext, dst)
-		a.emit32(uint32(dst.imm))
+		a.emit32(uint32(src.imm))
 		return nil
 	}
 	return fmt.Errorf("unsupported binary-op form")
 }
 
 func (a *Assembler) test(ops []operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[1].kind != opReg {
-		return fmt.Errorf("test expects reg, reg")
+	if len(ops) != 2 || ops[0].kind != opReg {
+		return fmt.Errorf("test expects a register destination")
 	}
-	return a.rmReg(0x84, ops[0], ops[1])
+	if ops[1].kind == opReg {
+		return a.rmReg(0x84, ops[0], ops[1])
+	}
+	if ops[1].kind == opImm {
+		o := ops[0]
+		w := o.size == 64
+		if o.size == 8 {
+			if rex := rexFor(false, 0, o.reg, o.reg >= 4); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0xF6)
+			a.emit(modrmReg(0, o.reg))
+			a.emit(byte(ops[1].imm))
+			return nil
+		}
+		if rex := rexFor(w, 0, o.reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0xF7)
+		a.emit(modrmReg(0, o.reg))
+		a.emit32(uint32(ops[1].imm))
+		return nil
+	}
+	return fmt.Errorf("unsupported test form")
 }
 
 func (a *Assembler) imul(ops []operand) error {
+	if len(ops) == 3 { // imul r, r/m, imm
+		return a.imul3(ops)
+	}
 	if len(ops) != 2 || ops[0].kind != opReg {
 		return fmt.Errorf("imul expects reg, r/m")
 	}
@@ -487,7 +688,7 @@ func (a *Assembler) imul(ops []operand) error {
 		return nil
 	}
 	if ops[1].kind == opMem {
-		if rex := rexFor(w, dst.reg, ops[1].base, false); rex != 0 {
+		if rex := memRex(w, dst.reg, ops[1]); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0x0F, 0xAF)
@@ -495,6 +696,42 @@ func (a *Assembler) imul(ops []operand) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported imul form")
+}
+
+// imul3 encodes the three-operand "imul reg, r/m, imm" (multiply by a
+// constant): 0x6B /r ib for an imm8, else 0x69 /r id.
+func (a *Assembler) imul3(ops []operand) error {
+	dst, src, imm := ops[0], ops[1], ops[2]
+	if dst.kind != opReg || imm.kind != opImm || (src.kind != opReg && src.kind != opMem) {
+		return fmt.Errorf("imul reg, r/m, imm: bad operands")
+	}
+	w := dst.size == 64
+	short := fitsInt8(imm.imm)
+	var rex byte
+	if src.kind == opMem {
+		rex = memRex(w, dst.reg, src)
+	} else {
+		rex = rexFor(w, dst.reg, src.reg, false)
+	}
+	if rex != 0 {
+		a.emit(rex)
+	}
+	if short {
+		a.emit(0x6B)
+	} else {
+		a.emit(0x69)
+	}
+	if src.kind == opReg {
+		a.emit(modrmReg(dst.reg, src.reg))
+	} else {
+		a.encodeMem(dst.reg, src)
+	}
+	if short {
+		a.emit(byte(imm.imm))
+	} else {
+		a.emit32(uint32(imm.imm))
+	}
+	return nil
 }
 
 // unaryF7 encodes the F7-group one-operand ops (idiv /7, div /6, neg /3).
@@ -514,7 +751,7 @@ func (a *Assembler) unaryF7(ops []operand, ext int) error {
 	}
 	if o.kind == opMem {
 		w := o.memSize == 64
-		if rex := rexFor(w, 0, o.base, false); rex != 0 {
+		if rex := memRex(w, 0, o); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0xF7)
@@ -573,12 +810,9 @@ func (a *Assembler) lea(ops []operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[1].kind != opMem {
 		return fmt.Errorf("lea expects reg, mem")
 	}
-	if ops[1].sym != "" {
-		return fmt.Errorf("rip-relative lea (data addressing) is a later phase")
-	}
 	dst := ops[0]
 	w := dst.size == 64
-	if rex := rexFor(w, dst.reg, ops[1].base, false); rex != 0 {
+	if rex := memRex(w, dst.reg, ops[1]); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(0x8D)
@@ -586,38 +820,68 @@ func (a *Assembler) lea(ops []operand) error {
 	return nil
 }
 
-// movzx / movsx from an 8- or 16-bit source (and movsxd from 32-bit).
+// movzx / movsx from an 8- or 16-bit source (and movsxd from 32-bit),
+// where the source is a register or a memory operand.
 func (a *Assembler) movzx(ops []operand, signed bool) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[1].kind != opReg {
-		return fmt.Errorf("movzx/movsx expects reg, reg")
+	if len(ops) != 2 || ops[0].kind != opReg {
+		return fmt.Errorf("movzx/movsx expects a register destination")
 	}
 	dst, src := ops[0], ops[1]
 	w := dst.size == 64
-	if src.size == 32 && signed { // movsxd r64, r/m32
-		a.emit(rexFor(true, dst.reg, src.reg, false))
+	srcSize := src.size
+	if src.kind == opMem {
+		srcSize = src.memSize
+	} else if src.kind != opReg {
+		return fmt.Errorf("movzx/movsx source must be a register or memory")
+	}
+	emitRM := func() {
+		if src.kind == opReg {
+			a.emit(modrmReg(dst.reg, src.reg))
+		} else {
+			a.encodeMem(dst.reg, src)
+		}
+	}
+	rexB8 := src.kind == opReg && byteRegNeedsRex(srcSize, dst.reg, src.reg)
+	var rex byte
+	if src.kind == opMem {
+		rex = memRex(w, dst.reg, src)
+	} else {
+		rex = rexFor(w, dst.reg, src.reg, rexB8)
+	}
+	if srcSize == 32 && signed { // movsxd r64, r/m32
+		a.emit(memRexOrW(rex))
 		a.emit(0x63)
-		a.emit(modrmReg(dst.reg, src.reg))
+		emitRM()
 		return nil
 	}
 	var op2 byte
 	switch {
-	case src.size == 8 && !signed:
+	case srcSize == 8 && !signed:
 		op2 = 0xB6
-	case src.size == 16 && !signed:
+	case srcSize == 16 && !signed:
 		op2 = 0xB7
-	case src.size == 8 && signed:
+	case srcSize == 8 && signed:
 		op2 = 0xBE
-	case src.size == 16 && signed:
+	case srcSize == 16 && signed:
 		op2 = 0xBF
 	default:
 		return fmt.Errorf("unsupported movzx/movsx widths")
 	}
-	if rex := rexFor(w, dst.reg, src.reg, byteRegNeedsRex(src.size, dst.reg, src.reg)); rex != 0 {
+	if rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(0x0F, op2)
-	a.emit(modrmReg(dst.reg, src.reg))
+	emitRM()
 	return nil
+}
+
+// memRexOrW ensures a REX byte is present (movsxd is always 64-bit, so
+// REX.W must be set even if no extension bits are).
+func memRexOrW(rex byte) byte {
+	if rex == 0 {
+		return 0x48
+	}
+	return rex | 0x08
 }
 
 func (a *Assembler) xchg(ops []operand) error {
@@ -641,8 +905,14 @@ func (a *Assembler) setcc(ops []operand, cc byte) error {
 }
 
 func (a *Assembler) jmp(ops []operand) error {
-	if len(ops) != 1 || ops[0].kind != opLabel {
-		return fmt.Errorf("jmp expects a label")
+	if len(ops) != 1 {
+		return fmt.Errorf("jmp expects one operand")
+	}
+	if ops[0].kind == opReg { // indirect: FF /4
+		return a.indirectCallJmp(ops[0], 4)
+	}
+	if ops[0].kind != opLabel {
+		return fmt.Errorf("jmp expects a label or register")
 	}
 	a.emit(0xE9)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
@@ -651,12 +921,29 @@ func (a *Assembler) jmp(ops []operand) error {
 }
 
 func (a *Assembler) call(ops []operand) error {
-	if len(ops) != 1 || ops[0].kind != opLabel {
-		return fmt.Errorf("call expects a label")
+	if len(ops) != 1 {
+		return fmt.Errorf("call expects one operand")
+	}
+	if ops[0].kind == opReg { // indirect: FF /2
+		return a.indirectCallJmp(ops[0], 2)
+	}
+	if ops[0].kind != opLabel {
+		return fmt.Errorf("call expects a label or register")
 	}
 	a.emit(0xE8)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)
+	return nil
+}
+
+// indirectCallJmp encodes "call/jmp reg" (FF /2 and FF /4). The operand
+// size is fixed at 64-bit, so only REX.B (for r8..r15) is ever needed.
+func (a *Assembler) indirectCallJmp(o operand, ext int) error {
+	if o.reg >= 8 {
+		a.emit(0x41) // REX.B
+	}
+	a.emit(0xFF)
+	a.emit(modrmReg(ext, o.reg))
 	return nil
 }
 

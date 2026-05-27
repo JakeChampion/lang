@@ -55,6 +55,22 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"sar rax, 1", "48d1f8"},
 		{"shl rax, 3", "48c1e003"},
 		{"movabs rax, 4294967296", "48b80000000001000000"},
+		// store-immediate-to-memory: the immediate is the *source*
+		// operand (regression guard — it was wrongly read from the dest).
+		{"mov dword ptr [rax], 1", "c70001000000"},
+		{"mov dword ptr [rax], 2147483648", "c70000000080"},
+		{"mov dword ptr [rax-8], 1", "c740f801000000"},
+		{"mov qword ptr [rbp-8], 5", "48c745f805000000"},
+		{"add dword ptr [rax], 100", "830064"},
+		{"and dword ptr [rax], 305419896", "812078563412"},
+		{"test edi, 1", "f7c701000000"},
+		{"movzx eax, byte ptr [rax]", "0fb600"},
+		{"imul rcx, rcx, 20", "486bc914"},
+		{"imul eax, eax, 1000", "69c0e8030000"},
+		{"call r11", "41ffd3"},
+		{"jmp rax", "ffe0"},
+		{"repe cmpsb", "f3a6"},
+		{"rep stosq", "f348ab"},
 	}
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {

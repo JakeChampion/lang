@@ -38,7 +38,10 @@ func parseOperand(s string) (operand, error) {
 	if r, ok := regTable[low]; ok {
 		return operand{kind: opReg, reg: r.num, size: r.size}, nil
 	}
-	if strings.HasPrefix(s, "[") || strings.Contains(low, "ptr") {
+	if strings.Contains(s, "[") {
+		// All memory operands carry brackets; a size prefix ("qword ptr")
+		// only ever precedes them. (Checking for the bare substring "ptr"
+		// would misfire on symbols like __ptr_width / __fern_drop_arr_ptr.)
 		return parseMem(s)
 	}
 	if v, err := strconv.ParseInt(s, 0, 64); err == nil {
@@ -54,8 +57,15 @@ func parseOperand(s string) (operand, error) {
 }
 
 func parseMem(s string) (operand, error) {
-	o := operand{kind: opMem, base: -1}
-	if i := strings.Index(strings.ToLower(s), "ptr"); i >= 0 {
+	o := operand{kind: opMem, base: -1, index: -1, scale: 1}
+	// A size keyword ("qword ptr") only appears before the '['. Scoping the
+	// search there avoids matching a "ptr" substring inside a symbol name
+	// like __fern_heap_ptr.
+	pre := s
+	if lb := strings.IndexByte(s, '['); lb >= 0 {
+		pre = s[:lb]
+	}
+	if i := strings.Index(strings.ToLower(pre), "ptr"); i >= 0 {
 		switch strings.ToLower(strings.TrimSpace(s[:i])) {
 		case "byte":
 			o.memSize = 8
@@ -79,32 +89,82 @@ func parseMem(s string) (operand, error) {
 	if inner == "" {
 		return operand{}, fmt.Errorf("empty memory operand")
 	}
-	j := strings.IndexAny(inner, "+-")
-	baseTok := inner
-	rest := ""
-	if j >= 0 {
-		baseTok = inner[:j]
-		rest = inner[j:]
-	}
-	if strings.EqualFold(baseTok, "rip") {
-		// rip-relative: the displacement is a symbol resolved against the
-		// data section (a later phase wires this up).
-		o.sym = strings.TrimPrefix(rest, "+")
-		return o, nil
-	}
-	r, ok := regTable[strings.ToLower(baseTok)]
-	if !ok {
-		return operand{}, fmt.Errorf("unknown base register %q in memory operand", baseTok)
-	}
-	o.base = r.num
-	if rest != "" {
-		d, err := strconv.ParseInt(rest, 0, 64)
-		if err != nil {
-			return operand{}, fmt.Errorf("bad displacement %q", rest)
+	// Parse [ term (+|-) term ... ] where a term is a register,
+	// register*scale, displacement, or (for rip) a symbol.
+	for _, t := range splitTerms(inner) {
+		tok := t.tok
+		if strings.EqualFold(tok, "rip") {
+			continue // the symbol displacement arrives as the next term
 		}
-		o.disp = d
+		if strings.Contains(tok, "*") {
+			parts := strings.SplitN(tok, "*", 2)
+			r, ok := regTable[strings.ToLower(parts[0])]
+			if !ok {
+				return operand{}, fmt.Errorf("bad index register %q", parts[0])
+			}
+			sc, err := strconv.Atoi(parts[1])
+			if err != nil || (sc != 1 && sc != 2 && sc != 4 && sc != 8) {
+				return operand{}, fmt.Errorf("bad scale %q", parts[1])
+			}
+			o.index, o.scale = r.num, sc
+			continue
+		}
+		if r, ok := regTable[strings.ToLower(tok)]; ok {
+			// First bare register is the base; a second becomes the index.
+			if o.base < 0 {
+				o.base = r.num
+			} else if o.index < 0 {
+				o.index = r.num
+			} else {
+				return operand{}, fmt.Errorf("too many registers in memory operand %q", inner)
+			}
+			continue
+		}
+		// Otherwise a displacement (numeric) or, with rip, a symbol.
+		if v, err := strconv.ParseInt(t.signed(), 0, 64); err == nil {
+			o.disp += v
+			continue
+		}
+		if o.base < 0 && o.index < 0 && isLabelName(tok) {
+			o.sym = tok // rip-relative symbol
+			continue
+		}
+		return operand{}, fmt.Errorf("bad term %q in memory operand", tok)
 	}
 	return o, nil
+}
+
+type memTerm struct {
+	neg bool
+	tok string
+}
+
+func (t memTerm) signed() string {
+	if t.neg {
+		return "-" + t.tok
+	}
+	return t.tok
+}
+
+// splitTerms breaks a memory operand body into signed terms, e.g.
+// "rax+rcx*4-8" → [{rax} {rcx*4} {-8}]. A leading term has no sign.
+func splitTerms(inner string) []memTerm {
+	var terms []memTerm
+	start := 0
+	neg := false
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == '+' || inner[i] == '-' {
+			if i > start {
+				terms = append(terms, memTerm{neg: neg, tok: inner[start:i]})
+			}
+			neg = inner[i] == '-'
+			start = i + 1
+		}
+	}
+	if start < len(inner) {
+		terms = append(terms, memTerm{neg: neg, tok: inner[start:]})
+	}
+	return terms
 }
 
 func isLabelName(s string) bool {
