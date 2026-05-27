@@ -1062,6 +1062,46 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Transient lookup-key reclamation (wasm). A string K on wasm32 is
+		// boxed into a 16-byte cell for EVERY read-method call (get / has /
+		// get_or) — the helper reads it for the strcmp but never retains
+		// it, so the per-call cell leaked. Now each read frees its
+		// transient key cell, and when the key was a FRESH owned temporary
+		// (a concat, not an alias the caller still owns) its string buffer
+		// is reclaimed too. Mixes aliased keys (the `key` local, which must
+		// SURVIVE every lookup — a premature buffer dec would UAF the next
+		// use) and fresh-concat keys (whose buffers must be freed exactly
+		// once, no double free). Per iter: get_or(alias 7) + get_or(fresh 7)
+		// + has(fresh 1) + has(alias 1) + get(fresh 7) + get(alias 7) +
+		// key.len()=3 = 33; 500x → 16500. NB delete is excluded: it has a
+		// pre-existing string-key double-free (see follow-up), independent
+		// of this slice.
+		name: "map_string_lookup_key_churn_free",
+		src: `import "core/no_prelude";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    var key: string = "ke" + "y";
+    m = m.set(key, 7);
+    m = m.set("ot" + "her", 3);
+    var acc: i32 = 0;
+    acc = acc + m.get_or(key, 0);
+    acc = acc + m.get_or("ke" + "y", 0);
+    if (m.has("ke" + "y")) { acc = acc + 1; }
+    if (m.has(key)) { acc = acc + 1; }
+    match (m.get("ke" + "y")) { Some(v) => { acc = acc + v; }, None => {} }
+    match (m.get(key)) { Some(v) => { acc = acc + v; }, None => {} }
+    return acc + key.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

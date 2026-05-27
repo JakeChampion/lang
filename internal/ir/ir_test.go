@@ -2136,6 +2136,45 @@ func TestLowerMapStringColDropFreesCell(t *testing.T) {
 	}
 }
 
+// TestLowerMapStringLookupKeyCellFreed verifies that the read-only Map
+// methods (get / has / get_or / delete) reclaim the transient boxed
+// lookup-key cell via __fern_cell_free — the read helpers never retain
+// the key, so the per-call cell is freed once the helper has consumed it.
+func TestLowerMapStringLookupKeyCellFreed(t *testing.T) {
+	cases := []struct{ name, call string }{
+		{"get", `match (m.get("a" + "b")) { Some(v) => { return v; }, None => { return 0; } }`},
+		{"has", `if (m.has("a" + "b")) { return 1; } return 0;`},
+		{"get_or", `return m.get_or("a" + "b", 0);`},
+		{"delete", `var r = m.delete("a" + "b"); return 0;`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a" + "b", 1);
+    `+c.call+`
+}`, 4)
+			if !callsDirect(p, "build", "__fern_cell_free") {
+				t.Errorf("expected %s lookup to free the transient key cell via __fern_cell_free:\n%s", c.name, p)
+			}
+		})
+	}
+}
+
+// TestLowerMapStringLookupKeyNoFreeOnNative verifies the transient
+// lookup-key cell reclamation is wasm-only (ptrW=8 keeps strings
+// single-pointer and never boxes lookup keys into freeable cells).
+func TestLowerMapStringLookupKeyNoFreeOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("a" + "b", 1);
+    return m.get_or("a" + "b", 0);
+}`, 8)
+	if callsDirect(p, "build", "__fern_cell_free") {
+		t.Errorf("native (ptrW=8) must not free lookup-key cells:\n%s", p)
+	}
+}
+
 // TestLowerMapStringKeyAndValueReclaim verifies a Map[string, string]
 // (wasm) reclaims BOTH columns: independent key + value walks both run at
 // the map's drop.
