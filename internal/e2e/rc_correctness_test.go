@@ -565,6 +565,29 @@ function main(): i32 {
 }`,
 	},
 	{
+		// String ENUM PAYLOAD reclamation (wasm). A non-uniform enum with a
+		// string payload variant: the eligible (inline / fresh payload)
+		// enum local's tag-dispatched deep-drop dec's the string payload
+		// via __fern_str_dec then frees the box. The match also extracts
+		// the payload into a binding that OUTLIVES the enum (out = t), so
+		// the binding co-owns and the buffer survives until both release.
+		// 200x churn; "hello"+"world" = 10 each. 200*10=2000.
+		name: "string_enum_payload_churn_free",
+		src: `enum Msg { Text(string), Code(i32) }
+function mk(seed: i32): i32 {
+    var m: Msg = Text("hello" + "world");
+    var out: string = "";
+    match (m) { Text(t) => { out = t; }, Code(c) => { out = "z"; } }
+    return out.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 2000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
 		// whole heap box entirely (tuples carried no rc header and were
 		// never swept). It now carries an rc=1 header and returns the
