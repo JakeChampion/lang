@@ -112,6 +112,19 @@ var linuxDarwinSysno = map[string][2]int{
 // hasn't been ported to Darwin surfaces visibly when the
 // driver builds with `-target arm64-darwin` instead of
 // silently producing wrong asm.
+// f64UnaryIntrinsic maps the cheap f64 math builtins to the single
+// arm64 FP instruction that implements them — no libm, no runtime
+// helper. floor/ceil/trunc/round are the FRINT rounding modes
+// (toward -inf / +inf / zero / nearest-ties-away).
+var f64UnaryIntrinsic = map[string]string{
+	"__abs_f64":   "fabs",
+	"__sqrt_f64":  "fsqrt",
+	"__floor_f64": "frintm",
+	"__ceil_f64":  "frintp",
+	"__trunc_f64": "frintz",
+	"__round_f64": "frinta",
+}
+
 var linuxOnlySysno = map[string]int{
 	"fstat":         sysFstat,
 	"getrandom":     sysGetrandom,
@@ -6863,6 +6876,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// `__memcpy` → `__fern_memcpy`, `map_new` →
 		// `map_new_impl`).
 		target := op.Str
+		// Cheap f64 math intrinsics lower to a single FP instruction —
+		// no libm, no runtime helper. The f64 argument is on the operand
+		// stack as its bit pattern (same convention as OpFNeg).
+		if inst, ok := f64UnaryIntrinsic[target]; ok {
+			g.pop()
+			g.emit("fmov d0, x0")
+			g.emit("%s d0, d0", inst)
+			g.emit("fmov x0, d0")
+			g.push()
+			return nil
+		}
 		switch target {
 		case "__memcpy":
 			target = "__fern_memcpy"

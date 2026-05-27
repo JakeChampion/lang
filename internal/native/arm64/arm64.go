@@ -596,6 +596,17 @@ func FNEG(rd, rn uint32) uint32 {
 	return 0x1E614000 | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// FABS / FSQRT and the FRINT rounding family (Dd, Dn, double-precision)
+// back the cheap f64 math intrinsics — abs, sqrt, floor (round toward
+// -inf), ceil (+inf), trunc (toward zero), round (nearest, ties away).
+// Each is a single FP instruction; no libm.
+func FABS(rd, rn uint32) uint32   { return 0x1E60C000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FSQRT(rd, rn uint32) uint32  { return 0x1E61C000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FRINTM(rd, rn uint32) uint32 { return 0x1E654000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FRINTP(rd, rn uint32) uint32 { return 0x1E64C000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FRINTZ(rd, rn uint32) uint32 { return 0x1E65C000 | ((rn & regMask) << 5) | (rd & regMask) }
+func FRINTA(rd, rn uint32) uint32 { return 0x1E664000 | ((rn & regMask) << 5) | (rd & regMask) }
+
 // FCMP Dn, Dm — compare and set the FP condition flags.
 func FCMP(rn, rm uint32) uint32 {
 	return 0x1E602000 | ((rm & regMask) << 16) | ((rn & regMask) << 5)

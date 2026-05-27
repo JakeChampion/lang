@@ -160,6 +160,18 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmFloat3(a, mnem, ops)
 	case "fneg":
 		return asmFNeg(a, ops)
+	case "fabs":
+		return asmFUnaryD(a, "fabs", ops, FABS)
+	case "fsqrt":
+		return asmFUnaryD(a, "fsqrt", ops, FSQRT)
+	case "frintm":
+		return asmFUnaryD(a, "frintm", ops, FRINTM)
+	case "frintp":
+		return asmFUnaryD(a, "frintp", ops, FRINTP)
+	case "frintz":
+		return asmFUnaryD(a, "frintz", ops, FRINTZ)
+	case "frinta":
+		return asmFUnaryD(a, "frinta", ops, FRINTA)
 	case "fcmp":
 		return asmFcmp(a, ops)
 	case "fmov":
@@ -1041,6 +1053,28 @@ func asmFloat3(a *Assembler, mnem string, ops []string) error {
 }
 
 // asmFNeg handles fneg Dd,Dn / Sd,Sn.
+// asmFUnaryD handles a double-precision unary FP op `<op> Dd, Dn`
+// (fabs/fsqrt/frint*). The backend only emits the double form; a
+// single-precision operand is a loud gap.
+func asmFUnaryD(a *Assembler, mnem string, ops []string, enc func(rd, rn uint32) uint32) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects 2 fp registers", mnem)
+	}
+	rd, single, err := parseVReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, _, err := parseVReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if single {
+		return fmt.Errorf("%s single-precision form not supported yet", mnem)
+	}
+	a.Emit(enc(rd, rn))
+	return nil
+}
+
 func asmFNeg(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("fneg expects 2 fp registers")
