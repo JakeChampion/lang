@@ -209,18 +209,31 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// Builds a string[] of all argv entries.
 					// Shares the wasi_args_* init path with
 					// __fern_arg_at via the low-memory cache.
+					// Each entry is copied into a fresh owned
+					// string via __fern_str_copy (no view strings
+					// escape), so it carries an rc header.
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_copy")
 					needs.add("__fern_args")
 				case "__fern_env_at":
 					// wasi_environ_sizes_get + wasi_environ_get
 					// + alloc for the environ_ptrs table + buf.
+					// The i-th entry is copied into a fresh owned
+					// string via __fern_str_copy.
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_copy")
 					needs.add("__fern_env_at")
 				case "__fern_env":
 					// (name) → Option[string]. Walks the cached
 					// environ_ptrs comparing each entry's prefix
-					// up to '=' against name.
+					// up to '=' against name. The matched value is
+					// copied into a fresh owned string via
+					// __fern_str_copy.
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_copy")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_env")
@@ -801,6 +814,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStringFromBytesBody,
+	},
+	"__fern_str_copy": {
+		// (ptr, len) → (data, len) — copies `len` raw bytes at `ptr`
+		// into a fresh owned two-word string (inline ≤7, else rc1 heap
+		// copy). Turns a borrowed VIEW string (argv_buf / environ slice,
+		// no per-string rc header) into a normal headered string.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrCopyBody,
 	},
 	"__load_i32": {
 		// (addr) → i32 — i32.load wrapper. Stdlib uses this where
@@ -3315,6 +3337,130 @@ func buildStringFromBytesBody(helperIdxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildStrCopyBody — (ptr, len) → (data, len). Copies `len` raw bytes
+// at `ptr` into a FRESH owned two-word string. Used to turn a borrowed
+// VIEW string — one whose data points into a shared buffer with no
+// per-string rc header (argv_buf / environ, as args()/env() produce) —
+// into a normal headered string, so it can flow through the rc system
+// (inc/dec, container drops) exactly like a concat/slice result.
+//
+// Three-way result, identical to __fern_string_from_bytes / __str_slice:
+//   - len == 0:  (0, 0x80000000)            inline empty (no alloc)
+//   - len <= 7:  inline-packed (data, len)  no alloc
+//   - len >  7:  (out, len), out = rc1-headered heap copy via memory.copy
+//
+// Locals (after the 2 params ptr=0, len=1):
+//
+//	2: $data (inline pack)
+//	3: $len  (inline pack)
+//	4: $out  (heap dst)
+//	5: $i    (loop counter)
+//	6: $byte
+func buildStrCopyBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__fern_alloc_rc1"]
+	var body []byte
+	// if len == 0: return (0, 0x80000000)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// if len <= 7: build inline-packed (data, len).
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 7)
+	body = numeric.InstI32LeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 2) // $data = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 3) // $len = 0
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 5) // $i = 0
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		{
+			// if $i >= len: break
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32GeU(body)
+			body = inst.InstBrIf(body, 1)
+			// $byte = mem[ptr + i]
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 5)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load8U(body, 0, 0)
+			body = inst.InstLocalSet(body, 6) // $byte
+			// pack: if i < 4: data |= byte << (i*8); else len |= byte << ((i-4)*8)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 6) // $byte
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 2)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 2)
+			}
+			body = inst.InstElse(body)
+			{
+				body = inst.InstLocalGet(body, 6) // $byte
+				body = inst.InstLocalGet(body, 5)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = inst.InstI32Const(body, 8)
+				body = numeric.InstI32Mul(body)
+				body = numeric.InstI32Shl(body)
+				body = inst.InstLocalGet(body, 3)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalSet(body, 3)
+			}
+			body = inst.InstEnd(body)
+			// $i++
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 5)
+			body = inst.InstBr(body, 0)
+		}
+		body = inst.InstEnd(body) // end loop
+		body = inst.InstEnd(body) // end block
+		// $len |= len << 24 | 0x80000000 (inline flag).
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 24)
+		body = numeric.InstI32Shl(body)
+		body = numeric.InstI32Or(body)
+		body = inst.InstI32Const(body, int32(-0x80000000))
+		body = numeric.InstI32Or(body)
+		body = inst.InstLocalSet(body, 3)
+		// return ($data, $len)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// Heap form: $out = alloc_rc1(len); memory.copy($out, ptr, len).
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 4) // $out
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstMemoryCopy(body)
+	// return ($out, len)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 1)
+	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildStrSliceBody — (base_data, base_len, low, high) → (data, len).
 // Mirrors the WAT path's $__str_slice. Bounds-checked slice into a
 // fresh string. Inline-fast-path for new_len ≤ 7, heap copy
@@ -3697,6 +3843,7 @@ func buildReaderCloseBody(_ map[string]uint32) []byte {
 //	8: $len
 func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	alloc := helperIdxs["__fern_alloc"]
+	strCopy := helperIdxs["__fern_str_copy"]
 	argsSizes := helperIdxs["wasi_args_sizes_get"]
 	argsGet := helperIdxs["wasi_args_get"]
 	var body []byte
@@ -3816,13 +3963,21 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 		}
 		body = inst.InstEnd(body)
 		body = inst.InstEnd(body)
-		// Store (cstr, len) at result + i*8
+		// Copy (cstr, len) into a fresh owned string (no view escapes):
+		// ($cdata, $clen) = __fern_str_copy($cstr, $len). Stack returns
+		// (data, len) → pop len into local 10, data into local 9.
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstCall(body, strCopy)
+		body = inst.InstLocalSet(body, 10) // $clen
+		body = inst.InstLocalSet(body, 9)  // $cdata
+		// Store ($cdata, $clen) at result + i*8
 		body = inst.InstLocalGet(body, 5)
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstI32Const(body, 8)
 		body = numeric.InstI32Mul(body)
 		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 9)
 		body = memory.InstI32Store(body, 2, 0)
 		body = inst.InstLocalGet(body, 5)
 		body = inst.InstLocalGet(body, 6)
@@ -3831,7 +3986,7 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 10)
 		body = memory.InstI32Store(body, 2, 0)
 		// $i++
 		body = inst.InstLocalGet(body, 6)
@@ -3850,7 +4005,7 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 5)
-	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 11, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -3868,6 +4023,7 @@ func buildArgsBody(helperIdxs map[string]uint32) []byte {
 func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
 	getArgs := helperIdxs["wasi_get_arguments_p2"]
 	alloc := helperIdxs["__fern_alloc"]
+	strCopy := helperIdxs["__fern_str_copy"]
 	var body []byte
 	body = appendArgsInitP2(body, getArgs, alloc, 0)
 	// Built-array cache check: argsSizesBufAddr == 1 → return
@@ -3921,16 +4077,24 @@ func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
 		body = numeric.InstI32Mul(body)
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, 6)
-		// mem[$result + i*8] = mem[$el]
+		// Copy the (ptr, len) view at $el into a fresh owned string:
+		// ($cdata, $clen) = __fern_str_copy(mem[$el], mem[$el+4]).
+		body = inst.InstLocalGet(body, 6)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstCall(body, strCopy)
+		body = inst.InstLocalSet(body, 8) // $clen
+		body = inst.InstLocalSet(body, 7) // $cdata
+		// mem[$result + i*8] = $cdata
 		body = inst.InstLocalGet(body, 3)
 		body = inst.InstLocalGet(body, 5)
 		body = inst.InstI32Const(body, 8)
 		body = numeric.InstI32Mul(body)
 		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 6)
-		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, 7)
 		body = memory.InstI32Store(body, 2, 0)
-		// mem[$result + i*8 + 4] = mem[$el + 4]
+		// mem[$result + i*8 + 4] = $clen
 		body = inst.InstLocalGet(body, 3)
 		body = inst.InstLocalGet(body, 5)
 		body = inst.InstI32Const(body, 8)
@@ -3938,8 +4102,7 @@ func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 6)
-		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalGet(body, 8)
 		body = memory.InstI32Store(body, 2, 0)
 		// $i++
 		body = inst.InstLocalGet(body, 5)
@@ -3958,7 +4121,7 @@ func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 3)
-	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

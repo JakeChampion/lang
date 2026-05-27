@@ -220,18 +220,23 @@ covered transitively.
 
 Two complications the remaining producers raise:
 
-1. **Shared-buffer VIEW strings break the rc-header invariant.**
-   `__fern_args` (and `__fern_env`) return strings whose `data` points
-   *into a shared buffer* (`argv_buf` / cached `environ`), not an
-   individually-allocated buffer — so `data-8` is mid-buffer, not an rc
-   header. These strings can't carry per-string headers. Options:
-   (a) **copy** each into its own rc1 string at production (uniform, but
-   changes args/env to allocate); (b) a **dec-side immortal-region
-   check** that recognizes argv_buf/environ addresses and skips them.
-   (a) is cleaner and keeps the dec's invariant ("every non-inline,
-   non-low-address heap string has an rc header") intact — recommended.
-   Until resolved, the dec must NOT be turned on, or it will misread a
-   view string's `data-8`.
+1. **Shared-buffer VIEW strings break the rc-header invariant.** —
+   **RESOLVED (option a).** `__fern_args` / `__fern_env` / `__fern_env_at`
+   used to return strings whose `data` points *into a shared buffer*
+   (`argv_buf` / cached `environ`), not an individually-allocated buffer
+   — so `data-8` was mid-buffer, not an rc header. These can't carry
+   per-string headers. Fixed by **copying** each entry into its own
+   owned string at production via the new `__fern_str_copy(ptr, len)`
+   runtime helper (inline-pack ≤7 bytes, else rc1-headered heap copy).
+   All five wasm view-producers route through it: `buildArgsBody`,
+   `buildArgsBodyP2`, `buildEnvAtBody`, `buildEnvBody`, `buildEnvBodyP2`.
+   This keeps the dec's invariant intact ("every non-inline,
+   non-low-address heap string has an rc header") — so the structural
+   container-drop slices can safely dec string fields/elements without a
+   per-value eligibility gate (a view can no longer reach a container).
+   The original alternative (b) — a dec-side immortal-region check —
+   was rejected as fragile (argv_buf/environ live at dynamic heap
+   addresses, not a static range).
 
 2. **Multi-alloc builders need per-alloc classification.** e.g.
    `buildReadFileBody` reuses one `alloc` for the path_open scratch, the

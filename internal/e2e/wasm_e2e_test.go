@@ -431,6 +431,25 @@ func TestWASMArgsBuiltinReadsValue(t *testing.T) {
 	}
 }
 
+// args() entries are copied out of the shared argv_buf into fresh
+// OWNED strings (via __fern_str_copy) so they carry an rc header and
+// never alias the runtime's view buffer. A >7-byte arg routes through
+// the heap-copy branch (short args inline-pack); the copied bytes must
+// match the original argv exactly — a wrong copy length / source offset
+// would print garbage or truncate.
+func TestWASMArgsBuiltinCopiesLongValue(t *testing.T) {
+	src := `function main(): i32 {
+		var a: string[] = args();
+		print(a[1]);
+		return 0;
+	}`
+	const long = "supercalifragilistic-expialidocious"
+	stdout, _ := invokeWasmtimeWithArgs(t, src, long)
+	if !strings.Contains(stdout, long) {
+		t.Errorf("expected stdout to contain the long arg %q, got %q", long, stdout)
+	}
+}
+
 // runWasmStdinEnv runs the component under wasmtime with scripted
 // stdin and env, returning stdout, stderr, and the exit code.
 // `--env KEY=VAL` is forwarded by wasmtime to
@@ -534,6 +553,25 @@ func TestWASMEnvBuiltin(t *testing.T) {
 	stdout, _, _ := runWasmStdinEnv(t, src, "", []string{"LANG_TEST_VAR=hi"})
 	if !strings.Contains(stdout, "hi") {
 		t.Errorf("stdout missing `hi`: %q", stdout)
+	}
+}
+
+// env() copies the matched value out of the environ list buffer into a
+// fresh owned string (via __fern_str_copy) — no view aliasing the
+// runtime buffer. A >7-byte value exercises the heap-copy branch; the
+// round-tripped bytes must match exactly.
+func TestWASMEnvBuiltinCopiesLongValue(t *testing.T) {
+	src := `function main(): i32 {
+		match (env("LANG_TEST_VAR")) {
+			Some(v) => { write(v); return 0; },
+			None => { return 1; }
+		}
+		return -1;
+	}`
+	const long = "/usr/local/bin:/usr/bin:/bin:/opt/fern/bin"
+	stdout, _, _ := runWasmStdinEnv(t, src, "", []string{"LANG_TEST_VAR=" + long})
+	if !strings.Contains(stdout, long) {
+		t.Errorf("stdout missing long env value %q: %q", long, stdout)
 	}
 }
 
