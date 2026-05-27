@@ -197,9 +197,16 @@ func assembleProgInsn(a *Assembler, line string) error {
 		if err != nil {
 			return err
 		}
-		val, err := strconv.ParseUint(strings.TrimPrefix(ops[1], "="), 0, 64)
+		valStr := strings.TrimPrefix(ops[1], "=")
+		val, err := strconv.ParseUint(valStr, 0, 64)
 		if err != nil {
-			return fmt.Errorf("bad literal %q", ops[1])
+			// Negative literals (e.g. `ldr x0, =-1`): parse as signed and
+			// reinterpret. For a w-register the low 32 bits are used.
+			sv, serr := strconv.ParseInt(valStr, 0, 64)
+			if serr != nil {
+				return fmt.Errorf("bad literal %q", ops[1])
+			}
+			val = uint64(sv)
 		}
 		a.LDRLiteral(rt, val, !is32(ops[0]))
 		return nil
