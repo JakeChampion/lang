@@ -8506,7 +8506,9 @@ func TestArm64EmptyU8Sentinel(t *testing.T) {
     var s: string = string_from_bytes(bs);
     return s.len();
 }`, 0},
-		{"to-lower-empty-string", `function main(): i32 {
+		{"to-lower-empty-string", `import "core/no_prelude";
+import "std/string";
+function main(): i32 {
     var s: string = "".to_lower();
     return s.len();
 }`, 0},
@@ -8797,13 +8799,17 @@ func TestArm64Map(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     var i: i32 = 0;
     while (i < 8) {
@@ -8814,7 +8820,9 @@ func TestArm64Map(t *testing.T) {
     if (m.get_or(7, -1) != 70) { return 2; }
     return 42;
 }`, 42},
-		{`function main(): i32 {
+		{`import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m.set("alpha", 1);
     m.set("beta", 2);
@@ -10905,6 +10913,8 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// above 4 GiB.
 		{"map_i32", `import "core/no_prelude";
 import "core/map";
+import "core/no_prelude";
+import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
@@ -12728,7 +12738,9 @@ func TestArm64FeatureParity(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"defer_basic", `function inner(trace: Map[string, i32]): i32 {
+		{"defer_basic", `import "core/no_prelude";
+import "core/map";
+function inner(trace: Map[string, i32]): i32 {
     trace.set("body-start", 1);
     defer trace.set("first-defer", 10);
     defer trace.set("second-defer", 20);
@@ -12771,7 +12783,9 @@ function main(): i32 {
     if (sum == 8) { return 0; }
     return 1;
 }`},
-		{"fstring_interp", `function main(): i32 {
+		{"fstring_interp", `import "core/no_prelude";
+import "std/i32";
+function main(): i32 {
     var x: i32 = 42;
     var s: string = f"x is {x}";
     if (s.len() == 7) { return 0; }
@@ -13099,7 +13113,9 @@ function main(): i32 {
 // __fern_rc_underflow_count). Mirrors TestX86_64RcUnderflowDetector
 // — pins the mechanism and that map self-assign is drift-free.
 func TestArm64RcUnderflowDetector(t *testing.T) {
-	selfAssign := `function main(): i32 {
+	selfAssign := `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
     m = m.set("b", 2);
