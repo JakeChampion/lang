@@ -43,15 +43,20 @@ builds a trivial program (`import "core/no_prelude"; import "<mod>";
 function main(): i32 { return 0; }`) and runs it through modload +
 checker. Fails if any module can't be imported standalone.
 
-## 3. `std/test` ergonomics — DEFERRED (needs a decision)
+## 3. `std/test` ergonomics — ADDRESSED via import aliases
 
 Post-flip the test DSL reads `test.assert_eq_i32(...)` /
-`test.TestRunner` everywhere — verbose for a test framework. The only
-mechanical fix is a "bare-export module" concept (an `import` that
-brings a module's public names in unqualified). That's an architectural
-addition; **not doing it here.** Recorded so the decision isn't lost.
-(Note: item 4's parser change does *not* address this — it's about
-reachability of keyword-qualified names, not verbosity.)
+`test.TestRunner` everywhere — verbose for a test framework. Rather
+than a bespoke "bare-export module" mechanism, the fix is **import
+aliases**: `import "std/test" as t;` lets callers write
+`t.assert_eq_i32(...)` / `t.TestRunner`. A short prefix keeps
+provenance explicit while cutting the verbosity, and it's a general
+feature (any module, any qualifier collision — e.g.
+`import "std/string" as s;`). Implemented: parser `as <ident>` syntax
++ `ast.Import.Alias`; modload already keys its import table off
+`Import.LocalName`, so setting LocalName = alias is all the resolution
+needs; the printer round-trips the `as` clause. Example files can adopt
+`import "std/test" as t;` for the nicer shape (follow-up).
 
 ## 4. Parser accepts keyword-named module qualifiers
 
@@ -105,7 +110,7 @@ self-contained.
 - [x] 1 — checker requires `core/map` import for Map construction
       (also fixed std/headers/http/url/test/json missing the import)
 - [x] 2 — standalone-import gate for stdlib modules
-- [~] 3 — std/test ergonomics (deferred, pending bare-export decision)
+- [x] 3 — std/test ergonomics — solved with import aliases (`as`)
 - [x] 4 — parser keyword-qualified module references
 - [~] 5 — self-contained `PrintMainResult` (deferred — see below)
 - [x] 6 — hygiene: drop `IsPrelude`; modload compound-type test

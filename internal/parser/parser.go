@@ -337,13 +337,28 @@ func (p *parser) parseImport() (*ast.Import, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional alias: `import "std/test" as t;` binds the qualifier
+	// to `t` instead of the path basename. Lets a module be referred
+	// to by a shorter / non-colliding name (and reach modules whose
+	// basename is a type keyword, e.g. `import "std/string" as s;`).
+	localName := importLocalName(pathTok.Text)
+	alias := ""
+	if _, ok := p.accept(lexer.Keyword, "as"); ok {
+		aliasTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		alias = aliasTok.Text
+		localName = alias
+	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
 	return &ast.Import{
 		P:         kw.Pos,
 		Path:      pathTok.Text,
-		LocalName: importLocalName(pathTok.Text),
+		LocalName: localName,
+		Alias:     alias,
 	}, nil
 }
 

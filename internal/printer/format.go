@@ -48,7 +48,12 @@ func Format(prog *ast.Program) string {
 			f.drainLeading(imp.P.Line, 0)
 			f.b.WriteString(`import "`)
 			f.b.WriteString(imp.Path)
-			f.b.WriteString(`";`)
+			f.b.WriteString(`"`)
+			if imp.Alias != "" {
+				f.b.WriteString(" as ")
+				f.b.WriteString(imp.Alias)
+			}
+			f.b.WriteString(`;`)
 			f.emitTrailing(imp.P.Line)
 			f.b.WriteByte('\n')
 		}

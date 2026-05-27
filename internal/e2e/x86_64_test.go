@@ -236,6 +236,23 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 // the parser accepts the keyword-named `string` module qualifier
 // (docs/POST-PRELUDE-CLEANUP.md item 4). Pins parse + check + codegen +
 // runtime end-to-end.
+// Import aliases run end-to-end: `import "std/string" as s;` lets a
+// keyword-basename module's free function be reached via the alias
+// qualifier, alongside an aliased receiver-method module.
+func TestX86_64ImportAlias(t *testing.T) {
+	src := `import "core/no_prelude";
+import "std/string" as s;
+import "std/i32" as nums;
+function main(): i32 {
+    if (s.repeat_char(120, 3) != "xxx") { return 1; }
+    if ((0 - 5).abs() != 5) { return 2; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("import alias program: got exit %d, want 0", code)
+	}
+}
+
 func TestX86_64StringRepeatChar(t *testing.T) {
 	src := `import "core/no_prelude";
 import "std/string";
