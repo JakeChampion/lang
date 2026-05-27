@@ -61,6 +61,7 @@
 // the prelude's transitive imports, so they get declared
 // explicitly.
 import "std/i32";
+import "core/map";
 // Wider int formatters for the i64 / u32 / u64 assertion
 // families. Each module exposes a `(n).to_string()` receiver
 // method dispatching through `__int_to_string_u64`.

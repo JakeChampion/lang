@@ -70,7 +70,9 @@ function main(): i32 {
 		{node: "StructLit", src: `struct P { x: i32, y: i32 }
 function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.x; }`},
 		{node: "TupleLit", src: `function main(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; return a + b; }`},
-		{node: "MapLit", src: `function main(): i32 {
+		{node: "MapLit", src: `import "core/no_prelude";
+import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map { 1: 10 };
     return m.len();
 }`},
