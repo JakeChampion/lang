@@ -2037,6 +2037,29 @@ function (s: EmitState) lookup_local(name: string): i32 {
     return 0;
 }
 
+// frame_ldr / frame_str load/store `reg` at the x29-relative frame
+// offset `off` (always <= 0 — locals live below the frame pointer,
+// since sp moves with the operand-stack push/pop). A scaled ldr/str
+// can't encode a negative offset and the unscaled (ldur/stur) form
+// only reaches -256, so a frame with >32 slots overflows. When `off`
+// is out of range, materialise the address in x16 (an AAPCS scratch
+// register never live across a frame access here) via `sub` first.
+function (s: EmitState) frame_ldr(reg: string, off: i32): EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    ldr " + reg + ", [x29, #" + i32_to_string(off) + "]\n");
+    }
+    s = s.write("    sub x16, x29, #" + i32_to_string(0 - off) + "\n");
+    return s.write("    ldr " + reg + ", [x16]\n");
+}
+
+function (s: EmitState) frame_str(reg: string, off: i32): EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    str " + reg + ", [x29, #" + i32_to_string(off) + "]\n");
+    }
+    s = s.write("    sub x16, x29, #" + i32_to_string(0 - off) + "\n");
+    return s.write("    str " + reg + ", [x16]\n");
+}
+
 function (s: EmitState) has_local(name: string): boolean {
     var i: i32 = 0;
     while (i < s.local_names.len()) {
@@ -2732,7 +2755,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         parser.ExprIdent(id) => {
             if (s.has_local(id.name)) {
                 var off: i32 = s.lookup_local(id.name);
-                s = s.write("    ldr x0, [x29, #" + i32_to_string(off) + "]\n");
+                s = s.frame_ldr("x0", off);
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
@@ -4277,7 +4300,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 var off: i32 = s.lookup_local(name);
                 // Box ptr in x9 (not on the stack) — see asm.fern. Args
                 // sit at +16, +32, … just like a direct call.
-                s = s.write("    ldr x9, [x29, #" + i32_to_string(off) + "]\n");
+                s = s.frame_ldr("x9", off);
                 s = s.write("    ldr x2, [x9]\n");
                 s = s.write("    blr x2\n");
                 if (c.args.len() > 0) {
@@ -4652,7 +4675,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var box_name: string = "__closure_box";
             s = s.bind_local(box_name);
             var box_off: i32 = s.lookup_local(box_name);
-            s = s.write("    str x9, [x29, #" + i32_to_string(box_off) + "]\n");
+            s = s.frame_str("x9", box_off);
             // Bind each capture, load from box[+(i+1)*8]. The
             // capture preserves the outer scope's type so that
             // type-aware dispatch inside the lambda body (e.g.
@@ -4675,9 +4698,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 }
                 s = s.bind_local_typed(caps[ci], cap_ty);
                 var c_off: i32 = s.lookup_local(caps[ci]);
-                s = s.write("    ldr x1, [x29, #" + i32_to_string(box_off) + "]\n");
+                s = s.frame_ldr("x1", box_off);
                 s = s.write("    ldr x0, [x1, #" + i32_to_string((ci + 1) * 8) + "]\n");
-                s = s.write("    str x0, [x29, #" + i32_to_string(c_off) + "]   // capture " + caps[ci] + "\n");
+                s = s.frame_str("x0", c_off);
                 ci = ci + 1;
             }
             // Bind params; args at +16, +32, … — IDENTICAL to a direct
@@ -4687,8 +4710,8 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.bind_local_typed(lm.params[pi2].name, ret_tag_of(lm.params[pi2].type_name));
                 var p_off: i32 = s.lookup_local(lm.params[pi2].name);
                 var a_off: i32 = 16 + pi2 * 16;
-                s = s.write("    ldr x0, [x29, #" + i32_to_string(a_off) + "]   // param " + lm.params[pi2].name + "\n");
-                s = s.write("    str x0, [x29, #" + i32_to_string(p_off) + "]\n");
+                s = s.frame_ldr("x0", a_off);
+                s = s.frame_str("x0", p_off);
                 pi2 = pi2 + 1;
             }
             var bi_l: i32 = 0;
@@ -4754,7 +4777,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             var oi: i32 = 0;
             while (oi < n_caps) {
                 var outer_off: i32 = s.lookup_local(caps[oi]);
-                s = s.write("    ldr x1, [x29, #" + i32_to_string(outer_off) + "]\n");
+                s = s.frame_ldr("x1", outer_off);
                 s = s.write("    str x1, [x0, #" + i32_to_string((oi + 1) * 8) + "]\n");
                 oi = oi + 1;
             }
@@ -4794,12 +4817,12 @@ function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitSt
     s = s.bind_local(kvm_name);
     var kvm_off: i32 = s.lookup_local(kvm_name);
     s = s.write("    ldr x0, [sp], #16\n");
-    s = s.write("    str x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.frame_str("x0", kvm_off);
     var kvi_name: string = "__forkv_i_" + i32_to_string(s.label_n);
     s = s.bind_local(kvi_name);
     var kvi_off: i32 = s.lookup_local(kvi_name);
     s = s.write("    mov x0, #0\n");
-    s = s.write("    str x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_str("x0", kvi_off);
     s = s.bind_local_typed(kvk, kvk_ty);
     var kvk_off: i32 = s.lookup_local(kvk);
     s = s.bind_local_typed(kvv, kvv_ty);
@@ -4811,24 +4834,24 @@ function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitSt
     var kvend: LabelOut = fresh_label(s);
     s = kvend.state;
     s = s.write(kvtop.name + ":\n");
-    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.frame_ldr("x0", kvm_off);
     s = s.write("    ldr x1, [x0]\n");        // keys arr
     s = s.write("    ldr x1, [x1]\n");        // keys.len
-    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_ldr("x2", kvi_off);
     s = s.write("    cmp x2, x1\n");
     s = s.write("    b.ge " + kvend.name + "\n");
-    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.frame_ldr("x0", kvm_off);
     s = s.write("    ldr x1, [x0]\n");        // keys arr
-    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_ldr("x2", kvi_off);
     s = s.write("    add x2, x2, #1\n");
     s = s.write("    ldr x0, [x1, x2, lsl #3]\n");   // keys[i+1]
-    s = s.write("    str x0, [x29, #" + i32_to_string(kvk_off) + "]\n");
-    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvm_off) + "]\n");
+    s = s.frame_str("x0", kvk_off);
+    s = s.frame_ldr("x0", kvm_off);
     s = s.write("    ldr x1, [x0, #8]\n");    // values arr
-    s = s.write("    ldr x2, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_ldr("x2", kvi_off);
     s = s.write("    add x2, x2, #1\n");
     s = s.write("    ldr x0, [x1, x2, lsl #3]\n");   // values[i+1]
-    s = s.write("    str x0, [x29, #" + i32_to_string(kvv_off) + "]\n");
+    s = s.frame_str("x0", kvv_off);
     s = s.push_loop_labels(kvend.name, kvcont.name);
     var kvbi: i32 = 0;
     while (kvbi < f.body.len()) {
@@ -4837,9 +4860,9 @@ function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitSt
     }
     s = s.pop_loop_labels();
     s = s.write(kvcont.name + ":\n");
-    s = s.write("    ldr x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_ldr("x0", kvi_off);
     s = s.write("    add x0, x0, #1\n");
-    s = s.write("    str x0, [x29, #" + i32_to_string(kvi_off) + "]\n");
+    s = s.frame_str("x0", kvi_off);
     s = s.write("    b " + kvtop.name + "\n");
     s = s.write(kvend.name + ":\n");
     return s;
@@ -4929,11 +4952,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 s = s.bind_local_typed(tda, "i32");
                 var tda_off: i32 = s.lookup_local(tda);
                 s = s.write("    ldr x1, [x0]\n");         // box.0
-                s = s.write("    str x1, [x29, #" + i32_to_string(tda_off) + "]\n");
+                s = s.frame_str("x1", tda_off);
                 s = s.bind_local_typed(tdb, "i32");
                 var tdb_off: i32 = s.lookup_local(tdb);
                 s = s.write("    ldr x1, [x0, #8]\n");     // box.1
-                s = s.write("    str x1, [x29, #" + i32_to_string(tdb_off) + "]\n");
+                s = s.frame_str("x1", tdb_off);
                 return s;
             }
             // Infer init type for string-aware dispatch.
@@ -4946,7 +4969,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.bind_local_typed(v.name, ity);
             var off: i32 = s.lookup_local(v.name);
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(off) + "]\n");
+            s = s.frame_str("x0", off);
             return s;
         },
         parser.StmtAssign(a) => {
@@ -4957,7 +4980,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = emit_expr(a.value, s);
             var off: i32 = s.lookup_local(a.target);
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(off) + "]\n");
+            s = s.frame_str("x0", off);
             return s;
         },
         parser.StmtExpr(x) => {
@@ -4979,7 +5002,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.bind_local(scrut_name);
             var scrut_off: i32 = s.lookup_local(scrut_name);
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+            s = s.frame_str("x0", scrut_off);
             var end_lbl: i32 = s.label_n;
             s = EmitState {
                 out: s.out,
@@ -5072,7 +5095,7 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                             // None/Err=1), not the struct shape pointer.
                             // The non-empty variant (Some/Ok) binds its
                             // PAYLOAD (offset 8), not the box.
-                            s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+                            s = s.frame_ldr("x0", scrut_off);
                             s = s.write("    ldr x1, [x0]\n");
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -5085,10 +5108,10 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                                 // print / concat dispatch.
                                 s = s.bind_local_typed(pv.binding, match_payload_type(m.scrutinee, s));
                                 var pbind_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    str x1, [x29, #" + i32_to_string(pbind_off) + "]\n");
+                                s = s.frame_str("x1", pbind_off);
                             }
                         } else {
-                        s = s.write("    ldr x0, [x29, #" + i32_to_string(scrut_off) + "]\n");
+                        s = s.frame_ldr("x0", scrut_off);
                         s = s.write("    ldr x1, [x0]\n");
                         var nameLit: StringLitOut = add_string_lit(s, pv.type_name);
                         s = nameLit.state;
@@ -5103,13 +5126,13 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                                 s = s.write("    ldr x1, [x0, #8]\n");
                                 s = s.bind_local_typed(pv.binding, field_type_tag_in(pv.type_name, "__ev", s));
                                 var ev_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    str x1, [x29, #" + i32_to_string(ev_off) + "]\n");
+                                s = s.frame_str("x1", ev_off);
                             } else {
                                 // `type X = A|B` member: bind whole struct,
                                 // typed so a field read resolves within it.
                                 s = s.bind_local_typed(pv.binding, pv.type_name);
                                 var bind_off: i32 = s.lookup_local(pv.binding);
-                                s = s.write("    str x0, [x29, #" + i32_to_string(bind_off) + "]\n");
+                                s = s.frame_str("x0", bind_off);
                             }
                         }
                         }
@@ -5154,12 +5177,12 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.bind_local(arr_name);
             var arr_off: i32 = s.lookup_local(arr_name);
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(arr_off) + "]\n");
+            s = s.frame_str("x0", arr_off);
             var idx_name: string = "__for_i_" + i32_to_string(s.label_n);
             s = s.bind_local(idx_name);
             var idx_off: i32 = s.lookup_local(idx_name);
             s = s.write("    mov x0, #0\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.frame_str("x0", idx_off);
             s = s.bind_local_typed(f.var_name, elem_ty);
             var elem_off: i32 = s.lookup_local(f.var_name);
             var top_lbl: i32 = s.label_n;
@@ -5206,17 +5229,17 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             };
             s = s.write(".Lfor_top_" + i32_to_string(top_lbl) + ":\n");
             // Condition.
-            s = s.write("    ldr x0, [x29, #" + i32_to_string(arr_off) + "]\n");
+            s = s.frame_ldr("x0", arr_off);
             s = s.write("    ldr x1, [x0]\n");
-            s = s.write("    ldr x2, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.frame_ldr("x2", idx_off);
             s = s.write("    cmp x2, x1\n");
             s = s.write("    b.ge .Lfor_end_" + i32_to_string(end_lbl) + "\n");
             // Bind element.
-            s = s.write("    ldr x0, [x29, #" + i32_to_string(arr_off) + "]\n");
-            s = s.write("    ldr x1, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.frame_ldr("x0", arr_off);
+            s = s.frame_ldr("x1", idx_off);
             s = s.write("    add x1, x1, #1\n");
             s = s.write("    ldr x0, [x0, x1, lsl #3]\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(elem_off) + "]\n");
+            s = s.frame_str("x0", elem_off);
             // Body — break → .Lfor_end; continue → .Lfor_cont.
             s = s.push_loop_labels(".Lfor_end_" + i32_to_string(end_lbl), ".Lfor_cont_" + i32_to_string(cont_lbl));
             var bi: i32 = 0;
@@ -5227,9 +5250,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             s = s.pop_loop_labels();
             // i = i + 1; jump to top.
             s = s.write(".Lfor_cont_" + i32_to_string(cont_lbl) + ":\n");
-            s = s.write("    ldr x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.frame_ldr("x0", idx_off);
             s = s.write("    add x0, x0, #1\n");
-            s = s.write("    str x0, [x29, #" + i32_to_string(idx_off) + "]\n");
+            s = s.frame_str("x0", idx_off);
             s = s.write("    b .Lfor_top_" + i32_to_string(top_lbl) + "\n");
             s = s.write(".Lfor_end_" + i32_to_string(end_lbl) + ":\n");
             return s;
@@ -5284,7 +5307,7 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
         s = s.bind_local_typed(fd.receiver_name, ret_tag_of(fd.receiver_type));
         var recv_off: i32 = s.lookup_local(fd.receiver_name);
         s = s.write("    ldr x0, [x29, #16]   // recv " + fd.receiver_name + "\n");
-        s = s.write("    str x0, [x29, #" + i32_to_string(recv_off) + "]\n");
+        s = s.frame_str("x0", recv_off);
     }
     var recv_shift: i32 = 0;
     if (has_recv) { recv_shift = 1; }
@@ -5294,8 +5317,8 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
         s = s.bind_local_typed(fd.params[i].name, ret_tag_of(fd.params[i].type_name));
         var local_off: i32 = s.lookup_local(fd.params[i].name);
         var arg_off: i32 = 16 + (i + recv_shift) * 16;
-        s = s.write("    ldr x0, [x29, #" + i32_to_string(arg_off) + "]   // param " + fd.params[i].name + "\n");
-        s = s.write("    str x0, [x29, #" + i32_to_string(local_off) + "]\n");
+        s = s.frame_ldr("x0", arg_off);
+        s = s.frame_str("x0", local_off);
         i = i + 1;
     }
     var bi: i32 = 0;
