@@ -1656,6 +1656,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 
 	case ir.OpCallDirect:
 		target := op.Str
+		// Cheap f64 math intrinsics lower inline — no libm. The f64
+		// argument rides the operand stack as raw bits (same as
+		// OpFNeg); the result goes back in rax before push.
+		if g.emitF64UnaryIntrinsic(target) {
+			g.push()
+			return nil
+		}
 		switch target {
 		case "__alloc":
 			target = "__fern_alloc"
@@ -1812,6 +1819,78 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		return fmt.Errorf("x86_64: unsupported IR op %s", op.Kind)
 	}
 	return nil
+}
+
+// emitF64UnaryIntrinsic lowers the cheap f64 math builtins inline,
+// matching the arm64 backend's single-instruction lowerings (no
+// libm). The f64 argument is already popped off the operand stack
+// into rax as raw bits; the result is left in rax and the caller
+// pushes it. Returns false (leaving rax untouched) for any name
+// that isn't a recognised intrinsic.
+//
+// abs/sqrt/floor/ceil/trunc map straight onto SSE: abs clears the
+// sign bit, sqrt is sqrtsd, and floor/ceil/trunc are roundsd with
+// the matching rounding-mode immediate (1=−∞, 2=+∞, 3=toward-zero).
+//
+// round is the one that needs care: it's round-half-AWAY-from-zero
+// (Go's math.Round, arm64's frinta), but x86's roundsd nearest mode
+// (imm 0) rounds ties to EVEN. So we compute r = trunc(x), take the
+// exact fractional part frac = x − r (exact by construction, so no
+// x+0.5 representability hazard), and bump r by copysign(1, x) when
+// |frac| ≥ 0.5. That reproduces ties-away for every input.
+func (g *generator) emitF64UnaryIntrinsic(name string) bool {
+	switch name {
+	case "__abs_f64", "__sqrt_f64", "__floor_f64", "__ceil_f64", "__trunc_f64", "__round_f64":
+	default:
+		return false
+	}
+	g.pop() // f64 bits → rax
+	switch name {
+	case "__abs_f64":
+		g.emit("movabs rcx, 0x7fffffffffffffff")
+		g.emit("and rax, rcx")
+	case "__sqrt_f64":
+		g.emit("movq xmm0, rax")
+		g.emit("sqrtsd xmm0, xmm0")
+		g.emit("movq rax, xmm0")
+	case "__floor_f64":
+		g.emit("movq xmm0, rax")
+		g.emit("roundsd xmm0, xmm0, 1")
+		g.emit("movq rax, xmm0")
+	case "__ceil_f64":
+		g.emit("movq xmm0, rax")
+		g.emit("roundsd xmm0, xmm0, 2")
+		g.emit("movq rax, xmm0")
+	case "__trunc_f64":
+		g.emit("movq xmm0, rax")
+		g.emit("roundsd xmm0, xmm0, 3")
+		g.emit("movq rax, xmm0")
+	case "__round_f64":
+		done := fmt.Sprintf(".Lround_done_%d", g.labelCounter)
+		g.labelCounter++
+		g.emit("movq xmm0, rax")        // x
+		g.emit("roundsd xmm1, xmm0, 3") // r = trunc(x)
+		g.emit("movapd xmm2, xmm0")     // frac = x - r (exact)
+		g.emit("subsd xmm2, xmm1")      //   "
+		g.emit("movq rcx, xmm2")        // |frac| bits
+		g.emit("movabs rdx, 0x7fffffffffffffff")
+		g.emit("and rcx, rdx")                   //   "
+		g.emit("movq xmm3, rcx")                 // |frac|
+		g.emit("movabs rcx, 0x3fe0000000000000") // 0.5
+		g.emit("movq xmm4, rcx")
+		g.emit("comisd xmm3, xmm4") // |frac| vs 0.5
+		g.emit("jb " + done)        // < 0.5 → r unchanged
+		g.emit("movq rcx, xmm0")    // copysign(1.0, x):
+		g.emit("movabs rdx, 0x8000000000000000")
+		g.emit("and rcx, rdx")                   //   sign(x)
+		g.emit("movabs rdx, 0x3ff0000000000000") // | bits(1.0)
+		g.emit("or rcx, rdx")
+		g.emit("movq xmm5, rcx")
+		g.emit("addsd xmm1, xmm5") // r += copysign(1, x)
+		g.label(done)
+		g.emit("movq rax, xmm1")
+	}
+	return true
 }
 
 // binPop pops two operand-stack values: rhs (top) → rcx, lhs
