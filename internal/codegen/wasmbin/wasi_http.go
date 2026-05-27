@@ -550,23 +550,13 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 
 	// ================ Build HeaderMap with empty parallel arrays ================
-	// names array: length-prefixed string[]; allocate 8 bytes (length
-	// prefix + 4 bytes spare so the alignment is clean).
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 28)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, 0) // length=0 at +4
-	body = memory.InstI32Store(body, 2, 0)
-
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 29)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0)
+	// Real empty growable string[]s (names slot 28, values slot 29).
+	// The first __method_HeaderMap_append reads the array length from
+	// the canonical -4 slot via `.len()`, so these must be valid
+	// arrays — not the bytes preceding a bare alloc, which an arena
+	// reset reuses with stale data.
+	body = emitEmptyStrArray(body, idxs, 28)
+	body = emitEmptyStrArray(body, idxs, 29)
 
 	// HeaderMap struct (8 bytes + 8-byte rc header):
 	// names_ptr@+0, values_ptr@+4 (relative to data). Phase
@@ -926,6 +916,45 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// 42 i32 locals after the 2 params (slots 2..43).
 	locals := inst.PutLocalsOneGroup(nil, 42, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitEmptyStrArray builds a valid empty growable string[] and stores
+// its data pointer in `slot`. The array runtime keeps cap @ base-12,
+// rc @ base-8, len @ base-4 with elements at base+0 (see
+// buildArrPushGrowBody), and uses headerBytes = max(16, stride), so a
+// 16-byte header is allocated and the data pointer is alloc+16.
+// Starting from a real (cap=0, len=0) array means the first `.push`
+// reads len=0 from the canonical -4 slot and takes the copy path
+// cleanly — no reliance on the 4 bytes before the allocation being
+// zero (a bump/arena allocator doesn't guarantee that across the
+// per-request arena reset).
+func emitEmptyStrArray(body []byte, idxs map[string]uint32, slot uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	// base = alloc(16) + 16
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, slot)
+	// cap = 0 @ base-12
+	body = inst.InstLocalGet(body, slot)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	// rc = 1 @ base-8
+	body = inst.InstLocalGet(body, slot)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// len = 0 @ base-4
+	body = inst.InstLocalGet(body, slot)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	return body
 }
 
 // emitMethodDispatch reads the method variant landed at retptr by
