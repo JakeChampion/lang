@@ -667,7 +667,9 @@ const examples = {
     print("hello, world");
     return 0;
 }`,
-  fact: `function fact(n: i32): i32 {
+  fact: `import "core/no_prelude";
+import "std/i32";
+function fact(n: i32): i32 {
     if (n == 0) { return 1; }
     return n * fact(n - 1);
 }
@@ -676,7 +678,11 @@ function main(): i32 {
     print("5! = " + f.to_string());
     return f;
 }`,
-  strings: `function main(): i32 {
+  strings: `import "core/no_prelude";
+import "std/string";
+import "std/i32";
+import "std/array";
+function main(): i32 {
     var s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
@@ -699,7 +705,11 @@ function main(): i32 {
     print("replace:    " + "hello world".replace("world", "Fern"));
     return parts.len();
 }`,
-  sort: `function join_i32s(arr: i32[]): string {
+  sort: `import "core/no_prelude";
+import "std/sort";
+import "std/i32";
+import "std/array";
+function join_i32s(arr: i32[]): string {
     var i: i32 = 0;
     var out: string = "";
     while (i < arr.len()) {
@@ -713,13 +723,15 @@ function main(): i32 {
 function main(): i32 {
     var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
     print("input:  [" + join_i32s(xs) + "]");
-    var asc: i32[] = sort_i32_asc(xs);
+    var asc: i32[] = sort.sort_i32_asc(xs);
     print("sorted: [" + join_i32s(asc) + "]");
-    var desc: i32[] = sort_i32_desc(xs);
+    var desc: i32[] = sort.sort_i32_desc(xs);
     print("desc:   [" + join_i32s(desc) + "]");
     return asc.len();
 }`,
-  union: `struct Add { l: i32, r: i32 }
+  union: `import "core/no_prelude";
+import "std/i32";
+struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
 struct Lit { v: i32 }
 type Expr = Add | Mul | Lit;
@@ -739,7 +751,9 @@ function main(): i32 {
     print("(2+3) * 4 = " + v.to_string());
     return v;
 }`,
-  result: `struct ParseError { message: string, pos: i32 }
+  result: `import "core/no_prelude";
+import "std/i32";
+struct ParseError { message: string, pos: i32 }
 
 function parse_int(s: string): Result[i32, ParseError] {
     var n: i32 = s.len();
@@ -765,7 +779,10 @@ function main(): i32 {
         Err(e) => { print("error at " + e.pos.to_string() + ": " + e.message); return 1; },
     }
 }`,
-  interp: `// Tiny arithmetic interpreter — lexer + parser + eval in Fern.
+  interp: `import "core/no_prelude";
+import "std/i32";
+import "std/array";
+// Tiny arithmetic interpreter — lexer + parser + eval in Fern.
 struct TokInt   { value: i32 }
 struct TokPunct { ch: i32 }
 struct TokEof   { _pad: i32 }
@@ -875,7 +892,10 @@ function main(): i32 {
     print(src + " = " + v.to_string());
     return v;
 }`,
-  format: `// format(fmt, args) — runtime template substitution. Walks
+  format: `import "core/no_prelude";
+import "std/format";
+import "std/i32";
+// format(fmt, args) — runtime template substitution. Walks
 // fmt and replaces each {} placeholder with args[i].
 // Complements f-strings (which only work on literal templates)
 // — use format() when the template itself comes from a config,
@@ -887,7 +907,7 @@ function describe(p: Person): string {
     // The args[] vector pre-stringifies non-string values via
     // .to_string(). A typed-overload story would need trait
     // dispatch which Fern doesn't have yet.
-    return format(
+    return format.format(
         "{} (age {}) lives in {}",
         [p.name, p.age.to_string(), p.city]
     );
@@ -908,28 +928,32 @@ function main(): i32 {
 
     // Underflow — more {}s than args → literal {} survives.
     // Useful as a runtime indicator that an arg list is short.
-    print(format("missing arg: {} and {}", ["x"]));
+    print(format.format("missing arg: {} and {}", ["x"]));
 
     // Overflow — extras silently dropped.
-    print(format("just {}", ["one", "two", "three"]));
+    print(format.format("just {}", ["one", "two", "three"]));
 
     return 0;
 }`,
-  http: `// An HTTP handler. Pick the "wasi:http/incoming-handler" world,
+  http: `import "core/no_prelude";
+import "std/headers";
+import "std/http";
+import "std/tcp";
+// An HTTP handler. Pick the "wasi:http/incoming-handler" world,
 // then hit "Run (wasm)" to send the request on the right through
 // the compiled handler — in-browser, no server. Routes on path +
 // method, reads the body, and sets a response header.
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        var h: HeaderMap = header_map_new();
+        var h: HeaderMap = headers.header_map_new();
         h.set("x-served-by", "fern");
         return HttpResponse { status: 200, body: "hello, world", headers: h };
     }
     if (req.method == "POST") {
         // Echo the request body back.
-        return http_response_ok(req.body_string());
+        return http.http_response_ok(req.body_string());
     }
-    return http_response_text(404, "not found");
+    return http.http_response_text(404, "not found");
 }`,
 };
 
