@@ -44,6 +44,7 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 		{"wholefloat", `function main(): i32 { print((42.0).to_string()); return 0; }`, "42\n"},
 		{"floatarith", `function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; print((x * y).to_string()); return 0; }`, "3\n"},
 		{"slashstring", `function main(): i32 { print("x: i32 = 1; // comment"); return 0; }`, "x: i32 = 1; // comment\n"},
+		{"strarr_iter", `function main(): i32 { var a: string[] = ["a", "bb", "ccc"]; for s in a { print(s); } return 0; }`, "a\nbb\nccc\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -111,6 +112,13 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"f64", "function main(): i32 { var x: f64 = 21.0; return (x * 2.0) as i32; }", 42},
 		{"bitand", "function main(): i32 { var x: i32 = 250; return x & 42; }", 42},
 		{"bitor", "function main(): i32 { var x: i32 = 40; return x | 2; }", 42},
+		// Array element addressing past [0] needs the scaled/extended add
+		// forms (lsl #N for the element-size stride, uxtw to widen the
+		// 32-bit index). These previously corrupted element [1]+.
+		{"i32arr_index", "function main(): i32 { var a: i32[] = [10, 20, 12]; return a[1] + a[2]; }", 32},
+		{"i32arr_iter", "function main(): i32 { var a: i32[] = [1, 2, 3, 36]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 42},
+		{"structarr_index", "struct P { x: i32, y: i32 } function main(): i32 { var ps: P[] = [P{x:1,y:2}, P{x:40,y:2}]; return ps[1].x + ps[1].y; }", 42},
+		{"structarr_iter", "struct P { v: i32 } function main(): i32 { var ps: P[] = [P{v:20}, P{v:22}]; var s: i32 = 0; for p in ps { s = s + p.v; } return s; }", 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

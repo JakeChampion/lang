@@ -112,6 +112,14 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tmov x0, #1\nlt0:\n\ttbz x0, #0, lt1\n\ttbnz x1, #63, lt0\n\ttbz w2, #5, lt1\nlt1:\n\tret\n",
 		"labels_and_branches": "" +
 			"loop:\n\tcmp x0, #0\n\tb.eq done\n\tsub x0, x0, #1\n\tcbnz x0, loop\n\tb loop\ndone:\n\tbeq loop\n\tret\n",
+		"addsub_shifted_extended": "" +
+			"\tadd x0, x1, x0, lsl #3\n\tadd x5, x6, x7, lsl #2\n\tsub x0, x1, x2, lsl #1\n\tadd w0, w1, w2, lsl #2\n" +
+			"\tadd x2, x0, w1, uxtw\n\tadd x2, x0, w1, uxtw #2\n\tadd x5, x6, w7, sxtw\n\tsub x2, x0, w1, uxtw #3\n",
+		"addsub_cmp_large_imm": "" +
+			"\tcmp x0, #0x10000\n\tcmp x19, #0x10000\n\tcmn x1, #0x2000\n" +
+			"\tadd x0, x1, #0x10000\n\tsub x2, x3, #0x1000\n\tadd x0, x1, #1, lsl #12\n",
+		"scvtf_w_and_mov_zr": "" +
+			"\tscvtf d0, w0\n\tscvtf s0, w1\n\tscvtf d2, x3\n\tmov x0, xzr\n\tmov w1, wzr\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {

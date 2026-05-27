@@ -253,8 +253,13 @@ func asmMov(a *Assembler, ops []string) error {
 		return err
 	}
 	// `mov` to/from sp is the `add Rd, Rn, #0` alias (ORR can't encode
-	// the stack pointer); plain reg-reg mov is the ORR/MOVreg alias.
-	if rd == 31 || rm == 31 {
+	// the stack pointer); plain reg-reg mov (including from the zero
+	// register xzr/wzr) is the ORR/MOVreg alias. sp and xzr share
+	// register number 31, so this must key off the operand spelling: the
+	// add-alias only applies to sp, since routing `mov Rd, xzr` through
+	// it would read sp (=Rn 31 in add-immediate) instead of zero.
+	isSP := func(s string) bool { return strings.TrimSpace(s) == "sp" }
+	if isSP(ops[0]) || isSP(ops[1]) {
 		a.Emit(clearSF(ADDimm(rd, rm, 0, false), is32(ops[0])))
 		return nil
 	}
@@ -349,19 +354,29 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 		if err != nil {
 			return err
 		}
-		sh, err := parseShiftField(ops, 3, "lsl")
-		if err != nil {
-			return err
-		}
-		shift12 := sh == 12
-		if sh != 0 && sh != 12 {
-			return fmt.Errorf("%s immediate shift must be 0 or 12", mnem)
-		}
 		w := is32(ops[0])
-		if mnem == "add" {
-			a.Emit(clearSF(ADDimm(rd, rn, uint16(imm), shift12), w))
+		var i12 uint16
+		var shift12 bool
+		if len(ops) > 3 {
+			// Explicit `, lsl #12`.
+			sh, serr := parseShiftField(ops, 3, "lsl")
+			if serr != nil {
+				return serr
+			}
+			if sh != 0 && sh != 12 {
+				return fmt.Errorf("%s immediate shift must be 0 or 12", mnem)
+			}
+			i12, shift12 = uint16(imm), sh == 12
 		} else {
-			a.Emit(clearSF(SUBimm(rd, rn, uint16(imm), shift12), w))
+			var ok bool
+			if i12, shift12, ok = addSubImm12(imm); !ok {
+				return fmt.Errorf("%s immediate %s out of range", mnem, ops[2])
+			}
+		}
+		if mnem == "add" {
+			a.Emit(clearSF(ADDimm(rd, rn, i12, shift12), w))
+		} else {
+			a.Emit(clearSF(SUBimm(rd, rn, i12, shift12), w))
 		}
 		return nil
 	}
@@ -370,12 +385,125 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	w := is32(ops[0])
+	// Optional shifted- or extended-register form. The backend emits
+	// `add Xd, Xn, Xm, lsl #N` to scale an index by a power-of-two
+	// element size, and `add Xd, Xn, Wm, uxtw/sxtw {#N}` to widen a
+	// 32-bit index to a 64-bit address. Dropping either (as the plain
+	// reg path did) corrupts every array element past [0].
+	if len(ops) > 3 {
+		kind := strings.Fields(ops[3])
+		if len(kind) > 0 && (strings.HasPrefix(kind[0], "uxt") || strings.HasPrefix(kind[0], "sxt")) {
+			opt, amt, eerr := parseExtend(ops[3])
+			if eerr != nil {
+				return eerr
+			}
+			if mnem == "add" {
+				a.Emit(ADDextReg(rd, rn, rm, opt, amt))
+			} else {
+				a.Emit(SUBextReg(rd, rn, rm, opt, amt))
+			}
+			return nil
+		}
+		st, amt, serr := parseRegShift(ops[3])
+		if serr != nil {
+			return serr
+		}
+		if mnem == "add" {
+			a.Emit(clearSF(ADDregShift(rd, rn, rm, st, amt), w))
+		} else {
+			a.Emit(clearSF(SUBregShift(rd, rn, rm, st, amt), w))
+		}
+		return nil
+	}
 	if mnem == "add" {
 		a.Emit(clearSF(ADDreg(rd, rn, rm), w))
 	} else {
 		a.Emit(clearSF(SUBreg(rd, rn, rm), w))
 	}
 	return nil
+}
+
+// parseRegShift parses a register-shift operand like "lsl #3" into a
+// shift-type selector (0=LSL, 1=LSR, 2=ASR) and amount.
+func parseRegShift(op string) (shiftType, amount uint32, err error) {
+	f := strings.Fields(op)
+	if len(f) != 2 {
+		return 0, 0, fmt.Errorf("bad register shift %q", op)
+	}
+	switch f[0] {
+	case "lsl":
+		shiftType = 0
+	case "lsr":
+		shiftType = 1
+	case "asr":
+		shiftType = 2
+	default:
+		return 0, 0, fmt.Errorf("unsupported add/sub shift %q", f[0])
+	}
+	n, err := parseImm(f[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return shiftType, uint32(n), nil
+}
+
+// addSubImm12 selects the 12-bit immediate encoding shared by
+// add/sub/cmp/cmn: a value <= 0xfff encodes directly; a value that is a
+// multiple of 0x1000 and fits in 12 bits once shifted right by 12 uses
+// the `lsl #12` form. GNU as performs this selection implicitly, so the
+// backend can emit a bare large immediate like `cmp x0, #0x10000`
+// (which must become #16, lsl #12 — not the truncated #0).
+func addSubImm12(v int64) (imm uint16, shift12 bool, ok bool) {
+	if v < 0 {
+		return 0, false, false
+	}
+	u := uint64(v)
+	if u <= 0xfff {
+		return uint16(u), false, true
+	}
+	if u&0xfff == 0 && (u>>12) <= 0xfff {
+		return uint16(u >> 12), true, true
+	}
+	return 0, false, false
+}
+
+// parseExtend parses an extended-register operand like "uxtw" or
+// "sxtw #2" into the 3-bit option selector and optional left-shift
+// amount.
+func parseExtend(op string) (option, amount uint32, err error) {
+	f := strings.Fields(op)
+	switch f[0] {
+	case "uxtb":
+		option = 0
+	case "uxth":
+		option = 1
+	case "uxtw":
+		option = 2
+	case "uxtx":
+		option = 3
+	case "sxtb":
+		option = 4
+	case "sxth":
+		option = 5
+	case "sxtw":
+		option = 6
+	case "sxtx":
+		option = 7
+	default:
+		return 0, 0, fmt.Errorf("unsupported extend %q", f[0])
+	}
+	switch len(f) {
+	case 1:
+		return option, 0, nil
+	case 2:
+		n, perr := parseImm(f[1])
+		if perr != nil {
+			return 0, 0, perr
+		}
+		return option, uint32(n), nil
+	default:
+		return 0, 0, fmt.Errorf("bad extend operand %q", op)
+	}
 }
 
 func asm3Reg(a *Assembler, mnem string, ops []string) error {
@@ -1024,10 +1152,12 @@ func asmScvtf(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
+	// A 32-bit (w) source clears the sf bit (bit 31) of the conversion.
+	w := is32(ops[1])
 	if single {
-		a.Emit(SCVTFS(rd, rn))
+		a.Emit(clearSF(SCVTFS(rd, rn), w))
 	} else {
-		a.Emit(SCVTF(rd, rn))
+		a.Emit(clearSF(SCVTF(rd, rn), w))
 	}
 	return nil
 }
@@ -1092,7 +1222,11 @@ func asmCmn(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
-		a.Emit(clearSF(CMNimm(rn, uint16(imm), false), w))
+		i12, sh12, ok := addSubImm12(imm)
+		if !ok {
+			return fmt.Errorf("cmn immediate %s out of range", ops[1])
+		}
+		a.Emit(clearSF(CMNimm(rn, i12, sh12), w))
 		return nil
 	}
 	rm, err := parseReg(ops[1])
@@ -1117,7 +1251,11 @@ func asmCmp(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
-		a.Emit(clearSF(CMPimm(rn, uint16(imm), false), w))
+		i12, sh12, ok := addSubImm12(imm)
+		if !ok {
+			return fmt.Errorf("cmp immediate %s out of range", ops[1])
+		}
+		a.Emit(clearSF(CMPimm(rn, i12, sh12), w))
 		return nil
 	}
 	rm, err := parseReg(ops[1])
