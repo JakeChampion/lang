@@ -2304,17 +2304,32 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// frees base = data-8, size+8.
 			if sdOk && ast.RcFreeEnabled && eligible {
 				offs, size := structFieldLayout(sd.Fields, b.ptrW)
-				var ptrFields []ast.Param
-				for _, f := range sd.Fields {
-					if arrElemIsRcTracked(f.Type) {
-						ptrFields = append(ptrFields, f)
-					}
-				}
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-				// rc == 1: drop fields, then free the box.
-				for _, f := range ptrFields {
+				// rc == 1: drop fields, then free the box. The struct is
+				// uniquely owned here, so each field is too — a string
+				// field's __fern_str_dec frees its buffer safely (inline /
+				// literal-sentinel strings no-op). The field was retained
+				// on construction (emitAliasInc) or moved in fresh, so the
+				// dec balances. Direct string fields only; a string nested
+				// in an array / tuple / enum field reclaims via that
+				// container's own (future) string-aware drop.
+				for _, f := range sd.Fields {
+					if _, isStr := f.Type.(ast.StringType); isStr && b.ptrW == 4 {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						if off := offs[f.Name]; off != 0 {
+							b.emit(Op{Kind: OpConstI32, I32: off})
+							b.emit(Op{Kind: OpAdd})
+						}
+						b.emit(Op{Kind: OpLoad, Width: WidthString})
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+						b.emit(Op{Kind: OpDrop})
+						continue
+					}
+					if !arrElemIsRcTracked(f.Type) {
+						continue
+					}
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if off := offs[f.Name]; off != 0 {
 						b.emit(Op{Kind: OpConstI32, I32: off})
@@ -3176,12 +3191,29 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	for _, f := range sd.Fields {
-		if !arrElemIsRcTracked(f.Type) {
+		_, isStr := f.Type.(ast.StringType)
+		isStr = isStr && ptrW == 4
+		if !arrElemIsRcTracked(f.Type) && !isStr {
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 		if off := offs[f.Name]; off != 0 {
 			ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
+		}
+		if isStr {
+			// Two-word string field: load (data, len) and reclaim via
+			// __fern_str_dec at the struct's last reference. Inline and
+			// static-literal strings are no-ops (flag / sentinel); a
+			// headered heap buffer frees at its own rc==1. The field was
+			// retained on construction (emitAliasInc → __fern_str_inc),
+			// so this dec balances. Direct string fields only — a string
+			// nested in an array / tuple / enum field reclaims via that
+			// container's own (future) string-aware drop.
+			ops = append(ops, Op{Kind: OpLoad, Width: WidthString})
+			ops = append(ops,
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			continue
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
 		ops = appendChildDrop(ops, f.Type, info, ptrW, reg)
@@ -8620,22 +8652,21 @@ func exprContainsCall(e ast.Expr) bool {
 // single-word __fern_rc_inc. The callers all pre-gate on
 // needsRcIncOnAlias(e), so this only fires for rc-tracked aliases.
 //
-// String safety: __fern_str_inc on a VIEW string (data pointing into the
-// shared argv_buf / environ heap buffers, as args()/env() produce) would
-// increment mid-buffer bytes and corrupt them. Views always reach a local
-// through a tainted RHS (FieldAccess / Index / Call), so they're never
-// free-eligible. We therefore emit the string inc ONLY when `e` is a bare
-// Ident of a free-eligible local — i.e. a fresh concat/slice result,
-// which is always a headered owned buffer. For any other string alias we
-// emit NO inc (the two-word value simply stays on the stack for the
-// following store, and the destination is itself tainted → skipped by the
-// dec sweep). This keeps __fern_str_inc/dec from ever touching a view or
-// literal, without needing an args/env range-skip.
+// String inc is now UNCONDITIONAL (matching arrays / structs / etc.):
+// every string is one of inline (the flag makes __fern_str_inc/dec a
+// no-op), static literal (the 0x80000000 data-segment sentinel header
+// short-circuits inc/dec), or headered heap (real rc) — there is no
+// view form anymore (args()/env() copy into owned strings; see the
+// args/env view-fix PR). So a borrowed read of a string out of a
+// container (`var s = foo.field` / `arr[i]`) co-owns the buffer, which
+// is required once a container drop dec's its string fields/elements:
+// without the inc, dropping the container would free the buffer out
+// from under the still-live alias (UAF). The earlier eligibility gate
+// (inc only fresh-owned bare idents) existed solely to avoid touching
+// view strings and is no longer needed.
 func (b *builder) emitAliasInc(e ast.Expr) {
 	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.ptrW == 4 {
-		if id, ok := e.(*ast.Ident); ok && b.freeEligible[id.Name] {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
-		}
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		return
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})

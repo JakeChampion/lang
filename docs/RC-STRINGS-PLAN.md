@@ -179,8 +179,21 @@ differential fuzz and `__rc_underflow_count` guard.
    `zeroRcTracked` / `isOwnedRcLocal` / `rhsTainted` / `emitDec` string
    branch + `needsRcIncOnAlias`. The common case: a `__str_concat`
    result in a local frees at scope exit. Highest single payoff.
-3. **String STRUCT FIELDS / TUPLE elements** — `arrElemIsRcTracked` +
-   the field/element drop + construction retain.
+3. **String STRUCT FIELDS** — **DONE.** The eligibility gate in
+   `emitAliasInc` was removed so string retain is now uniform (safe:
+   views are gone, literals carry the sentinel header) — a borrowed
+   read of a string out of a struct co-owns it. Both struct-local
+   reclamation (inline `emitDec`, eligible branch) and the generated
+   `genStructDropFn` dec direct string fields via a two-word
+   `WidthString` load + `__fern_str_dec`, inside the `rc==1` (unique)
+   guard only — never the escaped/non-eligible branch (where a still-
+   reachable field would be freed → UAF; it leaks there instead, which
+   is safe). `needsRcIncOnAlias` already retains alias-shaped field
+   initialisers; fresh values (concat / literal / call) are moved in and
+   freed by the drop. NOTE: other container constructions (array / tuple
+   / enum / closure) now also retain strings uniformly but don't yet
+   dec them on drop → they LEAK (safe, no over-release) until their own
+   slice below lands. **TUPLE elements** still pending (next).
 4. **String ARRAY elements** (`string[]`) — array drop deep-decs string
    elements; `string[]` buffer + each element string freed.
 5. **String ENUM payloads** (`enum E { S(string) }`) — the enum
