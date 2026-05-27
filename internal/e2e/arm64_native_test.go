@@ -39,6 +39,10 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 		{"negint", `function main(): i32 { print((0 - 42).to_string()); return 0; }`, "-42\n"},
 		{"concat", `function main(): i32 { print("x=" + (42).to_string()); return 0; }`, "x=42\n"},
 		{"loopsum", `function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 9) { s = s + i; i = i + 1; } print(s.to_string()); return 0; }`, "36\n"},
+		{"float", `function main(): i32 { print((3.5).to_string()); return 0; }`, "3.5\n"},
+		{"negfloat", `function main(): i32 { print((0.0 - 2.25).to_string()); return 0; }`, "-2.25\n"},
+		{"wholefloat", `function main(): i32 { print((42.0).to_string()); return 0; }`, "42\n"},
+		{"floatarith", `function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; print((x * y).to_string()); return 0; }`, "3\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

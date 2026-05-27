@@ -601,6 +601,16 @@ func FNEGS(rd, rn uint32) uint32 { return 0x1E214000 | ((rn & regMask) << 5) | (
 func FCMPS(rn, rm uint32) uint32 { return 0x1E202000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) }
 func FMOVS(rd, rn uint32) uint32 { return 0x1E204000 | ((rn & regMask) << 5) | (rd & regMask) }
 
+// FMOVSfromGPR Sd, Wn — copy the raw 32 bits of Wn into Sd; FMOVStoGPR
+// Wd, Sn — the reverse. These are the single-precision (ftype=00,
+// sf=0) twins of FMOVfromGPR / FMOVtoGPR.
+func FMOVSfromGPR(rd, rn uint32) uint32 {
+	return 0x1E270000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMOVStoGPR(rd, rn uint32) uint32 {
+	return 0x1E260000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // FCVTStoD Dd, Sn — widen single to double; FCVTDtoS Sd, Dn — narrow.
 func FCVTStoD(rd, rn uint32) uint32 { return 0x1E22C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FCVTDtoS(rd, rn uint32) uint32 { return 0x1E624000 | ((rn & regMask) << 5) | (rd & regMask) }

@@ -934,14 +934,15 @@ func asmFmov(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
-		if single {
-			return fmt.Errorf("fmov Sd, Wn not supported yet")
-		}
 		rn, err := parseReg(ops[1])
 		if err != nil {
 			return err
 		}
-		a.Emit(FMOVfromGPR(rd, rn))
+		if single {
+			a.Emit(FMOVSfromGPR(rd, rn))
+		} else {
+			a.Emit(FMOVfromGPR(rd, rn))
+		}
 	case !dstF && srcF: // fmov Xd, Dn
 		rd, err := parseReg(ops[0])
 		if err != nil {
@@ -952,9 +953,10 @@ func asmFmov(a *Assembler, ops []string) error {
 			return err
 		}
 		if single {
-			return fmt.Errorf("fmov Wd, Sn not supported yet")
+			a.Emit(FMOVStoGPR(rd, rn))
+		} else {
+			a.Emit(FMOVtoGPR(rd, rn))
 		}
-		a.Emit(FMOVtoGPR(rd, rn))
 	default:
 		return fmt.Errorf("fmov between two GPRs not supported")
 	}
