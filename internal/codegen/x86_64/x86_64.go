@@ -4025,10 +4025,10 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("push r12")
 	g.emit("sub rsp, 8")                                   // align
 	g.emit("mov r12, qword ptr [rip + __fern_strbuf_len]") // r12 = current len
-	// alloc len + 5 bytes
-	g.emit("lea rdi, [r12 + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("lea rbx, [rax + 4]") // rbx = data ptr
+	// L2 rc-header layout (see __fern_strcat): payload = len data + 1 NUL.
+	g.emit("lea rdi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rbx, rax") // rbx = data ptr (= base+8)
 	// length prefix
 	g.emit("mov ecx, r12d")
 	g.emitStrLenStore("ecx", "rbx")
@@ -4232,10 +4232,10 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("sub rsp, 8")    // align
 	g.emit("mov ebx, edi")  // rbx = fd
 	g.emit("mov r12d, esi") // r12 = max
-	// Allocate max + 5 bytes (4 prefix + max data + 1 NUL).
-	g.emit("lea edi, [r12 + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("lea r13, [rax + 4]") // r13 = data ptr
+	// L2 rc-header layout (see __fern_strcat): payload = max data + 1 NUL.
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
 	// read(fd, data, max)
 	g.emit("mov edi, ebx")
 	g.emit("mov rsi, r13")
@@ -4347,10 +4347,10 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("jmp .Lenv_strlen")
 	g.label(".Lenv_strlen_done")
 	g.emit("mov r15, rcx")
-	// Allocate len+5 bytes for the value string (4 prefix + N data + 1 NUL).
-	g.emit("lea edi, [r15 + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("lea rdi, [rax + 4]") // rdi = data ptr (= memcpy dst)
+	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
+	g.emit("lea edi, [r15 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax") // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r15d", "rdi")
 	g.emit("mov rsi, r14")
 	g.emit("mov rdx, r15")
@@ -4443,23 +4443,22 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("inc rcx")
 	g.emit("jmp .Largs_strlen")
 	g.label(".Largs_strlen_done")
-	// rcx = strlen. alloc(strlen + 5).
+	// L2 rc-header layout (see __fern_strcat): payload = strlen + 1 NUL.
 	g.emit("mov rdx, rcx") // save strlen (r15 is C ptr; need it for memcpy)
-	g.emit("lea edi, [rcx + 5]")
+	g.emit("lea edi, [rcx + 1]")
 	g.emit("push rdx")
-	g.emit("call __fern_alloc")
+	g.emit("call __fern_alloc_rc1")
 	g.emit("pop rdx")
-	g.emit("lea rdi, [rax + 4]")    // rdi = data ptr (= memcpy dst)
-	g.emitStrLenStore("edx", "rdi") // length prefix
+	g.emit("mov rdi, rax")          // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("edx", "rdi") // length prefix at data-4
 	// memcpy(data, argv[i], strlen + 1) — include NUL.
 	g.emit("mov rsi, r15") // src = argv[i]
 	g.emit("lea rdx, [rdx + 1]")
-	g.emit("push rax")
+	g.emit("push rax") // save data ptr across memcpy
 	g.emit("call __fern_memcpy")
-	g.emit("pop rax")
+	g.emit("pop rax") // rax = data ptr again
 	// result[i] = data ptr (full 8 bytes — pointer-stride).
-	g.emit("lea rcx, [rax + 4]")
-	g.emit("mov [r14 + r13*8], rcx")
+	g.emit("mov [r14 + r13*8], rax")
 	g.emit("inc r13")
 	g.emit("jmp .Largs_loop")
 	g.label(".Largs_done")
@@ -4493,11 +4492,11 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("push rbx")     // n
 	g.emit("push r12")     // data ptr
 	g.emit("mov ebx, edi") // rbx = n
-	// Allocate n + 5 (4 prefix + n data + 1 trailing NUL).
-	g.emit("lea edi, [rbx + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("lea r12, [rax + 4]")    // r12 = data ptr
-	g.emitStrLenStore("ebx", "r12") // length prefix
+	// L2 rc-header layout (see __fern_strcat): payload = n data + 1 NUL.
+	g.emit("lea edi, [rbx + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r12, rax")          // r12 = data ptr (= base+8)
+	g.emitStrLenStore("ebx", "r12") // length prefix at data-4
 	// getrandom(buf=r12, n=rbx, flags=0)
 	g.emit("mov rdi, r12")
 	g.emit("mov rsi, rbx")
@@ -4572,11 +4571,11 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (None)
 	g.emit("jmp .Lrl_ret")
 	g.label(".Lrl_some")
-	// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
-	g.emit("lea edi, [r12 + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("lea r13, [rax + 4]")     // r13 = data ptr
-	g.emitStrLenStore("r12d", "r13") // length prefix
+	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
+	g.emit("lea edi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r13, rax")           // r13 = data ptr (= base+8)
+	g.emitStrLenStore("r12d", "r13") // length prefix at data-4
 	// memcpy(r13, rbx, r12)
 	g.emit("mov rdi, r13")
 	g.emit("mov rsi, rbx")
@@ -4714,10 +4713,11 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov rax, [rbp - 24]")
 	g.emit("jmp .Lsfb_ret")
 	g.label(".Lsfb_heap")
-	g.emit("lea edi, [r12 + 4]")
-	g.emit("call __fern_alloc")
-	g.emit("lea rdi, [rax + 4]")     // rdi = data ptr (= memcpy dst)
-	g.emitStrLenStore("r12d", "rdi") // length prefix
+	// L2 rc-header layout — see __fern_strcat.
+	g.emit("mov edi, r12d")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")           // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("r12d", "rdi") // length prefix at data-4
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, r12")
 	g.emit("push rdi")   // save data ptr across memcpy
@@ -4797,11 +4797,15 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("mov rax, [rbp - 48]")
 	g.emit("jmp .Lstrslice_ret")
 	g.label(".Lstrslice_heap")
-	// --- Heap output path ---
-	g.emit("lea edi, [r14 + 4]")
-	g.emit("call __fern_alloc")
-	g.emit("lea rdi, [rax + 4]")     // rdi = data ptr (= memcpy dst)
-	g.emitStrLenStore("r14d", "rdi") // length prefix
+	// --- Heap output path (L2 rc-header layout — see __fern_strcat). ---
+	// alloc_rc1(new_len): rc + length share the 8-byte header, data at
+	// base+8 = rax. emitStrLenStore writes length at [data-4] = base+4,
+	// clobbering rc1's stashed payload-size slot (string-drop will compute
+	// alloc size from length, not from data-4).
+	g.emit("mov edi, r14d")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rdi, rax")           // rdi = data ptr (= memcpy dst)
+	g.emitStrLenStore("r14d", "rdi") // length prefix at data-4
 	g.emit("lea rsi, [rbx + r12]")   // src = base_byte_ptr + low
 	g.emit("mov rdx, r14")
 	g.emit("push rdi")   // save data ptr
@@ -5076,10 +5080,10 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("js .Lrf_err_close")
 	g.emit("mov r14, [rsp + 48]") // st_size
 
-	// alloc string buf: 4 + size, r13 = data ptr (one past length prefix).
-	g.emit("lea rdi, [r14 + 4]")
-	g.emit("call __fern_alloc")
-	g.emit("lea r13, [rax + 4]")
+	// L2 rc-header layout (see __fern_strcat): payload = size data only.
+	g.emit("mov edi, r14d")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
 	g.emitStrLenStore("r14d", "r13")
 
 	g.emit("xor r15, r15") // bytes_read = 0
@@ -5386,10 +5390,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov dword ptr [rax], 1")
 	g.emit("jmp .Lrrl_ret")
 	g.label(".Lrrl_some")
-	g.emit("lea rdi, [r13 + 5]")
-	g.emit("call __fern_alloc")
-	g.emit("mov [rax], r13d")    // length prefix
-	g.emit("lea r14, [rax + 4]") // data ptr
+	// L2 rc-header layout (see __fern_strcat): payload = N data + 1 NUL.
+	g.emit("lea rdi, [r13 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r14, rax")        // r14 = data ptr (= base+8)
+	g.emit("mov [r14 - 4], r13d") // length prefix at data-4
 	g.emit("mov rdi, r14")
 	g.emit("mov rsi, r12")
 	g.emit("mov rdx, r13")
@@ -5423,21 +5428,21 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
-	// alloc n + 4
-	g.emit("lea rdi, [r12 + 4]")
-	g.emit("call __fern_alloc")
-	g.emit("mov r13, rax")
-	// read(fd, base+4, n)
+	// L2 rc-header layout (see __fern_strcat): payload = n data only.
+	g.emit("mov edi, r12d")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
+	// read(fd, data, n)
 	g.emit("mov edi, ebx")
-	g.emit("lea rsi, [r13 + 4]")
+	g.emit("mov rsi, r13")
 	g.emit("mov rdx, r12")
 	g.emit("xor eax, eax")
 	g.emit("syscall")
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
-	g.emit("mov [r13], eax")
+	g.emit("mov [r13 - 4], eax")          // length prefix at data-4
 	g.emit("mov r12, rax")                // r12 = bytes_read
-	g.emit("lea rbx, [r13 + 4]")          // data ptr
+	g.emit("mov rbx, r13")                // data ptr
 	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
