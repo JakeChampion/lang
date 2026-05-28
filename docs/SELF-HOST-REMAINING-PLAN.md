@@ -467,20 +467,18 @@ planned order:
     set/unset round-trip (`self_host_env_test.go`); arm64 mirror is
     CI-gated.
   - 🔧 filesystem syscalls: `temp_dir` / `read_dir` / `stat` /
-    `remove_dir_all` — **emitted on x86-64 only.** asm_arm64 doesn't
-    yet recognise them as builtins (falls through to generic
-    `bl __fn_<name>` user-mangling) and doesn't emit the helper
-    bodies. The struct-stat offset research is done (st_mode @ 16 on
-    arm64 vs 24 on x86-64); what's missing is the dispatch wiring
-    near `asm.fern` lines 4432-4457 (mirror) and the arm64 asm-emit
-    bodies for `__fern_stat` (~75 lines), `__fern_read_dir` (~150),
-    `__fern_remove_dir_all` (~165) — straight ports from asm.fern
-    lines 8264-8676 with the syscall numbers translated to arm64
-    asm-generic (newfstatat 79 vs 262, getdents64 61 vs 217, etc.).
-    Tests are currently skipped with `t.Skip` referencing this
-    item (TestSelfHostFsBuiltinsArm64, TestSelfHostReaderArm64,
-    TestSelfHostFixpointArm64) — un-skip them as the port lands.
-    The x86-64 helpers themselves (these were
+    `remove_dir_all` — **dispatch wired on arm64 (helper bodies
+    were already emitted unconditionally in asm_arm64.fern; the
+    builtin dispatch in `emit_call` was missing); link now
+    succeeds, but the runtime bodies still have bugs.** Surfaced
+    failures: `TestSelfHostFsBuiltinsArm64` exits 9 in the
+    round-trip (read_dir step), so the `__fern_read_dir` body in
+    asm_arm64.fern (~line 7736) needs debugging.
+    `TestSelfHostReaderArm64` returns +1 byte across every input
+    size (29→30, 4096→4097, 10000→10001) — a separate off-by-one
+    in the arm64 reader's read_chunk/read_all path. Tests stay
+    skipped until those bodies are debugged. The x86-64 helpers
+    (these were
     interpreter-only before; no Go *native* backend implements them, so
     this was new ground, not a mirror). `temp_dir` mkdirs
     `/tmp/<prefix>-<monotonic_ns>`; `read_dir` walks `getdents64` into a

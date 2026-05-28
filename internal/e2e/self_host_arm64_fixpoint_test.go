@@ -38,14 +38,11 @@ import (
 // SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
 // aren't installed (see arm64Tooling); CI provides them.
 func TestSelfHostFixpointArm64(t *testing.T) {
-	// TODO(arm64-self-host-fs-port): the asm_arm64 backend doesn't yet emit
-	// the __fern_stat / __fern_read_dir / __fern_remove_dir_all runtime
-	// helpers (the x86 self-host has them in asm.fern; arm64 hasn't been
-	// mirrored). The fixpoint program now indirectly references those
-	// helpers (it bundles std/test, which calls them), so the link fails
-	// with "undefined reference to __fn_stat" etc. Skip until those
-	// helpers are ported — tracked in docs/SELF-HOST-REMAINING-PLAN.md.
-	t.Skip("arm64 self-host backend missing __fern_stat / __fern_read_dir / __fern_remove_dir_all helpers")
+	// TODO(arm64-self-host-fs-port): dispatch wiring for the fs builtins
+	// is now in place, so the link succeeds, but at least one runtime
+	// helper still has a bug (read_dir; see SELF-HOST-REMAINING-PLAN.md).
+	// Re-skip until the helper bodies are debugged.
+	t.Skip("arm64 self-host fs helper runtime body has a bug (read_dir); dispatch wiring is fixed but runtime fails")
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
