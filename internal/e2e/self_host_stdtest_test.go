@@ -127,6 +127,13 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// dispatch needs the decl to resolve field offsets).
 		{"header_map_migrated", langSrcAbs(t, "examples/tests/header_map_migrated_test.fern")},
 		{"http_request_headers_migrated", langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.fern")},
+		// `http_response_headers_migrated` — needs `int.int_to_string`
+		// (the qualified call modload mangles to `int__int_to_string`)
+		// to route to __fern_i32_to_string. Without it, core/int's
+		// pure-Fern body runs through raw __memcpy / u8[] machinery
+		// and produces empty strings, so the serialized response had
+		// "HTTP/1.1  OK" (status missing) and "Content-Length: ".
+		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
