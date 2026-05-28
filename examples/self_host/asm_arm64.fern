@@ -1715,6 +1715,10 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return "i32"; }
                     if (id.name == "remove_file") { return "option:unknown"; }
+                    if (id.name == "temp_dir") { return "result:string"; }
+                    if (id.name == "read_dir") { return "result:array_string"; }
+                    if (id.name == "stat") { return "result:unknown"; }
+                    if (id.name == "remove_dir_all") { return "option:unknown"; }
                     if (id.name == "f64_bits" || id.name == "f32_bits") { return "i32"; }
                     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return "f64"; }
                     // env(name): Option[string] — Some(value) if the
@@ -4225,6 +4229,43 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");   // name box
                 s = s.write("    bl __fern_env\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // Filesystem builtins (mirror of asm.fern): each lowers to
+            // a `bl __fern_<name>` runtime helper that handles the
+            // actual syscall + box layout. Without these dispatches the
+            // generic user-fn path emits `bl __fn_temp_dir` etc., which
+            // link-error against undefined symbols.
+            if (name == "temp_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_temp_dir\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "read_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_read_dir\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "stat" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_stat\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "remove_dir_all" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_remove_dir_all\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
                 return s;
