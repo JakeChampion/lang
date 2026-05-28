@@ -73,6 +73,13 @@ const (
 	darMmap       = 197
 	darOpenat     = 463
 	darGetentropy = 500
+	// fstat64 (BSD 339): arm64 macOS is always 64-bit-inode, so this
+	// fills the modern `struct stat` whose st_size sits at offset 96
+	// (vs Linux's 48). gettimeofday (BSD 116) fills a `struct timeval`
+	// {i64 tv_sec @0, i32 tv_usec @8} — Darwin's stand-in for the
+	// clock_gettime the Linux now-helper uses.
+	darFstat64      = 339
+	darGettimeofday = 116
 )
 
 // linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
@@ -105,13 +112,14 @@ var linuxDarwinSysno = map[string][2]int{
 
 // linuxOnlySysno carries syscalls whose Linux number we know
 // but whose Darwin equivalent doesn't exist with the same ABI
-// shape — `fstat` (Darwin's struct stat64 has different field
-// offsets), `getrandom` (Darwin uses chunked getentropy). The
+// shape — `getrandom` (Darwin uses chunked getentropy). The
 // `syscall()` helper emits the Linux form when `!g.darwin`
 // and panics at codegen time on Darwin, so a helper that
 // hasn't been ported to Darwin surfaces visibly when the
 // driver builds with `-target arm64-darwin` instead of
-// silently producing wrong asm.
+// silently producing wrong asm. (fstat and clock_gettime used
+// to live here; they're now branched inline for Darwin — see
+// syscallFstat and emitNowUnixMsRuntime.)
 // f64UnaryIntrinsic maps the cheap f64 math builtins to the single
 // arm64 FP instruction that implements them — no libm, no runtime
 // helper. floor/ceil/trunc/round are the FRINT rounding modes
@@ -126,9 +134,7 @@ var f64UnaryIntrinsic = map[string]string{
 }
 
 var linuxOnlySysno = map[string]int{
-	"fstat":         sysFstat,
-	"getrandom":     sysGetrandom,
-	"clock_gettime": sysClockGettime,
+	"getrandom": sysGetrandom,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -225,8 +231,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// per-call detection lives here because the use-flag setter
 	// in the regular emit walk runs AFTER the prelude / prologue
 	// — too late to fail cleanly.
-	var darwinIncompat []string
-	seenDarwinIncompat := map[string]bool{}
 	for _, fn := range ip.Funcs {
 		for _, op := range fn.Ops {
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
@@ -243,39 +247,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 				g.usesArgs = true
 			case "env":
 				g.usesEnv = true
-			case "read_file":
-				// `__fern_read_file` uses fstat — Linux-only
-				// (see linuxOnlySysno). The Darwin port would
-				// need an inline `stat64` syscall + struct
-				// layout that diverges from Linux's; until
-				// it ships, reject the call here.
-				if g.darwin && !seenDarwinIncompat["read_file"] {
-					darwinIncompat = append(darwinIncompat, "read_file")
-					seenDarwinIncompat["read_file"] = true
-				}
 			case "now_unix_ms":
-				// `__fern_now_unix_ms` uses clock_gettime —
-				// Linux-only today (see linuxOnlySysno). Darwin
-				// would need libSystem stitching or the
-				// mach_absolute_time + mach_timebase_info pair.
-				if g.darwin && !seenDarwinIncompat["now_unix_ms"] {
-					darwinIncompat = append(darwinIncompat, "now_unix_ms")
-					seenDarwinIncompat["now_unix_ms"] = true
-				}
 				g.usesNowUnixMs = true
 			}
 		}
-	}
-	if len(darwinIncompat) > 0 {
-		// Stable order so the error message is reproducible
-		// across runs even when the map's iteration order
-		// shifts (single entry today, but adding more later
-		// shouldn't tank reproducibility).
-		return "", fmt.Errorf(
-			"arm64-darwin: the following runtime helper(s) are not yet ported and would emit a Linux-only syscall: %v\n"+
-				"see docs/BACKEND-PARITY.md for the per-helper Darwin status",
-			darwinIncompat,
-		)
 	}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
@@ -3059,6 +3034,26 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.label("__fern_now_unix_ms")
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
+	if g.darwin {
+		// Darwin has no clock_gettime syscall; use gettimeofday(tp, NULL),
+		// which fills `struct timeval { i64 tv_sec @0; i32 tv_usec @8 }`.
+		// ms = tv_sec*1000 + tv_usec/1000.
+		g.emit("add x0, sp, #16") // timeval buffer
+		g.emit("mov x1, #0")      // tz = NULL
+		g.emit("mov x16, #%d", darGettimeofday)
+		g.emit("svc #0x80")
+		g.emit("ldr x9, [sp, #16]") // tv_sec (i64)
+		g.emit("mov x10, #1000")
+		g.emit("mul x9, x9, x10")    // sec * 1000
+		g.emit("ldr w11, [sp, #24]") // tv_usec (i32, 0..1e6)
+		g.emit("mov x10, #1000")
+		g.emit("udiv x11, x11, x10") // usec / 1000
+		g.emit("add x0, x9, x11")    // result
+		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ret")
+		g.sizeDirective("__fern_now_unix_ms")
+		return
+	}
 	// timespec buffer at sp+16.
 	g.emit("add x1, sp, #16")
 	g.emit("mov x0, #0") // CLOCK_REALTIME
@@ -4002,9 +3997,9 @@ func (g *generator) emitReadFileRuntime() {
 	// fstat(fd, statbuf). statbuf scratch at sp+64..sp+256 (192 bytes).
 	g.emit("mov x0, x20")
 	g.emit("add x1, sp, #64")
-	g.syscall("fstat")
+	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrf_err_close")
-	g.emit("ldr x22, [sp, #64 + 48]") // st_size
+	g.emit("ldr x22, [sp, #%d]", 64+g.statSizeOff()) // st_size
 
 	// alloc string buf: 4 (len prefix) + size. x21 holds the
 	// data pointer (one past the prefix) so the read loop and
@@ -4114,9 +4109,9 @@ func (g *generator) emitReadFileRuntime2W() {
 	// fstat(fd, statbuf).
 	g.emit("mov x0, x21")
 	g.emit("add x1, x29, #96") // statbuf at [x29+96]
-	g.syscall("fstat")
+	g.syscallFstat()
 	g.emit("tbnz x0, #63, .Lrf2w_err_close")
-	g.emit("ldr x23, [x29, #96 + 48]") // st_size
+	g.emit("ldr x23, [x29, #%d]", 96+g.statSizeOff()) // st_size
 	// Allocate exactly st_size bytes for the result string
 	// data — no length prefix (two-word ABI).
 	g.emit("mov x0, x23")
@@ -5362,6 +5357,34 @@ func (g *generator) syscall(name string) {
 		return
 	}
 	panic("arm64 syscall: unknown name " + name)
+}
+
+// syscallFstat emits fstat(fd, statbuf) — args already in x0/x1 — and
+// normalises the error shape to Linux's -errno-in-x0 (so callers' sign
+// checks work on both targets). Branched inline rather than via syscall()
+// because Darwin and Linux disagree on both the number and the struct
+// layout (see statSizeOff).
+func (g *generator) syscallFstat() {
+	if g.darwin {
+		g.emit("mov x16, #%d", darFstat64)
+		g.emit("svc #0x80")
+		lbl := g.freshLabel("fstat_ok")
+		g.emit("b.cc %s", lbl)
+		g.emit("neg x0, x0")
+		g.label(lbl)
+		return
+	}
+	g.emit("mov x8, #%d", sysFstat)
+	g.emit("svc #0")
+}
+
+// statSizeOff is the byte offset of st_size within the kernel's struct
+// stat: 96 in Darwin's 64-bit-inode `struct stat`, 48 in Linux's.
+func (g *generator) statSizeOff() int {
+	if g.darwin {
+		return 96
+	}
+	return 48
 }
 
 // adrpAdd emits the canonical AArch64 PC-relative

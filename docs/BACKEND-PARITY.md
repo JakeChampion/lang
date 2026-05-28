@@ -50,6 +50,15 @@ Coverage: `Test{Arm64,X86_64}ReadFileOk` /
 `...ReadFileNotFound` / `...WriteFileOk` /
 `...ReadWriteFileRoundtrip` per backend.
 
+arm64-darwin parity: `read_file` and `now_unix_ms` are ported
+to Darwin syscalls — `fstat` uses `fstat64` (BSD 339) with
+`st_size` at the 64-bit-inode `struct stat` offset 96 (vs
+Linux's 48), and `now_unix_ms` uses `gettimeofday` (BSD 116,
+`struct timeval` → `tv_usec/1000`) since Darwin has no
+`clock_gettime` syscall. Validated by `TestArm64DarwinNativeReadFile`
+and the `now_unix_ms` case in `TestArm64DarwinNativeMachO`, which
+execute on the macOS arm64 runner.
+
 Reader / Writer file API ✅ landed: `open_reader` /
 `open_writer` / `open_appender` + `Reader.read_line` /
 `read_chunk` / `close` + `Writer.write` / `close` on both
