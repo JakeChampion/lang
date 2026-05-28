@@ -69,6 +69,19 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
   if (t > 1700000000000) { return 7; }
   return 1;
 }`, 7},
+		// random_bytes — exercises the Darwin getentropy port (vs Linux
+		// getrandom). Asserts length AND that the bytes are actually
+		// filled by the syscall: OR-of-8-bytes==0 would mean the buffer
+		// is still the zero-mapped alloc memory (syscall failed silently).
+		{"random_bytes", `import "core/no_prelude";
+function main(): i32 {
+  var b: string = random_bytes(8);
+  if (b.len() != 8) { return 1; }
+  var v: i32 = 0; var i: i32 = 0;
+  while (i < 8) { v = v | (b[i] as i32); i = i + 1; }
+  if (v != 0) { return 7; }
+  return 2;
+}`, 7},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
