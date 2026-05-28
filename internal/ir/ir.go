@@ -2328,10 +2328,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if name, ok := mapValDropName(st, b.info, b.genEnumDrops); ok {
 				dropValues = name
 			} else if len(st.Args) >= 2 {
-				// Map[K, string] (wasm): each value is a boxed (data, len)
-				// cell; reclaim each value's string buffer via the
-				// __fern_str_dec column walk before freeing the buf + handle.
-				if _, isStr := st.Args[1].(ast.StringType); isStr && b.ptrW == 4 {
+				// Map[K, string]: each value column slot holds a string
+				// (boxed (data, len) cell on wasm; direct data pointer on
+				// natives — the generated __drop_map_str_values branches
+				// on ptrW). Reclaim each value's buffer before freeing
+				// the buf + handle.
+				if _, isStr := st.Args[1].(ast.StringType); isStr {
 					dropValues = "__drop_map_str_values"
 				}
 			}
@@ -3252,6 +3254,39 @@ func genMapStrKeyDropFn(ptrW int) *Func {
 func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 	pw := int32(ptrW)
 	entryStride := 2 * pw
+	// Inner block per entry differs by backend:
+	//   wasm (ptrW=4): the kv slot stores a cell pointer; deref to load
+	//     the (data, len) two-word string, __fern_str_dec it, then
+	//     __fern_cell_free the now-dead 16-byte cell.
+	//   natives (ptrW=8): the kv slot stores the string data pointer
+	//     directly (no boxing — the slot is already pointer-wide). One
+	//     __fern_rc_dec per entry is the whole reclamation; the L2
+	//     header at data-8 + rc-sentinel literals from prereqs 1+2 make
+	//     this safe across heap + literal sources.
+	var inner []Op
+	if ptrW == 4 {
+		inner = []Op{
+			{Kind: OpLoadLocal, I32: 5},
+			{Kind: OpIf, I32: BlockTypeVoid},
+			{Kind: OpLoadLocal, I32: 5},
+			{Kind: OpLoad, Width: WidthString},
+			{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+			{Kind: OpDrop},
+			{Kind: OpLoadLocal, I32: 5},
+			{Kind: OpCallDirect, Str: "__fern_cell_free", I32: 1},
+			{Kind: OpDrop},
+			{Kind: OpEnd},
+		}
+	} else {
+		inner = []Op{
+			{Kind: OpLoadLocal, I32: 5},
+			{Kind: OpIf, I32: BlockTypeVoid},
+			{Kind: OpLoadLocal, I32: 5},
+			{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+			{Kind: OpDrop},
+			{Kind: OpEnd},
+		}
+	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
@@ -3286,7 +3321,7 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 		{Kind: OpLoadLocal, I32: 2},
 		{Kind: OpGeS},
 		{Kind: OpBrIf, I32: 1},
-		// cellPtr = mem[entriesBase + i*entryStride + colOff]
+		// cellOrDataPtr = mem[entriesBase + i*entryStride + colOff]
 		{Kind: OpLoadLocal, I32: 4},
 		{Kind: OpLoadLocal, I32: 3},
 		{Kind: OpConstI32, I32: entryStride},
@@ -3296,31 +3331,21 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpStoreLocal, I32: 5},
-		// if cellPtr != 0: __fern_str_dec(mem[cellPtr] as (data, len)) to
-		// reclaim the buffer, then __fern_cell_free(cellPtr) to free the
-		// now-dead 16-byte cell itself. Both results dropped.
-		{Kind: OpLoadLocal, I32: 5},
-		{Kind: OpIf, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 5},
-		{Kind: OpLoad, Width: WidthString},
-		{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
-		{Kind: OpDrop},
-		{Kind: OpLoadLocal, I32: 5},
-		{Kind: OpCallDirect, Str: "__fern_cell_free", I32: 1},
-		{Kind: OpDrop},
-		{Kind: OpEnd},
-		// i = i + 1; continue.
-		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpConstI32, I32: 1},
-		{Kind: OpAdd},
-		{Kind: OpStoreLocal, I32: 3},
-		{Kind: OpBr, I32: 0},
-		{Kind: OpEnd}, // loop
-		{Kind: OpEnd}, // block
-		{Kind: OpEnd}, // if rc==1
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpReturn},
 	}
+	ops = append(ops, inner...)
+	ops = append(ops,
+		// i = i + 1; continue.
+		Op{Kind: OpLoadLocal, I32: 3},
+		Op{Kind: OpConstI32, I32: 1},
+		Op{Kind: OpAdd},
+		Op{Kind: OpStoreLocal, I32: 3},
+		Op{Kind: OpBr, I32: 0},
+		Op{Kind: OpEnd}, // loop
+		Op{Kind: OpEnd}, // block
+		Op{Kind: OpEnd}, // if rc==1
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn},
+	)
 	return &Func{
 		Name:         name,
 		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
@@ -8159,6 +8184,28 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
+	// Map[K, string] (natives) set retain: same semantics as the wasm gate
+	// above, but on natives strings are single-word pointers (no boxing) so
+	// __fern_rc_inc on the data pointer bumps the buffer's L2 rc header at
+	// data-8 directly. Literals short-circuit on the 0x80000000 sentinel
+	// (prereq 2). Alias-shape check inlined since needsRcIncOnAlias returns
+	// false for strings on ptrW=8 (string locals aren't generally tracked
+	// on natives yet — that's slice 2). Fresh values (concat / literal /
+	// call) are not Ident/Field/Index and stay un-inc'd, moved into the
+	// map with their rc=1; the column-walk drop dec's them later.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
+		b.ptrW == 8 {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			switch n.Args[2].(type) {
+			case *ast.Ident, *ast.FieldAccess, *ast.Index:
+				if err := b.expr(n.Args[2]); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+		}
+	}
 	// Map[string, V] (wasm) set KEY retain: the key column co-owns an
 	// aliased string key's buffer (boxed (data, len) cell), so __fern_str_inc
 	// it, balancing the __fern_str_dec in the __drop_map_str_keys walk at map
@@ -10242,6 +10289,12 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		}
+	} else if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 8 {
+		// Map[K, string] get retain (natives, non-boxed): the payload IS
+		// the string data pointer; bump its L2 rc so the returned Option
+		// co-owns the buffer alongside the map's column slot. Balances
+		// the map's drop dec; literals short-circuit on the sentinel.
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 	}
 	// Non-boxed: the payload IS the V value (an i32 in the low
 	// bits, or a pointer-shaped V address). payloadStoreOpFor
