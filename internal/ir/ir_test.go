@@ -2156,6 +2156,49 @@ func TestLowerMapStringKeyReclaim(t *testing.T) {
 	}
 }
 
+// TestLowerMapStringKeyReclaimOnNative is the native (ptrW=8 + single-
+// word) counterpart to TestLowerMapStringKeyReclaim: x86_64 also
+// generates __drop_map_str_keys, but the body uses the direct-pointer
+// form (__fern_rc_dec on each stored key data pointer; no cell deref,
+// no cell_free) since x86_64 stores keys unboxed.
+func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("foo" + "bar", 10);
+    return 0;
+}`, 8)
+	if !funcExists(p, "__drop_map_str_keys") {
+		t.Fatalf("native single-word (ptrW=8) must generate __drop_map_str_keys:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_map_str_keys") {
+		t.Errorf("expected map local drop to route through __drop_map_str_keys:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_map_str_keys", "__fern_rc_dec") {
+		t.Errorf("native __drop_map_str_keys must reclaim each key via __fern_rc_dec:\n%s", p)
+	}
+	if callsDirect(p, "__drop_map_str_keys", "__fern_cell_free") {
+		t.Errorf("native __drop_map_str_keys must NOT call __fern_cell_free (no cell boxing):\n%s", p)
+	}
+}
+
+// TestLowerMapStringKeyNoReclaimOnArm64TwoWord mirrors the value-side
+// gate test: arm64 (ptrW=8 + TwoWordOverride=true) is excluded from the
+// key reclaim path until the boxed-string runtime is ported, just like
+// __drop_map_str_values.
+func TestLowerMapStringKeyNoReclaimOnArm64TwoWord(t *testing.T) {
+	prev := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prev }()
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("foo" + "bar", 10);
+    return 0;
+}`, 8)
+	if callsDirect(p, "build", "__drop_map_str_keys") {
+		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must NOT route map drop through __drop_map_str_keys — boxed-string reclaim has no native runtime yet:\n%s", p)
+	}
+}
+
 // TestLowerMapStringColDropFreesCell verifies the string-column drop walk
 // frees the boxed K/V cell itself (__fern_cell_free) in addition to
 // reclaiming the buffer (__fern_str_dec) — the cell is a raw 16-byte
@@ -2227,15 +2270,6 @@ func TestLowerMapStringKeyAndValueReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerMapStringKeyNoReclaimOnNative verifies map string-key
-// reclamation is wasm-only: ptrW=8 emits no __drop_map_str_keys.
-func TestLowerMapStringKeyNoReclaimOnNative(t *testing.T) {
-	p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[string, i32] = map_new(8);
-    m = m.set("foo" + "bar", 10);
-    return 0;
-}`, 8)
-	if funcExists(p, "__drop_map_str_keys") {
-		t.Errorf("native (ptrW=8) must not generate __drop_map_str_keys:\n%s", p)
-	}
-}
+// Superseded by TestLowerMapStringKeyReclaimOnNative (single-word does
+// reclaim) and TestLowerMapStringKeyNoReclaimOnArm64TwoWord (arm64-
+// two-word is still excluded). See those two tests above.

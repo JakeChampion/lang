@@ -1341,6 +1341,72 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map[string, V] key reclamation — the symmetric slice to
+		// map_string_value_reclaim_churn_free, for the KEY column. The
+		// generated __drop_map_str_keys column walk reclaims each key's
+		// string buffer at map drop. Set retains an aliased string key
+		// so the column co-owns the buffer; fresh keys move in with
+		// rc=1. An OVERWRITE with the same key keeps the original key
+		// in place and discards the (freshly-boxed-on-wasm /
+		// rc-inc-on-native) new key, which leaks the inc on wasm but is
+		// bounded (accepted leak, documented in the plan).
+		//
+		// Coverage: aliased set + fresh set + overwrite + drop. Per iter:
+		// key.len()=31; 500x → 15500.
+		name: "map_string_key_reclaim_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var key: string = "key-aaaaaaaaaaaaaaaaaaaa-shared";
+    var m: Map[string, i32] = map_new(8);
+    m = m.set(key, 1);                                // aliased key
+    m = m.set(key, 2);                                // re-set same key (overwrite)
+    m = m.set("key-bbbbbbbbbbbbbbbbbbbb-fresh", 3);   // fresh key (moves in)
+    return key.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 15500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Inline-tagged strings (SSO ≤7 bytes) used as Map keys + values
+		// on natives. A fresh slice / concat result with len ≤ 7 packs
+		// into the "pointer" word with bit 0 set, so it's NOT a real heap
+		// pointer. Without an inline-tag guard in __fern_rc_inc /
+		// __fern_rc_dec the Map.set retain would deref the packed value
+		// as if it were a pointer and corrupt unrelated heap memory
+		// (segfault). Both Slice 7 (V retain) and Slice 8 (K retain) had
+		// this latent crash; long-string corpus cases hid it because >7
+		// chars take the heap path.
+		//
+		// Per iter: short_key.len()=1 + short_val.len()=2 = 3; 500x → 1500.
+		name: "map_inline_string_kv_retain_no_crash",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var src: string = "a=hi";
+    var short_key: string = src[0:1];   // inline (1 byte, tagged)
+    var short_val: string = src[2:4];   // inline (2 bytes, tagged)
+    var m: Map[string, string] = map_new(8);
+    m = m.set(short_key, short_val);    // aliased inline K + V — retains must skip tagged
+    var n = m.len();
+    return short_key.len() + short_val.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

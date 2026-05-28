@@ -1039,6 +1039,13 @@ func (g *generator) emitRcIncRuntime() {
 	g.typeDirective("__fern_rc_inc")
 	g.label("__fern_rc_inc")
 	g.emit("cbz x0, .Lrcinc_ret")
+	// SSO inline-tag guard: native strings ≤7 bytes pack their bytes
+	// into the "pointer" word with bit 0 set. Treating them as pointers
+	// would mis-read [data-8] as an rc word and corrupt memory. Heap
+	// pointers from __fern_alloc / __fern_alloc_rc1 are always 8-byte
+	// aligned (low bit clear), so this guard is a no-op for every
+	// non-string caller (arrays / structs / enums / closures / etc.).
+	g.emit("tbnz x0, #0, .Lrcinc_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lrcinc_ret")
 	g.emit("add w1, w1, #1")
@@ -1064,6 +1071,10 @@ func (g *generator) emitRcDecRuntime() {
 	g.typeDirective("__fern_rc_dec")
 	g.label("__fern_rc_dec")
 	g.emit("cbz x0, .Lrcdec_ret")
+	// SSO inline-tag guard — see __fern_rc_inc above. Heap pointers are
+	// always 8-byte aligned (low bit clear); native strings ≤7 bytes
+	// are inline-tagged and must not be deref'd as pointers.
+	g.emit("tbnz x0, #0, .Lrcdec_ret")
 	// Defensive low-address guard: skip any pointer in the
 	// unmappable low-memory region (< 0x10000 = 64 KiB,
 	// Linux's typical mmap_min_addr). Phase 1d-v's exit dec
@@ -1602,7 +1613,7 @@ func (g *generator) emitStrcatRuntime() {
 	// one). RC-STRINGS-PLAN.md prereq 1.
 	g.emit("add x0, x21, x22")
 	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov x23, x0")     // x23 = data ptr (= base+8)
+	g.emit("mov x23, x0")      // x23 = data ptr (= base+8)
 	g.emit("add w5, w21, w22") // w5 = combined length
 	g.emitStrLenStore("w5", "x23")
 	// Materialise a / b for the memcpy reads.

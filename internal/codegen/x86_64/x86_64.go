@@ -3210,6 +3210,14 @@ func (g *generator) emitRcIncRuntime() {
 	g.emit("mov rax, rdi") // return value = input ptr
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcinc_ret")
+	// SSO inline-tag guard: native strings ≤7 bytes are packed inline
+	// with bit 0 set (tag). Treating them as pointers would mis-read
+	// [data-8] as an rc word and corrupt memory. Heap pointers from
+	// __fern_alloc / __fern_alloc_rc1 are always 8-byte aligned (low
+	// bit clear), so this guard is a no-op for every other caller
+	// (arrays / structs / enums / closures / map handles / etc.).
+	g.emit("test dil, 1")
+	g.emit("jnz .Lrcinc_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
 	if ast.RcFreeDebug {
 		// UAF detector: a poisoned rc word means this block was
@@ -3246,6 +3254,12 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("mov rax, rdi") // return value = input ptr (matches arm64)
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lrcdec_ret")
+	// SSO inline-tag guard — see __fern_rc_inc above. Heap pointers
+	// are always 8-byte aligned (low bit clear), so this is a no-op
+	// for every non-string caller; for native strings ≤7 bytes the
+	// pointer is actually a packed inline value and must not be deref'd.
+	g.emit("test dil, 1")
+	g.emit("jnz .Lrcdec_ret")
 	// Defensive low-address guard — see emitRcDecRuntime in
 	// arm64.go for the rationale. Phase 1d-v's exit dec sweep
 	// can touch slots holding non-pointer values; treating
