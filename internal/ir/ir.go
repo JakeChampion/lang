@@ -8337,6 +8337,26 @@ func (b *builder) callBody(n *ast.Call) error {
 	if id.Name == "__method_Map_get" && len(n.TypeArgs) >= 2 {
 		return b.emitMapGetRebox(n, n.TypeArgs[0], n.TypeArgs[1], needBoxV)
 	}
+	// Map[K, string].get_or on native single-word: the runtime returns the
+	// string data pointer directly (no boxing — non-boxed V skips the wide
+	// path) and __map_retain_val is a no-op for valKind 1, so the caller
+	// would hold an un-retained alias the map's drop could later free
+	// (UAF). Lower the call inline and __fern_rc_inc the returned pointer
+	// so the caller co-owns the buffer. Inline strings short-circuit on
+	// the low-bit guard; literals on the 0x80000000 sentinel.
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 &&
+		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !needBoxV {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			return nil
+		}
+	}
 	if needBoxK || needBoxV {
 		switch id.Name {
 		case "__method_Map_set":
@@ -10540,6 +10560,15 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
 	b.emit(payloadLoadOpFor(vType, b.ptrW))
+	// Map[K, string] get_or retain (wasm boxed V): the returned (data, len)
+	// pair is the string the column was holding (or our just-allocated
+	// fallback cell). The caller will co-own the buffer alongside the
+	// map's cell, so __fern_str_inc it. Balances the caller's later dec
+	// and the map drop's column-walk dec. Mirrors emitMapGetRebox's
+	// boxed-V retain — same correctness rationale, same gating.
+	if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+	}
 	// get_or doesn't retain the key cell — reclaim the transient (the
 	// loaded result value sits underneath; the free ops are balanced).
 	// NB the fallback value cell (__map_or_box) is a separate temporary
