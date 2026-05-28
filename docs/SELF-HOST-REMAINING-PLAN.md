@@ -387,13 +387,24 @@ planned order:
     element's real tag — so struct elements route through the runtime
     shape-pointer dispatch. Guarded by the
     `tuple-destructure-struct-method` AsmRun case on both backends.
-  - **Known remaining example gaps** (separate runtime bugs):
-    `result_assertions_test` now links + runs but segfaults partway and
-    mis-handles an `Err`-result assertion message (a distinct
-    Result/Err-payload bug, *not* the typing or print issues);
-    `option_and_set_ops_test` segfaults on an Option assertion; and
-    `runner_self_test` diverges on a failure-message format. Each is a
-    distinct follow-up; the runtime-builtin surface itself is complete.
+  - ✅ **Match-scrutinee payload typing for `Option[T]` / `Result[T,…]`
+    locals + call results.** `match (o) { Some(msg) … }` bound `msg` as
+    `"unknown"` whenever the scrutinee was either an `ExprIdent` (a
+    local like `var o: Option[string] = …`) *or* a call to a user /
+    module function whose return type wraps a payload. That mis-routed
+    string-typed payloads through struct shape dispatch — e.g.
+    `msg.contains(...)` claimed `"expected 5"` wasn't in
+    `"assert_eq_i32: expected 5, got 4"`. `match_payload_type` now
+    walks the local type table for `ExprIdent` scrutinees and parses
+    `Option[T]` / `Result[T, …]` out of the called function's
+    `ret_type` for `ExprCall`. With this, `runner_self_test` and
+    `option_and_set_ops_test` join the std/test e2e gate
+    (`self_host_stdtest_test.go`).
+  - **Known remaining example gap** (one left): `result_assertions_test`
+    now passes 9/10 cases — it segfaults on the tenth, an
+    `is_err_array on Ok embeds length` case that walks the Err-side
+    payload of a `Result[T[], …]`. Distinct deeper bug in Err / array
+    payload handling, separate follow-up.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

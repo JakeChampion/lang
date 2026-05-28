@@ -68,6 +68,16 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		{"fail_fast", langSrcAbs(t, "examples/tests/fail_fast_test.fern")},
 		{"quiet_mode", langSrcAbs(t, "examples/tests/quiet_mode_test.fern")},
 		{"skip_and_subsuites", langSrcAbs(t, "examples/tests/skip_and_subsuites_test.fern")},
+		// `runner_self_test` inspects the runner's own failure
+		// messages — passes only once match arms on
+		// Option[string] locals / call results bind the payload
+		// as `string` (so msg.contains(...) routes through the
+		// string method, not shape dispatch).
+		{"runner_self", langSrcAbs(t, "examples/tests/runner_self_test.fern")},
+		// `option_and_set_ops` matches on `test.assert_is_some_i32(...)`
+		// (a call returning Option[string]); same payload-typing path
+		// drives msg.contains and the array-set assertions.
+		{"option_and_set_ops", langSrcAbs(t, "examples/tests/option_and_set_ops_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
