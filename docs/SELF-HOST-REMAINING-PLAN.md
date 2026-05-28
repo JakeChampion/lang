@@ -439,6 +439,15 @@ planned order:
     `float_test`, and `timing_test` exposes other downstream bugs in
     those suites (NaN-handling, segfaults in i64 / sleep paths) that
     are separate follow-ups.
+  - ✅ **IEEE NaN semantics in f64 compares (x86).** `ucomisd` sets
+    CF = ZF = PF = 1 on unordered, so naked `setb` / `setbe` / `sete`
+    treated `NaN < x`, `NaN <= x`, and `NaN == NaN` as true. `<` / `<=`
+    / `==` now AND with `setnp` (ordered-only); `!=` ORs with `setp`
+    (true when unordered) so `is_nan(x) = x != x` finally works. arm64
+    was already correct (its `cset eq` / `lt` / `le` family requires
+    ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
+    both backends; `float_math_test` and `float_array_strict_sort_test`
+    now match the interpreter byte-for-byte and join the gate.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

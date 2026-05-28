@@ -185,6 +185,26 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// IEEE NaN semantics — every relation with NaN is false
+			// except `!=`. arm64's fcmp + cset family already handles
+			// this (Z=1 only on ordered equal, mi/ls/gt/ge all require
+			// ordered flags), so this case is a parity assertion vs
+			// the x86 NaN-mask fix.
+			"f64-nan-compares",
+			"function main(): i32 { " +
+				"var nan: f64 = 0.0 / 0.0; var one: f64 = 1.0; " +
+				"if (!(nan != nan)) { return 1; } " +
+				"if (nan == nan) { return 2; } " +
+				"if (nan < one) { return 3; } " +
+				"if (one < nan) { return 4; } " +
+				"if (nan <= one) { return 5; } " +
+				"if (nan > one) { return 6; } " +
+				"if (nan >= one) { return 7; } " +
+				"return 42; }",
+			42,
+			"",
+		},
+		{
 			// Small builtins: f64<->i64 / f32<->i32 bit reinterprets,
 			// sleep_ms(0), remove_file on a missing path. See x86 mirror.
 			"small-builtins-roundtrip",
