@@ -1407,6 +1407,34 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map.get_or returning a string V: the returned string must
+		// survive the map drop. On wasm, emitWideMapGetOr now str_incs
+		// the loaded (data, len) pair; on natives, the call dispatch
+		// intercepts non-boxed string V and rc_incs the returned data
+		// pointer. Without these, the caller would hold an un-retained
+		// alias and the map drop's column walk would later free the
+		// buffer → UAF when the caller eventually used the string.
+		//
+		// Per iter: v.len() = 28; 500x → 14000.
+		name: "map_get_or_string_v_retain_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function get_value(): string {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
+    var v: string = m.get_or(1, "fallback-aaaaaaaaaaaaaaa");
+    return v;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + get_value().len(); k = k + 1; }
+    return (total - 14000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
