@@ -21,19 +21,22 @@ never updated. Per-item current state:
   variant), #4 (`internal/monomorph/monomorph_test.go` has tests),
   #6 (fernsmith fuzzer runs via `.github/workflows/test-fernsmith.yml`
   + `fuzz-diff.yml` + `fuzz-parse.yml`), #7 (`IsReservedName` is a
-  public helper in checker.go), #9 (the `noFloats bool` was replaced
+  public helper in checker.go), #8 (`evalChecked` was removed; the
+  remaining `evalProgram` runs parse + checker + interp end-to-end and
+  is documented as such), #9 (the `noFloats bool` was replaced
   with a structured field — comment at fernsmith.go:225), #10
-  (`genericFuncs`/`genericStructs` are gone from the codebase).
+  (`genericFuncs`/`genericStructs` are gone from the codebase), #12
+  (the `-short`-gated `diffOracleSeeds(t)` helper landed in #1622).
 - 🔧 **Partially done**: #5 — the small packages called out in the fix
   sketch (`closureconv` / `shadowrename` / `treeshake`) all have
   `_test.go` now; only the giant codegen packages
   (`internal/codegen/{arm64,x86_64}`) remain without unit tests.
-- ⬜ **Still open**: #8 (interp.evalProgram + evalChecked — trivially
-  small refactor), #11 (`gtype` is still an `int` iota in fernsmith
-  — the dual-representation cleanup hasn't happened), #12 (`go test
-  ./...` runtime — a `-short` mode hasn't landed), #13–16 (language-
-  design discussions — by their nature they require explicit buy-in
-  before any code lands).
+- ⬜ **Still open**: #11 (`gtype` is still an `int` iota in fernsmith
+  with 8 `g.typeName(t)` plaster sites — the dual-representation
+  cleanup hasn't happened; substantial refactor across the
+  ~1500-line fernsmith.go), #13–16 (language-design discussions —
+  by their nature they require explicit buy-in before any code
+  lands).
 
 ---
 
