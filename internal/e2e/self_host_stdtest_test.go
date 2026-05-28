@@ -78,6 +78,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// (a call returning Option[string]); same payload-typing path
 		// drives msg.contains and the array-set assertions.
 		{"option_and_set_ops", langSrcAbs(t, "examples/tests/option_and_set_ops_test.fern")},
+		// `result_assertions` walks the Ok payload of a
+		// Result[string[], IoError] (`v.len()` inside an Ok arm). Passes
+		// once ret_tag_of preserves the Result Ok type instead of
+		// collapsing it to "result:unknown".
+		{"result_assertions", langSrcAbs(t, "examples/tests/result_assertions_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

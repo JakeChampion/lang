@@ -400,11 +400,15 @@ planned order:
     `ret_type` for `ExprCall`. With this, `runner_self_test` and
     `option_and_set_ops_test` join the std/test e2e gate
     (`self_host_stdtest_test.go`).
-  - **Known remaining example gap** (one left): `result_assertions_test`
-    now passes 9/10 cases — it segfaults on the tenth, an
-    `is_err_array on Ok embeds length` case that walks the Err-side
-    payload of a `Result[T[], …]`. Distinct deeper bug in Err / array
-    payload handling, separate follow-up.
+  - ✅ **Result Ok-payload typing.** `ret_tag_of("Result[T, E]")`
+    collapsed to `"result:unknown"`, so `match (r) { Ok(v) … }` bound
+    `v` as `"unknown"` and `v.len()` (e.g. on a Result[string[], …]
+    payload) fell through every primitive dispatch arm to a
+    `-1` sentinel, segfaulting downstream. Both backends now wrap the
+    generic args, reuse `split_tuple_ret`'s bracket-depth-aware split,
+    and prefix `"result:"` so existing `is_result()` checks still match.
+    `result_assertions_test` now matches the interpreter byte-for-byte
+    and joins the gate — closing out the std/test follow-up list.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

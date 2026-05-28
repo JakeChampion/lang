@@ -798,7 +798,12 @@ function ret_tag_of(name: string): string {
         return "option:" + ret_tag_of(name[7:name.len() - 1]);
     }
     if (name.len() >= 8 && name[0:7] == "Result[") {
-        return "result:unknown";
+        // Result[T, E] — preserve the Ok payload tag so `match (r)
+        // { Ok(v) => … }` knows v's type. Wrap in parens and reuse
+        // split_tuple_ret's bracket-depth-aware split, then prefix
+        // "result:" so existing is_result() checks still match.
+        var inner: string = "(" + name[7 : name.len() - 1] + ")";
+        return "result:" + split_tuple_ret(inner).a;
     }
     if (name.len() > 0 && name[name.len() - 1] == 93) {
         // Trailing `]` → other `T[]` shapes (struct[] etc.)
