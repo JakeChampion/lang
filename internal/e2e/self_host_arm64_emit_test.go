@@ -185,6 +185,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// `u32` / `u64` / `i64` route through the i32 codegen path
+			// so `(n as u32).to_string()` doesn't fall to struct
+			// shape-dispatch. See x86 mirror.
+			"wider-int-as-cast-to-string",
+			"function main(): i32 { var a: u32 = 99 as u32; var b: u64 = 7 as u64; " +
+				"if (a.to_string() != \"99\") { return 1; } " +
+				"if (b.to_string() != \"7\") { return 2; } " +
+				"return 42; }",
+			42,
+			"",
+		},
+		{
 			// IEEE NaN semantics — every relation with NaN is false
 			// except `!=`. arm64's fcmp + cset family already handles
 			// this (Z=1 only on ordered equal, mi/ls/gt/ge all require

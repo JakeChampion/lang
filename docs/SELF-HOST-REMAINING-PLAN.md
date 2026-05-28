@@ -448,6 +448,18 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **Wider / unsigned integer tags.** `u32`, `u64`, `i64`,
+    `usize`, `isize` weren't recognised by `ret_tag_of`, so a variable
+    of one of those types had its tag default to `"unknown"`. Method
+    calls like `(n as u32).to_string()` then fell through the primitive
+    `.to_string()` dispatch (which keys on `prim_recv == "i32"`) to
+    struct shape-dispatch, segfaulting. Both backends now map these
+    name strings to the `i32` codegen path (and `u32[]` / `u64[]` /
+    `i64[]` to `array_i32`). Trade-off: u64-max loses
+    signed-vs-unsigned compare nuance (e.g. `max_u64` with values
+    near `2^64 - 1` still mis-sorts) — separate follow-up. Guarded by
+    `wider-int-as-cast-to-string` AsmRun case; `assert_at_wider_test`
+    and `array_at_and_f32_range_test` join the differential gate.
   - ✅ **`.lines()` trailing-newline.** The self-host's `s.lines()`
     was sugar for `s.split("\n")` — so `"a\nb\nc\n".lines()` returned
     4 lines (including a phantom trailing empty), and `"".lines()`
