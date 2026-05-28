@@ -1,5 +1,30 @@
 # Toolchain self-hosting plan
 
+> **Status (2026-05-28): all phases complete.** The default build of
+> `fern -o out src.fern` now requires **no binary on `$PATH` other than
+> the `fern` compiler itself** for any supported target — arm64-Linux,
+> x86-64-Linux, and arm64-darwin. The external toolchains (gcc / clang /
+> ld64 / lld / wasm-tools) remain available behind `-cc` as a
+> documented escape hatch.
+>
+> Per-phase landing (in chronological order):
+>
+> - Phase 1 (WAT→binary) + Phase 2 (Component Model writer): already
+>   landed via `internal/wasm/component` (see the wasm `-component-wrap`
+>   path) before this rewrite started.
+> - Phase 3 (arm64 ELF writer + linker, default flip): #1592.
+> - Phase 3b (x86-64 ELF writer + linker, full instruction surface +
+>   default flip): #1595 → #1597 → #1599 → #1600 → #1601.
+> - Phase 4 + 5 (Mach-O object writer, linker, ad-hoc code signature,
+>   `LC_UNIXTHREAD` static entry, default flip): #1604 → #1605 → #1608.
+> - Follow-up: arm64-darwin runtime helpers `read_file` (`fstat64` +
+>   `st_size@96`) and `now_unix_ms` (`gettimeofday`) ported — #1610;
+>   `random_bytes` darwin execution validated — #1612.
+>
+> The body of this doc is preserved for historical context (the design
+> reasoning is still useful), but the framing as a forward plan is no
+> longer accurate.
+
 > **Update — the wasm `wasm-tools` shell-out is gone.** `-target wasm`
 > and `-target wasi-http` now compose Component Model components natively
 > in Go (`internal/wasm/component`), and the `-wasi-adapter` flag +
