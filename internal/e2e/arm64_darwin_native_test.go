@@ -62,6 +62,13 @@ function main(): i32 { print("hi"); return 0; }`, 0},
 		{"concat", `import "core/no_prelude";
 import "std/string";
 function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
+		// now_unix_ms — exercises the Darwin gettimeofday port (vs Linux
+		// clock_gettime). A plausible wall-clock value (post-2023) → 7.
+		{"now_unix_ms", `function main(): i32 {
+  var t: i64 = now_unix_ms();
+  if (t > 1700000000000) { return 7; }
+  return 1;
+}`, 7},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -111,6 +118,48 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 				t.Errorf("native arm64-darwin %q exit = %d, want %d", c.name, code, c.wantExit)
 			}
 		})
+	}
+}
+
+// TestArm64DarwinNativeReadFile validates the Darwin read_file port — the
+// fstat64 syscall (339) and st_size at struct-stat offset 96 — by reading
+// a known file and checking its length. Builds everywhere; executes only
+// on Apple Silicon.
+func TestArm64DarwinNativeReadFile(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	dataPath := filepath.Join(dir, "data.txt")
+	const content = "hello, fern!" // 12 bytes
+	if err := os.WriteFile(dataPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	src := filepath.Join(dir, "prog.fern")
+	prog := "import \"core/no_prelude\";\nfunction main(): i32 {\n  match (read_file(\"" + dataPath + "\")) {\n    Ok(s) => { return s.len(); },\n    Err(e) => { return 99; }\n  }\n}\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read out: %v", err)
+	}
+	if _, err := macho.NewFile(bytes.NewReader(raw)); err != nil {
+		t.Fatalf("output is not a parseable Mach-O: %v", err)
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Skipf("native static Mach-O did not run to a normal exit (state=%v)", ps)
+	}
+	if code := ps.ExitCode(); code != len(content) {
+		t.Errorf("read_file().len() = %d, want %d (fstat64 / st_size offset wrong?)", code, len(content))
 	}
 }
 
