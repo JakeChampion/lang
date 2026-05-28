@@ -1274,6 +1274,19 @@ function parse_type_name(p: Par): TypeNameResult {
             // strict superset of the old coarse "tuple" placeholder.
             return TypeNameResult { par: p, name: tbuf };
         }
+        // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
+        // Without consuming it the surrounding decl loop spins on the
+        // `[` (OOMs the compiler). Reduce to the canonical postfix
+        // `T[]` form by parsing the inner type, swallowing the `]`,
+        // and returning `inner + "[]"` so ret_tag_of maps it through
+        // the existing array path.
+        if (p.peek_punct() == "[") {
+            p = p.advance();   // consume `[`
+            var bracketed: TypeNameResult = parse_type_name(p);
+            p = bracketed.par;
+            if (p.peek_punct() == "]") { p = p.advance(); }
+            return TypeNameResult { par: p, name: bracketed.name + "[]" };
+        }
         return TypeNameResult { par: p, name: "" };
     }
     p = p.advance();

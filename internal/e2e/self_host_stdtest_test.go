@@ -134,6 +134,13 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// and produces empty strings, so the serialized response had
 		// "HTTP/1.1  OK" (status missing) and "Content-Length: ".
 		{"http_response_headers_migrated", langSrcAbs(t, "examples/tests/http_response_headers_migrated_test.fern")},
+		// `string_prelude_migrated` — uses `var ab: [u8]` (the prefix-
+		// bracket type syntax). Before, the self-host's parse_type_name
+		// fell through with the `[` left on the cursor and the
+		// surrounding decl loop spun until the kernel OOM-killed the
+		// compiler. Now `[T]` desugars to `T[]` so it goes through the
+		// existing postfix-array path.
+		{"string_prelude_migrated", langSrcAbs(t, "examples/tests/string_prelude_migrated_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
