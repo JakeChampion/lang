@@ -377,10 +377,21 @@ planned order:
     path emits a second 1-byte write). The self-host's own AsmRun /
     arm64-emit string-output cases were rewritten to use `write` for
     no-newline/token output and bare `print` for whole lines.
-  - **Known remaining example gaps** (separate codegen bugs, not the
-    print issue): `result_assertions_test` fails to link
-    (`__fn_i32__it` — a generic receiver-method mis-mangle),
-    `option_and_set_ops_test` segfaults on an Option assertion, and
+  - ✅ **Tuple-destructure element typing.** `var (a, b) = init` bound
+    both names to `i32`, so a struct-typed element's receiver method
+    mis-mangled as `__fn_i32__<m>` (e.g. `__fn_i32__it` on the
+    `TestRunner` from `must_temp_dir`) and failed to link. The parser
+    now preserves the precise tuple spelling (`(A, B)` instead of the
+    coarse `"tuple"`), and both emitters split it (tuple literal →
+    per-item inference; ident call → declared return type) to bind each
+    element's real tag — so struct elements route through the runtime
+    shape-pointer dispatch. Guarded by the
+    `tuple-destructure-struct-method` AsmRun case on both backends.
+  - **Known remaining example gaps** (separate runtime bugs):
+    `result_assertions_test` now links + runs but segfaults partway and
+    mis-handles an `Err`-result assertion message (a distinct
+    Result/Err-payload bug, *not* the typing or print issues);
+    `option_and_set_ops_test` segfaults on an Option assertion; and
     `runner_self_test` diverges on a failure-message format. Each is a
     distinct follow-up; the runtime-builtin surface itself is complete.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via

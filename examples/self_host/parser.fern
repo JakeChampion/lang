@@ -1238,11 +1238,20 @@ function parse_type_name(p: Par): TypeNameResult {
         // loop spins (OOM). std/string's split_at / split_once use
         // `(string, string)` and `Option[(string, string)]`.
         if (p.peek_punct() == "(") {
+            var tbuf: string = "";
             var td: i32 = 0;
             while (!p.at_end()) {
                 var tpk: string = p.peek_punct();
-                if (tpk == "(") { td = td + 1; p = p.advance(); continue; }
-                if (tpk == ")") { td = td - 1; p = p.advance(); if (td == 0) { break; } continue; }
+                if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); continue; }
+                if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); if (td == 0) { break; } continue; }
+                if (tpk == ",") { tbuf = tbuf + ", "; p = p.advance(); continue; }
+                if (tpk == "[") { tbuf = tbuf + "["; p = p.advance(); continue; }
+                if (tpk == "]") { tbuf = tbuf + "]"; p = p.advance(); continue; }
+                if (tpk == ".") { tbuf = tbuf + "."; p = p.advance(); continue; }
+                var tseg: string = p.peek_ident();
+                if (tseg.len() == 0) { tseg = p.peek_keyword(); }
+                if (tseg.len() == 0) { p = p.advance(); continue; }
+                tbuf = tbuf + tseg;
                 p = p.advance();
             }
             // Function type `(T1, …) => R`. After the balanced param
@@ -1258,7 +1267,12 @@ function parse_type_name(p: Par): TypeNameResult {
                 p = rr.par;
                 return TypeNameResult { par: p, name: "fn" };
             }
-            return TypeNameResult { par: p, name: "tuple" };
+            // Tuple type — return the reconstructed precise spelling
+            // (e.g. "(string, TestRunner)") so tuple-destructure
+            // bindings can recover each element's type. ret_tag_of
+            // still maps the whole "(…)" to "unknown", so this is a
+            // strict superset of the old coarse "tuple" placeholder.
+            return TypeNameResult { par: p, name: tbuf };
         }
         return TypeNameResult { par: p, name: "" };
     }
