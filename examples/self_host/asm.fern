@@ -3889,10 +3889,53 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             return s;
                         }
                         if (fa.field == "lines" && c.args.len() == 0) {
-                            // Sugar for `s.split("\n")`. Materialise
-                            // a `"\n"` string box, then route through
-                            // the existing __fern_str_split runtime.
+                            // `s.lines()` — split on '\n', then drop a
+                            // trailing empty entry when s is empty or
+                            // ends with '\n' (so "a\nb\nc\n".lines() is
+                            // 3 lines, not 4 — matching the interp and
+                            // Rust/Python conventions). Routes through
+                            // the existing __fern_str_split runtime;
+                            // the trim happens in-place by decrementing
+                            // the array's len word.
                             s = emit_expr(fa.obj, s);
+                            var ln_lbl: i32 = s.label_n;
+                            s = EmitState {
+                                out: s.out, label_n: s.label_n + 1, local_names: s.local_names,
+                                in_function: s.in_function, string_lits: s.string_lits,
+                                needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+                                needs_heap: s.needs_heap, struct_decls: s.struct_decls,
+                                loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+                                funcs: s.funcs, local_types: s.local_types,
+                                needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq,
+                                needs_str_print: s.needs_str_print, needs_str_cmp: s.needs_str_cmp,
+                                needs_str_read_line: s.needs_str_read_line,
+                                needs_i32_to_string: s.needs_i32_to_string, needs_str_to_i32: s.needs_str_to_i32,
+                                needs_eprint: s.needs_eprint, needs_str_search: s.needs_str_search,
+                                needs_args: s.needs_args, needs_arr_push: s.needs_arr_push,
+                                needs_arr_slice: s.needs_arr_slice, needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+                                needs_arr_reverse: s.needs_arr_reverse, needs_arr_concat: s.needs_arr_concat,
+                                needs_arr_str_index_of: s.needs_arr_str_index_of,
+                                needs_arr_str_join: s.needs_arr_str_join, needs_arr_i32_sum: s.needs_arr_i32_sum,
+                                needs_arr_i32_min_max: s.needs_arr_i32_min_max,
+                                needs_arr_i32_product: s.needs_arr_i32_product,
+                                needs_str_chars: s.needs_str_chars, needs_str_bytes: s.needs_str_bytes,
+                                needs_str_reverse: s.needs_str_reverse, needs_i32_pow: s.needs_i32_pow
+                            };
+                            // Compute trim_flag (0 or 1) = (len==0) || (last byte == '\n').
+                            s = s.write("    movq (%rsp), %rax\n");        // peek s box
+                            s = s.write("    movq (%rax), %rdx\n");        // s data
+                            s = s.write("    movq 8(%rax), %rcx\n");       // s len
+                            s = s.write("    movq $1, %r10\n");            // default: trim = 1 (empty case)
+                            s = s.write("    testq %rcx, %rcx\n");
+                            s = s.write("    jz .Llines_have_" + i32_to_string(ln_lbl) + "\n");
+                            s = s.write("    decq %rcx\n");
+                            s = s.write("    movzbq (%rdx, %rcx, 1), %rcx\n");
+                            s = s.write("    cmpq $10, %rcx\n");
+                            s = s.write("    sete %r10b\n");
+                            s = s.write("    movzbq %r10b, %r10\n");
+                            s = s.write(".Llines_have_" + i32_to_string(ln_lbl) + ":\n");
+                            s = s.write("    pushq %r10\n");               // save trim_flag (stack: [trim, s])
+                            // Alloc "\n" delim box.
                             var lo_ln: StringLitOut = add_string_lit(s, "\n");
                             s = lo_ln.state;
                             s = s.write("    movq $16, %rdi\n");
@@ -3900,10 +3943,13 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    leaq .S" + i32_to_string(lo_ln.idx) + "(%rip), %rcx\n");
                             s = s.write("    movq %rcx, (%rax)\n");
                             s = s.write("    movq $1, 8(%rax)\n");
-                            s = s.write("    pushq %rax\n");
-                            s = s.write("    popq %rsi\n");
-                            s = s.write("    popq %rdi\n");
-                            s = s.write("    call __fern_str_split\n");
+                            s = s.write("    movq %rax, %rsi\n");          // delim → rsi
+                            s = s.write("    popq %r11\n");                // trim_flag temp
+                            s = s.write("    popq %rdi\n");                // s box → rdi
+                            s = s.write("    pushq %r11\n");               // re-save trim across call
+                            s = s.write("    call __fern_str_split\n");    // rax = array
+                            s = s.write("    popq %r11\n");                // restore trim_flag
+                            s = s.write("    subq %r11, (%rax)\n");        // P[0] (len) -= trim
                             s = s.write("    pushq %rax\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();

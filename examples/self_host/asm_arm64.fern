@@ -3681,10 +3681,46 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             return s;
                         }
                         if (fa.field == "lines" && c.args.len() == 0) {
-                            // Sugar for `s.split("\n")`. Materialise
-                            // a `"\n"` string box, then route through
-                            // the existing __fern_str_split runtime.
+                            // `s.lines()` — split on '\n', drop trailing
+                            // empty when s is empty or ends with '\n'.
+                            // See asm.fern for rationale.
                             s = emit_expr(fa.obj, s);
+                            // Compute trim_flag (0 or 1) into x10:
+                            //   trim = (s.len == 0) || (s[s.len - 1] == '\n')
+                            s = s.write("    ldr x9, [sp]\n");          // peek s box
+                            s = s.write("    ldr x10, [x9]\n");         // s data
+                            s = s.write("    ldr x11, [x9, #8]\n");     // s len
+                            s = s.write("    mov x12, #1\n");           // default trim = 1
+                            s = s.write("    cbz x11, .Llines_have_" + i32_to_string(s.label_n) + "\n");
+                            s = s.write("    sub x13, x11, #1\n");
+                            s = s.write("    ldrb w14, [x10, x13]\n");
+                            s = s.write("    cmp w14, #10\n");
+                            s = s.write("    cset x12, eq\n");
+                            s = s.write(".Llines_have_" + i32_to_string(s.label_n) + ":\n");
+                            s = s.write("    str x12, [sp, #-16]!\n");  // save trim_flag
+                            var ln_lbl: i32 = s.label_n;
+                            s = EmitState {
+                                out: s.out, label_n: s.label_n + 1, local_names: s.local_names,
+                                in_function: s.in_function, string_lits: s.string_lits,
+                                needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+                                needs_heap: s.needs_heap, struct_decls: s.struct_decls,
+                                loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+                                funcs: s.funcs, local_types: s.local_types,
+                                needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq,
+                                needs_str_print: s.needs_str_print, needs_str_cmp: s.needs_str_cmp,
+                                needs_str_read_line: s.needs_str_read_line,
+                                needs_i32_to_string: s.needs_i32_to_string, needs_str_to_i32: s.needs_str_to_i32,
+                                needs_eprint: s.needs_eprint, needs_str_search: s.needs_str_search,
+                                needs_args: s.needs_args, needs_arr_push: s.needs_arr_push,
+                                needs_arr_slice: s.needs_arr_slice, needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+                                needs_arr_reverse: s.needs_arr_reverse, needs_arr_concat: s.needs_arr_concat,
+                                needs_arr_str_index_of: s.needs_arr_str_index_of,
+                                needs_arr_str_join: s.needs_arr_str_join, needs_arr_i32_sum: s.needs_arr_i32_sum,
+                                needs_arr_i32_min_max: s.needs_arr_i32_min_max,
+                                needs_arr_i32_product: s.needs_arr_i32_product,
+                                needs_str_chars: s.needs_str_chars, needs_str_bytes: s.needs_str_bytes,
+                                needs_str_reverse: s.needs_str_reverse, needs_i32_pow: s.needs_i32_pow
+                            };
                             var lo_ln: StringLitOut = add_string_lit(s, "\n");
                             s = lo_ln.state;
                             s = s.write("    mov x0, #16\n");
@@ -3694,10 +3730,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    str x1, [x0]\n");
                             s = s.write("    mov x1, #1\n");
                             s = s.write("    str x1, [x0, #8]\n");
-                            s = s.write("    str x0, [sp, #-16]!\n");
-                            s = s.write("    ldr x1, [sp], #16\n");
-                            s = s.write("    ldr x0, [sp], #16\n");
-                            s = s.write("    bl __fern_str_split\n");
+                            s = s.write("    mov x1, x0\n");            // delim → x1
+                            // stack: [trim_flag, s_box]. Pop trim, pop s, push trim, call.
+                            s = s.write("    ldr x9, [sp], #16\n");     // trim_flag
+                            s = s.write("    ldr x0, [sp], #16\n");     // s box
+                            s = s.write("    str x9, [sp, #-16]!\n");   // re-save trim
+                            s = s.write("    bl __fern_str_split\n");   // x0 = array
+                            s = s.write("    ldr x9, [sp], #16\n");     // restore trim
+                            s = s.write("    ldr x10, [x0]\n");
+                            s = s.write("    sub x10, x10, x9\n");
+                            s = s.write("    str x10, [x0]\n");          // array.len -= trim
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.mark_str_search();
                             s = s.mark_heap();
