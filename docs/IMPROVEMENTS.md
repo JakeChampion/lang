@@ -9,6 +9,32 @@ the fix. Ordered by what's most worth chasing first.
 Status legend: 🔥 actionable now / 🛠 small refactor /
 🧪 test-infrastructure / 🎨 language-design (needs explicit buy-in).
 
+## Status (audited 2026-05-28)
+
+A spot-check across all 16 items found the doc significantly stale —
+most concrete items have landed since it was written, but the doc was
+never updated. Per-item current state:
+
+- ✅ **Done**: #1 (`refineCallTypeArgsFromDest` lives in checker.go),
+  #2 (`postSettleType` is wired through Var/Init/match paths), #3
+  (`internal/interp/coverage_test.go` exists and passes for every AST
+  variant), #4 (`internal/monomorph/monomorph_test.go` has tests),
+  #6 (fernsmith fuzzer runs via `.github/workflows/test-fernsmith.yml`
+  + `fuzz-diff.yml` + `fuzz-parse.yml`), #7 (`IsReservedName` is a
+  public helper in checker.go), #9 (the `noFloats bool` was replaced
+  with a structured field — comment at fernsmith.go:225), #10
+  (`genericFuncs`/`genericStructs` are gone from the codebase).
+- 🔧 **Partially done**: #5 — the small packages called out in the fix
+  sketch (`closureconv` / `shadowrename` / `treeshake`) all have
+  `_test.go` now; only the giant codegen packages
+  (`internal/codegen/{arm64,x86_64}`) remain without unit tests.
+- ⬜ **Still open**: #8 (interp.evalProgram + evalChecked — trivially
+  small refactor), #11 (`gtype` is still an `int` iota in fernsmith
+  — the dual-representation cleanup hasn't happened), #12 (`go test
+  ./...` runtime — a `-short` mode hasn't landed), #13–16 (language-
+  design discussions — by their nature they require explicit buy-in
+  before any code lands).
+
 ---
 
 ## 1. 🔥 Generic-call inference doesn't refine TypeArgs from destination
