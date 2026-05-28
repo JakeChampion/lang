@@ -409,6 +409,18 @@ planned order:
     and prefix `"result:"` so existing `is_result()` checks still match.
     `result_assertions_test` now matches the interpreter byte-for-byte
     and joins the gate — closing out the std/test follow-up list.
+  - ✅ **`Ok(x)` / `Err(x)` constructors.** Only `Some(x)` was lowered
+    as a wrapper heap box; `Ok` / `Err` fell through to the generic
+    function-call path and emitted `call __fn_Ok` / `call __fn_Err` —
+    undefined at link time inside any Fern body that constructs a
+    Result (`std/fuzz`'s `fuzz_corpus_from_dir`, user helpers, the
+    obvious `return Ok(...)` pattern). Both backends now emit Result
+    heap boxes (tag 0 / 1 @ 0, payload @ 8 — matching the StmtMatch
+    discriminant and the existing runtime-helper-constructed Results).
+    Guarded by the `result-ok-err-constructors` AsmRun case on both
+    backends; all three `std/fuzz` example suites (`fuzz_example`,
+    `fuzz_corpus`, `fuzz_shrink`) now match the interpreter
+    byte-for-byte and join the differential gate.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

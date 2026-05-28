@@ -185,6 +185,21 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Ok(x) / Err(x) lower as Result heap boxes (tag @0,
+			// payload @8), not as calls to __fn_Ok / __fn_Err.
+			// See the x86 mirror.
+			"result-ok-err-constructors",
+			"function ok_path(): Result[i32, string] { return Ok(40); } " +
+				"function err_path(): Result[i32, string] { return Err(\"nope\"); } " +
+				"function main(): i32 { " +
+				"var a: i32 = 0; var b: i32 = 0; " +
+				"match (ok_path()) { Ok(v) => { a = v; }, Err(_) => { return 1; } } " +
+				"match (err_path()) { Ok(_) => { return 2; }, Err(_) => { b = 2; } } " +
+				"return a + b; }",
+			42,
+			"",
+		},
+		{
 			"tuple-literal-access-middle",
 			"function main(): i32 { var t = (7, 11, 13); return t.1; }",
 			11,

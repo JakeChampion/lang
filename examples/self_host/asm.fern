@@ -4663,6 +4663,29 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
+            // Ok(x) / Err(x) — wrap a payload in a Result. Same box
+            // shape as Option: tag @0, payload @8. Ok = 0 / Err = 1
+            // (matches the StmtMatch arm discriminant + the runtime
+            // helpers that construct Result via resultOk / resultErr).
+            // Without this, a Fern body that `return Ok(...)` or
+            // `return Err(...)` falls through to the generic call path
+            // and emits `call __fn_Ok` / `call __fn_Err` — undefined
+            // at link time. std/fuzz's fuzz_corpus_from_dir hits it.
+            if ((name == "Ok" || name == "Err") && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    movq $16, %rdi\n");
+                s = s.write("    call __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    popq %rcx\n");
+                if (name == "Ok") {
+                    s = s.write("    movq $0, (%rax)\n");
+                } else {
+                    s = s.write("    movq $1, (%rax)\n");
+                }
+                s = s.write("    movq %rcx, 8(%rax)\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // Enum variant constructor with a payload: `Circle(x)` where
             // `Circle` is a synthesized variant struct (has the marker
             // field "__ev"). Heap box [shape_ptr @0, payload @8] — the

@@ -83,6 +83,13 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// once ret_tag_of preserves the Result Ok type instead of
 		// collapsing it to "result:unknown".
 		{"result_assertions", langSrcAbs(t, "examples/tests/result_assertions_test.fern")},
+		// std/fuzz suites — each imports std/fuzz + std/test and uses
+		// `Ok(...)` / `Err(...)` constructors inside Lang bodies. Pass
+		// once the self-host lowers those as Result heap boxes rather
+		// than emitting `call __fn_Ok` / `call __fn_Err`.
+		{"fuzz_example", langSrcAbs(t, "examples/tests/fuzz_example_test.fern")},
+		{"fuzz_corpus", langSrcAbs(t, "examples/tests/fuzz_corpus_test.fern")},
+		{"fuzz_shrink", langSrcAbs(t, "examples/tests/fuzz_shrink_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
