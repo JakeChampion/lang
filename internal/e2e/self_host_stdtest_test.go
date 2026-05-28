@@ -120,6 +120,13 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// was untyped before match_payload_type's ExprFieldAccess
 		// branch learned to look up receiver methods.
 		{"json_field_eq", langSrcAbs(t, "examples/tests/json_field_eq_test.fern")},
+		// `header_map_migrated` / `http_request_headers_migrated` —
+		// pass once std/headers + std/http declare their HeaderMap /
+		// HttpRequest structs explicitly (the Go checker inferred them
+		// from constructor literals; the self-host's shape-pointer
+		// dispatch needs the decl to resolve field offsets).
+		{"header_map_migrated", langSrcAbs(t, "examples/tests/header_map_migrated_test.fern")},
+		{"http_request_headers_migrated", langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

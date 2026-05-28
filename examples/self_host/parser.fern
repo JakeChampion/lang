@@ -1669,6 +1669,37 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
         structs = structs.push(StructDecl { name: "FileStat", fields: fsf });
     }
+    // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
+    // are constructed via record literals (e.g. `HeaderMap { names: …,
+    // values: … }`) but the stdlib files don't carry an explicit
+    // `struct` declaration — the Go-side checker infers the shape
+    // from usage, but the self-host's shape-pointer dispatch needs
+    // the declaration to resolve field offsets. Adding the decls to
+    // the stdlib files would tip the Go checker into "treat methods
+    // as fields" mode (so e.g. `h.get_all(…)` no longer resolves to
+    // the receiver method). Inject them at the self-host's table
+    // instead so the Go side stays untouched.
+    if (!struct_declared(structs, "HeaderMap")) {
+        var hmf: StructFieldDecl[] = [];
+        hmf = hmf.push(StructFieldDecl { name: "names", type_name: "string[]" });
+        hmf = hmf.push(StructFieldDecl { name: "values", type_name: "string[]" });
+        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf });
+    }
+    if (!struct_declared(structs, "HttpRequest")) {
+        var hrf: StructFieldDecl[] = [];
+        hrf = hrf.push(StructFieldDecl { name: "method", type_name: "string" });
+        hrf = hrf.push(StructFieldDecl { name: "path", type_name: "string" });
+        hrf = hrf.push(StructFieldDecl { name: "body", type_name: "string" });
+        hrf = hrf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
+        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf });
+    }
+    if (!struct_declared(structs, "HttpResponse")) {
+        var hsf: StructFieldDecl[] = [];
+        hsf = hsf.push(StructFieldDecl { name: "status", type_name: "i32" });
+        hsf = hsf.push(StructFieldDecl { name: "body", type_name: "string" });
+        hsf = hsf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
+        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf });
+    }
     return structs;
 }
 
