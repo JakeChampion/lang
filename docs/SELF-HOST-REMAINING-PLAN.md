@@ -448,6 +448,17 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **`Map.get_or(k, default)`.** core/map's pure-Lang
+    `__map_get_or_impl` body uses an open-addressed layout that doesn't
+    match the self-host's native `__fern_map_*` runtime, so falling
+    through to it (via the generic method-call path) read garbage and
+    segfaulted on first use. Both backends now special-case
+    `m.get_or(k, default)`: inline as `__fern_map_get(m, k)` → branch on
+    the Option tag → return the `Some` payload or the supplied default.
+    Guarded by the `map-get-or-string` AsmRun case;
+    `map_eq_and_predicates_test` joins the differential gate.
+    `json_field_eq_test` and the migrated header / http tests link
+    and run further, but hit other separate runtime bugs (tracked).
   - ✅ **Wider / unsigned integer tags.** `u32`, `u64`, `i64`,
     `usize`, `isize` weren't recognised by `ret_tag_of`, so a variable
     of one of those types had its tag default to `"unknown"`. Method

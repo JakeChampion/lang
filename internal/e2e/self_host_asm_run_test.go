@@ -308,6 +308,24 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// `m.get_or(k, default)` — inline as `__fern_map_get(m, k)`
+			// + Some-payload-or-default branch. Without this the
+			// generic struct shape-dispatch reads garbage out of the
+			// native map runtime and segfaults — std/test's
+			// assert_json_eq_field_* helpers hit it via core/map's
+			// `m.get_or` whose pure-Lang body uses a different layout.
+			"map-get-or-string",
+			"function main(): i32 { " +
+				"var m: Map[string, i32] = map_new(8); " +
+				"m.set(\"a\", 10); " +
+				"var a: i32 = m.get_or(\"a\", 0); " +
+				"var b: i32 = m.get_or(\"missing\", 99); " +
+				"return a + b; }",
+			109,
+			"",
+			"",
+		},
+		{
 			// Wider / unsigned integer type tags (`u32`, `u64`, `i64`,
 			// `usize`, `isize`) must route through the i32 path —
 			// otherwise (n as u32).to_string() falls to the struct

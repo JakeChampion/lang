@@ -111,6 +111,10 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// path so `(n as u32).to_string()` doesn't segfault.
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern")},
 		{"array_at_and_f32_range", langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.fern")},
+		// `map_eq_and_predicates` — needs `m.get_or(k, default)` to
+		// be dispatched (inline Some-or-default on __fern_map_get)
+		// instead of falling through to core/map's pure-Lang body.
+		{"map_eq_and_predicates", langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
