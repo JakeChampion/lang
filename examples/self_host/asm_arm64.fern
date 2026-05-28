@@ -5744,6 +5744,11 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     s = s.write("    mov sp, x29\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
+    // Flush the literal pool after each function body so any `ldr X, =N`
+    // we've emitted stays within the PC-relative ±1 MiB window. Without
+    // this, programs >1 MiB of code (e.g. the bundled self-host
+    // compiler) trip `as` with "pc-relative load offset out of range".
+    s = s.write("    .ltorg\n");
     s = s.leave_function();
     s = s.reset_locals();
     return s;
@@ -7884,10 +7889,13 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lrd_cpd:\n");
         s = s.write("    mov w10, #0\n");
         s = s.write("    strb w10, [x20, x23]\n");
-        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=65536, 0)
+        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0). Note: on
+        // arm64 Linux O_DIRECTORY=040000=16384 (arch-specific override
+        // of the asm-generic value); on x86-64 it's 65536. Using
+        // 65536 here would mean O_RDONLY|O_DIRECT — EINVAL on /tmp.
         s = s.write("    mov x0, #-100\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    ldr x2, =65536\n");
+        s = s.write("    mov x2, #16384\n");
         s = s.write("    mov x3, #0\n");
         s = s.write("    mov x8, #56\n");            // openat
         s = s.write("    svc #0\n");
@@ -8035,10 +8043,12 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".Lrda_cpd:\n");
         s = s.write("    mov w10, #0\n");
         s = s.write("    strb w10, [x19, x21]\n");
-        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY)
+        // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY). arm64
+        // O_DIRECTORY=040000=16384 (NOT the x86 65536, which is
+        // O_DIRECT on arm64 — see the same note in __fern_read_dir).
         s = s.write("    mov x0, #-100\n");
         s = s.write("    mov x1, x19\n");
-        s = s.write("    ldr x2, =65536\n");
+        s = s.write("    mov x2, #16384\n");
         s = s.write("    mov x3, #0\n");
         s = s.write("    mov x8, #56\n");
         s = s.write("    svc #0\n");

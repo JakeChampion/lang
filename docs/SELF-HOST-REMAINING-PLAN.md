@@ -476,21 +476,22 @@ planned order:
     allocates, and any `env()` caller marks the heap). Verified by a
     set/unset round-trip (`self_host_env_test.go`); arm64 mirror is
     CI-gated.
-  - 🔧 filesystem syscalls: `temp_dir` / `read_dir` / `stat` /
-    `remove_dir_all` — **dispatch wired on arm64 (#1626); link
-    succeeds; stat/temp_dir/remove_dir_all bodies work. Only
-    `read_dir` still returns Err at runtime** (the body
-    structurally mirrors the x86 version — openat O_DIRECTORY=
-    65536 → getdents64 → two-pass build of [cap, len, …]
-    entries — but produces a runtime failure that needs
-    strace-level debugging). `TestSelfHostFsBuiltinsArm64`
-    reaches the read_dir step (exit 9 = Err arm).
-    `TestSelfHostFixpointArm64` transitively depends on read_dir
-    via std/test. Both stay skipped until the body is debugged.
-    `TestSelfHostReaderArm64` was unrelated — turned out to be a
-    test-program typo (`print` adds a newline; should have been
-    `write`, matching the x86 reader test) — now passing on the
-    same branch. The x86-64 helpers (these were
+  - ✅ filesystem syscalls: `temp_dir` / `read_dir` / `stat` /
+    `remove_dir_all` — dispatch + bodies fully working on both
+    backends. arm64 ports landed in three rounds: (a) dispatch
+    wired (#1626) — the helper bodies were always emitted
+    unconditionally; emit_call just lacked the recognition; (b)
+    the `O_DIRECTORY` constant — arm64 uses `040000=16384`, not
+    the x86 `65536` (which is `O_DIRECT` on arm64). strace caught
+    it in seconds: `openat(...,O_RDONLY|O_DIRECT)=EINVAL`. Same
+    bug in both `__fern_read_dir` and `__fern_remove_dir_all`;
+    (c) `.ltorg` after every emitted function body — the bundled
+    self-host compiler is >1 MiB of code, so without periodic
+    literal-pool flushes some `ldr X, =N` references slipped
+    outside the PC-relative ±1 MiB window and `as` rejected
+    them. The reader test that surfaced alongside this work was
+    a test-program typo (`print` vs `write`), already fixed in
+    #1630. The x86-64 helpers (these were
     interpreter-only before; no Go *native* backend implements them, so
     this was new ground, not a mirror). `temp_dir` mkdirs
     `/tmp/<prefix>-<monotonic_ns>`; `read_dir` walks `getdents64` into a
