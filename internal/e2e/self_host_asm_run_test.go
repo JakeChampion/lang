@@ -308,6 +308,30 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// IEEE NaN semantics for f64 compares. Per IEEE, every
+			// relation with NaN is false except `!=`. ucomisd sets
+			// CF=ZF=PF=1 on unordered, so naked setb / setbe / sete
+			// would mis-report `NaN < x` / `NaN <= x` / `NaN == NaN`
+			// as true. `<` / `<=` / `==` now AND with `setnp`; `!=`
+			// ORs with `setp` so it returns true on unordered.
+			// Regression: is_nan (x != x) + strict-monotonic checks
+			// (a < b with a NaN-tainted array) must agree with IEEE.
+			"f64-nan-compares",
+			"function main(): i32 { " +
+				"var nan: f64 = 0.0 / 0.0; var one: f64 = 1.0; " +
+				"if (!(nan != nan)) { return 1; } " +
+				"if (nan == nan) { return 2; } " +
+				"if (nan < one) { return 3; } " +
+				"if (one < nan) { return 4; } " +
+				"if (nan <= one) { return 5; } " +
+				"if (nan > one) { return 6; } " +
+				"if (nan >= one) { return 7; } " +
+				"return 42; }",
+			42,
+			"",
+			"",
+		},
+		{
 			// Small builtins: f64<->i64 / f32<->i32 bit reinterprets,
 			// sleep_ms(0) (no-op nanosleep), and remove_file on a
 			// missing path (Err arm). 42 if every step is fine.

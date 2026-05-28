@@ -2856,12 +2856,37 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    movq %rax, %xmm0\n");   // lhs
                 s = s.write("    ucomisd %xmm1, %xmm0\n");
                 s = s.write("    movq $0, %rax\n");
-                if (b.op == "<") { s = s.write("    setb %al\n"); }
-                else if (b.op == "<=") { s = s.write("    setbe %al\n"); }
+                // IEEE: every relation with NaN is false; equality with
+                // NaN is also false; only `!=` returns true on NaN.
+                // ucomisd sets CF=ZF=PF=1 for unordered, so plain setb /
+                // setbe would mis-report `NaN < x` and `NaN <= x` as
+                // true. Mask `<` and `<=` with `setnp` (PF=0 → ordered);
+                // `==` gates on ordered-AND-equal, `!=` accepts either
+                // ordered-not-equal OR unordered. `>` / `>=` map to
+                // seta / setae which already require CF=0, so unordered
+                // (CF=1) is automatically false.
+                if (b.op == "<") {
+                    s = s.write("    setb %al\n");
+                    s = s.write("    setnp %dl\n");
+                    s = s.write("    andb %dl, %al\n");
+                }
+                else if (b.op == "<=") {
+                    s = s.write("    setbe %al\n");
+                    s = s.write("    setnp %dl\n");
+                    s = s.write("    andb %dl, %al\n");
+                }
                 else if (b.op == ">") { s = s.write("    seta %al\n"); }
                 else if (b.op == ">=") { s = s.write("    setae %al\n"); }
-                else if (b.op == "==") { s = s.write("    sete %al\n"); }
-                else { s = s.write("    setne %al\n"); }
+                else if (b.op == "==") {
+                    s = s.write("    sete %al\n");
+                    s = s.write("    setnp %dl\n");
+                    s = s.write("    andb %dl, %al\n");
+                }
+                else {
+                    s = s.write("    setne %al\n");
+                    s = s.write("    setp %dl\n");
+                    s = s.write("    orb %dl, %al\n");
+                }
                 s = s.write("    movzbq %al, %rax\n");
                 s = s.write("    pushq %rax\n");
                 return s;

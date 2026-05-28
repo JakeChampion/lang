@@ -95,6 +95,12 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// once the self-host has the remove_file builtin (unlinkat
 		// helper, Option[IoError] result).
 		{"filesystem_ops", langSrcAbs(t, "examples/tests/filesystem_ops_test.fern")},
+		// `float_math` / `float_array_strict_sort` — both need IEEE
+		// NaN semantics for f64 compares (every relation with NaN is
+		// false except `!=`). Pass once x86 masks the affected
+		// comparisons with setnp / setp.
+		{"float_math", langSrcAbs(t, "examples/tests/float_math_test.fern")},
+		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern")},
 		{"synthetic_fail", failing},
 	}
 
