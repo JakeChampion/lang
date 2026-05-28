@@ -14,8 +14,10 @@ servers. Targets so far:
   AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
   by the pure-Go native backend — no external toolchain needed. Pass `-cc
   aarch64-linux-gnu-gcc` to opt out to an external assembler/linker.
-- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs via `clang`
-  + `ld64` (or `lld` when cross-compiling from Linux).
+- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs. Assembled,
+  linked, and **ad-hoc code-signed in-process** by the pure-Go native
+  backend (static, no dyld) — no external toolchain needed. Pass `-cc clang`
+  to opt out to clang + `ld64`/`lld`.
 - **x86-64 / amd64** Linux ELF — System V AMD64 ABI. Like arm64, assembled
   and linked **in-process** by the pure-Go native backend (no external
   toolchain); pass `-cc x86_64-linux-gnu-gcc` to opt out.

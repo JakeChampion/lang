@@ -3,12 +3,35 @@ package e2e
 import (
 	"bytes"
 	"debug/macho"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+// hasLoadCommand reports whether a Mach-O image contains a load command
+// with the given cmd id (walking the raw header, little-endian arm64).
+func hasLoadCommand(bin []byte, cmd uint32) bool {
+	if len(bin) < 20 {
+		return false
+	}
+	ncmds := binary.LittleEndian.Uint32(bin[16:])
+	off := 32
+	for i := uint32(0); i < ncmds && off+8 <= len(bin); i++ {
+		c := binary.LittleEndian.Uint32(bin[off:])
+		sz := binary.LittleEndian.Uint32(bin[off+4:])
+		if c == cmd {
+			return true
+		}
+		if sz == 0 {
+			break
+		}
+		off += int(sz)
+	}
+	return false
+}
 
 // TestArm64DarwinNativeMachO builds an integer program through the
 // in-process Mach-O backend (`-target arm64-darwin -native`, no clang/
@@ -48,8 +71,9 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 				t.Fatalf("write src: %v", err)
 			}
 			out := filepath.Join(dir, "prog")
-			if o, err := exec.Command(bin, "-target", "arm64-darwin", "-native", "-o", out, src).CombinedOutput(); err != nil {
-				t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+			// No -native: arm64-darwin defaults to the in-process backend.
+			if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+				t.Fatalf("default arm64-darwin build failed: %v\n%s", err, o)
 			}
 
 			// Structural validation (runs on every host).
@@ -63,6 +87,12 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 			}
 			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
 				t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
+			}
+			// LC_UNIXTHREAD (0x5) is the in-process backend's marker; clang
+			// would emit LC_MAIN + dyld. Its presence proves the DEFAULT is
+			// native, with no external toolchain.
+			if !hasLoadCommand(raw, 0x5) {
+				t.Errorf("default build is missing LC_UNIXTHREAD — expected the native backend, not clang")
 			}
 
 			if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -81,5 +111,21 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 				t.Errorf("native arm64-darwin %q exit = %d, want %d", c.name, code, c.wantExit)
 			}
 		})
+	}
+}
+
+// TestArm64DarwinCcOptsOut confirms -cc still routes arm64-darwin through
+// an external toolchain: a failing -cc must make the build fail, proving
+// the default path doesn't shell out. Host-independent.
+func TestArm64DarwinCcOptsOut(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if err := exec.Command(bin, "-target", "arm64-darwin", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
+		t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
 	}
 }
