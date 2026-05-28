@@ -448,6 +448,21 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **`HeaderMap` / `HttpRequest` / `HttpResponse` struct decls
+    injected.** std/headers and std/http construct these types via
+    record literals (e.g. `HeaderMap { names: …, values: … }`) but
+    never declare a `struct`. The Go-side checker infers the shape
+    from usage; the self-host's shape-pointer dispatch needs the
+    declaration to resolve field offsets. Tried adding the decls to
+    the stdlib files first — that broke the Go checker by tipping
+    its resolution toward "field, not method" for `h.get_all(…)` etc.
+    Instead inject them in `parser.inject_builtin_enums` (same hook
+    as `FileStat` / `IoError`) so the self-host gets the entries
+    without changing the stdlib source. `header_map_migrated_test` and
+    `http_request_headers_migrated_test` now match the interpreter
+    byte-for-byte and join the differential gate.
+    `http_response_headers_migrated_test` still differs on test 1
+    (a separate behavioral bug in the response-builder serialization).
   - ✅ **Match-payload typing for receiver method calls.**
     `match_payload_type` already walked `s.funcs` for ExprCall scrutinees
     with an ExprIdent callee (free functions), but its
