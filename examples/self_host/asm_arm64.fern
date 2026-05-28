@@ -4341,6 +4341,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
+            // Ok(x) / Err(x) — Result wrapper. Same box shape as
+            // Option: tag @0, payload @8. Ok = 0 / Err = 1. See asm.fern.
+            if ((name == "Ok" || name == "Err") && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    mov x0, #16\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                s = s.write("    ldr x1, [sp], #16\n");
+                if (name == "Ok") {
+                    s = s.write("    mov x2, #0\n");
+                } else {
+                    s = s.write("    mov x2, #1\n");
+                }
+                s = s.write("    str x2, [x0]\n");
+                s = s.write("    str x1, [x0, #8]\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             // Enum variant constructor with payload: `Circle(x)`. Heap
             // box [shape_ptr @0, payload @8] — see asm.fern.
             if (is_enum_variant(name, s) && c.args.len() == 1) {
