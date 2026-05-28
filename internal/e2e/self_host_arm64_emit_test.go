@@ -185,6 +185,21 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Receiver-method calls returning Option[T] — see x86 mirror.
+			"match-receiver-method-option-payload",
+			"struct Wrap { n: i32 } " +
+				"pub function (w: Wrap) try_get(): Option[i32] { " +
+				"if (w.n == 0) { return None; } return Some(w.n); } " +
+				"function main(): i32 { " +
+				"var w: Wrap = Wrap { n: 42 }; " +
+				"match (w.try_get()) { " +
+				"Some(got) => { return got + 100; }, " +
+				"None => { return 1; } } " +
+				"return 99; }",
+			142,
+			"",
+		},
+		{
 			// `m.get_or(k, default)` — see x86 mirror.
 			"map-get-or-string",
 			"function main(): i32 { " +

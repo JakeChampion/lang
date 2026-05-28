@@ -765,6 +765,30 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                     if (fa.field == "min" || fa.field == "max") {
                         if (infer_expr_type(fa.obj, s) == "array_i32") { return "i32"; }
                     }
+                    // Receiver method call: look up the FuncDecl whose
+                    // receiver matches the obj's type tag and method
+                    // name matches the field. If its ret_type is
+                    // Option[T] / Result[T, …], return T. Without this
+                    // `match s.parse_int() { Some(got) … }` binds got as
+                    // "unknown" and got.to_string() mis-dispatches.
+                    var rcv: string = infer_expr_type(fa.obj, s);
+                    if (rcv.len() > 0) {
+                        var fi: i32 = 0;
+                        while (fi < s.funcs.len()) {
+                            if (s.funcs[fi].name == fa.field && s.funcs[fi].receiver_type == rcv) {
+                                var rt: string = s.funcs[fi].ret_type;
+                                if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                                    return ret_tag_of(rt[7 : rt.len() - 1]);
+                                }
+                                if (rt.len() >= 8 && rt[0:7] == "Result[") {
+                                    var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                                    return split_tuple_ret(inner).a;
+                                }
+                                return "unknown";
+                            }
+                            fi = fi + 1;
+                        }
+                    }
                     return "unknown";
                 },
                 _ => { return "unknown"; }
