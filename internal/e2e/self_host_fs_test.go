@@ -96,15 +96,11 @@ func TestSelfHostFsBuiltinsX86_64(t *testing.T) {
 // qemu-aarch64 (which passes the filesystem syscalls through to the
 // host). CI-gated; skips cleanly without the cross toolchain.
 func TestSelfHostFsBuiltinsArm64(t *testing.T) {
-	// TODO(arm64-self-host-fs-port): direct test of the fs builtins on the
-	// arm64 self-host backend. asm_arm64 emits `bl __fn_stat` /
-	// `bl __fn_read_dir` / `bl __fn_remove_dir_all` (the generic user-fn
-	// mangling) instead of recognising them as builtins that should lower
-	// to `bl __fern_<name>` runtime helpers, AND the helper bodies
-	// (__fern_stat / __fern_read_dir / __fern_remove_dir_all) aren't
-	// emitted — both pieces still need porting from asm.fern. Tracked in
-	// docs/SELF-HOST-REMAINING-PLAN.md.
-	t.Skip("arm64 self-host backend missing __fern_stat / __fern_read_dir / __fern_remove_dir_all helpers + builtin dispatch")
+	// TODO(arm64-self-host-fs-port): dispatch wiring for stat/read_dir/
+	// remove_dir_all is in place, so the link succeeds, but the program
+	// exits 9 — the read_dir step in the round-trip. The helper body in
+	// asm_arm64.fern (lines ~7736+) has a bug. Re-skip until debugged.
+	t.Skip("arm64 self-host __fern_read_dir helper body has a runtime bug (fs round-trip exits 9 / read_dir step)")
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()

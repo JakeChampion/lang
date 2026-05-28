@@ -4155,6 +4155,48 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
+            // temp_dir(prefix) — make a uniquely-named directory under
+            // /tmp. Returns Result[string]: Ok(path) or Err(_). The
+            // helper body is emitted unconditionally above; this was
+            // the missing dispatch.
+            if (name == "temp_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_temp_dir\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // stat(path) — file metadata. Returns Result[FileStat]:
+            // Ok(FileStat{is_file, is_dir, size}) or Err(_).
+            if (name == "stat" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_stat\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // read_dir(path) — list a directory's base-name children.
+            // Returns Result[string[]]: Ok(names) or Err(_).
+            if (name == "read_dir" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_read_dir\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // remove_dir_all(path) — recursive rm -rf. Returns
+            // Option[IoError]: None ok, Some(_) on error.
+            if (name == "remove_dir_all" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_remove_dir_all\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
             if ((name == "f64_bits" || name == "f64_from_bits") && c.args.len() == 1) {
                 return emit_expr(c.args[0], s);
             }
