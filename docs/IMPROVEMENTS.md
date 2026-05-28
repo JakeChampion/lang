@@ -32,11 +32,17 @@ never updated. Per-item current state:
   `_test.go` now; only the giant codegen packages
   (`internal/codegen/{arm64,x86_64}`) remain without unit tests.
 - ⬜ **Still open**: #11 (`gtype` is still an `int` iota in fernsmith
-  with 8 `g.typeName(t)` plaster sites — the dual-representation
-  cleanup hasn't happened; substantial refactor across the
-  ~1500-line fernsmith.go), #13–16 (language-design discussions —
-  by their nature they require explicit buy-in before any code
-  lands).
+  — but on closer look the proposed "small refactor" understates the
+  scope: making `gtype` a struct with kind+name would ripple through
+  ~28 switch cases that compare against the `tI32`-style constants,
+  the `numTypes` boundary check + dyn-alloc machinery, and the
+  iterator in `gtype_internal_test.go`. The doc's stated motivation
+  — `gtype.String()` can't see generator state — is already
+  mitigated by the `g.typeName(t)` helper that callers use. **Needs
+  a design call before any code lands** (effectively 🎨 rather than
+  🛠), so grouped with the design-discussion bucket below), #13–16
+  (language-design discussions — by their nature they require
+  explicit buy-in before any code lands).
 
 ---
 
