@@ -60,6 +60,18 @@ import (
 // 0 emit-skips / 0 mismatches across the same range.
 const diffOracleSeedCount = 2048
 
+// diffOracleSeeds returns the seed count for the differential sweep,
+// dropping to 1/8th (256) under `testing.Short()` so dev-loop
+// `go test -short ./internal/e2e` finishes promptly without sacrificing
+// the full 2048-seed coverage CI keeps.
+func diffOracleSeeds(t *testing.T) uint64 {
+	t.Helper()
+	if testing.Short() {
+		return diffOracleSeedCount / 8
+	}
+	return diffOracleSeedCount
+}
+
 // diffOracleArtifactDir returns the directory where the
 // differential oracle stashes asm + binary artifacts on
 // failure. The CI workflow uploads this path via
@@ -299,7 +311,8 @@ func asmExcerpt(path string) string {
 // touching coverage.
 func TestDifferential_LangsmithMain(t *testing.T) {
 	shardIdx, shardCount := diffOracleShard(t)
-	for seed := uint64(0); seed < diffOracleSeedCount; seed++ {
+	seedCount := diffOracleSeeds(t)
+	for seed := uint64(0); seed < seedCount; seed++ {
 		if seed%shardCount != shardIdx {
 			continue
 		}
