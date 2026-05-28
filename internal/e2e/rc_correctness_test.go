@@ -1300,6 +1300,47 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map[K, string] value reclamation across set / get / drop.
+		// On wasm the values are stored as boxed (data, len) cells and
+		// the generated __drop_map_str_values column walk str_decs each;
+		// on natives the values are stored as direct data pointers and
+		// the same generated walk rc_decs each (the prereq 1+2 L2 layout
+		// gives every heap string an rc header at data-8 and every
+		// literal a 0x80000000 sentinel, so the rc_dec is uniformly safe).
+		// Set-retain bumps an aliased value's rc so the map co-owns it
+		// alongside the source local; Map.get's returned Option co-owns
+		// via the same retain mechanism (str_inc on wasm, rc_inc on
+		// natives).
+		//
+		// Exercises: fresh value set (moves in, no inc), aliased value set
+		// (inc'd), Map.get retain (Option keeps a live copy), drop reclaim
+		// (column walk decs each entry). Long values force real heap
+		// strings (short strings inline on wasm; natives have no inline).
+		// Per iter: shared_len(33) + got_len(33) = 66; 500x → 33000.
+		name: "map_string_value_reclaim_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var shared: string = "value-aaaaaaaaaaaaaaaaaaaa-shared";
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, shared);                              // aliased set
+    m = m.set(2, shared);                              // second alias
+    m = m.set(3, "value-bbbbbbbbbbbbbbbbbbbb-fresh"); // fresh value (moves in)
+    var got: Option[string] = m.get(1);                // get retains
+    var got_len: i32 = 0;
+    match (got) { Some(s) => { got_len = s.len(); }, None => {} }
+    return shared.len() + got_len;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 33000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

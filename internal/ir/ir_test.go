@@ -2084,16 +2084,28 @@ func TestLowerMapStringValueGetRetain(t *testing.T) {
 	}
 }
 
-// TestLowerMapStringValueNoReclaimOnNative verifies map string-value
-// reclamation is wasm-only: ptrW=8 emits no __drop_map_str_values.
-func TestLowerMapStringValueNoReclaimOnNative(t *testing.T) {
+// TestLowerMapStringValueReclaimOnNative verifies natives (ptrW=8) now
+// generate __drop_map_str_values for Map[K, string] — mirroring wasm.
+// The generated body uses the direct-pointer form (__fern_rc_dec on each
+// stored data pointer; no cell deref, no cell_free) since natives don't
+// box single-pointer strings.
+func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
     m = m.set(1, "hello" + "world");
     return 0;
 }`, 8)
-	if funcExists(p, "__drop_map_str_values") {
-		t.Errorf("native (ptrW=8) must not generate __drop_map_str_values:\n%s", p)
+	if !funcExists(p, "__drop_map_str_values") {
+		t.Fatalf("native (ptrW=8) must generate __drop_map_str_values:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__drop_map_str_values") {
+		t.Errorf("expected map local drop to route through __drop_map_str_values:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_map_str_values", "__fern_rc_dec") {
+		t.Errorf("native __drop_map_str_values must reclaim each value via __fern_rc_dec:\n%s", p)
+	}
+	if callsDirect(p, "__drop_map_str_values", "__fern_cell_free") {
+		t.Errorf("native __drop_map_str_values must NOT call __fern_cell_free (no cell boxing):\n%s", p)
 	}
 }
 
