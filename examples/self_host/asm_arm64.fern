@@ -1363,6 +1363,16 @@ function (s: EmitState) mark_i32_pow(): EmitState {
 // wrongly typed "string".
 function match_payload_type(scrut: parser.Expr, s: EmitState): string {
     match (scrut) {
+        parser.ExprIdent(id) => {
+            // Scrutinee is a local — recover the wrapped payload tag
+            // from its declared/inferred type.
+            if (s.has_local(id.name)) {
+                var lt: string = s.local_type_of(id.name);
+                if (lt.len() >= 7 && lt[0:7] == "option:") { return lt[7 : lt.len()]; }
+                if (lt.len() >= 7 && lt[0:7] == "result:") { return lt[7 : lt.len()]; }
+            }
+            return "unknown";
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
@@ -1370,6 +1380,25 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                         return infer_expr_type(c.args[0], s);
                     }
                     if (id.name == "read_file" || id.name == "read_all_stdin") { return "string"; }
+                    if (id.name == "temp_dir") { return "string"; }
+                    if (id.name == "read_dir") { return "array_string"; }
+                    // Arbitrary free / module function returning
+                    // Option[T] or Result[T, …] — see asm.fern.
+                    var fi: i32 = 0;
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+                            var rt: string = s.funcs[fi].ret_type;
+                            if (rt.len() >= 8 && rt[0:7] == "Option[" && rt[rt.len() - 1] == 93) {
+                                return ret_tag_of(rt[7 : rt.len() - 1]);
+                            }
+                            if (rt.len() >= 8 && rt[0:7] == "Result[") {
+                                var inner: string = "(" + rt[7 : rt.len() - 1] + ")";
+                                return split_tuple_ret(inner).a;
+                            }
+                            return "unknown";
+                        }
+                        fi = fi + 1;
+                    }
                     return "unknown";
                 },
                 parser.ExprFieldAccess(fa) => {
