@@ -96,11 +96,14 @@ func TestSelfHostFsBuiltinsX86_64(t *testing.T) {
 // qemu-aarch64 (which passes the filesystem syscalls through to the
 // host). CI-gated; skips cleanly without the cross toolchain.
 func TestSelfHostFsBuiltinsArm64(t *testing.T) {
-	// TODO(arm64-self-host-fs-port): dispatch wiring for stat/read_dir/
-	// remove_dir_all is in place, so the link succeeds, but the program
-	// exits 9 — the read_dir step in the round-trip. The helper body in
-	// asm_arm64.fern (lines ~7736+) has a bug. Re-skip until debugged.
-	t.Skip("arm64 self-host __fern_read_dir helper body has a runtime bug (fs round-trip exits 9 / read_dir step)")
+	// TODO(arm64-self-host-fs-port): the link succeeds (dispatch wired in
+	// #1626), but the read_dir runtime helper still returns Err — exit 9
+	// reaches the program's read_dir Err arm. The body structurally
+	// mirrors the x86 version (openat O_DIRECTORY=65536 → getdents64 →
+	// two-pass build of [cap, len, …] entries) but produces a runtime
+	// failure that needs proper debugging (probably under qemu with
+	// strace). Tracked in docs/SELF-HOST-REMAINING-PLAN.md.
+	t.Skip("arm64 self-host __fern_read_dir body returns Err at runtime — needs strace-level debugging")
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
