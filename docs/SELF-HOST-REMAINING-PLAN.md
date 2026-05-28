@@ -448,6 +448,13 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **Prefix-bracket type `[T]` no longer OOMs the parser.**
+    `var ab: [u8] = …` left the `[` unconsumed (`parse_type_name`'s
+    fall-through with no base ident / keyword / paren), so the
+    surrounding decl loop spun until the kernel killed the
+    compiler. Now `[T]` desugars to `T[]` in the parser — reusing
+    the existing postfix-array type path. `string_prelude_migrated_test`
+    now compiles, runs, and joins the differential gate.
   - ✅ **`int.int_to_string(n)` routes to `__fern_i32_to_string`.**
     The qualified call `int.int_to_string(n)` modload-mangles to
     `int__int_to_string`; the self-host had no dispatch for that
