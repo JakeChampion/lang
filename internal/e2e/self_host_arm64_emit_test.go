@@ -173,6 +173,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Struct element of a destructured tuple keeps its type →
+			// receiver method dispatches via shape pointer (Box.bump),
+			// not __fn_i32__bump. See the x86 mirror.
+			"tuple-destructure-struct-method",
+			"struct Box { n: i32 } " +
+				"pub function (b: Box) bump(): i32 { return b.n + 1; } " +
+				"function pair(): (i32, Box) { return (5, Box { n: 10 }); } " +
+				"function main(): i32 { var (x, b) = pair(); return b.bump(); }",
+			11,
+			"",
+		},
+		{
 			"tuple-literal-access-middle",
 			"function main(): i32 { var t = (7, 11, 13); return t.1; }",
 			11,

@@ -293,6 +293,21 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// A struct element of a destructured tuple must keep its
+			// type so its receiver method dispatches through the
+			// shape-pointer path (__fn_Box__bump), not mis-mangle as
+			// __fn_i32__bump. Regression for the tuple-destructure
+			// element-typing fix.
+			"tuple-destructure-struct-method",
+			"struct Box { n: i32 } " +
+				"pub function (b: Box) bump(): i32 { return b.n + 1; } " +
+				"function pair(): (i32, Box) { return (5, Box { n: 10 }); } " +
+				"function main(): i32 { var (x, b) = pair(); return b.bump(); }",
+			11,
+			"",
+			"",
+		},
+		{
 			"tuple-literal-access-middle",
 			"function main(): i32 { var t = (7, 11, 13); return t.1; }",
 			11,
