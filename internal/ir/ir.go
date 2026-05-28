@@ -8327,6 +8327,38 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpEnd})
 		}
 	}
+	// Map[K, string] (native single-word) overwrite pre-drop: the native
+	// counterpart of the wasm gate above. Natives store the string data
+	// pointer directly in the value slot (no boxing), so __map_lookup_val
+	// returns the data pointer instead of a cell pointer — no deref
+	// needed; just __fern_rc_dec on the loaded pointer. SSO inline-tag
+	// guard in __fern_rc_dec skips inline-packed shorts; literal sentinel
+	// short-circuits at data-8. arm64 (ptrW=8 + TwoWordOverride) stays
+	// excluded — same gating as the rest of the native string-reclaim
+	// path, awaiting boxed-string runtime helpers.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
+		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK &&
+		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+			if err := b.expr(n.Args[0]); err != nil { // m
+				return err
+			}
+			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
+			oldSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__map_overwrite_oldstr_native_%d", oldSlot)] = oldSlot
+			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
+			// if oldPtr != 0: __fern_rc_dec it (low-bit guard handles inline).
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+		}
+	}
 	// `m.get(k)` ALWAYS reboxes the helper's uniform `Option[usize]`
 	// into a consumer-shaped `Option[V]`. The helper's payload sits
 	// at the usize slot offset (8 on natives), which only lines up

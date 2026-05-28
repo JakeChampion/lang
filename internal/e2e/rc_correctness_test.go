@@ -1481,6 +1481,35 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map.set overwrite pre-drop for string V: replacing an existing
+		// entry's value must reclaim the old buffer (the runtime's
+		// type-erased overwrite-dec is a no-op for valKind 1). Without
+		// the pre-drop, each overwrite leaks the old string buffer.
+		// Wasm derefs the old cell and __fern_str_dec's it; natives load
+		// the data pointer directly and __fern_rc_dec it. Three
+		// overwrites per iter; 500x → 500 (just m.len() each iter, the
+		// real check is uf=0 — proves the dec is balanced against the
+		// drop walk, no over-release of the surviving value).
+		name: "map_string_value_overwrite_pre_drop_churn",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-A");
+    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-B");
+    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-C");
+    return m.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
