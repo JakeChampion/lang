@@ -90,8 +90,18 @@ the audit history is preserved.
 - **Why**: every push uses 16 bytes regardless of type — a
   16-byte alignment hedge for arm64 `stp` / `ldp` and System
   V pre-call alignment on x86-64. Halving slots to 8 bytes
-  is straightforward on both architectures; the alignment
-  requirement only matters at call boundaries.
+  is *not* a simple constant flip: an experiment patching
+  both `slotBytes` values to 8 (no other changes) **builds
+  cleanly but SIGSEGVs 55 of the e2e fixtures**, because
+  the existing codegen relies on every push being an even
+  multiple of the call-boundary alignment requirement
+  (16 bytes for arm64 AAPCS64 and x86-64 SysV) — every
+  push currently maintains the invariant "for free".
+  Switching to 8-byte pushes makes parity toggle each push,
+  so calls land at an unaligned `sp` and the callee's stp /
+  push of a save register faults. The alignment requirement
+  matters at call boundaries; what's missing is the
+  bookkeeping to re-align there.
 - **Fix**: switch arm64 to unaligned `str x0, [sp, #-8]!`,
   x86-64 to `push rax`. Re-align sp to 16 only at the
   `bl` / `call`. Touches every push/pop, callee-save spill,
