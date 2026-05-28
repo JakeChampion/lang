@@ -1262,6 +1262,44 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Map iteration (for (k,v) in m / m.iter()) borrows entries from
+		// the live buffer rather than snapshotting — __mapiter_key/value
+		// hand out the raw stored pointer (value retained only for
+		// array-valued maps). The regression-prone surface is a borrowed
+		// key/value ESCAPING the loop into a container that outlives the
+		// map: the rc pass must retain it at the store site, else the
+		// container holds a borrowed ref the map's drop double-frees.
+		// Exercises string keys + scalar values escaping via for-kv, and
+		// array values escaping via the explicit iterator. Per iter:
+		// keys_acc.len()=2 + vsum(10+20)=30 + outer[0][0]=100 = 132;
+		// 500x → 66000.
+		name: "map_iter_escape_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("longkeyaaaaaaaaaaaaaa1", 10);
+    m = m.set("longkeyaaaaaaaaaaaaaa2", 20);
+    var keys_acc: string[] = [];
+    var vsum: i32 = 0;
+    for (k, v) in m { keys_acc = keys_acc.push(k); vsum = vsum + v; }
+    var am: Map[i32, i32[]] = map_new(8);
+    am = am.set(1, [100, 200]);
+    var outer: i32[][] = [];
+    var it = am.iter();
+    while (it.has_next()) { outer = outer.push(it.value()); it.advance(); }
+    return keys_acc.len() + vsum + outer[0][0];
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 66000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
