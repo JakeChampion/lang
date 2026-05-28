@@ -2348,16 +2348,24 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
 			b.emit(Op{Kind: OpDrop})
-			// Map[string, V] (wasm): the KEY column also holds boxed
-			// (data, len) cells; reclaim each key buffer via the
-			// __fern_str_dec key-column walk. Independent of the value
-			// walk above (both self-guard on rc==1); runs before the buf
-			// + handle free.
+			// Map[string, V]: reclaim each key's string buffer.
+			//   wasm (ptrW=4)              : boxed (data, len) cell; str_dec + cell_free.
+			//   native single-word (x86_64): direct data pointer; rc_dec.
+			//   arm64 (ptrW=8 + TwoWord)   : boxed like wasm, but no native
+			//                                str_dec / cell_free helpers — stay
+			//                                on pre-slice leaking-but-safe behaviour
+			//                                until the boxed-string runtime is
+			//                                ported. Same gating as __drop_map_str_values.
+			// Generated __drop_map_str_keys branches on ptrW for the boxed vs
+			// direct shape. Independent of the value walk above (both
+			// self-guard on rc==1); runs before the buf + handle free.
 			if len(st.Args) >= 1 {
-				if _, isStr := st.Args[0].(ast.StringType); isStr && b.ptrW == 4 {
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-					b.emit(Op{Kind: OpDrop})
+				if _, isStr := st.Args[0].(ast.StringType); isStr {
+					if b.ptrW == 4 || !ast.UseTwoWordStrings(b.ptrW) {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+						b.emit(Op{Kind: OpDrop})
+					}
 				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -8229,6 +8237,28 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	}
+	// Map[string, V] (native single-word) set KEY retain: x86_64 stores
+	// the string data pointer directly in the key column slot —
+	// __fern_rc_inc bumps the buffer's L2 rc header at data-8. Literals
+	// short-circuit on the 0x80000000 sentinel (prereq 2). Alias-shape
+	// check inlined since needsRcIncOnAlias returns false for strings on
+	// ptrW=8. Gated to non-two-word natives — arm64 stores keys boxed
+	// (the IR runs with TwoWordOverride=true) so rc_inc on the cell
+	// pointer would bump the cell's rc, not the key string's. Excluded
+	// until the arm64 boxed-string-reclaim path lands.
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
+		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
+			switch n.Args[1].(type) {
+			case *ast.Ident, *ast.FieldAccess, *ast.Index:
+				if err := b.expr(n.Args[1]); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
 		}
 	}
 	// Overwrite reclamation: `m.set(k, v)` REPLACES any existing value at
