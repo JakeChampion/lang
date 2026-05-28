@@ -1583,12 +1583,16 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("ldr x0, [x29, #80]")
 	g.emit("b .Lstrcat_ret")
 	g.label(".Lstrcat_heap")
-	// --- Heap output path ---
-	// alloc(la + lb + 4) for the new buffer (length prefix + data).
+	// --- Heap output path (L2 rc-header layout) ---
+	// Mirrors x86_64.go's __fern_strcat L2 conversion: alloc_rc1 returns
+	// data (= base+8); length lands at data-4 (= base+4, rc1's
+	// payload-size slot, overwritten — fine for strings since the
+	// eventual string-drop computes alloc size from length). Payload =
+	// la+lb (no NUL — arm64 strcat is no-NUL, unlike x86 which appends
+	// one). RC-STRINGS-PLAN.md prereq 1.
 	g.emit("add x0, x21, x22")
-	g.emit("add x0, x0, #4")
-	g.emit("bl __fern_alloc")
-	g.emit("add x23, x0, #4")  // x23 = data ptr (past the 4-byte length prefix)
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x23, x0")     // x23 = data ptr (= base+8)
 	g.emit("add w5, w21, w22") // w5 = combined length
 	g.emitStrLenStore("w5", "x23")
 	// Materialise a / b for the memcpy reads.
@@ -2150,9 +2154,10 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("ldr x0, [x29, #48]")
 	g.emit("b .Lsfb_ret")
 	g.label(".Lsfb_heap")
-	g.emit("add x0, x20, #4")
-	g.emit("bl __fern_alloc")
-	g.emit("add x21, x0, #4") // x21 = data ptr (callee-save)
+	// L2 rc-header layout — see __fern_strcat.
+	g.emit("mov x0, x20")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 	g.emitStrLenStore("w20", "x21")
 	g.emit("mov x0, x21") // memcpy dst
 	g.emit("mov x1, x19")
@@ -2233,10 +2238,10 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("ldr x0, [x29, #72]")
 	g.emit("b .Lstrslice_ret")
 	g.label(".Lstrslice_heap")
-	// --- Heap output path ---
-	g.emit("add x0, x22, #4")
-	g.emit("bl __fern_alloc")
-	g.emit("add x23, x0, #4") // x23 = data ptr (callee-save survives bl)
+	// --- Heap output path (L2 rc-header layout — see __fern_strcat). ---
+	g.emit("mov x0, x22")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x23, x0") // x23 = data ptr (= base+8)
 	g.emitStrLenStore("w22", "x23")
 	// memcpy(data_ptr, base + low, new_len).
 	g.emit("add x1, x19, x20") // src = base + low
@@ -2410,9 +2415,10 @@ func (g *generator) emitEnvRuntime() {
 		g.emit("str x20, [x0, #16]") // len
 		g.emit("b .Lenv_done")
 	} else {
-		g.emit("add x0, x2, #4")
-		g.emit("bl __fern_alloc")
-		g.emit("add x22, x0, #4")
+		// L2 rc-header layout — see __fern_strcat.
+		g.emit("mov x0, x2")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x22, x0") // x22 = data ptr (= base+8)
 		g.emitStrLenStore("w20", "x22")
 		g.emit("mov x0, x22")
 		g.emit("mov x1, x19")
@@ -2585,10 +2591,10 @@ func (g *generator) emitTcpRecvRuntime() {
 		g.emit("mov x1, x0")  // x1 = len
 		g.emit("mov x0, x21") // x0 = data
 	} else {
-		// Allocate `max + 5` bytes (4 prefix + max data + 1 NUL).
-		g.emit("add x0, x20, #5")
-		g.emit("bl __fern_alloc")
-		g.emit("add x21, x0, #4")
+		// L2 rc-header layout — see __fern_strcat. Payload = max + 1 NUL.
+		g.emit("add x0, x20, #1")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 		g.emit("mov x0, x19")
 		g.emit("mov x1, x21")
 		g.emit("mov x2, x20")
@@ -2986,10 +2992,10 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("adrp x0, __fern_strbuf_len")
 		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
 		g.emit("ldr x19, [x0]") // x19 = len
-		// alloc len + 4
-		g.emit("add x0, x19, #4")
-		g.emit("bl __fern_alloc")
-		g.emit("add x20, x0, #4") // x20 = data ptr
+		// L2 rc-header layout — see __fern_strcat. Payload = len data only.
+		g.emit("mov x0, x19")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x20, x0") // x20 = data ptr (= base+8)
 		g.emitStrLenStore("w19", "x20")
 		// memcpy(data, strbuf_data, len)
 		g.emit("mov x0, x20")
@@ -3143,11 +3149,11 @@ func (g *generator) emitArgsRuntime() {
 	g.label(".Largs_strlen_done")
 	g.emit("sub x0, x0, x23") // x0 = strlen
 	g.emit("mov x9, x0")      // x9 = saved strlen (caller-save, not preserved across bl)
-	// Allocate strlen + 5 (4 prefix + N data + 1 trailing NUL).
-	g.emit("add x0, x0, #5")
-	g.emit("bl __fern_alloc")
-	g.emit("add x10, x0, #4")     // x10 = string data pointer
-	g.emit("stur w9, [x10, #-4]") // length prefix
+	// L2 rc-header layout — see __fern_strcat. Payload = strlen + 1 NUL.
+	g.emit("add x0, x0, #1")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x10, x0")         // x10 = string data pointer (= base+8)
+	g.emit("stur w9, [x10, #-4]") // length prefix at data-4
 	// Stash data pointer in the reserved scratch slot at
 	// `[sp, #56]` (frame is 64 bytes: 16 fp/lr + 16 x19/x20
 	// + 16 x21/x22 + 8 x23 + 8 scratch). Caller-save x10 won't
@@ -3625,11 +3631,11 @@ func (g *generator) emitReadLineRuntime() {
 		g.emit("str x20, [x0, #16]") // len
 		g.emit("b .Lrl_ret")
 	} else {
-		// alloc(len + 5): 4 prefix + N data + 1 trailing NUL.
-		g.emit("add x0, x20, #5")
-		g.emit("bl __fern_alloc")
-		g.emit("add x21, x0, #4")      // x21 = data ptr
-		g.emit("stur w20, [x21, #-4]") // length prefix
+		// L2 rc-header layout — see __fern_strcat. Payload = N data + 1 NUL.
+		g.emit("add x0, x20, #1")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0")          // x21 = data ptr (= base+8)
+		g.emit("stur w20, [x21, #-4]") // length prefix at data-4
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")
 		g.emit("mov x2, x20")
@@ -3706,11 +3712,11 @@ func (g *generator) emitRandomBytesRuntime() {
 		g.emit("bl __fern_alloc")
 		g.emit("mov x19, x0") // x19 = data ptr
 	} else {
-		// Legacy single-pointer: length prefix at [data-4].
-		g.emit("add x0, x20, #5")
-		g.emit("bl __fern_alloc")
-		g.emit("add x19, x0, #4")      // x19 = data ptr (past prefix)
-		g.emit("stur w20, [x19, #-4]") // length prefix
+		// L2 rc-header layout — see __fern_strcat. Payload = n + 1 NUL.
+		g.emit("add x0, x20, #1")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x19, x0")          // x19 = data ptr (= base+8)
+		g.emit("stur w20, [x19, #-4]") // length prefix at data-4
 	}
 	if g.darwin {
 		// Darwin getentropy(buf, len), syscall 500. Max 256
@@ -4001,12 +4007,10 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("tbnz x0, #63, .Lrf_err_close")
 	g.emit("ldr x22, [sp, #%d]", 64+g.statSizeOff()) // st_size
 
-	// alloc string buf: 4 (len prefix) + size. x21 holds the
-	// data pointer (one past the prefix) so the read loop and
-	// the Ok-payload build can use it directly.
-	g.emit("add x0, x22, #4")
-	g.emit("bl __fern_alloc")
-	g.emit("add x21, x0, #4") // x21 = data ptr
+	// L2 rc-header layout — see __fern_strcat. Payload = size data only.
+	g.emit("mov x0, x22")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 	g.emitStrLenStore("w22", "x21")
 
 	// Read loop. x23 = bytes_read (cumulative).
@@ -4582,9 +4586,10 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("str x20, [x0, #16]")
 		g.emit("b .Lrrl_ret")
 	} else {
-		g.emit("add x0, x20, #5")
-		g.emit("bl __fern_alloc")
-		g.emit("add x21, x0, #4")
+		// L2 rc-header layout — see __fern_strcat. Payload = N data + 1 NUL.
+		g.emit("add x0, x20, #1")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 		g.emit("stur w20, [x21, #-4]")
 		g.emit("mov x0, x21")
 		g.emit("mov x1, x19")
@@ -4649,20 +4654,19 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("str w1, [x0]")
 		g.label(".Lrrc2w_ret")
 	} else {
-		// alloc n + 4 (length prefix + bytes). Caller may receive
-		// fewer bytes on a short read.
-		g.emit("add x0, x20, #4")
-		g.emit("bl __fern_alloc")
-		g.emit("mov x21, x0") // base
+		// L2 rc-header layout — see __fern_strcat. Payload = n data only.
+		g.emit("mov x0, x20")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
 		g.emit("mov w0, w19")
-		g.emit("add x1, x21, #4")
+		g.emit("mov x1, x21")
 		g.emit("mov x2, x20")
 		g.syscall("read")
 		g.emit("cmp x0, #0")
 		g.emit("ble .Lrrc_none")
-		g.emit("stur w0, [x21, #4 - 4]")
+		g.emit("stur w0, [x21, #-4]") // length at data-4
 		g.emit("mov x20, x0")
-		g.emit("add x19, x21, #4")
+		g.emit("mov x19, x21") // x19 = data ptr
 		g.emit("add x0, x19, x20")
 		g.emit("strb wzr, [x0]")
 		g.emit("mov x0, #16")
