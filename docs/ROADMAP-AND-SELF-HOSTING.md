@@ -43,21 +43,26 @@ based on a stale `CLAUDE.md` line that has since been
 updated. Item is closed — leaving the entry in the doc so
 the audit history is preserved.
 
-### 3. Wide-scalar Map K/V (i64 / u64 / f64) silently
-   diverges across backends
+### 3. ~~Wide-scalar Map K/V (i64 / u64 / f64) silently
+   diverges across backends~~ — RESOLVED
 
 - **Where**: `internal/ir/ir.go` `mapKeyKindTag` /
-  `mapValKindTag` (only know 0=i32-scalar / 1=string /
-  pointer); prelude's entry stride hardcoded to
-  `2 * __ptr_width()`.
-- **Why**: natives have 8-byte operand-stack slots so
-  `Map[i64, ...]` accidentally works; wasm32 strictly
-  validates `i32` and rejects the same calls. Code that
-  passes CI on native fails at runtime / link time on wasm.
-- **Fix**: extend the runtime-tag scheme to widths (or land
-  Map specialization, which makes the per-instantiation
-  entry-stride choice compile-time). Shares scope with the
-  `usize` work in item 1.
+  `mapValKindTag`. The doc previously claimed both only
+  knew "0=i32-scalar / 1=string / pointer" — that's stale.
+- **Resolution**: the runtime-tag scheme was extended.
+  `mapKeyKindTag` now includes **kind 2 = wide-scalar-boxed**
+  for i64 / u64 / f64 keys when `ptrW < 8` (wasm32); the
+  IR boxes the key into a heap cell and `__map_hash` /
+  `__map_lookup` dereference to hash/compare the underlying
+  8-byte value. `mapValKindTag` was widened (kinds 0..3 for
+  i32-scalar / non-array-pointer / non-rc array / rc-tracked
+  array), and wide-scalar V types use the `emitWideMapSet` /
+  `emitWideMapGet` boxing codepath.
+- **Coverage** (wasm e2e): `TestWASMWideKeyMapBasic`,
+  `…HasDelete`, `…Overwrite`, `…Grow`, `…HighBitsDistinct`,
+  `…U64`, `…StringV`, `…KeysSnapshot`, plus wide-V
+  `TestWASMMapValuesWideI64` / `…F64` and the boxing-dance
+  series at `wasm_e2e_test.go:2446`+.
 
 ### 4. Map runtime-tag dispatch in hot paths — perf + code size
 
