@@ -185,6 +185,20 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Small builtins: f64<->i64 / f32<->i32 bit reinterprets,
+			// sleep_ms(0), remove_file on a missing path. See x86 mirror.
+			"small-builtins-roundtrip",
+			"function main(): i32 { " +
+				"var a: f64 = 3.5; " +
+				"if (f64_from_bits(f64_bits(a)) != a) { return 1; } " +
+				"if (f32_from_bits(f32_bits(a)) != a) { return 2; } " +
+				"sleep_ms(0); " +
+				"match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Some(_) => {}, None => { return 3; } } " +
+				"return 42; }",
+			42,
+			"",
+		},
+		{
 			// Ok(x) / Err(x) lower as Result heap boxes (tag @0,
 			// payload @8), not as calls to __fn_Ok / __fn_Err.
 			// See the x86 mirror.

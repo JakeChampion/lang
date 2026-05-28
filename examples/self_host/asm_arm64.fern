@@ -1712,6 +1712,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // through the integer path without truncation.
                     if (id.name == "now_unix_ms") { return "i32"; }
                     if (id.name == "monotonic_ns") { return "i32"; }
+                    // See asm.fern for rationale.
+                    if (id.name == "sleep_ms") { return "i32"; }
+                    if (id.name == "remove_file") { return "option:unknown"; }
+                    if (id.name == "f64_bits" || id.name == "f32_bits") { return "i32"; }
+                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return "f64"; }
                     // env(name): Option[string] — Some(value) if the
                     // variable is set (including empty), None otherwise.
                     if (id.name == "env") { return "option:string"; }
@@ -4132,6 +4137,46 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
             }
+            // sleep_ms / remove_file / f{32,64}_bits / f{32,64}_from_bits —
+            // see asm.fern for the rationale; the same shape ports cleanly.
+            if (name == "sleep_ms" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_sleep_ms\n");
+                s = s.write("    mov x0, #0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            if (name == "remove_file" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_remove_file\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if ((name == "f64_bits" || name == "f64_from_bits") && c.args.len() == 1) {
+                return emit_expr(c.args[0], s);
+            }
+            if (name == "f32_bits" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    fmov d0, x0\n");
+                s = s.write("    fcvt s0, d0\n");
+                s = s.write("    fmov w0, s0\n");
+                s = s.write("    sxtw x0, w0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
+            if (name == "f32_from_bits" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    fmov s0, w0\n");
+                s = s.write("    fcvt d0, s0\n");
+                s = s.write("    fmov x0, d0\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                return s;
+            }
             // env(name) — look up an environment variable. Returns
             // Option[string]: Some(value) if set, None otherwise.
             if (name == "env" && c.args.len() == 1) {
@@ -5977,6 +6022,32 @@ pub function emit_module(mod: parser.Module): string {
     s = s.write("    mov sp, x29\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
+    // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
+    // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
+    s = s.write(".globl __fern_sleep_ms\n");
+    s = s.write(".type __fern_sleep_ms, %function\n");
+    s = s.write("__fern_sleep_ms:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    sub sp, sp, #32\n");
+    s = s.write("    cmp x0, #0\n");
+    s = s.write("    b.le .Lsm_done\n");
+    s = s.write("    mov x9, #1000\n");
+    s = s.write("    udiv x10, x0, x9\n");        // sec
+    s = s.write("    msub x11, x10, x9, x0\n");   // rem ms
+    s = s.write("    str x10, [sp]\n");
+    s = s.write("    ldr x12, =1000000\n");
+    s = s.write("    mul x11, x11, x12\n");
+    s = s.write("    str x11, [sp, #8]\n");
+    s = s.write("    mov x0, sp\n");
+    s = s.write("    mov x1, #0\n");
+    s = s.write("    mov x8, #101\n");            // nanosleep
+    s = s.write("    svc #0\n");
+    s = s.write(".Lsm_done:\n");
+    s = s.write("    mov sp, x29\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_sleep_ms, .-__fern_sleep_ms\n");
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.
@@ -7984,6 +8055,61 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
+
+        // __fern_remove_file(x0 = path box) → Option[IoError]. arm64
+        // mirror of asm.fern: NUL-terminate the path, unlinkat(AT_FDCWD,
+        // pathz, 0). Returns None on success, Some(_) on error.
+        s = s.write(".globl __fern_remove_file\n");
+        s = s.write(".type __fern_remove_file, %function\n");
+        s = s.write("__fern_remove_file:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // path box
+        s = s.write("    ldr x20, [x19]\n");         // path data
+        s = s.write("    ldr x21, [x19, #8]\n");     // path len
+        s = s.write("    add x0, x21, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x22, x0\n");            // pathz
+        s = s.write("    mov x9, #0\n");
+        s = s.write(".Lrf_copy:\n");
+        s = s.write("    cmp x9, x21\n");
+        s = s.write("    b.ge .Lrf_cpd\n");
+        s = s.write("    ldrb w10, [x20, x9]\n");
+        s = s.write("    strb w10, [x22, x9]\n");
+        s = s.write("    add x9, x9, #1\n");
+        s = s.write("    b .Lrf_copy\n");
+        s = s.write(".Lrf_cpd:\n");
+        s = s.write("    mov w10, #0\n");
+        s = s.write("    strb w10, [x22, x21]\n");
+        s = s.write("    mov x0, #-100\n");
+        s = s.write("    mov x1, x22\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #35\n");            // unlinkat
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Lrf_err\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0]\n");           // None
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    b .Lrf_ret\n");
+        s = s.write(".Lrf_err:\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0]\n");           // Some
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write(".Lrf_ret:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_remove_file, .-__fern_remove_file\n");
 
         // __fern_f64_to_string(x0 = IEEE-754 f64 bits) → string box.
         // arm64 mirror of asm.fern: fixed-precision decimal matching

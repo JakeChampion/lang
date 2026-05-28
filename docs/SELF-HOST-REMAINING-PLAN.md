@@ -421,6 +421,24 @@ planned order:
     backends; all three `std/fuzz` example suites (`fuzz_example`,
     `fuzz_corpus`, `fuzz_shrink`) now match the interpreter
     byte-for-byte and join the differential gate.
+  - ✅ **Small builtins follow-up batch.** Six builtins the interp
+    exposes that the self-host hadn't surfaced yet — each tiny but
+    individually blocking one or more example suites:
+    - `sleep_ms(n)` — nanosleep wrapper (no heap; lives next to the
+      clock helpers, emitted unconditionally).
+    - `remove_file(path)` — single `unlinkat`, mirroring
+      `remove_dir_all`'s file branch; returns `Option[IoError]`.
+    - `f64_bits(x)` / `f64_from_bits(b)` — no-op reinterprets (the
+      rt-stack already holds the IEEE bit pattern).
+    - `f32_bits(x)` / `f32_from_bits(b)` — `cvtsd2ss`+`movd`+`movsxd`
+      narrow / `movd`+`cvtss2sd` widen, since the self-host has no
+      distinct f32 value.
+    Guarded by the `small-builtins-roundtrip` AsmRun case on both
+    backends; `filesystem_ops_test` (the `remove_file` driver) joins
+    the differential gate. The link-error unblock on `batch7_test`,
+    `float_test`, and `timing_test` exposes other downstream bugs in
+    those suites (NaN-handling, segfaults in i64 / sleep paths) that
+    are separate follow-ups.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

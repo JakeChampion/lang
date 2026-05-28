@@ -90,6 +90,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		{"fuzz_example", langSrcAbs(t, "examples/tests/fuzz_example_test.fern")},
 		{"fuzz_corpus", langSrcAbs(t, "examples/tests/fuzz_corpus_test.fern")},
 		{"fuzz_shrink", langSrcAbs(t, "examples/tests/fuzz_shrink_test.fern")},
+		// `filesystem_ops` exercises remove_file alongside temp_dir /
+		// write_file / stat / read_dir / remove_dir_all. Joins the gate
+		// once the self-host has the remove_file builtin (unlinkat
+		// helper, Option[IoError] result).
+		{"filesystem_ops", langSrcAbs(t, "examples/tests/filesystem_ops_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

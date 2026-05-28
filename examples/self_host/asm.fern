@@ -444,6 +444,14 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // through the integer path without truncation.
                     if (id.name == "now_unix_ms") { return "i32"; }
                     if (id.name == "monotonic_ns") { return "i32"; }
+                    // sleep_ms / remove_file: void / Option[IoError].
+                    // Float bit-reinterpret: f64<->i64 passes through
+                    // (the rt-stack already holds the bit pattern);
+                    // f32<->i32 narrows / widens via SSE.
+                    if (id.name == "sleep_ms") { return "i32"; }
+                    if (id.name == "remove_file") { return "option:unknown"; }
+                    if (id.name == "f64_bits" || id.name == "f32_bits") { return "i32"; }
+                    if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return "f64"; }
                     // env(name): Option[string] — Some(value) if the
                     // variable is set (including empty), None otherwise.
                     if (id.name == "env") { return "option:string"; }
@@ -4353,6 +4361,54 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
+            // sleep_ms(n) — pause for `n` ms (no-op if n <= 0).
+            // Returns void; we push 0 so the stack-machine invariant
+            // holds.
+            if (name == "sleep_ms" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __fern_sleep_ms\n");
+                s = s.write("    pushq $0\n");
+                return s;
+            }
+            // remove_file(path) — unlink. Returns Option[IoError]:
+            // None on success, Some(_) on error.
+            if (name == "remove_file" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __fern_remove_file\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // f64_bits / f64_from_bits — no-op reinterprets. The
+            // 8-byte rt-stack slot already holds the IEEE bit pattern.
+            if ((name == "f64_bits" || name == "f64_from_bits") && c.args.len() == 1) {
+                return emit_expr(c.args[0], s);
+            }
+            // f32_bits(x) — narrow f64 to f32, take the 32-bit pattern
+            // as a sign-extended i32 slot.
+            if (name == "f32_bits" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movq %rax, %xmm0\n");
+                s = s.write("    cvtsd2ss %xmm0, %xmm0\n");
+                s = s.write("    movd %xmm0, %eax\n");
+                s = s.write("    movsxd %eax, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
+            // f32_from_bits(b) — interpret the low 32 bits of b as an
+            // IEEE-754 f32 and widen to f64.
+            if (name == "f32_from_bits" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rax\n");
+                s = s.write("    movd %eax, %xmm0\n");
+                s = s.write("    cvtss2sd %xmm0, %xmm0\n");
+                s = s.write("    movq %xmm0, %rax\n");
+                s = s.write("    pushq %rax\n");
+                return s;
+            }
             // env(name) — look up an environment variable. Returns
             // Option[string]: Some(value) if set, None otherwise.
             if (name == "env" && c.args.len() == 1) {
@@ -6501,6 +6557,35 @@ pub function emit_module(mod: parser.Module): string {
     s = s.write("    addq 8(%rsp), %rax\n");      // + tv_nsec
     s = s.write("    leave\n");
     s = s.write("    ret\n");
+    // __fern_sleep_ms(%rdi = ms) — pause for `ms` milliseconds via
+    // nanosleep (syscall 35); ms <= 0 returns immediately. Lives next
+    // to the clock helpers (emitted unconditionally) — no heap, just
+    // a syscall and a 16-byte timespec on the stack.
+    s = s.write(".globl __fern_sleep_ms\n");
+    s = s.write(".type __fern_sleep_ms, @function\n");
+    s = s.write("__fern_sleep_ms:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $32, %rsp\n");
+    s = s.write("    cmpq $0, %rdi\n");
+    s = s.write("    jle .Lsm_done\n");
+    s = s.write("    movq %rdi, %rax\n");
+    s = s.write("    movq $0, %rdx\n");
+    s = s.write("    movq $1000, %rcx\n");
+    s = s.write("    divq %rcx\n");
+    s = s.write("    movq %rax, (%rsp)\n");
+    s = s.write("    movq $1000000, %rax\n");
+    s = s.write("    imulq %rdx, %rax\n");
+    s = s.write("    movq %rax, 8(%rsp)\n");
+    s = s.write("    movq %rsp, %rdi\n");
+    s = s.write("    movq $0, %rsi\n");
+    s = s.write("    movq $35, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write(".Lsm_done:\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_sleep_ms, .-__fern_sleep_ms\n");
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, then parses an optional leading `-`
     // followed by decimal digits. Returns the parsed value in
@@ -8585,6 +8670,61 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
+
+        // __fern_remove_file(%rdi = path box) → Option[IoError]. Same
+        // NUL-terminate + unlinkat shape as remove_dir_all's file
+        // branch. Returns None on success, Some(_) on error.
+        s = s.write(".globl __fern_remove_file\n");
+        s = s.write(".type __fern_remove_file, @function\n");
+        s = s.write("__fern_remove_file:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");           // path data
+        s = s.write("    pushq %r12\n");           // path len
+        s = s.write("    pushq %r13\n");           // pathz
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq (%rdi), %rbx\n");     // path data
+        s = s.write("    movq 8(%rdi), %r12\n");    // path len
+        s = s.write("    leaq 1(%r12), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");       // pathz
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrf_copy:\n");
+        s = s.write("    cmpq %r12, %rcx\n");
+        s = s.write("    jge .Lrf_cpd\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrf_copy\n");
+        s = s.write(".Lrf_cpd:\n");
+        s = s.write("    movb $0, (%r13,%r12,1)\n");
+        s = s.write("    movq $-100, %rdi\n");      // AT_FDCWD
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $263, %rax\n");       // unlinkat
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    js .Lrf_err\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");        // None
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    jmp .Lrf_ret\n");
+        s = s.write(".Lrf_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");        // Some
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lrf_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_remove_file, .-__fern_remove_file\n");
 
         // __fern_f64_to_string(%rdi = IEEE-754 f64 bits) → string box.
         // Fixed-precision decimal, a hand-asm transcription of
