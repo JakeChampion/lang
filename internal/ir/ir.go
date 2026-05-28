@@ -8384,6 +8384,14 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
 				b.emit(payloadLoadOpFor(n.TypeArgs[1], b.ptrW))
+				// Map[K, string].iter().value() retain (wasm boxed): the
+				// returned (data, len) co-owns the buffer alongside the
+				// map's column cell, so __fern_str_inc balances the
+				// column-walk dec at map drop. Mirrors emitMapGetRebox's
+				// boxed-V retain.
+				if _, isStr := n.TypeArgs[1].(ast.StringType); isStr && b.ptrW == 4 {
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+				}
 				return nil
 			}
 		case "__method_MapIter_key":
@@ -8397,8 +8405,45 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
 				b.emit(payloadLoadOpFor(n.TypeArgs[0], b.ptrW))
+				// Map[string, V].iter().key() retain (wasm boxed): same
+				// rationale as the value retain above.
+				if _, isStr := n.TypeArgs[0].(ast.StringType); isStr && b.ptrW == 4 {
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+				}
 				return nil
 			}
+		}
+	}
+	// MapIter.value() / MapIter.key() on native single-word string K/V:
+	// the runtime returns the string data pointer directly (the boxed
+	// branch above doesn't fire because nothing needs boxing) and the
+	// caller would hold an un-retained alias the map drop's column walk
+	// could later free (UAF). Lower the call inline and __fern_rc_inc
+	// the returned pointer so the caller co-owns the buffer. Same SSO
+	// inline-tag / literal-sentinel safety as the get / get_or retains.
+	// arm64 (ptrW=8 + TwoWordOverride boxed) is excluded — its map
+	// drop also stays excluded, so no UAF risk.
+	if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && len(n.TypeArgs) >= 2 {
+		var retain bool
+		switch id.Name {
+		case "__method_MapIter_value":
+			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
+				retain = true
+			}
+		case "__method_MapIter_key":
+			if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
+				retain = true
+			}
+		}
+		if retain {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			return nil
 		}
 	}
 	for _, a := range n.Args {

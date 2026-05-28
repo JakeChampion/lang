@@ -1435,6 +1435,52 @@ function main(): i32 {
 }`,
 	},
 	{
+		// MapIter.value() / MapIter.key() returning a string K/V: the
+		// returned string must survive the map drop. Each helper builds
+		// a fresh map, iterates collecting strings into an outer array,
+		// and returns the array — the map dies at scope exit; without
+		// per-iter retain the column walk frees the strings the outer
+		// array now holds (UAF). The wasm boxed branches str_inc the
+		// (data, len); natives single-word rc_inc the returned data
+		// pointer at the call dispatch.
+		//
+		// Per iter: vs[0].len()=28 + ks[0].len()=26 = 54; 300x → 16200.
+		name: "map_iter_string_kv_retain_churn_free",
+		src: `import "core/no_prelude";
+import "core/int";
+import "core/map";
+import "std/string";
+function collect_values(): string[] {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
+    m = m.set(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
+    var out: string[] = [];
+    var it = m.iter();
+    while (it.has_next()) { out = out.push(it.value()); it.advance(); }
+    return out;
+}
+function collect_keys(): string[] {
+    var m: Map[string, i32] = map_new(8);
+    m = m.set("key-aaaaaaaaaaaaaaaaaaaa-1", 10);
+    m = m.set("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
+    var out: string[] = [];
+    var it = m.iter();
+    while (it.has_next()) { out = out.push(it.key()); it.advance(); }
+    return out;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 300) {
+        var vs = collect_values();
+        var ks = collect_keys();
+        total = total + vs[0].len() + ks[0].len();
+        k = k + 1;
+    }
+    return (total - 16200) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
