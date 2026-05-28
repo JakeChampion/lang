@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -2084,11 +2085,11 @@ func TestLowerMapStringValueGetRetain(t *testing.T) {
 	}
 }
 
-// TestLowerMapStringValueReclaimOnNative verifies natives (ptrW=8) now
-// generate __drop_map_str_values for Map[K, string] — mirroring wasm.
-// The generated body uses the direct-pointer form (__fern_rc_dec on each
-// stored data pointer; no cell deref, no cell_free) since natives don't
-// box single-pointer strings.
+// TestLowerMapStringValueReclaimOnNative verifies native single-word
+// strings (ptrW=8, !TwoWordOverride — the x86_64 path) generate
+// __drop_map_str_values for Map[K, string]. The body uses the
+// direct-pointer form (__fern_rc_dec on each stored data pointer; no
+// cell deref, no cell_free) since x86_64 stores strings unboxed.
 func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var m: Map[i32, string] = map_new(8);
@@ -2096,7 +2097,7 @@ func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
     return 0;
 }`, 8)
 	if !funcExists(p, "__drop_map_str_values") {
-		t.Fatalf("native (ptrW=8) must generate __drop_map_str_values:\n%s", p)
+		t.Fatalf("native single-word (ptrW=8) must generate __drop_map_str_values:\n%s", p)
 	}
 	if !callsDirect(p, "build", "__drop_map_str_values") {
 		t.Errorf("expected map local drop to route through __drop_map_str_values:\n%s", p)
@@ -2106,6 +2107,28 @@ func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	}
 	if callsDirect(p, "__drop_map_str_values", "__fern_cell_free") {
 		t.Errorf("native __drop_map_str_values must NOT call __fern_cell_free (no cell boxing):\n%s", p)
+	}
+}
+
+// TestLowerMapStringValueNoReclaimOnArm64TwoWord verifies that arm64
+// (ptrW=8 + TwoWordOverride=true — strings are boxed (data, len) cells
+// like wasm but the str_dec / cell_free runtime helpers don't exist
+// natively) is correctly EXCLUDED from the reclaim path. Otherwise the
+// generator's direct-pointer branch would __fern_rc_dec the cell pointer
+// instead of the string buffer, corrupting unrelated heap metadata.
+// The arm64 boxed-string reclaim is a separate slice that needs the
+// native runtime helpers first.
+func TestLowerMapStringValueNoReclaimOnArm64TwoWord(t *testing.T) {
+	prev := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prev }()
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.set(1, "hello" + "world");
+    return 0;
+}`, 8)
+	if callsDirect(p, "build", "__drop_map_str_values") {
+		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must NOT route map drop through __drop_map_str_values — boxed-string reclaim has no native runtime yet:\n%s", p)
 	}
 }
 

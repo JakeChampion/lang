@@ -2328,13 +2328,21 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if name, ok := mapValDropName(st, b.info, b.genEnumDrops); ok {
 				dropValues = name
 			} else if len(st.Args) >= 2 {
-				// Map[K, string]: each value column slot holds a string
-				// (boxed (data, len) cell on wasm; direct data pointer on
-				// natives — the generated __drop_map_str_values branches
-				// on ptrW). Reclaim each value's buffer before freeing
-				// the buf + handle.
+				// Map[K, string]: reclaim each value's string buffer
+				// before freeing the buf + handle.
+				//   wasm (ptrW=4)              : boxed (data, len) cell; str_dec + cell_free.
+				//   native single-word (x86_64): direct data pointer; rc_dec.
+				//   arm64 (ptrW=8 + TwoWord)   : boxed like wasm, but the wasm
+				//                                str_dec / cell_free helpers don't
+				//                                exist on arm64 yet — stay on the
+				//                                pre-slice leaking-but-safe behaviour
+				//                                until a native equivalent lands.
+				// The generated __drop_map_str_values branches on ptrW for the
+				// boxed vs direct shape.
 				if _, isStr := st.Args[1].(ast.StringType); isStr {
-					dropValues = "__drop_map_str_values"
+					if b.ptrW == 4 || !ast.UseTwoWordStrings(b.ptrW) {
+						dropValues = "__drop_map_str_values"
+					}
 				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -8184,17 +8192,17 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
-	// Map[K, string] (natives) set retain: same semantics as the wasm gate
-	// above, but on natives strings are single-word pointers (no boxing) so
-	// __fern_rc_inc on the data pointer bumps the buffer's L2 rc header at
-	// data-8 directly. Literals short-circuit on the 0x80000000 sentinel
-	// (prereq 2). Alias-shape check inlined since needsRcIncOnAlias returns
-	// false for strings on ptrW=8 (string locals aren't generally tracked
-	// on natives yet — that's slice 2). Fresh values (concat / literal /
-	// call) are not Ident/Field/Index and stay un-inc'd, moved into the
-	// map with their rc=1; the column-walk drop dec's them later.
+	// Map[K, string] (native single-word) set retain: x86_64 stores
+	// the string data pointer directly in the kv slot — __fern_rc_inc
+	// bumps the buffer's L2 rc header at data-8. Literals short-circuit
+	// on the 0x80000000 sentinel (prereq 2). Alias-shape check inlined
+	// since needsRcIncOnAlias returns false for strings on ptrW=8.
+	// Gated to non-two-word natives — arm64 stores strings boxed (the
+	// IR runs with TwoWordOverride=true) and rc_inc on a cell pointer
+	// would bump the cell's rc, not the string's. Excluded until the
+	// arm64 boxed-string-reclaim path lands its own set-retain.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		b.ptrW == 8 {
+		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			switch n.Args[2].(type) {
 			case *ast.Ident, *ast.FieldAccess, *ast.Index:
@@ -10289,11 +10297,15 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		}
-	} else if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 8 {
-		// Map[K, string] get retain (natives, non-boxed): the payload IS
-		// the string data pointer; bump its L2 rc so the returned Option
-		// co-owns the buffer alongside the map's column slot. Balances
-		// the map's drop dec; literals short-circuit on the sentinel.
+	} else if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		// Map[K, string] get retain (native single-word, non-boxed): the
+		// payload IS the string data pointer; bump its L2 rc so the
+		// returned Option co-owns the buffer alongside the map's column
+		// slot. Balances the map's drop dec; literals short-circuit on
+		// the sentinel. Gated to non-two-word natives — arm64 (boxed
+		// strings under TwoWordOverride) is excluded since map values
+		// are stored as cell pointers and rc_inc on a cell pointer
+		// would bump the cell's rc, not the string's.
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 	}
 	// Non-boxed: the payload IS the V value (an i32 in the low
