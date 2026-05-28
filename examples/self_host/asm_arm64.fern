@@ -1793,6 +1793,9 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_map(rt) && fa.field == "get") {
                         return "option:" + map_value_part(rt);
                     }
+                    if (is_map(rt) && fa.field == "get_or") {
+                        return map_value_part(rt);
+                    }
                     if (is_map(rt) && fa.field == "set") { return rt; }
                     if (is_map(rt) && fa.field == "has") { return "bool"; }
                     if (is_map(rt) && fa.field == "len") { return "i32"; }
@@ -3027,6 +3030,58 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         s = s.write("    ldr x0, [sp], #16\n");   // mapbox
                         s = s.write("    mov x2, #" + kk_get + "\n");   // keykind
                         s = s.write("    bl __fern_map_get\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.mark_heap();
+                        s = s.mark_str_eq();
+                        s = s.mark_arr_push();
+                        return s;
+                    }
+                    // m.get_or(k, default) — see asm.fern. Inline as
+                    // __fern_map_get + Some/None branch on the tag.
+                    if (is_map(prim_recv) && fa.field == "get_or" && c.args.len() == 2) {
+                        var kk_or: string = "0";
+                        if (map_key_is_i32(prim_recv)) { kk_or = "1"; }
+                        var or_lbl: i32 = s.label_n;
+                        s = EmitState {
+                            out: s.out, label_n: s.label_n + 2, local_names: s.local_names,
+                            in_function: s.in_function, string_lits: s.string_lits,
+                            needs_print_int: s.needs_print_int, needs_read_int: s.needs_read_int,
+                            needs_heap: s.needs_heap, struct_decls: s.struct_decls,
+                            loop_exit_labels: s.loop_exit_labels, loop_cont_labels: s.loop_cont_labels,
+                            funcs: s.funcs, local_types: s.local_types,
+                            needs_str_concat: s.needs_str_concat, needs_str_eq: s.needs_str_eq,
+                            needs_str_print: s.needs_str_print, needs_str_cmp: s.needs_str_cmp,
+                            needs_str_read_line: s.needs_str_read_line,
+                            needs_i32_to_string: s.needs_i32_to_string, needs_str_to_i32: s.needs_str_to_i32,
+                            needs_eprint: s.needs_eprint, needs_str_search: s.needs_str_search,
+                            needs_args: s.needs_args, needs_arr_push: s.needs_arr_push,
+                            needs_arr_slice: s.needs_arr_slice, needs_arr_i32_index_of: s.needs_arr_i32_index_of,
+                            needs_arr_reverse: s.needs_arr_reverse, needs_arr_concat: s.needs_arr_concat,
+                            needs_arr_str_index_of: s.needs_arr_str_index_of,
+                            needs_arr_str_join: s.needs_arr_str_join, needs_arr_i32_sum: s.needs_arr_i32_sum,
+                            needs_arr_i32_min_max: s.needs_arr_i32_min_max,
+                            needs_arr_i32_product: s.needs_arr_i32_product,
+                            needs_str_chars: s.needs_str_chars, needs_str_bytes: s.needs_str_bytes,
+                            needs_str_reverse: s.needs_str_reverse, needs_i32_pow: s.needs_i32_pow
+                        };
+                        s = emit_expr(fa.obj, s);
+                        s = emit_expr(c.args[0], s);
+                        s = emit_expr(c.args[1], s);
+                        // stack: [default, k, mapbox] (top down).
+                        s = s.write("    ldr x3, [sp], #16\n");   // default
+                        s = s.write("    ldr x1, [sp], #16\n");   // k
+                        s = s.write("    ldr x0, [sp], #16\n");   // mapbox
+                        s = s.write("    str x3, [sp, #-16]!\n"); // save default
+                        s = s.write("    mov x2, #" + kk_or + "\n");
+                        s = s.write("    bl __fern_map_get\n");   // x0 = Option box
+                        s = s.write("    ldr x3, [sp], #16\n");   // restore default
+                        s = s.write("    ldr x4, [x0]\n");
+                        s = s.write("    cbnz x4, .Lgo_def_" + i32_to_string(or_lbl) + "\n");
+                        s = s.write("    ldr x0, [x0, #8]\n");
+                        s = s.write("    b .Lgo_end_" + i32_to_string(or_lbl) + "\n");
+                        s = s.write(".Lgo_def_" + i32_to_string(or_lbl) + ":\n");
+                        s = s.write("    mov x0, x3\n");
+                        s = s.write(".Lgo_end_" + i32_to_string(or_lbl) + ":\n");
                         s = s.write("    str x0, [sp, #-16]!\n");
                         s = s.mark_heap();
                         s = s.mark_str_eq();

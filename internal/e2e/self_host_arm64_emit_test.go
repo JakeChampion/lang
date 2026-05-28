@@ -185,6 +185,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// `m.get_or(k, default)` — see x86 mirror.
+			"map-get-or-string",
+			"function main(): i32 { " +
+				"var m: Map[string, i32] = map_new(8); " +
+				"m.set(\"a\", 10); " +
+				"var a: i32 = m.get_or(\"a\", 0); " +
+				"var b: i32 = m.get_or(\"missing\", 99); " +
+				"return a + b; }",
+			109,
+			"",
+		},
+		{
 			// `u32` / `u64` / `i64` route through the i32 codegen path
 			// so `(n as u32).to_string()` doesn't fall to struct
 			// shape-dispatch. See x86 mirror.
