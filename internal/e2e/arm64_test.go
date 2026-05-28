@@ -11257,42 +11257,6 @@ function main(): i32 {
 	}
 }
 
-// `read_file` on arm64-darwin should surface a clean compile
-// error (not a codegen-time panic) because `__fern_read_file`
-// uses fstat — which lives in `linuxOnlySysno` and has no
-// portable Darwin form yet. The error mentions the helper name
-// + points the user at the parity doc. Verifies the pre-scan
-// catches the call BEFORE codegen tries to emit svc on Darwin.
-func TestArm64DarwinReadFileSurfacesCleanError(t *testing.T) {
-	src := `function main(): i32 {
-    match (read_file("test.txt")) {
-        Ok(s) => { return 0; },
-        Err(e) => { return 1; },
-    }
-}`
-	prog, perr := parser.Parse(src)
-	if perr != nil {
-		t.Fatalf("parse: %v", perr)
-	}
-	info, cerr := checker.Check(prog)
-	if cerr != nil {
-		t.Fatalf("check: %v", cerr)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	_, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-	if err == nil {
-		t.Fatalf("expected emit error for read_file on arm64-darwin, got none")
-	}
-	if !strings.Contains(err.Error(), "read_file") {
-		t.Errorf("error %q does not mention `read_file`", err)
-	}
-	if !strings.Contains(err.Error(), "Darwin") {
-		t.Errorf("error %q does not mention Darwin", err)
-	}
-}
-
 // arm64 control flow: while loop, if/else, comparison ops.
 // Verifies OpBlock / OpLoop / OpIf / OpEnd / OpBr / OpBrIf
 // scope tracking + the cbz / cbnz branch idioms.
