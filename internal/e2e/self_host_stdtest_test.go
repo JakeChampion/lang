@@ -101,6 +101,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// comparisons with setnp / setp.
 		{"float_math", langSrcAbs(t, "examples/tests/float_math_test.fern")},
 		{"float_array_strict_sort", langSrcAbs(t, "examples/tests/float_array_strict_sort_test.fern")},
+		// `lines_log` — needs `.lines()` to NOT produce a phantom empty
+		// trailing line when input ends with `\n` (matches the interp +
+		// Rust/Python). Passes once the self-host's lines() emit
+		// decrements the array len in the empty / trailing-`\n` case.
+		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

@@ -448,6 +448,16 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **`.lines()` trailing-newline.** The self-host's `s.lines()`
+    was sugar for `s.split("\n")` — so `"a\nb\nc\n".lines()` returned
+    4 lines (including a phantom trailing empty), and `"".lines()`
+    returned `[""]` instead of `[]`. Both backends now compute a
+    trim_flag (`s.len == 0 || s[s.len-1] == '\n'`) before calling
+    `__fern_str_split`, then decrement the resulting array's `len`
+    word by the flag — matching the interp + Rust/Python semantics.
+    The existing `str-lines-trailing-newline` AsmRun case was
+    rewritten (`"x\n".lines().len()` is 1, not 2); `lines_log_test`
+    now matches the interpreter byte-for-byte and joins the gate.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
   explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,

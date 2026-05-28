@@ -1502,7 +1502,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{
 			"str-lines-trailing-newline",
 			"function main(): i32 { var s = \"x\\n\"; var ls = s.lines(); return ls.len(); }",
-			2,
+			1,
 			"",
 			"",
 		},
