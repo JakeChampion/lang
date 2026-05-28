@@ -18,16 +18,16 @@ import (
 // self-host's native __fern_f64_to_string helper is held to the same
 // contract as the pure-Fern formatter the Go backend compiles.
 const f64ToStringProgram = `function main(): i32 {
-    print((3.5 as f64).to_string()); print("\n");
-    print((0.0 as f64 - 2.25).to_string()); print("\n");
-    print((0.0 as f64).to_string()); print("\n");
-    print((1.0 as f64).to_string()); print("\n");
-    print((100.0 as f64).to_string()); print("\n");
-    print((123456.789 as f64).to_string()); print("\n");
-    print((0.1 as f64).to_string()); print("\n");
-    print((0.5 as f64).to_string()); print("\n");
-    print((9999999.99 as f64).to_string()); print("\n");
-    print((0.0 as f64 - 0.000125).to_string()); print("\n");
+    print((3.5 as f64).to_string());
+    print((0.0 as f64 - 2.25).to_string());
+    print((0.0 as f64).to_string());
+    print((1.0 as f64).to_string());
+    print((100.0 as f64).to_string());
+    print((123456.789 as f64).to_string());
+    print((0.1 as f64).to_string());
+    print((0.5 as f64).to_string());
+    print((9999999.99 as f64).to_string());
+    print((0.0 as f64 - 0.000125).to_string());
     return 0;
 }`
 
