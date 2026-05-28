@@ -360,8 +360,31 @@ planned order:
   only need to resolve. Proven by the `std-json-intrinsics` case in
   `self_host_stdlib_import_test.go` (a `std/json`-importing program
   links + runs: 10+32=42).
-- 🔧 **`std/test` end-to-end** still needs more of the runtime builtin
-  surface. Used via explicit `import "std/test"; test.test_new(...)`
+- ✅ **`std/test` end-to-end runs through the self-host.** Compiled by
+  the file-loading driver (`asm_load_run.fern` + the real repo stdlib as
+  its import root), assembled, linked, and run, several example suites
+  now produce **byte-identical TAP-13 output and exit codes** to the
+  reference interpreter (`self_host_stdtest_test.go`, native x86 — the
+  driver resolves stdlib by host path so it can't run under qemu):
+  `arithmetic`, `strings`, `fail_fast`, `quiet_mode`,
+  `skip_and_subsuites`, plus a synthetic failing suite pinning the
+  `not ok` / exit-1 path.
+  - **Required fixing `print` to append a newline** (Fern's `print` ==
+    `println`, matching the interp + Go backend; `write` stays verbatim).
+    The self-host had `print` and `write` both emit bytes with no
+    newline, so TAP lines ran together. Fixed on both backends (literal
+    fast path folds the `\n` into the interned string; the non-literal
+    path emits a second 1-byte write). The self-host's own AsmRun /
+    arm64-emit string-output cases were rewritten to use `write` for
+    no-newline/token output and bare `print` for whole lines.
+  - **Known remaining example gaps** (separate codegen bugs, not the
+    print issue): `result_assertions_test` fails to link
+    (`__fn_i32__it` — a generic receiver-method mis-mangle),
+    `option_and_set_ops_test` segfaults on an Option assertion, and
+    `runner_self_test` diverges on a failure-message format. Each is a
+    distinct follow-up; the runtime-builtin surface itself is complete.
+- 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
+  explicit `import "std/test"; test.test_new(...)`
   (the prelude question is gone — see the update above). The batch,
   with progress:
   - ✅ `write_file(path, content): Option[IoError]` — emitted on both

@@ -4011,16 +4011,24 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // so the bootstrap driver uses `write` to keep the
             // self-hosted output byte-identical to the Go-built one.
             if ((name == "print" || name == "write") && c.args.len() == 1) {
+                // `print` appends a newline (Fern's print == println);
+                // `write` emits the bytes verbatim. Both otherwise share
+                // this lowering.
+                var add_nl: boolean = name == "print";
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
                         // Fast path for literals — direct
-                        // syscall, no heap-box alloc.
-                        var lo: StringLitOut = add_string_lit(s, sv.value);
+                        // syscall, no heap-box alloc. For `print`
+                        // the trailing newline rides along in the
+                        // interned literal so it's one write.
+                        var lit_val: string = sv.value;
+                        if (add_nl) { lit_val = sv.value + "\n"; }
+                        var lo: StringLitOut = add_string_lit(s, lit_val);
                         s = lo.state;
                         s = s.write("    movq $1, %rdi\n");
                         s = s.write("    leaq .S" + i32_to_string(lo.idx) + "(%rip), %rsi\n");
-                        s = s.write("    movq $" + i32_to_string(sv.value.len()) + ", %rdx\n");
+                        s = s.write("    movq $" + i32_to_string(lit_val.len()) + ", %rdx\n");
                         s = s.write("    movq $1, %rax\n");
                         s = s.write("    syscall\n");
                         s = s.write("    pushq $0\n");
@@ -4035,8 +4043,17 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(arg, s);
                     s = s.write("    popq %rdi\n");
                     s = s.write("    call __fern_print_str\n");
-                    s = s.write("    pushq $0\n");
                     s = s.mark_str_print();
+                    if (add_nl) {
+                        var nlo: StringLitOut = add_string_lit(s, "\n");
+                        s = nlo.state;
+                        s = s.write("    movq $1, %rdi\n");
+                        s = s.write("    leaq .S" + i32_to_string(nlo.idx) + "(%rip), %rsi\n");
+                        s = s.write("    movq $1, %rdx\n");
+                        s = s.write("    movq $1, %rax\n");
+                        s = s.write("    syscall\n");
+                    }
+                    s = s.write("    pushq $0\n");
                     return s;
                 }
             }

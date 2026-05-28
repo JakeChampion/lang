@@ -3838,16 +3838,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // runtime has no trailing newline); the bootstrap driver
             // uses write for byte-identical output. Mirrors asm.fern.
             if ((name == "print" || name == "write") && c.args.len() == 1) {
+                // `print` appends a newline (Fern's print == println);
+                // `write` emits the bytes verbatim.
+                var add_nl: boolean = name == "print";
                 var arg: parser.Expr = c.args[0];
                 match (arg) {
                     parser.ExprString(sv) => {
-                        var lo: StringLitOut = add_string_lit(s, sv.value);
+                        var lit_val: string = sv.value;
+                        if (add_nl) { lit_val = sv.value + "\n"; }
+                        var lo: StringLitOut = add_string_lit(s, lit_val);
                         s = lo.state;
                         var lbl: string = ".S" + i32_to_string(lo.idx);
                         s = s.write("    mov x0, #1\n");     // fd
                         s = s.write("    adrp x1, " + lbl + "\n");
                         s = s.write("    add x1, x1, :lo12:" + lbl + "\n");
-                        s = s.write("    mov x2, #" + i32_to_string(sv.value.len()) + "\n");
+                        s = s.write("    mov x2, #" + i32_to_string(lit_val.len()) + "\n");
                         s = s.write("    mov x8, #64\n");    // sys_write
                         s = s.write("    svc #0\n");
                         s = s.write("    mov x0, #0\n");
@@ -3862,6 +3867,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     s = emit_expr(arg, s);
                     s = s.write("    ldr x0, [sp], #16\n");
                     s = s.write("    bl __fern_print_str\n");
+                    s = s.mark_str_print();
+                    if (add_nl) {
+                        var nlo: StringLitOut = add_string_lit(s, "\n");
+                        s = nlo.state;
+                        var nlbl: string = ".S" + i32_to_string(nlo.idx);
+                        s = s.write("    mov x0, #1\n");
+                        s = s.write("    adrp x1, " + nlbl + "\n");
+                        s = s.write("    add x1, x1, :lo12:" + nlbl + "\n");
+                        s = s.write("    mov x2, #1\n");
+                        s = s.write("    mov x8, #64\n");
+                        s = s.write("    svc #0\n");
+                    }
                     s = s.write("    mov x0, #0\n");
                     s = s.write("    str x0, [sp, #-16]!\n");
                     s = s.mark_str_print();
