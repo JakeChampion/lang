@@ -1753,6 +1753,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "read_line") { return "string"; }
                     if (id.name == "read_all_stdin") { return "string"; }
                     if (id.name == "i32_to_string") { return "string"; }
+                    if (id.name == "int__int_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
                     if (id.name == "str_ends_with") { return "bool"; }
@@ -4627,6 +4628,15 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             }
             // i32_to_string(n) — decimal text → string box.
             if (name == "i32_to_string" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");
+                s = s.write("    bl __fern_i32_to_string\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_i32_to_string();
+                return s;
+            }
+            // `int.int_to_string(n)` → __fern_i32_to_string. See asm.fern.
+            if (name == "int__int_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_i32_to_string\n");

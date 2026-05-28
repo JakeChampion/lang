@@ -468,6 +468,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (id.name == "read_line") { return "string"; }
                     if (id.name == "read_all_stdin") { return "string"; }
                     if (id.name == "i32_to_string") { return "string"; }
+                    if (id.name == "int__int_to_string") { return "string"; }
                     if (id.name == "str_to_i32") { return "i32"; }
                     if (id.name == "str_starts_with") { return "bool"; }
                     if (id.name == "str_ends_with") { return "bool"; }
@@ -4933,6 +4934,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // string box. Useful for composing numeric output
             // into a larger message: `"answer: " + i32_to_string(n)`.
             if (name == "i32_to_string" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    popq %rdi\n");
+                s = s.write("    call __fern_i32_to_string\n");
+                s = s.write("    pushq %rax\n");
+                s = s.mark_i32_to_string();
+                return s;
+            }
+            // `int.int_to_string(n)` — modload mangles the qualified
+            // call to `int__int_to_string`. Route it to the native
+            // runtime helper rather than core/int's pure-Fern body,
+            // which uses raw __memcpy / string_from_bytes through
+            // u8[] memory and silently misbehaves under the self-
+            // host's u8[] layout. std/http's response serializer
+            // chains `... + int.int_to_string(resp.status) + ...`.
+            if (name == "int__int_to_string" && c.args.len() == 1) {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    popq %rdi\n");
                 s = s.write("    call __fern_i32_to_string\n");
