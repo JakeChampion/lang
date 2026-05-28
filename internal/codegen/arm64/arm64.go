@@ -472,21 +472,31 @@ func (g *generator) emitDataSections() {
 		g.line(`.section .rodata`)
 	}
 	for _, s := range g.stringOrder {
-		// Two-word ABI: data segment holds just the bytes (no
-		// 4-byte length prefix — length lives on the operand
-		// stack as the second word of the (data, len) pair).
-		// `.asciz` adds a trailing NUL byte; harmless because
-		// runtime readers consume length-bounded bytes.
-		g.line(`.align 2`)
+		// L2 layout w/ rc-sentinel header (prereq 2): 8-byte header
+		// (rc sentinel + length) followed by `.asciz` data. Pointers
+		// handed to user code address the data byte (.LStr_N); the
+		// 0x80000000 sentinel at data-8 makes __fern_rc_inc/dec
+		// short-circuit on literals so the future string-dec can safely
+		// run over container-stored / aliased literals without a
+		// fragile address-range guard. Mirrors the wasm internString
+		// sentinel header and the x86_64 emitDataSections layout.
+		//
+		// `.asciz` adds a trailing NUL byte; harmless because runtime
+		// readers consume length-bounded bytes. Length stored at data-4
+		// matches the L2 heap layout; existing OpConstStr lowering still
+		// pushes len as a separate operand stack word, so this prefix is
+		// forward-compatible (extra source of length for future emitStrLen
+		// callers that lose the (data, len) pair).
+		g.line(`.align 3`)
+		g.line("\t.4byte 0x80000000") // rc sentinel at data-8
+		g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 		g.label(g.stringLabel[s])
 		g.line("\t.asciz " + escapeForGAS(s))
 	}
-	// Empty-string sentinel. The runtime helpers don't read
-	// the bytes here (length is 0); the label exists for the
-	// rare path that needs an `adr` target for an empty data
-	// pointer. Kept at a fixed location for emitStrEmpty's
-	// inline-encoded sentinel reference.
-	g.line(`.align 2`)
+	// Empty-string sentinel. L2 layout w/ rc-sentinel header.
+	g.line(`.align 3`)
+	g.line("\t.4byte 0x80000000") // rc sentinel at data-8
+	g.line("\t.4byte 0")          // length = 0
 	g.label(".LStr_Empty")
 	g.line(`	.asciz ""`)
 	if g.usesArrEmpty {

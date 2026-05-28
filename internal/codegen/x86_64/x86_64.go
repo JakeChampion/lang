@@ -2593,12 +2593,18 @@ func (g *generator) emitDataSections() {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
-			// 4-byte little-endian length prefix followed by
-			// the .asciz data. Pointers handed to user code
-			// address the .asciz base (.LStr_N); `len()` reads
-			// `[ptr - 4]`. Same byte-level shape as wasm /
-			// arm64 — the rodata layout is portable.
-			g.line(".align 4")
+			// L2 layout w/ rc-sentinel header (prereq 2): 8-byte header
+			// (rc sentinel + length) followed by `.asciz` data. Pointers
+			// handed to user code address the data byte (.LStr_N); `len()`
+			// reads `[ptr - 4]` (unchanged from the pre-header layout —
+			// length stays at data-4, just rebased onto the rc header).
+			// The 0x80000000 sentinel at data-8 makes __fern_rc_inc/dec
+			// short-circuit on literals so the future string-dec can safely
+			// run over container-stored / aliased literals without a
+			// fragile address-range guard. Mirrors the wasm internString
+			// sentinel header.
+			g.line(".align 8")
+			g.line("\t.4byte 0x80000000") // rc sentinel at data-8
 			g.line(fmt.Sprintf("\t.4byte %d", len(s)))
 			g.label(g.stringLabel[s])
 			g.line("\t.asciz " + escapeForGAS(s))
@@ -2615,11 +2621,11 @@ func (g *generator) emitDataSections() {
 			// helpers (__fern_strcat, __str_slice,
 			// string_from_bytes) skip the alloc + memcpy when the
 			// result is zero bytes and return this static data
-			// pointer instead. Layout matches a length-prefixed
-			// string with length=0; the pointer addresses the
-			// data byte (which is just a trailing NUL).
-			g.line(".align 4")
-			g.line("\t.4byte 0")
+			// pointer instead. L2 layout w/ rc-sentinel header: 8-byte
+			// rc-sentinel header + length=0 + trailing NUL.
+			g.line(".align 8")
+			g.line("\t.4byte 0x80000000") // rc sentinel at data-8
+			g.line("\t.4byte 0")          // length = 0
 			g.label(".LStr_Empty")
 			g.line(`	.asciz ""`)
 		}
