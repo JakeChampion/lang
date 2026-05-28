@@ -38,11 +38,6 @@ import (
 // SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
 // aren't installed (see arm64Tooling); CI provides them.
 func TestSelfHostFixpointArm64(t *testing.T) {
-	// TODO(arm64-self-host-fs-port): transitively depends on read_dir
-	// (std/test, bundled into the fixpoint program, calls it). The
-	// dispatch is wired (#1626) but the runtime body still returns Err;
-	// see TestSelfHostFsBuiltinsArm64.
-	t.Skip("arm64 self-host __fern_read_dir runtime body returns Err — see TestSelfHostFsBuiltinsArm64")
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
