@@ -3749,14 +3749,19 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("mov rax, [rbp - 64]")
 	g.emit("jmp .Lstrcat_ret")
 	g.label(".Lstrcat_heap")
-	// --- Heap output path ---
-	// alloc(la + lb + 5) — 4 prefix + N data + 1 NUL.
-	g.emit("lea rdi, [r14 + r15 + 5]")
-	g.emit("call __fern_alloc")
-	// rax = base; data ptr = base + 4. Stash dst in rbx
-	// (callee-save) so it survives both __fern_memcpy
-	// calls, then return it at the end.
-	g.emit("lea rbx, [rax + 4]")
+	// --- Heap output path (L2 rc-header layout) ---
+	// Layout: [base+0 rc][base+4 length (shares rc1's payload-size slot)]
+	// [base+8.. data .. base+8+la+lb-1][base+8+la+lb NUL]. data = base+8.
+	// Payload requested from alloc_rc1 = la+lb+1 (data + NUL); length and
+	// rc share the 8-byte header (length lands at data-4 = base+4 via
+	// emitStrLenStore, clobbering rc1's stashed payload-size slot — fine
+	// for strings since the eventual string-drop computes alloc size from
+	// length, not from data-4). RC-STRINGS-PLAN.md prereq 1.
+	g.emit("lea rdi, [r14 + r15 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	// rax = data (base+8). Stash in rbx (callee-save) so it survives both
+	// __fern_memcpy calls, then return it at the end.
+	g.emit("mov rbx, rax")
 	// Combined length, then route through emitStrLenStore.
 	g.emit("mov ecx, r14d")
 	g.emit("add ecx, r15d")
