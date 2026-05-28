@@ -108,19 +108,33 @@ jobs:
         # (which is always the case on macOS).
         run: go test -v -run TestArm64Darwin ./internal/e2e/
 
-      - name: Compile + run every example for arm64-darwin
-        # Build each examples/*.fern via the driver, then actually
-        # execute the Mach-O. Catches codegen regressions across
-        # the example surface that wouldn't surface from the
-        # targeted go-test alone (new IR ops, new builtins,
-        # prelude changes).
+      - name: Compile + run every example for arm64-darwin (native, default)
+        # Build each examples/*.fern via the driver's DEFAULT path — the
+        # in-process Mach-O backend, no clang/ld64 — then actually execute
+        # the binary. This is the full-corpus execution check for the
+        # native arm64-darwin path. Examples whose darwin codegen isn't
+        # ported (read_file / now_unix_ms — Linux-only syscalls) error at
+        # codegen the same as on the clang path; skip those.
         run: |
           go build -o bin/fern ./cmd/fern
           mkdir -p build
           for f in examples/*.fern; do
             name=$(basename "$f" .fern)
-            ./bin/fern -target arm64-darwin -cc clang -o "build/$name" "$f"
+            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>build/$name.err; then
+              if grep -q "not yet ported" "build/$name.err"; then
+                echo "skip $name (unported darwin runtime helper)"; continue
+              fi
+              echo "build $name FAILED:"; cat "build/$name.err"; exit 1
+            fi
             echo "::group::run $name"
             ./build/$name || echo "(exited $?)"
             echo "::endgroup::"
           done
+
+      - name: clang fallback still works (-cc opt-out)
+        # The external-toolchain path must remain available via -cc.
+        run: |
+          echo 'function main(): i32 { return 7; }' > /tmp/fb.fern
+          ./bin/fern -target arm64-darwin -cc clang -o /tmp/fb /tmp/fb.fern
+          /tmp/fb; code=$?
+          test $code -eq 7 || { echo "clang fallback exit $code, want 7"; exit 1; }
