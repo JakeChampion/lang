@@ -308,6 +308,23 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// Wider / unsigned integer type tags (`u32`, `u64`, `i64`,
+			// `usize`, `isize`) must route through the i32 path —
+			// otherwise (n as u32).to_string() falls to the struct
+			// shape-dispatch and segfaults. Same for u32[] / u64[] /
+			// i64[]. Trade-off: u64-max loses signed-vs-unsigned
+			// compare nuance (separate follow-up). The 99 value here
+			// fits in i32 either way so the cast is a no-op at runtime.
+			"wider-int-as-cast-to-string",
+			"function main(): i32 { var a: u32 = 99 as u32; var b: u64 = 7 as u64; " +
+				"if (a.to_string() != \"99\") { return 1; } " +
+				"if (b.to_string() != \"7\") { return 2; } " +
+				"return 42; }",
+			42,
+			"",
+			"",
+		},
+		{
 			// IEEE NaN semantics for f64 compares. Per IEEE, every
 			// relation with NaN is false except `!=`. ucomisd sets
 			// CF=ZF=PF=1 on unordered, so naked setb / setbe / sete

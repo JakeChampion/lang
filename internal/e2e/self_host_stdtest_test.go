@@ -106,6 +106,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// Rust/Python). Passes once the self-host's lines() emit
 		// decrements the array len in the empty / trailing-`\n` case.
 		{"lines_log", langSrcAbs(t, "examples/tests/lines_log_test.fern")},
+		// `assert_at_wider` / `array_at_and_f32_range` — need `u32` /
+		// `u64` / `i64` type tags to route through the i32 codegen
+		// path so `(n as u32).to_string()` doesn't segfault.
+		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern")},
+		{"array_at_and_f32_range", langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

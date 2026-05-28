@@ -1422,6 +1422,11 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
 
 function ret_tag_of(name: string): string {
     if (name == "i32") { return "i32"; }
+    // See asm.fern: wider / unsigned integers share the i32 codegen
+    // path so `(n as u32).to_string()` etc. routes correctly.
+    if (name == "u32" || name == "u64" || name == "i64"
+            || name == "usize" || name == "isize") { return "i32"; }
+    if (name == "u32[]" || name == "u64[]" || name == "i64[]") { return "array_i32"; }
     if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }

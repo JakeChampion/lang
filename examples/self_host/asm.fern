@@ -777,6 +777,17 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
 // names, generics, etc.) fall through to "unknown".
 function ret_tag_of(name: string): string {
     if (name == "i32") { return "i32"; }
+    // Wider / unsigned integers share the i32 codegen path: the self-
+    // host stores every integer in an 8-byte slot, signed compares via
+    // cmp, no truncation. Routing them through the "i32" tag means
+    // `(n as u32).to_string()` etc. dispatches to __fern_i32_to_string
+    // instead of falling through to struct shape lookup (which
+    // segfaults). Loses signed-vs-unsigned compare nuance for u64-max
+    // arrays, but unblocks the common case used by std/test's
+    // assert_at_u32 / assert_at_u64 / wider-width helpers.
+    if (name == "u32" || name == "u64" || name == "i64"
+            || name == "usize" || name == "isize") { return "i32"; }
+    if (name == "u32[]" || name == "u64[]" || name == "i64[]") { return "array_i32"; }
     if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }
