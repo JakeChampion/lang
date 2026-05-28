@@ -115,6 +115,11 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// be dispatched (inline Some-or-default on __fern_map_get)
 		// instead of falling through to core/map's pure-Lang body.
 		{"map_eq_and_predicates", langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.fern")},
+		// `json_field_eq` — exercises every JsonValue arm, including
+		// `JNumber(s) => s.parse_int()` whose Some(got) payload binding
+		// was untyped before match_payload_type's ExprFieldAccess
+		// branch learned to look up receiver methods.
+		{"json_field_eq", langSrcAbs(t, "examples/tests/json_field_eq_test.fern")},
 		{"synthetic_fail", failing},
 	}
 

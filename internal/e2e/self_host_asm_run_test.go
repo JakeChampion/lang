@@ -308,6 +308,28 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// Receiver-method calls returning Option[T] / Result[T, E]
+			// (e.g. `s.parse_int(): Option[i32]`) must surface their
+			// payload type in match arms — otherwise `Some(got) =>`
+			// binds got as "unknown" and got.to_string() falls to
+			// struct shape-dispatch and segfaults. Regression for
+			// the match_payload_type ExprFieldAccess lookup that now
+			// walks s.funcs for receiver methods.
+			"match-receiver-method-option-payload",
+			"struct Wrap { n: i32 } " +
+				"pub function (w: Wrap) try_get(): Option[i32] { " +
+				"if (w.n == 0) { return None; } return Some(w.n); } " +
+				"function main(): i32 { " +
+				"var w: Wrap = Wrap { n: 42 }; " +
+				"match (w.try_get()) { " +
+				"Some(got) => { return got + 100; }, " +
+				"None => { return 1; } } " +
+				"return 99; }",
+			142,
+			"",
+			"",
+		},
+		{
 			// `m.get_or(k, default)` — inline as `__fern_map_get(m, k)`
 			// + Some-payload-or-default branch. Without this the
 			// generic struct shape-dispatch reads garbage out of the

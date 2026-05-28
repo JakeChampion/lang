@@ -448,6 +448,23 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **Match-payload typing for receiver method calls.**
+    `match_payload_type` already walked `s.funcs` for ExprCall scrutinees
+    with an ExprIdent callee (free functions), but its
+    ExprFieldAccess branch only special-cased a tiny whitelist
+    (`read_chunk`, `get`, `min`, `max`). So `match s.parse_int() {
+    Some(got) … }` — where `parse_int` is a `(s: string) parse_int():
+    Option[i32]` receiver method — bound `got` as `"unknown"`. The
+    downstream `got.to_string()` then fell through the primitive
+    dispatch to struct shape-dispatch and segfaulted in any deeply-
+    nested string-building flow (e.g. `assert_json_eq_field_i32`'s
+    failure-message branch). Both backends now walk `s.funcs` for a
+    receiver-method whose `receiver_type` matches the obj's type tag
+    and parse `Option[T]` / `Result[T, …]` out of its declared
+    `ret_type`. Guarded by `match-receiver-method-option-payload`
+    AsmRun case (uses an inline `Wrap.try_get(): Option[i32]` so the
+    fixture is self-contained); `json_field_eq_test` joins the
+    differential gate.
   - ✅ **`Map.get_or(k, default)`.** core/map's pure-Lang
     `__map_get_or_impl` body uses an open-addressed layout that doesn't
     match the self-host's native `__fern_map_*` runtime, so falling
