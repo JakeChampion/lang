@@ -106,10 +106,31 @@ default-correct unless we have a specific reason to deviate.
 - **Zig's no-closures stance.** Closures are valuable for HTTP
   routing / handler composition. Roc shows you can have them
   cheaply via lambda-set defunctionalisation.
-- **Roc's runtime refcounting.** With a bump allocator that's
-  freed on scope exit, refcounts are pure overhead. Compile-time
-  uniqueness analysis can mutate-in-place when the source is
-  provably dead, fall back to copy otherwise — no runtime check.
+- **Roc's runtime refcounting.** ⚠️ **REVERSED — we now do exactly
+  this.** The original call was: with a bump allocator freed on
+  scope exit, refcounts are pure overhead; compile-time uniqueness
+  analysis can mutate-in-place when the source is provably dead and
+  fall back to copy otherwise, with no runtime check. That reasoning
+  held only while every program was short-lived (a CLI invocation or
+  one HTTP handler, where the arena tears down wholesale). It broke
+  the moment we targeted a **long-running, allocation-heavy** program
+  — the self-hosted compiler — where `arr = arr.push(x)` build-up
+  loops are O(N²) in allocator traffic without in-place reuse
+  (measured 7–60 GB on a self-compile, overflowing the bump heap).
+  Pure compile-time uniqueness analysis turned out to be insufficient
+  on its own at that scale, so we adopted Roc/Koka/Lean4's actual
+  model: runtime RC headers + inc/dec at ownership transfers,
+  copy-on-write mutation when `rc == 1`, and a Perceus-style static
+  pass to *elide* the redundant inc/dec pairs (recovering most of the
+  "no runtime check" win where it can prove redundancy). See
+  `RC-PERCEUS-PLAN.md` (and `RC-STRINGS-PLAN.md` for string
+  reclamation). This is the clearest case of the self-hosting goal
+  reshaping a founding design decision: the arena-and-forget model
+  remains right for the *stated* edge/CLI use case, but the compiler
+  itself is not short-lived, and the two workloads want different
+  memory models. We carry both — arena scopes (`arena { … }`, the
+  per-handler arena) on top of RC — and lean on Perceus to keep RC
+  cheap where the arena already guarantees the lifetime.
 - **Odin's array swizzling / SoA programming.** Cute for gamedev,
   off-target for CLI / edge.
 - **Implicit numeric widening (C / TS / JS).** Universally
