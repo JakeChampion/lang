@@ -1881,16 +1881,28 @@ func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerStringClosureCaptureNoReclaimOnNative verifies the closure
-// string-capture drop is wasm-only (no __fern_str_dec on ptrW=8).
-func TestLowerStringClosureCaptureNoReclaimOnNative(t *testing.T) {
+// TestLowerStringClosureCaptureReclaimOnNativeSingleWord verifies
+// Slice 6's native side: a string captured by a closure reclaims via
+// __fern_rc_dec in the generated __closure_drop_<name> thunk on
+// native single-word (ptrW=8, !TwoWordOverride). The matching alias
+// inc at MakeEnv goes through __fern_rc_inc (emitAliasInc's native
+// fall-through), so the inc/dec balance is preserved. __fern_str_dec
+// stays wasm-only — it's the two-word (data, len) helper, absent on
+// the native runtime.
+func TestLowerStringClosureCaptureReclaimOnNativeSingleWord(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
     var f = function (): i32 { return s.len(); };
     return f();
 }`, 8)
 	if closureDropCallsDirect(p, "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) closure drop must not emit __fern_str_dec:\n%s", p)
+		t.Errorf("native (ptrW=8) closure drop must not emit the wasm-only __fern_str_dec:\n%s", p)
+	}
+	if !closureDropCallsDirect(p, "__fern_rc_dec") {
+		t.Errorf("expected the closure drop thunk to reclaim the native single-word string capture via __fern_rc_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_rc_inc") {
+		t.Errorf("expected MakeClosure to retain the string capture via __fern_rc_inc on native single-word:\n%s", p)
 	}
 }
 

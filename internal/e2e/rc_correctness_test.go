@@ -1611,6 +1611,31 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 6 (string closure captures): a closure capturing a
+		// string reclaims the captured buffer on native single-word
+		// (x86_64), mirroring wasm. The generated __closure_drop_<name>
+		// thunk now dec's the captured ptr via __fern_rc_dec (vs wasm's
+		// WidthString load + __fern_str_dec). MakeEnv already inc's the
+		// capture via __fern_rc_inc (emitAliasInc's native fall-through,
+		// gated by needsRcIncOnAlias).
+		// Per iter: s.len() = 26; 500x → 13000.
+		name: "native_string_closure_capture_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
+    var f = function (): i32 { return s.len(); };
+    return f();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 13000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

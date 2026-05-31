@@ -2854,8 +2854,16 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 		if arrElemIsRcTracked(c.Type) {
 			return true
 		}
-		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
-			return true
+		if _, isStr := c.Type.(ast.StringType); isStr {
+			// Slice 6: native single-word and wasm both need a
+			// closure_drop thunk for string captures. wasm reclaims
+			// the two-word (data, len) buffer via __fern_str_dec;
+			// native single-word dec's the single pointer via
+			// __fern_rc_dec. arm64 (TwoWordOverride boxed) excluded
+			// — same gating pattern as Slices 2-5.
+			if ptrW == 4 || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
+				return true
+			}
 		}
 	}
 	return false
@@ -2894,6 +2902,27 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthString},
 				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			off += slot
+			continue
+		}
+		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			// Slice 6: native single-word string capture. Load the
+			// pointer from [env+off] (WidthPtr — strings here are a
+			// single 8-byte slot) and reclaim via __fern_rc_dec.
+			// Balances the __fern_rc_inc at MakeEnv (emitAliasInc's
+			// native fall-through). Inside the env's is_unique
+			// branch, so the capture is this closure's owned
+			// reference; the SSO inline-tag low-bit guard in
+			// __fern_rc_dec safely skips short inline strings, and
+			// the static-literal sentinel header short-circuits
+			// literals.
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthPtr},
+				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue

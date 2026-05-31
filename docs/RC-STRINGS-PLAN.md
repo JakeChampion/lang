@@ -408,8 +408,8 @@ explicitly skipped.
 | Slice 2 — string LOCALS | DONE | DONE | TODO |
 | Slice 3 — string STRUCT fields | DONE | DONE | TODO |
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | TODO |
-| Slice 5 — string ENUM payloads | DONE | TODO | TODO |
-| Slice 6 — string CLOSURE captures | DONE | TODO | TODO |
+| Slice 5 — string ENUM payloads | DONE | DONE | TODO |
+| Slice 6 — string CLOSURE captures | DONE | DONE | TODO |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
 | Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
 
@@ -443,14 +443,16 @@ x86_64 single-word):
     the matching alias-inc path so `string[]` element overwrites
     + scope-exit sweeps free correctly.
 
-**Next on natives: Slice 5 (string ENUM payloads).** Same predicate
-shape as Slices 2-4 — `StringType` flows through the enum-payload
-drop path on native single-word, mirroring the wasm `__fern_str_dec`
-gating. Slice 6 (closure captures) follows the same template.
+Slices 5 (ENUM payloads, commit `f69ff7b0`) and 6 (CLOSURE captures,
+this PR) followed the same template — same predicate gate, same
+WidthPtr load + `__fern_rc_dec`. With Slice 6 landed, every native
+single-word string-reclaim slice is DONE; the column for x86_64
+flips fully green.
 
-Then back to the two-word arm64 column — porting `__fern_str_dec`
-and `__fern_cell_free` to `arm64.go` unlocks every native slice in
-one move (Slices 2-8 in that column flip to DONE together).
+**Next: the two-word arm64 column.** Porting `__fern_str_dec` and
+`__fern_cell_free` to `arm64.go` unlocks every slice in that column
+in one move — Slices 2-8 flip to DONE together. No more per-slice
+follow-ups; the remaining work is one cross-cutting backend port.
 
 ## What this doc IS / IS NOT
 
