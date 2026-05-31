@@ -405,9 +405,9 @@ explicitly skipped.
 | Prereq 1 — uniform rc header on heap strings | DONE | DONE | DONE (single-word path only) |
 | Prereq 2 — static-literal sentinel header | DONE | DONE | DONE |
 | Prereq 3 — SSO inline-tag guard on rc_inc/dec | n/a | DONE | DONE |
-| Slice 2 — string LOCALS | DONE | TODO | TODO |
-| Slice 3 — string STRUCT fields | DONE | TODO | TODO |
-| Slice 4 — string ARRAY elements (`string[]`) | DONE | TODO | TODO |
+| Slice 2 — string LOCALS | DONE | DONE | TODO |
+| Slice 3 — string STRUCT fields | DONE | DONE | TODO |
+| Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | TODO |
 | Slice 5 — string ENUM payloads | DONE | TODO | TODO |
 | Slice 6 — string CLOSURE captures | DONE | TODO | TODO |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
@@ -424,14 +424,33 @@ The native Map work landed across these PRs (all merged): #1616 #1618
 #1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7
 + Slice 8 + retain/overwrite gaps + the SSO inline-tag guard).
 
-The natural next slice on natives is **Slice 2 (string LOCALS)** — the
-plan's "highest single payoff." With prereqs 1 + 2 + 3 in place, the
-infrastructure to enable native string locals (predicate wiring plus
-scope-exit dec) is structurally ready; the work is mostly threading
-`StringType` through `needsRcIncOnAlias` / `rcTracked` /
-`zeroRcTracked` / `isOwnedRcLocal` / `rhsTainted` / `emitDec` on the
-native paths and testing aggressively for regressions (the rc arc's
-broadest surface).
+The native LOCAL / STRUCT / ARRAY slices landed next (also merged on
+x86_64 single-word):
+
+  - Slice 2 (LOCALS): commit `66577ec1` — adds `StringType` to
+    `rcTracked` / the alias-inc fall-through under
+    `b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))`,
+    so a fresh string local (concat / slice / call result) frees at
+    scope exit via `__fern_rc_dec`. Aliased string locals get
+    retained at alias points via `__fern_rc_inc`. The SSO
+    inline-tag low-bit guard keeps short inline strings safe.
+  - Slice 3 (STRUCT fields): commit `30341852` — adds the parallel
+    `OpLoad WidthPtr` + `__fern_rc_dec` + drop branch to
+    `genStructDropFn`'s inline field loop, `decValueOnStack`,
+    `dropStructField`, and `appendChildDrop` for native single-word.
+  - Slice 4 (ARRAY elements): commit `78942f4d` — adds the
+    single-word ptr → `__fern_rc_dec` branch to `arrElemDec` and
+    the matching alias-inc path so `string[]` element overwrites
+    + scope-exit sweeps free correctly.
+
+**Next on natives: Slice 5 (string ENUM payloads).** Same predicate
+shape as Slices 2-4 — `StringType` flows through the enum-payload
+drop path on native single-word, mirroring the wasm `__fern_str_dec`
+gating. Slice 6 (closure captures) follows the same template.
+
+Then back to the two-word arm64 column — porting `__fern_str_dec`
+and `__fern_cell_free` to `arm64.go` unlocks every native slice in
+one move (Slices 2-8 in that column flip to DONE together).
 
 ## What this doc IS / IS NOT
 
