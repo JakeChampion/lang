@@ -1682,6 +1682,19 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
         structs = structs.push(StructDecl { name: "FileStat", fields: fsf });
     }
+    // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
+    // Same injection pattern as FileStat: the __fern_subprocess
+    // runtime helper builds a struct whose shape pointer is the
+    // interned "ProcessResult" name, and the emitter resolves
+    // `r.stdout` / `r.stderr` / `r.exit_code` to slot offsets from
+    // this decl.
+    if (!struct_declared(structs, "ProcessResult")) {
+        var prf: StructFieldDecl[] = [];
+        prf = prf.push(StructFieldDecl { name: "stdout", type_name: "string" });
+        prf = prf.push(StructFieldDecl { name: "stderr", type_name: "string" });
+        prf = prf.push(StructFieldDecl { name: "exit_code", type_name: "i32" });
+        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf });
+    }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
     // values: … }`) but the stdlib files don't carry an explicit

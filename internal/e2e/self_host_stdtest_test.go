@@ -175,6 +175,14 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// so the rest of the TAP (suite header, per-case `ok` lines,
 		// totals) is compared byte-for-byte.
 		{"batch8", langSrcAbs(t, "examples/tests/batch8_test.fern"), "# golden file bootstrapped at "},
+		// subprocess suites — pass once __fern_subprocess is in place.
+		// Each forks a child, plumbs stdin / stdout / stderr through
+		// 3 pipes, execve's the cmd (trying `cmd`, `/bin/cmd`,
+		// `/usr/bin/cmd` so bare names like "echo" / "sh" / "cat"
+		// resolve without full PATH search), and packs the result.
+		{"process_assertions", langSrcAbs(t, "examples/tests/process_assertions_test.fern"), ""},
+		{"process_output_shortcuts", langSrcAbs(t, "examples/tests/process_output_shortcuts_test.fern"), ""},
+		{"lang_binary_e2e", langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 

@@ -448,6 +448,26 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **`subprocess(cmd, args, stdin)` runtime helper (x86).**
+    Forks a child, plumbs the child's stdin / stdout / stderr through 3
+    pipes (pipe2 × 3), execve's the cmd with `argv = [cmd, args…, NULL]`
+    and the parent's envp, then in the parent: writes the stdin
+    payload, reads stdout + stderr to EOF (64 KiB scratch buffers each),
+    waitpid's the child, decodes the exit status (WIFEXITED → status>>8;
+    signal → 128+sig), and packs the result into a `ProcessResult
+    {stdout, stderr, exit_code}` struct (decl injected via
+    `parser.inject_builtin_enums`, shape pointer pre-interned in the
+    .rodata pool). The child falls back to `/bin/<cmd>` and
+    `/usr/bin/<cmd>` so bare names like `"echo"` / `"sh"` / `"cat"`
+    resolve without a full PATH search; spawn failure lands as
+    `exit_code = 127` via the child's `exit(127)` after the final
+    execve returns. Unblocks `process_assertions_test`,
+    `process_output_shortcuts_test`, and `lang_binary_e2e_test` —
+    all three match the interpreter byte-for-byte and join the
+    differential gate. arm64 not yet implemented (the subprocess
+    helper alone is ~250 lines of asm and the call-site dispatch
+    isn't there); programs that use `subprocess` on arm64 still
+    fail to link (status quo).
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
