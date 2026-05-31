@@ -480,6 +480,19 @@ planned order:
     (`process_assertions`, `process_output_shortcuts`,
     `lang_binary_e2e`) now ride the arm64 gate too — the gate
     sits at **49/49** on both backends.
+  - ✅ **Stage-2 fixed-point gate.** `TestSelfHostStage2FixedPoint`
+    proves the self-host is a fixed point of its own emit:
+    mmc-stage1 (Go-compiled `asm_load_run.fern`) compiles
+    `asm_load_run.fern` to a 5.8 MB asm program — that program
+    links into mmc-stage2 (a fully self-hosted compiler). For
+    `asm_load_run.fern` itself plus 10 representative gate cases
+    (basic arith, struct shape dispatch, Option / Result payload
+    typing, std/fuzz, f64, wider-int / unsigned compare, json
+    typed-get, bench, subprocess, http response), the asm emitted
+    by mmc-stage1 and mmc-stage2 is **byte-identical**. So the
+    Fern emitter is deterministic AND idempotent under self-
+    recompilation — the first non-trivial proof that the self-host
+    has reached its eigenvector. Runs in ~8 s; cheap to gate.
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
