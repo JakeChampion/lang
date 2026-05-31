@@ -1004,8 +1004,20 @@ func (g *generator) emitStrIncRuntime() {
 	g.label("__fern_str_inc")
 	// Inline tag: bit 63 of x1 set ⇒ packed bytes, no heap.
 	g.emit("tbnz x1, #63, .Lstrinc_ret")
-	// Heap path: rc_inc(x0) tail-call returns x0; x1 (len) flows through.
-	g.emit("b __fern_rc_inc")
+	// Heap path: inc the rc at [x0-8]. The rc bump is inlined here
+	// (rather than tail-calling __fern_rc_inc) because __fern_rc_inc
+	// uses x1 as scratch and would clobber the length — and str_inc
+	// must return the (data, len) pair intact in (x0, x1). A garbled
+	// length flows straight into the next strcat / store and either
+	// SIGSEGVs or triggers a multi-gigabyte alloc. Use w2 as scratch
+	// so x1 survives. Mirrors __fern_rc_inc's null / low-bit-tag /
+	// static-sentinel short-circuits.
+	g.emit("cbz x0, .Lstrinc_ret")
+	g.emit("tbnz x0, #0, .Lstrinc_ret")
+	g.emit("ldur w2, [x0, #-8]")
+	g.emit("tbnz w2, #31, .Lstrinc_ret")
+	g.emit("add w2, w2, #1")
+	g.emit("stur w2, [x0, #-8]")
 	g.label(".Lstrinc_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_str_inc")
@@ -1763,9 +1775,16 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.emit("movz x1, #0x8000, lsl #48") // inline-flag, length 0
 	g.emit("b .Lstrcat2w_ret")
 	g.label(".Lstrcat2w_alloc")
-	// Allocate the destination buffer. The new heap-form
-	// layout has no length prefix — alloc exactly total bytes.
-	g.emit("bl __fern_alloc")
+	// Allocate the destination buffer via the rc-headered allocator
+	// so the result carries a live rc=1 at data-8 and its payload
+	// size at data-4. Under Slice 2 these heap strings are rc-tracked
+	// (str_inc on aliases, str_dec on drops) and both helpers read
+	// [data-8] / [data-4]; a raw __fern_alloc buffer has no such
+	// header, so retaining a fresh concat (e.g. id(("a" + localStr)))
+	// read the word before the allocation and SIGSEGV'd. alloc_rc1
+	// adds the 8-byte header itself and returns data = base+8, so the
+	// memcpy offsets below are unchanged.
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x2, x0") // x2 = dst (temporary; clobbered by next call's args)
 	// Reserve dst in a stable callee-save by reusing x19 (we
 	// no longer need a_data as a single register since we'll
@@ -2409,9 +2428,15 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.label(".Lstrslice2w_nonempty")
 	// Materialise base byte pointer.
 	g.emitStrDataPtr2W("x19", "x19", "x20", 64) // x19 = base byte ptr; spill at [x29+64]
-	// Allocate new_len bytes for the heap output.
+	// Allocate new_len bytes for the heap output via the rc-headered
+	// allocator (rc=1 at data-8, payload size at data-4) so the
+	// substring is a real rc-tracked string — str_inc on an alias
+	// (e.g. `var w = words[i]` where the element is a slice) and
+	// str_dec on drop both read that header. A raw __fern_alloc
+	// buffer has none, so retaining a slice read before the
+	// allocation and SIGSEGV'd. Mirrors __fern_strcat / read_file.
 	g.emit("mov w0, w24")
-	g.emit("bl __fern_alloc")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x23, x0") // x23 = dst
 	// memcpy(dst, base_ptr + low, new_len).
 	g.emit("add x1, x19, x21")
@@ -5944,6 +5969,18 @@ func (g *generator) slotIsString(idx int32) bool {
 	return ok
 }
 
+// twoWordStrHelperArgSlots is the hardcoded string-arg table the
+// OpCallDirect slot-count logic falls back to for built-in runtime
+// helpers that take a two-word string but are emitted with a bare
+// I32 arg count and no ArgTypes. The value is the total number of
+// operand-stack slots the helper's arguments occupy (each two-word
+// string counts as 2). __fern_str_inc / __fern_str_dec both take a
+// single (data, len) string → 2 slots.
+var twoWordStrHelperArgSlots = map[string]int{
+	"__fern_str_inc": 2,
+	"__fern_str_dec": 2,
+}
+
 // callArgTypes returns the parameter types of an OpCallDirect /
 // OpCallDirectPair, preferring the IR-stamped `op.ArgTypes`
 // (populated by the lowering pass from FuncSigs at the central
@@ -5981,6 +6018,13 @@ func returnIsString(g *generator, name string) bool {
 		return isStr
 	}
 	switch name {
+	case "__fern_str_inc":
+		// Two-word string retain: returns the (data, len) pair
+		// unchanged in (x0, x1). The post-call push must emit BOTH
+		// words so the retained string stays on the operand stack
+		// (e.g. for OpReturn of an aliased string). __fern_str_dec
+		// is deliberately absent — it returns only `data` (x0).
+		return true
 	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
@@ -7645,8 +7689,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			argTypes := callArgTypes(g, op, argc)
-			if argTypes != nil {
+			if sw, ok := twoWordStrHelperArgSlots[target]; ok {
+				// Built-in two-word string runtime helpers — emitted
+				// from many IR sites with a bare I32:1 arg count and no
+				// ArgTypes, so callArgTypes can't see that their single
+				// logical string argument occupies two operand-stack
+				// slots (data, len). Without this the call pops just the
+				// top word (the length) into x0 and the helper reads it
+				// as the data pointer — SIGSEGV on literal strings (e.g.
+				// __fern_str_inc retaining an aliased generic id() param).
+				slotCount = sw
+			} else if argTypes := callArgTypes(g, op, argc); argTypes != nil {
 				slotCount = 0
 				for _, t := range argTypes {
 					if _, isStr := t.(ast.StringType); isStr {

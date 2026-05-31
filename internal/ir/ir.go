@@ -9274,7 +9274,16 @@ func exprContainsCall(e ast.Expr) bool {
 // (inc only fresh-owned bare idents) existed solely to avoid touching
 // view strings and is no longer needed.
 func (b *builder) emitAliasInc(e ast.Expr) {
-	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.ptrW == 4 {
+	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.twoWordStrings() {
+		// Two-word string ABI (wasm32 + arm64 TwoWordOverride): the
+		// value occupies two stack words (data, len), so the retain
+		// must go through __fern_str_inc, which tag-checks the inline
+		// bit and inc's only the heap data pointer. The single-word
+		// __fern_rc_inc fall-through below would pop just the top word
+		// (the length) and dereference it as a pointer — a SIGSEGV on
+		// literal strings, whose length is a small integer. Gating on
+		// b.ptrW==4 (wasm-only) missed arm64 and crashed every aliased
+		// string (e.g. generic id[T](x: string) returning its param).
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
 		return
 	}
