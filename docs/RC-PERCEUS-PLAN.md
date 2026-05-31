@@ -1428,6 +1428,264 @@ Two separate PRs:
 - Borrowed params: per-function escape analysis identifies args
   that don't escape; callers skip the inc.
 
+#### Phase 5 drop-reuse — detailed plan (NEXT, not started)
+
+Date: 2026-05-31. Status: design, code-grounded; nothing emitted yet.
+
+##### Why the naive framing undersells it (and what the real target is)
+
+The one-line sketch above ("dec then alloc of compatible size reuses
+the storage") describes a win the **freelist already captures**. Since
+Phase 3 step-4, `__fern_alloc` pops its size class's LIFO freelist
+before bumping (`buildAllocBody`, `runtime.go:1512`; the arm64 /
+x86_64 mirrors). A `__free(base, sz)` immediately followed by an
+`__fern_alloc(sz)` of the *same 16-byte class* therefore already
+returns the exact block just freed — storage reuse, for free, with no
+new analysis. So plain storage-reuse is **not** the prize.
+
+The prize is **constructor reuse / FBIP** (Functional But In-Place,
+the Perceus paper's headline result): when a uniquely-owned value of
+type `T` is dropped and a fresh `T` of the **same box shape** is
+constructed in its immediate vicinity, reuse the *same memory in place*
+and skip the whole round trip the freelist still pays:
+
+  1. the drop-walk (`__fern_rc_is_unique` gate + per-field `dec`),
+  2. the `__free` push,
+  3. the `__fern_alloc` pop,
+  4. **the full re-initialisation of every field** — the field that
+     didn't change can keep its old value instead of being re-stored
+     (and, if it's an rc field, its inc+dec cancel).
+
+The canonical shape, and the one that motivates this for Fern's
+self-host + edge-handler corpus:
+
+```fern
+// list map: the Cons cell is dropped and immediately rebuilt
+function map_inc(xs: List): List {
+    return match (xs) {
+        Cons(h, t) => Cons(h + 1, map_inc(t)),   // reuse xs's box
+        Nil => Nil,
+    };
+}
+// record update: the struct box is dropped and immediately rebuilt
+function bump(p: Point): Point {
+    return Point { x: p.x + 1, y: p.y };          // reuse p's box
+}
+```
+
+In both, the source (`xs` / `p`) is dead after the match-scrutinee /
+field reads, its box is the same size as the result's, and today we
+drop-walk + free + alloc + re-store every field. FBIP turns each into
+"overwrite the changed field in the existing box, hand it back" — O(1),
+zero allocator traffic, and on `bump` the `y` store disappears
+entirely.
+
+##### Mechanism: a reuse token threaded drop-site → alloc-site
+
+Perceus introduces a *reuse token* (`reuse r = drop x; … Ctor@r{…}`).
+We lower the same idea as a new IR op pair so the existing per-backend
+`OpAlloc` lowering is the only codegen that changes:
+
+  - `OpDropReuse` *(replaces a free-eligible `OpDrop`+drop-glue at a
+    reuse-paired dec site)* — on the last reference returns the box
+    **base pointer** as a "token" (an i32) instead of pushing it to the
+    freelist; on a shared/null/sentinel value returns `0`. Drop-walk of
+    rc fields still happens (their refs are going away regardless); only
+    the **buffer free** is withheld so the token can carry it.
+  - `OpAllocReuse (token i32, tokenSize i32, size i32) → ptr` — if
+    `token != 0` AND `class(tokenSize) == class(size)`, return `token`
+    (in-place reuse); else **free the token** (when non-null) and fall
+    through to the normal `freelist-pop-or-bump` path of `__fern_alloc`.
+    One new runtime helper, `__fern_alloc_reuse(token, tokenSize, size)`,
+    on each backend (**SHIPPED, slice 5a** — see below).
+
+The token is a plain pointer on the operand stack / in a scratch local
+— no header bit, no type tag. It carries `tokenSize` (the dropped
+block's static allocation size) alongside it so the helper can compute
+`class(tokenSize)` and compare; a bare pointer can't recover its own
+size from the intrusive freelist, and without it a class mismatch would
+either overflow a too-small block (unsound) or leak the dropped one.
+Size-class equality mirrors the freelist's existing class arithmetic
+(`(sz+15)&-16`, exact-fit classes 16…2048). A token whose class differs
+is **freed back to its own class** and a fresh block allocated; a `0`
+token allocates directly. So a mispaired reuse is **never unsound and
+never a leak** — it degrades to today's free+alloc. This preserves the
+Phase-1 invariant that "rc/reuse decisions only ever affect speed,
+never correctness".
+
+##### Where the pairing is decided (the analysis)
+
+Reuse pairing is a *local, intra-statement* match — deliberately
+narrow for the first cut, because the high-value cases are syntactically
+local (a `match` arm that reconstructs its scrutinee; a field-update
+`T{…}` literal whose RHS reads a dying `T`). The analysis runs in
+`lowerFunc` alongside the existing `computeMovedLocals` /
+`computeFreeEligible` and produces `reusePairs: map[reuseSite]allocSite`.
+
+A drop site `D` (an owned, free-eligible local going dead) pairs with a
+construction site `C` when ALL hold:
+
+  1. **Same box shape.** `D`'s static type and `C`'s constructed type
+     have equal `payloadLayout` / `structFieldLayout` box size (so the
+     same size class — exact, since allocs are 16-rounded). For enums,
+     the dropped variant and constructed variant must agree on box size
+     (the `uniformEnumBoxSize` predicate already computes this).
+  2. **`D` is free-eligible and uniquely owned at `D`.** Reuse rides on
+     the existing `computeFreeEligible` taint set — a borrowed or
+     escaped value is never a reuse source (same rule that lets it be
+     freed at all). The runtime `rc==1` check in `OpDropReuse` is the
+     backstop: a shared value yields token `0`.
+  3. **`D` dominates `C` and `D`'s value is dead at `C`.** `D` is the
+     scrutinee / the source struct, already read into the fields of
+     `C` before `C` constructs. Reuse `computeMovedLocals`' last-
+     occurrence + dominance machinery: `C` may only read `D`'s fields
+     *before* the reuse, never after.
+  4. **No allocation between `D` and `C`.** Keeps the token live and the
+     class fresh; any intervening alloc could have popped the same
+     class. (Conservative; relaxable later.)
+
+When a pair is found: the dec at `D` lowers to `OpDropReuse` (token →
+scratch local), and `C`'s `OpAlloc` becomes `OpAllocReuse(token,
+size)`. Unpaired drops keep `OpDrop` + today's `__fern_box_free` /
+`__fern_arr_dec` glue; unpaired allocs keep `OpAlloc`. The
+move-on-return / move-on-alias inc-elisions compose unchanged (they run
+first; reuse pairing reads the post-move dec sites).
+
+##### Field-store elision (the second-order win)
+
+Once `C` reuses `D`'s box, a field whose `C`-value is provably the same
+expression as `D`'s same-offset field (`Point{ x: p.x+1, y: p.y }` →
+`y` unchanged) can skip its store. Slice 5d only; slices 5a–5c reuse
+the *storage* (wins 1–3 above) and always re-store every field
+(simplest correct form). The store-elision needs a syntactic
+"`C.field_i` is exactly `D.field_i`" check and an rc-field inc/dec
+cancellation — bounded, but separable, so it ships last.
+
+##### Slices
+
+  - **5a — runtime helper + shim, inert. SHIPPED (x86_64 verified;
+    arm64 + wasm ride CI).** `__fern_alloc_reuse(token, tokenSize,
+    size)` on all three backends (wasm `buildAllocReuseBody` calling
+    `__fern_alloc` + `__free`; arm64 `emitAllocReuseRuntime` and the
+    x86_64 mirror — each a small prologue that tail-calls
+    `__fern_alloc`). No pairing emitted yet (the dedicated `OpDropReuse`
+    / `OpAllocReuse` IR ops arrive with the pairing in 5b); the helper
+    is exposed as the `__alloc_reuse(token, tokenSize, size)` builtin
+    shim (checker sig, native call-name map + use-flag, wasm `needs()`
+    dep) so the runtime branches are testable in isolation. Tests
+    (`Test{X86_64,Arm64,WASM}AllocReuse`, flag-on): `sameClass`
+    (in-place reuse — `b == a`), `nullToken` (degrades to a fresh
+    distinct alloc — `b != 0 && b != a`), and `mismatch` (token freed +
+    fresh alloc — `b != a` — and the freed token reappears from its
+    class's freelist on the next same-class `__alloc` — `c == a`,
+    proving slow-not-wrong without a leak).
+  - **5b — struct field-update reuse. SHIPPED (x86_64 verified; arm64
+    + wasm ride CI).** A self-overwrite `p = T{ ... }` of an OWNED,
+    all-i32-scalar struct local reuses p's box in place when uniquely
+    owned. Lowered in `b.tryStructReuseOverwrite` (hooked at the top of
+    `b.assign`'s Ident case, replacing the normal expr + dec-on-
+    overwrite): evaluate every field into an i32 temp first (so a field
+    reading p — `x: p.x + 1`, or a swap `a: p.b, b: p.a` — sees the old
+    value before the box is overwritten), then
+    `token = __fern_rc_is_unique(old) ? base(old) : 0` (the aliased /
+    null / sentinel branch dec's old and yields 0), then
+    `__alloc_reuse(token, size+hdr, size+hdr)`, rc=1, store temps,
+    store data ptr. Two gates make it sound: **freeEligible** (OWNED,
+    never a borrowed param — a borrow can be rc==1 while the caller
+    still holds it) and the **runtime is_unique** check (an aliased p
+    copies, leaving the alias intact). Restricted to i32-class scalar
+    fields for now — pointer fields (per-field rc, deferred to 5d) and
+    wide/float scalars (need width-correct temps) fall back to the
+    normal fresh alloc. Gated on `ast.RcFreeEnabled`, so the flag-off
+    arena stays byte-identical. Tests: IR-level `TestStructReuse*`
+    (fires for the eligible shape; skips pointer-field / borrowed-param
+    / wide-scalar) + e2e `Test{X86_64,Arm64,WASM}StructReuse` churn /
+    aliased / swap (value-correct + 0 over-releases). The
+    `FixturesFreeMatchesNoFree` differential gate already asserts
+    reuse-on == reuse-off byte-identical (reuse rides `RcFreeEnabled`).
+  - **5c — pointer-field struct reuse. SHIPPED (x86_64 verified; arm64
+    + wasm ride CI).** Widens 5b's self-overwrite reuse from all-scalar
+    structs to structs with single-word rc-tracked pointer fields
+    (array / struct / Map / enum / closure / tuple — `arrElemIsRcTracked`;
+    **strings still excluded**, two-word on wasm / boxed on arm64, and
+    wide/float scalars still excluded — single-word i32/pointer temps).
+    `structReuseEligible` replaces the all-scalar gate. Per-field rc:
+    each new pointer value is retained on eval (`emitAliasInc`, as
+    normal `StructLit`); on the **reuse branch only** (gated on the i32
+    `is_unique` result, not the raw token — backend-safe truthiness) the
+    box's OLD pointer-field values are **flat-dec'd** before the new
+    ones overwrite them. A carried-over field (`items: p.items`)
+    balances (eval-inc cancels the dec-old → rc unchanged); a replaced
+    field releases its old reference (flat dec — leak-but-never-UAF; a
+    freeing dec is a follow-up). Tests: IR `TestStructReuseFiresForPointerField`
+    / `…SkipsStringField` + e2e `Test{X86_64,Arm64,WASM}StructReuse`
+    `ptr_carried` (200 reuses, array carried — 0 over-release or it
+    corrupts), `ptr_aliased` (alias declines reuse; field shared
+    correctly), `ptr_replaced` (old released each iter). Differential
+    gate + rc-correctness corpus + self-host VM stay green free-on.
+    Still on the original plan: enum/Cons-cell reuse (a `match`-arm hook
+    + tag-guarded payload release) and field-store elision.
+  - **5d — enum/Cons-cell reuse + field-store elision (NOT STARTED).**
+    Enum reuse pairs a dropped enum scrutinee in a `match` arm with a
+    same-box-size constructor in that arm (`map_inc` shape), gated on
+    `uniformEnumBoxSize`; reuses the pointer-payload release machinery
+    5c built. Field-store elision then skips the store for a provably-
+    unchanged field (`y: p.y`) and cancels its inc/dec — a strict
+    optimization on top of correct reuse.
+
+##### Test + safety contract (same bar as Phases 1–3)
+
+  - Every slice ships the per-backend unit test + at least one
+    `rc_correctness` corpus entry that **forces reuse to fire and reads
+    the value back** (a churn loop whose result is only correct if every
+    reuse wrote the right block), folded with `__rc_underflow_count()`.
+  - The `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` differential
+    gate already asserts free-on == free-off byte-identical; reuse is a
+    third axis — add a `reuse-off` baseline (a package var
+    `ast.RcReuseEnabled`, default on once 5b lands, that the gate flips)
+    so reuse-on == reuse-off is pinned the same way.
+  - **`RcFreeDebug` extension:** `OpDropReuse` must poison-and-quarantine
+    exactly like the free path when reuse does *not* fire (token
+    returned but the paired alloc took a different class), so the UAF
+    detector still covers the withheld-free path. When reuse *does* fire,
+    the block is neither freed nor poisoned — it's live in its new
+    identity; the detector's invariant (no inc/dec touches a poisoned
+    block) is unchanged.
+
+##### Why this is the right next slice
+
+  - It is the **defining** missing Perceus feature — "Reuse" is in the
+    paper's title; without it this is "RC + two peephole elisions", not
+    Perceus.
+  - It is **self-contained and low-risk**: one IR op pair, one runtime
+    helper per backend, an analysis that *reuses* the existing
+    `computeFreeEligible` taint + `computeMovedLocals` dominance
+    machinery, and a runtime class-equality backstop that makes every
+    mispairing slow-not-wrong.
+  - It targets the exact shapes the project cares about: the self-host
+    parser/asm `acc.push` + record-rebuild loops and the edge-handler
+    request/response struct churn.
+  - The two alternatives are worse first picks: heap-string rc is
+    **blocked on the in-flight SSO native flip**
+    (`docs/SSO-NATIVE-FLIP-STATUS.md`), and full map key/value
+    reclamation **reopens the borrow ⇄ free over-release tension**
+    (get-results return uncounted) that Phase 3 spent its hardest weeks
+    closing.
+
+##### Reference anchors (read before implementing)
+
+  - `internal/codegen/wasmbin/runtime.go:1481` `buildAllocBody` (the
+    freelist-pop-or-bump body `__fern_alloc_reuse` fronts);
+    `:1608` `buildFreeBody`.
+  - `internal/ir/ir.go:1696` `computeFreeEligible` (taint source for
+    rule 2); `:2036` `computeMovedLocals` (dominance for rule 3);
+    `:1984` `emitRcDecLocalsAtExit` + `:2107`
+    `emitRcDecLocalsAtExitExcept` (where `OpDropReuse` replaces the
+    paired dec); `:2382` the `__fern_box_free` struct-drop tail and
+    `:4246` `emitEnumNew` (the alloc sites `OpAllocReuse` replaces).
+  - `internal/ir/move_on_return_test.go` — template for the
+    analysis-level tests.
+
 ### Phase 6: cleanups + measurements
 
 End-state verification: run the benchmarks, compare RSS, build

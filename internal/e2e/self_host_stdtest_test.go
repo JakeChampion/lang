@@ -308,24 +308,8 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 		t.Fatalf("write synthetic: %v", err)
 	}
 
-	// The arm64 emitter has every helper the x86 one does EXCEPT
-	// `subprocess(cmd, args, stdin) → ProcessResult` (the fork /
-	// pipe / execve / wait4 runtime). That gap blocks three suites
-	// — `process_assertions`, `process_output_shortcuts`,
-	// `lang_binary_e2e` — at link time with undefined references
-	// to `__fn_subprocess`. Track + retest once the arm64 mirror
-	// of __fern_subprocess lands.
-	skipArm64 := map[string]bool{
-		"process_assertions":       true,
-		"process_output_shortcuts": true,
-		"lang_binary_e2e":          true,
-	}
-
 	cases := selfHostStdTestCases(t, failing)
 	for _, tc := range cases {
-		if skipArm64[tc.name] {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			// Oracle: the reference interpreter (native x86 binary).
 			ic := exec.Command(interpBin, "-interp", tc.src)

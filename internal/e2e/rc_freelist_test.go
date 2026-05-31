@@ -462,3 +462,268 @@ func TestArm64FreelistReuse(t *testing.T) {
 		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", code)
 	}
 }
+
+// --- Phase 5 slice 5a: __fern_alloc_reuse in isolation ------------
+//
+// allocReuseSrc is the shared body for the flag-on drop-reuse (FBIP)
+// primitive across backends. The pairing analysis (slices 5b+) is not
+// wired yet, so these call the `__alloc_reuse(token, tokenSize, size)`
+// shim directly to prove the three runtime branches:
+//
+//   - sameClass: a live token whose size class matches `size` is
+//     handed straight back — in-place storage reuse (b == a).
+//   - nullToken: a 0 token degrades to a plain allocation, returning a
+//     fresh block distinct from any live one (b != 0, b != a).
+//   - mismatch: a token whose class differs is freed (not leaked) and
+//     a fresh block of the requested class is returned (b != a); the
+//     freed token then reappears from its own class's freelist on the
+//     next same-class __alloc (c == a) — the slow-not-wrong backstop.
+//
+// Each program returns 0 on success. Natives import core/no_prelude
+// (matching freelistReuseSrc); the wasm variants omit it (the wasm
+// harness uses the auto-prelude).
+var allocReuseSrc = struct{ sameClass, nullToken, mismatch string }{
+	sameClass: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 64);
+    if (a == b) { return 0; }
+    return 1;
+}`,
+	nullToken: `import "core/no_prelude";
+function main(): i32 {
+    var z: usize = 0;
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(z, 0, 64);
+    if (b == 0) { return 1; }
+    if (b == a) { return 2; }
+    return 0;
+}`,
+	mismatch: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 32);
+    if (a == b) { return 1; }
+    var c: usize = __alloc(64);
+    if (a == c) { return 0; }
+    return 2;
+}`,
+}
+
+func TestX86_64AllocReuse(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
+	}
+}
+
+func TestArm64AllocReuse(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
+	}
+}
+
+// Wasm mirror. SKIPs without wasmtime (rides CI). Sets RcFreeEnabled
+// around runWasm like TestWASMFreelistReuse.
+func TestWASMAllocReuse(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	sameClass := `function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 64);
+    if (a == b) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, sameClass); got != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", got)
+	}
+
+	nullToken := `function main(): i32 {
+    var z: usize = 0;
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(z, 0, 64);
+    if (b == 0) { return 1; }
+    if (b == a) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, nullToken); got != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", got)
+	}
+
+	mismatch := `function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 32);
+    if (a == b) { return 1; }
+    var c: usize = __alloc(64);
+    if (a == c) { return 0; }
+    return 2;
+}`
+	if got := runWasm(t, mismatch); got != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", got)
+	}
+}
+
+// --- Phase 5b: self-overwrite struct reuse (FBIP) end-to-end -------
+//
+// These exercise `p = T{ ... }` reusing p's box in place. Correctness
+// alone doesn't prove reuse fired (a fresh-alloc lowering gives the
+// same values) — the IR test TestStructReuseFiresForSelfOverwrite pins
+// that the __alloc_reuse path is taken; these pin that taking it stays
+// value-correct and over-release-free, including the runtime alias
+// decision and the read-before-overwrite ordering.
+var structReuseSrc = struct{ churn, aliased, swap string }{
+	// 200 self-overwrites reusing one box. churn(200).x == 200; folds
+	// __rc_underflow_count() so any over-release in the reuse path trips.
+	churn: `struct Point { x: i32, y: i32 }
+function churn(n: i32): i32 {
+    var p: Point = Point { x: 0, y: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Point { x: p.x + 1, y: p.y };
+        i = i + 1;
+    }
+    return p.x;
+}
+function main(): i32 {
+    return (churn(200) - 200) + __rc_underflow_count();
+}`,
+	// p is aliased (rc 2) before the overwrite, so the runtime is_unique
+	// check must decline the in-place reuse and allocate a fresh box —
+	// the alias q must still see the original {5,7}.
+	aliased: `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 5, y: 7 };
+    var q: Point = p;
+    p = Point { x: p.x + 1, y: p.y };
+    if (q.x != 5) { return 1; }
+    if (p.x != 6) { return 2; }
+    return __rc_underflow_count();
+}`,
+	// Field swap: the reuse path must read BOTH source fields into temps
+	// before overwriting either, or the second store reads a clobbered
+	// field. Even churn → {1,2} (a==1); odd churn → {2,1} (a==2).
+	swap: `struct Pair { a: i32, b: i32 }
+function churn(n: i32): i32 {
+    var p: Pair = Pair { a: 1, b: 2 };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Pair { a: p.b, b: p.a };
+        i = i + 1;
+    }
+    return p.a;
+}
+function main(): i32 {
+    return (churn(200) - 1) + (churn(201) - 2) + __rc_underflow_count();
+}`,
+}
+
+// Phase 5c: pointer-field struct reuse. A single-word rc-tracked
+// pointer field (array here) is carried over or replaced across the
+// reuse. The rc balance is the delicate part — the carried-over array's
+// eval-inc must cancel the reuse-branch dec-old, or it either
+// over-releases (underflow != 0) or gets freed+reused (corrupt values).
+var structPtrReuseSrc = struct{ carried, aliased, replaced string }{
+	// 200 reuses carrying the SAME array field over unchanged. items
+	// stays [10,20,30] (sum 60), id == n. Any rc drift corrupts items.
+	carried: `struct Holder { id: i32, items: i32[] }
+function churn(n: i32): i32 {
+    var p: Holder = Holder { id: 0, items: [10, 20, 30] };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Holder { id: p.id + 1, items: p.items };
+        i = i + 1;
+    }
+    return (p.id - n) + (p.items[0] + p.items[1] + p.items[2] - 60);
+}
+function main(): i32 {
+    return churn(200) + __rc_underflow_count();
+}`,
+	// Aliased holder: q shares p's box (rc 2), so reuse declines and a
+	// fresh box is allocated. q keeps its view; the array field is shared
+	// (both see [7,8]); rc stays balanced.
+	aliased: `struct Holder { id: i32, items: i32[] }
+function main(): i32 {
+    var p: Holder = Holder { id: 1, items: [7, 8] };
+    var q: Holder = p;
+    p = Holder { id: p.id + 1, items: p.items };
+    if (q.id != 1) { return 1; }
+    if (q.items[0] != 7) { return 2; }
+    if (p.id != 2) { return 3; }
+    if (p.items[1] != 8) { return 4; }
+    return __rc_underflow_count();
+}`,
+	// Each iteration REPLACES the array field with a fresh one. The old
+	// array's reference is released on the reuse branch (flat dec). Final
+	// items == [n, n], id == n.
+	replaced: `struct Holder { id: i32, items: i32[] }
+function churn(n: i32): i32 {
+    var p: Holder = Holder { id: 0, items: [0] };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Holder { id: p.id + 1, items: [p.id + 1, p.id + 1] };
+        i = i + 1;
+    }
+    return (p.id - n) + (p.items[0] - n) + (p.items[1] - n);
+}
+function main(): i32 {
+    return churn(100) + __rc_underflow_count();
+}`,
+}
+
+// structReuseCases is the shared table every backend's struct-reuse
+// test iterates: the 5b all-scalar shapes plus the 5c pointer-field
+// shapes.
+var structReuseCases = []struct{ name, src string }{
+	{"churn", structReuseSrc.churn},
+	{"aliased", structReuseSrc.aliased},
+	{"swap", structReuseSrc.swap},
+	{"ptr_carried", structPtrReuseSrc.carried},
+	{"ptr_aliased", structPtrReuseSrc.aliased},
+	{"ptr_replaced", structPtrReuseSrc.replaced},
+}
+
+func TestX86_64StructReuse(t *testing.T) {
+	for _, c := range structReuseCases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestArm64StructReuse(t *testing.T) {
+	for _, c := range structReuseCases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestWASMStructReuse(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	for _, c := range structReuseCases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, got)
+			}
+		})
+	}
+}

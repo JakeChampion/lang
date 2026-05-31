@@ -1556,6 +1556,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// `__alloc_reuse(token, tokenSize, size)` is the Phase 5 drop-reuse
+	// (FBIP) primitive: when `token != 0` and its size class
+	// (`(tokenSize+15)&-16`) equals `size`'s class, it returns `token`
+	// in place — the dropped block's storage is reused for the new
+	// allocation, skipping the free + alloc round trip. Otherwise it
+	// returns the dropped block to the freelist (when non-null) and
+	// bump/freelist-allocates `size` bytes via `__alloc`. A `0` token,
+	// or a class mismatch, therefore degrades to a plain allocation, so
+	// a mispaired reuse is slow-not-wrong (never an overflow, never a
+	// leak). Slice 5a exposes it as a shim so the reuse-vs-alloc branch
+	// is testable before the pairing analysis (5b+) emits it. `size`
+	// must be the value that would be passed to the matching `__alloc`;
+	// `tokenSize` the size the dropped block was allocated with.
+	c.info.FuncSigs["__alloc_reuse"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}, ast.NumberType{}},
+		Result: usizeT,
+	}
 	c.info.FuncSigs["__load_i32"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},

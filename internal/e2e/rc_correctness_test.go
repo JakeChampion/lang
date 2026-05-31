@@ -1656,6 +1656,109 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Nested-tuple reclamation: ARRAY OF TUPLES (`(string,i32)[]`)
+		// used to leak each tuple's string element — the array drop
+		// fell through to the flat __fern_drop_arr_ptr which only
+		// rc_dec's the element pointers (freeing each tuple box but
+		// never traversing). arrElemStructDropName now also matches
+		// tuple elements and emits a generated __drop_arr_tuple_<mangled>
+		// loop that recurses through __drop_tuple_<mangled> per element
+		// before freeing the buffer. Per iter: s.len()=26 + n=7 = 33;
+		// 500x → 16500.
+		name: "native_nested_tuple_string_in_array_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var a: (string, i32)[] = [("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)];
+    return a[0].0.len() + a[0].1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Nested-tuple reclamation: a tuple held inside an ENUM PAYLOAD
+		// reaches the __drop_tuple_<mangled> helper through the
+		// generated __drop_enum_<Wrap> body's appendChildDrop call,
+		// closing the same string leak the struct-field case had. The
+		// enum is wrapped in an outer struct so the variant-plan path
+		// (worklist-driven) fires — a bare local hits the inline
+		// fallback that can't safely route, a pre-existing orthogonal
+		// eligibility-analysis gap. Per iter same arithmetic as the
+		// sibling: 33 / iter, 500x → 16500.
+		name: "native_nested_tuple_string_in_enum_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+enum Wrap { Pair((string, i32)), Empty }
+struct Holder { w: Wrap }
+function mk(): i32 {
+    var h: Holder = Holder { w: Pair(("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)) };
+    var r: i32 = 0;
+    match (h.w) { Pair(q) => { r = q.0.len() + q.1; }, Empty => { r = 0; } }
+    return r;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Nested-tuple reclamation: a tuple captured by a CLOSURE
+		// reaches __drop_tuple_<mangled> through the generated
+		// __closure_drop_<name> thunk, which dispatches captures via
+		// dropFnNameFor (already did for arrays/structs/enums; post-fix
+		// now also for tuples). Per iter: 33; 500x → 16500.
+		name: "native_nested_tuple_string_in_closure_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var p: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
+    var f: () => i32 = function(): i32 { return p.0.len() + p.1; };
+    return f();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Nested-tuple reclamation: a tuple held inside a STRUCT FIELD
+		// used to leak its string element — the struct's drop dec'd the
+		// tuple ptr flat (freeing the tuple box but never traversing the
+		// elements). dropFnNameFor now routes the field through a
+		// generated __drop_tuple_<mangled> helper which dec's the
+		// string element + frees the tuple box at the struct's last
+		// reference. Same routing fires for an enum-payload tuple, a
+		// closure-capture tuple, or a tuple element that's itself a
+		// tuple — the worklist is shape-driven, not container-driven.
+		// Per iter: s.len()=26 + n=7 = 33; 500x → 16500.
+		name: "native_nested_tuple_string_in_struct_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Box { items: (string, i32) }
+function mk(): i32 {
+    var b: Box = Box { items: ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7) };
+    return b.items.0.len() + b.items.1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

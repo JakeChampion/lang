@@ -464,10 +464,76 @@ planned order:
     execve returns. Unblocks `process_assertions_test`,
     `process_output_shortcuts_test`, and `lang_binary_e2e_test` —
     all three match the interpreter byte-for-byte and join the
-    differential gate. arm64 not yet implemented (the subprocess
-    helper alone is ~250 lines of asm and the call-site dispatch
-    isn't there); programs that use `subprocess` on arm64 still
-    fail to link (status quo).
+    differential gate.
+  - ✅ **`subprocess(cmd, args, stdin)` runtime helper (arm64).**
+    Arm64 mirror of the x86 implementation above. Same shape but
+    using arm64 syscalls — `pipe2`=59, `clone(SIGCHLD, 0, …)`=220
+    as the fork equivalent (arm64 Linux has no `fork`), `dup3`=24
+    in place of `dup2`, `close`=57 / `read`=63 / `write`=64 /
+    `execve`=221 / `wait4`=260 / `exit`=93 — with `__fern_envp`
+    loaded PC-relatively via `adrp` / `add` / `ldr`. Locals + 5
+    callee-saved pairs share a 224-byte frame (6 pipe fds + wait
+    status packed at +96..+123 from `sp`; scratch above).
+    `infer_expr_type` now recognises `subprocess` as returning
+    `"unknown"` so the `ProcessResult` field access routes through
+    shape-pointer dispatch. The 3 previously-skipped suites
+    (`process_assertions`, `process_output_shortcuts`,
+    `lang_binary_e2e`) now ride the arm64 gate too — the gate
+    sits at **49/49** on both backends.
+  - ✅ **Stage-2 fixed-point gate.** `TestSelfHostStage2FixedPoint`
+    proves the self-host is a fixed point of its own emit:
+    mmc-stage1 (Go-compiled `asm_load_run.fern`) compiles
+    `asm_load_run.fern` to a 5.8 MB asm program — that program
+    links into mmc-stage2 (a fully self-hosted compiler). For
+    `asm_load_run.fern` itself plus 10 representative gate cases
+    (basic arith, struct shape dispatch, Option / Result payload
+    typing, std/fuzz, f64, wider-int / unsigned compare, json
+    typed-get, bench, subprocess, http response), the asm emitted
+    by mmc-stage1 and mmc-stage2 is **byte-identical**. So the
+    Fern emitter is deterministic AND idempotent under self-
+    recompilation — the first non-trivial proof that the self-host
+    has reached its eigenvector. Runs in ~8 s; cheap to gate.
+  - ✅ **Arm64 stage-2 fixed-point gate.**
+    `TestSelfHostStage2FixedPointArm64` mirrors the x86 version
+    but for the arm64 emit path. mmc-arm64-stage1 (x86 host
+    binary, the cross-compiler-on-host pattern the differential
+    gate already uses) compiles `asm_arm64_load_run.fern` to ~6.8
+    MB of aarch64 asm; that links into mmc-arm64-stage2, a real
+    aarch64 binary running under qemu-aarch64 (or native on arm64
+    hardware). For 4 representative cases (`self`, `sort_wider`
+    — unsigned `cset lo/ls/hi/hs`, `float_math` — IEEE NaN
+    compares, `process_assertions` — `clone(SIGCHLD)` /
+    `dup3` / `execve` syscall fork) the arm64 asm emitted by
+    stage-1 (running on x86) and stage-2 (running under qemu) is
+    **byte-identical**. So the arm64 emit path is both
+    deterministic (host arch doesn't influence output) and
+    idempotent under self-recompilation. Runs in ~15 s.
+  - ✅ **Arm64 backend `strbuf_take` return-shape fix.** The Go
+    arm64 backend's `returnIsString` table — which decides
+    whether `OpCallDirect`'s post-call push moves both `x0` (data
+    ptr) and `x1` (byte length) onto the operand stack — listed
+    `random_bytes` / `tcp_recv` / `string_from_bytes` /
+    `__str_slice` but NOT `strbuf_take`. So strbuf-take's
+    two-word return went through the single-word path: only `x0`
+    was pushed, the second-word `OpStoreLocal` read garbage from
+    the stack as the byte length, and any program using strbuf
+    silently mis-rendered its output (e.g. a 0x10000000-byte
+    write to fd 1 that EFAULTs, then the trailing newline from
+    `print`). The most visible symptom was the arm64 self-host
+    (`asm_arm64_load_run.fern`) compiling cleanly through the Go
+    arm64 backend but emitting **0 bytes of asm** at runtime —
+    the strbuf-take-then-print chain at the end of `emit_module`
+    dropped its payload. Also: the strbuf runtime references
+    `__fern_memcpy` (for the append + take memcpys) and
+    `__fern_alloc` (for take's fresh string box), so the
+    `strbuf_*` cases in arm64's `OpCallDirect` dispatch now set
+    `g.usesMemcpy` / `g.usesAlloc` to pull those runtimes in —
+    matching the x86 mirror. Without that, a program that used
+    only strbuf (and nothing else triggering memcpy / alloc)
+    failed to link with undefined `__fern_memcpy` references.
+    Pinned by `TestArm64StrBufTake` (3-char reproducer) +
+    `TestArm64StrBufLargeAppend` (1 000 × 5 bytes for the bump-
+    loop / multi-page path).
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the

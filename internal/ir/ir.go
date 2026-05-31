@@ -717,8 +717,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// routing nested fields/payloads/captures (see builder.genEnumDrops).
 	// Shared across lowering and the post-pass drop worklist below.
 	genEnumDrops := map[string]*ast.EnumDecl{}
+	// Tuple-shape registry, sibling of genEnumDrops. Records the
+	// canonical TupleType for every shape dropFnNameFor routed
+	// through `__drop_tuple_<mangled>`, so the post-pass worklist can
+	// recover the element list when generating each drop body.
+	genTupleDrops := map[string]ast.TupleType{}
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops)
 		if err != nil {
 			return nil, err
 		}
@@ -730,7 +735,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// MakeEnv). emitDec dispatches owned closure drops to these.
 	if ast.RcFreeEnabled {
 		for name, caps := range closureCaps {
-			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops)
+			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops, genTupleDrops)
 			if thunk == nil {
 				continue
 			}
@@ -781,10 +786,12 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
+					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
 					op.Str == "__drop_map_str_values" ||
 					op.Str == "__drop_map_str_keys" ||
-					strings.HasPrefix(op.Str, "__drop_enum_")) && !queued[op.Str] {
+					strings.HasPrefix(op.Str, "__drop_enum_") ||
+					strings.HasPrefix(op.Str, "__drop_tuple_")) && !queued[op.Str] {
 					queued[op.Str] = true
 					work = append(work, op.Str)
 				}
@@ -801,6 +808,16 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if mangled := strings.TrimPrefix(name, "__drop_arr_tuple_"); mangled != name {
+				// Routing recorded the tuple shape in genTupleDrops at
+				// the call site (arrElemStructDropName), so the
+				// per-element __drop_tuple_<mangled> the loop body
+				// invokes is generatable; enqueueCalls picks it up
+				// from this body for the worklist's next pass.
+				if _, ok := genTupleDrops[mangled]; !ok {
+					continue
+				}
+				fn = genArrTupleDropFn(mangled, ptrW)
 			} else if name == "__drop_map_str_values" {
 				fn = genMapStrValDropFn(ptrW)
 			} else if name == "__drop_map_str_keys" {
@@ -824,9 +841,22 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue
 				}
-				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops)
+				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops, genTupleDrops)
 				if fn == nil {
 					continue // plan failed — routing shouldn't have named it
+				}
+			} else if mangled := strings.TrimPrefix(name, "__drop_tuple_"); mangled != name {
+				// Tuple shape has no source name — dropFnNameFor stashed
+				// the canonical TupleType in genTupleDrops under the
+				// mangled key. The worklist regenerates the body from
+				// the recovered shape.
+				tt, ok := genTupleDrops[mangled]
+				if !ok {
+					continue
+				}
+				fn = genTupleDropFn(mangled, tt, info, ptrW, genEnumDrops, genTupleDrops)
+				if fn == nil {
+					continue
 				}
 			} else {
 				sn := strings.TrimPrefix(name, "__drop_struct_")
@@ -834,7 +864,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue // routing only names structs it verified exist
 				}
-				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops)
+				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops)
 			}
 			generated[name] = true
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
@@ -1435,6 +1465,13 @@ type builder struct {
 	// generate the body. Map header is shared by value, so writes from
 	// any lowering / post-pass site reach the worklist.
 	genEnumDrops map[string]*ast.EnumDecl
+	// genTupleDrops is genEnumDrops' tuple sibling: the mangled tuple
+	// shape (key) → the canonical TupleType (value). Tuples have no
+	// declared name in source, so this registry IS the only way the
+	// worklist can recover the element list for a tuple a nested
+	// drop-fn called by mangled name. dropFnNameFor records each
+	// distinct shape it routes through `__drop_tuple_<...>` here.
+	genTupleDrops map[string]ast.TupleType
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -2124,7 +2161,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// must fall back to the always-present __fern_drop_arr_ptr
 			// (whose own buffer-free is internally RcFreeEnabled-gated).
 			// Array-of-array / enum / closure keep __fern_drop_arr_ptr.
-			if name, ok := arrElemStructDropName(at.Elem, b.info); ok && ast.RcFreeEnabled {
+			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
 				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				return
@@ -2178,7 +2215,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
-		if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops); ok {
+		if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -2193,7 +2230,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// (inner buffers are array-of-array, a later slice); plain
 			// arrays (i32[]) free the buffer via arr_dec. Previously all
 			// of these flat-dec'd, leaking the buffer.
-			if name, ok := arrElemStructDropName(at.Elem, b.info); ok {
+			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
 				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				return
@@ -2381,7 +2418,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// generic __map_drop_values (kind 2/3). Both free the buf +
 			// handle via the trailing __fern_map_drop.
 			dropValues := "__map_drop_values"
-			if name, ok := mapValDropName(st, b.info, b.genEnumDrops); ok {
+			if name, ok := mapValDropName(st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 				dropValues = name
 			} else if len(st.Args) >= 2 {
 				// Map[K, string]: reclaim each value's string buffer
@@ -2895,7 +2932,7 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 // rc-tracked captures (the generic helper already handles those).
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
-func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl) *Func {
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
 	if !hasRcCapture(caps, ptrW) {
 		return nil
 	}
@@ -2954,7 +2991,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr})
 			if at, isArr := c.Type.(ast.ArrayType); isArr {
-				if drop, ok := arrElemStructDropName(at.Elem, info); ok {
+				if drop, ok := arrElemStructDropName(at.Elem, info, tupleReg, ptrW); ok {
 					// Array of concrete structs: deep-drop each element
 					// box + the buffer (Stage B loop).
 					ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
@@ -2974,7 +3011,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				ops = append(ops,
 					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
 					Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-			} else if drop, ok := dropFnNameFor(c.Type, info, reg); ok {
+			} else if drop, ok := dropFnNameFor(c.Type, info, reg, tupleReg, ptrW); ok {
 				// Concrete-struct (or boxed generic-enum) capture: free its
 				// box + nested children.
 				ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
@@ -3008,11 +3045,16 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 // enum with at least one statically-droppable payload routes to a
 // tag-dispatched __drop_enum_<Name> — reading the runtime tag picks the
 // exact per-variant payload type, so a union's differing variant types
-// are handled correctly (no misread). Map / runtime handle types,
-// arrays, closures, and generic enum instantiations (Args != nil; their
+// are handled correctly (no misread). A TUPLE with at least one rc-
+// tracked element routes to __drop_tuple_<mangled> (genTupleDropFn
+// generates a uniform deep-drop from the captured tuple shape) — the
+// caller MUST supply a non-nil `tupleReg` so the worklist can recover
+// the shape; absent a registry we fall back to the safe flat dec, the
+// same way generic enums do. Map / runtime handle types, arrays,
+// closures, and generic enum instantiations (Args != nil; their
 // box-vs-pair-form shape needs the type args, handled inline for locals)
 // return ("", false) so the caller falls back to a flat one-level dec.
-func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl) (string, bool) {
+func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
 		if v.Name == "Map" {
@@ -3052,6 +3094,16 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl)
 			return "", false
 		}
 		return "__drop_enum_" + v.Name, true
+	case ast.TupleType:
+		if tupleReg == nil {
+			return "", false
+		}
+		if !tupleNeedsDrop(v, ptrW) {
+			return "", false
+		}
+		mangled := mangleTupleInst(v)
+		tupleReg[mangled] = v
+		return "__drop_tuple_" + mangled, true
 	}
 	return "", false
 }
@@ -3071,12 +3123,53 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl)
 // instantiation (e.g. `Option_LB_Item_RB_`) — is a pathological clash we
 // don't defend, as no realistic source produces it.
 func mangleEnumInst(et ast.EnumType) string {
-	return strings.NewReplacer(
-		"[", "_LB_",
-		"]", "_RB_",
-		",", "_C_",
-		" ", "",
-	).Replace(et.String())
+	return tupleEnumMangler.Replace(et.String())
+}
+
+// mangleTupleInst is mangleEnumInst's tuple sibling — same escape
+// vocabulary, applied to a tuple's canonical String() so a tuple shape
+// gets a stable, symbol-safe name component for its
+// `__drop_tuple_<...>` recursive-drop function. `(string, i32)` →
+// `__drop_tuple__LP_string_C_i32_RP_`. The mangled token uniquely
+// determines the shape, so two structurally-equal tuples share one
+// generated drop and two distinct shapes never collide.
+func mangleTupleInst(tt ast.TupleType) string {
+	return tupleEnumMangler.Replace(tt.String())
+}
+
+// tupleEnumMangler is the shared escape table for tuple + enum
+// instantiation mangling. `[`/`]` carry enum type args, `(`/`)` carry
+// tuple-element lists, and `,` separates either; all four collapse to
+// `[A-Za-z0-9_]` tokens so the result is a valid wasm/asm symbol and
+// no two distinct types compress to the same mangled name.
+var tupleEnumMangler = strings.NewReplacer(
+	"[", "_LB_",
+	"]", "_RB_",
+	"(", "_LP_",
+	")", "_RP_",
+	",", "_C_",
+	" ", "",
+)
+
+// tupleNeedsDrop reports whether tt has at least one element worth
+// recursing through — its drop fn dec's only rc-tracked / string
+// elements, so a tuple of plain i32s (or any other non-rc shape) has
+// nothing to do beyond the surrounding box dec the caller already
+// emits. Mirrors enumNeedsDrop in role: dropFnNameFor uses it to
+// decide whether to register and route through `__drop_tuple_<...>`
+// at all.
+func tupleNeedsDrop(tt ast.TupleType, ptrW int) bool {
+	for _, et := range tt.Elems {
+		if arrElemIsRcTracked(et) {
+			return true
+		}
+		if _, isStr := et.(ast.StringType); isStr {
+			if ptrW == 4 || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // enumNeedsDrop reports whether a concrete enum has a heap box worth
@@ -3174,15 +3267,32 @@ func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
 // statically exact (no union ambiguity), so it's safe to dispatch a
 // type-specific per-element drop. Array-of-array / array-of-enum /
 // array-of-closure return ("", false) and keep __fern_drop_arr_ptr.
-func arrElemStructDropName(elem ast.Type, info *checker.Info) (string, bool) {
-	v, ok := elem.(ast.StructType)
-	if !ok || v.Name == "Map" {
-		return "", false
+func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
+	if v, ok := elem.(ast.StructType); ok {
+		if v.Name == "Map" {
+			return "", false
+		}
+		if _, ok := info.Structs[v.Name]; !ok {
+			return "", false
+		}
+		return "__drop_arr_struct_" + v.Name, true
 	}
-	if _, ok := info.Structs[v.Name]; !ok {
-		return "", false
+	// Tuple-element sibling of the struct case: the per-element loop
+	// recurses through __drop_tuple_<mangled>, which dec's the tuple's
+	// rc-tracked / string elements (e.g. the string inside
+	// `(string, i32)`) before returning the tuple box to the freelist.
+	// Without this branch the array drop fell through to the flat
+	// __fern_drop_arr_ptr (rc_dec per element only) — freed each tuple
+	// box but never traversed it, leaking the strings inside. Caller
+	// supplies the tuple registry so the per-shape drop can be
+	// regenerated by the post-pass worklist; absent a registry (direct
+	// unit calls) we bail to the safe flat path.
+	if tt, ok := elem.(ast.TupleType); ok && tupleReg != nil && tupleNeedsDrop(tt, ptrW) {
+		mangled := mangleTupleInst(tt)
+		tupleReg[mangled] = tt
+		return "__drop_arr_tuple_" + mangled, true
 	}
-	return "__drop_arr_struct_" + v.Name, true
+	return "", false
 }
 
 // genArrStructDropFn builds __drop_arr_struct_<Elem>(ptr): on the
@@ -3249,6 +3359,65 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 	}
 }
 
+// genArrTupleDropFn is genArrStructDropFn's tuple sibling — same
+// loop shape, but the per-element call dispatches to a generated
+// __drop_tuple_<mangled> helper (sized for THIS tuple's shape) so
+// each element's rc-tracked / string members reclaim before the
+// buffer is freed. Tuples have no source name; the mangled tuple
+// shape carries the only key the worklist + per-element helper
+// agree on. Slots: 0=ptr (param), 1=i, 2=len (scratch).
+func genArrTupleDropFn(mangled string, ptrW int) *Func {
+	stride := int32(ptrW)
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpSub},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// __drop_tuple_<mangled>(mem[ptr + i*stride]); drop result.
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: stride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpCallDirect, Str: "__drop_tuple_" + mangled, I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: stride},
+		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         "__drop_arr_tuple_" + mangled,
+		Params:       []ast.Param{{Name: "__at", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
 // mapValDropName returns the column-walk drop function name for a Map
 // whose VALUE type has a generated recursive drop (concrete struct or
 // enum), plus whether one applies. The name embeds the per-value drop fn
@@ -3256,11 +3425,11 @@ func genArrStructDropFn(elemName string, ptrW int) *Func {
 // and the per-value drop it calls — from the name alone, no type lookup.
 // The map's drop routes here instead of the generic __map_drop_values
 // (which only reclaims array values). Mirrors mapValHasDrop's domain.
-func mapValDropName(st ast.StructType, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) (string, bool) {
+func mapValDropName(st ast.StructType, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, ptrW int) (string, bool) {
 	if st.Name != "Map" || len(st.Args) < 2 {
 		return "", false
 	}
-	perVal, ok := mapValHasDrop(st.Args[1], info, genEnumDrops)
+	perVal, ok := mapValHasDrop(st.Args[1], info, genEnumDrops, genTupleDrops, ptrW)
 	if !ok {
 		return "", false
 	}
@@ -3478,7 +3647,7 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 // enum-payload, and map-key reclamation are later slices). Used by the
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
-func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) []Op {
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) []Op {
 	// Two-word string value (wasm): the caller loaded (data, len) via a
 	// string-aware load (payloadLoadOpFor), so reclaim via __fern_str_dec.
 	// Reached from genEnumDropFn's payload drop (struct string fields are
@@ -3500,7 +3669,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	if isMapType(t) {
 		return appendMapDrop(ops)
 	}
-	if name, ok := dropFnNameFor(t, info, reg); ok {
+	if name, ok := dropFnNameFor(t, info, reg, tupleReg, ptrW); ok {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: name, I32: 1},
 			Op{Kind: OpDrop})
@@ -3509,7 +3678,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		// Any array field frees its buffer (see dropStructField for the
 		// rationale): array-of-struct deep-drops elements + buffer,
 		// array-of-rc frees the outer buffer, plain arrays arr_dec.
-		if name, ok := arrElemStructDropName(at.Elem, info); ok {
+		if name, ok := arrElemStructDropName(at.Elem, info, tupleReg, ptrW); ok {
 			return append(ops,
 				Op{Kind: OpCallDirect, Str: name, I32: 1},
 				Op{Kind: OpDrop})
@@ -3535,6 +3704,91 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		Op{Kind: OpDrop})
 }
 
+// genTupleDropFn builds the recursive __drop_tuple_<mangled> function
+// — the struct-drop sibling for anonymous tuple shapes. At the box's
+// last reference (rc==1) it dec's every rc-tracked / string element
+// and returns the box to the freelist; otherwise it just dec's. The
+// box was alloc'd as `tupleElemLayout size + 8` rc header, so
+// __fern_box_free frees base = data-8 with that size. The body mirrors
+// the inline tuple-LOCAL drop in emitDec (string elements split by
+// wasm two-word vs native single-word ABI; rc-tracked elements recurse
+// via appendChildDrop), so a nested tuple — `(string, i32)` as a
+// struct field, an array element, an enum payload, or another tuple's
+// element — reaches the same dec calls a top-level local does, fixing
+// the leak the docs called out under "nested tuples … strings still
+// leak."
+//
+// Tuples not worth dropping (no rc-tracked or string element) are
+// filtered upstream by tupleNeedsDrop before the routing fires, so
+// genTupleDropFn assumes at least one element drop is emitted; the
+// box_free + dec arms are always emitted.
+func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+	offs, size := tupleElemLayout(tt.Elems, ptrW)
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+	}
+	for i, et := range tt.Elems {
+		if _, isStr := et.(ast.StringType); isStr && ptrW == 4 {
+			// Two-word string element: load (data, len) and reclaim
+			// via __fern_str_dec. Mirrors the inline tuple-local
+			// path's wasm branch.
+			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+			if offs[i] != 0 {
+				ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
+			}
+			ops = append(ops,
+				Op{Kind: OpLoad, Width: WidthString},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			continue
+		}
+		if _, isStr := et.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			// Native single-word string element (x86_64,
+			// !TwoWordOverride): single ptr + __fern_rc_dec. SSO
+			// inline-tag low-bit guard + literal sentinel keep all
+			// sources safe. arm64 boxed excluded.
+			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+			if offs[i] != 0 {
+				ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
+			}
+			ops = append(ops,
+				Op{Kind: OpLoad, Width: WidthPtr},
+				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpDrop})
+			continue
+		}
+		if !arrElemIsRcTracked(et) {
+			continue
+		}
+		ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+		if offs[i] != 0 {
+			ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
+		}
+		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
+		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg)
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpConstI32, I32: size},
+		Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2},
+		Op{Kind: OpDrop},
+		Op{Kind: OpElse},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop},
+		Op{Kind: OpEnd},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn})
+	return &Func{
+		Name:       "__drop_tuple_" + mangled,
+		Params:     []ast.Param{{Name: "__dt", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        ops,
+	}
+}
+
 // genStructDropFn builds the recursive __drop_struct_<Name> function:
 // at the value's last reference (rc==1) it drops each rc-tracked field
 // — recursing into nested struct fields via their own drop fns — then
@@ -3543,7 +3797,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 // frees base = data-8, size+8 (structFieldLayout's size already
 // accounts for the header). Works for a childless struct too: the
 // field loop is empty, so it just is_unique-gates and frees the box.
-func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) *Func {
+func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -3576,7 +3830,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, f.Type, info, ptrW, reg)
+		ops = appendChildDrop(ops, f.Type, info, ptrW, reg, tupleReg)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -3607,7 +3861,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
 // capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
-func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl) *Func {
+func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
 	plan, ok := enumVariantDropPlan(ed, ptrW)
 	if !ok {
 		return nil
@@ -3634,7 +3888,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg)
+			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg)
 		}
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
@@ -3832,7 +4086,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -3841,16 +4095,17 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		Captures:   fn.Captures,
 	}
 	b := &builder{
-		info:         info,
-		fn:           fn,
-		out:          out,
-		locals:       map[string]int32{},
-		scratchType:  map[int32]ast.Type{},
-		ptrW:         ptrW,
-		pairForm:     pairForm,
-		closureCaps:  closureCaps,
-		genEnumDrops: genEnumDrops,
-		thisIsPair:   pairForm[fn.Name],
+		info:          info,
+		fn:            fn,
+		out:           out,
+		locals:        map[string]int32{},
+		scratchType:   map[int32]ast.Type{},
+		ptrW:          ptrW,
+		pairForm:      pairForm,
+		closureCaps:   closureCaps,
+		genEnumDrops:  genEnumDrops,
+		genTupleDrops: genTupleDrops,
+		thisIsPair:    pairForm[fn.Name],
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
@@ -6372,7 +6627,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// each `set` call can reload it.
 		b.emit(Op{Kind: OpConstI32, I32: int32(len(n.Entries))})
 		b.emit(Op{Kind: OpConstI32, I32: mapKeyKindTag(n.KeyType, b.ptrW)})
-		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info, b.genEnumDrops)})
+		b.emit(Op{Kind: OpConstI32, I32: mapValTag(n.ValueType, b.ptrW, b.info, b.genEnumDrops, b.genTupleDrops)})
 		b.emit(Op{Kind: OpCallDirect, Str: "map_new", I32: 3})
 		mapSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_maplit_%d", mapSlot)] = mapSlot
@@ -7788,7 +8043,7 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 // overwrite-dec in __map_set_impl; readers mask the low byte
 // (kind != 0 == pointer-shaped) since map_new stores the packed
 // mapValTag (kind | stride<<8), not the bare kind.
-func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) int32 {
+func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, ptrW int) int32 {
 	if at, ok := t.(ast.ArrayType); ok {
 		if arrElemIsRcTracked(at.Elem) {
 			return 3
@@ -7803,7 +8058,7 @@ func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// retain (here) and drop (routing) never disagree. Other pointers
 	// (string / generic-enum / tuple / slice / runtime handles) fall
 	// through to the non-reclaimed pointer kind (1).
-	if _, ok := mapValHasDrop(t, info, genEnumDrops); ok {
+	if _, ok := mapValHasDrop(t, info, genEnumDrops, genTupleDrops, ptrW); ok {
 		return 4
 	}
 	if ast.IsPointerType(t) {
@@ -7820,7 +8075,7 @@ func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 // drop in a __drop_map_via_<drop> column walk), keeping the retained set
 // and the reclaimed set identical. Generic-enum instantiations (Args) and
 // runtime handle structs are excluded — they stay non-reclaimed (kind 1).
-func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) (string, bool) {
+func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, ptrW int) (string, bool) {
 	// Array-of-CONCRETE-struct value (Map[K, Item[]]): each value array
 	// deep-drops its element boxes + buffer via the generated
 	// __drop_arr_struct_<Elem> loop, rather than the shallow drop_arr_ptr
@@ -7830,7 +8085,7 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// applies), so this changes the DROP, not the retain. Other arrays
 	// (plain / nested / enum-elem) keep __map_drop_values.
 	if at, ok := v.(ast.ArrayType); ok {
-		return arrElemStructDropName(at.Elem, info)
+		return arrElemStructDropName(at.Elem, info, genTupleDrops, ptrW)
 	}
 	// Every other value with a generated recursive drop — concrete user
 	// struct (__drop_struct_<V>), concrete enum (__drop_enum_<V>), or a
@@ -7838,7 +8093,7 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// in genEnumDrops) — routes through dropFnNameFor, the same dispatch
 	// the struct/enum field drops use. Strings / tuples / slices / runtime
 	// handles / pair-form generic enums read false and stay non-reclaimed.
-	return dropFnNameFor(v, info, genEnumDrops)
+	return dropFnNameFor(v, info, genEnumDrops, genTupleDrops, ptrW)
 }
 
 // mapValTag is what map_new actually stores at buf+12: the low
@@ -7849,8 +8104,8 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 // stride = tag >> 8) so the runtime can arr_dec / drop_arr_ptr a
 // value without the IR threading the stride through every set /
 // drop call. Non-array kinds (0/1) carry no stride.
-func mapValTag(t ast.Type, ptrW int, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl) int32 {
-	kind := mapValKindTag(t, info, genEnumDrops)
+func mapValTag(t ast.Type, ptrW int, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType) int32 {
+	kind := mapValKindTag(t, info, genEnumDrops, genTupleDrops, ptrW)
 	if kind >= 2 {
 		if at, ok := t.(ast.ArrayType); ok {
 			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
@@ -8312,7 +8567,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-reads the same pointer. Runs before the wide/generic
 	// dispatch so both set lowerings are covered uniformly.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 &&
-		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops) >= 2 &&
+		len(n.TypeArgs) >= 2 && mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) >= 2 &&
 		needsRcIncOnAlias(n.Args[2], b) {
 		if err := b.expr(n.Args[2]); err != nil {
 			return err
@@ -8411,9 +8666,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// (it only probes keys, then overwrites the slot).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && !needBoxK &&
-		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops) == 4 &&
+		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
 		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
-		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops); ok {
+		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
@@ -8644,7 +8899,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			keyKind = mapKeyKindTag(n.TypeArgs[0], b.ptrW)
 		}
 		if len(n.TypeArgs) >= 2 {
-			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info, b.genEnumDrops)
+			valKind = mapValTag(n.TypeArgs[1], b.ptrW, b.info, b.genEnumDrops, b.genTupleDrops)
 		}
 		b.emit(Op{Kind: OpConstI32, I32: keyKind})
 		b.emit(Op{Kind: OpConstI32, I32: valKind})
@@ -8758,15 +9013,211 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	return nil, fmt.Errorf("ir: indirect call through unknown local %q", name)
 }
 
+// structReuseEligible reports whether every field of the struct is a
+// shape the Phase 5b/5c drop-reuse path handles: an i32-class integer
+// scalar (≤ 32 bits) OR a single-word rc-tracked pointer
+// (array / struct / Map / enum / closure / tuple — `arrElemIsRcTracked`).
+// Excluded, falling back to the normal dec-on-overwrite + fresh alloc:
+//   - strings (two-word on wasm / boxed on arm64 — the reuse temps are
+//     single-word; their rc release also diverges per backend),
+//   - wide / float scalars (i64 / f64 / f32 — would need width-correct
+//     temp slots; the temps here are i32/pointer-width),
+//   - bool and anything else not in the two categories above.
+func structReuseEligible(sd *ast.StructDecl) bool {
+	for _, f := range sd.Fields {
+		if nt, ok := f.Type.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
+			continue
+		}
+		if arrElemIsRcTracked(f.Type) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where
+// p is an owned, uniquely-droppable struct local of the same type T,
+// every field of which is structReuseEligible) so the new value reuses
+// p's old box in place when it's the sole owner — the Phase 5b/5c
+// constructor-reuse (FBIP) win. Returns (true, err) when it took the
+// reuse path (the caller returns immediately), (false, nil) when the
+// shape isn't eligible and normal lowering should proceed.
+//
+// Soundness:
+//   - Gated on b.freeEligible[p] (OWNED, not a borrowed param / alias):
+//     a borrowed value can be rc==1 while the caller still holds it, so
+//     static ownership — not just the runtime rc check — is required
+//     before reusing storage in place.
+//   - The runtime is_unique check is the second gate: reuse fires only
+//     at rc==1. An aliased p (rc>1) is dec'd and a fresh box allocated,
+//     so the alias keeps the old value intact.
+//   - All field expressions are evaluated into temps BEFORE the box is
+//     reused, so a field that reads p (`x: p.x + 1`) sees the old value
+//     even though the box it lives in is about to be overwritten — no
+//     read-after-overwrite hazard, including field swaps.
+//   - Pointer fields: each new value is retained on eval (emitAliasInc
+//     for an alias-shaped RHS, same as normal StructLit construction).
+//     On the REUSE branch only, the box's OLD pointer-field values are
+//     flat-dec'd first (they're being repurposed). For a carried-over
+//     field (`name: p.name`) the eval-inc and this dec balance, so its
+//     rc is unchanged; for a replaced field the old reference is
+//     released (flat dec — leak-but-never-UAF: the buffer isn't freed
+//     here, a freeing dec is a follow-up). The dec is gated on the i32
+//     is_unique result (not the raw token pointer) so the branch
+//     condition is backend-safe truthiness.
+//   - tokenSize == size (same type T), so __alloc_reuse's class check
+//     always matches on the reuse path and never frees.
+func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
+	if !ast.RcFreeEnabled {
+		return false, nil
+	}
+	sl, ok := n.Value.(*ast.StructLit)
+	if !ok {
+		return false, nil
+	}
+	st, ok := b.exprStaticType(t).(ast.StructType)
+	if !ok || st.Name != sl.TypeName {
+		return false, nil
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok || !structReuseEligible(sd) {
+		return false, nil
+	}
+	if !b.freeEligible[t.Name] {
+		return false, nil
+	}
+
+	offs, size := structFieldLayout(sd.Fields, b.ptrW)
+	const rcHeaderBytes = 8
+
+	// 1. Evaluate every field value into a single-word temp. These reads
+	//    of the OLD p (still live in slot idx) all complete before the
+	//    box is reused below. Pointer fields are retained here exactly
+	//    as normal StructLit construction does (Phase 1d-viii).
+	type fieldTemp struct {
+		name string
+		slot int32
+		ptr  bool
+	}
+	temps := make([]fieldTemp, 0, len(sl.Fields))
+	hasPtr := false
+	for _, f := range sl.Fields {
+		isPtr := arrElemIsRcTracked(fieldType(sd.Fields, f.Name))
+		if err := b.expr(f.Value); err != nil {
+			return true, err
+		}
+		if isPtr && needsRcIncOnAlias(f.Value, b) {
+			b.emitAliasInc(f.Value)
+		}
+		ts := b.allocSlot()
+		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
+		b.emit(Op{Kind: OpStoreLocal, I32: ts})
+		temps = append(temps, fieldTemp{f.Name, ts, isPtr})
+		hasPtr = hasPtr || isPtr
+	}
+
+	// 2. reused = is_unique(old) (an i32 0/1, captured so both the token
+	//    select and the old-field-dec branch can read it). token =
+	//    reused ? base(old) : 0; the aliased / null / sentinel branch
+	//    dec's the old box (the alias keeps it) and yields 0 so
+	//    __alloc_reuse allocates a fresh box.
+	reusedSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_uniq_%d", reusedSlot)] = reusedSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+
+	tokenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_tok_%d", tokenSlot)] = tokenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpEnd})
+
+	// 3. base = __alloc_reuse(token, size+hdr, size+hdr).
+	boxSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_box_%d", boxSlot)] = boxSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+
+	// 4. REUSE branch only: release the box's OLD pointer-field values
+	//    before the new ones overwrite them. On a fresh box (reused==0)
+	//    the slots are uninitialised, so this is gated on the is_unique
+	//    result. Flat dec (one level, no free): a carried-over field's
+	//    eval-inc above balances it; a replaced field's old reference is
+	//    released.
+	if hasPtr {
+		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, tp := range temps {
+			if !tp.ptr {
+				continue
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+		b.emit(Op{Kind: OpEnd})
+	}
+
+	// 5. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
+	//    otherwise).
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+
+	// 6. Store the field temps at [base + hdr + off].
+	for _, tp := range temps {
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
+		b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
+	}
+
+	// 7. p = data (= base + hdr); leave the tee for expression position.
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: idx})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	return true, nil
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
-		if err := b.expr(n.Value); err != nil {
-			return err
-		}
 		idx, ok := b.locals[t.Name]
 		if !ok {
 			return fmt.Errorf("ir: cannot assign to %q (no slot)", t.Name)
+		}
+		// Phase 5b drop-reuse (FBIP): a self-overwrite of an owned
+		// struct local with a fresh struct literal of the same type
+		// reuses the old box's storage in place when it's uniquely
+		// owned (`p = Point{x: p.x + 1, y: p.y}` → no alloc). Handles
+		// the whole assignment (old-value drop + construct + store), so
+		// it returns early past the normal expr + dec-on-overwrite.
+		if done, err := b.tryStructReuseOverwrite(n, t, idx); done {
+			return err
+		}
+		if err := b.expr(n.Value); err != nil {
+			return err
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
