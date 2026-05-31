@@ -1656,6 +1656,33 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Nested-tuple reclamation: a tuple held inside a STRUCT FIELD
+		// used to leak its string element — the struct's drop dec'd the
+		// tuple ptr flat (freeing the tuple box but never traversing the
+		// elements). dropFnNameFor now routes the field through a
+		// generated __drop_tuple_<mangled> helper which dec's the
+		// string element + frees the tuple box at the struct's last
+		// reference. Same routing fires for an enum-payload tuple, a
+		// closure-capture tuple, or a tuple element that's itself a
+		// tuple — the worklist is shape-driven, not container-driven.
+		// Per iter: s.len()=26 + n=7 = 33; 500x → 16500.
+		name: "native_nested_tuple_string_in_struct_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Box { items: (string, i32) }
+function mk(): i32 {
+    var b: Box = Box { items: ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7) };
+    return b.items.0.len() + b.items.1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

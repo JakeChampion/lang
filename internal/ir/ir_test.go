@@ -2273,3 +2273,112 @@ func TestLowerMapStringKeyAndValueReclaim(t *testing.T) {
 // Superseded by TestLowerMapStringKeyReclaimOnNative (single-word does
 // reclaim) and TestLowerMapStringKeyNoReclaimOnArm64TwoWord (arm64-
 // two-word is still excluded). See those two tests above.
+
+// anyTupleDropFn reports whether the program contains at least one
+// __drop_tuple_<mangled> function — used by the nested-tuple-reclaim
+// tests below, which don't care about the exact mangled name (it
+// changes when the tuple shape changes).
+func anyTupleDropFn(p *Program) (*Func, bool) {
+	for _, fn := range p.Funcs {
+		if strings.HasPrefix(fn.Name, "__drop_tuple_") {
+			return fn, true
+		}
+	}
+	return nil, false
+}
+
+// callsAnyTupleDrop reports whether any function in p calls any
+// __drop_tuple_<mangled> helper.
+func callsAnyTupleDrop(p *Program) bool {
+	for _, fn := range p.Funcs {
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_tuple_") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestLowerNestedTupleStringInStructReclaim — a struct field that holds
+// a tuple containing a string used to leak the string buffer: the
+// struct drop (inline at the local's scope exit OR via a generated
+// __drop_struct_<Name> when the struct is itself a nested field) flat-
+// dec'd the tuple ptr via __fern_rc_dec (freeing the tuple box on its
+// rc==0) but never traversed the tuple's elements, so the string
+// buffer survived past its last reachable reference. With the nested-
+// tuple-drop fix, dropFnNameFor routes the tuple field through a
+// generated __drop_tuple_<mangled> helper that is_unique-gates the
+// tuple ptr, reclaims its string element via __fern_str_dec (wasm
+// two-word), then returns the tuple box to the freelist.
+func TestLowerNestedTupleStringInStructReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
+function build(): i32 {
+    var b: Box = Box { items: ("h" + "i", 7) };
+    return b.items.1;
+}`, 4)
+	if !callsAnyTupleDrop(p) {
+		t.Errorf("expected the Box's struct drop to route its tuple field through a generated __drop_tuple_<...> helper; got:\n%s", p)
+	}
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("expected a generated __drop_tuple_<...> helper to materialise for the struct's tuple field; got:\n%s", p)
+	}
+	sawStrDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_str_dec" {
+			sawStrDec = true
+		}
+	}
+	if !sawStrDec {
+		t.Errorf("expected the generated %s body to dec its string element via __fern_str_dec on wasm; got:\n%s", td.Name, p)
+	}
+}
+
+// TestLowerNestedTupleStringInStructReclaimOnNativeSingleWord — same
+// as the wasm test above but for the native single-word string ABI:
+// the generated __drop_tuple_<...> helper must dec the string element
+// via __fern_rc_dec (not __fern_str_dec, which is wasm-only). The
+// matching alias inc at construction time goes through __fern_rc_inc
+// via emitAliasInc's existing native fall-through.
+func TestLowerNestedTupleStringInStructReclaimOnNativeSingleWord(t *testing.T) {
+	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
+function build(): i32 {
+    var b: Box = Box { items: ("h" + "i", 7) };
+    return b.items.1;
+}`, 8)
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("expected a generated __drop_tuple_<...> helper on native single-word; got:\n%s", p)
+	}
+	sawRcDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_rc_dec" {
+			sawRcDec = true
+		}
+	}
+	if !sawRcDec {
+		t.Errorf("expected the generated %s body to dec its string element via __fern_rc_dec on native single-word; got:\n%s", td.Name, p)
+	}
+}
+
+// TestLowerNestedTupleStringNoReclaimOnArm64TwoWord locks the
+// exclusion: the arm64 two-word boxed string ABI doesn't have a
+// native __fern_str_dec helper (it lives in wasm runtime only), so
+// the nested tuple's string element must NOT be reclaimed yet — it
+// leaks safely until the arm64 two-word string-reclaim port lands.
+// Routing falls back to the flat dec, the same way Slices 2-6's
+// arm64 two-word exclusions do.
+func TestLowerNestedTupleStringNoReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `struct Box { items: (string, i32) }
+function build(): i32 {
+    var b: Box = Box { items: ("h" + "i", 7) };
+    return b.items.1;
+}`, 8)
+	if _, ok := anyTupleDropFn(p); ok {
+		t.Errorf("arm64 two-word: no __drop_tuple_<...> helper should be generated (no native str_dec runtime); got:\n%s", p)
+	}
+}
