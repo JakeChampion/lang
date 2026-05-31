@@ -2245,12 +2245,20 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// tainted) are SKIPPED entirely — never touched, so a view string
 		// can never be misread/freed.
 		if _, isStr := t.(ast.StringType); isStr {
-			// Gated on wasm32 (ptrW==4) — __fern_str_dec is wasm-only;
-			// the arm64 two-word override has no such helper.
+			// wasm two-word: __fern_str_dec consumes (data, len), returns data;
+			// drop the returned ptr.
+			// Native single-word (x86_64, !TwoWordOverride): __fern_rc_dec
+			// consumes ptr, returns ptr (SSO inline-tag low-bit guard +
+			// literal sentinel + low-address guard all safe). arm64 boxed
+			// excluded — no native str_dec helper.
 			if ast.RcFreeEnabled && eligible && b.ptrW == 4 {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes (data, len)
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned data ptr
+			} else if ast.RcFreeEnabled && eligible && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes single data ptr
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
 			}
 			return
 		}
@@ -2700,13 +2708,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if _, isFunc := t.(*ast.FuncType); isFunc {
 			return true
 		}
-		// wasm32 strings: a heap string carries an rc header (the producer
-		// prereq), and the emitDec string branch reclaims owned ones via
-		// __fern_str_dec. Gated strictly on wasm (ptrW==4) — natives,
-		// INCLUDING the arm64 two-word-string override, have no
-		// __fern_str_dec runtime helper.
+		// Heap strings carry an rc header (prereq 1), and the emitDec
+		// string branch reclaims owned ones via __fern_str_dec on wasm
+		// or __fern_rc_dec on native single-word (x86_64). arm64
+		// (TwoWordOverride boxed) excluded — no native str_dec runtime
+		// helper, same gating as the rest of the native string-reclaim
+		// path. The SSO inline-tag low-bit guard in __fern_rc_dec
+		// (Slice 8) keeps short inline strings safe.
 		if _, isStr := t.(ast.StringType); isStr {
-			return b.ptrW == 4
+			return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
 		}
 		// Tuple values are always pointer-shaped headered boxes
 		// (TupleLit lowering); rc_inc/dec + box_free apply.
@@ -3805,12 +3815,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		if _, isTuple := t.(ast.TupleType); isTuple {
 			return true
 		}
-		// Two-word string locals: zero both slots so a never-initialised
-		// string local's exit dec sees (data=0, len=0) — __fern_str_dec
-		// null-guards data=0. wasm32 only (ptrW==4), matching the dec
-		// sweep's string gate.
+		// String locals: zero so a never-initialised local's exit dec
+		// sees a null pointer — __fern_str_dec / __fern_rc_dec null-
+		// guard. wasm two-word zeroes both slots (data, len); native
+		// single-word (x86_64, !TwoWordOverride) zeroes one slot. arm64
+		// excluded for the same reason as the dec sweep.
 		if _, isStr := t.(ast.StringType); isStr {
-			return b.ptrW == 4
+			return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
 		}
 		return false
 	}
@@ -3827,8 +3838,9 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			continue
 		}
 		// A two-word string slot consumes two operand values (data, len);
-		// push two zeros so OpStoreLocal balances.
-		if _, isStr := v.Type.(ast.StringType); isStr {
+		// push two zeros so OpStoreLocal balances. Native single-word
+		// string slots take only one zero (the single data pointer).
+		if _, isStr := v.Type.(ast.StringType); isStr && b.ptrW == 4 {
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 		}
 		b.emit(Op{Kind: OpConstI32, I32: 0})
@@ -9193,10 +9205,15 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// __fern_str_inc (emitAliasInc picks the two-word helper). Lets two
 	// eligible string locals share a buffer safely (the dec's is_unique
 	// gate frees once) and protects a string flowing into a container
-	// that outlives the source. Gated ptrW==4 — __fern_str_inc is
-	// wasm-only; on natives strings stay un-inc'd (and unreclaimed).
+	// that outlives the source. Native single-word strings (x86_64,
+	// !TwoWordOverride) inc via __fern_rc_inc (emitAliasInc fall-
+	// through). SSO inline-tag low-bit guard in __fern_rc_inc (added
+	// during Slice 8) keeps short inline strings safe. arm64
+	// (TwoWordOverride boxed) excluded — no native str_inc / str_dec
+	// runtime, same gating as the rest of the native string-reclaim
+	// path.
 	if _, isStr := t.(ast.StringType); isStr {
-		return b.ptrW == 4
+		return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
 	}
 	return false
 }

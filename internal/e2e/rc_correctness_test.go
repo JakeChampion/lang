@@ -1510,6 +1510,31 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 2 (string locals): a fresh string local from concat / slice
+		// gets dec'd at scope exit on native single-word (x86_64) just
+		// like wasm. Before Slice 2 lands on natives, the buffer leaked
+		// every iteration; with the predicate enabled (needsRcIncOnAlias
+		// + rcTracked + emitDec branch widened to ptrW=8 + !TwoWord),
+		// each iter's fresh concat result frees through __fern_rc_dec
+		// at scope exit. uf=0 + heap stays bounded confirms the reclaim.
+		// (arm64 boxed excluded — no native str_dec runtime helper.)
+		// Per iter: s.len() = 28; 500x → 14000.
+		name: "native_string_local_concat_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var s: string = "value-aaaaaaaaaaaaaaaaaaaa-" + "1";
+    return s.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 14000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
