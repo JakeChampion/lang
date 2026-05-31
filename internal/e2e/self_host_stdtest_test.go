@@ -169,6 +169,12 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		// the gate strips those before comparing.
 		{"bench", langSrcAbs(t, "examples/tests/bench_test.fern"), "# bench "},
 		{"rel_tol_and_ms_bench", langSrcAbs(t, "examples/tests/rel_tol_and_ms_bench_test.fern"), "# bench "},
+		// `batch8_test` — the only run-to-run divergence is a single
+		// log line `# golden file bootstrapped at /tmp/golden-…` where
+		// the directory carries a process-pid suffix. Strip the prefix
+		// so the rest of the TAP (suite header, per-case `ok` lines,
+		// totals) is compared byte-for-byte.
+		{"batch8", langSrcAbs(t, "examples/tests/batch8_test.fern"), "# golden file bootstrapped at "},
 		{"synthetic_fail", failing, ""},
 	}
 
