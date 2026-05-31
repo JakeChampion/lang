@@ -415,7 +415,7 @@ explicitly skipped.
 | Slice 2 — string LOCALS | DONE | DONE | DONE |
 | Slice 3 — string STRUCT fields | DONE | DONE | DONE |
 | Slice 3 follow-up — string TUPLE elements | DONE | DONE | TODO |
-| Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | TODO |
+| Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | DONE |
 | Slice 5 — string ENUM payloads | DONE | DONE | TODO |
 | Slice 6 — string CLOSURE captures | DONE | DONE | TODO |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |

@@ -1856,6 +1856,43 @@ func TestLowerStringArrayElemNoReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerStringArrayElemReclaimOnArm64TwoWord — Slice 4 on arm64:
+// a string[] local on the two-word ABI reclaims its element strings
+// through __fern_drop_arr_str (same two-word walk as wasm). The
+// per-slice IR widening gates on UseTwoWordStrings, so wasm and
+// arm64-TwoWordOverride share one codegen path; native single-word
+// (the !TwoWordOverride case) keeps the single-ptr drop_arr_ptr path.
+func TestLowerStringArrayElemReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
+    var arr: string[] = [a, b];
+    return arr[0].len() + arr[1].len();
+}`, 8)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("arm64 two-word: expected string[] local reclamation via __fern_drop_arr_str:\n%s", p)
+	}
+}
+
+// TestLowerStringArrayInStructFieldReclaimOnArm64TwoWord locks the
+// nested string[] case on arm64: a `string[]` struct field reclaims
+// through the same __fern_drop_arr_str routing under the two-word
+// ABI, mirroring the wasm-side coverage above.
+func TestLowerStringArrayInStructFieldReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `struct Tags { items: string[] }
+function build(a: string): i32 {
+    var t: Tags = Tags { items: [a] };
+    return t.items[0].len();
+}`, 8)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("arm64 two-word: expected string[] struct field reclamation via __fern_drop_arr_str:\n%s", p)
+	}
+}
+
 // TestLowerStringEnumPayloadReclaim verifies a string enum payload is
 // reclaimed: the owned enum local's deep-drop dec's the payload via the
 // two-word __fern_str_dec at the enum's last reference. The payload is

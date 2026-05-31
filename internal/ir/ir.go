@@ -2297,9 +2297,10 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			helper := "__fern_arr_dec"
 			if arrElemIsRcTracked(at.Elem) {
 				helper = "__fern_drop_arr_ptr"
-			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 4 {
-				// string[] on wasm: walk + __fern_str_dec each two-word
-				// element, then free the buffer.
+			} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
+				// walk + __fern_str_dec each (data, len) element, then free
+				// the buffer.
 				helper = "__fern_drop_arr_str"
 			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// string[] on native single-word (x86_64, !TwoWordOverride):
@@ -2334,11 +2335,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// freelist is on AND it's an owned local. __fern_arr_dec
 		// carries the same guards as __fern_rc_dec. Ineligible /
 		// flag-off arrays fall through to the plain box dec.
-		// string[] (wasm two-word elements): reclaim each element via the
-		// two-word walk in __fern_drop_arr_str, then free the buffer.
-		// Gated eligible — a borrowed string[] never frees its elements.
+		// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
+		// reclaim each element via the two-word walk in
+		// __fern_drop_arr_str, then free the buffer. Gated eligible —
+		// a borrowed string[] never frees its elements.
 		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled && eligible {
-			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 4 {
+			if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2})
@@ -3745,7 +3747,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		helper := "__fern_arr_dec"
 		if arrElemIsRcTracked(at.Elem) {
 			helper = "__fern_drop_arr_ptr"
-		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 4 {
+		} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			helper = "__fern_drop_arr_str"
 		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			// string[] on native single-word: __fern_drop_arr_ptr walks +

@@ -337,6 +337,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
+	if g.usesDropArrStr {
+		g.emitDropArrStrRuntime()
+	}
 	if g.usesRcIsUnique {
 		g.emitRcIsUniqueRuntime()
 	}
@@ -1617,6 +1620,88 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_drop_arr_ptr")
+	g.line(".ltorg")
+}
+
+// emitDropArrStrRuntime emits `__fern_drop_arr_str(ptr, stride) ->
+// ptr` — the Slice 4 drop handler for `string[]` under the two-word
+// ABI. Each element is a (data, len) pair at stride bytes apart; the
+// per-element walk loads both and dec's via __fern_str_dec. On the
+// LAST reference (rc==1) the elements free; otherwise the array box
+// just dec's (the elements stay alive for the other holder). Same
+// null / low-address / static-sentinel guards as __fern_drop_arr_ptr;
+// returns the input ptr (matching the dec contract).
+//
+// AAPCS64 inputs: x0 = ptr, x1 = stride (16 for two-word strings on
+// arm64). Callee-saved across __fern_str_dec calls: x19 = ptr,
+// x20 = stride, x21 = len, x22 = i. Mirrors the wasm
+// buildDropArrStrBody and the structural sibling on arm64
+// (emitDropArrPtrRuntime).
+func (g *generator) emitDropArrStrRuntime() {
+	g.line("")
+	g.line(".global __fern_drop_arr_str")
+	g.typeDirective("__fern_drop_arr_str")
+	g.label("__fern_drop_arr_str")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0") // x19 = ptr
+	g.emit("mov x20, x1") // x20 = stride
+	g.emit("cbz x19, .Ldrop_arr_str_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Ldrop_arr_str_ret")
+	g.emit("ldur w0, [x19, #-8]")
+	g.emit("tbnz w0, #31, .Ldrop_arr_str_ret")
+	// Only the last reference walks elements (rc == 1).
+	g.emit("cmp w0, #1")
+	g.emit("b.ne .Ldrop_arr_str_decarr")
+	g.emit("ldur w21, [x19, #-4]") // x21 = len
+	g.emit("mov x22, #0")          // i = 0
+	g.label(".Ldrop_arr_str_loop")
+	g.emit("cmp w22, w21")
+	g.emit("b.ge .Ldrop_arr_str_decarr")
+	// (x0, x1) = (data, len) of element i = (mem[ptr+i*stride],
+	// mem[ptr+i*stride+8]).
+	g.emit("mul x0, x22, x20")
+	g.emit("add x0, x19, x0") // x0 = &elem[i]
+	g.emit("ldr x1, [x0, #8]") // x1 = elem.len
+	g.emit("ldr x0, [x0]")     // x0 = elem.data
+	g.emit("bl __fern_str_dec")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Ldrop_arr_str_loop")
+	g.label(".Ldrop_arr_str_decarr")
+	if ast.RcFreeEnabled {
+		// Same buffer-free path as emitDropArrPtrRuntime: at rc==1
+		// the elements have been reclaimed above, so return the
+		// buffer to the freelist. headerBytes = max(16, stride),
+		// base = ptr - headerBytes, size = headerBytes + cap*stride.
+		g.emit("ldur w2, [x19, #-8]")
+		g.emit("cmp w2, #1")
+		g.emit("b.ne .Ldrop_arr_str_plaindec")
+		g.emit("mov x3, #16")
+		g.emit("cmp x20, #16")
+		g.emit("csel x3, x20, x3, hi")
+		g.emit("ldur w4, [x19, #-12]")
+		g.emit("mul x1, x4, x20")
+		g.emit("add x1, x1, x3")
+		g.emit("sub x0, x19, x3")
+		g.emit("bl __fern_free")
+		g.emit("mov x0, x19")
+		g.emit("b .Ldrop_arr_str_done")
+		g.label(".Ldrop_arr_str_plaindec")
+	}
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_rc_dec")
+	g.emit("b .Ldrop_arr_str_done")
+	g.label(".Ldrop_arr_str_ret")
+	g.emit("mov x0, x19")
+	g.label(".Ldrop_arr_str_done")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_drop_arr_str")
 	g.line(".ltorg")
 }
 
@@ -5368,6 +5453,12 @@ type generator struct {
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See x86_64's mirror + the wasm runtime.
 	usesDropArrPtr bool
+	// usesDropArrStr gates `__fern_drop_arr_str` — the Slice 4
+	// drop handler for `string[]` under the two-word ABI: walks
+	// the (data, len) elements calling __fern_str_dec and then
+	// frees the buffer. Set when an OpCallDirect names this
+	// helper in the IR walk. arm64 port of the wasm helper.
+	usesDropArrStr bool
 	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
 	// "last reference?" check used by the Phase 3 struct drop.
 	usesRcIsUnique bool
@@ -7525,6 +7616,20 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcDec = true
 			if ast.RcFreeEnabled {
 				g.usesFree = true
+				g.usesAlloc = true
+			}
+		case "__fern_drop_arr_str":
+			// `string[]` drop loop (Slice 4 two-word ABI). Walks
+			// elements via __fern_str_dec (which on rc==1 frees the
+			// element box via __fern_box_free + needs __fern_rc_dec
+			// for the rc!=1 path), then frees the array buffer
+			// via __fern_free.
+			g.usesDropArrStr = true
+			g.usesStrDec = true
+			g.usesBoxFree = true
+			g.usesFree = true
+			g.usesRcDec = true
+			if ast.RcFreeEnabled {
 				g.usesAlloc = true
 			}
 		case "__fern_rc_is_unique":
