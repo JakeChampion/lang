@@ -2857,6 +2857,12 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
 			return true
 		}
+		// Native single-word string capture (x86_64, !TwoWordOverride):
+		// the env slot holds a single ptr that needs __fern_rc_dec'ing
+		// on the closure's last reference. arm64 boxed strings excluded.
+		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			return true
+		}
 	}
 	return false
 }
@@ -2894,6 +2900,23 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthString},
 				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+				Op{Kind: OpDrop})
+			off += slot
+			continue
+		}
+		// Native single-word string capture (x86_64, !TwoWordOverride):
+		// load the single ptr from [env+off] and __fern_rc_dec it
+		// (balances the __fern_rc_inc at MakeEnv via emitAliasInc).
+		// Inside the env's is_unique branch, so the capture is uniquely
+		// owned; SSO inline-tag low-bit guard + literal sentinel keep
+		// all sources safe. arm64 boxed excluded.
+		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthPtr},
+				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue
@@ -4997,6 +5020,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 					// A two-word string capture is dropped by the thunk
 					// (__fern_str_dec), so it must have been inc'd at MakeEnv
 					// or the thunk would over-release it.
+					rcTracked = true
+				}
+				if _, isStr := ct.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+					// Native single-word string capture (x86_64): thunk dec's
+					// via __fern_rc_dec; same inc-at-MakeEnv requirement.
 					rcTracked = true
 				}
 				if rcTracked && !needsRcIncOnAlias(capExpr, b) {
