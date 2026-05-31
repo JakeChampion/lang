@@ -45,13 +45,58 @@
 
 package ir
 
+import "github.com/jakechampion/lang/internal/ast"
+
 // ConstPropagate replaces every OpLoadLocal of a slot known to hold
 // a constant with a fresh copy of that constant op. Programs whose
 // slots never see a constant write are unchanged.
 func ConstPropagate(prog *Program) {
 	for _, fn := range prog.Funcs {
-		fn.Ops = constPropOps(fn.Ops)
+		fn.Ops = constPropOps(fn.Ops, fn)
 	}
+}
+
+// slotIsWide reports whether slot `idx` on `fn` lowers to a multi-
+// value ABI on at least one backend — the wasm backend, in
+// particular, fans out string-typed slots into two adjacent i32
+// locals so a single `local.load` / `local.store` actually emits
+// two `local.get` / `local.set` instructions. Substituting an
+// OpLoadLocal of such a slot with a single OpConstI32 / OpConstStr
+// would underflow the operand stack at emit time. ConstPropagate
+// skips any binding / substitution that touches a wide slot to
+// keep the rewrite ABI-agnostic.
+func slotIsWide(fn *Func, idx int32) bool {
+	if fn == nil {
+		return false
+	}
+	t := slotTypeAt(fn, idx)
+	if t == nil {
+		return false
+	}
+	_, isStr := t.(ast.StringType)
+	return isStr
+}
+
+// slotTypeAt resolves a slot index against the function's param /
+// local / scratch layout (the same fan-out the backends use).
+// Returns nil when the index is out of range — defensive against
+// inliner-introduced scratch slots that haven't been registered
+// yet; the caller treats nil as "don't propagate" rather than
+// guess.
+func slotTypeAt(fn *Func, idx int32) ast.Type {
+	i := int(idx)
+	if i < len(fn.Params) {
+		return fn.Params[i].Type
+	}
+	i -= len(fn.Params)
+	if i < len(fn.Locals) {
+		return fn.Locals[i].Type
+	}
+	i -= len(fn.Locals)
+	if i < len(fn.ScratchTypes) {
+		return fn.ScratchTypes[i]
+	}
+	return nil
 }
 
 // scopeFrame tracks the analyzer's knowledge inside a structured
@@ -71,7 +116,7 @@ type scopeFrame struct {
 	written  map[int32]bool
 }
 
-func constPropOps(ops []Op) []Op {
+func constPropOps(ops []Op, fn *Func) []Op {
 	out := make([]Op, 0, len(ops))
 	consts := map[int32]Op{}
 	var stack []*scopeFrame
@@ -116,10 +161,19 @@ func constPropOps(ops []Op) []Op {
 					target.brStates = append(target.brStates, cloneConsts(consts))
 				}
 			}
-			// Linearly-next code is unreachable from this OpBr;
-			// the merge point is the target scope's OpEnd, which
-			// already factored in this state via brStates.
-			consts = map[int32]Op{}
+			// Linearly-next code is unreachable from this OpBr.
+			// Keeping the slot table intact lets the analyzer
+			// substitute through the dead region — those reads
+			// don't execute, but downstream Fold may collapse the
+			// resulting const-rich expressions, exposing more
+			// reachable code to pruneConstIf or letting DCE drop
+			// the tail in one pass. Soundness: at the surrounding
+			// OpEnd the slot table picks the right merge — for
+			// blocks/ifs the brStates / thenEnd / sawElse logic
+			// reconciles every live path independently of this
+			// straight-line value, and for any merge whose only
+			// live arrivals are the brStates, no information from
+			// after the OpBr leaks into them.
 			out = append(out, op)
 
 		case OpBrIf:
@@ -133,7 +187,7 @@ func constPropOps(ops []Op) []Op {
 			out = append(out, op)
 
 		case OpStoreLocal, OpTeeLocal:
-			if len(out) > 0 && isConstOp(out[len(out)-1].Kind) {
+			if !slotIsWide(fn, op.I32) && len(out) > 0 && isConstOp(out[len(out)-1].Kind) {
 				consts[op.I32] = out[len(out)-1]
 			} else {
 				delete(consts, op.I32)
@@ -144,11 +198,13 @@ func constPropOps(ops []Op) []Op {
 			out = append(out, op)
 
 		case OpLoadLocal:
-			if c, ok := consts[op.I32]; ok {
-				replacement := c
-				replacement.Pos = op.Pos
-				out = append(out, replacement)
-				continue
+			if !slotIsWide(fn, op.I32) {
+				if c, ok := consts[op.I32]; ok {
+					replacement := c
+					replacement.Pos = op.Pos
+					out = append(out, replacement)
+					continue
+				}
 			}
 			out = append(out, op)
 
