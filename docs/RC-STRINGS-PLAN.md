@@ -86,21 +86,63 @@ form, and natives don't have an inline form at all (so their dec doesn't
 need a second word). The actual prerequisites are smaller and
 self-contained:
 
-1. **Uniform rc header on heap strings**, per backend: change every
-   heap-string allocation path (`__str_concat`, `__str_slice`,
-   `string_from_bytes`, `int_to_string`, …) to alloc through the
-   rc-headered allocator (`__fern_alloc_rc1` exists; wasmbin's bare
-   `__fern_alloc` paths switch to it), so `data-8` always holds a real
-   rc. Length readers keep reading their existing offset.
-2. **Static-literal sentinel header** — **DONE (wasm).** `internString`
-   now prefixes every interned heap-form literal with an 8-byte
-   `0x80000000` rc-sentinel header (mirroring `internEnumSentinel`), so
-   `__fern_str_inc/dec` short-circuit on them. This was load-bearing:
-   literals intern at 1024+, ABOVE the low-address guard (1024), so the
-   guard alone never covered them — a container-stored or aliased
-   literal reaching the dec would have misread mid-data-segment bytes as
-   an rc. With the header, uniform string inc/dec is safe over literals,
-   unblocking the container-field reclamation slices.
+1. **Uniform rc header on heap strings**, per backend — **DONE (wasm
+   + x86_64 + arm64 single-word).** Every heap-string-producing path
+   on each backend now allocates through `__fern_alloc_rc1` so
+   `data-8` always holds a real rc.
+
+   - wasm (`internal/codegen/wasmbin`): the audit shipped with the
+     plan's first carrier work — `__str_concat`, `__str_slice`,
+     `__fern_string_from_bytes`, `__fern_read_line`, etc.
+   - x86_64: 12 producers converted across two PRs (`__fern_strcat`,
+     `__fern_str_slice`, `string_from_bytes`, `__fern_strbuf_take`,
+     `__fern_env` per-value copy, `__fern_args` per-arg copy,
+     `__fern_read_line` Some, `__fern_reader_read_line` Some,
+     `__fern_tcp_recv`, `__fern_read_file`,
+     `__fern_reader_read_chunk`, `__fern_random_bytes`).
+   - arm64 single-word: same 12 producers converted on the single-
+     word ABI path. The two-word arm64 variants (`*2W_*`) belong to
+     the in-progress `TwoWordOverride` migration and are untouched.
+
+   Length readers keep reading at `data-4` — on natives the **L2
+   layout** (rc at base+0, length-or-rc1-size at base+4, data at
+   base+8) lets string length and rc1's payload-size slot overlap
+   safely (strings compute their alloc size from length, not from
+   data-4, so the rc1 size slot is sacrificed for the length). The
+   alternative L1 layout (length appended after rc1's 8-byte header,
+   total +8 bytes per string) was rejected as wasteful for the
+   project's short-lived-process / edge-handler workload.
+2. **Static-literal sentinel header** — **DONE (wasm + x86_64 + arm64).**
+   `internString` on each backend now prefixes every interned
+   heap-form literal with an 8-byte `0x80000000` rc-sentinel header.
+
+   - wasm: original prereq-2 work.
+   - natives (x86_64 + arm64): each `.LStr_N` label now sits at
+     `base+8` with `[base+0]=0x80000000` (rc sentinel) and
+     `[base+4]=length` — matching the L2 heap layout above. The
+     0x80000000 sentinel makes `__fern_rc_inc/dec` short-circuit on
+     literals so the native string-dec can safely run over
+     container-stored / aliased literals without a fragile
+     address-range guard.
+
+   Literals were load-bearing because they intern at 1024+, ABOVE the
+   low-address guard (1024), so the guard alone never covered them
+   — a container-stored or aliased literal reaching the dec would
+   have misread mid-data-segment bytes as an rc. With the header,
+   uniform string inc/dec is safe over literals, unblocking the
+   container-field reclamation slices.
+
+3. **Native SSO inline-tag guard** — **DONE.** Added late in the
+   x86_64 / arm64 reclaim work after CI surfaced a latent crash:
+   native strings ≤7 bytes are SSO-packed inline with bit 0 of the
+   "pointer" word set as the tag. Treating them as pointers and
+   reading `[data-8]` corrupts memory. Fix: low-bit guard at the top
+   of `__fern_rc_inc` / `__fern_rc_dec` on both natives. Heap
+   pointers from `__fern_alloc` / `__fern_alloc_rc1` are always
+   8-byte aligned (low bit clear), so the guard is a no-op for every
+   non-string caller (arrays / structs / enums / closures / map
+   handles / etc.) — the only effect is to safely skip inline-tagged
+   string values. Hardens every string-rc call site uniformly.
 
 These are per-backend runtime/codegen changes (wasm + x86-64 + arm64),
 self-contained and shippable one backend at a time (reclamation can go
@@ -233,31 +275,60 @@ differential fuzz and `__rc_underflow_count` guard.
    nested closure) forces the generic env-only drop so the thunk never
    over-releases it (the capture leaks then — safe). Verified for both
    scope-local and escaping (returned) closures.
-7. **`Map[K, string]` VALUES** — **DONE.** A `Map[K, string]` value is
-   stored BOXED — the value column holds an 8-byte `(data, len)` cell
-   pointer (`boxIntoCell` at set). Reclamation is driven by the IR static
-   type (the runtime valKind stays 1, so `.values()` / runtime overwrite
-   are undisturbed): a generated `__drop_map_str_values` column walk
-   `__fern_str_dec`s each value's buffer at the map's last reference; the
-   set retains an aliased value (`__fern_str_inc`), `m.get` retains the
-   returned string, and a key OVERWRITE pre-drops the replaced buffer via
-   `__map_lookup_val` + `__fern_str_dec`. The 8-byte cell itself leaks
-   (like every boxed-value cell today — a minor follow-up); the dominant
-   string buffer is reclaimed. Verified across set/get/overwrite/escape +
-   churn.
-8. **`Map[string, V]` KEYS** — **DONE.** String keys are stored boxed
-   in the KEY column (an 8-byte `(data, len)` cell), like values. A
-   generated `__drop_map_str_keys` column walk (the value walk
-   parameterised on the column byte-offset: 0 for keys, `ptrW` for
-   values) `__fern_str_dec`s each key buffer at the map's last
-   reference, emitted alongside the value walk in the `emitDec` Map
-   branch (both self-guard on rc==1). `set` retains an aliased string
-   key (`__fern_str_inc`). Known accepted leak: an OVERWRITE discards
-   the freshly-boxed key (the runtime keeps the existing one), so the
-   discarded key buffer leaks — safe (no double free), bounded, and
-   keys leaked entirely pre-slice. The 8-byte cell also leaks (as for
-   all boxed cells). Verified across fresh / aliased / overwrite keys,
-   `Map[string, string]` (both columns) + churn.
+7. **`Map[K, string]` VALUES** — **DONE (wasm + x86_64).** A
+   `Map[K, string]` value is stored BOXED on wasm — the value column
+   holds an 8-byte `(data, len)` cell pointer (`boxIntoCell` at set).
+   On native single-word strings (x86_64) the cell holds the data
+   pointer directly (no boxing — fits in the pointer-wide slot).
+   Reclamation is driven by the IR static type (the runtime valKind
+   stays 1, so `.values()` / runtime overwrite are undisturbed): a
+   generated `__drop_map_str_values` column walk reclaims each value's
+   buffer at the map's last reference — `__fern_str_dec` per cell on
+   wasm (+ `__fern_cell_free`), `__fern_rc_dec` per data pointer on
+   x86_64 (the generator branches on ptrW). The set retains an aliased
+   value (`__fern_str_inc` on wasm, `__fern_rc_inc` on x86_64), `m.get`
+   /`m.get_or` / `m.iter().value()` all retain the returned string, and
+   a key OVERWRITE pre-drops the replaced buffer via `__map_lookup_val`
+   + `__fern_str_dec` (wasm) or `__fern_rc_dec` (x86_64). The 8-byte
+   cell on wasm leaks (like every boxed-value cell today — a minor
+   follow-up); the dominant string buffer is reclaimed.
+
+   **arm64 is excluded.** arm64 IR-lowering forces `TwoWordOverride=true`
+   (see `internal/codegen/arm64/arm64.go`), so strings are stored boxed
+   like wasm — but arm64 lacks the native `__fern_str_dec` and
+   `__fern_cell_free` runtime helpers, so the boxed reclaim path can't
+   run there yet. arm64 stays on the pre-slice (leaking-but-stable)
+   behaviour pending a future PR that ports those helpers.
+
+   The SSO inline-tag (`bit 0` of the data pointer on natives) and
+   literal sentinel (`0x80000000` at data-8, from prereq 2) are both
+   handled by guards at the top of `__fern_rc_inc`/`__fern_rc_dec` —
+   added during the Slice 8 work and load-bearing for every native
+   string-rc call site. Verified across set/get/get_or/iter/overwrite/
+   escape + inline (≤7-byte) + literal + heap + churn.
+8. **`Map[string, V]` KEYS** — **DONE (wasm + x86_64).** String keys
+   are stored boxed in the KEY column on wasm (an 8-byte `(data, len)`
+   cell), like values; on native single-word strings (x86_64) the slot
+   holds the data pointer directly. A generated `__drop_map_str_keys`
+   column walk (the value walk parameterised on the column byte-offset:
+   0 for keys, `ptrW` for values; ptrW-branched body — boxed deref on
+   wasm, direct rc_dec on x86_64) reclaims each key buffer at the map's
+   last reference, emitted alongside the value walk in the `emitDec`
+   Map branch (both self-guard on rc==1). `set` retains an aliased
+   string key (`__fern_str_inc` on wasm, `__fern_rc_inc` on x86_64).
+   `m.iter().key()` retains the returned string analogously to value.
+
+   Known accepted leak: an OVERWRITE discards the freshly-boxed-or-
+   inc'd new key (the runtime keeps the existing one in place), so the
+   discarded key buffer leaks the +1 — safe (no double free), bounded,
+   and keys leaked entirely pre-slice. The 8-byte cell on wasm also
+   leaks (as for all boxed cells).
+
+   **arm64 excluded** for the same reason as Slice 7 (boxed strings
+   without native str_dec / cell_free runtime).
+
+   Verified across fresh / aliased / overwrite keys, `Map[string,
+   string]` (both columns), churn, inline keys, literal keys.
 
    NB: the `wasmtime` CLI reports a **non-zero exit code** from a
    component as `invalid expected discriminant` (the WASI `run`
@@ -327,11 +398,46 @@ Remaining to classify/handle: `read_file` (P1/P2), `reader_read_line_fd`
 the IR concat fast path. The dec can't turn on until all are headered or
 explicitly skipped.
 
+## Current status (Map API is the leading edge)
+
+| Slice | wasm | x86_64 (single-word) | arm64 (two-word boxed) |
+|---|---|---|---|
+| Prereq 1 — uniform rc header on heap strings | DONE | DONE | DONE (single-word path only) |
+| Prereq 2 — static-literal sentinel header | DONE | DONE | DONE |
+| Prereq 3 — SSO inline-tag guard on rc_inc/dec | n/a | DONE | DONE |
+| Slice 2 — string LOCALS | DONE | TODO | TODO |
+| Slice 3 — string STRUCT fields | DONE | TODO | TODO |
+| Slice 4 — string ARRAY elements (`string[]`) | DONE | TODO | TODO |
+| Slice 5 — string ENUM payloads | DONE | TODO | TODO |
+| Slice 6 — string CLOSURE captures | DONE | TODO | TODO |
+| Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
+| Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
+
+¹ arm64 stays on the pre-slice leaking-but-stable behaviour for both
+Map columns. Unblock requires porting `__fern_str_dec` and
+`__fern_cell_free` from `internal/codegen/wasmbin/runtime.go` to
+`internal/codegen/arm64/arm64.go`, then dropping the `!ast.UseTwoWordStrings(b.ptrW)`
+guard at the four Map gates (drop, set retain, get retain, overwrite
+pre-drop) in `internal/ir/ir.go`.
+
+The native Map work landed across these PRs (all merged): #1616 #1618
+#1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7
++ Slice 8 + retain/overwrite gaps + the SSO inline-tag guard).
+
+The natural next slice on natives is **Slice 2 (string LOCALS)** — the
+plan's "highest single payoff." With prereqs 1 + 2 + 3 in place, the
+infrastructure to enable native string locals (predicate wiring plus
+scope-exit dec) is structurally ready; the work is mostly threading
+`StringType` through `needsRcIncOnAlias` / `rcTracked` /
+`zeroRcTracked` / `isOwnedRcLocal` / `rhsTainted` / `emitDec` on the
+native paths and testing aggressively for regressions (the rc arc's
+broadest surface).
+
 ## What this doc IS / IS NOT
 
 - IS: the sequencing + design for string reclamation, on the CURRENT
   (heterogeneous, per-backend) string ABI — not blocked on SSO.
 - IS NOT: a scope estimate for any single slice (each has its own; ~8
-  reclamation slices above, atop the 2 per-backend prerequisites).
+  reclamation slices above, atop the 3 per-backend prerequisites).
 
 https://claude.ai/code/session_01Vrwb6rXeWdQ9jBLH34TSaQ
