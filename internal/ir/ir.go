@@ -9005,28 +9005,33 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	return nil, fmt.Errorf("ir: indirect call through unknown local %q", name)
 }
 
-// structReuseAllScalar reports whether every field of the struct is an
-// integer/bool scalar ≤ 32 bits — the conservative shape Phase 5b
-// drop-reuse handles first. Pointer-shaped fields (string / array /
-// struct / enum / closure) carry rc that the reuse path would have to
-// drop-or-carry per field (deferred to the field-store-elision slice,
-// 5d); wide scalars (i64 / f64) and f32 would need width-correct temp
-// slots (the temps here are i32). Both fall back to the normal
-// dec-on-overwrite + fresh alloc.
-func structReuseAllScalar(sd *ast.StructDecl) bool {
+// structReuseEligible reports whether every field of the struct is a
+// shape the Phase 5b/5c drop-reuse path handles: an i32-class integer
+// scalar (≤ 32 bits) OR a single-word rc-tracked pointer
+// (array / struct / Map / enum / closure / tuple — `arrElemIsRcTracked`).
+// Excluded, falling back to the normal dec-on-overwrite + fresh alloc:
+//   - strings (two-word on wasm / boxed on arm64 — the reuse temps are
+//     single-word; their rc release also diverges per backend),
+//   - wide / float scalars (i64 / f64 / f32 — would need width-correct
+//     temp slots; the temps here are i32/pointer-width),
+//   - bool and anything else not in the two categories above.
+func structReuseEligible(sd *ast.StructDecl) bool {
 	for _, f := range sd.Fields {
-		nt, ok := f.Type.(ast.NumberType)
-		if !ok || nt.NormalWidth() > 32 {
-			return false
+		if nt, ok := f.Type.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
+			continue
 		}
+		if arrElemIsRcTracked(f.Type) {
+			continue
+		}
+		return false
 	}
 	return true
 }
 
 // tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where
 // p is an owned, uniquely-droppable struct local of the same type T,
-// all of whose fields are i32-class scalars) so the new value reuses
-// p's old box in place when it's the sole owner — the Phase 5b
+// every field of which is structReuseEligible) so the new value reuses
+// p's old box in place when it's the sole owner — the Phase 5b/5c
 // constructor-reuse (FBIP) win. Returns (true, err) when it took the
 // reuse path (the caller returns immediately), (false, nil) when the
 // shape isn't eligible and normal lowering should proceed.
@@ -9043,6 +9048,16 @@ func structReuseAllScalar(sd *ast.StructDecl) bool {
 //     reused, so a field that reads p (`x: p.x + 1`) sees the old value
 //     even though the box it lives in is about to be overwritten — no
 //     read-after-overwrite hazard, including field swaps.
+//   - Pointer fields: each new value is retained on eval (emitAliasInc
+//     for an alias-shaped RHS, same as normal StructLit construction).
+//     On the REUSE branch only, the box's OLD pointer-field values are
+//     flat-dec'd first (they're being repurposed). For a carried-over
+//     field (`name: p.name`) the eval-inc and this dec balance, so its
+//     rc is unchanged; for a replaced field the old reference is
+//     released (flat dec — leak-but-never-UAF: the buffer isn't freed
+//     here, a freeing dec is a follow-up). The dec is gated on the i32
+//     is_unique result (not the raw token pointer) so the branch
+//     condition is backend-safe truthiness.
 //   - tokenSize == size (same type T), so __alloc_reuse's class check
 //     always matches on the reuse path and never frees.
 func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
@@ -9058,7 +9073,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		return false, nil
 	}
 	sd, ok := b.info.Structs[st.Name]
-	if !ok || !structReuseAllScalar(sd) {
+	if !ok || !structReuseEligible(sd) {
 		return false, nil
 	}
 	if !b.freeEligible[t.Name] {
@@ -9068,31 +9083,46 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	offs, size := structFieldLayout(sd.Fields, b.ptrW)
 	const rcHeaderBytes = 8
 
-	// 1. Evaluate every field value into an i32 temp. These reads of
-	//    the OLD p (still live in slot idx) all complete before the box
-	//    is reused below.
+	// 1. Evaluate every field value into a single-word temp. These reads
+	//    of the OLD p (still live in slot idx) all complete before the
+	//    box is reused below. Pointer fields are retained here exactly
+	//    as normal StructLit construction does (Phase 1d-viii).
 	type fieldTemp struct {
 		name string
 		slot int32
+		ptr  bool
 	}
 	temps := make([]fieldTemp, 0, len(sl.Fields))
+	hasPtr := false
 	for _, f := range sl.Fields {
+		isPtr := arrElemIsRcTracked(fieldType(sd.Fields, f.Name))
 		if err := b.expr(f.Value); err != nil {
 			return true, err
+		}
+		if isPtr && needsRcIncOnAlias(f.Value, b) {
+			b.emitAliasInc(f.Value)
 		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
-		temps = append(temps, fieldTemp{f.Name, ts})
+		temps = append(temps, fieldTemp{f.Name, ts, isPtr})
+		hasPtr = hasPtr || isPtr
 	}
 
-	// 2. token = is_unique(old) ? base(old) : 0. On the aliased / null /
-	//    sentinel branch, dec old (the alias keeps it) and yield 0 so
+	// 2. reused = is_unique(old) (an i32 0/1, captured so both the token
+	//    select and the old-field-dec branch can read it). token =
+	//    reused ? base(old) : 0; the aliased / null / sentinel branch
+	//    dec's the old box (the alias keeps it) and yields 0 so
 	//    __alloc_reuse allocates a fresh box.
-	tokenSlot := b.allocSlot()
-	b.locals[fmt.Sprintf("__reuse_tok_%d", tokenSlot)] = tokenSlot
+	reusedSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_uniq_%d", reusedSlot)] = reusedSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+
+	tokenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_tok_%d", tokenSlot)] = tokenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
@@ -9115,13 +9145,36 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
 
-	// 4. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
+	// 4. REUSE branch only: release the box's OLD pointer-field values
+	//    before the new ones overwrite them. On a fresh box (reused==0)
+	//    the slots are uninitialised, so this is gated on the is_unique
+	//    result. Flat dec (one level, no free): a carried-over field's
+	//    eval-inc above balances it; a replaced field's old reference is
+	//    released.
+	if hasPtr {
+		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, tp := range temps {
+			if !tp.ptr {
+				continue
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+		b.emit(Op{Kind: OpEnd})
+	}
+
+	// 5. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
 	//    otherwise).
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpStore})
 
-	// 5. Store the field temps at [base + hdr + off].
+	// 6. Store the field temps at [base + hdr + off].
 	for _, tp := range temps {
 		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
@@ -9130,7 +9183,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
 	}
 
-	// 6. p = data (= base + hdr); leave the tee for expression position.
+	// 7. p = data (= base + hdr); leave the tee for expression position.
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
 	b.emit(Op{Kind: OpAdd})

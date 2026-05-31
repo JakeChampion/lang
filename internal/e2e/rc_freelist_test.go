@@ -630,12 +630,73 @@ function main(): i32 {
 }`,
 }
 
+// Phase 5c: pointer-field struct reuse. A single-word rc-tracked
+// pointer field (array here) is carried over or replaced across the
+// reuse. The rc balance is the delicate part — the carried-over array's
+// eval-inc must cancel the reuse-branch dec-old, or it either
+// over-releases (underflow != 0) or gets freed+reused (corrupt values).
+var structPtrReuseSrc = struct{ carried, aliased, replaced string }{
+	// 200 reuses carrying the SAME array field over unchanged. items
+	// stays [10,20,30] (sum 60), id == n. Any rc drift corrupts items.
+	carried: `struct Holder { id: i32, items: i32[] }
+function churn(n: i32): i32 {
+    var p: Holder = Holder { id: 0, items: [10, 20, 30] };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Holder { id: p.id + 1, items: p.items };
+        i = i + 1;
+    }
+    return (p.id - n) + (p.items[0] + p.items[1] + p.items[2] - 60);
+}
+function main(): i32 {
+    return churn(200) + __rc_underflow_count();
+}`,
+	// Aliased holder: q shares p's box (rc 2), so reuse declines and a
+	// fresh box is allocated. q keeps its view; the array field is shared
+	// (both see [7,8]); rc stays balanced.
+	aliased: `struct Holder { id: i32, items: i32[] }
+function main(): i32 {
+    var p: Holder = Holder { id: 1, items: [7, 8] };
+    var q: Holder = p;
+    p = Holder { id: p.id + 1, items: p.items };
+    if (q.id != 1) { return 1; }
+    if (q.items[0] != 7) { return 2; }
+    if (p.id != 2) { return 3; }
+    if (p.items[1] != 8) { return 4; }
+    return __rc_underflow_count();
+}`,
+	// Each iteration REPLACES the array field with a fresh one. The old
+	// array's reference is released on the reuse branch (flat dec). Final
+	// items == [n, n], id == n.
+	replaced: `struct Holder { id: i32, items: i32[] }
+function churn(n: i32): i32 {
+    var p: Holder = Holder { id: 0, items: [0] };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Holder { id: p.id + 1, items: [p.id + 1, p.id + 1] };
+        i = i + 1;
+    }
+    return (p.id - n) + (p.items[0] - n) + (p.items[1] - n);
+}
+function main(): i32 {
+    return churn(100) + __rc_underflow_count();
+}`,
+}
+
+// structReuseCases is the shared table every backend's struct-reuse
+// test iterates: the 5b all-scalar shapes plus the 5c pointer-field
+// shapes.
+var structReuseCases = []struct{ name, src string }{
+	{"churn", structReuseSrc.churn},
+	{"aliased", structReuseSrc.aliased},
+	{"swap", structReuseSrc.swap},
+	{"ptr_carried", structPtrReuseSrc.carried},
+	{"ptr_aliased", structPtrReuseSrc.aliased},
+	{"ptr_replaced", structPtrReuseSrc.replaced},
+}
+
 func TestX86_64StructReuse(t *testing.T) {
-	for _, c := range []struct{ name, src string }{
-		{"churn", structReuseSrc.churn},
-		{"aliased", structReuseSrc.aliased},
-		{"swap", structReuseSrc.swap},
-	} {
+	for _, c := range structReuseCases {
 		t.Run(c.name, func(t *testing.T) {
 			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
 				t.Errorf("%s: got %d, want 0", c.name, code)
@@ -645,11 +706,7 @@ func TestX86_64StructReuse(t *testing.T) {
 }
 
 func TestArm64StructReuse(t *testing.T) {
-	for _, c := range []struct{ name, src string }{
-		{"churn", structReuseSrc.churn},
-		{"aliased", structReuseSrc.aliased},
-		{"swap", structReuseSrc.swap},
-	} {
+	for _, c := range structReuseCases {
 		t.Run(c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
 				t.Errorf("%s: got %d, want 0", c.name, code)
@@ -662,11 +719,7 @@ func TestWASMStructReuse(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
-	for _, c := range []struct{ name, src string }{
-		{"churn", structReuseSrc.churn},
-		{"aliased", structReuseSrc.aliased},
-		{"swap", structReuseSrc.swap},
-	} {
+	for _, c := range structReuseCases {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {
 				t.Errorf("%s: got %d, want 0", c.name, got)
