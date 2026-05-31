@@ -584,6 +584,20 @@ planned order:
     `timing`, `unions_migrated`) join the differential gate.
     arm64 mirror is a follow-up — the x86 self-host gate is the
     one that diff-compares this on every PR.
+  - ✅ **arm64 mirror of the unsigned-cmp / wider-int dispatch.**
+    `asm_arm64.fern` now matches `asm.fern`'s tag system: distinct
+    `u32` / `u64` / `i64` / `usize` / `isize` scalar tags + the
+    matching array tags, the four `is_int_tag` / `is_int_array_tag`
+    / `is_unsigned_tag` / `is_unsigned_int_array_tag` helpers, and
+    `ExprBinary`'s integer compare picks `cset lo / ls / hi / hs`
+    for unsigned operands instead of `lt / le / gt / ge`. Method
+    dispatch (`.len()` / `.is_empty()` / `.push()` / `.reverse()` /
+    `.concat()` / `.first()` / `.last()` / array slice + `for v in
+    arr`), `is_concrete` / `friendly_type`, and `StmtFor`'s checker
+    arm all accept every `is_int_array_tag`. Both backends now emit
+    the same shape for wider-int sort / reduction code, so the CI-
+    only arm64 self-host gate stays in step with x86 as the
+    differential gate grows.
   - ✅ **`.lines()` trailing-newline.** The self-host's `s.lines()`
     was sugar for `s.split("\n")` — so `"a\nb\nc\n".lines()` returned
     4 lines (including a phantom trailing empty), and `"".lines()`
