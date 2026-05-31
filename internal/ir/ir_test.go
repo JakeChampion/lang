@@ -1927,6 +1927,51 @@ function build(): i32 {
 	}
 }
 
+// TestLowerStringEnumPayloadReclaimOnArm64TwoWord — Slice 5 on arm64:
+// a non-uniform enum holding a string payload reclaims through the
+// variant-plan path (dropStructField → __fern_str_dec) under the
+// two-word ABI. Wasm and arm64-TwoWordOverride now share one
+// classifier (enumVariantDropPlan kind=3 fires for both) and one
+// dispatcher (dropStructField string branch fires for both). Native
+// single-word (x86_64, !TwoWordOverride) keeps its rc_dec path.
+func TestLowerStringEnumPayloadReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
+function build(): i32 {
+    var m: Msg = Text("hello" + "world");
+    var got: i32 = 0;
+    match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
+    return got;
+}`, 8)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected enum string payload reclamation via __fern_str_dec:\n%s", p)
+	}
+}
+
+// TestLowerStringNestedEnumPayloadReclaimOnArm64TwoWord locks the
+// worklist-driven path: an enum field on a struct routes through the
+// generated __drop_enum_<Name>, whose body must dec a string payload
+// via __fern_str_dec on arm64 (the appendChildDrop gate fires under
+// UseTwoWordStrings).
+func TestLowerStringNestedEnumPayloadReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
+struct Holder { m: Msg }
+function build(): i32 {
+    var h: Holder = Holder { m: Text("hello" + "world") };
+    var got: i32 = 0;
+    match (h.m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
+    return got;
+}`, 8)
+	if !callsDirect(p, "__drop_enum_Msg", "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected __drop_enum_Msg to reclaim its string payload via __fern_str_dec:\n%s", p)
+	}
+}
+
 // closureDropCallsDirect reports whether any generated __closure_drop_*
 // thunk calls `callee`.
 func closureDropCallsDirect(p *Program, callee string) bool {
