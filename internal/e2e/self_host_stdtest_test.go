@@ -183,6 +183,36 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		{"process_assertions", langSrcAbs(t, "examples/tests/process_assertions_test.fern"), ""},
 		{"process_output_shortcuts", langSrcAbs(t, "examples/tests/process_output_shortcuts_test.fern"), ""},
 		{"lang_binary_e2e", langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern"), ""},
+		// Wider-int reductions / sorts / arrays. Pass once
+		// ret_tag_of stops collapsing u32 / u64 / i64 / their array
+		// forms onto the i32 / array_i32 tags — distinct tags drive
+		// unsigned cset / setb compare semantics in emit, and the
+		// array .len() / .is_empty() / .push() / .first() / .last()
+		// / slice paths now accept every is_int_array_tag (not only
+		// the literal "array_i32" string), so `for v in arr { … }`
+		// over i64[] / u32[] / u64[] iterates correctly.
+		{"sort_wider", langSrcAbs(t, "examples/tests/sort_wider_test.fern"), ""},
+		{"array_reductions", langSrcAbs(t, "examples/tests/array_reductions_test.fern"), ""},
+		{"wide_numerics", langSrcAbs(t, "examples/tests/wide_numerics_test.fern"), ""},
+		{"wider_array_contains_count", langSrcAbs(t, "examples/tests/wider_array_contains_count_test.fern"), ""},
+		{"sorted_unique_range", langSrcAbs(t, "examples/tests/sorted_unique_range_test.fern"), ""},
+		// Suites that hit `arr.len()` / `arr.slice(…)` / `for v in arr`
+		// on i32 / string arrays whose dispatch only needed to keep
+		// flowing now that the wider-int paths went generic.
+		{"all_substring_array", langSrcAbs(t, "examples/tests/all_substring_array_test.fern"), ""},
+		{"array_prefix_suffix_subseq", langSrcAbs(t, "examples/tests/array_prefix_suffix_subseq_test.fern"), ""},
+		{"batch7", langSrcAbs(t, "examples/tests/batch7_test.fern"), ""},
+		{"ci_string_and_log_kv", langSrcAbs(t, "examples/tests/ci_string_and_log_kv_test.fern"), ""},
+		{"env_unreachable", langSrcAbs(t, "examples/tests/env_unreachable_test.fern"), ""},
+		{"file_lines_and_timestamp", langSrcAbs(t, "examples/tests/file_lines_and_timestamp_test.fern"), ""},
+		{"float", langSrcAbs(t, "examples/tests/float_test.fern"), ""},
+		{"helpers", langSrcAbs(t, "examples/tests/helpers_test.fern"), ""},
+		{"json_detail", langSrcAbs(t, "examples/tests/json_detail_test.fern"), ""},
+		{"one_of_none_of", langSrcAbs(t, "examples/tests/one_of_none_of_test.fern"), ""},
+		{"set_eq", langSrcAbs(t, "examples/tests/set_eq_test.fern"), ""},
+		{"string_count_and_dir_listing", langSrcAbs(t, "examples/tests/string_count_and_dir_listing_test.fern"), ""},
+		{"timing", langSrcAbs(t, "examples/tests/timing_test.fern"), ""},
+		{"unions_migrated", langSrcAbs(t, "examples/tests/unions_migrated_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 
