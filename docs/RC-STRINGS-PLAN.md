@@ -407,9 +407,10 @@ explicitly skipped.
 | Prereq 3 — SSO inline-tag guard on rc_inc/dec | n/a | DONE | DONE |
 | Slice 2 — string LOCALS | DONE | DONE | TODO |
 | Slice 3 — string STRUCT fields | DONE | DONE | TODO |
+| Slice 3 follow-up — string TUPLE elements | DONE | DONE | TODO |
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | TODO |
-| Slice 5 — string ENUM payloads | DONE | TODO | TODO |
-| Slice 6 — string CLOSURE captures | DONE | TODO | TODO |
+| Slice 5 — string ENUM payloads | DONE | DONE | TODO |
+| Slice 6 — string CLOSURE captures | DONE | DONE | TODO |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
 | Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
 
@@ -424,8 +425,8 @@ The native Map work landed across these PRs (all merged): #1616 #1618
 #1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7
 + Slice 8 + retain/overwrite gaps + the SSO inline-tag guard).
 
-The native LOCAL / STRUCT / ARRAY slices landed next (also merged on
-x86_64 single-word):
+Every native single-word string-reclaim slice has now landed on
+x86_64:
 
   - Slice 2 (LOCALS): commit `66577ec1` — adds `StringType` to
     `rcTracked` / the alias-inc fall-through under
@@ -438,19 +439,39 @@ x86_64 single-word):
     `OpLoad WidthPtr` + `__fern_rc_dec` + drop branch to
     `genStructDropFn`'s inline field loop, `decValueOnStack`,
     `dropStructField`, and `appendChildDrop` for native single-word.
+  - Slice 3 follow-up (TUPLE elements): commit `5519258c` — tuple-
+    local deep-drop dec's string elements on native single-word
+    (`__fern_rc_dec`, rc==1 guard), the destructure projection dups
+    them via `__fern_rc_inc` so the binding co-owns, and `tup.N`
+    direct reads retain through `needsRcIncOnAlias`. Nested tuples
+    (tuple in a struct / array / tuple) have no generated drop fn
+    yet, so their strings still leak.
   - Slice 4 (ARRAY elements): commit `78942f4d` — adds the
     single-word ptr → `__fern_rc_dec` branch to `arrElemDec` and
     the matching alias-inc path so `string[]` element overwrites
     + scope-exit sweeps free correctly.
+  - Slice 5 (ENUM payloads): commit `f69ff7b0` — `dropKind`
+    classification now returns kind 4 for native single-word
+    strings, so the existing `payloadLoadOpFor` (WidthPtr) +
+    `decValueOnStack` / `appendChildDrop` emitters (updated in
+    Slice 3) reclaim enum-variant string payloads.
+  - Slice 6 (CLOSURE captures): commit `49d54a63` — three
+    target-aware gates flip together: `hasRcCapture` (triggers
+    per-closure thunk generation), `genClosureDropThunk` (emits
+    `OpLoad WidthPtr` + `__fern_rc_dec` from the generated
+    `__closure_drop_<name>` thunk, vs the wasm two-word
+    `WidthString` + `__fern_str_dec` branch), and the `thunkSafe`
+    gate (the closureTarget pin that demands every rc-tracked
+    capture was inc'd at MakeEnv — needed because the matching
+    `__fern_rc_inc` rides through `emitAliasInc`'s native fall-
+    through on aliased captures only, so a non-alias source would
+    over-release at the thunk).
 
-**Next on natives: Slice 5 (string ENUM payloads).** Same predicate
-shape as Slices 2-4 — `StringType` flows through the enum-payload
-drop path on native single-word, mirroring the wasm `__fern_str_dec`
-gating. Slice 6 (closure captures) follows the same template.
-
-Then back to the two-word arm64 column — porting `__fern_str_dec`
-and `__fern_cell_free` to `arm64.go` unlocks every native slice in
-one move (Slices 2-8 in that column flip to DONE together).
+**Next: the two-word arm64 column.** Porting `__fern_str_dec` and
+`__fern_cell_free` to `arm64.go` unlocks every slice in that column
+in one move — Slices 2-8 (plus the TUPLE follow-up) flip to DONE
+together. No more per-slice follow-ups on natives; the remaining
+work is one cross-cutting backend port.
 
 ## What this doc IS / IS NOT
 
