@@ -1611,6 +1611,30 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 6 (string closure captures): a closure that captures a
+		// string reclaims the capture from the env block on the closure's
+		// last reference, on native single-word (x86_64). hasRcCapture now
+		// counts string captures on natives, genClosureDropThunk emits
+		// WidthPtr + __fern_rc_dec for them, and thunkSafe widens to
+		// require the same MakeEnv inc invariant.
+		// Per iter: s.len() = 26; 500x → 13000.
+		name: "native_string_closure_capture_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
+    var f = function(): i32 { return s.len(); };
+    return f();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 13000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
