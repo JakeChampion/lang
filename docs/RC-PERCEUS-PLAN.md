@@ -1579,15 +1579,30 @@ cancellation — bounded, but separable, so it ships last.
     fresh alloc — `b != a` — and the freed token reappears from its
     class's freelist on the next same-class `__alloc` — `c == a`,
     proving slow-not-wrong without a leak).
-  - **5b — struct field-update reuse.** Pair a dropped owned struct
-    local with an immediately-following `StructLit` of the same type
-    (`bump(p)` shape). The narrowest, highest-confidence case (single
-    box, fixed size, `structFieldLayout` already exact). Corpus:
-    `struct_update_reuse_churn` (a 200-iteration `p = bump(p)` loop —
-    zero allocator growth proves reuse fired; fold
-    `__rc_underflow_count()` + a value check). Wire into the
-    `FixturesFreeMatchesNoFree` differential gate so reuse stays
-    observationally invisible.
+  - **5b — struct field-update reuse. SHIPPED (x86_64 verified; arm64
+    + wasm ride CI).** A self-overwrite `p = T{ ... }` of an OWNED,
+    all-i32-scalar struct local reuses p's box in place when uniquely
+    owned. Lowered in `b.tryStructReuseOverwrite` (hooked at the top of
+    `b.assign`'s Ident case, replacing the normal expr + dec-on-
+    overwrite): evaluate every field into an i32 temp first (so a field
+    reading p — `x: p.x + 1`, or a swap `a: p.b, b: p.a` — sees the old
+    value before the box is overwritten), then
+    `token = __fern_rc_is_unique(old) ? base(old) : 0` (the aliased /
+    null / sentinel branch dec's old and yields 0), then
+    `__alloc_reuse(token, size+hdr, size+hdr)`, rc=1, store temps,
+    store data ptr. Two gates make it sound: **freeEligible** (OWNED,
+    never a borrowed param — a borrow can be rc==1 while the caller
+    still holds it) and the **runtime is_unique** check (an aliased p
+    copies, leaving the alias intact). Restricted to i32-class scalar
+    fields for now — pointer fields (per-field rc, deferred to 5d) and
+    wide/float scalars (need width-correct temps) fall back to the
+    normal fresh alloc. Gated on `ast.RcFreeEnabled`, so the flag-off
+    arena stays byte-identical. Tests: IR-level `TestStructReuse*`
+    (fires for the eligible shape; skips pointer-field / borrowed-param
+    / wide-scalar) + e2e `Test{X86_64,Arm64,WASM}StructReuse` churn /
+    aliased / swap (value-correct + 0 over-releases). The
+    `FixturesFreeMatchesNoFree` differential gate already asserts
+    reuse-on == reuse-off byte-identical (reuse rides `RcFreeEnabled`).
   - **5c — enum/Cons-cell reuse.** Pair a dropped enum scrutinee in a
     `match` arm with a same-variant-or-same-box-size constructor in that
     arm (`map_inc` shape). Gated on `uniformEnumBoxSize` agreement; the

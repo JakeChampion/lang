@@ -575,3 +575,102 @@ func TestWASMAllocReuse(t *testing.T) {
 		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", got)
 	}
 }
+
+// --- Phase 5b: self-overwrite struct reuse (FBIP) end-to-end -------
+//
+// These exercise `p = T{ ... }` reusing p's box in place. Correctness
+// alone doesn't prove reuse fired (a fresh-alloc lowering gives the
+// same values) — the IR test TestStructReuseFiresForSelfOverwrite pins
+// that the __alloc_reuse path is taken; these pin that taking it stays
+// value-correct and over-release-free, including the runtime alias
+// decision and the read-before-overwrite ordering.
+var structReuseSrc = struct{ churn, aliased, swap string }{
+	// 200 self-overwrites reusing one box. churn(200).x == 200; folds
+	// __rc_underflow_count() so any over-release in the reuse path trips.
+	churn: `struct Point { x: i32, y: i32 }
+function churn(n: i32): i32 {
+    var p: Point = Point { x: 0, y: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Point { x: p.x + 1, y: p.y };
+        i = i + 1;
+    }
+    return p.x;
+}
+function main(): i32 {
+    return (churn(200) - 200) + __rc_underflow_count();
+}`,
+	// p is aliased (rc 2) before the overwrite, so the runtime is_unique
+	// check must decline the in-place reuse and allocate a fresh box —
+	// the alias q must still see the original {5,7}.
+	aliased: `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 5, y: 7 };
+    var q: Point = p;
+    p = Point { x: p.x + 1, y: p.y };
+    if (q.x != 5) { return 1; }
+    if (p.x != 6) { return 2; }
+    return __rc_underflow_count();
+}`,
+	// Field swap: the reuse path must read BOTH source fields into temps
+	// before overwriting either, or the second store reads a clobbered
+	// field. Even churn → {1,2} (a==1); odd churn → {2,1} (a==2).
+	swap: `struct Pair { a: i32, b: i32 }
+function churn(n: i32): i32 {
+    var p: Pair = Pair { a: 1, b: 2 };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Pair { a: p.b, b: p.a };
+        i = i + 1;
+    }
+    return p.a;
+}
+function main(): i32 {
+    return (churn(200) - 1) + (churn(201) - 2) + __rc_underflow_count();
+}`,
+}
+
+func TestX86_64StructReuse(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"churn", structReuseSrc.churn},
+		{"aliased", structReuseSrc.aliased},
+		{"swap", structReuseSrc.swap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestArm64StructReuse(t *testing.T) {
+	for _, c := range []struct{ name, src string }{
+		{"churn", structReuseSrc.churn},
+		{"aliased", structReuseSrc.aliased},
+		{"swap", structReuseSrc.swap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestWASMStructReuse(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	for _, c := range []struct{ name, src string }{
+		{"churn", structReuseSrc.churn},
+		{"aliased", structReuseSrc.aliased},
+		{"swap", structReuseSrc.swap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, got)
+			}
+		})
+	}
+}

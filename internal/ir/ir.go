@@ -9005,15 +9005,158 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	return nil, fmt.Errorf("ir: indirect call through unknown local %q", name)
 }
 
+// structReuseAllScalar reports whether every field of the struct is an
+// integer/bool scalar ≤ 32 bits — the conservative shape Phase 5b
+// drop-reuse handles first. Pointer-shaped fields (string / array /
+// struct / enum / closure) carry rc that the reuse path would have to
+// drop-or-carry per field (deferred to the field-store-elision slice,
+// 5d); wide scalars (i64 / f64) and f32 would need width-correct temp
+// slots (the temps here are i32). Both fall back to the normal
+// dec-on-overwrite + fresh alloc.
+func structReuseAllScalar(sd *ast.StructDecl) bool {
+	for _, f := range sd.Fields {
+		nt, ok := f.Type.(ast.NumberType)
+		if !ok || nt.NormalWidth() > 32 {
+			return false
+		}
+	}
+	return true
+}
+
+// tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where
+// p is an owned, uniquely-droppable struct local of the same type T,
+// all of whose fields are i32-class scalars) so the new value reuses
+// p's old box in place when it's the sole owner — the Phase 5b
+// constructor-reuse (FBIP) win. Returns (true, err) when it took the
+// reuse path (the caller returns immediately), (false, nil) when the
+// shape isn't eligible and normal lowering should proceed.
+//
+// Soundness:
+//   - Gated on b.freeEligible[p] (OWNED, not a borrowed param / alias):
+//     a borrowed value can be rc==1 while the caller still holds it, so
+//     static ownership — not just the runtime rc check — is required
+//     before reusing storage in place.
+//   - The runtime is_unique check is the second gate: reuse fires only
+//     at rc==1. An aliased p (rc>1) is dec'd and a fresh box allocated,
+//     so the alias keeps the old value intact.
+//   - All field expressions are evaluated into temps BEFORE the box is
+//     reused, so a field that reads p (`x: p.x + 1`) sees the old value
+//     even though the box it lives in is about to be overwritten — no
+//     read-after-overwrite hazard, including field swaps.
+//   - tokenSize == size (same type T), so __alloc_reuse's class check
+//     always matches on the reuse path and never frees.
+func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
+	if !ast.RcFreeEnabled {
+		return false, nil
+	}
+	sl, ok := n.Value.(*ast.StructLit)
+	if !ok {
+		return false, nil
+	}
+	st, ok := b.exprStaticType(t).(ast.StructType)
+	if !ok || st.Name != sl.TypeName {
+		return false, nil
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok || !structReuseAllScalar(sd) {
+		return false, nil
+	}
+	if !b.freeEligible[t.Name] {
+		return false, nil
+	}
+
+	offs, size := structFieldLayout(sd.Fields, b.ptrW)
+	const rcHeaderBytes = 8
+
+	// 1. Evaluate every field value into an i32 temp. These reads of
+	//    the OLD p (still live in slot idx) all complete before the box
+	//    is reused below.
+	type fieldTemp struct {
+		name string
+		slot int32
+	}
+	temps := make([]fieldTemp, 0, len(sl.Fields))
+	for _, f := range sl.Fields {
+		if err := b.expr(f.Value); err != nil {
+			return true, err
+		}
+		ts := b.allocSlot()
+		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
+		b.emit(Op{Kind: OpStoreLocal, I32: ts})
+		temps = append(temps, fieldTemp{f.Name, ts})
+	}
+
+	// 2. token = is_unique(old) ? base(old) : 0. On the aliased / null /
+	//    sentinel branch, dec old (the alias keeps it) and yield 0 so
+	//    __alloc_reuse allocates a fresh box.
+	tokenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_tok_%d", tokenSlot)] = tokenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpEnd})
+
+	// 3. base = __alloc_reuse(token, size+hdr, size+hdr).
+	boxSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_box_%d", boxSlot)] = boxSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+
+	// 4. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
+	//    otherwise).
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+
+	// 5. Store the field temps at [base + hdr + off].
+	for _, tp := range temps {
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
+		b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
+	}
+
+	// 6. p = data (= base + hdr); leave the tee for expression position.
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: idx})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	return true, nil
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
-		if err := b.expr(n.Value); err != nil {
-			return err
-		}
 		idx, ok := b.locals[t.Name]
 		if !ok {
 			return fmt.Errorf("ir: cannot assign to %q (no slot)", t.Name)
+		}
+		// Phase 5b drop-reuse (FBIP): a self-overwrite of an owned
+		// struct local with a fresh struct literal of the same type
+		// reuses the old box's storage in place when it's uniquely
+		// owned (`p = Point{x: p.x + 1, y: p.y}` → no alloc). Handles
+		// the whole assignment (old-value drop + construct + store), so
+		// it returns early past the normal expr + dec-on-overwrite.
+		if done, err := b.tryStructReuseOverwrite(n, t, idx); done {
+			return err
+		}
+		if err := b.expr(n.Value); err != nil {
+			return err
 		}
 		// Phase 1d: same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
