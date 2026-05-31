@@ -768,6 +768,23 @@ function main(): i32 {
     }
     return acc + __rc_underflow_count();
 }`},
+	// Array element: x moved into a nested array [x]; the outer array's
+	// drop_arr_ptr dec's the element, balancing the elided inc. 100
+	// build/move/drop/free cycles.
+	{"array_elem", `function once(n: i32): i32 {
+    var x: i32[] = [n, n + 1];
+    var xs: i32[][] = [x];
+    return xs[0][0] + xs[0][1];
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (2 * i + 1));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
 	// Composes with move-on-return: x moved into s, s moved out to the
 	// caller; the caller owns and frees the whole thing.
 	{"returned", `struct Wrap { inner: i32[] }

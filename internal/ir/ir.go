@@ -2128,30 +2128,40 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // dominance guards (top-level statement, no preceding return), so —
 // exactly as move-on-alias — x is moved on every path to an exit.
 func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]int, maxIdx map[string]int, moved map[string]bool) {
-	sl, ok := val.(*ast.StructLit)
-	if !ok {
-		return
-	}
-	sd, ok := b.info.Structs[sl.TypeName]
-	if !ok {
-		return
-	}
-	for _, f := range sl.Fields {
-		id, ok := f.Value.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		if !arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
-			continue
-		}
-		if !b.isOwnedRcLocal(id.Name) {
-			continue
-		}
-		if identIdx[id] != maxIdx[id.Name] {
-			continue
+	// mark moves the Ident when it's an owned rc local at its last use.
+	// The caller has established the dominance guards; the per-container
+	// drop (struct field-drop / array drop_arr_ptr) releases the moved
+	// value exactly once, balancing the skipped construction inc.
+	mark := func(e ast.Expr) {
+		id, ok := e.(*ast.Ident)
+		if !ok || !b.isOwnedRcLocal(id.Name) || identIdx[id] != maxIdx[id.Name] {
+			return
 		}
 		moved[id.Name] = true
 		b.moveSites[id] = true
+	}
+	switch lit := val.(type) {
+	case *ast.StructLit:
+		sd, ok := b.info.Structs[lit.TypeName]
+		if !ok {
+			return
+		}
+		for _, f := range lit.Fields {
+			// Only fields the StructLit inc's AND emitDec dec's on drop
+			// (arrElemIsRcTracked; strings excluded).
+			if arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+				mark(f.Value)
+			}
+		}
+	case *ast.ArrayLit:
+		// An array of rc-tracked elements: each element is inc'd on
+		// construction and dec'd by __fern_drop_arr_ptr at the array's
+		// drop, so a moved element balances. Plain-scalar arrays never
+		// reach the element inc — mark is a no-op there (isOwnedRcLocal
+		// is false for scalars).
+		for _, el := range lit.Elems {
+			mark(el)
+		}
 	}
 }
 
@@ -6660,7 +6670,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// so the new matrix co-owns `inner`. Same gating as
 			// the Var / Assign / call-arg / struct-field /
 			// closure-capture sites.
-			if needsRcIncOnAlias(el, b) {
+			//
+			// Phase 4 move-on-construction: an owned rc local consumed as
+			// an element at its last use is moved into the array —
+			// __fern_drop_arr_ptr dec's the element at the array's drop,
+			// balancing the skipped inc (markConstructionMoves sets
+			// b.moveSites[el]).
+			if needsRcIncOnAlias(el, b) && !b.moveSites[el] {
 				b.emitAliasInc(el)
 			}
 			b.emit(storeOpAndWidth)
