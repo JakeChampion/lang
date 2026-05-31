@@ -681,7 +681,6 @@ function main(): i32 {
   strings: `import "core/no_prelude";
 import "std/string";
 import "std/i32";
-import "std/array";
 function main(): i32 {
     var s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
@@ -693,17 +692,8 @@ function main(): i32 {
     var contains: string = "no";
     if (s.contains("Fern")) { contains = "yes"; }
     print("contains:   " + contains);
-    var parts: string[] = "a,b,c,d".split(",");
-    var i: i32 = 0;
-    var joined: string = "";
-    while (i < parts.len()) {
-        if (i > 0) { joined = joined + " | "; }
-        joined = joined + parts[i];
-        i = i + 1;
-    }
-    print("split:      " + joined);
     print("replace:    " + "hello world".replace("world", "Fern"));
-    return parts.len();
+    return s.len();
 }`,
   sort: `import "core/no_prelude";
 import "std/sort";
@@ -1315,9 +1305,24 @@ function runWasmOnce() {
 
 runWasmBtn.addEventListener("click", runWasmOnce);
 
-// Show the request editor only for the wasi:http world.
+// Show the request editor only for the wasi:http world, and disable
+// the interpreter "Run" there — a handler program transitively imports
+// std/tcp, which auto-injects a `main` that calls `tcp_serve`. That
+// blocks forever in the interp (nothing wakes the listener in the
+// browser), so the only sensible run path for the wasi-http world is
+// "Run (wasm)" through web/wasi-http-shim.js. runtimeReady gates the
+// run-button manipulation so we don't prematurely enable it before
+// the wasm bundle has booted (initial HTML keeps it disabled).
+let runtimeReady = false;
 function syncHttpReqVisibility() {
-  httpReqEl.hidden = worldSelectEl.value !== "wasi-http";
+  const http = worldSelectEl.value === "wasi-http";
+  httpReqEl.hidden = !http;
+  if (runtimeReady) {
+    runBtn.disabled = http;
+    runBtn.title = http
+      ? "Run (interpreter) doesn't apply to an http handler — use Run (wasm) instead"
+      : "";
+  }
 }
 worldSelectEl.addEventListener("change", syncHttpReqVisibility);
 syncHttpReqVisibility();
@@ -1867,6 +1872,11 @@ WebAssembly.instantiateStreaming(fetch("fern.wasm"), go.importObject)
     runWasmBtn.disabled = false;
     viewAsmBtn.disabled = false;
     buildComponentBtn.disabled = false;
+    runtimeReady = true;
+    // If the initial world (or a hash-loaded source) picked wasi-http
+    // before boot completed, the run button needs the http-mode
+    // disable applied now that we're past the runtime gate.
+    syncHttpReqVisibility();
     statusEl.textContent = embedMode
       ? "ready"
       : "ready · Ctrl/Cmd+Enter to run · hover for types";
