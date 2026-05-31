@@ -174,6 +174,80 @@ test("Run (wasm) http handler echoes a POST body", async ({ page }) => {
   });
 });
 
+// readExampleNames returns every value in the example dropdown except
+// the placeholder. Iterating from the actual <option>s keeps the
+// "all-examples gate" tests in step with whatever the dropdown ships
+// — adding or removing an example here just changes the loop count.
+async function readExampleNames(page) {
+  return await page
+    .locator("#example option")
+    .evaluateAll((opts) =>
+      opts.map((o) => o.value).filter((v) => v !== ""),
+    );
+}
+
+test("every example runs cleanly via Run (interp)", async ({ page }) => {
+  await gotoReady(page);
+  const names = await readExampleNames(page);
+  expect(names.length).toBeGreaterThan(3);
+  for (const name of names) {
+    // The http example transitively imports std/tcp; its auto-injected
+    // main calls blocking tcp_serve, which the playground locks out
+    // for the wasi-http world. Exercised via Run (wasm) instead, in
+    // its own dedicated test above.
+    if (name === "http") continue;
+    await page.locator("#example").selectOption(name);
+    await page.locator("#run").click();
+    // The exit chip is only set on a successful run; the interp's
+    // error branch writes "[error]" / "[stderr]" into #out and leaves
+    // meta empty. Asserting on the chip is a single tight signal.
+    await expect(
+      page.locator("#meta .exit-ok, #meta .exit-err"),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("#out")).not.toContainText("[error]");
+    await expect(page.locator("#out")).not.toContainText(
+      "program produced no output",
+    );
+  }
+});
+
+test("every cli example runs cleanly via Run (wasm)", async ({ page }) => {
+  await gotoReady(page);
+  const names = await readExampleNames(page);
+  for (const name of names) {
+    // http is wasi-http world; covered by the dedicated http Run (wasm)
+    // tests above (status chip + headers + body). Skip here so the
+    // cli-only path stays focused.
+    if (name === "http") continue;
+    await page.locator("#example").selectOption(name);
+    await page.locator("#runWasm").click();
+    // runWasmOnce stamps "compiled to wasm" into meta only on success;
+    // compile / shim failures leave "[compile error]" / "JS error:" in
+    // #out and meta empty. That distinction is the regression signal
+    // for codegen bugs like the one the strings/split workaround
+    // dodges — re-introducing a method that emits invalid wasm trips
+    // this gate.
+    await expect(page.locator("#meta")).toContainText("compiled to wasm", {
+      timeout: 15_000,
+    });
+    await expect(page.locator("#out")).not.toContainText("[compile error]");
+    await expect(page.locator("#out")).not.toContainText("JS error");
+  }
+});
+
+test("Run (interp) is disabled in the wasi-http world", async ({ page }) => {
+  await gotoReady(page);
+  // Pins the lockup fix directly rather than only via a hang-timeout:
+  // toggling the world should flip the run button's disabled state in
+  // both directions. (A handler's auto-synthesised main calls blocking
+  // tcp_serve; running it through the interp would never return.)
+  await expect(page.locator("#run")).toBeEnabled();
+  await page.locator("#worldSelect").selectOption("wasi-http");
+  await expect(page.locator("#run")).toBeDisabled();
+  await page.locator("#worldSelect").selectOption("wasm");
+  await expect(page.locator("#run")).toBeEnabled();
+});
+
 test("Build component compiles the default source to a downloadable component", async ({
   page,
 }) => {
