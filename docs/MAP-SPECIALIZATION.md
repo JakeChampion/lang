@@ -173,18 +173,33 @@ call the specialized name is a 1-line change.
 > constant parameter survives past the wrapper OpBlock and
 > the body's `if (keyKind == N)` guards. Verified
 > end-to-end on a synthetic 3-arm dispatcher in
-> `TestConstPropSpecialisesDispatchWithConstantTag`. This
-> still doesn't unlock `__map_hash` specialization on its
-> own — `__map_hash` is 149 IR ops, well over the
-> `inlineSizeLimit=80` budget, so the call doesn't get
-> inlined in the first place. To use this building block
-> for Map: either raise the inline budget for callees with
-> at least one compile-time-constant argument (specialization-
-> by-cloning), or pre-split `__map_hash` into smaller per-
-> kind helpers that each fit the existing budget (the same
-> direction the original step-1 sketch took, but now the
-> dispatcher's dead arms WILL fold away thanks to the
-> new constprop).
+> `TestConstPropSpecialisesDispatchWithConstantTag`.
+>
+> **Re-tested step 1 (2026-05-31, after the constprop
+> building block landed).** Same split as the 2026-05-28
+> attempt: `__map_hash_i32` / `__map_hash_wide` /
+> `__map_hash_string` plus a tiny dispatcher. Measured on a
+> 100-key Map[i32,i32] benchmark on arm64:
+> baseline `3836` lines → split `3889` lines (+53), `load_i64`
+> count `9 → 9` (the wide-scalar code path is still emitted
+> in the binary). **Step 1 still doesn't help in isolation.**
+> Root cause is now visible: `__map_hash` is called from
+> inside `__map_lookup` / `__map_set_impl` / `__map_grow`,
+> NEVER from user code directly. Inside those runtime
+> functions, `keyKind` is a parameter loaded from the Map
+> buffer at runtime — not a compile-time constant. So even
+> with cross-slot constprop, the K never reaches the
+> dispatcher as a constant: the call chain is
+> `user → __map_lookup → __map_hash(k, runtime keyKind)`.
+> For step 1 to bear fruit, step 2's call-site rewrite has
+> to land in the same change — `__map_lookup` /
+> `__map_set_impl` /etc. must either be specialized per K
+> (so each variant calls `__map_hash_<K>` directly) or
+> inlined into user code (their 100+-op bodies far exceed
+> the current 80-op budget). Both are larger changes than
+> "step 1 in isolation"; the original sketch's "1-line
+> change at the emit site" undersells the work needed by
+> roughly an order of magnitude.
 
 Rollback if anything regresses: keep `__map_hash` for one
 release, gate the rewrite behind a build-tag (`+build
