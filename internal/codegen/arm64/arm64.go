@@ -4177,6 +4177,8 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("mov x20, x1") // x20 = path_len
 	// path → byte ptr (inline spill at [x29+80..95]).
 	g.emitStrDataPtr2W("x25", "x19", "x20", 80) // x25 = path byte ptr
+	// NUL-terminate for openat (see emitNulTermPath2W).
+	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
 	g.emit("mov x0, #-100")
 	g.emit("mov x1, x25")
@@ -4357,25 +4359,29 @@ func (g *generator) emitWriteFileRuntime() {
 //	Some(IoError): 16-byte box {tag=0@0, payload=err@8}
 //	None:           8-byte box {tag=1@0}
 func (g *generator) emitWriteFileRuntime2W() {
-	// Frame: 96 bytes. fp/lr (16) + 6 callee-saves (48) +
-	// 2× 16-byte inline-spill scratch for path + content (32).
-	g.emit("stp x29, x30, [sp, #-96]!")
+	// Frame: 112 bytes. fp/lr (16) + 7 callee-saves (56 = x19..x25
+	// + 8 pad) + 2× 16-byte inline-spill scratch for path + content
+	// (32) + 8 align.
+	g.emit("stp x29, x30, [sp, #-112]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
 	g.emit("mov x19, x0") // path_data
 	g.emit("mov x20, x1") // path_len
 	g.emit("mov x21, x2") // content_data
 	g.emit("mov x22, x3") // content_len
 	// content byte length + byte ptr.
 	g.emitStrLen2W("w24", "x22")                // x24 = content byte length
-	g.emitStrDataPtr2W("x23", "x21", "x22", 64) // x23 = content byte ptr; scratch at [x29+64]
+	g.emitStrDataPtr2W("x23", "x21", "x22", 72) // x23 = content byte ptr; scratch at [x29+72]
 	// path byte ptr (separate scratch).
-	g.emitStrDataPtr2W("x0", "x19", "x20", 80) // x0 = path byte ptr; scratch at [x29+80]
+	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
+	// NUL-terminate for openat (see emitNulTermPath2W).
+	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
-	g.emit("mov x1, x0")
 	g.emit("mov x0, #-100")
+	g.emit("mov x1, x25")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
 	g.syscall("openat")
@@ -4424,10 +4430,11 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("str wzr, [x0]")     // tag = 0 (Some)
 	g.emit("str x19, [x0, #8]") // payload
 	g.label(".Lwf2w_return")
+	g.emit("ldr x25, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ldp x29, x30, [sp], #112")
 	g.emit("ret")
 	g.sizeDirective("__fern_write_file")
 	g.line(".ltorg")
@@ -4531,6 +4538,8 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x19, x0")                       // path_data
 			g.emit("mov x20, x1")                       // path_len
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
+			// NUL-terminate for openat (see emitNulTermPath2W).
+			g.emitNulTermPath2W("x21", "x21", "x20")
 			g.emit("mov x0, #-100")
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
@@ -6133,6 +6142,46 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 	g.emit("ubfx %s, %s, #56, #4", lenX, lenX) // overwrites lenX with the nibble
 	g.emit("mov %s, %s", dstW, regW(lenX))
 	g.label(doneLbl)
+}
+
+// emitNulTermPath2W allocates `lenX + 1` bytes on the bump heap,
+// memcpys `lenX` bytes from `dataX`, and writes a trailing NUL —
+// producing a NUL-terminated C string in `dstX` suitable for
+// passing as the path argument to openat / etc.
+//
+// The two-word string ABI carries (data, len) with no trailing
+// NUL, and the bump heap leaves no zero pad between adjacent
+// same-16-byte-aligned allocations — so if `lenX` is 0 mod 16
+// (e.g. "examples/tests/strings_test.fern" is 32 bytes) the
+// byte after the path data is the first byte of the next
+// allocation. The kernel happily reads past the intended end
+// and openat sees a concatenated path, failing with ENOTDIR.
+//
+// Caller assumptions:
+//   - `dstX` and `lenX` are distinct callee-saved registers
+//     (x19..x28) that survive the `bl` calls.
+//   - `dataX` may alias `dstX` — the helper stashes the src on
+//     the stack before alloc so the original byte pointer
+//     survives `mov dstX, x0`.
+//   - The caller has 16 bytes of headroom past sp for the
+//     temporary stack push.
+//   - x0..x9 are clobbered.
+func (g *generator) emitNulTermPath2W(dstX, dataX, lenX string) {
+	// Stash src on the stack so it survives the dst overwrite
+	// (callers commonly pass dataX == dstX to reuse a scratch
+	// register; the `mov dstX, x0` after alloc would otherwise
+	// clobber the byte pointer before the memcpy load).
+	g.emit("str %s, [sp, #-16]!", dataX)
+	g.emit("mov x0, %s", lenX)
+	g.emit("add x0, x0, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov %s, x0", dstX)
+	g.emit("mov x0, %s", dstX)
+	g.emit("ldr x1, [sp], #16") // restore src into x1 for memcpy
+	g.emit("mov x2, %s", lenX)
+	g.emit("bl __fern_memcpy")
+	g.emit("mov w9, #0")
+	g.emit("strb w9, [%s, %s]", dstX, lenX)
 }
 
 // emitStrDataPtr2W is the two-word-ABI counterpart of
