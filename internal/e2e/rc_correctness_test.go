@@ -1584,6 +1584,33 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 5 (string enum payloads): an enum variant carrying a
+		// string payload reclaims the payload buffer on native single-word
+		// (x86_64), mirroring wasm. The dropKind classifier now returns 4
+		// for native single-word strings, so payloadDropLoadsFor /
+		// enumVariantDropPlan include them; the existing decValueOnStack
+		// / appendChildDrop emitters handle the actual __fern_rc_dec.
+		// Per iter: s.len() = 26; 500x → 13000.
+		name: "native_string_enum_payload_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+enum Msg { Text(string), Number(i32) }
+function mk(): i32 {
+    var m: Msg = Msg.Text("value-aaaaaaaaaaaaaaaaaa-" + "1");
+    match (m) {
+        Text(s) => { return s.len(); },
+        Number(n) => { return n; }
+    }
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 13000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

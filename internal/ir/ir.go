@@ -3655,6 +3655,9 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
 			return 3, true // two-word string dec (__fern_str_dec)
 		}
+		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			return 4, true // single-word native string dec (__fern_rc_dec)
+		}
 		return 0, false
 	}
 	var want []enumDropLoad
@@ -3757,6 +3760,9 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
 			return 3, true // two-word string dec (__fern_str_dec)
+		}
+		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			return 4, true // single-word native string dec (__fern_rc_dec)
 		}
 		return 0, false // scalar — nothing to drop
 	}
