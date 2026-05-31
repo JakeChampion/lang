@@ -2097,6 +2097,14 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
+		// Single-word string value (native single-word, x86_64): caller
+		// loaded a ptr; __fern_rc_dec it (inline-tag / sentinel guards
+		// keep all sources safe). arm64 boxed strings excluded.
+		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
 		// `mayFree` is the borrow-aware permission to return this
 		// value's buffer to the freelist. It's true only for OWNED
 		// top-level array locals (computeFreeEligible); struct fields
@@ -2145,6 +2153,14 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// drop (struct / tuple string fields are handled inline).
 		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 4 {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		// Single-word string value (native single-word, x86_64): caller
+		// loaded a ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-
+		// tag low-bit guard + literal sentinel keep all sources safe.
+		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
@@ -2440,6 +2456,23 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthString})
 						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+						b.emit(Op{Kind: OpDrop})
+						continue
+					}
+					// Native single-word string field (x86_64, !TwoWordOverride):
+					// the field is a single pointer at the field offset; load
+					// it as WidthPtr and __fern_rc_dec (SSO inline-tag low-bit
+					// guard + literal sentinel keep all sources safe). arm64
+					// boxed strings excluded — same gating as the rest of the
+					// native string-reclaim path.
+					if _, isStr := f.Type.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						if off := offs[f.Name]; off != 0 {
+							b.emit(Op{Kind: OpConstI32, I32: off})
+							b.emit(Op{Kind: OpAdd})
+						}
+						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 						b.emit(Op{Kind: OpDrop})
 						continue
 					}
@@ -3411,6 +3444,15 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
+			Op{Kind: OpDrop})
+	}
+	// Single-word string value (native single-word, x86_64): the caller
+	// loaded a ptr via payloadLoadOpFor; reclaim via __fern_rc_dec (SSO
+	// inline-tag low-bit guard + literal sentinel keep all sources safe).
+	// arm64 boxed strings excluded.
+	if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
 			Op{Kind: OpDrop})
 	}
 	if isMapType(t) {
