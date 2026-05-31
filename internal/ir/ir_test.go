@@ -2382,3 +2382,68 @@ function build(): i32 {
 		t.Errorf("arm64 two-word: no __drop_tuple_<...> helper should be generated (no native str_dec runtime); got:\n%s", p)
 	}
 }
+
+// TestLowerEnumPayloadTupleStringReclaim pins coverage of the second
+// nested-tuple shape the __drop_tuple_<mangled> routing closes: an
+// ENUM PAYLOAD that's a tuple holding a string. The variant's payload
+// drop — both the generated __drop_enum_<Name> (the worklist-driven
+// nested-field path) and the inline tag-dispatch path
+// (enumVariantDropPlan in emitDec) — routes the TupleType payload
+// through __drop_tuple_<...>, and that helper dec's the string
+// element. The variant-plan path only fires for the eligible / freel-
+// igible flow, so the test uses a direct construction inside an
+// outer struct (which itself drops through __drop_struct_<Outer> →
+// __drop_enum_<Wrap> → __drop_tuple_<...> end-to-end).
+func TestLowerEnumPayloadTupleStringReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `enum Wrap { Pair((string, i32)), Empty }
+struct Holder { w: Wrap }
+function build(): i32 {
+    var h: Holder = Holder { w: Pair(("h" + "i", 7)) };
+    var r: i32 = 0;
+    match (h.w) { Pair(q) => { r = q.1; }, Empty => { r = 0; } }
+    return r;
+}`, 4)
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("expected a generated __drop_tuple_<...> helper to materialise for the enum's tuple payload; got:\n%s", p)
+	}
+	sawStrDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_str_dec" {
+			sawStrDec = true
+		}
+	}
+	if !sawStrDec {
+		t.Errorf("expected the generated %s body to dec its string element via __fern_str_dec on wasm; got:\n%s", td.Name, p)
+	}
+}
+
+// TestLowerClosureCaptureTupleStringReclaim pins coverage of the
+// third nested-tuple shape: a CLOSURE CAPTURE that's a tuple holding
+// a string. genClosureDropThunk routes a capture through
+// dropFnNameFor (which already did for arrays / structs / enums) —
+// post-fix it returns __drop_tuple_<...> for a tuple capture too. The
+// thunk then calls into that helper at the closure's last reference.
+func TestLowerClosureCaptureTupleStringReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var p: (string, i32) = ("h" + "i", 7);
+    var f: () => i32 = function(): i32 { return p.1; };
+    return f();
+}`, 4)
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("expected a generated __drop_tuple_<...> helper to materialise for the closure's tuple capture; got:\n%s", p)
+	}
+	sawStrDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_str_dec" {
+			sawStrDec = true
+		}
+	}
+	if !sawStrDec {
+		t.Errorf("expected the generated %s body to dec its string element via __fern_str_dec on wasm; got:\n%s", td.Name, p)
+	}
+	if !closureDropCallsDirect(p, td.Name) {
+		t.Errorf("expected the generated closure drop thunk to invoke %s on the tuple capture; got:\n%s", td.Name, p)
+	}
+}
