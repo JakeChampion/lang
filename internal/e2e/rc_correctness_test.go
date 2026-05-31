@@ -1635,6 +1635,27 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Tuple sibling of Slice 3: a tuple with a string element dec's
+		// the element at scope exit and dups it on destructure binding,
+		// on native single-word (x86_64). Mirrors wasm's two-word path.
+		// Per iter: s.len()=26 + n=7 = 33; 500x → 16500.
+		name: "native_string_tuple_element_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var t: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
+    var (s, n) = t;
+    return s.len() + n;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

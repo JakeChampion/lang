@@ -2326,6 +2326,21 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
+				// Native single-word string tuple element (x86_64,
+				// !TwoWordOverride): load WidthPtr + __fern_rc_dec. SSO
+				// inline-tag guard + literal sentinel keep all sources
+				// safe. arm64 boxed excluded.
+				if _, isStr := et.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					if offs[i] != 0 {
+						b.emit(Op{Kind: OpConstI32, I32: offs[i]})
+						b.emit(Op{Kind: OpAdd})
+					}
+					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					continue
+				}
 				if !arrElemIsRcTracked(et) {
 					continue
 				}
@@ -5126,6 +5141,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// deep-drop __fern_str_dec would free the buffer under the
 				// still-live binding (UAF).
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			} else if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				// Native single-word string element: dup via __fern_rc_inc
+				// so the binding co-owns the buffer alongside the tuple
+				// box's later dec.
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			} else if arrElemIsRcTracked(tup.Elems[i]) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
