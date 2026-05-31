@@ -304,6 +304,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
 	}
+	if g.usesStrInc {
+		g.emitStrIncRuntime()
+	}
+	if g.usesStrDec {
+		g.emitStrDecRuntime()
+	}
+	if g.usesCellFree {
+		g.emitCellFreeRuntime()
+	}
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
@@ -980,6 +989,80 @@ func (g *generator) emitClosureDropRuntime() {
 	g.label(".Lcd_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_closure_drop")
+	g.line(".ltorg")
+}
+
+// emitStrIncRuntime emits `__fern_str_inc(data, len) -> (data, len)` —
+// two-word string retain. Inline-tagged values (top bit of len) are
+// no-ops returning the pair unchanged; heap strings tail-call
+// __fern_rc_inc on data (which short-circuits on null / low-address /
+// static-sentinel). arm64 port of the wasm helper.
+func (g *generator) emitStrIncRuntime() {
+	g.line("")
+	g.line(".global __fern_str_inc")
+	g.typeDirective("__fern_str_inc")
+	g.label("__fern_str_inc")
+	// Inline tag: bit 63 of x1 set ⇒ packed bytes, no heap.
+	g.emit("tbnz x1, #63, .Lstrinc_ret")
+	// Heap path: rc_inc(x0) tail-call returns x0; x1 (len) flows through.
+	g.emit("b __fern_rc_inc")
+	g.label(".Lstrinc_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_inc")
+}
+
+// emitStrDecRuntime emits `__fern_str_dec(data, len) -> data` —
+// two-word string reclaim. Inline-tagged values are no-ops. Heap
+// strings: at rc==1 tail-call __fern_box_free(data, payload_size_at_data-4);
+// otherwise (rc>1 or static high-bit sentinel) tail-call __fern_rc_dec.
+// NULL / low-address guarded. arm64 port of the wasm helper.
+func (g *generator) emitStrDecRuntime() {
+	g.line("")
+	g.line(".global __fern_str_dec")
+	g.typeDirective("__fern_str_dec")
+	g.label("__fern_str_dec")
+	g.emit("tbnz x1, #63, .Lstrdec_ret")
+	g.emit("cbz x0, .Lstrdec_ret")
+	g.emit("cmp x0, #0x10000")
+	g.emit("b.lo .Lstrdec_ret")
+	g.emit("ldur w2, [x0, #-8]") // rc
+	g.emit("cmp w2, #1")
+	g.emit("b.ne .Lstrdec_dec")
+	// rc == 1: box_free(data, payload size at data-4).
+	g.emit("ldur w1, [x0, #-4]")
+	g.emit("b __fern_box_free")
+	g.label(".Lstrdec_dec")
+	g.emit("b __fern_rc_dec")
+	g.label(".Lstrdec_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_dec")
+}
+
+// emitCellFreeRuntime emits `__fern_cell_free(cell) -> cell` —
+// returns a 16-byte boxed (data, len) cell to the freelist. NULL /
+// low-address guarded; otherwise __fern_free(cell, 16). x19 saves the
+// cell across the bl so we can return it. arm64 port of the wasm helper.
+func (g *generator) emitCellFreeRuntime() {
+	g.line("")
+	g.line(".global __fern_cell_free")
+	g.typeDirective("__fern_cell_free")
+	g.label("__fern_cell_free")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = cell (default return)
+	g.emit("cbz x19, .Lcellfree_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Lcellfree_ret")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, #16")
+	g.emit("bl __fern_free")
+	g.label(".Lcellfree_ret")
+	g.emit("mov x0, x19")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_cell_free")
 	g.line(".ltorg")
 }
 
@@ -5152,6 +5235,16 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesStrInc / usesStrDec / usesCellFree gate the two-word
+	// string runtime helpers — the arm64 port of the wasm
+	// __fern_str_inc / __fern_str_dec / __fern_cell_free. Tail-call
+	// __fern_rc_inc / __fern_rc_dec / __fern_box_free / __fern_free
+	// respectively on the heap path; inline-tagged values (top bit of
+	// len) short-circuit. Set when an OpCallDirect names one of these
+	// helpers in the IR walk.
+	usesStrInc   bool
+	usesStrDec   bool
+	usesCellFree bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter that __fern_rc_dec bumps). Set when the IR emits the
@@ -7234,6 +7327,22 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcInc = true
 		case "__fern_rc_dec":
 			g.usesRcDec = true
+		case "__fern_str_inc":
+			// Two-word string retain (arm64 + wasm). Tail-calls __fern_rc_inc
+			// on the heap path so we need both.
+			g.usesStrInc = true
+			g.usesRcInc = true
+		case "__fern_str_dec":
+			// Two-word string reclaim (arm64 + wasm). On rc==1 tail-calls
+			// __fern_box_free + needs __fern_rc_dec for the rc!=1 path.
+			g.usesStrDec = true
+			g.usesBoxFree = true
+			g.usesRcDec = true
+		case "__fern_cell_free":
+			// 16-byte boxed-cell free (paired with the wasm-style boxed-
+			// string map column walks). Tail-calls __fern_free.
+			g.usesCellFree = true
+			g.usesFree = true
 		case "__fern_rc_underflow_count":
 			g.usesRcUnderflowCount = true
 		case "__fern_arr_push_grow":

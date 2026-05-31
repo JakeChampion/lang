@@ -2277,17 +2277,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// tainted) are SKIPPED entirely — never touched, so a view string
 		// can never be misread/freed.
 		if _, isStr := t.(ast.StringType); isStr {
-			// wasm two-word: __fern_str_dec consumes (data, len), returns data;
-			// drop the returned ptr.
+			// Two-word string ABIs (wasm + arm64-TwoWordOverride): __fern_str_dec
+			// consumes (data, len), returns data; drop the returned ptr.
 			// Native single-word (x86_64, !TwoWordOverride): __fern_rc_dec
 			// consumes ptr, returns ptr (SSO inline-tag low-bit guard +
-			// literal sentinel + low-address guard all safe). arm64 boxed
-			// excluded — no native str_dec helper.
-			if ast.RcFreeEnabled && eligible && b.ptrW == 4 {
+			// literal sentinel + low-address guard all safe).
+			if ast.RcFreeEnabled && eligible && ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes (data, len)
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned data ptr
-			} else if ast.RcFreeEnabled && eligible && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			} else if ast.RcFreeEnabled && eligible && b.ptrW == 8 {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes single data ptr
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
@@ -2780,7 +2779,10 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// path. The SSO inline-tag low-bit guard in __fern_rc_dec
 		// (Slice 8) keeps short inline strings safe.
 		if _, isStr := t.(ast.StringType); isStr {
-			return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
+			// arm64 now has __fern_str_inc / __fern_str_dec / __fern_cell_free
+			// runtime helpers, so the wasm two-word path applies there too.
+			// All non-zero ptrW with strings is rc-tracked.
+			return true
 		}
 		// Tuple values are always pointer-shaped headered boxes
 		// (TupleLit lowering); rc_inc/dec + box_free apply.
@@ -3928,7 +3930,10 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		// single-word (x86_64, !TwoWordOverride) zeroes one slot. arm64
 		// excluded for the same reason as the dec sweep.
 		if _, isStr := t.(ast.StringType); isStr {
-			return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
+			// arm64 now has __fern_str_inc / __fern_str_dec / __fern_cell_free
+			// runtime helpers, so the wasm two-word path applies there too.
+			// All non-zero ptrW with strings is rc-tracked.
+			return true
 		}
 		return false
 	}
@@ -3947,7 +3952,8 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		// A two-word string slot consumes two operand values (data, len);
 		// push two zeros so OpStoreLocal balances. Native single-word
 		// string slots take only one zero (the single data pointer).
-		if _, isStr := v.Type.(ast.StringType); isStr && b.ptrW == 4 {
+		// Wasm and arm64-two-word both take two-word strings.
+		if _, isStr := v.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 		}
 		b.emit(Op{Kind: OpConstI32, I32: 0})
@@ -9330,7 +9336,9 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// runtime, same gating as the rest of the native string-reclaim
 	// path.
 	if _, isStr := t.(ast.StringType); isStr {
-		return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
+		// arm64 now has __fern_str_inc, so the wasm two-word retain path
+		// applies there too. All non-zero ptrW with strings is alias-retained.
+		return true
 	}
 	return false
 }
