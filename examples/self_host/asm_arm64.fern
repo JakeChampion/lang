@@ -2597,13 +2597,16 @@ function is_value_fn_name(s: EmitState, name: string): boolean {
 // callee_param_is_fn reports whether the named receiver-less function's
 // param at idx has a function type ("fn").
 function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
+    // Match receiver methods as well as free functions so
+    // `f.bench("…", n, my_workload)` boxes `my_workload` the same way
+    // a free-fn call does. See asm.fern.
     var fi: i32 = 0;
     while (fi < s.funcs.len()) {
-        if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
-            if (idx < s.funcs[fi].params.len()) {
-                return s.funcs[fi].params[idx].type_name == "fn";
+        if (s.funcs[fi].name == name) {
+            if (idx < s.funcs[fi].params.len()
+                    && s.funcs[fi].params[idx].type_name == "fn") {
+                return true;
             }
-            return false;
         }
         fi = fi + 1;
     }
@@ -3949,7 +3952,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // receiver's shape pointer.
                     var mi: i32 = c.args.len() - 1;
                     while (mi >= 0) {
-                        s = emit_expr(c.args[mi], s);
+                        // Mirror the free-function `fn`-arg boxing.
+                        // See asm.fern for rationale.
+                        var fvn: string = arg_fn_value_name(c.args[mi], fa.field, mi, s);
+                        if (fvn.len() > 0) { s = emit_fn_value(fvn, s); }
+                        else { s = emit_expr(c.args[mi], s); }
                         mi = mi - 1;
                     }
                     s = emit_expr(fa.obj, s);

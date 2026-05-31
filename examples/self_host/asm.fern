@@ -2716,16 +2716,20 @@ function is_value_fn_name(s: EmitState, name: string): boolean {
     return false;
 }
 
-// callee_param_is_fn reports whether the named receiver-less function's
-// param at idx has a function type ("fn").
+// callee_param_is_fn reports whether any function declared with the
+// given name has a `fn`-typed param at idx. Used by `arg_fn_value_name`
+// to know whether a bare ident argument should be boxed as a closure
+// value (instead of being called as a 0-arg function). Looks at both
+// receiver-less and receiver methods so `f.call_one(noop)` boxes
+// `noop` the same way `call_n(3, noop)` does.
 function callee_param_is_fn(s: EmitState, name: string, idx: i32): boolean {
     var fi: i32 = 0;
     while (fi < s.funcs.len()) {
-        if (s.funcs[fi].name == name && s.funcs[fi].receiver_type.len() == 0) {
-            if (idx < s.funcs[fi].params.len()) {
-                return s.funcs[fi].params[idx].type_name == "fn";
+        if (s.funcs[fi].name == name) {
+            if (idx < s.funcs[fi].params.len()
+                    && s.funcs[fi].params[idx].type_name == "fn") {
+                return true;
             }
-            return false;
         }
         fi = fi + 1;
     }
@@ -4179,7 +4183,16 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // shape pointer.
                     var mi: i32 = c.args.len() - 1;
                     while (mi >= 0) {
-                        s = emit_expr(c.args[mi], s);
+                        // Mirror the free-function call's `fn`-arg
+                        // boxing so `f.bench("…", n, my_workload)`
+                        // wraps `my_workload` as a closure value
+                        // instead of calling it 0-arg here. Without
+                        // this the callee receives `my_workload()`'s
+                        // return value (garbage) and crashes on the
+                        // indirect call inside its body.
+                        var fvn: string = arg_fn_value_name(c.args[mi], fa.field, mi, s);
+                        if (fvn.len() > 0) { s = emit_fn_value(fvn, s); }
+                        else { s = emit_expr(c.args[mi], s); }
                         mi = mi - 1;
                     }
                     s = emit_expr(fa.obj, s);
