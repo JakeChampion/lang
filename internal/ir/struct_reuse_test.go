@@ -42,10 +42,34 @@ function main(): i32 { return churn(3); }`)
 	}
 }
 
-// A struct with a pointer-shaped (rc-tracked) field is deferred to the
-// field-store-elision slice (5d) — the reuse path must not fire, so its
-// per-field rc isn't mishandled.
-func TestStructReuseSkipsPointerField(t *testing.T) {
+// A single-word rc-tracked pointer field (here an array) now reuses
+// too (Phase 5c): the old field value is released on the reuse branch,
+// the new one retained on eval.
+func TestStructReuseFiresForPointerField(t *testing.T) {
+	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
+function churn(n: i32): i32 {
+    var p: Holder = Holder { id: 0, items: [1, 2] };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Holder { id: p.id + 1, items: p.items };
+        i = i + 1;
+    }
+    return p.id;
+}
+function main(): i32 { return churn(3); }`)
+	f := funcByName(ip, "churn")
+	if f == nil {
+		t.Fatal("no func churn")
+	}
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("array-field struct should reuse, got %d __alloc_reuse", got)
+	}
+}
+
+// A string field is still excluded — strings are two-word on wasm /
+// boxed on arm64, which the single-word reuse temps + flat-dec release
+// don't handle. Falls back to the normal fresh alloc.
+func TestStructReuseSkipsStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function churn(n: i32): i32 {
     var p: Named = Named { id: 0, name: "a" };
@@ -62,7 +86,7 @@ function main(): i32 { return churn(3); }`)
 		t.Fatal("no func churn")
 	}
 	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("pointer-field struct must not reuse (deferred to 5d), got %d", got)
+		t.Errorf("string-field struct must not reuse (single-word temps), got %d", got)
 	}
 }
 

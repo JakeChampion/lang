@@ -1603,16 +1603,35 @@ cancellation — bounded, but separable, so it ships last.
     aliased / swap (value-correct + 0 over-releases). The
     `FixturesFreeMatchesNoFree` differential gate already asserts
     reuse-on == reuse-off byte-identical (reuse rides `RcFreeEnabled`).
-  - **5c — enum/Cons-cell reuse.** Pair a dropped enum scrutinee in a
-    `match` arm with a same-variant-or-same-box-size constructor in that
-    arm (`map_inc` shape). Gated on `uniformEnumBoxSize` agreement; the
-    `OpMatchTag` read of `[ptr+0]` must precede the reuse (guaranteed by
-    rule 3). Corpus: `list_map_reuse` (build a 1000-node list, `map_inc`
-    it, sum — O(1) allocator traffic for the map).
-  - **5d — field-store elision.** The unchanged-field skip described
-    above, struct first then enum. Corpus extends 5b/5c with a
-    store-count assertion (via a debug counter, like
-    `__rc_underflow_count`).
+  - **5c — pointer-field struct reuse. SHIPPED (x86_64 verified; arm64
+    + wasm ride CI).** Widens 5b's self-overwrite reuse from all-scalar
+    structs to structs with single-word rc-tracked pointer fields
+    (array / struct / Map / enum / closure / tuple — `arrElemIsRcTracked`;
+    **strings still excluded**, two-word on wasm / boxed on arm64, and
+    wide/float scalars still excluded — single-word i32/pointer temps).
+    `structReuseEligible` replaces the all-scalar gate. Per-field rc:
+    each new pointer value is retained on eval (`emitAliasInc`, as
+    normal `StructLit`); on the **reuse branch only** (gated on the i32
+    `is_unique` result, not the raw token — backend-safe truthiness) the
+    box's OLD pointer-field values are **flat-dec'd** before the new
+    ones overwrite them. A carried-over field (`items: p.items`)
+    balances (eval-inc cancels the dec-old → rc unchanged); a replaced
+    field releases its old reference (flat dec — leak-but-never-UAF; a
+    freeing dec is a follow-up). Tests: IR `TestStructReuseFiresForPointerField`
+    / `…SkipsStringField` + e2e `Test{X86_64,Arm64,WASM}StructReuse`
+    `ptr_carried` (200 reuses, array carried — 0 over-release or it
+    corrupts), `ptr_aliased` (alias declines reuse; field shared
+    correctly), `ptr_replaced` (old released each iter). Differential
+    gate + rc-correctness corpus + self-host VM stay green free-on.
+    Still on the original plan: enum/Cons-cell reuse (a `match`-arm hook
+    + tag-guarded payload release) and field-store elision.
+  - **5d — enum/Cons-cell reuse + field-store elision (NOT STARTED).**
+    Enum reuse pairs a dropped enum scrutinee in a `match` arm with a
+    same-box-size constructor in that arm (`map_inc` shape), gated on
+    `uniformEnumBoxSize`; reuses the pointer-payload release machinery
+    5c built. Field-store elision then skips the store for a provably-
+    unchanged field (`y: p.y`) and cancels its inc/dec — a strict
+    optimization on top of correct reuse.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 
