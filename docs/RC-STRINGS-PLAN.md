@@ -412,8 +412,8 @@ explicitly skipped.
 | Prereq 1 — uniform rc header on heap strings | DONE | DONE | DONE (single-word path only) |
 | Prereq 2 — static-literal sentinel header | DONE | DONE | DONE |
 | Prereq 3 — SSO inline-tag guard on rc_inc/dec | n/a | DONE | DONE |
-| Slice 2 — string LOCALS | DONE | DONE | TODO |
-| Slice 3 — string STRUCT fields | DONE | DONE | TODO |
+| Slice 2 — string LOCALS | DONE | DONE | DONE |
+| Slice 3 — string STRUCT fields | DONE | DONE | DONE |
 | Slice 3 follow-up — string TUPLE elements | DONE | DONE | TODO |
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | TODO |
 | Slice 5 — string ENUM payloads | DONE | DONE | TODO |

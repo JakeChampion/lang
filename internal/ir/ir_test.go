@@ -1725,6 +1725,50 @@ function build(s: string): i32 {
 	}
 }
 
+// TestLowerStringStructFieldReclaimOnArm64TwoWord verifies Slice 3 on
+// arm64: a struct local with a string field reclaims the field via the
+// two-word __fern_str_dec at scope exit, same shape as wasm. The
+// alias-inc on construction balances against the dec — both fire on
+// the two-word string ABI gate (UseTwoWordStrings), so wasm and
+// arm64-TwoWordOverride share the same Slice 3 codegen. arm64 single-
+// word (the !TwoWordOverride path) keeps the native rc_dec path.
+func TestLowerStringStructFieldReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `struct Holder { name: string }
+function build(s: string): i32 {
+    var h: Holder = Holder { name: s };
+    return h.name.len();
+}`, 8)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected struct local reclamation to dec its string field via __fern_str_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("arm64 two-word: expected alias-shaped string field init to retain via __fern_str_inc:\n%s", p)
+	}
+}
+
+// TestLowerStringNestedStructFieldReclaimOnArm64TwoWord locks the
+// generated __drop_struct_<T> path on arm64 too: an Inner struct
+// nested as a field of Outer reclaims through Outer's drop recursing
+// into __drop_struct_Inner, which dec's Inner's string field via
+// __fern_str_dec under the two-word ABI.
+func TestLowerStringNestedStructFieldReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `struct Inner { name: string }
+struct Outer { inner: Inner }
+function build(s: string): i32 {
+    var o: Outer = Outer { inner: Inner { name: s } };
+    return o.inner.name.len();
+}`, 8)
+	if !callsDirect(p, "__drop_struct_Inner", "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected __drop_struct_Inner to reclaim its string field via __fern_str_dec:\n%s", p)
+	}
+}
+
 // TestLowerStringTupleElemReclaim verifies a string tuple element is
 // reclaimed: the owned tuple local's deep-drop dec's the element via the
 // two-word __fern_str_dec at the tuple's last reference, and the alias-

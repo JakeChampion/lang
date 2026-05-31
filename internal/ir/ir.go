@@ -2501,7 +2501,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// in an array / tuple / enum field reclaims via that
 				// container's own (future) string-aware drop.
 				for _, f := range sd.Fields {
-					if _, isStr := f.Type.(ast.StringType); isStr && b.ptrW == 4 {
+					if _, isStr := f.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 						b.emit(Op{Kind: OpLoadLocal, I32: slot})
 						if off := offs[f.Name]; off != 0 {
 							b.emit(Op{Kind: OpConstI32, I32: off})
@@ -3806,7 +3806,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 	}
 	for _, f := range sd.Fields {
 		_, isStr := f.Type.(ast.StringType)
-		isStr = isStr && ptrW == 4
+		isStr = isStr && ast.UseTwoWordStrings(ptrW)
 		if !arrElemIsRcTracked(f.Type) && !isStr {
 			continue
 		}
