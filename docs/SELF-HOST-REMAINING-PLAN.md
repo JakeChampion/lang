@@ -598,6 +598,22 @@ planned order:
     the same shape for wider-int sort / reduction code, so the CI-
     only arm64 self-host gate stays in step with x86 as the
     differential gate grows.
+  - ✅ **arm64 differential gate alongside x86.** A new
+    `asm_arm64_load_run.fern` driver (file-based, same import
+    machinery as `asm_load_run` but routes through `asm_arm64`)
+    plus `TestSelfHostStdTestE2EArm64` mirror the x86 gate's case
+    list: the driver builds as a native x86 host binary
+    (cross-compiler-on-host, the pattern the existing arm64
+    reader / alloc-trap tests use), the aarch64 cross-gcc
+    assembles + links each compiled program, and `qemu-aarch64`
+    runs the result — stdout + exit code must match the reference
+    interpreter byte-for-byte. Three suites are excluded
+    (`process_assertions`, `process_output_shortcuts`,
+    `lang_binary_e2e`) because the arm64 emitter doesn't yet
+    have the `__fern_subprocess` runtime helper; track + retest
+    once that mirror lands. Catches arm64 emitter regressions on
+    every PR — without it, parity gaps only surface when someone
+    runs the arm64 emit suite manually.
   - ✅ **`.lines()` trailing-newline.** The self-host's `s.lines()`
     was sugar for `s.split("\n")` — so `"a\nb\nc\n".lines()` returned
     4 lines (including a phantom trailing empty), and `"".lines()`
