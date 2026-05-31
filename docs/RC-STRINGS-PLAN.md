@@ -239,9 +239,16 @@ differential fuzz and `__rc_underflow_count` guard.
    deep-drop dec's string elements (`WidthString` + `__fern_str_dec`,
    rc==1 guard), the destructure projection dups them via
    `__fern_str_inc` so the binding co-owns, and `tup.N` direct reads
-   retain through `needsRcIncOnAlias`. Nested tuples (tuple in a struct /
-   array / tuple) have no generated drop fn yet, so their strings still
-   leak.
+   retain through `needsRcIncOnAlias`. **Nested tuples** (tuple in a
+   struct / array / enum payload / tuple) — **DONE.** Each distinct
+   tuple shape registered via `dropFnNameFor` gets a generated
+   `__drop_tuple_<mangled>` recursive-drop fn (sibling of
+   `__drop_struct_<Name>`): is_unique-gates the box, dec's every rc-
+   tracked element (string elements split by wasm two-word vs native
+   single-word ABI, the rest recurse via `appendChildDrop`), then
+   returns the box to the freelist. arm64 two-word boxed strings stay
+   excluded — same `__fern_str_dec` gate as the rest of the native
+   string-reclaim path.
 4. **String ARRAY elements** (`string[]`) — **DONE.** New runtime helper
    `__fern_drop_arr_str` (mirrors `__fern_drop_arr_ptr`): on the array's
    last reference walks the two-word elements calling `__fern_str_dec`,
