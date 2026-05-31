@@ -2447,3 +2447,55 @@ func TestLowerClosureCaptureTupleStringReclaim(t *testing.T) {
 		t.Errorf("expected the generated closure drop thunk to invoke %s on the tuple capture; got:\n%s", td.Name, p)
 	}
 }
+
+// TestLowerArrayOfTupleStringReclaim pins the array-of-tuple sibling
+// of the nested-tuple-drop fix. `(string, i32)[]` used to leak its
+// elements' strings: arrElemStructDropName only recognised concrete
+// struct elements, so the local-side ARRAY drop fell through to the
+// flat __fern_drop_arr_ptr which only rc_dec's each element pointer
+// (freeing the tuple boxes but never traversing them). Post-fix the
+// routing recognises tuple elements and emits a per-element
+// __drop_tuple_<mangled> loop that dec's each tuple's string element
+// before freeing the buffer.
+//
+// The assertion is loose on call-site placement (the per-element loop
+// may live in the local-side ARRAY drop OR a generated
+// __drop_arr_tuple_<mangled> helper) — both shapes satisfy the
+// invariant we care about: SOME function calls __drop_tuple_<...>
+// while the array is being reclaimed.
+func TestLowerArrayOfTupleStringReclaim(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var a: (string, i32)[] = [("h" + "i", 7)];
+    return a[0].1;
+}`, 4)
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("expected a generated __drop_tuple_<...> helper to materialise for the array's tuple element; got:\n%s", p)
+	}
+	sawStrDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_str_dec" {
+			sawStrDec = true
+		}
+	}
+	if !sawStrDec {
+		t.Errorf("expected the generated %s body to dec its string element via __fern_str_dec on wasm; got:\n%s", td.Name, p)
+	}
+	// Pin that SOMEONE actually invokes the helper — without a call
+	// site the leak fix is paper-only.
+	called := false
+	for _, fn := range p.Funcs {
+		for _, op := range fn.Ops {
+			if op.Kind == OpCallDirect && op.Str == td.Name {
+				called = true
+				break
+			}
+		}
+		if called {
+			break
+		}
+	}
+	if !called {
+		t.Errorf("expected SOME function to call %s while reclaiming the array's tuple elements; got:\n%s", td.Name, p)
+	}
+}

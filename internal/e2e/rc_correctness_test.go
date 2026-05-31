@@ -1656,6 +1656,31 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Nested-tuple reclamation: ARRAY OF TUPLES (`(string,i32)[]`)
+		// used to leak each tuple's string element — the array drop
+		// fell through to the flat __fern_drop_arr_ptr which only
+		// rc_dec's the element pointers (freeing each tuple box but
+		// never traversing). arrElemStructDropName now also matches
+		// tuple elements and emits a generated __drop_arr_tuple_<mangled>
+		// loop that recurses through __drop_tuple_<mangled> per element
+		// before freeing the buffer. Per iter: s.len()=26 + n=7 = 33;
+		// 500x → 16500.
+		name: "native_nested_tuple_string_in_array_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var a: (string, i32)[] = [("value-aaaaaaaaaaaaaaaaaa-" + "1", 7)];
+    return a[0].0.len() + a[0].1;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Nested-tuple reclamation: a tuple held inside an ENUM PAYLOAD
 		// reaches the __drop_tuple_<mangled> helper through the
 		// generated __drop_enum_<Wrap> body's appendChildDrop call,
