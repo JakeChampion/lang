@@ -1773,6 +1773,11 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return "i32"; }
                     if (id.name == "remove_file") { return "option:unknown"; }
+                    // subprocess(cmd, args, stdin) → ProcessResult struct.
+                    // See asm.fern: returns "unknown" because the struct's
+                    // fields resolve through the shape-pointer dispatch path
+                    // (parser.inject_builtin_enums injects the decl).
+                    if (id.name == "subprocess") { return "unknown"; }
                     if (id.name == "temp_dir") { return "result:string"; }
                     if (id.name == "read_dir") { return "result:array_string"; }
                     if (id.name == "stat") { return "result:unknown"; }
@@ -4335,6 +4340,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = emit_expr(c.args[0], s);
                 s = s.write("    ldr x0, [sp], #16\n");
                 s = s.write("    bl __fern_remove_file\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // subprocess(cmd, args, stdin) → ProcessResult. Mirror of
+            // the x86 dispatch in asm.fern. Args (left to right) reach
+            // the helper in x0 / x1 / x2.
+            if (name == "subprocess" && c.args.len() == 3) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = emit_expr(c.args[2], s);
+                s = s.write("    ldr x2, [sp], #16\n");   // stdin box
+                s = s.write("    ldr x1, [sp], #16\n");   // args box
+                s = s.write("    ldr x0, [sp], #16\n");   // cmd box
+                s = s.write("    bl __fern_subprocess\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
                 return s;
@@ -8401,6 +8421,347 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_remove_file, .-__fern_remove_file\n");
+
+        // __fern_subprocess(x0 = cmd box, x1 = args box (string[]),
+        //                   x2 = stdin box) → ProcessResult struct.
+        // arm64 mirror of asm.fern's helper: 3 pipes via pipe2 (sysno
+        // 59), fork via clone(SIGCHLD,0,…) (sysno 220, no fork on
+        // arm64), child execve (sysno 221, dup3=24, close=57) trying
+        // cmd → /bin/cmd → /usr/bin/cmd then exit(127) (sysno 93).
+        // Parent writes stdin (sysno 64), reads stdout + stderr to
+        // EOF (sysno 63) into 64 KiB scratch bufs, wait4s (sysno 260),
+        // decodes WIFEXITED (status >> 8) vs signaled (128 + sig),
+        // packs {shape, stdout, stderr, exit_code} on the heap.
+        var prLitA: StringLitOut = add_string_lit(s, "ProcessResult");
+        s = prLitA.state;
+        s = s.write(".globl __fern_subprocess\n");
+        s = s.write(".type __fern_subprocess, %function\n");
+        s = s.write("__fern_subprocess:\n");
+        // Big frame: x29/x30 + 5 callee-saved pairs (x19..x28) + 128
+        // bytes of locals = 224 bytes. Layout (from sp = x29):
+        //   [sp+ 0]  saved x29
+        //   [sp+ 8]  saved x30
+        //   [sp+16]  saved x19  (cmd box)
+        //   [sp+24]  saved x20  (args box)
+        //   [sp+32]  saved x21  (stdin box)
+        //   [sp+40]  saved x22  (scratch / child pid)
+        //   [sp+48]  saved x23  (cmdz)
+        //   [sp+56]  saved x24  (argv)
+        //   [sp+64]  saved x25  (stdout buf)
+        //   [sp+72]  saved x26  (stdout len)
+        //   [sp+80]  saved x27  (stderr buf)
+        //   [sp+88]  saved x28  (stderr len)
+        //   [sp+96..119]  6 pipe fds (4 bytes each)
+        //   [sp+120..123] wait4 status (4 bytes)
+        //   [sp+124..223] scratch / padding
+        s = s.write("    sub sp, sp, #224\n");
+        s = s.write("    stp x29, x30, [sp, #0]\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #16]\n");
+        s = s.write("    stp x21, x22, [sp, #32]\n");
+        s = s.write("    stp x23, x24, [sp, #48]\n");
+        s = s.write("    stp x25, x26, [sp, #64]\n");
+        s = s.write("    stp x27, x28, [sp, #80]\n");
+        // Save input boxes into callee-saved regs.
+        s = s.write("    mov x19, x0\n");    // cmd box
+        s = s.write("    mov x20, x1\n");    // args box
+        s = s.write("    mov x21, x2\n");    // stdin box
+        // Build cmdz: NUL-terminated cmd string. cmd_len + 1 bytes.
+        s = s.write("    ldr x22, [x19, #8]\n");   // cmd_len
+        s = s.write("    add x0, x22, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x23, x0\n");          // cmdz
+        s = s.write("    ldr x9, [x19]\n");        // cmd data
+        s = s.write("    mov x10, #0\n");
+        s = s.write(".Lsp_ccmd:\n");
+        s = s.write("    cmp x10, x22\n");
+        s = s.write("    b.ge .Lsp_ccmd_d\n");
+        s = s.write("    ldrb w11, [x9, x10]\n");
+        s = s.write("    strb w11, [x23, x10]\n");
+        s = s.write("    add x10, x10, #1\n");
+        s = s.write("    b .Lsp_ccmd\n");
+        s = s.write(".Lsp_ccmd_d:\n");
+        s = s.write("    mov w11, #0\n");
+        s = s.write("    strb w11, [x23, x22]\n");
+        // Build argv: (nargs + 2) * 8 bytes ptr slots.
+        s = s.write("    ldr x22, [x20]\n");       // nargs
+        s = s.write("    add x0, x22, #2\n");
+        s = s.write("    lsl x0, x0, #3\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x24, x0\n");          // argv
+        // argv[0] = cmdz
+        s = s.write("    str x23, [x24]\n");
+        // argv[i+1] = NUL-terminated copy of args[i] for i in 0..nargs.
+        s = s.write("    mov x25, #0\n");          // i (reuses x25 — restored later if needed; safe before stdout buf)
+        s = s.write(".Lsp_arg:\n");
+        s = s.write("    cmp x25, x22\n");
+        s = s.write("    b.ge .Lsp_arg_d\n");
+        s = s.write("    add x9, x25, #1\n");
+        s = s.write("    ldr x10, [x20, x9, lsl #3]\n");   // args[i] box
+        s = s.write("    ldr x26, [x10, #8]\n");           // arg_len
+        s = s.write("    add x0, x26, #1\n");
+        s = s.write("    str x10, [sp, #128]\n");          // spill arg box
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    ldr x10, [sp, #128]\n");          // reload arg box
+        s = s.write("    ldr x9, [x10]\n");                // arg data
+        s = s.write("    mov x11, #0\n");
+        s = s.write(".Lsp_acopy:\n");
+        s = s.write("    cmp x11, x26\n");
+        s = s.write("    b.ge .Lsp_acopy_d\n");
+        s = s.write("    ldrb w12, [x9, x11]\n");
+        s = s.write("    strb w12, [x0, x11]\n");
+        s = s.write("    add x11, x11, #1\n");
+        s = s.write("    b .Lsp_acopy\n");
+        s = s.write(".Lsp_acopy_d:\n");
+        s = s.write("    mov w12, #0\n");
+        s = s.write("    strb w12, [x0, x26]\n");
+        s = s.write("    add x9, x25, #1\n");
+        s = s.write("    str x0, [x24, x9, lsl #3]\n");
+        s = s.write("    add x25, x25, #1\n");
+        s = s.write("    b .Lsp_arg\n");
+        s = s.write(".Lsp_arg_d:\n");
+        // argv[nargs + 1] = NULL.
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    mov x10, #0\n");
+        s = s.write("    str x10, [x24, x9, lsl #3]\n");
+        // Create 3 pipes via pipe2(fds, 0). Each pipe writes 2 fds.
+        s = s.write("    add x0, sp, #96\n");      // in fds
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x8, #59\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    add x0, sp, #104\n");     // out fds
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x8, #59\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    add x0, sp, #112\n");     // err fds
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x8, #59\n");
+        s = s.write("    svc #0\n");
+        // fork via clone(SIGCHLD=17, 0, 0, 0, 0). Returns child pid in
+        // parent, 0 in child.
+        s = s.write("    mov x0, #17\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x3, #0\n");
+        s = s.write("    mov x4, #0\n");
+        s = s.write("    mov x8, #220\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    cbnz x0, .Lsp_parent\n");
+        // ---------- CHILD ----------
+        // dup3(in_r, 0, 0); dup3(out_w, 1, 0); dup3(err_w, 2, 0).
+        s = s.write("    ldr w0, [sp, #96]\n");    // in_r
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #24\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr w0, [sp, #108]\n");   // out_w
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #24\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr w0, [sp, #116]\n");   // err_w
+        s = s.write("    mov x1, #2\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #24\n");
+        s = s.write("    svc #0\n");
+        // Close all 6 original pipe fds.
+        s = s.write("    ldr w0, [sp, #96]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n  svc #0\n");
+        // execve(cmdz, argv, envp). envp is the value of __fern_envp.
+        s = s.write("    mov x0, x23\n");                         // cmdz
+        s = s.write("    mov x1, x24\n");                         // argv
+        s = s.write("    adrp x9, __fern_envp\n");
+        s = s.write("    add x9, x9, :lo12:__fern_envp\n");
+        s = s.write("    ldr x2, [x9]\n");                        // envp
+        s = s.write("    mov x8, #221\n");
+        s = s.write("    svc #0\n");
+        // execve only returns on failure. Fall back to /bin/<cmd> and
+        // /usr/bin/<cmd> so bare names like "echo" / "sh" / "cat"
+        // resolve without re-implementing $PATH search.
+        // Compute cmd_len (cmdz length).
+        s = s.write("    mov x22, #0\n");                         // cmd_len
+        s = s.write(".Lsp_clen:\n");
+        s = s.write("    ldrb w9, [x23, x22]\n");
+        s = s.write("    cbz w9, .Lsp_clen_d\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lsp_clen\n");
+        s = s.write(".Lsp_clen_d:\n");
+        // Try /bin/<cmd> (5 + cmd_len + 1).
+        s = s.write("    add x0, x22, #6\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x25, x0\n");                         // path buf
+        s = s.write("    mov w9, #47\n  strb w9, [x25]\n");       // '/'
+        s = s.write("    mov w9, #98\n  strb w9, [x25, #1]\n");   // 'b'
+        s = s.write("    mov w9, #105\n strb w9, [x25, #2]\n");   // 'i'
+        s = s.write("    mov w9, #110\n strb w9, [x25, #3]\n");   // 'n'
+        s = s.write("    mov w9, #47\n  strb w9, [x25, #4]\n");   // '/'
+        s = s.write("    mov x10, #0\n");
+        s = s.write(".Lsp_bcopy:\n");
+        s = s.write("    cmp x10, x22\n");
+        s = s.write("    b.ge .Lsp_bcopy_d\n");
+        s = s.write("    ldrb w11, [x23, x10]\n");
+        s = s.write("    add x9, x10, #5\n");
+        s = s.write("    strb w11, [x25, x9]\n");
+        s = s.write("    add x10, x10, #1\n");
+        s = s.write("    b .Lsp_bcopy\n");
+        s = s.write(".Lsp_bcopy_d:\n");
+        s = s.write("    add x9, x22, #5\n");
+        s = s.write("    mov w11, #0\n");
+        s = s.write("    strb w11, [x25, x9]\n");                 // NUL
+        s = s.write("    mov x0, x25\n");
+        s = s.write("    mov x1, x24\n");
+        s = s.write("    adrp x9, __fern_envp\n");
+        s = s.write("    add x9, x9, :lo12:__fern_envp\n");
+        s = s.write("    ldr x2, [x9]\n");
+        s = s.write("    mov x8, #221\n");
+        s = s.write("    svc #0\n");
+        // Try /usr/bin/<cmd> (9 + cmd_len + 1).
+        s = s.write("    add x0, x22, #10\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x25, x0\n");
+        s = s.write("    mov w9, #47\n  strb w9, [x25]\n");
+        s = s.write("    mov w9, #117\n strb w9, [x25, #1]\n");   // 'u'
+        s = s.write("    mov w9, #115\n strb w9, [x25, #2]\n");   // 's'
+        s = s.write("    mov w9, #114\n strb w9, [x25, #3]\n");   // 'r'
+        s = s.write("    mov w9, #47\n  strb w9, [x25, #4]\n");
+        s = s.write("    mov w9, #98\n  strb w9, [x25, #5]\n");
+        s = s.write("    mov w9, #105\n strb w9, [x25, #6]\n");
+        s = s.write("    mov w9, #110\n strb w9, [x25, #7]\n");
+        s = s.write("    mov w9, #47\n  strb w9, [x25, #8]\n");
+        s = s.write("    mov x10, #0\n");
+        s = s.write(".Lsp_ucopy:\n");
+        s = s.write("    cmp x10, x22\n");
+        s = s.write("    b.ge .Lsp_ucopy_d\n");
+        s = s.write("    ldrb w11, [x23, x10]\n");
+        s = s.write("    add x9, x10, #9\n");
+        s = s.write("    strb w11, [x25, x9]\n");
+        s = s.write("    add x10, x10, #1\n");
+        s = s.write("    b .Lsp_ucopy\n");
+        s = s.write(".Lsp_ucopy_d:\n");
+        s = s.write("    add x9, x22, #9\n");
+        s = s.write("    mov w11, #0\n");
+        s = s.write("    strb w11, [x25, x9]\n");
+        s = s.write("    mov x0, x25\n");
+        s = s.write("    mov x1, x24\n");
+        s = s.write("    adrp x9, __fern_envp\n");
+        s = s.write("    add x9, x9, :lo12:__fern_envp\n");
+        s = s.write("    ldr x2, [x9]\n");
+        s = s.write("    mov x8, #221\n");
+        s = s.write("    svc #0\n");
+        // All execve attempts failed → exit(127).
+        s = s.write("    mov x0, #127\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
+        // ---------- PARENT ----------
+        s = s.write(".Lsp_parent:\n");
+        s = s.write("    mov x22, x0\n");                         // child pid
+        // Close child ends: in_r, out_w, err_w.
+        s = s.write("    ldr w0, [sp, #96]\n   mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n  svc #0\n");
+        s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n  svc #0\n");
+        // Write stdin payload (if any) to in_w, then close in_w.
+        s = s.write("    ldr x2, [x21, #8]\n");                   // stdin len
+        s = s.write("    cbz x2, .Lsp_close_in\n");
+        s = s.write("    ldr w0, [sp, #100]\n");                  // in_w
+        s = s.write("    ldr x1, [x21]\n");                       // stdin data
+        s = s.write("    mov x8, #64\n");                         // write
+        s = s.write("    svc #0\n");
+        s = s.write(".Lsp_close_in:\n");
+        s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n  svc #0\n");
+        // Read stdout to EOF into 64 KiB buf. x25 = buf, x26 = total.
+        s = s.write("    mov x0, #65536\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x25, x0\n");
+        s = s.write("    mov x26, #0\n");
+        s = s.write(".Lsp_rdo:\n");
+        s = s.write("    mov x2, #65536\n");
+        s = s.write("    sub x2, x2, x26\n");
+        s = s.write("    cmp x2, #0\n");
+        s = s.write("    b.le .Lsp_rdo_d\n");
+        s = s.write("    ldr w0, [sp, #104]\n");                  // out_r
+        s = s.write("    add x1, x25, x26\n");
+        s = s.write("    mov x8, #63\n");                         // read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Lsp_rdo_d\n");
+        s = s.write("    add x26, x26, x0\n");
+        s = s.write("    b .Lsp_rdo\n");
+        s = s.write(".Lsp_rdo_d:\n");
+        s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n  svc #0\n");
+        // Read stderr similarly. x27 = buf, x28 = total.
+        s = s.write("    mov x0, #65536\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x27, x0\n");
+        s = s.write("    mov x28, #0\n");
+        s = s.write(".Lsp_rde:\n");
+        s = s.write("    mov x2, #65536\n");
+        s = s.write("    sub x2, x2, x28\n");
+        s = s.write("    cmp x2, #0\n");
+        s = s.write("    b.le .Lsp_rde_d\n");
+        s = s.write("    ldr w0, [sp, #112]\n");                  // err_r
+        s = s.write("    add x1, x27, x28\n");
+        s = s.write("    mov x8, #63\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Lsp_rde_d\n");
+        s = s.write("    add x28, x28, x0\n");
+        s = s.write("    b .Lsp_rde\n");
+        s = s.write(".Lsp_rde_d:\n");
+        s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n  svc #0\n");
+        // wait4(pid, &status, 0, NULL).
+        s = s.write("    mov x0, x22\n");
+        s = s.write("    add x1, sp, #120\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x3, #0\n");
+        s = s.write("    mov x8, #260\n");
+        s = s.write("    svc #0\n");
+        // Decode exit status.
+        s = s.write("    ldr w9, [sp, #120]\n");
+        s = s.write("    and w10, w9, #127\n");                  // sig
+        s = s.write("    cbnz w10, .Lsp_signaled\n");
+        s = s.write("    lsr w9, w9, #8\n");
+        s = s.write("    and w9, w9, #255\n");
+        s = s.write("    b .Lsp_have_exit\n");
+        s = s.write(".Lsp_signaled:\n");
+        s = s.write("    and w9, w9, #127\n");
+        s = s.write("    add w9, w9, #128\n");
+        s = s.write(".Lsp_have_exit:\n");
+        s = s.write("    mov x22, x9\n");                         // exit_code (full reg, x22)
+        // Build stdout box {data=x25, len=x26}.
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x25, [x0]\n");
+        s = s.write("    str x26, [x0, #8]\n");
+        s = s.write("    mov x25, x0\n");                         // stdout box
+        // Build stderr box {data=x27, len=x28}.
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x27, [x0]\n");
+        s = s.write("    str x28, [x0, #8]\n");
+        s = s.write("    mov x27, x0\n");                         // stderr box
+        // Build ProcessResult struct: [shape, stdout, stderr, exit_code].
+        s = s.write("    mov x0, #32\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    adrp x9, .S" + i32_to_string(prLitA.idx) + "\n");
+        s = s.write("    add x9, x9, :lo12:.S" + i32_to_string(prLitA.idx) + "\n");
+        s = s.write("    str x9, [x0]\n");
+        s = s.write("    str x25, [x0, #8]\n");
+        s = s.write("    str x27, [x0, #16]\n");
+        s = s.write("    str x22, [x0, #24]\n");
+        // Epilogue.
+        s = s.write("    ldp x27, x28, [sp, #80]\n");
+        s = s.write("    ldp x25, x26, [sp, #64]\n");
+        s = s.write("    ldp x23, x24, [sp, #48]\n");
+        s = s.write("    ldp x21, x22, [sp, #32]\n");
+        s = s.write("    ldp x19, x20, [sp, #16]\n");
+        s = s.write("    ldp x29, x30, [sp, #0]\n");
+        s = s.write("    add sp, sp, #224\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_subprocess, .-__fern_subprocess\n");
 
         // __fern_f64_to_string(x0 = IEEE-754 f64 bits) → string box.
         // arm64 mirror of asm.fern: fixed-precision decimal matching

@@ -464,10 +464,22 @@ planned order:
     execve returns. Unblocks `process_assertions_test`,
     `process_output_shortcuts_test`, and `lang_binary_e2e_test` —
     all three match the interpreter byte-for-byte and join the
-    differential gate. arm64 not yet implemented (the subprocess
-    helper alone is ~250 lines of asm and the call-site dispatch
-    isn't there); programs that use `subprocess` on arm64 still
-    fail to link (status quo).
+    differential gate.
+  - ✅ **`subprocess(cmd, args, stdin)` runtime helper (arm64).**
+    Arm64 mirror of the x86 implementation above. Same shape but
+    using arm64 syscalls — `pipe2`=59, `clone(SIGCHLD, 0, …)`=220
+    as the fork equivalent (arm64 Linux has no `fork`), `dup3`=24
+    in place of `dup2`, `close`=57 / `read`=63 / `write`=64 /
+    `execve`=221 / `wait4`=260 / `exit`=93 — with `__fern_envp`
+    loaded PC-relatively via `adrp` / `add` / `ldr`. Locals + 5
+    callee-saved pairs share a 224-byte frame (6 pipe fds + wait
+    status packed at +96..+123 from `sp`; scratch above).
+    `infer_expr_type` now recognises `subprocess` as returning
+    `"unknown"` so the `ProcessResult` field access routes through
+    shape-pointer dispatch. The 3 previously-skipped suites
+    (`process_assertions`, `process_output_shortcuts`,
+    `lang_binary_e2e`) now ride the arm64 gate too — the gate
+    sits at **49/49** on both backends.
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
