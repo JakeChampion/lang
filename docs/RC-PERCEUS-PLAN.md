@@ -1492,22 +1492,26 @@ We lower the same idea as a new IR op pair so the existing per-backend
     freelist; on a shared/null/sentinel value returns `0`. Drop-walk of
     rc fields still happens (their refs are going away regardless); only
     the **buffer free** is withheld so the token can carry it.
-  - `OpAllocReuse (token i32, size i32) → ptr` — if `token != 0` AND
-    the token's size class equals `size`'s class, return `token`
-    (in-place reuse); else fall through to the normal
-    `freelist-pop-or-bump` path of `__fern_alloc`. One new runtime
-    helper, `__fern_alloc_reuse(token, size)`, on each backend; it is a
-    three-instruction prologue in front of the existing `__fern_alloc`
-    body (compare classes, `cmov`/`select` the token, tail into alloc).
+  - `OpAllocReuse (token i32, tokenSize i32, size i32) → ptr` — if
+    `token != 0` AND `class(tokenSize) == class(size)`, return `token`
+    (in-place reuse); else **free the token** (when non-null) and fall
+    through to the normal `freelist-pop-or-bump` path of `__fern_alloc`.
+    One new runtime helper, `__fern_alloc_reuse(token, tokenSize, size)`,
+    on each backend (**SHIPPED, slice 5a** — see below).
 
-The token is a plain i32 on the operand stack / in a scratch local —
-no header bit, no type tag. Size-class equality is the only runtime
-guard, mirroring the freelist's existing class arithmetic
-(`(size+15)&-16`, classes 16…2048). A token whose class differs (or a
-`0` token) costs one compare + one branch and then allocates normally,
-so a mispaired reuse is **never unsound and never a leak** — it
-degrades to today's free+alloc. This preserves the Phase-1 invariant
-that "rc/reuse decisions only ever affect speed, never correctness".
+The token is a plain pointer on the operand stack / in a scratch local
+— no header bit, no type tag. It carries `tokenSize` (the dropped
+block's static allocation size) alongside it so the helper can compute
+`class(tokenSize)` and compare; a bare pointer can't recover its own
+size from the intrusive freelist, and without it a class mismatch would
+either overflow a too-small block (unsound) or leak the dropped one.
+Size-class equality mirrors the freelist's existing class arithmetic
+(`(sz+15)&-16`, exact-fit classes 16…2048). A token whose class differs
+is **freed back to its own class** and a fresh block allocated; a `0`
+token allocates directly. So a mispaired reuse is **never unsound and
+never a leak** — it degrades to today's free+alloc. This preserves the
+Phase-1 invariant that "rc/reuse decisions only ever affect speed,
+never correctness".
 
 ##### Where the pairing is decided (the analysis)
 
@@ -1559,14 +1563,22 @@ cancellation — bounded, but separable, so it ships last.
 
 ##### Slices
 
-  - **5a — IR ops + runtime helper, inert.** Add `OpDropReuse` /
-    `OpAllocReuse` and `__fern_alloc_reuse` on all three backends
-    (wasm `buildAllocReuseBody` in front of `buildAllocBody`; arm64 /
-    x86_64 mirrors). No pairing emitted yet — `OpAllocReuse` is only
-    reachable from a unit test that hands it a token. Proves the
-    reuse-vs-bump branch and the class-mismatch fallthrough on every
-    backend. `Test{WASM,X86_64,Arm64}AllocReuseSameClass` /
-    `…DifferentClassFallsThrough` / `…NullTokenAllocates`.
+  - **5a — runtime helper + shim, inert. SHIPPED (x86_64 verified;
+    arm64 + wasm ride CI).** `__fern_alloc_reuse(token, tokenSize,
+    size)` on all three backends (wasm `buildAllocReuseBody` calling
+    `__fern_alloc` + `__free`; arm64 `emitAllocReuseRuntime` and the
+    x86_64 mirror — each a small prologue that tail-calls
+    `__fern_alloc`). No pairing emitted yet (the dedicated `OpDropReuse`
+    / `OpAllocReuse` IR ops arrive with the pairing in 5b); the helper
+    is exposed as the `__alloc_reuse(token, tokenSize, size)` builtin
+    shim (checker sig, native call-name map + use-flag, wasm `needs()`
+    dep) so the runtime branches are testable in isolation. Tests
+    (`Test{X86_64,Arm64,WASM}AllocReuse`, flag-on): `sameClass`
+    (in-place reuse — `b == a`), `nullToken` (degrades to a fresh
+    distinct alloc — `b != 0 && b != a`), and `mismatch` (token freed +
+    fresh alloc — `b != a` — and the freed token reappears from its
+    class's freelist on the next same-class `__alloc` — `c == a`,
+    proving slow-not-wrong without a leak).
   - **5b — struct field-update reuse.** Pair a dropped owned struct
     local with an immediately-following `StructLit` of the same type
     (`bump(p)` shape). The narrowest, highest-confidence case (single

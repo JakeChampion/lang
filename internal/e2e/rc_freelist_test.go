@@ -462,3 +462,116 @@ func TestArm64FreelistReuse(t *testing.T) {
 		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", code)
 	}
 }
+
+// --- Phase 5 slice 5a: __fern_alloc_reuse in isolation ------------
+//
+// allocReuseSrc is the shared body for the flag-on drop-reuse (FBIP)
+// primitive across backends. The pairing analysis (slices 5b+) is not
+// wired yet, so these call the `__alloc_reuse(token, tokenSize, size)`
+// shim directly to prove the three runtime branches:
+//
+//   - sameClass: a live token whose size class matches `size` is
+//     handed straight back — in-place storage reuse (b == a).
+//   - nullToken: a 0 token degrades to a plain allocation, returning a
+//     fresh block distinct from any live one (b != 0, b != a).
+//   - mismatch: a token whose class differs is freed (not leaked) and
+//     a fresh block of the requested class is returned (b != a); the
+//     freed token then reappears from its own class's freelist on the
+//     next same-class __alloc (c == a) — the slow-not-wrong backstop.
+//
+// Each program returns 0 on success. Natives import core/no_prelude
+// (matching freelistReuseSrc); the wasm variants omit it (the wasm
+// harness uses the auto-prelude).
+var allocReuseSrc = struct{ sameClass, nullToken, mismatch string }{
+	sameClass: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 64);
+    if (a == b) { return 0; }
+    return 1;
+}`,
+	nullToken: `import "core/no_prelude";
+function main(): i32 {
+    var z: usize = 0;
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(z, 0, 64);
+    if (b == 0) { return 1; }
+    if (b == a) { return 2; }
+    return 0;
+}`,
+	mismatch: `import "core/no_prelude";
+function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 32);
+    if (a == b) { return 1; }
+    var c: usize = __alloc(64);
+    if (a == c) { return 0; }
+    return 2;
+}`,
+}
+
+func TestX86_64AllocReuse(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
+	}
+}
+
+func TestArm64AllocReuse(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.sameClass); code != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.nullToken); code != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, allocReuseSrc.mismatch); code != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", code)
+	}
+}
+
+// Wasm mirror. SKIPs without wasmtime (rides CI). Sets RcFreeEnabled
+// around runWasm like TestWASMFreelistReuse.
+func TestWASMAllocReuse(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	sameClass := `function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 64);
+    if (a == b) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, sameClass); got != 0 {
+		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", got)
+	}
+
+	nullToken := `function main(): i32 {
+    var z: usize = 0;
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(z, 0, 64);
+    if (b == 0) { return 1; }
+    if (b == a) { return 2; }
+    return 0;
+}`
+	if got := runWasm(t, nullToken); got != 0 {
+		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", got)
+	}
+
+	mismatch := `function main(): i32 {
+    var a: usize = __alloc(64);
+    var b: usize = __alloc_reuse(a, 64, 32);
+    if (a == b) { return 1; }
+    var c: usize = __alloc(64);
+    if (a == c) { return 0; }
+    return 2;
+}`
+	if got := runWasm(t, mismatch); got != 0 {
+		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", got)
+	}
+}

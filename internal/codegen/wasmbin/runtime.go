@@ -450,6 +450,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add(op.Str)
 				case "__free":
 					needs.add("__free")
+				case "__alloc_reuse":
+					needs.add("__alloc_reuse")
+					needs.add("__fern_alloc")
+					needs.add("__free")
 				case "__fern_arr_dec":
 					needs.add("__fern_arr_dec")
 					needs.add("__free")
@@ -901,6 +905,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildFreeBody,
+	},
+	"__alloc_reuse": {
+		// (token, tokenSize, size) → i32. Phase 5 drop-reuse (FBIP)
+		// primitive: reuse the dropped block in place on a size-class
+		// match, else free it and allocate afresh. See
+		// buildAllocReuseBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildAllocReuseBody,
 	},
 	"__fern_arr_dec": {
 		// (data, stride) → data. Phase 3 step-4 size-aware array
@@ -2490,6 +2503,55 @@ func buildAliasAllocBody(helperIdxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, helperIdxs["__fern_alloc"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildAllocReuseBody — (token, tokenSize, size) → i32. The Phase 5
+// drop-reuse (FBIP) primitive (wasm mirror of the native helpers).
+// When `token` is a live block whose 16-byte size class matches
+// `size`'s, hands it straight back (in-place reuse: no free, no alloc).
+// When `token` is null, or the classes differ, it frees the (non-null)
+// dropped block and allocates `size` bytes via __fern_alloc — so a
+// mispaired reuse is only ever slower, never unsound (the matching
+// class guarantees the reused block is wide enough). Class arithmetic
+// ((sz+15)&-16, exact-fit 16..2048 classes) mirrors __fern_alloc /
+// __free.
+//
+// Locals: 0=token, 1=tokenSize, 2=size (params).
+func buildAllocReuseBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__fern_alloc"]
+	free := helperIdxs["__free"]
+	var body []byte
+	// if token == 0 → return __fern_alloc(size)
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// if class(tokenSize) == class(size) → return token
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 15)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -16)
+	body = numeric.InstI32And(body)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 15)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -16)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// mismatch: __free(token, tokenSize); return __fern_alloc(size)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, free)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, alloc)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

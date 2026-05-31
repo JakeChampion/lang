@@ -286,6 +286,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesFree {
 		g.emitFreeRuntime()
 	}
+	if g.usesAllocReuse {
+		g.emitAllocReuseRuntime()
+	}
 	if g.usesArrDec {
 		g.emitArrDecRuntime()
 	}
@@ -803,6 +806,48 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.sizeDirective("__fern_free")
+	g.line(".ltorg")
+}
+
+// emitAllocReuseRuntime emits
+// `__fern_alloc_reuse(token, tokenSize, size) -> ptr` — the Phase 5
+// drop-reuse (FBIP) primitive (arm64 mirror of the x86_64 helper).
+// On a live token whose 16-byte size class matches `size`'s, returns
+// the token in place (no free, no alloc); on a null token or class
+// mismatch, frees the (non-null) dropped block and allocates afresh,
+// so a mispaired reuse is slow-not-wrong. Class arithmetic mirrors
+// __fern_alloc / __fern_free ((sz+15)&-16, exact-fit 16..2048).
+// AAPCS64: x0 = token, x1 = tokenSize, x2 = size. Leaf except on the
+// mismatch path (it calls __fern_free, so it frames there); the reuse
+// and fresh-alloc paths tail into __fern_alloc.
+func (g *generator) emitAllocReuseRuntime() {
+	g.line("")
+	g.line(".global __fern_alloc_reuse")
+	g.typeDirective("__fern_alloc_reuse")
+	g.label("__fern_alloc_reuse")
+	g.emit("cbz x0, .Lreuse_fresh") // null token → plain alloc(size)
+	// class(tokenSize) in x3, class(size) in x4
+	g.emit("add x3, x1, #15")
+	g.emit("and x3, x3, #-16")
+	g.emit("add x4, x2, #15")
+	g.emit("and x4, x4, #-16")
+	g.emit("cmp x3, x4")
+	g.emit("b.ne .Lreuse_mismatch")
+	// Classes match: reuse in place — x0 already holds token.
+	g.emit("ret")
+	g.label(".Lreuse_mismatch")
+	// Free the dropped block (x0=token, x1=tokenSize), preserving
+	// size (x2) and the return address across the call.
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("str x2, [sp, #-16]!") // save size (keep 16-align)
+	g.emit("bl __fern_free")
+	g.emit("ldr x2, [sp], #16") // restore size
+	g.emit("ldp x29, x30, [sp], #16")
+	g.label(".Lreuse_fresh")
+	g.emit("mov x0, x2") // size
+	g.emit("b __fern_alloc") // tail call
+	g.sizeDirective("__fern_alloc_reuse")
 	g.line(".ltorg")
 }
 
@@ -5184,6 +5229,12 @@ type generator struct {
 	// usesArrDec gates `__fern_arr_dec` — the size-aware array dec
 	// that frees the buffer at rc==0. Pulls in __fern_free.
 	usesArrDec bool
+	// usesAllocReuse gates `__fern_alloc_reuse` — the Phase 5
+	// drop-reuse (FBIP) primitive `(token, tokenSize, size) -> ptr`.
+	// Reuses a dropped block's storage in place on a size-class
+	// match, else frees it and allocates afresh. Pulls in
+	// __fern_alloc + __fern_free.
+	usesAllocReuse bool
 	// usesMapDrop gates `__fern_map_drop` — the Phase 3 map
 	// reclamation handler that frees the buf + handle at rc==1.
 	// Pulls in __fern_free when the flag is on.
@@ -7262,6 +7313,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAlloc = true
 		case "__free":
 			target = "__fern_free"
+			g.usesFree = true
+			g.usesAlloc = true
+		case "__alloc_reuse":
+			target = "__fern_alloc_reuse"
+			g.usesAllocReuse = true
 			g.usesFree = true
 			g.usesAlloc = true
 		case "__fern_arr_dec":

@@ -213,6 +213,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrDec {
 		g.emitArrDecRuntime()
 	}
+	if g.usesAllocReuse {
+		g.emitAllocReuseRuntime()
+	}
 	if g.usesMapDrop {
 		g.emitMapDropRuntime()
 	}
@@ -480,6 +483,12 @@ type generator struct {
 	// that frees the buffer at rc==0 (plain-array scope-exit +
 	// array dec-on-overwrite). Pulls in __fern_free.
 	usesArrDec bool
+	// usesAllocReuse gates `__fern_alloc_reuse` — the Phase 5
+	// drop-reuse (FBIP) primitive `(token, tokenSize, size) -> ptr`
+	// that reuses a dropped block's storage in place when its size
+	// class matches, else frees it and allocates afresh. Pulls in
+	// __fern_alloc + __fern_free.
+	usesAllocReuse bool
 	// usesMapDrop gates `__fern_map_drop` — the Phase 3 map
 	// reclamation handler that frees the buf + handle at rc==1
 	// (Map scope-exit). Pulls in __fern_free when the flag is on.
@@ -551,6 +560,10 @@ func (g *generator) recordUse(target string) {
 	case "__alloc":
 		g.usesAlloc = true
 	case "__free":
+		g.usesFree = true
+		g.usesAlloc = true
+	case "__alloc_reuse":
+		g.usesAllocReuse = true
 		g.usesFree = true
 		g.usesAlloc = true
 	case "__fern_arr_dec":
@@ -1673,6 +1686,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_alloc"
 		case "__free":
 			target = "__fern_free"
+		case "__alloc_reuse":
+			target = "__fern_alloc_reuse"
 		case "__memcpy":
 			target = "__fern_memcpy"
 		case "__slice_make":
@@ -2907,6 +2922,58 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.line(".size __fern_free, .-__fern_free")
+}
+
+// emitAllocReuseRuntime emits
+// `__fern_alloc_reuse(token: i64, tokenSize: i64, size: i64) -> i64`
+// — the Phase 5 drop-reuse (FBIP) primitive. When `token` is a live
+// block whose 16-byte size class matches `size`'s, it hands the block
+// straight back (in-place reuse: no free, no alloc, no re-init of the
+// fields the constructor is about to overwrite). When `token` is null,
+// or the classes differ, it degrades to a plain allocation — freeing
+// the (non-null) dropped block first so nothing leaks — which is why a
+// mispaired reuse is only ever slower, never unsound. The class
+// arithmetic mirrors __fern_alloc / __fern_free exactly
+// ((sz+15)&-16, exact-fit 16..2048 classes), so a match guarantees the
+// reused block is wide enough for the new value.
+//
+// System V: rdi = token, rsi = tokenSize, rdx = size. Non-leaf only on
+// the class-mismatch path (it calls __fern_free); the reuse and the
+// fresh-alloc paths tail into __fern_alloc with no frame.
+func (g *generator) emitAllocReuseRuntime() {
+	g.line("")
+	g.line(".globl __fern_alloc_reuse")
+	g.line(".type __fern_alloc_reuse, @function")
+	g.label("__fern_alloc_reuse")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lreuse_fresh") // null token → plain alloc(size)
+	// class(tokenSize) in rax, class(size) in rcx
+	g.emit("mov rax, rsi")
+	g.emit("add rax, 15")
+	g.emit("and rax, -16")
+	g.emit("mov rcx, rdx")
+	g.emit("add rcx, 15")
+	g.emit("and rcx, -16")
+	g.emit("cmp rax, rcx")
+	g.emit("jne .Lreuse_mismatch")
+	// Classes match: reuse the block in place — return token.
+	g.emit("mov rax, rdi")
+	g.emit("ret")
+	g.label(".Lreuse_mismatch")
+	// Free the dropped block (rdi=token, rsi=tokenSize), preserving
+	// size (rdx) across the call, then fall into the fresh alloc.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rdx") // save size
+	g.emit("sub rsp, 8") // 16-byte align for the call
+	g.emit("call __fern_free")
+	g.emit("add rsp, 8")
+	g.emit("pop rdx") // restore size
+	g.emit("pop rbp")
+	g.label(".Lreuse_fresh")
+	g.emit("mov rdi, rdx") // size
+	g.emit("jmp __fern_alloc") // tail call
+	g.line(".size __fern_alloc_reuse, .-__fern_alloc_reuse")
 }
 
 // emitArrDecRuntime emits `__fern_arr_dec(data: i64, stride: i64)`
