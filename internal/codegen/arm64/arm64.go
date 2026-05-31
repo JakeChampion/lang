@@ -274,6 +274,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesMemcpy = true
 		g.usesAlloc = true
 	}
+	// read_file / write_file both NUL-terminate the path with an
+	// alloc + memcpy before openat (see emitNulTermPath2W) — pull
+	// the runtimes in so the helper links. read_file already needs
+	// __fern_alloc for the result string buffer; write_file gets
+	// it transitively too. The IoError box constructor is shared
+	// with the Reader/Writer family above; pulled in here for the
+	// programs that use file I/O without the Reader API.
+	if g.usesReadFile || g.usesWriteFile {
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 		// __fern_alloc_box piggybacks on __fern_alloc — the
