@@ -307,6 +307,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
 	}
+	if g.usesStrInc {
+		g.emitStrIncRuntime()
+	}
+	if g.usesStrDec {
+		g.emitStrDecRuntime()
+	}
+	if g.usesCellFree {
+		g.emitCellFreeRuntime()
+	}
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
@@ -1037,6 +1046,92 @@ func (g *generator) emitClosureDropRuntime() {
 	g.line(".ltorg")
 }
 
+// emitStrIncRuntime emits `__fern_str_inc(data, len) -> (data, len)` —
+// two-word string retain. Inline-tagged values (top bit of len) are
+// no-ops returning the pair unchanged; heap strings tail-call
+// __fern_rc_inc on data (which short-circuits on null / low-address /
+// static-sentinel). arm64 port of the wasm helper.
+func (g *generator) emitStrIncRuntime() {
+	g.line("")
+	g.line(".global __fern_str_inc")
+	g.typeDirective("__fern_str_inc")
+	g.label("__fern_str_inc")
+	// Inline tag: bit 63 of x1 set ⇒ packed bytes, no heap.
+	g.emit("tbnz x1, #63, .Lstrinc_ret")
+	// Heap path: inc the rc at [x0-8]. The rc bump is inlined here
+	// (rather than tail-calling __fern_rc_inc) because __fern_rc_inc
+	// uses x1 as scratch and would clobber the length — and str_inc
+	// must return the (data, len) pair intact in (x0, x1). A garbled
+	// length flows straight into the next strcat / store and either
+	// SIGSEGVs or triggers a multi-gigabyte alloc. Use w2 as scratch
+	// so x1 survives. Mirrors __fern_rc_inc's null / low-bit-tag /
+	// static-sentinel short-circuits.
+	g.emit("cbz x0, .Lstrinc_ret")
+	g.emit("tbnz x0, #0, .Lstrinc_ret")
+	g.emit("ldur w2, [x0, #-8]")
+	g.emit("tbnz w2, #31, .Lstrinc_ret")
+	g.emit("add w2, w2, #1")
+	g.emit("stur w2, [x0, #-8]")
+	g.label(".Lstrinc_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_inc")
+}
+
+// emitStrDecRuntime emits `__fern_str_dec(data, len) -> data` —
+// two-word string reclaim. Inline-tagged values are no-ops. Heap
+// strings: at rc==1 tail-call __fern_box_free(data, payload_size_at_data-4);
+// otherwise (rc>1 or static high-bit sentinel) tail-call __fern_rc_dec.
+// NULL / low-address guarded. arm64 port of the wasm helper.
+func (g *generator) emitStrDecRuntime() {
+	g.line("")
+	g.line(".global __fern_str_dec")
+	g.typeDirective("__fern_str_dec")
+	g.label("__fern_str_dec")
+	g.emit("tbnz x1, #63, .Lstrdec_ret")
+	g.emit("cbz x0, .Lstrdec_ret")
+	g.emit("cmp x0, #0x10000")
+	g.emit("b.lo .Lstrdec_ret")
+	g.emit("ldur w2, [x0, #-8]") // rc
+	g.emit("cmp w2, #1")
+	g.emit("b.ne .Lstrdec_dec")
+	// rc == 1: box_free(data, payload size at data-4).
+	g.emit("ldur w1, [x0, #-4]")
+	g.emit("b __fern_box_free")
+	g.label(".Lstrdec_dec")
+	g.emit("b __fern_rc_dec")
+	g.label(".Lstrdec_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_dec")
+}
+
+// emitCellFreeRuntime emits `__fern_cell_free(cell) -> cell` —
+// returns a 16-byte boxed (data, len) cell to the freelist. NULL /
+// low-address guarded; otherwise __fern_free(cell, 16). x19 saves the
+// cell across the bl so we can return it. arm64 port of the wasm helper.
+func (g *generator) emitCellFreeRuntime() {
+	g.line("")
+	g.line(".global __fern_cell_free")
+	g.typeDirective("__fern_cell_free")
+	g.label("__fern_cell_free")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0") // x19 = cell (default return)
+	g.emit("cbz x19, .Lcellfree_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Lcellfree_ret")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, #16")
+	g.emit("bl __fern_free")
+	g.label(".Lcellfree_ret")
+	g.emit("mov x0, x19")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_cell_free")
+	g.line(".ltorg")
+}
+
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
 // byte-grain copy. Word-grain bulk path runs in 8-byte chunks
 // since arm64 has 64-bit registers; tail loop handles the
@@ -1734,9 +1829,16 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.emit("movz x1, #0x8000, lsl #48") // inline-flag, length 0
 	g.emit("b .Lstrcat2w_ret")
 	g.label(".Lstrcat2w_alloc")
-	// Allocate the destination buffer. The new heap-form
-	// layout has no length prefix — alloc exactly total bytes.
-	g.emit("bl __fern_alloc")
+	// Allocate the destination buffer via the rc-headered allocator
+	// so the result carries a live rc=1 at data-8 and its payload
+	// size at data-4. Under Slice 2 these heap strings are rc-tracked
+	// (str_inc on aliases, str_dec on drops) and both helpers read
+	// [data-8] / [data-4]; a raw __fern_alloc buffer has no such
+	// header, so retaining a fresh concat (e.g. id(("a" + localStr)))
+	// read the word before the allocation and SIGSEGV'd. alloc_rc1
+	// adds the 8-byte header itself and returns data = base+8, so the
+	// memcpy offsets below are unchanged.
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x2, x0") // x2 = dst (temporary; clobbered by next call's args)
 	// Reserve dst in a stable callee-save by reusing x19 (we
 	// no longer need a_data as a single register since we'll
@@ -2380,9 +2482,15 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.label(".Lstrslice2w_nonempty")
 	// Materialise base byte pointer.
 	g.emitStrDataPtr2W("x19", "x19", "x20", 64) // x19 = base byte ptr; spill at [x29+64]
-	// Allocate new_len bytes for the heap output.
+	// Allocate new_len bytes for the heap output via the rc-headered
+	// allocator (rc=1 at data-8, payload size at data-4) so the
+	// substring is a real rc-tracked string — str_inc on an alias
+	// (e.g. `var w = words[i]` where the element is a slice) and
+	// str_dec on drop both read that header. A raw __fern_alloc
+	// buffer has none, so retaining a slice read before the
+	// allocation and SIGSEGV'd. Mirrors __fern_strcat / read_file.
 	g.emit("mov w0, w24")
-	g.emit("bl __fern_alloc")
+	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x23, x0") // x23 = dst
 	// memcpy(dst, base_ptr + low, new_len).
 	g.emit("add x1, x19, x21")
@@ -5206,6 +5314,16 @@ type generator struct {
 	// docs/RC-PERCEUS-PLAN.md.
 	usesRcInc bool
 	usesRcDec bool
+	// usesStrInc / usesStrDec / usesCellFree gate the two-word
+	// string runtime helpers — the arm64 port of the wasm
+	// __fern_str_inc / __fern_str_dec / __fern_cell_free. Tail-call
+	// __fern_rc_inc / __fern_rc_dec / __fern_box_free / __fern_free
+	// respectively on the heap path; inline-tagged values (top bit of
+	// len) short-circuit. Set when an OpCallDirect names one of these
+	// helpers in the IR walk.
+	usesStrInc   bool
+	usesStrDec   bool
+	usesCellFree bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter that __fern_rc_dec bumps). Set when the IR emits the
@@ -5911,6 +6029,18 @@ func (g *generator) slotIsString(idx int32) bool {
 	return ok
 }
 
+// twoWordStrHelperArgSlots is the hardcoded string-arg table the
+// OpCallDirect slot-count logic falls back to for built-in runtime
+// helpers that take a two-word string but are emitted with a bare
+// I32 arg count and no ArgTypes. The value is the total number of
+// operand-stack slots the helper's arguments occupy (each two-word
+// string counts as 2). __fern_str_inc / __fern_str_dec both take a
+// single (data, len) string → 2 slots.
+var twoWordStrHelperArgSlots = map[string]int{
+	"__fern_str_inc": 2,
+	"__fern_str_dec": 2,
+}
+
 // callArgTypes returns the parameter types of an OpCallDirect /
 // OpCallDirectPair, preferring the IR-stamped `op.ArgTypes`
 // (populated by the lowering pass from FuncSigs at the central
@@ -5948,6 +6078,13 @@ func returnIsString(g *generator, name string) bool {
 		return isStr
 	}
 	switch name {
+	case "__fern_str_inc":
+		// Two-word string retain: returns the (data, len) pair
+		// unchanged in (x0, x1). The post-call push must emit BOTH
+		// words so the retained string stays on the operand stack
+		// (e.g. for OpReturn of an aliased string). __fern_str_dec
+		// is deliberately absent — it returns only `data` (x0).
+		return true
 	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice", "strbuf_take":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
@@ -7294,6 +7431,24 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcInc = true
 		case "__fern_rc_dec":
 			g.usesRcDec = true
+		case "__fern_str_inc":
+			// Two-word string retain (arm64 + wasm). Tail-calls __fern_rc_inc
+			// on the heap path so we need both.
+			g.usesStrInc = true
+			g.usesRcInc = true
+		case "__fern_str_dec":
+			// Two-word string reclaim (arm64 + wasm). On rc==1 tail-calls
+			// __fern_box_free + needs __fern_rc_dec for the rc!=1 path.
+			// __fern_box_free internally calls __fern_free.
+			g.usesStrDec = true
+			g.usesBoxFree = true
+			g.usesFree = true
+			g.usesRcDec = true
+		case "__fern_cell_free":
+			// 16-byte boxed-cell free (paired with the wasm-style boxed-
+			// string map column walks). Tail-calls __fern_free.
+			g.usesCellFree = true
+			g.usesFree = true
 		case "__fern_rc_underflow_count":
 			g.usesRcUnderflowCount = true
 		case "__fern_arr_push_grow":
@@ -7607,8 +7762,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		argc := int(op.I32)
 		slotCount := argc
 		if ast.UseTwoWordStrings(8) {
-			argTypes := callArgTypes(g, op, argc)
-			if argTypes != nil {
+			if sw, ok := twoWordStrHelperArgSlots[target]; ok {
+				// Built-in two-word string runtime helpers — emitted
+				// from many IR sites with a bare I32:1 arg count and no
+				// ArgTypes, so callArgTypes can't see that their single
+				// logical string argument occupies two operand-stack
+				// slots (data, len). Without this the call pops just the
+				// top word (the length) into x0 and the helper reads it
+				// as the data pointer — SIGSEGV on literal strings (e.g.
+				// __fern_str_inc retaining an aliased generic id() param).
+				slotCount = sw
+			} else if argTypes := callArgTypes(g, op, argc); argTypes != nil {
 				slotCount = 0
 				for _, t := range argTypes {
 					if _, isStr := t.(ast.StringType); isStr {
