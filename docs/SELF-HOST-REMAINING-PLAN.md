@@ -493,6 +493,21 @@ planned order:
     Fern emitter is deterministic AND idempotent under self-
     recompilation — the first non-trivial proof that the self-host
     has reached its eigenvector. Runs in ~8 s; cheap to gate.
+  - ✅ **Arm64 stage-2 fixed-point gate.**
+    `TestSelfHostStage2FixedPointArm64` mirrors the x86 version
+    but for the arm64 emit path. mmc-arm64-stage1 (x86 host
+    binary, the cross-compiler-on-host pattern the differential
+    gate already uses) compiles `asm_arm64_load_run.fern` to ~6.8
+    MB of aarch64 asm; that links into mmc-arm64-stage2, a real
+    aarch64 binary running under qemu-aarch64 (or native on arm64
+    hardware). For 4 representative cases (`self`, `sort_wider`
+    — unsigned `cset lo/ls/hi/hs`, `float_math` — IEEE NaN
+    compares, `process_assertions` — `clone(SIGCHLD)` /
+    `dup3` / `execve` syscall fork) the arm64 asm emitted by
+    stage-1 (running on x86) and stage-2 (running under qemu) is
+    **byte-identical**. So the arm64 emit path is both
+    deterministic (host arch doesn't influence output) and
+    idempotent under self-recompilation. Runs in ~15 s.
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
