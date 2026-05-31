@@ -25,11 +25,12 @@ servers. Targets so far:
   `wasmtime run` or `wasmtime serve` (`wasi:http/incoming-handler`).
 
 The pipeline is end-to-end — lexer → recursive-descent parser → type checker
-(aggregated errors, did-you-mean hints) → closure conversion → IR lowering →
-IR optimisation → ARM64 (`.s`, Linux ELF or Mach-O via `-target arm64-darwin`)
-or WASM (`.wat` → preview-2 component) emitter. Both backends share the IR
-layer, so a new language feature usually needs only `Lower` + the IR; codegen
-picks it up for free.
+(aggregated errors, did-you-mean hints) → monomorphisation → closure
+conversion → IR lowering → IR optimisation → backend emitter: ARM64 (`.s`,
+Linux ELF or Mach-O via `-target arm64-darwin`), x86-64 (`.s`, Linux ELF), or
+WASM (preview-2 component). The native backends share the IR layer, so a new
+language feature usually needs only `Lower` + the IR; codegen picks it up for
+free.
 
 Inspired by Vladimir Keleshev's *Compiling to Assembly from Scratch*
 (https://keleshev.com/compiling-to-assembly-from-scratch), but designed
@@ -86,18 +87,18 @@ make run-factorial   # compile, link, run under qemu-aarch64
 ## Language at a glance
 
 ```
-struct Point { x: number, y: number }
+struct Point { x: i32, y: i32 }
 
-function (p: Point) magnitude(): number {
+function (p: Point) magnitude(): i32 {
   return p.x * p.x + p.y * p.y;
 }
 
-function factorial(n: number, acc: number): number {
+function factorial(n: i32, acc: i32): i32 {
   if (n == 0) { return acc; }
   return factorial(n - 1, acc * n);    // tail call → loop
 }
 
-function main(): number {
+function main(): i32 {
   var origin: Point = Point { x: 3, y: 4 };
   print("hello");                         // write(2) syscall on arm64, fd_write on wasm
   return origin.magnitude() + factorial(5, 1);
@@ -129,22 +130,26 @@ Supported:
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
   `for x in arr / "string"`, `switch` (comma-separated cases, `default`),
   `return`, `break`, `continue`, blocks, expression statements.
-- Types: `number` (32-bit signed), `boolean`, `void`, `float` (32-bit IEEE),
-  `string`, arrays (`number[]`), nominal structs, function types
-  (`(T, U) => V`).
+- Types: sized integers `i8` / `i16` / `i32` / `i64` / `u8` / `u16` /
+  `u32` / `u64` (with `isize` / `usize` aliases; `i32` is the default
+  literal type), `boolean`, `void`, `f32` / `f64` (IEEE, `float` is an
+  alias for `f32`), `string`, owned arrays (`i32[]`), non-owning slice
+  views (`[i32]`), tuples (`(i32, string)`), `Map[K, V]`, nominal
+  structs, generic structs/enums, and function types (`(T, U) => V`).
 - Operators: `+ - * / %`, `== != < > <= >=`, `&& || !`, bitwise
   `& | ^ << >>`, unary `-`. String `+` concatenates, `==` / `!=` compare
   contents, indexing returns the byte at a position.
-- Literals: number, boolean, float, string, arrays, struct constructors.
-- `len(s)` / `len(arr)`, compound assignment (`x += 7`), ternary
-  `cond ? then : else`, tail-call optimisation, and function values
-  (lowered to indirect calls).
+- Literals: integer, boolean, float, string, arrays, struct constructors.
+- `len(s)` / `len(arr)`, compound assignment (`x += 7`), `if` /
+  `match` as expressions (`var s = if (x > 0) { "+" } else { "-" };`),
+  tail-call optimisation, and function values (lowered to indirect
+  calls).
 
 Built-ins:
 
 - `print` / `write` / `eprint` / `putchar` — output (stdout newline-terminated,
   stdout raw, stderr, single byte).
-- `len(x): number`, `args(): string[]`, `exit(code): void`.
+- `len(x): i32`, `args(): string[]`, `exit(code): void`.
 - `stdin(): Reader` / `stdout(): Writer` / `stderr(): Writer` — standard
   streams with `.read_line()` / `.write(s)` methods.
 - `env(name): Option[string]` — environment lookup.
@@ -171,13 +176,13 @@ consumes the same `ir.Program`, so the optimisation pipeline lives in one place:
 |--------------------|--------------|
 | `Inline`           | Substitutes small leaf-function bodies, including ones with internal control flow / multiple returns. |
 | `FuseTee`          | Collapses adjacent `OpStoreLocal X ; OpLoadLocal X` to a single `OpTeeLocal X` (cleaner WAT, identity on ARM64). |
-| `TailCallOptimize` | Wraps the body in a loop and rewrites `OpCallDirect <self> ; OpReturn` to a parameter rebind plus `OpBr`. Currently unwired (the arm64 backend doesn't call it); kept for the upcoming x86-64 backend. |
+| `TailCallOptimize` | Wraps the body in a loop and rewrites `OpCallDirect <self> ; OpReturn` to a parameter rebind plus `OpBr`. Wired into every backend (arm64, x86-64, wasm), so self-tail recursion runs in O(1) stack depth everywhere. |
 | `FlattenBranches`  | `if (c) { return X; } return Y;` → typed value-returning if + one trailing return. |
 | `OptimizeCleanup`  | Iterates `PropagateCopies` (drop dead tees / stores) + `ConstPropagate` (replace loads of constant-bound slots) + `Fold` (constant arithmetic, constant-if pruning, const+drop) + `ReduceStrength` (`x * 2^k → x << k`, identity ops) to a fixed point. |
 | `EliminateDeadCode`| Drops ops between a terminator (`OpReturn` / `OpReturnVoid` / `OpBr`) and the next control-flow merge. |
 
-Concrete payoff — `function f(): number { var x: number = 7; var y:
-number = x + 3; return y * 2 + x; }` lowers to twelve IR ops and
+Concrete payoff — `function f(): i32 { var x: i32 = 7; var y:
+i32 = x + 3; return y * 2 + x; }` lowers to twelve IR ops and
 collapses to a single `const.i32 27 ; return` after the pipeline.
 
 ## Calling conventions
@@ -205,9 +210,12 @@ internal/ast/              # AST types + Position
 internal/checker/          # type checker + did-you-mean hints
 internal/closureconv/      # nested-function hoisting
 internal/ir/               # stack-machine IR + lowering + opt passes
-internal/codegen/          # ARM64 emitter (arm64/) + WASM emitter (wasm/)
+internal/codegen/          # arm64/, x86_64/, wasmbin/ emitters
+internal/native/           # pure-Go assemblers + ELF/Mach-O linkers
+internal/monomorph/        # generic instantiation
+internal/modload/          # module/import resolution
 internal/diag/             # error formatting with source context
-internal/e2e/              # end-to-end tests for both backends
+internal/e2e/              # end-to-end tests for every backend
 internal/interp/           # AST tree-walking interpreter (REPL)
 examples/                  # sample programs
 ```
