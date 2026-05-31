@@ -557,13 +557,33 @@ planned order:
     of one of those types had its tag default to `"unknown"`. Method
     calls like `(n as u32).to_string()` then fell through the primitive
     `.to_string()` dispatch (which keys on `prim_recv == "i32"`) to
-    struct shape-dispatch, segfaulting. Both backends now map these
-    name strings to the `i32` codegen path (and `u32[]` / `u64[]` /
-    `i64[]` to `array_i32`). Trade-off: u64-max loses
-    signed-vs-unsigned compare nuance (e.g. `max_u64` with values
-    near `2^64 - 1` still mis-sorts) — separate follow-up. Guarded by
-    `wider-int-as-cast-to-string` AsmRun case; `assert_at_wider_test`
-    and `array_at_and_f32_range_test` join the differential gate.
+    struct shape-dispatch, segfaulting. The first cut mapped these
+    name strings onto the `i32` codegen path; the follow-up below
+    promotes them to first-class tags so the unsigned compare path
+    gets exercised. Guarded by `wider-int-as-cast-to-string` AsmRun
+    case; `assert_at_wider_test` and `array_at_and_f32_range_test`
+    join the differential gate.
+  - ✅ **Unsigned compare semantics + wider-int array dispatch (x86).**
+    `ret_tag_of` now returns distinct `u32` / `u64` / `i64` / `usize`
+    / `isize` scalar tags and `array_u32` / `array_u64` / `array_i64`
+    array tags. `ExprBinary`'s integer compare emit detects unsigned
+    operand tags and picks `setb` / `setbe` / `seta` / `setae` instead
+    of `setl` / `setle` / `setg` / `setge`, so values near `u64::MAX`
+    sort by unsigned order. Method dispatch on the wider-int arrays —
+    `.len()` / `.is_empty()` / `.push()` / `.reverse()` / `.concat()`
+    / `.first()` / `.last()` / `arr[a:b]` slice and `for v in arr` —
+    now accepts every `is_int_array_tag`, not only the literal
+    `"array_i32"` string, so `for v in i64_arr { … }` iterates
+    correctly. Nineteen previously-broken `examples/tests/*_test.fern`
+    suites (`sort_wider`, `array_reductions`, `wide_numerics`,
+    `wider_array_contains_count`, `sorted_unique_range`,
+    `all_substring_array`, `array_prefix_suffix_subseq`, `batch7`,
+    `ci_string_and_log_kv`, `env_unreachable`,
+    `file_lines_and_timestamp`, `float`, `helpers`, `json_detail`,
+    `one_of_none_of`, `set_eq`, `string_count_and_dir_listing`,
+    `timing`, `unions_migrated`) join the differential gate.
+    arm64 mirror is a follow-up — the x86 self-host gate is the
+    one that diff-compares this on every PR.
   - ✅ **`.lines()` trailing-newline.** The self-host's `s.lines()`
     was sugar for `s.split("\n")` — so `"a\nb\nc\n".lines()` returned
     4 lines (including a phantom trailing empty), and `"".lines()`

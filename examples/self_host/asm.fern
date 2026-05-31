@@ -562,7 +562,7 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                     if (is_mapiter(rt) && fa.field == "has_next") { return "bool"; }
                     if (is_mapiter(rt) && fa.field == "key") { return "string"; }
                     if (is_mapiter(rt) && fa.field == "value") { return rt[8:rt.len()]; }
-                    if ((rt == "i32" || rt == "string") && fa.field == "to_string") {
+                    if ((is_int_tag(rt) || rt == "string") && fa.field == "to_string") {
                         return "string";
                     }
                     if ((rt == "f64" || rt == "f32" || rt == "float") && fa.field == "to_string") {
@@ -578,22 +578,25 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
                         return "bool";
                     }
                     if (fa.field == "len"
-                            && (rt == "string" || rt == "array_i32" || rt == "array_string" || rt == "array")) {
+                            && (rt == "string" || is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
                         return "i32";
                     }
                     if (fa.field == "is_empty"
-                            && (rt == "string" || rt == "array_i32" || rt == "array_string" || rt == "array")) {
+                            && (rt == "string" || is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
                         return "bool";
                     }
                     // `.push(x)` / `.reverse()` / `.concat(b)` return the same array type.
                     if ((fa.field == "push" || fa.field == "reverse" || fa.field == "concat")
-                            && (rt == "array_i32" || rt == "array_string" || rt == "array")) {
+                            && (is_int_array_tag(rt) || rt == "array_string" || rt == "array")) {
                         return rt;
                     }
                     // `.first()` / `.last()` return the element type.
                     if ((fa.field == "first" || fa.field == "last")
-                            && (rt == "array_i32" || rt == "array_string")) {
+                            && (is_int_array_tag(rt) || rt == "array_string")) {
                         if (rt == "array_i32") { return "i32"; }
+                        if (rt == "array_u32") { return "u32"; }
+                        if (rt == "array_u64") { return "u64"; }
+                        if (rt == "array_i64") { return "i64"; }
                         return "string";
                     }
                     // i32/string-array search methods.
@@ -672,10 +675,14 @@ function infer_expr_type(e: parser.Expr, s: EmitState): string {
             // Container type drives element type:
             //   string → "i32" (byte)
             //   array_string → "string"
-            //   array_i32 / array → "i32"
+            //   array_u64 → "u64" (so element compares pick unsigned)
+            //   array_u32 → "u32"; array_i64 → "i64"; else → "i32"
             var at: string = infer_expr_type(x.array, s);
             if (at == "string") { return "i32"; }
             if (at == "array_string") { return "string"; }
+            if (at == "array_u64") { return "u64"; }
+            if (at == "array_u32") { return "u32"; }
+            if (at == "array_i64") { return "i64"; }
             return "i32";
         },
         parser.ExprSlice(sl) => {
@@ -812,17 +819,19 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
 // names, generics, etc.) fall through to "unknown".
 function ret_tag_of(name: string): string {
     if (name == "i32") { return "i32"; }
-    // Wider / unsigned integers share the i32 codegen path: the self-
-    // host stores every integer in an 8-byte slot, signed compares via
-    // cmp, no truncation. Routing them through the "i32" tag means
-    // `(n as u32).to_string()` etc. dispatches to __fern_i32_to_string
-    // instead of falling through to struct shape lookup (which
-    // segfaults). Loses signed-vs-unsigned compare nuance for u64-max
-    // arrays, but unblocks the common case used by std/test's
-    // assert_at_u32 / assert_at_u64 / wider-width helpers.
-    if (name == "u32" || name == "u64" || name == "i64"
-            || name == "usize" || name == "isize") { return "i32"; }
-    if (name == "u32[]" || name == "u64[]" || name == "i64[]") { return "array_i32"; }
+    // Wider / unsigned integer scalars get their own tags so the
+    // comparison emit can pick signed vs unsigned set instructions.
+    // Method dispatch (.to_string / .abs / .min etc.) goes through
+    // is_int_tag below, which accepts every integer tag — so the
+    // i32 codegen path still services all of them.
+    if (name == "u32") { return "u32"; }
+    if (name == "u64") { return "u64"; }
+    if (name == "i64") { return "i64"; }
+    if (name == "usize") { return "usize"; }
+    if (name == "isize") { return "isize"; }
+    if (name == "u32[]") { return "array_u32"; }
+    if (name == "u64[]") { return "array_u64"; }
+    if (name == "i64[]") { return "array_i64"; }
     if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     if (name == "bool" || name == "boolean") { return "bool"; }
     if (name == "string") { return "string"; }
@@ -932,6 +941,31 @@ function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
         _ => { }
     }
     return TwoTags { a: "i32", b: "i32" };
+}
+
+// is_int_tag accepts every integer-shaped type tag — i32 / i64 /
+// u32 / u64 / usize / isize — so method-dispatch sites that used
+// to check `tag == "i32"` keep accepting wider/unsigned values.
+function is_int_tag(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "u64" || t == "i64"
+        || t == "usize" || t == "isize";
+}
+
+// is_int_array_tag — same idea for arrays of integers.
+function is_int_array_tag(t: string): boolean {
+    return t == "array_i32" || t == "array_u32" || t == "array_u64"
+        || t == "array_i64";
+}
+
+// is_unsigned_tag picks out the tags whose values need unsigned
+// compare semantics (setb/setbe/seta/setae instead of setl/le/g/ge).
+function is_unsigned_tag(t: string): boolean {
+    return t == "u32" || t == "u64" || t == "usize";
+}
+
+// is_unsigned_int_array_tag — array element type is unsigned.
+function is_unsigned_int_array_tag(t: string): boolean {
+    return t == "array_u32" || t == "array_u64";
 }
 
 // generic_key_tag extracts the key-type tag from a `Map[K, V]` type
@@ -2978,12 +3012,18 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 // (lhs - rhs); setcc materialises the bool in
                 // %al, movzbq zero-extends into %rax so the
                 // surrounding stack push gets a clean 0/1.
+                // Pick signed vs unsigned set instructions from the
+                // operand tags — `u32` / `u64` / `usize` use
+                // setb / setbe / seta / setae so values near u64-max
+                // sort/compare in the expected order.
+                var is_unsigned: boolean = is_unsigned_tag(infer_expr_type(b.left, s))
+                    || is_unsigned_tag(infer_expr_type(b.right, s));
                 s = s.write("    cmpq %rcx, %rax\n");
                 var cc: string = "";
-                if (b.op == "<") { cc = "setl"; }
-                else if (b.op == "<=") { cc = "setle"; }
-                else if (b.op == ">") { cc = "setg"; }
-                else if (b.op == ">=") { cc = "setge"; }
+                if (b.op == "<") { if (is_unsigned) { cc = "setb"; } else { cc = "setl"; } }
+                else if (b.op == "<=") { if (is_unsigned) { cc = "setbe"; } else { cc = "setle"; } }
+                else if (b.op == ">") { if (is_unsigned) { cc = "seta"; } else { cc = "setg"; } }
+                else if (b.op == ">=") { if (is_unsigned) { cc = "setae"; } else { cc = "setge"; } }
                 else if (b.op == "==") { cc = "sete"; }
                 else { cc = "setne"; }
                 s = s.write("    " + cc + " %al\n");
@@ -3403,7 +3443,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     if (fa.field == "len" && c.args.len() == 0
                             && (prim_recv == "string"
                                 || prim_recv == "array"
-                                || prim_recv == "array_i32"
+                                || is_int_array_tag(prim_recv)
                                 || prim_recv == "array_string")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rax\n");
@@ -3422,9 +3462,9 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // `__fn_i32.to_string` symbol that no FuncDecl
                     // emits, producing a link error.
                     if (fa.field == "to_string" && c.args.len() == 0
-                            && (prim_recv == "i32" || prim_recv == "string")) {
+                            && (is_int_tag(prim_recv) || prim_recv == "string")) {
                         s = emit_expr(fa.obj, s);
-                        if (prim_recv == "i32") {
+                        if (is_int_tag(prim_recv)) {
                             s = s.write("    popq %rdi\n");
                             s = s.write("    call __fern_i32_to_string\n");
                             s = s.write("    pushq %rax\n");
@@ -3451,7 +3491,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // the length word directly.
                     if (fa.field == "len" && c.args.len() == 0
                             && (prim_recv == "string"
-                                || prim_recv == "array_i32"
+                                || is_int_array_tag(prim_recv)
                                 || prim_recv == "array_string"
                                 || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
@@ -3466,7 +3506,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     }
                     if (fa.field == "is_empty" && c.args.len() == 0
                             && (prim_recv == "string"
-                                || prim_recv == "array_i32"
+                                || is_int_array_tag(prim_recv)
                                 || prim_recv == "array_string"
                                 || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
@@ -3766,7 +3806,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // ptr; both are 8 bytes in the operand-stack
                     // representation). Returns a fresh array.
                     if (fa.field == "push" && c.args.len() == 1
-                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                            && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
@@ -3779,7 +3819,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.reverse()` on arrays — fresh
                     // array with elements in opposite order.
                     if (fa.field == "reverse" && c.args.len() == 0
-                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                            && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rdi\n");
                         s = s.write("    call __fern_arr_reverse\n");
@@ -3790,7 +3830,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.concat(other)` on arrays — fresh
                     // array of length `a.len + b.len`.
                     if (fa.field == "concat" && c.args.len() == 1
-                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                            && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = emit_expr(c.args[0], s);
                         s = s.write("    popq %rsi\n");
@@ -3803,7 +3843,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     // Built-in `.first()` / `.last()` on arrays —
                     // O(1) element access. UB on empty arrays.
                     if (fa.field == "first" && c.args.len() == 0
-                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                            && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rax\n");
                         s = s.write("    movq 8(%rax), %rax\n");
@@ -3811,7 +3851,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                         return s;
                     }
                     if (fa.field == "last" && c.args.len() == 0
-                            && (prim_recv == "array_i32" || prim_recv == "array_string" || prim_recv == "array")) {
+                            && (is_int_array_tag(prim_recv) || prim_recv == "array_string" || prim_recv == "array")) {
                         s = emit_expr(fa.obj, s);
                         s = s.write("    popq %rax\n");
                         s = s.write("    movq (%rax), %rcx\n");
@@ -5355,7 +5395,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    pushq %rax\n");
                 return s;
             }
-            if (st == "array_i32" || st == "array_string" || st == "array") {
+            if (is_int_array_tag(st) || st == "array_string" || st == "array") {
                 s = emit_expr(sl.array, s);
                 s = emit_expr(sl.start, s);
                 s = emit_expr(sl.end, s);
@@ -6172,6 +6212,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             }
             var elem_ty: string = "i32";
             if (iter_ty == "array_string") { elem_ty = "string"; }
+            if (iter_ty == "array_u32") { elem_ty = "u32"; }
+            if (iter_ty == "array_u64") { elem_ty = "u64"; }
+            if (iter_ty == "array_i64") { elem_ty = "i64"; }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
             s = s.bind_local(arr_name);
@@ -6408,8 +6451,8 @@ function is_wrapper(tag: string): boolean {
 }
 
 function is_concrete(tag: string): boolean {
-    return tag == "i32" || tag == "string" || tag == "bool" || tag == "f64"
-        || tag == "array_i32" || tag == "array_string" || tag == "array";
+    return is_int_tag(tag) || tag == "string" || tag == "bool" || tag == "f64"
+        || is_int_array_tag(tag) || tag == "array_string" || tag == "array";
 }
 
 // Conservative: reject ONLY when exactly one side is an Option/Result
@@ -6440,6 +6483,9 @@ function friendly_type(tag: string): string {
         return "Result[" + friendly_type(tag[7:tag.len()]) + ", _]";
     }
     if (tag == "array_i32") { return "i32[]"; }
+    if (tag == "array_u32") { return "u32[]"; }
+    if (tag == "array_u64") { return "u64[]"; }
+    if (tag == "array_i64") { return "i64[]"; }
     if (tag == "array_string") { return "string[]"; }
     return tag;
 }
@@ -6501,6 +6547,9 @@ function check_stmt(st: parser.Stmt, want: string, fname: string, ctx: CheckCtx)
             var it: string = infer_expr_type(fo.iter, ctx.st);
             var elem: string = "unknown";
             if (it == "array_i32") { elem = "i32"; }
+            if (it == "array_u32") { elem = "u32"; }
+            if (it == "array_u64") { elem = "u64"; }
+            if (it == "array_i64") { elem = "i64"; }
             if (it == "array_string") { elem = "string"; }
             ctx = CheckCtx { st: ctx.st.bind_local_typed(fo.var_name, elem), errs: ctx.errs };
             return check_stmts(fo.body, want, fname, ctx);
