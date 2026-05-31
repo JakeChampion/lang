@@ -5888,7 +5888,7 @@ func returnIsString(g *generator, name string) bool {
 		return isStr
 	}
 	switch name {
-	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice":
+	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice", "strbuf_take":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -7403,9 +7403,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "strbuf_append":
 			target = "__fern_strbuf_append"
 			g.usesStrBuf = true
+			// strbuf_append grows the buffer by copying old
+			// contents into a fresh allocation, so it pulls in
+			// __fern_memcpy. Mirror of the x86 backend.
+			g.usesMemcpy = true
 		case "strbuf_take":
 			target = "__fern_strbuf_take"
 			g.usesStrBuf = true
+			// strbuf_take allocates a new string box and memcpys
+			// the accumulator bytes into it.
+			g.usesAlloc = true
+			g.usesMemcpy = true
 		case "now_unix_ms":
 			// now_unix_ms(): wall-clock ms since the Unix
 			// epoch via clock_gettime(CLOCK_REALTIME, ...).

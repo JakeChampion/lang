@@ -508,6 +508,32 @@ planned order:
     **byte-identical**. So the arm64 emit path is both
     deterministic (host arch doesn't influence output) and
     idempotent under self-recompilation. Runs in ~15 s.
+  - ✅ **Arm64 backend `strbuf_take` return-shape fix.** The Go
+    arm64 backend's `returnIsString` table — which decides
+    whether `OpCallDirect`'s post-call push moves both `x0` (data
+    ptr) and `x1` (byte length) onto the operand stack — listed
+    `random_bytes` / `tcp_recv` / `string_from_bytes` /
+    `__str_slice` but NOT `strbuf_take`. So strbuf-take's
+    two-word return went through the single-word path: only `x0`
+    was pushed, the second-word `OpStoreLocal` read garbage from
+    the stack as the byte length, and any program using strbuf
+    silently mis-rendered its output (e.g. a 0x10000000-byte
+    write to fd 1 that EFAULTs, then the trailing newline from
+    `print`). The most visible symptom was the arm64 self-host
+    (`asm_arm64_load_run.fern`) compiling cleanly through the Go
+    arm64 backend but emitting **0 bytes of asm** at runtime —
+    the strbuf-take-then-print chain at the end of `emit_module`
+    dropped its payload. Also: the strbuf runtime references
+    `__fern_memcpy` (for the append + take memcpys) and
+    `__fern_alloc` (for take's fresh string box), so the
+    `strbuf_*` cases in arm64's `OpCallDirect` dispatch now set
+    `g.usesMemcpy` / `g.usesAlloc` to pull those runtimes in —
+    matching the x86 mirror. Without that, a program that used
+    only strbuf (and nothing else triggering memcpy / alloc)
+    failed to link with undefined `__fern_memcpy` references.
+    Pinned by `TestArm64StrBufTake` (3-char reproducer) +
+    `TestArm64StrBufLargeAppend` (1 000 × 5 bytes for the bump-
+    loop / multi-page path).
   - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
     With the `fn`-arg boxing fix below, both `bench_test` and
     `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
