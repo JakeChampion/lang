@@ -7267,10 +7267,13 @@ pub function emit_module(mod: parser.Module): string {
     // after this pool, inside the needs_heap block) can reference its
     // shape-name label. The helper's own add_string_lit dedups to this
     // slot; without the early intern the label would be undefined for
-    // programs that never mention stat() themselves.
+    // programs that never mention stat() themselves. Same for the
+    // __fern_subprocess helper's "ProcessResult" shape name.
     if (s.needs_heap) {
         var fsPre: StringLitOut = add_string_lit(s, "FileStat");
         s = fsPre.state;
+        var prPre: StringLitOut = add_string_lit(s, "ProcessResult");
+        s = prPre.state;
     }
     // .rodata: emit each interned string literal as a
     // labelled `.ascii` directive. GAS interprets the escape
