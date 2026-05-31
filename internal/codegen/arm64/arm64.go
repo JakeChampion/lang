@@ -7335,8 +7335,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_str_dec":
 			// Two-word string reclaim (arm64 + wasm). On rc==1 tail-calls
 			// __fern_box_free + needs __fern_rc_dec for the rc!=1 path.
+			// __fern_box_free internally calls __fern_free.
 			g.usesStrDec = true
 			g.usesBoxFree = true
+			g.usesFree = true
 			g.usesRcDec = true
 		case "__fern_cell_free":
 			// 16-byte boxed-cell free (paired with the wasm-style boxed-

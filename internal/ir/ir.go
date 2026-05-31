@@ -1975,12 +1975,14 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
 			return true
 		case ast.StringType:
-			// wasm two-word strings now alias-inc (__fern_str_inc), so
-			// they participate in move-on-return / move-on-alias like the
-			// other rc types: a returned string local cancels its
+			// Two-word string ABIs (wasm + arm64-TwoWordOverride) and
+			// native single-word (x86_64) all participate in move-on-
+			// return / move-on-alias now that the rc-tracked predicate is
+			// uniform for strings: a returned string local cancels its
 			// transfer-inc against the exit-sweep dec (no free under the
-			// caller). Gated ptrW==4 (wasm-only reclamation).
-			return b.ptrW == 4
+			// caller). The arm64 unblock landed __fern_str_inc / dec, so
+			// the boxed-string case applies too.
+			return true
 		}
 		return false
 	}
