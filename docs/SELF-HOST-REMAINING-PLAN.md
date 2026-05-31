@@ -448,6 +448,22 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **`fn`-typed args boxed (not called) on method calls.** The
+    free-function call path already detected when a bare ident
+    argument named a function whose callee param was `() => void` and
+    wrapped it as a closure value (`{&fn_ptr}`) — so
+    `call_n(3, my_workload)` correctly passed the function. The
+    **method-call** arg loop didn't, so `f.bench("…", n, my_workload)`
+    silently invoked `my_workload` 0-arg and passed the return value;
+    inside `bench`, `fn()` then dereferenced the garbage box and
+    segfaulted. Both backends' method-call arg loops now use
+    `arg_fn_value_name` like the free-fn path, and `callee_param_is_fn`
+    looks up both free and receiver methods. Both `bench_test` and
+    `rel_tol_and_ms_bench_test` now exit 0 through the self-host;
+    they aren't byte-identical to the interp (timing in `# bench …`
+    comment lines differs run-to-run) so they don't join the
+    differential gate, but the `method-fn-arg-boxed-not-called` AsmRun
+    case pins the codegen on both backends.
   - ✅ **Prefix-bracket type `[T]` no longer OOMs the parser.**
     `var ab: [u8] = …` left the `[` unconsumed (`parse_type_name`'s
     fall-through with no base ident / keyword / paren), so the

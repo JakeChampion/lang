@@ -185,6 +185,18 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// Method call with a `fn`-typed parameter — see x86 mirror.
+			"method-fn-arg-boxed-not-called",
+			"struct Foo { n: i32 } " +
+				"pub function (f: Foo) call_one(fn: () => void): Foo { " +
+				"fn(); return Foo { n: f.n + 99 }; } " +
+				"function noop() { } " +
+				"function main(): i32 { var f: Foo = Foo { n: 0 }; " +
+				"f = f.call_one(noop); return f.n; }",
+			99,
+			"",
+		},
+		{
 			// Receiver-method calls returning Option[T] — see x86 mirror.
 			"match-receiver-method-option-payload",
 			"struct Wrap { n: i32 } " +

@@ -308,6 +308,25 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// Method call with a `fn`-typed parameter: passing a bare
+			// function ident must box it as a closure value, not call
+			// it as a 0-arg function and pass the return value.
+			// Without this `f.bench("…", n, my_workload)` silently
+			// invoked my_workload zero times and the callee's `fn()`
+			// crashed on the garbage closure box. Free-function calls
+			// already had this; the method-call arg loop didn't.
+			"method-fn-arg-boxed-not-called",
+			"struct Foo { n: i32 } " +
+				"pub function (f: Foo) call_one(fn: () => void): Foo { " +
+				"fn(); return Foo { n: f.n + 99 }; } " +
+				"function noop() { } " +
+				"function main(): i32 { var f: Foo = Foo { n: 0 }; " +
+				"f = f.call_one(noop); return f.n; }",
+			99,
+			"",
+			"",
+		},
+		{
 			// Receiver-method calls returning Option[T] / Result[T, E]
 			// (e.g. `s.parse_int(): Option[i32]`) must surface their
 			// payload type in match arms — otherwise `Some(got) =>`
