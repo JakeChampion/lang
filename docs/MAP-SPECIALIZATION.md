@@ -164,6 +164,27 @@ call the specialized name is a 1-line change.
 > teaching Fold to track constant-slot bindings. Either way,
 > "1-line change at the emit site" undersells the work —
 > step 1 as a standalone PR isn't worth shipping.
+>
+> **Building block landed (2026-05-31).** The Fold-tracks-
+> constant-slot-bindings piece is now in: `ConstPropagate`
+> propagates constants across structured control-flow
+> scopes (OpBlock / OpIf / OpElse / OpEnd with per-branch
+> snapshot + merge), so an inlined function's compile-time-
+> constant parameter survives past the wrapper OpBlock and
+> the body's `if (keyKind == N)` guards. Verified
+> end-to-end on a synthetic 3-arm dispatcher in
+> `TestConstPropSpecialisesDispatchWithConstantTag`. This
+> still doesn't unlock `__map_hash` specialization on its
+> own — `__map_hash` is 149 IR ops, well over the
+> `inlineSizeLimit=80` budget, so the call doesn't get
+> inlined in the first place. To use this building block
+> for Map: either raise the inline budget for callees with
+> at least one compile-time-constant argument (specialization-
+> by-cloning), or pre-split `__map_hash` into smaller per-
+> kind helpers that each fit the existing budget (the same
+> direction the original step-1 sketch took, but now the
+> dispatcher's dead arms WILL fold away thanks to the
+> new constprop).
 
 Rollback if anything regresses: keep `__map_hash` for one
 release, gate the rewrite behind a build-tag (`+build
