@@ -1535,6 +1535,32 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 4 (string[] elements): a string[] local with FRESH element
+		// values gets its buffer + each element dec'd at scope exit on
+		// native single-word (x86_64) just like wasm. The wasm path goes
+		// through __fern_drop_arr_str (two-word elements); on natives
+		// the elements are single pointers so __fern_drop_arr_ptr does
+		// the same job (walks the array, __fern_rc_dec's each element,
+		// frees the buffer). SSO inline-tag low-bit guard in
+		// __fern_rc_dec keeps short inline elements safe; literal
+		// sentinel short-circuits on .LStr_N elements.
+		// Per iter: 24 + 24 = 48; 500x → 24000.
+		name: "native_string_array_local_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    var arr: string[] = ["value-aaaaaaaaaaaaaaaa-" + "1", "value-aaaaaaaaaaaaaaaa-" + "2"];
+    return arr[0].len() + arr[1].len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 24000) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.

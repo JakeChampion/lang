@@ -2184,9 +2184,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if arrElemIsRcTracked(at.Elem) {
 				helper = "__fern_drop_arr_ptr"
 			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 4 {
-				// string[]: walk + __fern_str_dec each two-word element,
-				// then free the buffer.
+				// string[] on wasm: walk + __fern_str_dec each two-word
+				// element, then free the buffer.
 				helper = "__fern_drop_arr_str"
+			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				// string[] on native single-word (x86_64, !TwoWordOverride):
+				// elements are single pointers; __fern_drop_arr_ptr walks +
+				// __fern_rc_dec's each one (SSO inline-tag low-bit guard
+				// in __fern_rc_dec keeps short inline strings safe).
+				helper = "__fern_drop_arr_ptr"
 			}
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
@@ -2222,6 +2228,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				return
+			}
+			// Native single-word string[] (x86_64, !TwoWordOverride): each
+			// element is a single pointer; __fern_drop_arr_ptr walks +
+			// __fern_rc_dec's each one. arm64 boxed strings excluded.
+			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
@@ -3419,6 +3435,11 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 			helper = "__fern_drop_arr_ptr"
 		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 4 {
 			helper = "__fern_drop_arr_str"
+		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			// string[] on native single-word: __fern_drop_arr_ptr walks +
+			// __fern_rc_dec's each pointer element. Same routing as the
+			// local-side gate above and the dropStructField gate.
+			helper = "__fern_drop_arr_ptr"
 		}
 		return append(ops,
 			Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
