@@ -448,6 +448,13 @@ planned order:
     ordered flags). Guarded by the `f64-nan-compares` AsmRun case on
     both backends; `float_math_test` and `float_array_strict_sort_test`
     now match the interpreter byte-for-byte and join the gate.
+  - ✅ **bench / rel_tol_and_ms_bench joined the differential gate.**
+    With the `fn`-arg boxing fix below, both `bench_test` and
+    `rel_tol_and_ms_bench_test` run cleanly end-to-end through the
+    self-host. Their `# bench …` comment lines carry per-iteration
+    timings that differ run-to-run, so the gate strips lines starting
+    with `# bench ` on both sides before comparing — the rest of the
+    TAP output is byte-identical to the interpreter.
   - ✅ **`fn`-typed args boxed (not called) on method calls.** The
     free-function call path already detected when a bare ident
     argument named a function whose callee param was `() => void` and
