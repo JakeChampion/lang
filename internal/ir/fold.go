@@ -151,9 +151,10 @@ func foldOnce(ops []Op) []Op {
 
 // pruneConstIf rewrites a constant-conditioned if-block. ops[i] is the
 // OpConstI32 condition; ops[i+1] is the matched OpIf. The function
-// returns the replacement op slice (the surviving arm's body) and the
-// boolean true on success. On failure the caller falls through to the
-// generic case.
+// returns the replacement op slice (the surviving arm wrapped in an
+// OpBlock so any internal `br N` keeps the same relative depth) and
+// the boolean true on success. On failure the caller falls through to
+// the generic case.
 //
 // The if-block layout in IR:
 //
@@ -165,7 +166,11 @@ func foldOnce(ops []Op) []Op {
 //	(k)    OpEnd
 //
 // On a non-zero condition the then-arm survives; on zero the else-arm
-// (or nothing, if there's no OpElse) survives.
+// (or nothing, if there's no OpElse) survives. The result reuses the
+// matched OpIf's blocktype on the wrapping OpBlock so an inner
+// `br 0` that originally targeted the OpIf's End still lands on the
+// same logical merge point and the wasm validator sees a stack-
+// balanced block.
 func pruneConstIf(ops []Op, i int) ([]Op, bool) {
 	thenStart := i + 2
 	elseIdx, endIdx := scanIfBlock(ops, i+1)
@@ -183,7 +188,42 @@ func pruneConstIf(ops []Op, i int) ([]Op, bool) {
 	} else if elseIdx >= 0 {
 		arm = ops[elseIdx+1 : endIdx]
 	}
-	return append([]Op{}, arm...), true
+	if !armNeedsWrapping(arm) {
+		return append([]Op{}, arm...), true
+	}
+	ifOp := ops[i+1]
+	out := make([]Op, 0, len(arm)+2)
+	out = append(out, Op{Kind: OpBlock, I32: ifOp.I32, Pos: ifOp.Pos})
+	out = append(out, arm...)
+	out = append(out, Op{Kind: OpEnd, Pos: ops[endIdx].Pos})
+	return out, true
+}
+
+// armNeedsWrapping reports whether splicing arm in place of the
+// enclosing OpIf would leave a stranded OpBr / OpBrIf whose depth
+// targeted the if's own scope (or higher). Walking the arm with a
+// local depth counter, any branch with `depth >= localDepth`
+// targeted the if itself or some outer scope — removing the if
+// would shift that depth by one and break wasm validation. The
+// caller wraps the arm in an OpBlock with the if's blocktype to
+// preserve the structure.
+func armNeedsWrapping(arm []Op) bool {
+	depth := 0
+	for _, op := range arm {
+		switch op.Kind {
+		case OpBlock, OpLoop, OpIf:
+			depth++
+		case OpEnd:
+			if depth > 0 {
+				depth--
+			}
+		case OpBr, OpBrIf:
+			if int(op.I32) >= depth {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // scanIfBlock locates the OpElse (if any) and OpEnd matching the OpIf
