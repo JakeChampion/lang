@@ -1561,6 +1561,29 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Slice 3 (string struct fields): a struct with a string field
+		// dec's that field at scope exit on native single-word (x86_64),
+		// mirroring wasm. The genStructDropFn body now loads the field
+		// as WidthPtr (single ptr on natives) and __fern_rc_dec's it,
+		// vs wasm's WidthString load + __fern_str_dec.
+		// Per iter: name.len()=26 + count=7 = 33; 500x → 16500.
+		name: "native_string_struct_field_reclaim",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/string";
+struct Item { name: string, count: i32 }
+function mk(): i32 {
+    var it: Item = Item { name: "value-aaaaaaaaaaaaaaaaaa-" + "1", count: 7 };
+    return it.name.len() + it.count;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Escape into a struct field: an owned array stored in a
 		// returned struct escapes the helper; freeing it at exit
 		// would strand the field. Churn forces reuse of a freed block.
