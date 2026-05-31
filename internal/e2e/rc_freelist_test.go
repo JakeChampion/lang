@@ -727,3 +727,90 @@ func TestWASMStructReuse(t *testing.T) {
 		})
 	}
 }
+
+// --- Phase 4: move-on-construction (FBIP pair-cancellation) -------
+//
+// `var s = Wrap{ inner: x }` at x's last use moves x's reference into
+// the field — the field-init inc and x's exit dec are both elided. The
+// struct's own field-drop then releases x exactly once. Correctness
+// can't distinguish this from the inc/dec version (same values), so the
+// IR test TestMoveOnConstructionElidesIncForLastUse pins that the inc
+// is gone; these pin that eliding it stays value-correct and 0
+// over-release under free, including the build+free churn.
+var moveOnConstructionCases = []struct{ name, src string }{
+	// One-shot: x moved into s.inner; s drops at scope exit, freeing the
+	// array; x's own dec is elided. sum == 60, 0 over-releases.
+	{"once", `struct Wrap { inner: i32[] }
+function build(): i32 {
+    var x: i32[] = [10, 20, 30];
+    var s: Wrap = Wrap { inner: x };
+    return s.inner[0] + s.inner[1] + s.inner[2];
+}
+function main(): i32 {
+    return (build() - 60) + __rc_underflow_count();
+}`},
+	// 100 build/move/drop/free cycles: each iteration builds a fresh
+	// array, moves it into a Wrap, reads it back, drops + frees. If the
+	// move mis-counted, a freed array would be reused and corrupt the
+	// read-back; folds __rc_underflow_count().
+	{"churn", `struct Wrap { inner: i32[] }
+function once(n: i32): i32 {
+    var x: i32[] = [n, n + 1];
+    var s: Wrap = Wrap { inner: x };
+    return s.inner[0] + s.inner[1];
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (2 * i + 1));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
+	// Composes with move-on-return: x moved into s, s moved out to the
+	// caller; the caller owns and frees the whole thing.
+	{"returned", `struct Wrap { inner: i32[] }
+function build(n: i32): Wrap {
+    var x: i32[] = [n, n + 1, n + 2];
+    var s: Wrap = Wrap { inner: x };
+    return s;
+}
+function main(): i32 {
+    var w: Wrap = build(5);
+    return (w.inner[0] + w.inner[1] + w.inner[2] - 18) + __rc_underflow_count();
+}`},
+}
+
+func TestX86_64MoveOnConstruction(t *testing.T) {
+	for _, c := range moveOnConstructionCases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestArm64MoveOnConstruction(t *testing.T) {
+	for _, c := range moveOnConstructionCases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, code)
+			}
+		})
+	}
+}
+
+func TestWASMMoveOnConstruction(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	for _, c := range moveOnConstructionCases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runWasm(t, c.src); got != 0 {
+				t.Errorf("%s: got %d, want 0", c.name, got)
+			}
+		})
+	}
+}

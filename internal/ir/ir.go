@@ -2072,21 +2072,33 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			// key the site on whichever the lowering will see.
 			var rhs *ast.Ident
 			var site ast.Node
+			var val ast.Expr
 			switch s := st.(type) {
 			case *ast.Var:
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
+				val = s.Init
 			case *ast.ExprStmt:
 				if a, ok := s.Expr.(*ast.Assign); ok {
 					if _, tok := a.Target.(*ast.Ident); tok {
 						rhs, _ = a.Value.(*ast.Ident)
 						site = a
+						val = a.Value
 					}
 				}
+			case *ast.Return:
+				val = s.Value
 			}
 			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
 				moved[rhs.Name] = true
 				b.moveSites[site] = true
+			}
+			// Move-on-construction: a struct literal built at this
+			// top-level statement that consumes an owned rc local at the
+			// local's last use moves it into the field (see
+			// markConstructionMoves).
+			if val != nil {
+				b.markConstructionMoves(val, identIdx, maxIdx, moved)
 			}
 		}
 		if stmtContainsReturn(st) {
@@ -2094,6 +2106,53 @@ func (b *builder) computeMovedLocals() map[string]bool {
 		}
 	}
 	return moved
+}
+
+// markConstructionMoves implements the move-on-construction slice of
+// Phase 4 pair-cancellation: when a struct literal built at a
+// dominating top-level statement consumes an OWNED rc local in a
+// non-string rc-tracked field at the local's LAST use
+// (`var s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
+// x's exit-sweep dec cancel — x's single reference is moved into the
+// struct's field. Skipping the inc (gated on b.moveSites[fieldIdent] at
+// the StructLit lowering) and x's dec (moved[x] excludes it from the
+// exit sweep) leaves the struct owning x; the struct's own field-drop
+// (emitDec) releases it exactly once, so the net rc is unchanged.
+//
+// The eligibility mirrors the inc/drop sides exactly: the field must be
+// `arrElemIsRcTracked` (array / struct / enum / closure / tuple — the
+// fields the StructLit inc's AND emitDec dec's; strings are excluded,
+// their two-word retain/release diverges per backend), and the value
+// must be an owned rc local (isOwnedRcLocal) whose occurrence here is
+// its max pre-order index. The caller has already established the
+// dominance guards (top-level statement, no preceding return), so —
+// exactly as move-on-alias — x is moved on every path to an exit.
+func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]int, maxIdx map[string]int, moved map[string]bool) {
+	sl, ok := val.(*ast.StructLit)
+	if !ok {
+		return
+	}
+	sd, ok := b.info.Structs[sl.TypeName]
+	if !ok {
+		return
+	}
+	for _, f := range sl.Fields {
+		id, ok := f.Value.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if !arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+			continue
+		}
+		if !b.isOwnedRcLocal(id.Name) {
+			continue
+		}
+		if identIdx[id] != maxIdx[id.Name] {
+			continue
+		}
+		moved[id.Name] = true
+		b.moveSites[id] = true
+	}
 }
 
 // stmtContainsReturn reports whether a statement (or anything nested
@@ -6752,7 +6811,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// Index) and the field type is an array. Strings /
 			// structs / enums / closures join in Phase 1e along
 			// with their matching drop handlers.
-			if needsRcIncOnAlias(f.Value, b) {
+			//
+			// Phase 4 move-on-construction: when this field consumes an
+			// owned rc local at its last use (b.moveSites set by
+			// markConstructionMoves), skip the inc — the local's
+			// reference is moved into the field and its exit-sweep dec is
+			// skipped to match.
+			if needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
 			// Reuse payloadStoreOp so the store is correctly
@@ -9107,7 +9172,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		if err := b.expr(f.Value); err != nil {
 			return true, err
 		}
-		if isPtr && needsRcIncOnAlias(f.Value, b) {
+		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		ts := b.allocSlot()
