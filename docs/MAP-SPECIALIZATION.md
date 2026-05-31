@@ -145,6 +145,26 @@ already knows K at every `OpCallDirect "__map_hash"` site
 (we stamp it via `mapKeyKindTag(K)`); rewriting that emit to
 call the specialized name is a 1-line change.
 
+> **Caveat (experimental, 2026-05-28).** A first cut — split
+> `__map_hash` into `__map_hash_i32` / `__map_hash_wide` /
+> `__map_hash_string` and keep the existing entrypoint as a
+> tiny dispatcher (`if keyKind == 0 → call i32; …`) — was
+> tested. The hope was the existing inline+fold pipeline
+> (inlineMaxPasses=3) would propagate a compile-time-constant
+> `keyKind` through the dispatcher and prune the dead arms.
+> It doesn't. The IR's Fold pass doesn't propagate constants
+> through inline-bound slot reads, so the dispatcher's
+> branches stay live and all three specialized bodies inline
+> verbatim: emitted asm size for a `Map[i32, i32]` program
+> went from 5778 → 5836 lines and the wide-hash `load_i64`
+> count climbed from 20 → 41. **Step 1 in isolation regresses
+> code size.** The wins assumed here require either landing
+> step 2 in the same change (so callers thread a compile-
+> time-constant K straight to the specialized hash) or
+> teaching Fold to track constant-slot bindings. Either way,
+> "1-line change at the emit site" undersells the work —
+> step 1 as a standalone PR isn't worth shipping.
+
 Rollback if anything regresses: keep `__map_hash` for one
 release, gate the rewrite behind a build-tag (`+build
 mapspec`) so a CI matrix entry runs the generic path until
