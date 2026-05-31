@@ -1,0 +1,141 @@
+// examples/self_host/asm_arm64_load_run.fern — arm64 mirror of
+// asm_load_run.fern. Takes an entry .fern file path on the command
+// line, follows its `import "./x"` declarations to sibling files
+// (and `std/…` / `core/…` under the optional second-arg stdlib
+// root), loads them transitively, flattens, and prints aarch64
+// assembly to stdout.
+//
+//     $ asm_arm64_load_run prog.fern [stdlib-root] > prog.s
+//
+// File-loading machinery is identical to asm_load_run; only the
+// emitter import differs (./asm_arm64 instead of ./asm).
+
+import "core/no_prelude";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./asm_arm64";
+
+function last_slash(p: string): i32 {
+    var i: i32 = 0;
+    var last: i32 = 0 - 1;
+    while (i < p.len()) {
+        if (p[i] == 47) { last = i; }
+        i = i + 1;
+    }
+    return last;
+}
+
+function dir_of(p: string): string {
+    var ls: i32 = last_slash(p);
+    if (ls < 0) { return ""; }
+    return p[0:ls];
+}
+
+function module_name(import_path: string): string {
+    var ls: i32 = last_slash(import_path);
+    if (ls >= 0) { return import_path[ls + 1:import_path.len()]; }
+    return import_path;
+}
+
+function is_local(import_path: string): boolean {
+    if (import_path.len() == 0) { return false; }
+    return import_path[0] == 46;
+}
+
+function join_path(dir: string, name: string): string {
+    if (dir.len() == 0) { return name + ".fern"; }
+    return dir + "/" + name + ".fern";
+}
+
+function contains_name(xs: string[], n: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function should_load(import_path: string, root: string): boolean {
+    if (import_path.len() == 0) { return false; }
+    if (is_local(import_path)) { return true; }
+    if (root.len() == 0) { return false; }
+    if (import_path == "core/no_prelude") { return false; }
+    return true;
+}
+
+function resolve_path(import_path: string, entry_dir: string, root: string): string {
+    if (is_local(import_path)) {
+        return join_path(entry_dir, module_name(import_path));
+    }
+    return root + "/" + import_path + ".fern";
+}
+
+function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
+    var i: i32 = 0;
+    while (i < mod.imports.len()) {
+        var ip: string = mod.imports[i].path;
+        if (should_load(ip, root) && !contains_name(paths, ip)) {
+            paths = paths.push(ip);
+        }
+        i = i + 1;
+    }
+    return paths;
+}
+
+function main(): i32 {
+    var av: string[] = args();
+    if (av.len() < 2) {
+        eprint("usage: asm_arm64_load_run <entry.fern> [stdlib-root]\n");
+        return 2;
+    }
+    var entry_path: string = av[1];
+    var dir: string = dir_of(entry_path);
+    var root: string = "";
+    if (av.len() >= 3) { root = av[2]; }
+
+    var esrc: string = "";
+    var eok: boolean = false;
+    match (read_file(entry_path)) {
+        Ok(s) => { esrc = s; eok = true; },
+        Err(e) => { eok = false; },
+    }
+    if (!eok) {
+        eprint("asm_arm64_load_run: cannot read entry file\n");
+        return 1;
+    }
+    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
+
+    var paths: string[] = add_imports([], entry_mod, root);
+    var loaded: flatten.LoadedModule[] = [];
+    var done: string[] = [];
+    var j: i32 = 0;
+    while (j < paths.len()) {
+        var ipath: string = paths[j];
+        j = j + 1;
+        if (!contains_name(done, ipath)) {
+            done = done.push(ipath);
+            var mpath: string = resolve_path(ipath, dir, root);
+            var msrc: string = "";
+            var mok: boolean = false;
+            match (read_file(mpath)) {
+                Ok(s2) => { msrc = s2; mok = true; },
+                Err(e) => { mok = false; },
+            }
+            if (!mok) {
+                eprint("asm_arm64_load_run: cannot read module: ");
+                eprint(mpath);
+                eprint("\n");
+                return 1;
+            }
+            var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
+            loaded = loaded.push(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            paths = add_imports(paths, m, root);
+        }
+    }
+
+    var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    write(asm_arm64.emit_module(parser.module_with_builtins(merged)));
+    return 0;
+}
