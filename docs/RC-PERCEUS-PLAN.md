@@ -1435,7 +1435,12 @@ reuse-path) skip the inc when `b.moveSites[fieldIdent]` is set, and
 eligibility) releases the moved value exactly once, so the net rc is
 unchanged. Eligibility mirrors the inc/drop sides exactly
 (`arrElemIsRcTracked` field — array / struct / enum / closure / tuple;
-strings excluded). Composes with move-on-return
+strings excluded). Also covers ARRAY LITERAL elements (`var xs = [x]`):
+an owned rc local consumed as an element at its last use is moved into
+the array, balanced by `__fern_drop_arr_ptr`'s per-element dec at the
+array's drop. (Tuple / enum literals are deferred — enum payloads aren't
+inc'd on construction at all, so there's no pair to cancel; tuple
+element drop isn't wired the same way.) Composes with move-on-return
 (`var s = Wrap{inner: x}; return s` carries zero rc traffic) and with
 the Phase 5 reuse path. Covered by IR `TestMoveOnConstruction{ElidesIncForLastUse,
 KeepsIncWhenReadAgain, KeepsIncForBranched, ComposesWithReturn}` + e2e
