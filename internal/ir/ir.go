@@ -2072,21 +2072,33 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			// key the site on whichever the lowering will see.
 			var rhs *ast.Ident
 			var site ast.Node
+			var val ast.Expr
 			switch s := st.(type) {
 			case *ast.Var:
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
+				val = s.Init
 			case *ast.ExprStmt:
 				if a, ok := s.Expr.(*ast.Assign); ok {
 					if _, tok := a.Target.(*ast.Ident); tok {
 						rhs, _ = a.Value.(*ast.Ident)
 						site = a
+						val = a.Value
 					}
 				}
+			case *ast.Return:
+				val = s.Value
 			}
 			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
 				moved[rhs.Name] = true
 				b.moveSites[site] = true
+			}
+			// Move-on-construction: a struct literal built at this
+			// top-level statement that consumes an owned rc local at the
+			// local's last use moves it into the field (see
+			// markConstructionMoves).
+			if val != nil {
+				b.markConstructionMoves(val, identIdx, maxIdx, moved)
 			}
 		}
 		if stmtContainsReturn(st) {
@@ -2094,6 +2106,53 @@ func (b *builder) computeMovedLocals() map[string]bool {
 		}
 	}
 	return moved
+}
+
+// markConstructionMoves implements the move-on-construction slice of
+// Phase 4 pair-cancellation: when a struct literal built at a
+// dominating top-level statement consumes an OWNED rc local in a
+// non-string rc-tracked field at the local's LAST use
+// (`var s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
+// x's exit-sweep dec cancel — x's single reference is moved into the
+// struct's field. Skipping the inc (gated on b.moveSites[fieldIdent] at
+// the StructLit lowering) and x's dec (moved[x] excludes it from the
+// exit sweep) leaves the struct owning x; the struct's own field-drop
+// (emitDec) releases it exactly once, so the net rc is unchanged.
+//
+// The eligibility mirrors the inc/drop sides exactly: the field must be
+// `arrElemIsRcTracked` (array / struct / enum / closure / tuple — the
+// fields the StructLit inc's AND emitDec dec's; strings are excluded,
+// their two-word retain/release diverges per backend), and the value
+// must be an owned rc local (isOwnedRcLocal) whose occurrence here is
+// its max pre-order index. The caller has already established the
+// dominance guards (top-level statement, no preceding return), so —
+// exactly as move-on-alias — x is moved on every path to an exit.
+func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]int, maxIdx map[string]int, moved map[string]bool) {
+	sl, ok := val.(*ast.StructLit)
+	if !ok {
+		return
+	}
+	sd, ok := b.info.Structs[sl.TypeName]
+	if !ok {
+		return
+	}
+	for _, f := range sl.Fields {
+		id, ok := f.Value.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if !arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+			continue
+		}
+		if !b.isOwnedRcLocal(id.Name) {
+			continue
+		}
+		if identIdx[id] != maxIdx[id.Name] {
+			continue
+		}
+		moved[id.Name] = true
+		b.moveSites[id] = true
+	}
 }
 
 // stmtContainsReturn reports whether a statement (or anything nested
@@ -2238,9 +2297,10 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			helper := "__fern_arr_dec"
 			if arrElemIsRcTracked(at.Elem) {
 				helper = "__fern_drop_arr_ptr"
-			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 4 {
-				// string[] on wasm: walk + __fern_str_dec each two-word
-				// element, then free the buffer.
+			} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
+				// walk + __fern_str_dec each (data, len) element, then free
+				// the buffer.
 				helper = "__fern_drop_arr_str"
 			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// string[] on native single-word (x86_64, !TwoWordOverride):
@@ -2275,11 +2335,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// freelist is on AND it's an owned local. __fern_arr_dec
 		// carries the same guards as __fern_rc_dec. Ineligible /
 		// flag-off arrays fall through to the plain box dec.
-		// string[] (wasm two-word elements): reclaim each element via the
-		// two-word walk in __fern_drop_arr_str, then free the buffer.
-		// Gated eligible — a borrowed string[] never frees its elements.
+		// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
+		// reclaim each element via the two-word walk in
+		// __fern_drop_arr_str, then free the buffer. Gated eligible —
+		// a borrowed string[] never frees its elements.
 		if at, ok := t.(ast.ArrayType); ok && ast.RcFreeEnabled && eligible {
-			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 4 {
+			if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2})
@@ -2501,7 +2562,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// in an array / tuple / enum field reclaims via that
 				// container's own (future) string-aware drop.
 				for _, f := range sd.Fields {
-					if _, isStr := f.Type.(ast.StringType); isStr && b.ptrW == 4 {
+					if _, isStr := f.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 						b.emit(Op{Kind: OpLoadLocal, I32: slot})
 						if off := offs[f.Name]; off != 0 {
 							b.emit(Op{Kind: OpConstI32, I32: off})
@@ -3686,7 +3747,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		helper := "__fern_arr_dec"
 		if arrElemIsRcTracked(at.Elem) {
 			helper = "__fern_drop_arr_ptr"
-		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 4 {
+		} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			helper = "__fern_drop_arr_str"
 		} else if _, isStr := at.Elem.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			// string[] on native single-word: __fern_drop_arr_ptr walks +
@@ -3806,7 +3867,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 	}
 	for _, f := range sd.Fields {
 		_, isStr := f.Type.(ast.StringType)
-		isStr = isStr && ptrW == 4
+		isStr = isStr && ast.UseTwoWordStrings(ptrW)
 		if !arrElemIsRcTracked(f.Type) && !isStr {
 			continue
 		}
@@ -6752,7 +6813,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// Index) and the field type is an array. Strings /
 			// structs / enums / closures join in Phase 1e along
 			// with their matching drop handlers.
-			if needsRcIncOnAlias(f.Value, b) {
+			//
+			// Phase 4 move-on-construction: when this field consumes an
+			// owned rc local at its last use (b.moveSites set by
+			// markConstructionMoves), skip the inc — the local's
+			// reference is moved into the field and its exit-sweep dec is
+			// skipped to match.
+			if needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
 			// Reuse payloadStoreOp so the store is correctly
@@ -9107,7 +9174,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		if err := b.expr(f.Value); err != nil {
 			return true, err
 		}
-		if isPtr && needsRcIncOnAlias(f.Value, b) {
+		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		ts := b.allocSlot()

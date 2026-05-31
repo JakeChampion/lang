@@ -109,12 +109,24 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	// json + http suites previously OOM'd the native mmc at the
 	// 64-MiB heap that arm64's __fern_alloc reserved (vs 512 MiB on
 	// x86) — they now ride the gate post the heap-parity bump.
+	//
+	// The `strings` + `string_prelude_migrated` cases have entry
+	// paths whose byte length is exactly 0 mod 16
+	// ("examples/tests/strings_test.fern" = 32 bytes,
+	// "examples/tests/string_prelude_migrated_test.fern" = 48
+	// bytes); they trigger the path-NUL-termination bug in
+	// __fern_read_file_2W (the bump heap leaves no zero pad
+	// between same-aligned allocations, so openat reads past the
+	// path end into the next argv string). Both pass once the
+	// helper alloc-and-copys a NUL-terminated path.
 	cases := []string{
 		"examples/tests/arithmetic_test.fern",
 		"examples/tests/json_field_eq_test.fern",
 		"examples/tests/http_response_headers_migrated_test.fern",
 		"examples/tests/sort_wider_test.fern",
 		"examples/tests/process_assertions_test.fern",
+		"examples/tests/strings_test.fern",
+		"examples/tests/string_prelude_migrated_test.fern",
 	}
 	for _, rel := range cases {
 		t.Run(filepath.Base(rel), func(t *testing.T) {

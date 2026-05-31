@@ -274,6 +274,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesMemcpy = true
 		g.usesAlloc = true
 	}
+	// read_file / write_file both NUL-terminate the path with an
+	// alloc + memcpy before openat (see emitNulTermPath2W) — pull
+	// the runtimes in so the helper links. read_file already needs
+	// __fern_alloc for the result string buffer; write_file gets
+	// it transitively too. The IoError box constructor is shared
+	// with the Reader/Writer family above; pulled in here for the
+	// programs that use file I/O without the Reader API.
+	if g.usesReadFile || g.usesWriteFile {
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesIoError = true
+	}
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 		// __fern_alloc_box piggybacks on __fern_alloc — the
@@ -324,6 +336,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
+	}
+	if g.usesDropArrStr {
+		g.emitDropArrStrRuntime()
 	}
 	if g.usesRcIsUnique {
 		g.emitRcIsUniqueRuntime()
@@ -1605,6 +1620,88 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_drop_arr_ptr")
+	g.line(".ltorg")
+}
+
+// emitDropArrStrRuntime emits `__fern_drop_arr_str(ptr, stride) ->
+// ptr` — the Slice 4 drop handler for `string[]` under the two-word
+// ABI. Each element is a (data, len) pair at stride bytes apart; the
+// per-element walk loads both and dec's via __fern_str_dec. On the
+// LAST reference (rc==1) the elements free; otherwise the array box
+// just dec's (the elements stay alive for the other holder). Same
+// null / low-address / static-sentinel guards as __fern_drop_arr_ptr;
+// returns the input ptr (matching the dec contract).
+//
+// AAPCS64 inputs: x0 = ptr, x1 = stride (16 for two-word strings on
+// arm64). Callee-saved across __fern_str_dec calls: x19 = ptr,
+// x20 = stride, x21 = len, x22 = i. Mirrors the wasm
+// buildDropArrStrBody and the structural sibling on arm64
+// (emitDropArrPtrRuntime).
+func (g *generator) emitDropArrStrRuntime() {
+	g.line("")
+	g.line(".global __fern_drop_arr_str")
+	g.typeDirective("__fern_drop_arr_str")
+	g.label("__fern_drop_arr_str")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0") // x19 = ptr
+	g.emit("mov x20, x1") // x20 = stride
+	g.emit("cbz x19, .Ldrop_arr_str_ret")
+	g.emit("cmp x19, #0x10000")
+	g.emit("b.lo .Ldrop_arr_str_ret")
+	g.emit("ldur w0, [x19, #-8]")
+	g.emit("tbnz w0, #31, .Ldrop_arr_str_ret")
+	// Only the last reference walks elements (rc == 1).
+	g.emit("cmp w0, #1")
+	g.emit("b.ne .Ldrop_arr_str_decarr")
+	g.emit("ldur w21, [x19, #-4]") // x21 = len
+	g.emit("mov x22, #0")          // i = 0
+	g.label(".Ldrop_arr_str_loop")
+	g.emit("cmp w22, w21")
+	g.emit("b.ge .Ldrop_arr_str_decarr")
+	// (x0, x1) = (data, len) of element i = (mem[ptr+i*stride],
+	// mem[ptr+i*stride+8]).
+	g.emit("mul x0, x22, x20")
+	g.emit("add x0, x19, x0") // x0 = &elem[i]
+	g.emit("ldr x1, [x0, #8]") // x1 = elem.len
+	g.emit("ldr x0, [x0]")     // x0 = elem.data
+	g.emit("bl __fern_str_dec")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Ldrop_arr_str_loop")
+	g.label(".Ldrop_arr_str_decarr")
+	if ast.RcFreeEnabled {
+		// Same buffer-free path as emitDropArrPtrRuntime: at rc==1
+		// the elements have been reclaimed above, so return the
+		// buffer to the freelist. headerBytes = max(16, stride),
+		// base = ptr - headerBytes, size = headerBytes + cap*stride.
+		g.emit("ldur w2, [x19, #-8]")
+		g.emit("cmp w2, #1")
+		g.emit("b.ne .Ldrop_arr_str_plaindec")
+		g.emit("mov x3, #16")
+		g.emit("cmp x20, #16")
+		g.emit("csel x3, x20, x3, hi")
+		g.emit("ldur w4, [x19, #-12]")
+		g.emit("mul x1, x4, x20")
+		g.emit("add x1, x1, x3")
+		g.emit("sub x0, x19, x3")
+		g.emit("bl __fern_free")
+		g.emit("mov x0, x19")
+		g.emit("b .Ldrop_arr_str_done")
+		g.label(".Ldrop_arr_str_plaindec")
+	}
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_rc_dec")
+	g.emit("b .Ldrop_arr_str_done")
+	g.label(".Ldrop_arr_str_ret")
+	g.emit("mov x0, x19")
+	g.label(".Ldrop_arr_str_done")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_drop_arr_str")
 	g.line(".ltorg")
 }
 
@@ -4285,6 +4382,8 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("mov x20, x1") // x20 = path_len
 	// path → byte ptr (inline spill at [x29+80..95]).
 	g.emitStrDataPtr2W("x25", "x19", "x20", 80) // x25 = path byte ptr
+	// NUL-terminate for openat (see emitNulTermPath2W).
+	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
 	g.emit("mov x0, #-100")
 	g.emit("mov x1, x25")
@@ -4465,25 +4564,29 @@ func (g *generator) emitWriteFileRuntime() {
 //	Some(IoError): 16-byte box {tag=0@0, payload=err@8}
 //	None:           8-byte box {tag=1@0}
 func (g *generator) emitWriteFileRuntime2W() {
-	// Frame: 96 bytes. fp/lr (16) + 6 callee-saves (48) +
-	// 2× 16-byte inline-spill scratch for path + content (32).
-	g.emit("stp x29, x30, [sp, #-96]!")
+	// Frame: 112 bytes. fp/lr (16) + 7 callee-saves (56 = x19..x25
+	// + 8 pad) + 2× 16-byte inline-spill scratch for path + content
+	// (32) + 8 align.
+	g.emit("stp x29, x30, [sp, #-112]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
 	g.emit("mov x19, x0") // path_data
 	g.emit("mov x20, x1") // path_len
 	g.emit("mov x21, x2") // content_data
 	g.emit("mov x22, x3") // content_len
 	// content byte length + byte ptr.
 	g.emitStrLen2W("w24", "x22")                // x24 = content byte length
-	g.emitStrDataPtr2W("x23", "x21", "x22", 64) // x23 = content byte ptr; scratch at [x29+64]
+	g.emitStrDataPtr2W("x23", "x21", "x22", 72) // x23 = content byte ptr; scratch at [x29+72]
 	// path byte ptr (separate scratch).
-	g.emitStrDataPtr2W("x0", "x19", "x20", 80) // x0 = path byte ptr; scratch at [x29+80]
+	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
+	// NUL-terminate for openat (see emitNulTermPath2W).
+	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
-	g.emit("mov x1, x0")
 	g.emit("mov x0, #-100")
+	g.emit("mov x1, x25")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
 	g.syscall("openat")
@@ -4532,10 +4635,11 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("str wzr, [x0]")     // tag = 0 (Some)
 	g.emit("str x19, [x0, #8]") // payload
 	g.label(".Lwf2w_return")
+	g.emit("ldr x25, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ldp x29, x30, [sp], #112")
 	g.emit("ret")
 	g.sizeDirective("__fern_write_file")
 	g.line(".ltorg")
@@ -4639,6 +4743,8 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("mov x19, x0")                       // path_data
 			g.emit("mov x20, x1")                       // path_len
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
+			// NUL-terminate for openat (see emitNulTermPath2W).
+			g.emitNulTermPath2W("x21", "x21", "x20")
 			g.emit("mov x0, #-100")
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
@@ -5347,6 +5453,12 @@ type generator struct {
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See x86_64's mirror + the wasm runtime.
 	usesDropArrPtr bool
+	// usesDropArrStr gates `__fern_drop_arr_str` — the Slice 4
+	// drop handler for `string[]` under the two-word ABI: walks
+	// the (data, len) elements calling __fern_str_dec and then
+	// frees the buffer. Set when an OpCallDirect names this
+	// helper in the IR walk. arm64 port of the wasm helper.
+	usesDropArrStr bool
 	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
 	// "last reference?" check used by the Phase 3 struct drop.
 	usesRcIsUnique bool
@@ -6270,6 +6382,46 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 	g.emit("ubfx %s, %s, #56, #4", lenX, lenX) // overwrites lenX with the nibble
 	g.emit("mov %s, %s", dstW, regW(lenX))
 	g.label(doneLbl)
+}
+
+// emitNulTermPath2W allocates `lenX + 1` bytes on the bump heap,
+// memcpys `lenX` bytes from `dataX`, and writes a trailing NUL —
+// producing a NUL-terminated C string in `dstX` suitable for
+// passing as the path argument to openat / etc.
+//
+// The two-word string ABI carries (data, len) with no trailing
+// NUL, and the bump heap leaves no zero pad between adjacent
+// same-16-byte-aligned allocations — so if `lenX` is 0 mod 16
+// (e.g. "examples/tests/strings_test.fern" is 32 bytes) the
+// byte after the path data is the first byte of the next
+// allocation. The kernel happily reads past the intended end
+// and openat sees a concatenated path, failing with ENOTDIR.
+//
+// Caller assumptions:
+//   - `dstX` and `lenX` are distinct callee-saved registers
+//     (x19..x28) that survive the `bl` calls.
+//   - `dataX` may alias `dstX` — the helper stashes the src on
+//     the stack before alloc so the original byte pointer
+//     survives `mov dstX, x0`.
+//   - The caller has 16 bytes of headroom past sp for the
+//     temporary stack push.
+//   - x0..x9 are clobbered.
+func (g *generator) emitNulTermPath2W(dstX, dataX, lenX string) {
+	// Stash src on the stack so it survives the dst overwrite
+	// (callers commonly pass dataX == dstX to reuse a scratch
+	// register; the `mov dstX, x0` after alloc would otherwise
+	// clobber the byte pointer before the memcpy load).
+	g.emit("str %s, [sp, #-16]!", dataX)
+	g.emit("mov x0, %s", lenX)
+	g.emit("add x0, x0, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov %s, x0", dstX)
+	g.emit("mov x0, %s", dstX)
+	g.emit("ldr x1, [sp], #16") // restore src into x1 for memcpy
+	g.emit("mov x2, %s", lenX)
+	g.emit("bl __fern_memcpy")
+	g.emit("mov w9, #0")
+	g.emit("strb w9, [%s, %s]", dstX, lenX)
 }
 
 // emitStrDataPtr2W is the two-word-ABI counterpart of
@@ -7464,6 +7616,20 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcDec = true
 			if ast.RcFreeEnabled {
 				g.usesFree = true
+				g.usesAlloc = true
+			}
+		case "__fern_drop_arr_str":
+			// `string[]` drop loop (Slice 4 two-word ABI). Walks
+			// elements via __fern_str_dec (which on rc==1 frees the
+			// element box via __fern_box_free + needs __fern_rc_dec
+			// for the rc!=1 path), then frees the array buffer
+			// via __fern_free.
+			g.usesDropArrStr = true
+			g.usesStrDec = true
+			g.usesBoxFree = true
+			g.usesFree = true
+			g.usesRcDec = true
+			if ast.RcFreeEnabled {
 				g.usesAlloc = true
 			}
 		case "__fern_rc_is_unique":

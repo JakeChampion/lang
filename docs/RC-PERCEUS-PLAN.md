@@ -1418,7 +1418,31 @@ prove no live read is stranded and nothing leaks. Composes with
 move-on-return: `var x = […]; var y = x; return y` carries zero rc
 traffic. Covered by `TestMoveOnAlias{ElidesIncForSingleUseLocal,
 MovesAtLastUseEvenIfMultiUse, KeepsIncForBranchedAlias,
-KeepsIncWhenReadAgain}`. Still to do: Phase 5 drop-reuse.
+KeepsIncWhenReadAgain}`.
+
+**Move-on-construction (DONE).** Third pair-cancellation slice, same
+structural shape: when a `StructLit` built at a dominating top-level
+statement consumes an OWNED rc local in a non-string rc-tracked field at
+the local's LAST use (`var s = Wrap{ inner: x }`, `x` dead after), the
+field-init inc and x's exit-sweep dec cancel — x's single reference is
+moved into the field. `markConstructionMoves` (folded into
+`computeMovedLocals`) reuses the same last-occurrence + dominance guards
+(top-level statement, no preceding return) as move-on-alias, so x is
+moved on every path to an exit; the StructLit inc sites (normal +
+reuse-path) skip the inc when `b.moveSites[fieldIdent]` is set, and
+`moved[x]` drops x from the exit sweep. The struct's own field-drop
+(`emitDec`, which dec's pointer fields on drop regardless of free-
+eligibility) releases the moved value exactly once, so the net rc is
+unchanged. Eligibility mirrors the inc/drop sides exactly
+(`arrElemIsRcTracked` field — array / struct / enum / closure / tuple;
+strings excluded). Composes with move-on-return
+(`var s = Wrap{inner: x}; return s` carries zero rc traffic) and with
+the Phase 5 reuse path. Covered by IR `TestMoveOnConstruction{ElidesIncForLastUse,
+KeepsIncWhenReadAgain, KeepsIncForBranched, ComposesWithReturn}` + e2e
+`Test{X86_64,Arm64,WASM}MoveOnConstruction` (once / churn / returned,
+value-correct + 0 over-release under free). Still to do: Phase 5
+drop-reuse for non-struct constructors (array / tuple / enum literals)
+and the move-on-alias generalisations.
 
 ### Phase 5: Drop reuse + borrowed params
 
