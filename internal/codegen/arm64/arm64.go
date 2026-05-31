@@ -690,7 +690,16 @@ func (g *generator) emitDataSections() {
 // Bump-only — no free. The OS reclaims everything at process
 // exit.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 64 * 1024 * 1024
+	// 512 MiB per region — matches the x86 backend's heap size so
+	// the arm64 native self-host driver can compile programs
+	// with large stdlib transitive imports (e.g. std/json +
+	// std/sort + std/array + std/string + core/int) without
+	// running out and exiting 137 mid-parse. Same shape as x86:
+	// lazy-mmap'd, bump-only, OS-reclaims-on-exit. The address
+	// space is reserved up front but pages only commit as
+	// they're touched, so the wider window costs nothing on
+	// programs that don't grow into it.
+	const heapBytes = 512 * 1024 * 1024
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")

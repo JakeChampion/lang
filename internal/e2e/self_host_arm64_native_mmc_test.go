@@ -103,23 +103,38 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
-	testSrc := langSrcAbs(t, "examples/tests/arithmetic_test.fern")
 
-	// Both binaries compile arithmetic_test.fern → aarch64 asm.
-	nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot).Output()
-	if err != nil {
-		t.Fatalf("mmc_arm64_native: %v", err)
+	// Pick programs spanning the emit surface: a trivial baseline,
+	// then four programs with large stdlib transitive imports. The
+	// json + http suites previously OOM'd the native mmc at the
+	// 64-MiB heap that arm64's __fern_alloc reserved (vs 512 MiB on
+	// x86) — they now ride the gate post the heap-parity bump.
+	cases := []string{
+		"examples/tests/arithmetic_test.fern",
+		"examples/tests/json_field_eq_test.fern",
+		"examples/tests/http_response_headers_migrated_test.fern",
+		"examples/tests/sort_wider_test.fern",
+		"examples/tests/process_assertions_test.fern",
 	}
-	if len(nativeOut) == 0 {
-		t.Fatal("mmc_arm64_native emitted 0 bytes — the bug both fixes guarded against")
-	}
-	crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot).Output()
-	if err != nil {
-		t.Fatalf("mmc_x86_cross: %v", err)
-	}
-	if !bytes.Equal(nativeOut, crossOut) {
-		divLine := firstDivergentLine(nativeOut, crossOut)
-		t.Errorf("native arm64 / cross-host arm64 asm differ (%d vs %d bytes); first divergent line: %d",
-			len(nativeOut), len(crossOut), divLine)
+	for _, rel := range cases {
+		t.Run(filepath.Base(rel), func(t *testing.T) {
+			testSrc := langSrcAbs(t, rel)
+			nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot).Output()
+			if err != nil {
+				t.Fatalf("mmc_arm64_native: %v", err)
+			}
+			if len(nativeOut) == 0 {
+				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (strbuf return shape, ProcessResult rodata, arm64 heap size)")
+			}
+			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot).Output()
+			if err != nil {
+				t.Fatalf("mmc_x86_cross: %v", err)
+			}
+			if !bytes.Equal(nativeOut, crossOut) {
+				divLine := firstDivergentLine(nativeOut, crossOut)
+				t.Errorf("native arm64 / cross-host arm64 asm differ (%d vs %d bytes); first divergent line: %d",
+					len(nativeOut), len(crossOut), divLine)
+			}
+		})
 	}
 }
