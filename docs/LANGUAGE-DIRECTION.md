@@ -106,10 +106,22 @@ default-correct unless we have a specific reason to deviate.
 - **Zig's no-closures stance.** Closures are valuable for HTTP
   routing / handler composition. Roc shows you can have them
   cheaply via lambda-set defunctionalisation.
-- **Roc's runtime refcounting.** With a bump allocator that's
-  freed on scope exit, refcounts are pure overhead. Compile-time
-  uniqueness analysis can mutate-in-place when the source is
-  provably dead, fall back to copy otherwise — no runtime check.
+- **Roc's runtime refcounting.** ⚠️ **Reversed — see
+  `RC-PERCEUS-PLAN.md`.** The original stance was: with a bump
+  allocator freed on scope exit, refcounts are pure overhead, and
+  compile-time uniqueness analysis can mutate-in-place when the
+  source is provably dead (copy otherwise) with no runtime check.
+  That holds for short-lived programs, but breaks for the
+  allocation-heavy, long-running workload we now optimise against —
+  the self-hosting compiler, where `arr = arr.push(x)` in a loop is
+  O(N²) allocator traffic without in-place reuse and overflowed the
+  heap. So Fern now ships Perceus-style runtime refcounting (8-byte
+  RC headers, inc/dec at bindings/args/returns/captures, copy-on-
+  write push) with a static pass that elides the redundant inc/dec
+  pairs. This is a genuine pivot driven by the bootstrap goal, not
+  the original edge-handler ideal. The machinery is wired across
+  every backend; Phase 3 (the freeing allocator) is still gated, so
+  today the system is correct-but-leaks, held up by the arena reset.
 - **Odin's array swizzling / SoA programming.** Cute for gamedev,
   off-target for CLI / edge.
 - **Implicit numeric widening (C / TS / JS).** Universally
