@@ -785,6 +785,23 @@ function main(): i32 {
     }
     return acc + __rc_underflow_count();
 }`},
+	// Tuple element: x moved into (x, n); the tuple's __drop_tuple_ dec's
+	// the element, balancing the elided inc. 100 build/move/drop/free
+	// cycles.
+	{"tuple_elem", `function once(n: i32): i32 {
+    var x: i32[] = [n, n + 2];
+    var t: (i32[], i32) = (x, n);
+    return t.0[0] + t.0[1] + t.1;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (3 * i + 2));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
 	// Composes with move-on-return: x moved into s, s moved out to the
 	// caller; the caller owns and frees the whole thing.
 	{"returned", `struct Wrap { inner: i32[] }
