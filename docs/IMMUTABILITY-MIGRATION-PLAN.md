@@ -20,15 +20,35 @@ The decision's 4-step sequencing is:
    mock_platform, io_buffered, headers, stream, json, and the
    `std/wasm` Module builders all rewritten; no statement-leading
    field assignment remains in `examples/` or `internal/stdlib/`).
-4. Flip the checker to reject field / capture mutation — **field
-   assignment done** (the Go checker rejects `obj.field = v` with
-   E048; the e2e `struct_mutation` / `compound_field_assign` /
-   `nested_field_mutation` fixtures are now rejection fixtures).
-   **Remaining:** (a) capture write-back rejection (needs closureconv-
-   time handling; no `.fern` consumer today), and (b) the parallel
-   rule in the self-host `checker.fern` + inverting
-   `self_host_field_assign_test.go` (the self-host compiler still
-   accepts field assignment for programs it compiles).
+4. Flip the checker to reject field / capture mutation — **done on
+   the reference (Go) compiler**, both cycle vectors:
+   - **Field assignment** → E048 (`obj.field = v` rejected; the e2e
+     `struct_mutation` / `compound_field_assign` /
+     `nested_field_mutation` fixtures are now rejection fixtures).
+   - **Reference-capture write-back** → E049 (a closure may not
+     assign back a pointer-shaped capture — string / array / struct /
+     enum / slice / tuple / closure. Scalar captures stay mutable, so
+     the cycle-safe counter closure still works; only the actual
+     cycle vector is closed). The detection keys off the
+     `captureChain` + `ast.IsPointerType`.
+
+   **Remaining (deferred):** the self-host compiler's own
+   enforcement. The self-host parser still desugars `obj.field = v`
+   to `__set_field` and the emitter lowers it, so the bootstrap
+   compiler *accepts* field assignment for programs it compiles. It
+   does NOT reject — and can't cleanly yet: the asm_run / asm_arm64_run
+   drivers run lexer → parser → asm with no checker pass, and the
+   emitter turns an unknown statement into a `# unsupported` comment
+   rather than failing the build, so there is no error-exit path to
+   surface a rejection. Full self-host rejection waits on
+   error-reporting infrastructure in the bootstrap compiler. In the
+   meantime the self-host compiler fully supports the replacement
+   idiom — struct-update (`T { ...old, f: v }`) parses, emits, and
+   runs (verified end-to-end by `self_host_struct_update_test.go` and
+   `self_host_functional_update_test.go`, the latter being the
+   functional rewrite of the old field-assignment cases) — so it
+   compiles modern Fern; the residual `__set_field` lowering is dead
+   for code that doesn't use it.
 
 This doc covers **step-3 scoping** plus a concrete **step-2 design
 sketch**. Every code claim below was verified against the file at the
