@@ -2020,6 +2020,31 @@ func TestLowerStringClosureCaptureNoReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerStringClosureCaptureReclaimOnArm64TwoWord — Slice 6 on arm64:
+// a string captured by a closure under the two-word ABI is reclaimed via
+// __fern_str_dec at the closure's last reference (the generated
+// __closure_drop_<name> thunk), balancing the __fern_str_inc that
+// MakeClosure emits to retain the alias-shaped capture. Wasm and
+// arm64-TwoWordOverride share one codegen path via the
+// UseTwoWordStrings gate; native single-word (x86_64, !TwoWordOverride)
+// keeps its rc_dec capture-drop path.
+func TestLowerStringClosureCaptureReclaimOnArm64TwoWord(t *testing.T) {
+	prevOverride := ast.TwoWordOverride
+	ast.TwoWordOverride = true
+	defer func() { ast.TwoWordOverride = prevOverride }()
+	p := lowerSourceWith(t, `function build(): i32 {
+    var s: string = "cap" + "tured";
+    var f = function (): i32 { return s.len(); };
+    return f();
+}`, 8)
+	if !closureDropCallsDirect(p, "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected a __closure_drop_* thunk to reclaim the string capture via __fern_str_dec:\n%s", p)
+	}
+	if !callsDirect(p, "build", "__fern_str_inc") {
+		t.Errorf("arm64 two-word: expected MakeClosure to retain the string capture via __fern_str_inc:\n%s", p)
+	}
+}
+
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
 // rc==1-gated __fern_box_free (tuples previously leaked their box

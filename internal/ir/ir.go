@@ -2983,12 +2983,12 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 		if arrElemIsRcTracked(c.Type) {
 			return true
 		}
-		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
+		if _, isStr := c.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			return true
 		}
 		// Native single-word string capture (x86_64, !TwoWordOverride):
 		// the env slot holds a single ptr that needs __fern_rc_dec'ing
-		// on the closure's last reference. arm64 boxed strings excluded.
+		// on the closure's last reference.
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			return true
 		}
@@ -3017,11 +3017,12 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 	off := int32(0)
 	for _, c := range caps {
 		slot := irCaptureSlotSize(c.Type, ptrW)
-		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 4 {
-			// Two-word string capture: load (data, len) from [env+off]
-			// and reclaim via __fern_str_dec (balances the __fern_str_inc
-			// at MakeEnv). Inside the env's is_unique branch, so the
-			// capture is this closure's owned reference; inline / literal
+		if _, isStr := c.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+			// Two-word string capture (wasm + arm64-TwoWordOverride):
+			// load (data, len) from [env+off] and reclaim via
+			// __fern_str_dec (balances the __fern_str_inc at MakeEnv).
+			// Inside the env's is_unique branch, so the capture is
+			// this closure's owned reference; inline / literal
 			// strings no-op.
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
@@ -5368,10 +5369,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 			for _, capExpr := range mc.Captures {
 				ct := b.exprType(capExpr)
 				rcTracked := arrElemIsRcTracked(ct)
-				if _, isStr := ct.(ast.StringType); isStr && b.ptrW == 4 {
-					// A two-word string capture is dropped by the thunk
-					// (__fern_str_dec), so it must have been inc'd at MakeEnv
-					// or the thunk would over-release it.
+				if _, isStr := ct.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+					// A two-word string capture (wasm + arm64-TwoWordOverride)
+					// is dropped by the thunk (__fern_str_dec), so it must
+					// have been inc'd at MakeEnv or the thunk would over-
+					// release it.
 					rcTracked = true
 				}
 				if _, isStr := ct.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
