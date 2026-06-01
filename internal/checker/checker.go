@@ -2618,6 +2618,26 @@ func assignable(dst, src ast.Type) bool {
 		}
 		return true
 	}
+	// Tuples assign element-wise. Without this, the only path to
+	// a tuple assignment is the top-level `ast.Equal`, which
+	// rejects a tuple whose elements are individually assignable
+	// but not equal — e.g. `(None, s)` typed `(Option, Stream)`
+	// returned from a function declared `(Option[i32], Stream)`.
+	// The bare-return case relies on the 0-arg enum relaxation
+	// below; recursing here lets that same relaxation reach a
+	// tuple element. Cursor-idiom readers (docs/CURSOR-IDIOM.md)
+	// that return `(Option[T], Stream)` with a bare `None` arm
+	// depend on this.
+	if dt, dok := dst.(ast.TupleType); dok {
+		if st, sok := src.(ast.TupleType); sok && len(dt.Elems) == len(st.Elems) {
+			for i := range dt.Elems {
+				if !assignable(dt.Elems[i], st.Elems[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	// Same relaxation for generic struct values: a builtin like
 	// `map_new(cap)` returns `StructType{Name: "Map"}` with no
 	// Args; the destination context (e.g. `var m: Map[i32,

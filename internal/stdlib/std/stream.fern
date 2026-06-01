@@ -66,17 +66,19 @@ pub function (s: Stream) is_empty(): boolean {
 }
 
 // `(s: Stream).read_all()` — consume the remaining bytes
-// as a fresh `u8[]`. The cursor advances to the end of the
-// buffer so subsequent reads return empty.
+// as a fresh `u8[]`, returning `(bytes, advancedStream)` per
+// the cursor idiom (docs/CURSOR-IDIOM.md). The returned
+// Stream's cursor is at the end of the buffer; rebind it:
+// `var (bytes, s) = s.read_all();`.
 //
-// Phase 2 will return `Result[u8[], IoError]` once host-
+// Phase 2 will fold an IoError into the result once host-
 // side reads can fail; Phase 1's in-memory buffer can't
-// fail so the unwrapped return is fine.
-pub function (s: Stream) read_all(): u8[] {
+// fail so the bare bytes return is fine.
+pub function (s: Stream) read_all(): (u8[], Stream) {
     var rem: i32 = s.remaining();
     if (rem == 0) {
         var empty: u8[] = [];
-        return empty;
+        return (empty, s);
     }
     var out: u8[] = [];
     var i: i32 = s.pos;
@@ -85,68 +87,81 @@ pub function (s: Stream) read_all(): u8[] {
         out = out.push(s.data[i]);
         i = i + 1;
     }
-    s.pos = end;
-    return out;
+    return (out, Stream { ...s, pos: end });
 }
 
 // `(s: Stream).read_all_string()` — consume the remaining
-// bytes as a UTF-8 string. Convenience over
-// `string_from_bytes(s.read_all())`. The Stream's content
-// is assumed UTF-8; non-UTF-8 input round-trips through the
-// string as raw bytes (lang's string doesn't enforce UTF-8
-// validity today).
-pub function (s: Stream) read_all_string(): string {
-    return string_from_bytes(s.read_all());
+// bytes as a UTF-8 string, returning `(string, advancedStream)`.
+// Convenience over `string_from_bytes` on `read_all`'s bytes.
+// Non-UTF-8 input round-trips through the string as raw bytes
+// (lang's string doesn't enforce UTF-8 validity today).
+pub function (s: Stream) read_all_string(): (string, Stream) {
+    var (bytes, s2) = s.read_all();
+    return (string_from_bytes(bytes), s2);
 }
 
 // ============================================================
-// Reader-shape methods — Tier-C Rec §13 Phase 1
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5). Lang doesn't yet
-// have nominal interface types, so Reader / Writer
-// polymorphism is convention-based: concrete types that
-// share these method names (Stream, the fd-backed Reader,
-// future BufReader) compose against the same code.
+// Reader-shape methods — Tier-C Rec §13.
+//
+// These follow the immutable CURSOR IDIOM (docs/CURSOR-IDIOM.md):
+// a read returns `(value, advancedStream)` and the caller
+// rebinds the Stream. Stream is a value-semantic in-memory
+// reader.
+//
+// NOTE — Stream and the fd-backed Reader are DELIBERATELY
+// SEPARATE shapes (the "share method names so they compose"
+// convention that this comment used to describe is RETIRED).
+// The fd-backed Reader is effectful — its position lives in
+// kernel fd state, not a Fern value — so it cannot adopt the
+// value-threaded cursor idiom: its `read_line()` stays a bare
+// `Option[string]` that advances the fd as a side effect.
+// Immutable readers (Stream) and effectful readers (fd) are
+// distinct abstractions; unifying them waits on nominal
+// interface types AND a decision on how an effectful reader
+// presents a value-shaped surface (if ever).
 // ============================================================
 
 // `(s: Stream).read_byte()` — read a single byte from the
-// cursor, advancing it. Returns None when the Stream is
-// exhausted.
-pub function (s: Stream) read_byte(): Option[i32] {
-    if (s.pos >= s.data.len()) { return None; }
+// cursor. Returns `(Option[i32], advancedStream)`: Some(b)
+// + a Stream advanced past it, or None + the unchanged
+// Stream when exhausted. Rebind: `var (b, s) = s.read_byte();`.
+pub function (s: Stream) read_byte(): (Option[i32], Stream) {
+    if (s.pos >= s.data.len()) { return (None, s); }
     var b: i32 = s.data[s.pos] as i32;
-    s.pos = s.pos + 1;
-    return Some(b);
+    return (Some(b), Stream { ...s, pos: s.pos + 1 });
 }
 
 // `(s: Stream).read_n(n)` — read up to `n` bytes from the
-// cursor. Returns the actual bytes consumed (possibly fewer
-// than `n` at EOF). Empty array when the Stream is already
-// exhausted or `n <= 0`.
-pub function (s: Stream) read_n(n: i32): u8[] {
+// cursor, returning `(bytes, advancedStream)`. The byte array
+// holds the actual bytes consumed (possibly fewer than `n` at
+// EOF); empty when already exhausted or `n <= 0`.
+pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
     var out: u8[] = [];
-    if (n <= 0) { return out; }
-    var end: i32 = s.pos + n;
+    if (n <= 0) { return (out, s); }
+    var pos: i32 = s.pos;
+    var end: i32 = pos + n;
     if (end > s.data.len()) { end = s.data.len(); }
-    while (s.pos < end) {
-        out = out.push(s.data[s.pos]);
-        s.pos = s.pos + 1;
+    while (pos < end) {
+        out = out.push(s.data[pos]);
+        pos = pos + 1;
     }
-    return out;
+    return (out, Stream { ...s, pos: pos });
 }
 
 // `(s: Stream).read_line()` — read up to and including the
-// next `\n`, returning the line WITHOUT the trailing newline.
-// A trailing `\r` (Windows line endings) is also stripped.
-// Returns None when the Stream is exhausted at the start of
-// the call (signals EOF); a final unterminated line returns
-// Some(line) on its last call before transitioning to None
-// on the subsequent one.
-pub function (s: Stream) read_line(): Option[string] {
-    if (s.pos >= s.data.len()) { return None; }
+// next `\n`, returning `(Option[string], advancedStream)`.
+// The line excludes the trailing newline; a trailing `\r`
+// (Windows line endings) is also stripped. None + unchanged
+// Stream when exhausted at the start of the call (EOF); a
+// final unterminated line returns Some(line) + the advanced
+// Stream, then None on the subsequent call.
+pub function (s: Stream) read_line(): (Option[string], Stream) {
+    if (s.pos >= s.data.len()) { return (None, s); }
     var line_bytes: u8[] = [];
-    while (s.pos < s.data.len()) {
-        var b: i32 = s.data[s.pos] as i32;
-        s.pos = s.pos + 1;
+    var pos: i32 = s.pos;
+    while (pos < s.data.len()) {
+        var b: i32 = s.data[pos] as i32;
+        pos = pos + 1;
         if (b == 10) {
             // \n — strip a trailing \r if present.
             var n: i32 = line_bytes.len();
@@ -158,12 +173,12 @@ pub function (s: Stream) read_line(): Option[string] {
                         stripped = stripped.push(line_bytes[i]);
                         i = i + 1;
                     }
-                    return Some(string_from_bytes(stripped));
+                    return (Some(string_from_bytes(stripped)), Stream { ...s, pos: pos });
                 }
             }
-            return Some(string_from_bytes(line_bytes));
+            return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
         }
         line_bytes = line_bytes.push(b as u8);
     }
-    return Some(string_from_bytes(line_bytes));
+    return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
 }

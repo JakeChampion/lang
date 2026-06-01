@@ -1748,3 +1748,37 @@ function main(): i32 { return 0; }`)
 		}
 	}
 }
+
+// A tuple return whose elements are individually assignable (but not
+// equal) to the declared element types should type-check. The
+// motivating case is the cursor idiom (docs/CURSOR-IDIOM.md): a
+// reader declared `(Option[i32], i32)` returns a bare `None` in its
+// EOF arm, which types as `(Option, i32)`. Before assignable learned
+// to recurse into tuples, the bare-`None` element only widened to
+// `Option[i32]` at a top-level return, never inside a tuple, so this
+// rejected with an E002 tuple mismatch.
+func TestTupleReturnWidensBareEnumElement(t *testing.T) {
+	src := `function read(pos: i32, n: i32): (Option[i32], i32) {
+    if (pos >= n) { return (None, pos); }
+    return (Some(pos), pos + 1);
+}
+function main(): i32 {
+    var (b, p) = read(0, 1);
+    match (b) { Some(v) => { return v; }, None => { return -1; } }
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// The tuple-assignability recursion must still reject a genuine
+// element mismatch — it widens bare enums, it doesn't make tuples
+// universally assignable.
+func TestTupleReturnStillRejectsElementMismatch(t *testing.T) {
+	src := `function f(): (i32, string) {
+    return (1, 2);
+}`
+	if err := checkSource(t, src); err == nil {
+		t.Errorf("expected a type error for (i32, i32) returned as (i32, string)")
+	}
+}

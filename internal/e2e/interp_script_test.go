@@ -1665,8 +1665,9 @@ func TestInterpScriptStreamPrimitive(t *testing.T) {
 function main(): i32 {
     var s: Stream = stream.stream_from_string("hello world");
     print(s.len().to_string());
-    print(s.read_all_string());
-    if (s.is_empty()) { print("done"); }
+    var (text, s2) = s.read_all_string();
+    print(text);
+    if (s2.is_empty()) { print("done"); }
     return 0;
 }`,
 			wantStdout: "11\nhello world\ndone\n",
@@ -1677,7 +1678,7 @@ function main(): i32 {
 function main(): i32 {
     var bs: u8[] = "abc".bytes();
     var s: Stream = stream.stream_from_bytes(bs);
-    var got: u8[] = s.read_all();
+    var (got, s2) = s.read_all();
     print(got.len().to_string());
     print((got[0] as i32).to_string());
     print((got[2] as i32).to_string());
@@ -1691,9 +1692,10 @@ function main(): i32 {
 function main(): i32 {
     var s: Stream = stream.stream_from_string("abc");
     print(s.remaining().to_string());
-    var _ : u8[] = s.read_all();
-    print(s.remaining().to_string());
-    print(s.len().to_string());
+    var (_, s2) = s.read_all();
+    // cursor idiom: the advanced Stream is s2; original s is unchanged.
+    print(s2.remaining().to_string());
+    print(s2.len().to_string());
     return 0;
 }`,
 			wantStdout: "3\n0\n3\n",
@@ -1706,7 +1708,7 @@ function main(): i32 {
     if (s.len() != 0) { return 1; }
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
-    var bs: u8[] = s.read_all();
+    var (bs, s2) = s.read_all();
     if (bs.len() != 0) { return 4; }
     print("ok");
     return 0;
@@ -2034,9 +2036,12 @@ func TestInterpScriptStreamReader(t *testing.T) {
 			source: `import "std/stream";
 function main(): i32 {
     var s: Stream = stream.stream_from_string("ab");
-    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
-    match (s.read_byte()) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
-    match (s.read_byte()) { Some(_) => { print("UNEXPECTED"); }, None => { print("none"); } }
+    var (b1, s2) = s.read_byte();
+    match (b1) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    var (b2, s3) = s2.read_byte();
+    match (b2) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
+    var (b3, _) = s3.read_byte();
+    match (b3) { Some(_) => { print("UNEXPECTED"); }, None => { print("none"); } }
     return 0;
 }`,
 			wantStdout: "97\n98\nnone\n",
@@ -2046,11 +2051,11 @@ function main(): i32 {
 			source: `import "std/stream";
 function main(): i32 {
     var s: Stream = stream.stream_from_string("hello");
-    var first: u8[] = s.read_n(3);
+    var (first, s2) = s.read_n(3);
     print(first.len().to_string());
-    var rest: u8[] = s.read_n(99);
+    var (rest, s3) = s2.read_n(99);
     print(rest.len().to_string());
-    var empty: u8[] = s.read_n(1);
+    var (empty, _) = s3.read_n(1);
     print(empty.len().to_string());
     return 0;
 }`,
@@ -2061,10 +2066,14 @@ function main(): i32 {
 			source: `import "std/stream";
 function main(): i32 {
     var s: Stream = stream.stream_from_string("unix\nwindows\r\nfinal");
-    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
-    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
-    match (s.read_line()) { Some(l) => { print(l); }, None => { print("none"); } }
-    match (s.read_line()) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
+    var (l1, s2) = s.read_line();
+    match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
+    var (l2, s3) = s2.read_line();
+    match (l2) { Some(l) => { print(l); }, None => { print("none"); } }
+    var (l3, s4) = s3.read_line();
+    match (l3) { Some(l) => { print(l); }, None => { print("none"); } }
+    var (l4, _) = s4.read_line();
+    match (l4) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
     return 0;
 }`,
 			wantStdout: "unix\nwindows\nfinal\neof\n",
