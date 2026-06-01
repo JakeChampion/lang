@@ -2107,8 +2107,8 @@ func TestInterpScriptBytesWriter(t *testing.T) {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_string("HTTP/1.1 200 OK\r\n");
-    w.write_string("\r\nhello");
+    w = w.write_string("HTTP/1.1 200 OK\r\n");
+    w = w.write_string("\r\nhello");
     print(w.len().to_string());
     print(w.into_string());
     return 0;
@@ -2120,8 +2120,8 @@ function main(): i32 {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_byte(72);  // 'H'
-    w.write_byte(105); // 'i'
+    w = w.write_byte(72);  // 'H'
+    w = w.write_byte(105); // 'i'
     print(w.into_string());
     return 0;
 }`,
@@ -2132,12 +2132,12 @@ function main(): i32 {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_string("first");
+    w = w.write_string("first");
     if (w.len() != 5) { return 1; }
-    w.reset();
+    w = w.reset();
     if (w.len() != 0) { return 2; }
     if (!w.is_empty()) { return 3; }
-    w.write_string("second");
+    w = w.write_string("second");
     print(w.into_string());
     return 0;
 }`,
@@ -2149,7 +2149,7 @@ function main(): i32 {
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     var bs: u8[] = "binary".bytes();
-    w.write_bytes(bs);
+    w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }
     print(w.into_string());
     return 0;
