@@ -112,6 +112,40 @@ function main(): i32 {
 	var b: i32 = 0x0F;
 	return (a | b) & 0xFF ^ (a >> 2);
 }`,
+
+	// string_concat — exercises __fern_strcat / __fern_str_concat
+	// plus literal interning of the operands.
+	"string_concat": `
+function main(): i32 {
+	var s: string = "hello" + " " + "world";
+	return s.len();
+}`,
+
+	// array_iterate — exercises array literal allocation, .push, and
+	// `for x in arr` lowering with element-load + body codegen.
+	"array_iterate": `
+function main(): i32 {
+	var xs: i32[] = [1, 2, 3];
+	xs = xs.push(4);
+	var sum: i32 = 0;
+	for x in xs { sum = sum + x; }
+	return sum;
+}`,
+
+	// match_option — exercises Option box construction, match
+	// dispatch, and payload binding through the variant shape.
+	"match_option": `
+function maybe(n: i32): Option[i32] {
+	if (n > 0) { return Some(n); }
+	return None;
+}
+function main(): i32 {
+	match (maybe(7)) {
+		Some(v) => { return v; },
+		None => { return 0; }
+	}
+	return -1;
+}`,
 }
 
 // TestEmitFeatureMatrix asserts every program in the matrix lowers
