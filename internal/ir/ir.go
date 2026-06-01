@@ -2530,23 +2530,17 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			// Map[string, V]: reclaim each key's string buffer.
-			//   wasm (ptrW=4)              : boxed (data, len) cell; str_dec + cell_free.
+			//   two-word ABI (wasm + arm64-TwoWordOverride): boxed (data, len) cell; str_dec + cell_free.
 			//   native single-word (x86_64): direct data pointer; rc_dec.
-			//   arm64 (ptrW=8 + TwoWord)   : boxed like wasm, but no native
-			//                                str_dec / cell_free helpers — stay
-			//                                on pre-slice leaking-but-safe behaviour
-			//                                until the boxed-string runtime is
-			//                                ported. Same gating as __drop_map_str_values.
-			// Generated __drop_map_str_keys branches on ptrW for the boxed vs
-			// direct shape. Independent of the value walk above (both
-			// self-guard on rc==1); runs before the buf + handle free.
+			// Generated __drop_map_str_keys branches on UseTwoWordStrings
+			// for the boxed vs direct shape. Independent of the value walk
+			// above (both self-guard on rc==1); runs before the buf + handle
+			// free.
 			if len(st.Args) >= 1 {
 				if _, isStr := st.Args[0].(ast.StringType); isStr {
-					if b.ptrW == 4 || !ast.UseTwoWordStrings(b.ptrW) {
-						b.emit(Op{Kind: OpLoadLocal, I32: slot})
-						b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-						b.emit(Op{Kind: OpDrop})
-					}
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+					b.emit(Op{Kind: OpDrop})
 				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -8732,20 +8726,22 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 		}
 	}
-	// Map[string, V] (wasm) set KEY retain: the key column co-owns an
-	// aliased string key's buffer (boxed (data, len) cell), so __fern_str_inc
-	// it, balancing the __fern_str_dec in the __drop_map_str_keys walk at map
-	// drop. Fresh keys (concat / literal / call) are moved in with no inc. An
-	// OVERWRITE discards the freshly-boxed key (the runtime keeps the
-	// existing one), so an aliased overwrite key leaks its inc — safe (no
-	// double free), bounded, and keys already leaked entirely pre-slice.
+	// Map[string, V] (two-word ABI — wasm + arm64-TwoWordOverride)
+	// set KEY retain: the key column co-owns an aliased string
+	// key's buffer (boxed (data, len) cell), so __fern_str_inc it,
+	// balancing the __fern_str_dec in the __drop_map_str_keys walk
+	// at map drop. Fresh keys (concat / literal / call) are moved
+	// in with no inc. An OVERWRITE discards the freshly-boxed key
+	// (the runtime keeps the existing one), so an aliased overwrite
+	// key leaks its inc — safe (no double free), bounded, and keys
+	// already leaked entirely pre-slice.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
-		b.ptrW == 4 && needsRcIncOnAlias(n.Args[1], b) {
+		ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(n.Args[1], b) {
 		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
 			if err := b.expr(n.Args[1]); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
@@ -8950,10 +8946,11 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
 				b.emit(payloadLoadOpFor(n.TypeArgs[0], b.ptrW))
-				// Map[string, V].iter().key() retain (wasm boxed): same
-				// rationale as the value retain above.
-				if _, isStr := n.TypeArgs[0].(ast.StringType); isStr && b.ptrW == 4 {
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+				// Map[string, V].iter().key() retain (two-word ABI —
+				// wasm + arm64-TwoWordOverride): same rationale as the
+				// value retain above.
+				if _, isStr := n.TypeArgs[0].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 				}
 				return nil
 			}
