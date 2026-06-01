@@ -2128,30 +2128,40 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // dominance guards (top-level statement, no preceding return), so —
 // exactly as move-on-alias — x is moved on every path to an exit.
 func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]int, maxIdx map[string]int, moved map[string]bool) {
-	sl, ok := val.(*ast.StructLit)
-	if !ok {
-		return
-	}
-	sd, ok := b.info.Structs[sl.TypeName]
-	if !ok {
-		return
-	}
-	for _, f := range sl.Fields {
-		id, ok := f.Value.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		if !arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
-			continue
-		}
-		if !b.isOwnedRcLocal(id.Name) {
-			continue
-		}
-		if identIdx[id] != maxIdx[id.Name] {
-			continue
+	// mark moves the Ident when it's an owned rc local at its last use.
+	// The caller has established the dominance guards; the per-container
+	// drop (struct field-drop / array drop_arr_ptr) releases the moved
+	// value exactly once, balancing the skipped construction inc.
+	mark := func(e ast.Expr) {
+		id, ok := e.(*ast.Ident)
+		if !ok || !b.isOwnedRcLocal(id.Name) || identIdx[id] != maxIdx[id.Name] {
+			return
 		}
 		moved[id.Name] = true
 		b.moveSites[id] = true
+	}
+	switch lit := val.(type) {
+	case *ast.StructLit:
+		sd, ok := b.info.Structs[lit.TypeName]
+		if !ok {
+			return
+		}
+		for _, f := range lit.Fields {
+			// Only fields the StructLit inc's AND emitDec dec's on drop
+			// (arrElemIsRcTracked; strings excluded).
+			if arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+				mark(f.Value)
+			}
+		}
+	case *ast.ArrayLit:
+		// An array of rc-tracked elements: each element is inc'd on
+		// construction and dec'd by __fern_drop_arr_ptr at the array's
+		// drop, so a moved element balances. Plain-scalar arrays never
+		// reach the element inc — mark is a no-op there (isOwnedRcLocal
+		// is false for scalars).
+		for _, el := range lit.Elems {
+			mark(el)
+		}
 	}
 }
 
@@ -2186,11 +2196,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// those leak for now — safe under no-free, no over-release).
 	// Both helpers carry the null / low-address / sentinel guards.
 	decValueOnStack := func(t ast.Type, mayFree bool) {
-		// Two-word string value (wasm): the caller loaded (data, len) via
-		// payloadLoadOpFor, so reclaim via the two-word __fern_str_dec.
-		// Reached from the enum payload drop (struct / tuple string
-		// fields are handled inline before reaching here).
-		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 4 {
+		// Two-word string value (wasm + arm64-TwoWordOverride): the
+		// caller loaded (data, len) via payloadLoadOpFor, so reclaim
+		// via the two-word __fern_str_dec. Reached from the enum
+		// payload drop (struct / tuple string fields are handled
+		// inline before reaching here).
+		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -2246,10 +2257,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// shared or not. Every other field type (arrays, enums/unions,
 	// closures, Map) keeps the flat one-level dec.
 	dropStructField := func(t ast.Type) {
-		// Two-word string value (wasm): caller loaded (data, len), reclaim
-		// via __fern_str_dec. Reached from the enum variant-plan payload
-		// drop (struct / tuple string fields are handled inline).
-		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 4 {
+		// Two-word string value (wasm + arm64-TwoWordOverride): caller
+		// loaded (data, len), reclaim via __fern_str_dec. Reached from
+		// the enum variant-plan payload drop (struct / tuple string
+		// fields are handled inline).
+		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -3709,11 +3721,12 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
 func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) []Op {
-	// Two-word string value (wasm): the caller loaded (data, len) via a
-	// string-aware load (payloadLoadOpFor), so reclaim via __fern_str_dec.
-	// Reached from genEnumDropFn's payload drop (struct string fields are
-	// handled inline in genStructDropFn before reaching here).
-	if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+	// Two-word string value (wasm + arm64-TwoWordOverride): the
+	// caller loaded (data, len) via a string-aware load
+	// (payloadLoadOpFor), so reclaim via __fern_str_dec. Reached from
+	// genEnumDropFn's payload drop (struct string fields are handled
+	// inline in genStructDropFn before reaching here).
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 			Op{Kind: OpDrop})
@@ -4009,7 +4022,7 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 		if arrElemIsRcTracked(t) {
 			return 2, true // flat dec (struct / enum / closure)
 		}
-		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			return 3, true // two-word string dec (__fern_str_dec)
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
@@ -4115,7 +4128,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 		if arrElemIsRcTracked(t) {
 			return 2, true // flat dec (struct / enum / closure)
 		}
-		if _, isStr := t.(ast.StringType); isStr && ptrW == 4 {
+		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			return 3, true // two-word string dec (__fern_str_dec)
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
@@ -6660,7 +6673,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// so the new matrix co-owns `inner`. Same gating as
 			// the Var / Assign / call-arg / struct-field /
 			// closure-capture sites.
-			if needsRcIncOnAlias(el, b) {
+			//
+			// Phase 4 move-on-construction: an owned rc local consumed as
+			// an element at its last use is moved into the array —
+			// __fern_drop_arr_ptr dec's the element at the array's drop,
+			// balancing the skipped inc (markConstructionMoves sets
+			// b.moveSites[el]).
+			if needsRcIncOnAlias(el, b) && !b.moveSites[el] {
 				b.emitAliasInc(el)
 			}
 			b.emit(storeOpAndWidth)

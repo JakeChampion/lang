@@ -64,6 +64,25 @@ function main(): i32 { return f(true); }`)
 	}
 }
 
+// Array literals get the same treatment: an owned rc local consumed as
+// an element at its last use is moved into the array (drop_arr_ptr dec's
+// it), so the element inc is elided.
+func TestMoveOnConstructionElidesIncForArrayElement(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32 {
+    var x: i32[] = [1, 2, 3];
+    var xs: i32[][] = [x];
+    return xs[0][0];
+}
+function main(): i32 { return f(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("owned local moved into an array element at last use should emit no __fern_rc_inc, got %d", got)
+	}
+}
+
 // Composes with move-on-return: `var s = Wrap{inner: x}; return s` moves
 // x into s AND moves s out to the caller — zero rc traffic in f.
 func TestMoveOnConstructionComposesWithReturn(t *testing.T) {
