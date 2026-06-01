@@ -156,7 +156,7 @@ func (a *Assembler) roundsd(ops []operand) error {
 func (a *Assembler) emitRexRM(w bool, reg int, rm operand) {
 	var rex byte
 	if rm.kind == opMem {
-		rex = memRex(w, reg, rm)
+		rex = memRex(w, reg, rm, false)
 	} else {
 		rex = rexFor(w, reg, rm.reg, false)
 	}

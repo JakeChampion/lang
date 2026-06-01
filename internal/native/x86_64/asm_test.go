@@ -108,6 +108,19 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		// high-byte register (htons byte-swap) — must NOT carry a REX prefix
 		{"xchg al, ah", "86e0"},
 		{"mov al, ah", "88e0"},
+		// low-byte registers spl/bpl/sil/dil to/from memory — these regs
+		// (4..7) can ONLY be addressed with a REX prefix present; without it
+		// the ModRM reg field decodes as ah/ch/dh/bh instead, corrupting the
+		// operand. Regression guard: __fern_putchar stores its arg via
+		// `mov [rsp], dil`, which was emitted REX-less (== `mov [rsp], bh`)
+		// so every putchar wrote a stray 0 byte. Encodings cross-checked
+		// against GNU as.
+		{"mov [rsp], dil", "40883c24"},
+		{"mov [rsp], sil", "40883424"},
+		{"mov [rbp-8], bpl", "40886df8"},
+		{"mov byte ptr [rax], dil", "408838"},
+		{"mov dil, [rsp]", "408a3c24"},
+		{"mov sil, [rsp]", "408a3424"},
 	}
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {

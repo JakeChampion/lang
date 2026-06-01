@@ -236,6 +236,35 @@ func TestX86_64NativeTranscendentals(t *testing.T) {
 	}
 }
 
+// putchar writes a single byte to stdout. The runtime stashes its
+// argument on the stack via `mov [rsp], dil` and write(1, &slot, 1).
+// `dil` (low 8 of rdi) is one of the registers that can ONLY be
+// addressed with a REX prefix present; the native assembler used to
+// emit it REX-less, which silently decodes as `mov [rsp], bh` — so
+// every putchar wrote a stray 0 byte instead of its argument. The
+// gcc-linked e2e path (TestX86_64Print) never caught this because GNU
+// as encodes it correctly; only the in-process native assembler was
+// affected. Regression guard: assert the exact bytes reach stdout.
+func TestX86_64NativePutchar(t *testing.T) {
+	src := `function main(): i32 {
+    putchar(65);
+    putchar(66);
+    putchar(233);
+    putchar(10);
+    return 0;
+}`
+	out, code := compileAndRunX86Native(t, src)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	// 233 is the raw byte the program asked for — putchar is a 1-byte
+	// write, not a UTF-8 codepoint encoder, so it stays a lone 0xE9.
+	want := "AB\xe9\n"
+	if out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+}
+
 // Integer arithmetic and comparison operators across the phase-1
 // instruction surface (add/sub/imul/idiv + cmp/setcc + branches).
 func TestX86_64NativeArithmetic(t *testing.T) {
