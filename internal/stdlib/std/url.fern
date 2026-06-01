@@ -115,7 +115,7 @@ pub function url_parse(s: string): Option[Url] {
 
     var rest_start: i32 = 0;
     if (scheme_end >= 0) {
-        u.scheme = s[0:scheme_end];
+        u = Url { ...u, scheme: s[0:scheme_end] };
         rest_start = scheme_end + 3;
     }
 
@@ -127,7 +127,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (frag_start < n) {
-        u.fragment = s[frag_start+1:n];
+        u = Url { ...u, fragment: s[frag_start+1:n] };
     }
 
     // Find query '?' in [rest_start, frag_start).
@@ -138,7 +138,7 @@ pub function url_parse(s: string): Option[Url] {
         i = i + 1;
     }
     if (query_start < frag_start) {
-        u.query = s[query_start+1:frag_start];
+        u = Url { ...u, query: s[query_start+1:frag_start] };
     }
 
     // Find authority end. With a scheme, scan for the first
@@ -165,7 +165,6 @@ pub function url_parse(s: string): Option[Url] {
             i = i + 1;
         }
         if (colon < authority_end) {
-            u.host = s[rest_start:colon];
             // Port: digits only, max 65535. Any non-digit or
             // out-of-range value zeroes the port.
             var port: i32 = 0;
@@ -177,15 +176,15 @@ pub function url_parse(s: string): Option[Url] {
                 if (port > 65535) { port = 0; break; }
                 i = i + 1;
             }
-            u.port = port;
+            u = Url { ...u, host: s[rest_start:colon], port: port };
         } else {
-            u.host = s[rest_start:authority_end];
+            u = Url { ...u, host: s[rest_start:authority_end] };
         }
     }
 
     // Path: [authority_end, query_start).
     if (authority_end < query_start) {
-        u.path = s[authority_end:query_start];
+        u = Url { ...u, path: s[authority_end:query_start] };
     }
 
     return Some(u);
