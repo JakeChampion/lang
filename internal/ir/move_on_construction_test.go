@@ -41,6 +41,25 @@ function main(): i32 { return f(); }`)
 	}
 }
 
+// Tuple literals get the same treatment: an owned rc local consumed as
+// a tuple element at its last use is moved into the tuple (__drop_tuple_
+// dec's it), so the element inc is elided.
+func TestMoveOnConstructionElidesIncForTupleElement(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32 {
+    var x: i32[] = [1, 2, 3];
+    var t: (i32[], i32) = (x, 9);
+    return t.0[0] + t.1;
+}
+function main(): i32 { return f(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("owned local moved into a tuple element at last use should emit no __fern_rc_inc, got %d", got)
+	}
+}
+
 // A construction nested in a branch is not a top-level statement, so it
 // does not dominate the exit — the inc is kept (mirrors the move-on-
 // alias branch guard).

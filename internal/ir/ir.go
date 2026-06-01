@@ -2162,6 +2162,16 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 		for _, el := range lit.Elems {
 			mark(el)
 		}
+	case *ast.TupleLit:
+		// A tuple with rc-tracked elements: each is inc'd on
+		// construction and dec'd by __drop_tuple_<...> at the tuple's
+		// drop (tupleNeedsDrop / dropFnNameFor), so a moved element
+		// balances — same shape as the struct/array cases. Only mark
+		// owned rc locals; mark self-filters non-pointer elements via
+		// isOwnedRcLocal.
+		for _, el := range lit.Elems {
+			mark(el)
+		}
 	}
 }
 
@@ -6777,7 +6787,13 @@ func (b *builder) expr(e ast.Expr) error {
 			// Phase 1d-viii: tuple element is a struct-lit-style
 			// alias site. See the StructLit case below for the
 			// gating rationale.
-			if needsRcIncOnAlias(elem, b) {
+			//
+			// Phase 4 move-on-construction: an owned rc local consumed
+			// as a tuple element at its last use is moved into the
+			// tuple — __drop_tuple_<...> dec's the element at the
+			// tuple's drop, balancing the skipped inc
+			// (markConstructionMoves sets b.moveSites[elem]).
+			if needsRcIncOnAlias(elem, b) && !b.moveSites[elem] {
 				b.emitAliasInc(elem)
 			}
 			b.emit(payloadStoreOpFor(elemTypes[i], b.ptrW))
