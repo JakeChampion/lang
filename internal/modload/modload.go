@@ -1199,6 +1199,21 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		for i := range x.Fields {
 			r.rewriteExpr(&x.Fields[i].Value)
 		}
+		// Struct-update `Foo { ...base, field: v }`: the spread
+		// source is an ordinary expression and may itself reference
+		// module-local names (or be a nested struct literal), so it
+		// needs the same rewrite pass as the field values.
+		if x.Base != nil {
+			r.rewriteExpr(&x.Base)
+		}
+	case *ast.TupleLit:
+		// `(e1, e2, …)` — recurse into each element. The cursor
+		// idiom returns `(result, cursor)` tuples whose elements are
+		// struct-update literals of module-local types; without this
+		// the StructLit TypeName inside a tuple is left unmangled.
+		for i := range x.Elems {
+			r.rewriteExpr(&x.Elems[i])
+		}
 	}
 }
 

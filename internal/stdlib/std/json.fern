@@ -130,13 +130,18 @@ struct __JsonParser {
     error: i32,
 }
 
-function __json_p_skip_ws(p: __JsonParser) {
-    var n: i32 = p.s.len();
-    while (p.pos < n) {
-        var b: i32 = p.s[p.pos];
+// __json_p_skip_ws advances past leading whitespace and returns
+// the advanced cursor. Advance-only: no value to surface, so it
+// returns just the new __JsonParser (rebind: `p = __json_p_skip_ws(p);`).
+function __json_p_skip_ws(p: __JsonParser): __JsonParser {
+    var cur: __JsonParser = p;
+    var n: i32 = cur.s.len();
+    while (cur.pos < n) {
+        var b: i32 = cur.s[cur.pos];
         if (b != 32 && b != 9 && b != 10 && b != 13) { break; }
-        p.pos = p.pos + 1;
+        cur = __JsonParser { ...cur, pos: cur.pos + 1 };
     }
+    return cur;
 }
 
 function __json_p_byte(p: __JsonParser): i32 {
@@ -151,43 +156,53 @@ function __json_hex_value(c: i32): i32 {
     return -1;
 }
 
-function __json_p_number(p: __JsonParser): JsonValue {
+// __json_p_number consumes a JSON number and returns the
+// decoded JNumber plus the advanced cursor: `(JsonValue,
+// __JsonParser)`. On a malformed number it threads back a
+// cursor with `error: 1` and a JNull placeholder.
+function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
+    // Copy the borrowed parameter into a local before threading it
+    // through struct-updates. Reassigning the *parameter* in a loop
+    // and returning it trips an RC over-release in the current
+    // struct-update lowering (a separate codegen bug); the local
+    // copy — the same shape __json_p_skip_ws uses — sidesteps it.
+    var p: __JsonParser = p0;
     var start: i32 = p.pos;
     var n: i32 = p.s.len();
     var b: i32 = 0;
     // Optional '-'
-    if (__json_p_byte(p) == 45) { p.pos = p.pos + 1; }
+    if (__json_p_byte(p) == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
     // At least one digit.
     b = __json_p_byte(p);
-    if (b < 48 || b > 57) { p.error = 1; return JNull; }
+    if (b < 48 || b > 57) { return (JNull, __JsonParser { ...p, error: 1 }); }
     // Integer digits.
     while (p.pos < n) {
         b = p.s[p.pos];
         if (b < 48 || b > 57) { break; }
-        p.pos = p.pos + 1;
+        p = __JsonParser { ...p, pos: p.pos + 1 };
     }
     // Optional '.<digits>'.
     if (__json_p_byte(p) == 46) {
-        p.pos = p.pos + 1;
+        p = __JsonParser { ...p, pos: p.pos + 1 };
         while (p.pos < n) {
             b = p.s[p.pos];
             if (b < 48 || b > 57) { break; }
-            p.pos = p.pos + 1;
+            p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
     // Optional [eE][+-]?<digits>.
     b = __json_p_byte(p);
     if (b == 101 || b == 69) {
-        p.pos = p.pos + 1;
+        p = __JsonParser { ...p, pos: p.pos + 1 };
         b = __json_p_byte(p);
-        if (b == 43 || b == 45) { p.pos = p.pos + 1; }
+        if (b == 43 || b == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
         while (p.pos < n) {
             b = p.s[p.pos];
             if (b < 48 || b > 57) { break; }
-            p.pos = p.pos + 1;
+            p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
-    return JNumber(p.s[start:p.pos]);
+    return (JNumber(p.s[start:p.pos]), p);
 }
 
 // __json_emit_codepoint encodes a single Unicode scalar value
@@ -229,38 +244,48 @@ function __json_emit_codepoint(out: string, cp: i32): string {
 // Sets p.error and returns 0 on any non-hex digit or
 // past-end-of-input. Does NOT consume the hex digits past
 // what it reads — it advances p.pos by 4 on success.
-function __json_p_uhex(p: __JsonParser): i32 {
-    if (p.pos + 4 > p.s.len()) { p.error = 1; return 0; }
+function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
+    // See __json_p_number: thread a local copy of the param, not the
+    // param itself, to avoid the struct-update RC over-release.
+    var p: __JsonParser = p0;
+    if (p.pos + 4 > p.s.len()) { return (0, __JsonParser { ...p, error: 1 }); }
     var u: i32 = 0;
     var i: i32 = 0;
     while (i < 4) {
         var hv: i32 = __json_hex_value(p.s[p.pos]);
-        if (hv < 0) { p.error = 1; return 0; }
+        if (hv < 0) { return (0, __JsonParser { ...p, error: 1 }); }
         u = (u << 4) | hv;
-        p.pos = p.pos + 1;
+        p = __JsonParser { ...p, pos: p.pos + 1 };
         i = i + 1;
     }
-    return u;
+    return (u, p);
 }
 
-function __json_p_string(p: __JsonParser): string {
-    if (__json_p_byte(p) != 34) { p.error = 1; return ""; }
-    p.pos = p.pos + 1;
+// __json_p_string consumes a quoted JSON string and returns the
+// decoded value plus the advanced cursor: `(string,
+// __JsonParser)`. Error paths thread back a cursor with
+// `error: 1` and an empty-string placeholder.
+function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
+    // See __json_p_number: thread a local copy of the param.
+    var p: __JsonParser = p0;
+    if (__json_p_byte(p) != 34) { return ("", __JsonParser { ...p, error: 1 }); }
+    p = __JsonParser { ...p, pos: p.pos + 1 };
     var out: string = "";
     var n: i32 = p.s.len();
     var b: i32 = 0;
     while (true) {
         b = __json_p_byte(p);
-        if (b == 0) { p.error = 1; return ""; }
-        if (b == 34) { p.pos = p.pos + 1; return out; }
+        if (b == 0) { return ("", __JsonParser { ...p, error: 1 }); }
+        if (b == 34) { return (out, __JsonParser { ...p, pos: p.pos + 1 }); }
         if (b == 92) {                                  // '\\'
-            p.pos = p.pos + 1;
+            p = __JsonParser { ...p, pos: p.pos + 1 };
             var esc: i32 = __json_p_byte(p);
-            if (esc == 0) { p.error = 1; return ""; }
+            if (esc == 0) { return ("", __JsonParser { ...p, error: 1 }); }
             if (esc == 117) {                           // 'u' — \uXXXX
-                p.pos = p.pos + 1;
-                var u: i32 = __json_p_uhex(p);
-                if (p.error != 0) { return ""; }
+                p = __JsonParser { ...p, pos: p.pos + 1 };
+                var (u, pu) = __json_p_uhex(p);
+                p = pu;
+                if (p.error != 0) { return ("", p); }
                 // High surrogate (D800..DBFF): combine with
                 // the following low surrogate (DC00..DFFF) to
                 // form a single astral code point. Lone or
@@ -273,9 +298,10 @@ function __json_p_string(p: __JsonParser): string {
                         || p.s[p.pos+1] != 117) {
                         out = __json_emit_codepoint(out, 65533);
                     } else {
-                        p.pos = p.pos + 2;
-                        var low: i32 = __json_p_uhex(p);
-                        if (p.error != 0) { return ""; }
+                        p = __JsonParser { ...p, pos: p.pos + 2 };
+                        var (low, pl) = __json_p_uhex(p);
+                        p = pl;
+                        if (p.error != 0) { return ("", p); }
                         if (low < 56320 || low > 57343) {
                             out = __json_emit_codepoint(out, 65533);
                             out = __json_emit_codepoint(out, low);
@@ -299,132 +325,151 @@ function __json_p_string(p: __JsonParser): string {
                 else if (esc == 116) { ch = 9; }
                 else if (esc == 98)  { ch = 8; }
                 else if (esc == 102) { ch = 12; }
-                else { p.error = 1; return ""; }
+                else { return ("", __JsonParser { ...p, error: 1 }); }
                 var sb: u8[] = [ch as u8];
                 out = out + string_from_bytes(sb);
-                p.pos = p.pos + 1;
+                p = __JsonParser { ...p, pos: p.pos + 1 };
             }
         } else {
             out = out + p.s[p.pos:p.pos+1];
-            p.pos = p.pos + 1;
+            p = __JsonParser { ...p, pos: p.pos + 1 };
         }
     }
-    return "";   // unreachable
+    return ("", p);   // unreachable
 }
 
-function __json_p_array(p: __JsonParser): JsonValue {
-    p.pos = p.pos + 1;                                  // consume '['
-    __json_p_skip_ws(p);
+// __json_p_array consumes a JSON array and returns the decoded
+// JArray plus the advanced cursor: `(JsonValue, __JsonParser)`.
+// Recurses into __json_p_value for each element, threading the
+// cursor through. Error paths thread back `error: 1` + JNull.
+function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
+    // See __json_p_number: thread a local copy of the param.
+    var p: __JsonParser = p0;
+    p = __JsonParser { ...p, pos: p.pos + 1 };          // consume '['
+    p = __json_p_skip_ws(p);
     if (__json_p_byte(p) == 93) {                       // ']'
-        p.pos = p.pos + 1;
+        p = __JsonParser { ...p, pos: p.pos + 1 };
         var empty: JsonValue[] = [];
-        return JArray(empty);
+        return (JArray(empty), p);
     }
     var arr: JsonValue[] = [];
     while (true) {
-        var elem: JsonValue = __json_p_value(p);
-        if (p.error != 0) { return JNull; }
+        var (elem, pe) = __json_p_value(p);
+        p = pe;
+        if (p.error != 0) { return (JNull, p); }
         arr = arr.push(elem);
-        __json_p_skip_ws(p);
+        p = __json_p_skip_ws(p);
         var b: i32 = __json_p_byte(p);
         if (b == 44) {                                  // ','
-            p.pos = p.pos + 1;
-            __json_p_skip_ws(p);
+            p = __JsonParser { ...p, pos: p.pos + 1 };
+            p = __json_p_skip_ws(p);
             continue;
         }
         if (b == 93) {                                  // ']'
-            p.pos = p.pos + 1;
-            return JArray(arr);
+            p = __JsonParser { ...p, pos: p.pos + 1 };
+            return (JArray(arr), p);
         }
-        p.error = 1;
-        return JNull;
+        return (JNull, __JsonParser { ...p, error: 1 });
     }
-    return JNull;   // unreachable
+    return (JNull, p);   // unreachable
 }
 
-function __json_p_object(p: __JsonParser): JsonValue {
-    p.pos = p.pos + 1;                                  // consume '{'
-    __json_p_skip_ws(p);
+// __json_p_object consumes a JSON object and returns the decoded
+// JObject plus the advanced cursor: `(JsonValue, __JsonParser)`.
+// Recurses into __json_p_string (keys) and __json_p_value
+// (values), threading the cursor through. Error paths thread
+// back `error: 1` + JNull.
+function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
+    // See __json_p_number: thread a local copy of the param.
+    var p: __JsonParser = p0;
+    p = __JsonParser { ...p, pos: p.pos + 1 };          // consume '{'
+    p = __json_p_skip_ws(p);
     var m: Map[string, JsonValue] = map_new(8);
     if (__json_p_byte(p) == 125) {                      // '}'
-        p.pos = p.pos + 1;
-        return JObject(m);
+        p = __JsonParser { ...p, pos: p.pos + 1 };
+        return (JObject(m), p);
     }
     while (true) {
-        var key: string = __json_p_string(p);
-        if (p.error != 0) { return JNull; }
-        __json_p_skip_ws(p);
+        var (key, pk) = __json_p_string(p);
+        p = pk;
+        if (p.error != 0) { return (JNull, p); }
+        p = __json_p_skip_ws(p);
         if (__json_p_byte(p) != 58) {                   // ':'
-            p.error = 1; return JNull;
+            return (JNull, __JsonParser { ...p, error: 1 });
         }
-        p.pos = p.pos + 1;
-        var val: JsonValue = __json_p_value(p);
-        if (p.error != 0) { return JNull; }
+        p = __JsonParser { ...p, pos: p.pos + 1 };
+        var (val, pv) = __json_p_value(p);
+        p = pv;
+        if (p.error != 0) { return (JNull, p); }
         m.set(key, val);
-        __json_p_skip_ws(p);
+        p = __json_p_skip_ws(p);
         var b: i32 = __json_p_byte(p);
         if (b == 44) {                                  // ','
-            p.pos = p.pos + 1;
-            __json_p_skip_ws(p);
+            p = __JsonParser { ...p, pos: p.pos + 1 };
+            p = __json_p_skip_ws(p);
             continue;
         }
         if (b == 125) {                                 // '}'
-            p.pos = p.pos + 1;
-            return JObject(m);
+            p = __JsonParser { ...p, pos: p.pos + 1 };
+            return (JObject(m), p);
         }
-        p.error = 1;
-        return JNull;
+        return (JNull, __JsonParser { ...p, error: 1 });
     }
-    return JNull;   // unreachable
+    return (JNull, p);   // unreachable
 }
 
-function __json_p_value(p: __JsonParser): JsonValue {
-    __json_p_skip_ws(p);
+// __json_p_value is the recursive-descent dispatch: it skips
+// leading whitespace, peeks the next byte, and delegates to the
+// number / string / array / object parsers. Returns the decoded
+// value plus the advanced cursor: `(JsonValue, __JsonParser)`.
+// Error paths thread back `error: 1` + JNull.
+function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
+    // See __json_p_number: thread a local copy of the param.
+    var p: __JsonParser = p0;
+    p = __json_p_skip_ws(p);
     var b: i32 = __json_p_byte(p);
-    if (b == 0) { p.error = 1; return JNull; }
+    if (b == 0) { return (JNull, __JsonParser { ...p, error: 1 }); }
     if (b == 110) {                                     // 'n' — null
-        if (p.pos + 4 > p.s.len()) { p.error = 1; return JNull; }
+        if (p.pos + 4 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
         if (p.s[p.pos+1] != 117 || p.s[p.pos+2] != 108 || p.s[p.pos+3] != 108) {
-            p.error = 1; return JNull;
+            return (JNull, __JsonParser { ...p, error: 1 });
         }
-        p.pos = p.pos + 4;
-        return JNull;
+        return (JNull, __JsonParser { ...p, pos: p.pos + 4 });
     }
     if (b == 116) {                                     // 't' — true
-        if (p.pos + 4 > p.s.len()) { p.error = 1; return JNull; }
+        if (p.pos + 4 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
         if (p.s[p.pos+1] != 114 || p.s[p.pos+2] != 117 || p.s[p.pos+3] != 101) {
-            p.error = 1; return JNull;
+            return (JNull, __JsonParser { ...p, error: 1 });
         }
-        p.pos = p.pos + 4;
-        return JBool(true);
+        return (JBool(true), __JsonParser { ...p, pos: p.pos + 4 });
     }
     if (b == 102) {                                     // 'f' — false
-        if (p.pos + 5 > p.s.len()) { p.error = 1; return JNull; }
+        if (p.pos + 5 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
         if (p.s[p.pos+1] != 97 || p.s[p.pos+2] != 108 ||
             p.s[p.pos+3] != 115 || p.s[p.pos+4] != 101) {
-            p.error = 1; return JNull;
+            return (JNull, __JsonParser { ...p, error: 1 });
         }
-        p.pos = p.pos + 5;
-        return JBool(false);
+        return (JBool(false), __JsonParser { ...p, pos: p.pos + 5 });
     }
     if (b == 34) {                                      // '"' — string
-        var s: string = __json_p_string(p);
-        if (p.error != 0) { return JNull; }
-        return JString(s);
+        var (s, ps) = __json_p_string(p);
+        p = ps;
+        if (p.error != 0) { return (JNull, p); }
+        return (JString(s), p);
     }
     if (b == 91)  { return __json_p_array(p); }         // '['
     if (b == 123) { return __json_p_object(p); }        // '{'
     if (b == 45 || (b >= 48 && b <= 57)) {              // '-' or digit
         return __json_p_number(p);
     }
-    p.error = 1;
-    return JNull;
+    return (JNull, __JsonParser { ...p, error: 1 });
 }
 
 pub function json_parse(s: string): Option[JsonValue] {
     var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0 };
-    var v: JsonValue = __json_p_value(p);
-    __json_p_skip_ws(p);
+    var (v, pv) = __json_p_value(p);
+    p = pv;
+    p = __json_p_skip_ws(p);
     if (p.error != 0 || p.pos < p.s.len()) { return None; }
     return Some(v);
 }

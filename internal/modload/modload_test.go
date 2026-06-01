@@ -208,6 +208,54 @@ function main(): i32 { return 0; }`,
 	}
 }
 
+// A struct-update literal nested inside a tuple-literal return value
+// must have its TypeName mangled with the module prefix, and its
+// spread Base must be rewritten too. This is the cursor idiom's shape
+// (`return (result, Cur { ...p, pos: … })`) — the rewriter previously
+// never descended into TupleLit elements, so the StructLit TypeName
+// stayed bare and the checker reported "unknown struct type". Regress
+// against that: walk the mangled function body and assert no bare
+// `Cur` StructLit survives.
+func TestLoadMangleStructUpdateInTupleReturn(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"cur.fern": `pub struct Cur { s: string, pos: i32 }
+pub function adv(p: Cur): (i32, Cur) {
+    return (p.pos, Cur { ...p, pos: p.pos + 1 });
+}`,
+		"main.fern": `import "./cur";
+function main(): i32 { return 0; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	adv := findFunc(prog, "cur__adv")
+	if adv == nil {
+		t.Fatalf("cur__adv not found in: %v", funcNames(prog))
+	}
+	var bare int
+	var mangled int
+	ast.Walk(adv.Body, func(n ast.Node) bool {
+		sl, ok := n.(*ast.StructLit)
+		if !ok {
+			return true
+		}
+		switch sl.TypeName {
+		case "Cur":
+			bare++
+		case "cur__Cur":
+			mangled++
+		}
+		return true
+	})
+	if bare != 0 {
+		t.Errorf("struct-update inside tuple return left %d bare \"Cur\" StructLit(s); want all mangled", bare)
+	}
+	if mangled != 1 {
+		t.Errorf("expected exactly 1 mangled \"cur__Cur\" StructLit, got %d", mangled)
+	}
+}
+
 // Imports are resolved relative to the importing file's directory,
 // not the working directory or the entry file's directory. A nested
 // import in a sibling subdirectory resolves through filepath.Join.
