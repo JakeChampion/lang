@@ -436,16 +436,17 @@ func TestWASMArrayDropFree(t *testing.T) {
 // Phase 1e-strings: a string local frees its old heap buffer on
 // reassignment (dec-on-overwrite in assign(), gated RcFreeEnabled &&
 // freeEligible). These run the concat-loop reclaim + the aliased-ident
-// inc/dec balance with free actually happening on each backend; 0 only
-// if every free+reuse is sound and no release underflows.
+// inc/dec balance with free actually happening; 0 only if every
+// free+reuse is sound and no release underflows.
+//
+// x86_64 (native single-word rc_dec) and wasm (two-word str_dec under
+// wasmtime) only: native-arm64 heap-string reclamation is the deferred
+// RC-perceus slice 5g (SSO-blocked), so the arm64 string dec-on-overwrite
+// is gated off in ir.go and there's no arm64 variant here — asserting
+// reclaim there would force the unproven native str_dec path (qemu masks
+// the over-release real hardware hits).
 func TestX86_64StringReassignFree(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, stringReassignFreeSrc); code != 0 {
-		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", code)
-	}
-}
-
-func TestArm64StringReassignFree(t *testing.T) {
-	if _, code := compileAndRunArm64FreeOn(t, stringReassignFreeSrc); code != 0 {
 		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", code)
 	}
 }

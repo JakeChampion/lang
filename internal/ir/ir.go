@@ -9549,11 +9549,24 @@ func (b *builder) assign(n *ast.Assign) error {
 			//
 			// Net-zero on the operand stack (load → str_dec/rc_dec → drop),
 			// so the new value sitting underneath is left untouched.
-			//   two-word ABI (wasm + arm64-TwoWordOverride): load (data,len),
-			//     __fern_str_dec — inline-tag / literal-sentinel guards no-op
-			//     the non-heap sources — then drop the returned data ptr.
-			//   native single-word (x86_64): load ptr, __fern_rc_dec (SSO
-			//     low-bit + sentinel guards keep all sources safe), drop.
+			//   wasm two-word (ptrW==4): load (data,len), __fern_str_dec —
+			//     inline-tag / literal-sentinel guards no-op the non-heap
+			//     sources — then drop the returned data ptr. Verified under
+			//     wasmtime (host-independent), so local == CI.
+			//   native single-word x86_64 (ptrW==8, !TwoWordOverride): load
+			//     ptr, __fern_rc_dec (SSO low-bit + sentinel guards keep all
+			//     sources safe), drop. Verified on the native x86_64 runner.
+			//
+			// arm64 (ptrW==8 + TwoWordOverride, two-word str_dec) is
+			// DELIBERATELY EXCLUDED for now: native-arm64 heap-string
+			// reclamation is the RC-perceus plan's deferred slice 5g
+			// ("heap-string rc — SSO-blocked", x86_64-only testing caveat).
+			// Enabling the overwrite str_dec there over-releases on real
+			// arm64 hardware (qemu user-mode masks it), so arm64 keeps its
+			// prior safe-leak behaviour — codegen here is byte-identical to
+			// main on arm64 — until the native str_dec / cell_free reclaim
+			// path is verified on hardware. Re-enable by widening the wasm
+			// branch back to ast.UseTwoWordStrings once 5g lands.
 			//
 			// Gated on freeEligible like the exit dec: an INELIGIBLE
 			// (borrowed param / escaped) string is skipped here AND at exit,
@@ -9561,11 +9574,11 @@ func (b *builder) assign(n *ast.Assign) error {
 			// Tuples are deliberately NOT handled here — their is_unique
 			// deep-drop pulls in dropStructField / decValueOnStack and
 			// belongs with the emitDec refactor, not a duplicated inline.
-			if ast.UseTwoWordStrings(b.ptrW) {
+			if b.ptrW == 4 {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
-			} else if b.ptrW == 8 {
+			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
