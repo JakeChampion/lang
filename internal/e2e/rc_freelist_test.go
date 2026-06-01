@@ -342,6 +342,41 @@ function main(): i32 {
     return (build() - 19900) + __rc_underflow_count();
 }`
 
+// stringReassignFreeSrc is the string analogue of pushLoopFreeSrc and
+// the headline case for the Phase 1e-strings dec-on-overwrite: a string
+// local reassigned in a loop frees its OLD heap buffer before taking the
+// new one, so 300 concat-growth iterations reclaim+reuse instead of
+// orphaning every intermediate. The concat RHS is a fresh rc=1 buffer
+// (no alias-inc), so the dec-on-overwrite this slice adds is the only
+// release of the prior buffer — a double-free or corrupted reuse would
+// drift the length read-back or bump __rc_underflow_count.
+//
+// aliasHeap additionally covers the inc+dec-old balance when the RHS IS
+// an aliased string ident (needsRcIncOnAlias fires): `a = b` frees a's
+// old "a"+w buffer AND retains b's, leaving both bindings readable and
+// the exit double-dec of b's shared buffer balanced. w="zz" → a="azz",
+// b="bbzz", a=b ⇒ a.len()+b.len() = 4+4 = 8. Folded to 0 on success.
+const stringReassignFreeSrc = `function build(): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < 300) {
+        s = s + "x";
+        i = i + 1;
+    }
+    return s.len();
+}
+function aliasHeap(w: string): i32 {
+    var a: string = "a" + w;
+    var b: string = "bb" + w;
+    a = b;
+    return a.len() + b.len();
+}
+function main(): i32 {
+    var grown: i32 = build() - 300;
+    var aliased: i32 = aliasHeap("zz") - 8;
+    return grown + aliased + __rc_underflow_count();
+}`
+
 // Phase 3 step-4: arrays free their buffer when rc hits 0 (flag-on).
 // This exercises __fern_drop_arr_ptr's tail-free + freelist reuse
 // across 50 build/drop cycles, and re-runs the whole rc-correctness
@@ -395,6 +430,32 @@ func TestWASMArrayDropFree(t *testing.T) {
 				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, got)
 			}
 		})
+	}
+}
+
+// Phase 1e-strings: a string local frees its old heap buffer on
+// reassignment (dec-on-overwrite in assign(), gated RcFreeEnabled &&
+// freeEligible). These run the concat-loop reclaim + the aliased-ident
+// inc/dec balance with free actually happening on each backend; 0 only
+// if every free+reuse is sound and no release underflows.
+func TestX86_64StringReassignFree(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, stringReassignFreeSrc); code != 0 {
+		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", code)
+	}
+}
+
+func TestArm64StringReassignFree(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, stringReassignFreeSrc); code != 0 {
+		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", code)
+	}
+}
+
+func TestWASMStringReassignFree(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	if got := runWasm(t, stringReassignFreeSrc); got != 0 {
+		t.Errorf("string reassign free+reuse: got %d, want 0 (drift / over-release on string dec-on-overwrite)", got)
 	}
 }
 
