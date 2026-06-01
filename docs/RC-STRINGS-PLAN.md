@@ -417,7 +417,7 @@ explicitly skipped.
 | Slice 3 follow-up — string TUPLE elements | DONE | DONE | TODO |
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | DONE |
 | Slice 5 — string ENUM payloads | DONE | DONE | DONE |
-| Slice 6 — string CLOSURE captures | DONE | DONE | TODO |
+| Slice 6 — string CLOSURE captures | DONE | DONE | DONE |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
 | Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
 
