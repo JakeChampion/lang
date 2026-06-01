@@ -82,6 +82,47 @@ func TestFormatMinimalParens(t *testing.T) {
 	}
 }
 
+// Bitwise (& | ^) bind LOOSER than the comparison family (== != < <=
+// > >=), matching Fern's parser hierarchy (parseLogicalAnd → parseBitOr
+// → parseBitXor → parseBitAnd → parseEquality → parseRelational in
+// parser.go). A printer that ranked bitwise tighter would drop parens
+// the parser actually needs on round-trip — the bug that turned
+// `(n & (n - 1)) == 0` (the "is power of 2" idiom) into
+// `n & ((n - 1) == 0)` (ANDing a number with a boolean) when round-
+// tripping internal/stdlib/std/i32.fern. This unit-level guard pins
+// the contract so the same regression can't sneak back in without
+// the corpus sweep noticing.
+func TestFormatBitwiseLooserThanCompare(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// `==` binds tighter → keep the parens around `n & m` so the
+		// AST still groups as `(n & m) == 0` after re-parse.
+		{`(a & b) == 0`, `(a & b) == 0`},
+		{`(a | b) == 0`, `(a | b) == 0`},
+		{`(a ^ b) == 0`, `(a ^ b) == 0`},
+		// `!=` / `<` / `>` family same precedence as `==`.
+		{`(a & b) != 0`, `(a & b) != 0`},
+		{`(a & b) < 16`, `(a & b) < 16`},
+		// The bare `a == b & c` shape (parens already absent in
+		// source) keeps that grouping verbatim: parser reads it as
+		// `(a == b) & c` so a round-trip preserves it without
+		// needing to add parens. Pinned so a future precedence
+		// reshuffle doesn't silently insert them.
+		{`a == b & c`, `a == b & c`},
+		// `&` vs `|` — `&` binds tighter (parseBitOr → parseBitXor
+		// → parseBitAnd), so `a & b | c` drops parens around
+		// `a & b`. `a | b & c` keeps the grouping verbatim.
+		{`a & b | c`, `a & b | c`},
+		{`a | b & c`, `a | b & c`},
+		{`(a | b) & c`, `(a | b) & c`},
+	}
+	for _, tc := range cases {
+		got := formatSrc(t, "function f(a: i32, b: i32, c: i32): i32 { return "+tc.in+"; }")
+		if !strings.Contains(got, "return "+tc.want+";") {
+			t.Errorf("input %q → expected `return %s;` in:\n%s", tc.in, tc.want, got)
+		}
+	}
+}
+
 // Negative i32 / float literals format as unary `-` over a
 // positive literal, matching how the parser models them.
 func TestFormatNegativeLiterals(t *testing.T) {
