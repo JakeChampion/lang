@@ -11,8 +11,8 @@
 // Intended use (Phase 1):
 //
 //   var m: MockPlatform = mock_platform_new();
-//   m.record("fetch", "GET /users/42");
-//   m.record("kv_set", "user:42=Alice");
+//   m = m.record("fetch", "GET /users/42");
+//   m = m.record("kv_set", "user:42=Alice");
 //
 //   // Drive the handler manually:
 //   var req: HttpRequest = ...;
@@ -38,12 +38,15 @@ pub function mock_platform_new(): MockPlatform {
     return MockPlatform { calls: empty };
 }
 
-// `(m: MockPlatform).record(name, args)` — append a call
-// to the log. `args` is a free-form string; tests typically
-// stuff a comma-separated argument summary or a JSON-shaped
-// payload representation in there for assertion.
-pub function (m: MockPlatform) record(name: string, args: string) {
-    m.calls = m.calls.push(MockCall { name: name, args: args });
+// `(m: MockPlatform).record(name, args): MockPlatform` —
+// return a MockPlatform whose log has `name`/`args` appended.
+// `args` is a free-form string; tests typically stuff a
+// comma-separated argument summary or a JSON-shaped payload
+// representation in there for assertion. Functional update
+// (immutable data structures): rebind the result —
+// `m = m.record(...)`.
+pub function (m: MockPlatform) record(name: string, args: string): MockPlatform {
+    return MockPlatform { ...m, calls: m.calls.push(MockCall { name: name, args: args }) };
 }
 
 // `(m: MockPlatform).call_count()` — number of calls
@@ -53,12 +56,13 @@ pub function (m: MockPlatform) call_count(): i32 {
     return m.calls.len();
 }
 
-// `(m: MockPlatform).reset()` — clear the call log without
-// re-allocating the MockPlatform. Lets a single mock be
-// reused across multiple test cases without leaking state.
-pub function (m: MockPlatform) reset() {
+// `(m: MockPlatform).reset(): MockPlatform` — return a
+// MockPlatform with an empty call log. Functional update
+// (immutable data structures): rebind the result —
+// `m = m.reset()`.
+pub function (m: MockPlatform) reset(): MockPlatform {
     var empty: MockCall[] = [];
-    m.calls = empty;
+    return MockPlatform { ...m, calls: empty };
 }
 
 // `(m: MockPlatform).has_call(name)` — true iff any

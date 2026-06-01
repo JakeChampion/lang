@@ -1757,8 +1757,8 @@ import "std/i32";
 import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m.record("fetch", "GET /users/42");
-    m.record("kv_set", "user:42=Alice");
+    m = m.record("fetch", "GET /users/42");
+    m = m.record("kv_set", "user:42=Alice");
     print(m.call_count().to_string());
     print(m.calls[0].name);
     print(m.calls[1].args);
@@ -1771,7 +1771,7 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m.record("fetch", "x");
+    m = m.record("fetch", "x");
     if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
     if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
     return 0;
@@ -1783,9 +1783,9 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m.record("fetch", "first");
-    m.record("kv_set", "second");
-    m.record("fetch", "third");
+    m = m.record("fetch", "first");
+    m = m.record("kv_set", "second");
+    m = m.record("fetch", "third");
     // find_call returns the FIRST match.
     match (m.find_call("fetch")) {
         Some(c) => { print(c.args); },
@@ -1804,10 +1804,10 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m.record("a", "1");
-    m.record("b", "2");
+    m = m.record("a", "1");
+    m = m.record("b", "2");
     if (m.call_count() != 2) { return 1; }
-    m.reset();
+    m = m.reset();
     if (m.call_count() != 0) { return 2; }
     if (m.has_call("a")) { return 3; }
     print("ok");
