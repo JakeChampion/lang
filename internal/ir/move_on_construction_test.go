@@ -60,6 +60,25 @@ function main(): i32 { return f(); }`)
 	}
 }
 
+// Closure captures get the same treatment: an owned rc local captured
+// at its last use is moved into the closure env (the closure's drop
+// thunk dec's the capture), so the capture inc is elided.
+func TestMoveOnConstructionElidesIncForClosureCapture(t *testing.T) {
+	ip := lowerForTest(t, `function f(): () => i32 {
+    var x: i32[] = [1, 2, 3];
+    function get(): i32 { return x[0]; }
+    return get;
+}
+function main(): i32 { return f()(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("owned local moved into a closure capture at last use should emit no __fern_rc_inc, got %d", got)
+	}
+}
+
 // A construction nested in a branch is not a top-level statement, so it
 // does not dominate the exit — the inc is kept (mirrors the move-on-
 // alias branch guard).

@@ -802,6 +802,23 @@ function main(): i32 {
     }
     return acc + __rc_underflow_count();
 }`},
+	// Closure capture: x moved into the closure env; the closure's drop
+	// thunk dec's the capture, balancing the elided inc. The closure is
+	// built, called, and dropped each iteration. 100 cycles.
+	{"closure_capture", `function once(n: i32): i32 {
+    var x: i32[] = [n, n + 5];
+    function get(): i32 { return x[0] + x[1]; }
+    return get();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (2 * i + 5));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
 	// Composes with move-on-return: x moved into s, s moved out to the
 	// caller; the caller owns and frees the whole thing.
 	{"returned", `struct Wrap { inner: i32[] }
