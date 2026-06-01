@@ -1426,8 +1426,8 @@ import "std/headers";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
-    h.set("x-served-by", "fern");
-    h.set("content-type", "text/plain");
+    h = h.set("x-served-by", "fern");
+    h = h.set("content-type", "text/plain");
     return HttpResponse { status: 201, body: "ok", headers: h };
 }
 `
