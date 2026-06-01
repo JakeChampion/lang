@@ -414,7 +414,7 @@ explicitly skipped.
 | Prereq 3 — SSO inline-tag guard on rc_inc/dec | n/a | DONE | DONE |
 | Slice 2 — string LOCALS | DONE | DONE | DONE |
 | Slice 3 — string STRUCT fields | DONE | DONE | DONE |
-| Slice 3 follow-up — string TUPLE elements | DONE | DONE | TODO |
+| Slice 3 follow-up — string TUPLE elements | DONE | DONE | DONE |
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | DONE |
 | Slice 5 — string ENUM payloads | DONE | DONE | DONE |
 | Slice 6 — string CLOSURE captures | DONE | DONE | DONE |

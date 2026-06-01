@@ -2513,14 +2513,16 @@ function build(): i32 {
 	}
 }
 
-// TestLowerNestedTupleStringNoReclaimOnArm64TwoWord locks the
-// exclusion: the arm64 two-word boxed string ABI doesn't have a
-// native __fern_str_dec helper (it lives in wasm runtime only), so
-// the nested tuple's string element must NOT be reclaimed yet — it
-// leaks safely until the arm64 two-word string-reclaim port lands.
-// Routing falls back to the flat dec, the same way Slices 2-6's
-// arm64 two-word exclusions do.
-func TestLowerNestedTupleStringNoReclaimOnArm64TwoWord(t *testing.T) {
+// TestLowerNestedTupleStringReclaimOnArm64TwoWord — Slice 3 follow-up
+// on arm64: a nested tuple `(string, i32)` held in a struct field
+// reclaims its string element through a generated __drop_tuple_<...>
+// helper whose body dec's via __fern_str_dec under the two-word ABI.
+// Originally an exclusion (the helper symbol existed only on wasm);
+// post-#1665 the arm64 string-runtime port (and the four prior arm64
+// slice widenings) made tupleNeedsDrop's two-word string branch a
+// safe one-line widening — wasm and arm64-TwoWordOverride now share
+// one codegen path.
+func TestLowerNestedTupleStringReclaimOnArm64TwoWord(t *testing.T) {
 	prevOverride := ast.TwoWordOverride
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prevOverride }()
@@ -2529,8 +2531,18 @@ function build(): i32 {
     var b: Box = Box { items: ("h" + "i", 7) };
     return b.items.1;
 }`, 8)
-	if _, ok := anyTupleDropFn(p); ok {
-		t.Errorf("arm64 two-word: no __drop_tuple_<...> helper should be generated (no native str_dec runtime); got:\n%s", p)
+	td, ok := anyTupleDropFn(p)
+	if !ok {
+		t.Fatalf("arm64 two-word: expected a generated __drop_tuple_<...> helper for the struct's tuple field; got:\n%s", p)
+	}
+	sawStrDec := false
+	for _, op := range td.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__fern_str_dec" {
+			sawStrDec = true
+		}
+	}
+	if !sawStrDec {
+		t.Errorf("arm64 two-word: expected %s to dec its string element via __fern_str_dec; got:\n%s", td.Name, p)
 	}
 }
 
