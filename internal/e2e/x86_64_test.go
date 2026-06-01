@@ -746,6 +746,51 @@ function main(): i32 {
 	}
 }
 
+// Struct-update literal `Foo { ...base, field: v }` end-to-end on the
+// native x86-64 backend: un-named fields are copied from the base, the
+// named ones override, and copied pointer-shaped fields (string) are
+// rc-inc'd so they survive — without double-free. Exercises the IR
+// lowering's copy-from-base path.
+func TestX86_64StructUpdate(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"override-scalar", `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { ...a, y: 10 };
+    return b.x + b.y;
+}`, 13}, // copied x=3 + override y=10
+		{"pure-copy", `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { ...a };
+    return b.x + b.y;
+}`, 7},
+		{"functional-base-unchanged", `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { ...a, x: 100 };
+    return a.x + a.y;
+}`, 7}, // updating b must not touch a
+		{"copied-string-field", `struct Person { name: string, age: i32 }
+function main(): i32 {
+    var a: Person = Person { name: "alice", age: 30 };
+    var b: Person = Person { ...a, age: 31 };
+    return b.name.len() + b.age;
+}`, 36}, // copied name ("alice"=5) + override age=31
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, code := compileAndRunX86_64(t, c.src)
+			if code != c.want {
+				t.Errorf("exit = %d, want %d", code, c.want)
+			}
+		})
+	}
+}
+
 // f32 / f64 arithmetic, comparison, int <-> float
 // conversions, negation. Mirrors TestArm64Floats's case
 // table. Floats ride the operand stack as raw bit patterns

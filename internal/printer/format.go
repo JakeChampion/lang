@@ -560,12 +560,12 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 // surrounding context (or, for left-associative right-children,
 // less-than-or-equal).
 const (
-	precLowest  = 0
-	precAssign  = 1  // = += -= …
-	precPipe    = 2  // |>  (above assignment, below ternary)
-	precIfExpr  = 3  // if (c) { e } else { e } in expression position
-	precOr      = 4  // ||
-	precAnd     = 5  // &&
+	precLowest = 0
+	precAssign = 1 // = += -= …
+	precPipe   = 2 // |>  (above assignment, below ternary)
+	precIfExpr = 3 // if (c) { e } else { e } in expression position
+	precOr     = 4 // ||
+	precAnd    = 5 // &&
 	// Bitwise (|, ^, &) sit BELOW the comparison family in Fern's
 	// grammar — the parser hierarchy is parseLogicalAnd →
 	// parseBitOr → parseBitXor → parseBitAnd → parseEquality →
@@ -915,6 +915,14 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 	case *ast.StructLit:
 		f.b.WriteString(x.TypeName)
 		f.b.WriteString(" { ")
+		// Struct-update literal: leading `...base`, then overrides.
+		if x.Base != nil {
+			f.b.WriteString("...")
+			f.formatExpr(x.Base, precLowest)
+			if len(x.Fields) > 0 {
+				f.b.WriteString(", ")
+			}
+		}
 		for i, fld := range x.Fields {
 			if i > 0 {
 				f.b.WriteString(", ")

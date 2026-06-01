@@ -3016,6 +3016,9 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 			walkExprForNames(arm.Body, selfName, siblings, seen)
 		}
 	case *ast.StructLit:
+		if n.Base != nil {
+			walkExprForNames(n.Base, selfName, siblings, seen)
+		}
 		for _, f := range n.Fields {
 			walkExprForNames(f.Value, selfName, siblings, seen)
 		}
@@ -5133,6 +5136,30 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
 		}
+		// Struct-update literal `Foo { ...base, field: v }`: the base
+		// must have this struct's type, and supplies every field the
+		// overrides don't — so the completeness check below is relaxed.
+		// For a generic struct the base fixes the instantiation, so
+		// seed the type-arg substitution from the base's Args.
+		var baseArgs []ast.Type
+		if n.Base != nil {
+			bt := c.checkExpr(n.Base, s)
+			if bt != nil {
+				bst, ok := bt.(ast.StructType)
+				if !ok || bst.Name != sd.Name {
+					c.errfCode(n.Base.Pos(), "E003", "struct-update base must be %s, got %s", sd.Name, bt)
+				} else {
+					baseArgs = bst.Args
+					if sub != nil {
+						for i, tp := range sd.TypeParams {
+							if i < len(bst.Args) {
+								sub[tp] = bst.Args[i]
+							}
+						}
+					}
+				}
+			}
+		}
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -5172,9 +5199,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
-		for _, f := range sd.Fields {
-			if !seen[f.Name] {
-				c.errfCode(n.P, "E005", "struct literal missing field %q", f.Name)
+		// A plain literal must name every field. A struct-update
+		// literal (Base != nil) copies the un-named fields from the
+		// base, so the completeness requirement is relaxed.
+		if n.Base == nil {
+			for _, f := range sd.Fields {
+				if !seen[f.Name] {
+					c.errfCode(n.P, "E005", "struct literal missing field %q", f.Name)
+				}
 			}
 		}
 		if len(sd.TypeParams) > 0 {
@@ -5183,6 +5215,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			for i, tp := range sd.TypeParams {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
+				} else if n.Base != nil && i < len(baseArgs) {
+					// The base fixes the instantiation for any
+					// type param the (subset) overrides didn't touch.
+					args[i] = baseArgs[i]
 				} else {
 					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
 					complete = false

@@ -343,6 +343,37 @@ func TestInterpStructBasic(t *testing.T) {
 	}
 }
 
+// Struct-update literal `Point { ...a, y: 10 }`: un-named fields copy
+// from the base, named fields override. The result is a fresh value.
+func TestInterpStructUpdate(t *testing.T) {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
+			var a: Point = Point { x: 3, y: 4 };
+			var b: Point = Point { ...a, y: 10 };
+			return b.x + b.y;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 13 {
+		t.Errorf("got %v, want 13 (copied x=3 + override y=10)", v)
+	}
+}
+
+// Struct-update produces a fresh value: mutating/overriding into the
+// new struct must not change the base. Returns the base's fields after
+// an update derived from it.
+func TestInterpStructUpdateIsFunctional(t *testing.T) {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
+			var a: Point = Point { x: 3, y: 4 };
+			var b: Point = Point { ...a, x: 100 };
+			return a.x + a.y;
+		}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 7 {
+		t.Errorf("got %v, want 7 (base a unchanged: 3+4)", v)
+	}
+}
+
 // Sum types in the interpreter: a payload-carrying variant
 // constructed and then matched routes through the right arm with
 // payload bindings visible in the arm body.
