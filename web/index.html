@@ -926,7 +926,6 @@ function main(): i32 {
     return 0;
 }`,
   http: `import "core/no_prelude";
-import "std/headers";
 import "std/http";
 import "std/tcp";
 // An HTTP handler. Pick the "wasi:http/incoming-handler" world,
@@ -935,9 +934,10 @@ import "std/tcp";
 // method, reads the body, and sets a response header.
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        var h: HeaderMap = headers.header_map_new();
-        h.set("x-served-by", "fern");
-        return HttpResponse { status: 200, body: "hello, world", headers: h };
+        // Functional header update: with_header returns a new
+        // response with the header set (immutable data structures).
+        return http.http_response_ok("hello, world")
+            .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
         // Echo the request body back.
