@@ -25,8 +25,8 @@ import "std/http";
 
 function test_user_headers_before_auto_block(): Option[string] {
     var r: HttpResponse = http.http_response_ok("hello");
-    r.headers.set("X-Trace-Id", "abc123");
-    r.headers.set("Cache-Control", "no-store");
+    r = r.with_header("X-Trace-Id", "abc123");
+    r = r.with_header("Cache-Control", "no-store");
     var wire: string = http.http_serialize_response(r);
     return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
@@ -48,7 +48,7 @@ function test_user_content_length_is_ignored(): Option[string] {
     var r: HttpResponse = http.http_response_ok("hi");
     // Handler tries to claim 9999 bytes — the auto block
     // must override with the real length (2).
-    r.headers.set("Content-Length", "9999");
+    r = r.with_header("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
     return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
@@ -62,15 +62,15 @@ function test_user_content_length_does_not_leak_into_wire(): Option[string] {
     // Stronger negative form: the bogus "9999" must NOT
     // appear anywhere in the serialized output.
     var r: HttpResponse = http.http_response_ok("hi");
-    r.headers.set("Content-Length", "9999");
+    r = r.with_header("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
     return test.assert_not_contains(wire, "9999");
 }
 
 function test_duplicate_set_cookie_via_append(): Option[string] {
     var r: HttpResponse = http.http_response_ok("hi");
-    r.headers.append("Set-Cookie", "a=1");
-    r.headers.append("Set-Cookie", "b=2");
+    r = r.with_appended_header("Set-Cookie", "a=1");
+    r = r.with_appended_header("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
     return test.assert_eq_string(wire,
         "HTTP/1.1 200 OK\r\n" +
@@ -85,8 +85,8 @@ function test_duplicate_set_cookie_via_append(): Option[string] {
 function test_duplicate_set_cookie_both_in_order(): Option[string] {
     // Order invariant: a=1 must come before b=2.
     var r: HttpResponse = http.http_response_ok("hi");
-    r.headers.append("Set-Cookie", "a=1");
-    r.headers.append("Set-Cookie", "b=2");
+    r = r.with_appended_header("Set-Cookie", "a=1");
+    r = r.with_appended_header("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
     return test.assert_contains_in_order(wire,
         ["set-cookie: a=1", "set-cookie: b=2"]);

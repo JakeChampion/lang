@@ -106,7 +106,7 @@ pub function http_response_internal_error(body: string): HttpResponse {
 // headers) and as a real `Location:` header.
 pub function http_response_redirect(location: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
-    h.set("Location", location);
+    h = h.set("Location", location);
     return HttpResponse { status: 302, body: location, headers: h };
 }
 
@@ -238,7 +238,7 @@ function __parse_headers(block: string): HeaderMap {
             if (col > 0) {
                 var name: string = line[0:col];
                 var value: string = line[col + 1:line.len()].trim();
-                h.append(name, value);
+                h = h.append(name, value);
             }
         }
         i = i + 1;
@@ -444,4 +444,28 @@ pub function (r: HttpRequest) body_bytes(): u8[] {
 // in-memory string's length.
 pub function (r: HttpRequest) body_len(): i32 {
     return r.body.len();
+}
+
+// ============================================================
+// Header convenience methods — the ergonomic immutable-update
+// shape for handler code. Under immutable data structures
+// `r.headers.set(k, v)` returns a new HeaderMap but can't
+// write it back into `r`, so handlers would otherwise need the
+// verbose `r = HttpResponse { ...r, headers: r.headers.set(k,
+// v) };`. These wrap that into a single rebind — the Rust
+// `http` builder idiom: `r = r.with_header("X-Trace", "1");`.
+// ============================================================
+
+// `(r: HttpResponse).with_header(name, value)` — replace any
+// existing entries for `name` (set semantics) and return the
+// updated response. Rebind: `r = r.with_header(k, v);`.
+pub function (r: HttpResponse) with_header(name: string, value: string): HttpResponse {
+    return HttpResponse { ...r, headers: r.headers.set(name, value) };
+}
+
+// `(r: HttpResponse).with_appended_header(name, value)` — add
+// an entry without replacing existing same-name entries
+// (append semantics — duplicate-safe, e.g. Set-Cookie).
+pub function (r: HttpResponse) with_appended_header(name: string, value: string): HttpResponse {
+    return HttpResponse { ...r, headers: r.headers.append(name, value) };
 }

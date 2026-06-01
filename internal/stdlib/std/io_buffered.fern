@@ -42,28 +42,32 @@ pub function bytes_writer_new(): BytesWriter {
 // `(w: BytesWriter).write_string(s)` — append a string's
 // bytes. Same call shape as the fd-backed Writer's write
 // method.
-pub function (w: BytesWriter) write_string(s: string) {
+pub function (w: BytesWriter) write_string(s: string): BytesWriter {
     var bs: u8[] = s.bytes();
+    var data: u8[] = w.data;
     var i: i32 = 0;
     while (i < bs.len()) {
-        w.data = w.data.push(bs[i]);
+        data = data.push(bs[i]);
         i = i + 1;
     }
+    return BytesWriter { ...w, data: data };
 }
 
 // `(w: BytesWriter).write_bytes(bs)` — append a byte slice
 // directly (no string round-trip).
-pub function (w: BytesWriter) write_bytes(bs: u8[]) {
+pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
+    var data: u8[] = w.data;
     var i: i32 = 0;
     while (i < bs.len()) {
-        w.data = w.data.push(bs[i]);
+        data = data.push(bs[i]);
         i = i + 1;
     }
+    return BytesWriter { ...w, data: data };
 }
 
 // `(w: BytesWriter).write_byte(b)` — single-byte write.
-pub function (w: BytesWriter) write_byte(b: i32) {
-    w.data = w.data.push(b as u8);
+pub function (w: BytesWriter) write_byte(b: i32): BytesWriter {
+    return BytesWriter { ...w, data: w.data.push(b as u8) };
 }
 
 // `(w: BytesWriter).len()` — total bytes written so far.
@@ -91,10 +95,10 @@ pub function (w: BytesWriter) into_string(): string {
     return string_from_bytes(w.data);
 }
 
-// `(w: BytesWriter).reset()` — clear the buffer for reuse.
-// Useful in hot paths that want to amortise allocation across
-// many message round-trips.
-pub function (w: BytesWriter) reset() {
+// `(w: BytesWriter).reset(): BytesWriter` — return a writer with
+// an empty buffer. Functional (immutable data structures): rebind
+// the result — `w = w.reset()`.
+pub function (w: BytesWriter) reset(): BytesWriter {
     var empty: u8[] = [];
-    w.data = empty;
+    return BytesWriter { ...w, data: empty };
 }
