@@ -6292,6 +6292,49 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx is 1 for both Option and Result
 		b.emit(Op{Kind: OpEq})
 		b.openIf(BlockTypeVoid)
+		// Cleanup-before-return: this is an early return on the error
+		// path, so — exactly like the `*ast.Return` lowering — it must
+		// run the active defers and the owned-local dec sweep before
+		// leaving the function. Without these, `expr?` on the failure
+		// path silently skipped BOTH: registered `defer`s never ran (a
+		// correctness bug beyond rc — e.g. a `defer f.close()` leaked
+		// its handle on every error propagation), and live owned locals
+		// were never dec'd (an rc leak / count inflation that defeats
+		// the rc==1 mutate-in-place fast path).
+		if err := b.emitDeferCleanup(); err != nil {
+			return err
+		}
+		// Decide how the dec sweep treats the value THIS path returns,
+		// mirroring the Return lowering's transfer rules so the sweep
+		// never frees the value being handed to the caller:
+		//   - Option returns a FRESH None (never a tracked local), so a
+		//     full sweep is always safe.
+		//   - Result FORWARDS the source error value (the whole box in
+		//     heap form, its (tag, payload) in pair form):
+		//       * bare owned local `r?`  → hand r over untouched:
+		//         exclude it from the sweep (move-on-return).
+		//       * field / index alias (`s.f?`, `a[i]?`) → the box is a
+		//         child of a tracked container the sweep would deep-drop;
+		//         heap form re-incs the forwarded box so the drop nets
+		//         out, pair form conservatively skips the sweep (the
+		//         extracted payload could otherwise dangle — preferring
+		//         today's leak to a use-after-free).
+		//       * fresh call result (`foo()?`) → not a tracked local,
+		//         full sweep is safe.
+		sweepExclude := ""
+		forwardInc := false
+		sweepFailurePath := true
+		if n.Kind == ast.TryKindResult {
+			if id, ok := n.Inner.(*ast.Ident); ok && b.isOwnedRcLocal(id.Name) {
+				sweepExclude = id.Name
+			} else if needsRcIncOnAlias(n.Inner, b) {
+				if b.thisIsPair {
+					sweepFailurePath = false
+				} else {
+					forwardInc = true
+				}
+			}
+		}
 		// Failure-path return shape has to match the enclosing
 		// function's ABI: pair-form fns return (tag, payload)
 		// via OpReturnPair, heap-form fns return a single
@@ -6300,11 +6343,13 @@ func (b *builder) expr(e ast.Expr) error {
 		case ast.TryKindOption:
 			if b.thisIsPair {
 				b.emit(Op{Kind: OpMakeNoneI32})
+				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturnPair})
 			} else {
 				if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
 					return err
 				}
+				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			}
 		case ast.TryKindResult:
@@ -6318,9 +6363,19 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpConstI32, I32: 4})
 				b.emit(Op{Kind: OpAdd})
 				b.emit(Op{Kind: OpLoad}) // payload at ptr+4
+				if sweepFailurePath {
+					b.emitRcDecLocalsAtExitExcept(sweepExclude)
+				}
 				b.emit(Op{Kind: OpReturnPair})
 			} else {
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				if forwardInc {
+					// Field / index alias: the container drop below
+					// would otherwise free the forwarded box out from
+					// under the caller. Re-inc so the dec nets out.
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				}
+				b.emitRcDecLocalsAtExitExcept(sweepExclude)
 				b.emit(Op{Kind: OpReturn})
 			}
 		default:
