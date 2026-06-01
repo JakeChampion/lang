@@ -1,7 +1,6 @@
 // wasi:http/incoming-handler wrapper for the wasmbin backend.
 //
-// Mirrors the WAT path's `emitHttpHandlerWrapper`
-// (internal/codegen/wasm/wasm.go, search for `__http_entry`): the
+// The `__http_entry` handler wrapper: the
 // host calls `wasi:http/incoming-handler@0.2.0#handle(req, out)`
 // per request, the wrapper marshals the canonical-ABI incoming
 // request into the user's `HttpRequest` struct, invokes the
@@ -228,7 +227,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //	42: $write_chunk
 //	43: $write_buf
 //
-// TODO: the WAT path emits a method-name br_table that pins the
+// TODO: emit a method-name br_table that pins the
 // common HTTP verbs to pre-interned inline-form string constants
 // for fast pointer-equality compares against user code's `req.method
 // == "GET"`. The wasmbin slice shipped here goes through

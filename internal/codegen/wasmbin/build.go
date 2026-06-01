@@ -106,8 +106,8 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// calls `tcp_serve` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
 		// tree-shake so it doesn't hold tcp_serve / tcp_listen
-		// alive on this target. Mirror of the WAT path's
-		// `IsSynthesisedHandlerMain` pre-shake (wasm.go ~140).
+		// alive on this target. This is the
+		// `IsSynthesisedHandlerMain` pre-shake.
 		out := prog.Funcs[:0]
 		for _, fn := range prog.Funcs {
 			if fn.IsSynthesisedHandlerMain {
@@ -122,10 +122,10 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
 	}
-	// Same IR optimisation pipeline the WAT path runs — see
-	// internal/codegen/wasm/wasm.go EmitWithOptions for the
-	// rationale on each step. Both paths share the pipeline so
-	// changes light up on both backends at once.
+	// The shared IR optimisation pipeline — the same passes every
+	// backend runs, so a change here lights up on all of them at
+	// once. See each pass's doc comment in internal/ir for the
+	// rationale on the ordering.
 	ir.TailCallOptimize(ip)
 	ir.Inline(ip)
 	// Wasm closure pair: 8 bytes total, env_ptr at offset 4.
