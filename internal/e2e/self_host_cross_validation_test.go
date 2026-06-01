@@ -171,6 +171,27 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 				"function main(): i32 { return pow2(10); }",
 			1024 % 256, // = 0
 		},
+		// Struct-update `P { ...base, f: v }` — exercises the new
+		// has_base path through all three engines (interp copies+
+		// overrides the base's fields, vm's OpStructUpdate does the
+		// same, asm copies non-overridden decl fields + stores
+		// overrides). i32-only fields stay within the engines' common
+		// subset.
+		{
+			"struct-update-single-override",
+			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }",
+			24,
+		},
+		{
+			"struct-update-out-of-order",
+			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, z: 7, x: 9 }; return q.x*100 + q.y*10 + q.z; }",
+			927 % 256, // = 159
+		},
+		{
+			"struct-update-in-return",
+			"struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { var p: P = P { a: 5, b: 6 }; var q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }",
+			6606 % 256, // = 206
+		},
 	}
 
 	for _, tc := range cases {

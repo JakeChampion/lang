@@ -167,6 +167,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             return collect_idents_expr(sl.end, acc);
         },
         parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 acc = collect_idents_expr(sl.field_values[i], acc);
@@ -5417,15 +5418,79 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // string in .rodata — string-pointer equality is
             // enough to identify the struct type at runtime.
             //
-            // Steps:
-            //   1. Compile each field value in source order
-            //      (push N values onto the rt-stack).
-            //   2. Allocate (N+1)*8 bytes on the heap.
-            //   3. Store the shape pointer at [%rax + 0].
-            //   4. Pop each field value from the rt-stack into
-            //      [%rax + (i+1)*8] — descending i so the
-            //      top-of-stack lands in the LAST field slot.
-            //   5. Push %rax (the struct pointer).
+            // Struct-update `Name { ...base, f: v }`: the new box has
+            // one slot per DECLARED field (in decl order); un-overridden
+            // slots are copied verbatim from the base, the rest are the
+            // override values. This heap is leak-everything (rc intrinsics
+            // are no-ops), so no rc bookkeeping is needed on the copies —
+            // unlike the Go IR lowering, which inc's each copied pointer
+            // field. See docs/IMMUTABILITY-MIGRATION-PLAN.md.
+            if (sl.has_base) {
+                // Find the struct decl to size the box + map override
+                // names to decl-order field indices.
+                var dn: i32 = 0;
+                var fields: parser.StructFieldDecl[] = [];
+                var ddi: i32 = 0;
+                while (ddi < s.struct_decls.len()) {
+                    if (s.struct_decls[ddi].name == sl.type_name) {
+                        fields = s.struct_decls[ddi].fields;
+                        dn = fields.len();
+                    }
+                    ddi = ddi + 1;
+                }
+                // Evaluate the base (its pointer lands on the rt-stack).
+                s = emit_expr(sl.base, s);
+                // Allocate the new box: (dn+1)*8 bytes. Base ptr stays on
+                // the rt-stack across the call (alloc clobbers scratch).
+                var su_bytes: i32 = (dn + 1) * 8;
+                s = s.write("    movq $" + i32_to_string(su_bytes) + ", %rdi\n");
+                s = s.write("    call __fern_alloc\n");
+                s = s.mark_heap();
+                // Shape pointer at [%rax + 0].
+                var suNameLit: StringLitOut = add_string_lit(s, sl.type_name);
+                s = suNameLit.state;
+                s = s.write("    leaq .S" + i32_to_string(suNameLit.idx) + "(%rip), %rcx\n");
+                s = s.write("    movq %rcx, (%rax)\n");
+                // Pop the base pointer into %rsi — no calls happen during
+                // the field-copy below, so %rsi survives.
+                s = s.write("    popq %rsi\n");
+                // Copy each NON-overridden declared field from base→box.
+                var ci: i32 = 0;
+                while (ci < dn) {
+                    var cname: string = fields[ci].name;
+                    var overridden: boolean = false;
+                    var oj: i32 = 0;
+                    while (oj < sl.field_names.len()) {
+                        if (sl.field_names[oj] == cname) { overridden = true; }
+                        oj = oj + 1;
+                    }
+                    if (!overridden) {
+                        s = s.write("    movq " + i32_to_string((ci + 1) * 8) + "(%rsi), %rcx\n");
+                        s = s.write("    movq %rcx, " + i32_to_string((ci + 1) * 8) + "(%rax)\n");
+                    }
+                    ci = ci + 1;
+                }
+                // Save the box pointer on the rt-stack; the override
+                // value exprs below may use both registers and the stack.
+                s = s.write("    pushq %rax\n");
+                var ok: i32 = 0;
+                while (ok < sl.field_names.len()) {
+                    // decl-order index of this override field.
+                    var oidx: i32 = 0;
+                    var of2: i32 = 0;
+                    while (of2 < dn) {
+                        if (fields[of2].name == sl.field_names[ok]) { oidx = of2; }
+                        of2 = of2 + 1;
+                    }
+                    s = emit_expr(sl.field_values[ok], s);  // rt: [box, val]
+                    s = s.write("    popq %rcx\n");          // val → %rcx
+                    s = s.write("    popq %rax\n");          // box → %rax
+                    s = s.write("    movq %rcx, " + i32_to_string((oidx + 1) * 8) + "(%rax)\n");
+                    s = s.write("    pushq %rax\n");         // box back on rt-stack
+                    ok = ok + 1;
+                }
+                return s;
+            }
             var n_fields: i32 = sl.field_values.len();
             var i: i32 = 0;
             while (i < n_fields) {

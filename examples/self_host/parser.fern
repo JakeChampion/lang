@@ -69,7 +69,16 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
 // type_name is the struct's declared name; field_names and
 // field_values parallel-array the initializers in source
 // order. Empty struct lit `Name { }` is allowed (zero fields).
-pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[] }
+//
+// Struct-update `Name { ...base, field: value }`: a leading
+// `...base` spread copies the un-overridden fields from `base`,
+// the listed fields override. `has_base` flags the presence of a
+// base; when false, `base` holds a placeholder ExprUnknown
+// sentinel (Expr is a no-null union, so we carry the flag rather
+// than sniff the sentinel). With a base, a subset of fields is
+// legal — the checker relaxes completeness. See
+// docs/IMMUTABILITY-MIGRATION-PLAN.md.
+pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr }
 // Postfix field access `obj.field`. obj can be any Expr that
 // evaluates to a struct value.
 pub struct ExprFieldAccess { obj: Expr, field: string }
@@ -205,7 +214,13 @@ function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
 }
 function e_struct_lit(type_name: string, field_names: string[], field_values: Expr[]): Expr {
-    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values };
+    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base") };
+}
+// e_struct_update builds a struct-update literal carrying a base
+// spread source. The base is the value whose un-overridden fields
+// are copied into the new box; the listed fields override.
+function e_struct_update(type_name: string, field_names: string[], field_values: Expr[], base: Expr): Expr {
+    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base };
 }
 function e_field_access(obj: Expr, field: string): Expr {
     return ExprFieldAccess { obj: obj, field: field };
@@ -356,6 +371,29 @@ function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
     p = p.advance();  // consume `{`
     var fnames: string[] = [];
     var fvals: Expr[] = [];
+    // Struct-update `Name { ...base, field: value }`: a leading
+    // `...base` spread copies the un-overridden fields from `base`,
+    // the listed fields override. `...base` must be first. With no
+    // overrides (`Name { ...base }`) it's a legal pure copy.
+    var has_base: boolean = false;
+    var base: Expr = e_unknown("no-base");
+    if (p.peek_punct() == "...") {
+        p = p.advance();
+        var br = parse_expr(p);
+        p = br.par;
+        has_base = true;
+        base = br.expr;
+        if (p.peek_punct() == ",") {
+            p = p.advance();
+        } else {
+            // No overrides — expect the closing brace (pure copy).
+            if (p.peek_punct() != "}") {
+                return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
+            }
+            p = p.advance();
+            return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base) };
+        }
+    }
     if (p.peek_punct() != "}") {
         while (true) {
             var fn: string = p.peek_ident();
@@ -385,6 +423,9 @@ function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
         return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
     }
     p = p.advance();
+    if (has_base) {
+        return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base) };
+    }
     return ExprResult { par: p, expr: e_struct_lit(type_name, fnames, fvals) };
 }
 
@@ -608,6 +649,9 @@ function parse_primary(p: Par): ExprResult {
                 var look: Par = p.advance();
                 if (look.peek_punct() == "}") {
                     struct_lit_ok = true;
+                } else if (look.peek_punct() == "...") {
+                    // `Name { ...base ... }` — struct-update spread.
+                    struct_lit_ok = true;
                 } else if ((look.peek_ident()).len() > 0) {
                     var look2: Par = look.advance();
                     if (look2.peek_punct() == ":") { struct_lit_ok = true; }
@@ -617,6 +661,26 @@ function parse_primary(p: Par): ExprResult {
                 p = p.advance();
                 var fnames: string[] = [];
                 var fvals: Expr[] = [];
+                // Struct-update: a leading `...base` spread copies the
+                // un-overridden fields from `base`, listed fields override.
+                var has_base: boolean = false;
+                var sbase: Expr = e_unknown("no-base");
+                if (p.peek_punct() == "...") {
+                    p = p.advance();
+                    var sbr = parse_expr(p);
+                    p = sbr.par;
+                    has_base = true;
+                    sbase = sbr.expr;
+                    if (p.peek_punct() == ",") {
+                        p = p.advance();
+                    } else {
+                        if (p.peek_punct() != "}") {
+                            return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
+                        }
+                        p = p.advance();
+                        return parse_postfix(p, e_struct_update(x.name, fnames, fvals, sbase));
+                    }
+                }
                 if (p.peek_punct() != "}") {
                     while (true) {
                         var fname: string = p.peek_ident();
@@ -645,7 +709,11 @@ function parse_primary(p: Par): ExprResult {
                     return ExprResult { par: p, expr: e_unknown("missing } in struct lit") };
                 }
                 p = p.advance();
-                base = e_struct_lit(x.name, fnames, fvals);
+                if (has_base) {
+                    base = e_struct_update(x.name, fnames, fvals, sbase);
+                } else {
+                    base = e_struct_lit(x.name, fnames, fvals);
+                }
             }
             return parse_postfix(p, base);
         },

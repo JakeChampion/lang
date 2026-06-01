@@ -559,6 +559,42 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             return v_err("unreachable slice arm");
         },
         parser.ExprStructLit(sl) => {
+            // Struct-update `Name { ...base, f: v }`: start from the
+            // base struct's fields, then overwrite the named overrides
+            // (or append any not already present). Field lookup is by
+            // name, so order is irrelevant.
+            if (sl.has_base) {
+                var bv: Value = eval_expr(sl.base, env);
+                if (is_err(bv)) { return bv; }
+                match (bv) {
+                    VStruct(sv) => {
+                        var bnames: string[] = sv.field_names;
+                        var bvals: Value[] = sv.field_values;
+                        var oi: i32 = 0;
+                        while (oi < sl.field_values.len()) {
+                            var ov2: Value = eval_expr(sl.field_values[oi], env);
+                            if (is_err(ov2)) { return ov2; }
+                            var oname: string = sl.field_names[oi];
+                            var replaced: boolean = false;
+                            var bi: i32 = 0;
+                            while (bi < bnames.len()) {
+                                if (bnames[bi] == oname) {
+                                    bvals = bvals.set(bi, ov2);
+                                    replaced = true;
+                                }
+                                bi = bi + 1;
+                            }
+                            if (!replaced) {
+                                bnames = bnames.push(oname);
+                                bvals = bvals.push(ov2);
+                            }
+                            oi = oi + 1;
+                        }
+                        return v_struct(sl.type_name, bnames, bvals);
+                    },
+                    _ => { return v_err("struct update base is not a struct"); }
+                }
+            }
             // Evaluate each field's value in declaration order,
             // propagating the first VErr. Field names are
             // copied as-is from the parser; the runtime treats
