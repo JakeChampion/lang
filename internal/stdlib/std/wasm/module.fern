@@ -115,6 +115,89 @@ pub function module_new(): Module {
     };
 }
 
+// ============================================================
+// Builder methods — populate a section and return a NEW Module
+// (immutable update; the receiver is unchanged). Chain them off
+// `module_new()`:
+//
+//     var m: module.Module = module.module_new()
+//         .with_types([p0], [r0])
+//         .with_functions([0u32])
+//         .with_exports(["main"], [sections.export_func()], [0u32])
+//         .with_code([fn]);
+//
+// Section field-groups (e.g. type_params + type_results) are set
+// together so a populated section is never left half-built, and
+// the singleton-section flags (`*_present` / `has_start`) are
+// folded into the matching builder so callers can't set the data
+// without the gate.
+// ============================================================
+
+// with_types — type section: one functype per (params, results)
+// pair (parallel arrays).
+pub function (m: Module) with_types(params: u8[][], results: u8[][]): Module {
+    return Module { ...m, type_params: params, type_results: results };
+}
+
+// with_imports — import section: parallel (module, name, kind,
+// desc) arrays, one per import.
+pub function (m: Module) with_imports(modules: string[], names: string[], kinds: u8[], descs: u8[][]): Module {
+    return Module { ...m, import_modules: modules, import_names: names, import_kinds: kinds, import_descs: descs };
+}
+
+// with_functions — function section: one typeidx per declared
+// (non-imported) function, in declaration order.
+pub function (m: Module) with_functions(typeidxs: u32[]): Module {
+    return Module { ...m, function_typeidxs: typeidxs };
+}
+
+// with_table — table section (sets table_present). `max = -1`
+// means "no maximum".
+pub function (m: Module) with_table(reftype: u8, min: u32, max: i32): Module {
+    return Module { ...m, table_present: true, table_reftype: reftype, table_min: min, table_max: max };
+}
+
+// with_memory — memory section (sets memory_present). `max = -1`
+// means "no maximum".
+pub function (m: Module) with_memory(min: u32, max: i32): Module {
+    return Module { ...m, memory_present: true, memory_min: min, memory_max: max };
+}
+
+// with_globals — global section: parallel (valtype, mut, init)
+// arrays, one per global.
+pub function (m: Module) with_globals(valtypes: u8[], muts: u8[], inits: u8[][]): Module {
+    return Module { ...m, global_valtypes: valtypes, global_muts: muts, global_inits: inits };
+}
+
+// with_exports — export section: parallel (name, kind, idx)
+// arrays, one per export.
+pub function (m: Module) with_exports(names: string[], kinds: u8[], idxs: u32[]): Module {
+    return Module { ...m, export_names: names, export_kinds: kinds, export_idxs: idxs };
+}
+
+// with_start — start section (sets has_start).
+pub function (m: Module) with_start(funcidx: u32): Module {
+    return Module { ...m, has_start: true, start_funcidx: funcidx };
+}
+
+// with_elements — element section: parallel (offset, funcidx-list)
+// arrays, one active funcref segment per pair.
+pub function (m: Module) with_elements(offsets: i32[], funcidxs: u32[][]): Module {
+    return Module { ...m, elem_offsets: offsets, elem_funcidxs: funcidxs };
+}
+
+// with_code — code section: one pre-wrapped function body per
+// typeidx in function_typeidxs.
+pub function (m: Module) with_code(bodies: u8[][]): Module {
+    return Module { ...m, code_bodies: bodies };
+}
+
+// with_data — data section: parallel (offset, init-bytes) arrays,
+// one active data segment per pair.
+pub function (m: Module) with_data(offsets: i32[], inits: u8[][]): Module {
+    return Module { ...m, data_offsets: offsets, data_inits: inits };
+}
+
 // build — serialise the module to the complete wasm binary:
 // preamble (\0asm + version 1) followed by every populated
 // section in spec-required order.
