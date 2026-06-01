@@ -926,6 +926,38 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Target, precPrimary)
 		f.b.WriteByte('.')
 		f.b.WriteString(x.Field)
+	case *ast.Lambda:
+		// Anonymous function expression: `function(p: T): R { ... }`.
+		// Mirrors formatFunc minus the name / receiver / pub prefix.
+		// Without this case formatExpr fell through to the empty
+		// default and silently dropped the lambda — leaving a
+		// dangling comma when it was the last call argument
+		// (`f(xs, )`, which then fails to re-parse). A single-
+		// statement body renders inline so short predicate lambdas
+		// stay on one line; anything longer uses the normal
+		// multi-line block.
+		f.b.WriteString("function(")
+		for i, p := range x.Params {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(p.Name)
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(p.Type))
+		}
+		f.b.WriteByte(')')
+		if x.ReturnType != nil {
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(x.ReturnType))
+		}
+		f.b.WriteByte(' ')
+		if x.Body != nil && len(x.Body.Stmts) == 1 && isSingleLineStmt(x.Body.Stmts[0]) {
+			f.b.WriteString("{ ")
+			f.formatStmt(x.Body.Stmts[0], 0)
+			f.b.WriteString(" }")
+		} else {
+			f.formatBlock(x.Body, 0)
+		}
 	}
 }
 

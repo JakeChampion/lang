@@ -410,6 +410,37 @@ defer w.close();
 	}
 }
 
+// An anonymous function expression (lambda) used as a call argument
+// must survive formatting. Before the fix formatExpr had no
+// `*ast.Lambda` case, so it fell through to the empty default and
+// dropped the lambda entirely — when the lambda was the last argument
+// the output was `f(xs, )`, which then failed to re-parse. Regression
+// guard: the lambda text survives, and parse → format → parse is
+// stable. Surfaced by the examples-corpus formatter sweep.
+func TestFormatLambdaArgumentRoundTrip(t *testing.T) {
+	srcs := []string{
+		// last-argument lambda — the dangling-comma case
+		`function f(): Option[string] { return check([1, 2, 3], function(n: i32): boolean { return n > 0; }); }`,
+		// lambda bound to a local
+		`function f(): i32 { var g = function(x: i32): i32 { return x + 1; }; return g(41); }`,
+		// multi-statement body (block form, not inlined)
+		`function f(): i32 { var g = function(x: i32): i32 { var y = x * 2; return y + 1; }; return g(20); }`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "function(") {
+			t.Errorf("lambda dropped from formatted output for input %q:\n%s", src, got)
+		}
+		if _, err := parser.Parse(got); err != nil {
+			t.Errorf("formatted output failed to re-parse for input %q:\n%s\nerr: %v", src, got, err)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
 // `enum` decls and `match` statements round-trip through
 // parse → format → parse stably, including payload-carrying
 // variants and `pub enum`.

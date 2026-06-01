@@ -93,6 +93,26 @@ func TestStringLiteralEscapes(t *testing.T) {
 	}
 }
 
+// A string literal containing multi-byte UTF-8 characters must be
+// preserved byte-for-byte. The lexer previously did `b.WriteRune(c)`
+// where `c` was a single source byte (`rune(l.src[l.i])`), so each
+// byte of a multi-byte character was re-encoded as its own code point
+// — turning `∃` (0xE2 0x88 0x83) into three mojibake runes. Strings
+// are UTF-8 byte arrays here, so the token text must equal the
+// original source bytes. Surfaced as a format → parse → format
+// non-idempotency on a real example file.
+func TestStringLiteralUTF8(t *testing.T) {
+	for _, s := range []string{"∃ over empty", "héllo wörld", "日本語", "emoji 🎉 ok"} {
+		toks, _, err := Tokenize(`"` + s + `"`)
+		if err != nil {
+			t.Fatalf("tokenize %q: %v", s, err)
+		}
+		if toks[0].Kind != String || toks[0].Text != s {
+			t.Errorf("got %q (% x), want %q (% x)", toks[0].Text, toks[0].Text, s, s)
+		}
+	}
+}
+
 func TestStringLiteralUnterminated(t *testing.T) {
 	if _, _, err := Tokenize(`"oops`); err == nil {
 		t.Error("expected error on unterminated string")
