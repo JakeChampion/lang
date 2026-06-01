@@ -478,8 +478,12 @@ func scaleBits(scale int) int {
 }
 
 // memRex computes the REX prefix for an instruction with a memory operand,
-// accounting for base and index register extensions (REX.B / REX.X).
-func memRex(w bool, reg int, m operand) byte {
+// accounting for base and index register extensions (REX.B / REX.X). needB8
+// forces an (otherwise-empty) REX prefix when the register operand is one of
+// the 8-bit registers spl/bpl/sil/dil (regs 4..7), which can only be addressed
+// with a REX prefix present; without it the same ModRM reg field decodes as
+// ah/ch/dh/bh instead.
+func memRex(w bool, reg int, m operand, needB8 bool) byte {
 	var r byte
 	if w {
 		r |= 0x08
@@ -493,7 +497,7 @@ func memRex(w bool, reg int, m operand) byte {
 	if m.base >= 8 {
 		r |= 0x01
 	}
-	if r != 0 {
+	if r != 0 || needB8 {
 		return 0x40 | r
 	}
 	return 0
@@ -567,8 +571,8 @@ func (a *Assembler) mov(ops []operand, abs bool) error {
 	case dst.kind == opMem && src.kind == opImm:
 		w := dst.memSize == 64
 		if w {
-			a.emit(memRex(true, 0, dst))
-		} else if rex := memRex(false, 0, dst); rex != 0 {
+			a.emit(memRex(true, 0, dst, false))
+		} else if rex := memRex(false, 0, dst, false); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0xC7)
@@ -601,7 +605,7 @@ func (a *Assembler) memReg(opBase byte, reg, mem operand) error {
 	if reg.size != 8 {
 		op |= 1
 	}
-	if rex := memRex(w, reg.reg, mem); rex != 0 {
+	if rex := memRex(w, reg.reg, mem, needsRexByte(reg)); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(op)
@@ -615,7 +619,7 @@ func (a *Assembler) regMem(opBase byte, reg, mem operand) error {
 	if reg.size != 8 {
 		op |= 1
 	}
-	if rex := memRex(w, reg.reg, mem); rex != 0 {
+	if rex := memRex(w, reg.reg, mem, needsRexByte(reg)); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(op)
@@ -658,7 +662,7 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 	case dst.kind == opMem && src.kind == opImm:
 		w := dst.memSize == 64
 		if fitsInt8(src.imm) {
-			if rex := memRex(w, 0, dst); rex != 0 {
+			if rex := memRex(w, 0, dst, false); rex != 0 {
 				a.emit(rex)
 			}
 			a.emit(0x83)
@@ -666,7 +670,7 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 			a.emit(byte(src.imm))
 			return nil
 		}
-		if rex := memRex(w, 0, dst); rex != 0 {
+		if rex := memRex(w, 0, dst, false); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0x81)
@@ -725,7 +729,7 @@ func (a *Assembler) imul(ops []operand) error {
 		return nil
 	}
 	if ops[1].kind == opMem {
-		if rex := memRex(w, dst.reg, ops[1]); rex != 0 {
+		if rex := memRex(w, dst.reg, ops[1], false); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0x0F, 0xAF)
@@ -746,7 +750,7 @@ func (a *Assembler) imul3(ops []operand) error {
 	short := fitsInt8(imm.imm)
 	var rex byte
 	if src.kind == opMem {
-		rex = memRex(w, dst.reg, src)
+		rex = memRex(w, dst.reg, src, false)
 	} else {
 		rex = rexFor(w, dst.reg, src.reg, false)
 	}
@@ -788,7 +792,7 @@ func (a *Assembler) unaryF7(ops []operand, ext int) error {
 	}
 	if o.kind == opMem {
 		w := o.memSize == 64
-		if rex := memRex(w, 0, o); rex != 0 {
+		if rex := memRex(w, 0, o, false); rex != 0 {
 			a.emit(rex)
 		}
 		a.emit(0xF7)
@@ -849,7 +853,7 @@ func (a *Assembler) lea(ops []operand) error {
 	}
 	dst := ops[0]
 	w := dst.size == 64
-	if rex := memRex(w, dst.reg, ops[1]); rex != 0 {
+	if rex := memRex(w, dst.reg, ops[1], false); rex != 0 {
 		a.emit(rex)
 	}
 	a.emit(0x8D)
@@ -881,7 +885,7 @@ func (a *Assembler) movzx(ops []operand, signed bool) error {
 	rexB8 := needsRexByte(src) || needsRexByte(dst)
 	var rex byte
 	if src.kind == opMem {
-		rex = memRex(w, dst.reg, src)
+		rex = memRex(w, dst.reg, src, false)
 	} else {
 		rex = rexFor(w, dst.reg, src.reg, rexB8)
 	}
