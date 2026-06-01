@@ -2782,6 +2782,32 @@ func (s *scope) lookup(name string) (ast.Type, bool) {
 	return nil, false
 }
 
+// capturedType reports whether `name` is NOT a local of the current
+// function's scope `s` but DOES resolve in an enclosing function's
+// scope via the captureChain — i.e. it's a closure capture — and if
+// so returns its type. A local-function / lambda body gets a fresh
+// scope chain (the captureChain is the only bridge to the enclosing
+// function), so a name the current scope can't see but an enclosing
+// scope can is a capture. Used to reject capture write-back of
+// reference-shaped values (`cap = v` inside a closure), the
+// enforcement counterpart to the field-immutability rule
+// (docs/IMMUTABILITY-MIGRATION-PLAN.md §4).
+func (c *checker) capturedType(name string, s *scope) (ast.Type, bool) {
+	if _, ok := s.lookup(name); ok {
+		return nil, false // a local of the current function
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		ent := c.captureChain[i]
+		if ent.scope == nil {
+			continue
+		}
+		if t, ok := ent.scope.lookup(name); ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
 func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.current = fn
 	defer func() { c.current = nil }()
@@ -4964,6 +4990,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(fa.Pos(), "E048",
 				"cannot assign to field %q: fields are immutable after construction; rebuild with `T { ...old, %s: value }`",
 				fa.Field, fa.Field)
+		}
+		// A closure may not write back a REFERENCE-shaped captured
+		// variable. This is the other half of immutability
+		// enforcement (E048 bans field mutation; this bans
+		// pointer-capture write-back), closing the remaining
+		// reference-cycle vector: a closure whose env holds a
+		// pointer could be made to point back at a value that points
+		// at the closure. Scalar captures (i32 / i64 / f32 / f64)
+		// can't hold a reference, so writing them can't form a cycle
+		// — the stateful "counter closure" stays legal. Pointer-
+		// shaped captures (string / array / struct / enum / slice /
+		// tuple / closure, per ast.IsPointerType) are rejected;
+		// thread the new value out of the closure (return it).
+		if id, ok := n.Target.(*ast.Ident); ok {
+			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
+				c.errfCode(id.Pos(), "E049",
+					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
+					ct, id.Name)
+			}
 		}
 		return lt
 	case *ast.Lambda:
