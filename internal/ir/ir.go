@@ -990,6 +990,21 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 	if fn.Body == nil {
 		return false
 	}
+	// A function that registers a defer can't use the pair-form
+	// (tag, payload) return ABI. The Return lowering's pair-form
+	// fast path is gated on `len(b.defers) == 0`; with defers
+	// present it falls back to the heap-box return path, which
+	// emits a single-pointer OpReturn — a mismatch against the
+	// two-i32 pair signature this function would otherwise be
+	// given (the wasm validator rejects it: "expected i32 but
+	// nothing on stack"; natives read a garbage payload register).
+	// Keep such functions heap-form so the signature and every
+	// return agree.
+	var defers []*ast.Defer
+	collectDefers(fn.Body, &defers)
+	if len(defers) > 0 {
+		return false
+	}
 	return allReturnsArePairFormShape(fn.Body, variantNames, pairForm)
 }
 
