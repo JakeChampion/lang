@@ -831,6 +831,25 @@ function main(): i32 {
     var w: Wrap = build(5);
     return (w.inner[0] + w.inner[1] + w.inner[2] - 18) + __rc_underflow_count();
 }`},
+	// Move-on-destructure: t moved into the destructure temp at its last
+	// use; the temp frees the tuple box once, the extracted array
+	// element gets its own dup so it survives the box free. 100
+	// build/destructure/drop/free cycles. once(n) reads a[0]+a[1]+b =
+	// n + (n+3) + (n+7) = 3n+10.
+	{"destructure", `function once(n: i32): i32 {
+    var t: (i32[], i32) = ([n, n + 3], n + 7);
+    var (a, b) = t;
+    return a[0] + a[1] + b;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (3 * i + 10));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
 }
 
 func TestX86_64MoveOnConstruction(t *testing.T) {

@@ -2091,6 +2091,15 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				}
 			case *ast.Return:
 				val = s.Value
+			case *ast.Destructure:
+				// `var (a, b) = t` aliases the source tuple into the
+				// destructure temp (inc at the alias site below). When t
+				// is an owned rc local at its last use, that inc and t's
+				// exit-sweep dec cancel — move t into the temp, which
+				// frees the box once. Keyed on the Destructure node (the
+				// lowering checks b.moveSites[n] there).
+				rhs, _ = s.Init.(*ast.Ident)
+				site = s
 			}
 			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
 				moved[rhs.Name] = true
@@ -5477,7 +5486,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (UAF). A fresh Init (TupleLit / call result) isn't alias-shaped
 		// and reads false, so the temp owns the sole reference and frees
 		// it normally. Mirrors the Var-binding alias inc.
-		if needsRcIncOnAlias(n.Init, b) {
+		//
+		// Phase 4 move-on-destructure: when Init is an owned rc tuple
+		// local at its last use (b.moveSites[n] set in
+		// computeMovedLocals), the alias inc and the source's exit-sweep
+		// dec cancel — move the source into the temp instead.
+		if needsRcIncOnAlias(n.Init, b) && !b.moveSites[n] {
 			b.emitAliasInc(n.Init)
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
