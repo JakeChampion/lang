@@ -2122,6 +2122,50 @@ function main(): i32 {
 }`,
 	},
 	{
+		// Cursor-idiom coverage: the json parser threads an immutable
+		// __JsonParser cursor as a (result, cursor) tuple through 8
+		// mutually-recursive functions (struct-update advance, no field
+		// mutation). This case drives every cursor-threading path —
+		// numbers, \uXXXX escapes (__json_p_uhex through the cursor),
+		// nested arrays + objects (recursion), and a malformed input
+		// that must thread error:1 back through the cursor to None.
+		// RC-gated: the parser copies each borrowed `p` param into a
+		// local before struct-updating it in a loop, so the underflow
+		// counter must stay 0 even under free-on.
+		name: "stdlib_json_cursor_idiom",
+		src: `import "core/no_prelude";
+import "core/int";
+import "std/json";
+import "std/string";
+function main(): i32 {
+    var bad: i32 = 0;
+    // nested arrays + objects + \uXXXX escape round-trip
+    match (json.json_parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
+        Some(v) => {
+            match (json.json_get_string(v, "k")) {
+                Some(s) => { if (s != "aAb") { bad = bad + 1; } },
+                None => { bad = bad + 2; }
+            }
+            match (json.json_get_array(v, "nums")) {
+                Some(a) => { if (a.len() != 3) { bad = bad + 4; } },
+                None => { bad = bad + 8; }
+            }
+        },
+        None => { bad = bad + 100; }
+    }
+    // malformed: error threads through the cursor → None
+    match (json.json_parse("{\"a\":}")) {
+        Some(v) => { bad = bad + 1000; },
+        None => { }
+    }
+    match (json.json_parse("[1,2")) {
+        Some(v) => { bad = bad + 2000; },
+        None => { }
+    }
+    return bad + __rc_underflow_count();
+}`,
+	},
+	{
 		// Map growth reclamation: inserting 100 keys into one map
 		// triggers several __map_grow doublings (cap 4→8→…→128), each
 		// freeing the previous kv buffer. The read-back checksum + the
