@@ -476,6 +476,83 @@ func TestNestedFieldAssignmentRejected(t *testing.T) {
 	}
 }
 
+// Capture write-back of a REFERENCE-shaped variable is rejected
+// (E049): a closure whose env holds a pointer could close a cycle by
+// pointing back at a value that points at the closure. This is the
+// capture half of immutability enforcement (E048 is the field half).
+// Scalar captures stay legal (see TestScalarCaptureWriteBackAllowed).
+func TestPointerCaptureWriteBackRejected(t *testing.T) {
+	src := `function main(): i32 {
+		var name: string = "a";
+		var f = function (): i32 {
+			name = "b";
+			return name.len();
+		};
+		return f();
+	}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "reference-typed closure capture") {
+		t.Errorf("expected E049 for pointer capture write-back, got: %v", err)
+	}
+}
+
+// A nested closure writing a reference-typed variable captured from
+// two levels up is still rejected.
+func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
+	src := `function main(): i32 {
+		var acc: i32[] = [];
+		var outer = function (): i32 {
+			var inner = function (): i32 {
+				acc = acc.push(1);
+				return acc.len();
+			};
+			return inner();
+		};
+		return outer();
+	}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "reference-typed closure capture") {
+		t.Errorf("expected E049 for nested pointer capture write-back, got: %v", err)
+	}
+}
+
+// Scalar capture write-back stays legal — an i32/i64/f32/f64 capture
+// can't hold a reference, so it can't form a cycle. This is the
+// stateful "counter closure": each call increments the env's count.
+func TestScalarCaptureWriteBackAllowed(t *testing.T) {
+	src := `function makeCounter(): () => i32 {
+		var count: i32 = 0;
+		function tick(): i32 {
+			count = count + 1;
+			return count;
+		}
+		return tick;
+	}
+	function main(): i32 {
+		var c = makeCounter();
+		return c() + c();
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("scalar (counter) capture write-back should compile, got: %v", err)
+	}
+}
+
+// Reading a reference capture stays legal — only write-back is banned.
+// The closure's own params / locals are not captures and remain
+// assignable.
+func TestCaptureReadAndLocalAssignStillAllowed(t *testing.T) {
+	src := `function main(): i32 {
+		var n: i32 = 5;
+		var f = function (x: i32): i32 {
+			var local: i32 = x;
+			local = local + n;
+			return local;
+		};
+		return f(37);
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("capture read + local assignment should compile, got: %v", err)
+	}
+}
+
 // Enforcement bans only post-construction mutation, not recursive
 // types: an immutable recursive tree (the self-host parser's own
 // AST shape) must still construct and type-check.
