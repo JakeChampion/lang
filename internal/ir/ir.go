@@ -2175,6 +2175,24 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 		for _, el := range lit.Elems {
 			mark(el)
 		}
+	case *ast.MakeClosure:
+		// A closure capturing rc-tracked locals: each is inc'd at
+		// MakeEnv (Phase 1d-vii) and dec'd by the closure's drop
+		// (__closure_drop_<name> / __fern_closure_drop at its last
+		// reference), so a moved capture balances — same shape as the
+		// other containers. Eligibility matches hasRcCapture
+		// (arrElemIsRcTracked; strings are reclaimed by the thunk too
+		// but excluded here for the same single-word-temp reason as the
+		// struct/array cases). mark self-filters via isOwnedRcLocal.
+		// Eliding an inc only REMOVES ops, which the Defunctionalise /
+		// ElideClosurePair passes tolerate (they already treat the inc
+		// as a value-preserving pass-through when chasing alias chains);
+		// the defunc/elide unit tests + self-host VM gate this.
+		for _, cap := range lit.Captures {
+			if arrElemIsRcTracked(b.exprType(cap)) {
+				mark(cap)
+			}
+		}
 	}
 }
 
@@ -6972,7 +6990,11 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(capExpr); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(capExpr, b) {
+			// Phase 4 move-on-construction: an owned rc local captured at
+			// its last use is moved into the closure env — the closure's
+			// drop thunk dec's the capture, balancing the skipped inc
+			// (markConstructionMoves sets b.moveSites[capExpr]).
+			if needsRcIncOnAlias(capExpr, b) && !b.moveSites[capExpr] {
 				b.emitAliasInc(capExpr)
 			}
 		}
