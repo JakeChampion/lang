@@ -515,10 +515,9 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	}
 
 	if target == "wasm" || target == "wasi-http" {
-		// Both CLI wasm targets route through wasmbin. WAT is
-		// out of the user-facing wasm story; what's left of
-		// internal/codegen/wasm/ is dev tooling (cmd/fern-wasm,
-		// cmd/dump_wat) waiting on a downstream cleanup PR.
+		// Both CLI wasm targets route through wasmbin. The old
+		// WAT-text backend (internal/codegen/wasm) has been
+		// removed; wasmbin emits the component binary directly.
 		if outPath == "" {
 			return 1, fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", target)
 		}

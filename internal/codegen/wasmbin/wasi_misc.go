@@ -2,8 +2,7 @@
 // `buildComponent`-uses-wasmbin flip was attempted: slice
 // header construction + indexing, the zero-copy
 // `string.as_bytes()` view, and the stdio Writer
-// constructors. Each one mirrors what the WAT path emits
-// from internal/codegen/wasm/wasm.go.
+// constructors.
 
 package wasmbin
 
