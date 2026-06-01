@@ -9533,6 +9533,56 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
+		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			// Phase 1e-strings: dec the OLD string buffer before the
+			// overwrite, mirroring the exit-sweep string branch (emitDec)
+			// and gated identically (RcFreeEnabled && freeEligible). A
+			// reassignment ends the old binding's ownership exactly like a
+			// scope exit would, so the same eligible-gated str_dec applies.
+			// This is what makes `var s = ""; for … { s = s + chunk }`
+			// reclaim each intermediate buffer instead of orphaning it —
+			// the alias-inc side (needsRcIncOnAlias) already retains string
+			// RHSs, so this is its matching release. Without it the inc/dec
+			// sides were asymmetric for strings: every string reassignment
+			// leaked the prior buffer (safe under the bump allocator, but
+			// the rc undercount kept the freelist from reclaiming it).
+			//
+			// Net-zero on the operand stack (load → str_dec/rc_dec → drop),
+			// so the new value sitting underneath is left untouched.
+			//   wasm two-word (ptrW==4): load (data,len), __fern_str_dec —
+			//     inline-tag / literal-sentinel guards no-op the non-heap
+			//     sources — then drop the returned data ptr. Verified under
+			//     wasmtime (host-independent), so local == CI.
+			//   native single-word x86_64 (ptrW==8, !TwoWordOverride): load
+			//     ptr, __fern_rc_dec (SSO low-bit + sentinel guards keep all
+			//     sources safe), drop. Verified on the native x86_64 runner.
+			//
+			// arm64 (ptrW==8 + TwoWordOverride, two-word str_dec) is
+			// DELIBERATELY EXCLUDED for now: native-arm64 heap-string
+			// reclamation is the RC-perceus plan's deferred slice 5g
+			// ("heap-string rc — SSO-blocked", x86_64-only testing caveat).
+			// Enabling the overwrite str_dec there over-releases on real
+			// arm64 hardware (qemu user-mode masks it), so arm64 keeps its
+			// prior safe-leak behaviour — codegen here is byte-identical to
+			// main on arm64 — until the native str_dec / cell_free reclaim
+			// path is verified on hardware. Re-enable by widening the wasm
+			// branch back to ast.UseTwoWordStrings once 5g lands.
+			//
+			// Gated on freeEligible like the exit dec: an INELIGIBLE
+			// (borrowed param / escaped) string is skipped here AND at exit,
+			// so the two stay balanced and a borrow is never over-released.
+			// Tuples are deliberately NOT handled here — their is_unique
+			// deep-drop pulls in dropStructField / decValueOnStack and
+			// belongs with the emitDec refactor, not a duplicated inline.
+			if b.ptrW == 4 {
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
@@ -9842,6 +9892,27 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name == name {
 			return isRcTracked(v.Type)
+		}
+	}
+	return false
+}
+
+// isStringTypeOfLocal reports whether the named param / local is
+// declared with a string type. Drives the string dec-on-overwrite in
+// assign() (Phase 1e-strings) — kept separate from isArrayTypeOfLocal
+// because the string dec uses the two-word-aware str_dec helper, not
+// the single-word rc_dec the array/struct/enum/closure path emits.
+func isStringTypeOfLocal(name string, b *builder) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			_, ok := p.Type.(ast.StringType)
+			return ok
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			_, ok := v.Type.(ast.StringType)
+			return ok
 		}
 	}
 	return false
