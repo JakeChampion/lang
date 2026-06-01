@@ -162,6 +162,22 @@ function main(): i32 {
 	var add20: (i32) => i32 = adder(20);
 	return add10(1) + add20(2);
 }`,
+
+	// closure_string_capture — extends closure_capture with a
+	// STRING capture. Exercises the string-closure-capture path
+	// (Slice 6, the generated __closure_drop_<name> thunk runs
+	// __fern_str_dec on the captured slot). A regression here
+	// (wrong width on the load, or missed string-type
+	// classification in hasRcCapture) would silently leak or
+	// double-free the captured string.
+	"closure_string_capture": `
+function greeter(name: string): () => string {
+	return function (): string { return "hello, " + name; };
+}
+function main(): i32 {
+	var g: () => string = greeter("world");
+	return g().len();
+}`,
 }
 
 // TestEmitFeatureMatrix asserts every program in the matrix lowers
