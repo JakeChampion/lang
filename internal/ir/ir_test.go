@@ -2333,11 +2333,16 @@ func TestLowerMapStringKeyReclaimOnNative(t *testing.T) {
 	}
 }
 
-// TestLowerMapStringKeyNoReclaimOnArm64TwoWord mirrors the value-side
-// gate test: arm64 (ptrW=8 + TwoWordOverride=true) is excluded from the
-// key reclaim path until the boxed-string runtime is ported, just like
-// __drop_map_str_values.
-func TestLowerMapStringKeyNoReclaimOnArm64TwoWord(t *testing.T) {
+// TestLowerMapStringKeyReclaimOnArm64TwoWord — Slice 8 on arm64:
+// the matching key-side flip of Slice 7. Strings as Map KEYS are
+// boxed (data, len) cells under arm64-TwoWordOverride the same way
+// as on wasm, and the __drop_map_str_keys column-walk reclamation
+// works on either backend now (genMapStrColDropFn branches on
+// UseTwoWordStrings to pick the boxed-cell vs direct-pointer body
+// shape internally). Originally an exclusion-locking gate; flipped
+// to inclusion-asserting once #1665's runtime helpers + the Slice 7
+// IR widening landed.
+func TestLowerMapStringKeyReclaimOnArm64TwoWord(t *testing.T) {
 	prev := ast.TwoWordOverride
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prev }()
@@ -2346,8 +2351,8 @@ func TestLowerMapStringKeyNoReclaimOnArm64TwoWord(t *testing.T) {
     m = m.set("foo" + "bar", 10);
     return 0;
 }`, 8)
-	if callsDirect(p, "build", "__drop_map_str_keys") {
-		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must NOT route map drop through __drop_map_str_keys — boxed-string reclaim has no native runtime yet:\n%s", p)
+	if !callsDirect(p, "build", "__drop_map_str_keys") {
+		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must route map drop through __drop_map_str_keys now that the boxed-string runtime + IR Slice 8 widening have landed:\n%s", p)
 	}
 }
 
