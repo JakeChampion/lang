@@ -419,12 +419,15 @@ explicitly skipped.
 | Slice 5 — string ENUM payloads | DONE | DONE | DONE |
 | Slice 6 — string CLOSURE captures | DONE | DONE | DONE |
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | DONE |
-| Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
+| Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | DONE |
 
-¹ arm64 still leaks the KEY column. Unblock is a one-line widening
-of the `Map[string, V]` drop-key gate + the matching set / overwrite
-sites in `internal/ir/ir.go` — the runtime helpers + the value-side
-machinery this slice landed are reused as-is.
+Every row across the matrix is now DONE — `string` participates in
+rc reclamation across LOCALS / fields / array elements / tuple
+elements / enum payloads / closure captures / Map values + keys on
+wasm + x86_64 + arm64-TwoWordOverride. The Map-key OVERWRITE path
+still accepts an aliased-overwrite-leak on every backend (safe, no
+double-free; the runtime keeps the existing key so the freshly-
+boxed key's inc has no balancing dec) — documented at the gate.
 
 The native Map work landed across these PRs (all merged): #1616 #1618
 #1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7
