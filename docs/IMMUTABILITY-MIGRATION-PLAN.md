@@ -15,9 +15,20 @@ RC pivot was lifted from).
 The decision's 4-step sequencing is:
 
 1. Record the decision — **done** (`CYCLE-COLLECTION-ANALYSIS.md` §Decision).
-2. Add a functional struct-update expression.
-3. Migrate in-tree mutators off field assignment.
-4. Flip the checker to reject field / capture mutation.
+2. Add a functional struct-update expression — **done** (`Foo { ...old, f: v }`).
+3. Migrate in-tree mutators off field assignment — **done** (wc, url,
+   mock_platform, io_buffered, headers, stream, json, and the
+   `std/wasm` Module builders all rewritten; no statement-leading
+   field assignment remains in `examples/` or `internal/stdlib/`).
+4. Flip the checker to reject field / capture mutation — **field
+   assignment done** (the Go checker rejects `obj.field = v` with
+   E048; the e2e `struct_mutation` / `compound_field_assign` /
+   `nested_field_mutation` fixtures are now rejection fixtures).
+   **Remaining:** (a) capture write-back rejection (needs closureconv-
+   time handling; no `.fern` consumer today), and (b) the parallel
+   rule in the self-host `checker.fern` + inverting
+   `self_host_field_assign_test.go` (the self-host compiler still
+   accepts field assignment for programs it compiles).
 
 This doc covers **step-3 scoping** plus a concrete **step-2 design
 sketch**. Every code claim below was verified against the file at the

@@ -1,5 +1,6 @@
-// Compound assignment to a struct field (`a.v += n`) desugars to
-// `a.v = a.v + n`, the same lvalue forms plain `=` accepts.
+// Rejection fixture: compound assignment to a struct field (`a.v += n`)
+// desugars to `a.v = a.v + n`, so it is banned the same way as a plain
+// field assignment (E048).
 struct Acc { v: i32 }
 function main(): i32 {
     var a: Acc = Acc { v: 7 };

@@ -4494,10 +4494,11 @@ func TestWASMStringIndexAndCompare(t *testing.T) {
 }
 
 func TestWASMStructBasic(t *testing.T) {
+	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
 			var p: Point = Point { x: 10, y: 32 };
-			p.x = p.x + 5;
+			p = Point { ...p, x: p.x + 5 };
 			return p.x + p.y;
 		}`
 	// (10+5) + 32 = 47
@@ -4506,12 +4507,17 @@ func TestWASMStructBasic(t *testing.T) {
 	}
 }
 
-func TestWASMStructPassByReference(t *testing.T) {
+// Structs are passed by reference (pointer), but that reference is
+// read-only: a function can't mutate its caller's struct in place
+// (the old "mutate-through-call" semantic the immutability migration
+// removes). The functional form returns the new value and the caller
+// rebinds.
+func TestWASMStructFunctionalUpdate(t *testing.T) {
 	src := `struct Box { v: i32 }
-		function bump(b: Box): void { b.v = b.v + 100; }
+		function bump(b: Box): Box { return Box { ...b, v: b.v + 100 }; }
 		function main(): i32 {
 			var b: Box = Box { v: 5 };
-			bump(b);
+			b = bump(b);
 			return b.v;
 		}`
 	if got := runWasm(t, src); got != 105 {

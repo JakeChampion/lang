@@ -331,10 +331,11 @@ func TestInterpMapBasic(t *testing.T) {
 }
 
 func TestInterpStructBasic(t *testing.T) {
+	// Fields are immutable; update via struct-update + rebind.
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
 			var p: Point = Point { x: 3, y: 4 };
-			p.x = p.x + 1;
+			p = Point { ...p, x: p.x + 1 };
 			return p.x + p.y;
 		}`
 	v, _ := evalProgram(t, src)

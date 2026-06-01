@@ -1865,20 +1865,23 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Escape into a struct field via field-assign
-		// (`b.items = arr`): the store retains the value without an
-		// inc, so the owned array must survive the helper's exit.
-		name: "escape_array_into_field_assign",
+		// Escape into a struct field via struct-update
+		// (`Box { ...b, items: arr }`): the new box stores the owned
+		// `arr` (override-pointer-field path), and the old base box —
+		// whose own `items` array is now unreferenced — is dropped.
+		// The escaped array must survive the helper's exit, and the
+		// base's array must be freed exactly once.
+		name: "escape_array_into_struct_update",
 		src: `import "core/no_prelude";
 import "core/int";
 struct Box { items: i32[] }
-function fill(b: Box, n: i32) {
+function fill(b: Box, n: i32): Box {
     var arr: i32[] = [n, n + 1, n + 2, n + 3];
-    b.items = arr;
+    return Box { ...b, items: arr };
 }
 function main(): i32 {
     var b: Box = Box { items: [0, 0, 0, 0] };
-    fill(b, 7000);
+    b = fill(b, 7000);
     var c: i32 = 0;
     while (c < 300) {
         var junk: i32[] = [c, c, c, c];

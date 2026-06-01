@@ -4950,15 +4950,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !assignable(lt, rt) {
 			c.errfCode(n.P, "E003", "cannot assign %s to %s", rt, lt)
 		}
-		// Restrict assignment targets the same way `=` does for
-		// arrays: only Ident, Index and FieldAccess are addressable.
-		if _, ok := n.Target.(*ast.FieldAccess); !ok {
-			if _, ok := n.Target.(*ast.Ident); !ok {
-				if _, ok := n.Target.(*ast.Index); !ok {
-					// Already errored elsewhere when the parser built
-					// the Assign — nothing to add here.
-				}
-			}
+		// Fields are immutable after construction: a struct value
+		// can't have a field reassigned in place. This is the
+		// enforcement half of the immutable-data-structures
+		// migration (docs/IMMUTABILITY-MIGRATION-PLAN.md §4) — with
+		// no post-construction mutation, reference cycles become
+		// unconstructible, so RC stays garbage-free with no cycle
+		// collector. The fix is a functional struct-update:
+		// `p = Foo { ...p, field: v }`. (Local variable reassignment
+		// and array-element assignment `arr[i] = v` — a CoW path —
+		// stay legal; only `*ast.FieldAccess` targets are banned.)
+		if fa, ok := n.Target.(*ast.FieldAccess); ok {
+			c.errfCode(fa.Pos(), "E048",
+				"cannot assign to field %q: fields are immutable after construction; rebuild with `T { ...old, %s: value }`",
+				fa.Field, fa.Field)
 		}
 		return lt
 	case *ast.Lambda:
