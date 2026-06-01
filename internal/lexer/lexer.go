@@ -449,7 +449,14 @@ func (l *lexer) next() (Token, error) {
 				}
 				continue
 			}
-			b.WriteRune(c)
+			// Write the raw source byte, not WriteRune(c): c is
+			// `rune(l.src[l.i])`, a single byte, so for a multi-byte
+			// UTF-8 character WriteRune would re-encode each lead/
+			// continuation byte as its own code point (e.g. the 3
+			// bytes of `∃` become three mojibake runes). Strings are
+			// UTF-8 byte arrays here, so preserving the source bytes
+			// verbatim is both correct and what round-trips.
+			b.WriteByte(l.src[l.i])
 			l.advance()
 		}
 		if l.i >= len(l.src) {
