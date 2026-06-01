@@ -418,15 +418,13 @@ explicitly skipped.
 | Slice 4 — string ARRAY elements (`string[]`) | DONE | DONE | DONE |
 | Slice 5 — string ENUM payloads | DONE | DONE | DONE |
 | Slice 6 — string CLOSURE captures | DONE | DONE | DONE |
-| Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | EXCLUDED ¹ |
+| Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | DONE |
 | Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | EXCLUDED ¹ |
 
-¹ arm64 stays on the pre-slice leaking-but-stable behaviour for both
-Map columns. Unblock requires porting `__fern_str_dec` and
-`__fern_cell_free` from `internal/codegen/wasmbin/runtime.go` to
-`internal/codegen/arm64/arm64.go`, then dropping the `!ast.UseTwoWordStrings(b.ptrW)`
-guard at the four Map gates (drop, set retain, get retain, overwrite
-pre-drop) in `internal/ir/ir.go`.
+¹ arm64 still leaks the KEY column. Unblock is a one-line widening
+of the `Map[string, V]` drop-key gate + the matching set / overwrite
+sites in `internal/ir/ir.go` — the runtime helpers + the value-side
+machinery this slice landed are reused as-is.
 
 The native Map work landed across these PRs (all merged): #1616 #1618
 #1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7
