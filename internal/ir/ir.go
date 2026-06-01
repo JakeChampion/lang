@@ -1906,10 +1906,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// A fresh owned heap string (concat / slice result —
 			// rhsTainted whitelists exactly those, since both COPY into a
 			// new headered buffer) frees at its last reference via
-			// __fern_str_dec. wasm32 only (ptrW==4 — __fern_str_dec is
-			// wasm-only); aliases / views / literals are tainted above and
-			// skipped.
-			if b.ptrW == 4 {
+			// __fern_str_dec. Two-word ABI only (wasm + arm64-
+			// TwoWordOverride — both back __fern_str_dec with the
+			// uniform L2 rc header); native single-word strings go
+			// through their own emitDec branch via __fern_rc_dec which
+			// doesn't need this eligibility flag. Aliases / views /
+			// literals are tainted above and skipped.
+			if ast.UseTwoWordStrings(b.ptrW) {
 				elig[v.Name] = true
 			}
 		}
@@ -11416,14 +11419,16 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
 	b.emit(payloadLoadOpFor(vType, b.ptrW))
-	// Map[K, string] get_or retain (wasm boxed V): the returned (data, len)
-	// pair is the string the column was holding (or our just-allocated
-	// fallback cell). The caller will co-own the buffer alongside the
-	// map's cell, so __fern_str_inc it. Balances the caller's later dec
-	// and the map drop's column-walk dec. Mirrors emitMapGetRebox's
-	// boxed-V retain — same correctness rationale, same gating.
-	if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+	// Map[K, string] get_or retain (two-word ABI — wasm + arm64-
+	// TwoWordOverride; boxed V): the returned (data, len) pair is
+	// the string the column was holding (or our just-allocated
+	// fallback cell). The caller will co-own the buffer alongside
+	// the map's cell, so __fern_str_inc it. Balances the caller's
+	// later dec and the map drop's column-walk dec. Mirrors
+	// emitMapGetRebox's boxed-V retain — same correctness
+	// rationale, same gating.
+	if _, isStr := vType.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 	}
 	// get_or doesn't retain the key cell — reclaim the transient (the
 	// loaded result value sits underneath; the free ops are balanced).

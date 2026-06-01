@@ -673,9 +673,15 @@ func (g *generator) emitDataSections() {
 		g.label("__fern_rc_underflow")
 		g.line(`	.quad 0`)
 	}
-	if ast.RcFreeEnabled && g.usesAlloc {
+	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
 		// Phase 3 step-4 segregated freelist: 128 heads, one per
 		// 16-byte size class (16..2048). Mirrors the x86_64 BSS.
+		// Either alloc or free reaches into it (alloc pops, free
+		// pushes), so emit when EITHER is used — without this the
+		// arm64 string-LOCAL freeEligible widening (str_dec →
+		// box_free → free) referenced freelist_heads without
+		// usesAlloc, link-failing on programs that string-concat
+		// but never explicitly alloc otherwise.
 		g.line(`.align 3`)
 		g.label("__fern_freelist_heads")
 		g.line(`	.space 1024`)
@@ -3243,9 +3249,15 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("adrp x0, __fern_strbuf_len")
 		g.emit("add x0, x0, :lo12:__fern_strbuf_len")
 		g.emit("ldr x19, [x0]")
-		// alloc x19 bytes
+		// alloc_rc1 x19 bytes — like __fern_strcat's two-word path,
+		// the result is rc-tracked by the IR (freeEligible on a
+		// strbuf_take local now fires on arm64 too), so it needs the
+		// rc=1 header + payload size at data-4 for __fern_str_dec's
+		// box_free to read correctly. Plain __fern_alloc here would
+		// hand back a header-less buffer whose data-8 is garbage,
+		// segfaulting the local-side str_dec at scope exit.
 		g.emit("mov x0, x19")
-		g.emit("bl __fern_alloc")
+		g.emit("bl __fern_alloc_rc1")
 		g.emit("mov x20, x0")
 		// memcpy(dst, strbuf_data, len)
 		g.emit("mov x0, x20")
