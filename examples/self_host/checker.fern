@@ -743,6 +743,39 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             if (ssig.name.len() == 0) {
                 return t_unknown("undefined struct: " + sl.type_name);
             }
+            if (sl.has_base) {
+                // Struct-update `Name { ...base, f: v }`: the base
+                // supplies the un-overridden fields, so completeness
+                // and declaration-order are relaxed — a subset of
+                // overrides is legal. The base must itself be a value
+                // of the same struct type. Each override must name a
+                // declared field with a matching type.
+                var bt: Type = check_expr(sl.base, s);
+                if (!type_eq(bt, t_struct(sl.type_name))) {
+                    return t_unknown("struct " + sl.type_name + " update base type mismatch");
+                }
+                var ui: i32 = 0;
+                while (ui < sl.field_names.len()) {
+                    var uname: string = sl.field_names[ui];
+                    var found: boolean = false;
+                    var ufi: i32 = 0;
+                    while (ufi < ssig.field_names.len()) {
+                        if (ssig.field_names[ufi] == uname) {
+                            found = true;
+                            var uft: Type = check_expr(sl.field_values[ui], s);
+                            if (!type_eq(uft, ssig.field_types[ufi])) {
+                                return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
+                            }
+                        }
+                        ufi = ufi + 1;
+                    }
+                    if (!found) {
+                        return t_unknown("struct " + sl.type_name + " has no field `" + uname + "`");
+                    }
+                    ui = ui + 1;
+                }
+                return t_struct(sl.type_name);
+            }
             if (sl.field_names.len() != ssig.field_names.len()) {
                 return t_unknown("struct " + sl.type_name + " field count mismatch");
             }

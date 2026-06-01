@@ -165,6 +165,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             return collect_idents_expr(sl.end, acc);
         },
         parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 acc = collect_idents_expr(sl.field_values[i], acc);
@@ -5034,6 +5035,74 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
             // Layout: [shape_ptr, val0, val1, …, val_(N-1)].
             // Same shape as the x86-64 backend; see asm.fern
             // for the rationale.
+            //
+            // Struct-update `Name { ...base, f: v }`: one slot per
+            // DECLARED field (decl order); un-overridden slots copy
+            // from the base, the rest are overrides. Leak-everything
+            // heap → no rc bookkeeping on copies (mirrors asm.fern).
+            if (sl.has_base) {
+                var dn: i32 = 0;
+                var fields: parser.StructFieldDecl[] = [];
+                var ddi: i32 = 0;
+                while (ddi < s.struct_decls.len()) {
+                    if (s.struct_decls[ddi].name == sl.type_name) {
+                        fields = s.struct_decls[ddi].fields;
+                        dn = fields.len();
+                    }
+                    ddi = ddi + 1;
+                }
+                // Evaluate the base (its pointer lands on the rt-stack).
+                s = emit_expr(sl.base, s);
+                // Allocate the new box. Base ptr stays on the rt-stack
+                // across the call (alloc clobbers scratch regs).
+                var su_bytes: i32 = (dn + 1) * 8;
+                s = s.write("    mov x0, #" + i32_to_string(su_bytes) + "\n");
+                s = s.write("    bl __fern_alloc\n");
+                s = s.mark_heap();
+                // x0 = box. Shape pointer at [x0].
+                var suNameLit: StringLitOut = add_string_lit(s, sl.type_name);
+                s = suNameLit.state;
+                s = s.write("    adrp x1, .S" + i32_to_string(suNameLit.idx) + "\n");
+                s = s.write("    add x1, x1, :lo12:.S" + i32_to_string(suNameLit.idx) + "\n");
+                s = s.write("    str x1, [x0]\n");
+                // Pop the base pointer into x2 — no calls happen during
+                // the field copy, so x2 survives.
+                s = s.write("    ldr x2, [sp], #16\n");
+                var ci: i32 = 0;
+                while (ci < dn) {
+                    var cname: string = fields[ci].name;
+                    var overridden: boolean = false;
+                    var oj: i32 = 0;
+                    while (oj < sl.field_names.len()) {
+                        if (sl.field_names[oj] == cname) { overridden = true; }
+                        oj = oj + 1;
+                    }
+                    if (!overridden) {
+                        s = s.write("    ldr x1, [x2, #" + i32_to_string((ci + 1) * 8) + "]\n");
+                        s = s.write("    str x1, [x0, #" + i32_to_string((ci + 1) * 8) + "]\n");
+                    }
+                    ci = ci + 1;
+                }
+                // Save the box pointer on the rt-stack; override value
+                // exprs below may use both registers and the stack.
+                s = s.write("    str x0, [sp, #-16]!\n");
+                var ok: i32 = 0;
+                while (ok < sl.field_names.len()) {
+                    var oidx: i32 = 0;
+                    var of2: i32 = 0;
+                    while (of2 < dn) {
+                        if (fields[of2].name == sl.field_names[ok]) { oidx = of2; }
+                        of2 = of2 + 1;
+                    }
+                    s = emit_expr(sl.field_values[ok], s);   // rt: [box, val]
+                    s = s.write("    ldr x1, [sp], #16\n");   // val → x1
+                    s = s.write("    ldr x0, [sp], #16\n");   // box → x0
+                    s = s.write("    str x1, [x0, #" + i32_to_string((oidx + 1) * 8) + "]\n");
+                    s = s.write("    str x0, [sp, #-16]!\n"); // box back on rt-stack
+                    ok = ok + 1;
+                }
+                return s;
+            }
             var n_fields: i32 = sl.field_values.len();
             var i: i32 = 0;
             while (i < n_fields) {
