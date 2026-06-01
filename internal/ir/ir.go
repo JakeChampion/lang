@@ -9437,6 +9437,179 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	return true, nil
 }
 
+// tryEnumReuseOverwrite is the enum analogue of tryStructReuseOverwrite
+// (Phase 5e). A self-overwrite of an owned enum local with a freshly
+// constructed, payload-carrying variant of the SAME enum reuses the old
+// box's storage in place when the box is uniquely owned at runtime — so
+// a loop like `c = Step(c.n + 1)` allocates zero boxes per iteration.
+//
+// Crucially, this changes NO rc accounting versus the baseline
+// (emitEnumNew + the flat __fern_rc_dec the overwrite-dec emits for a
+// non-array enum target). Enum construction does NOT inc its payloads,
+// and the baseline overwrite-dec does NOT release the old box's payloads
+// (it flat-dec's the box only — old payloads leak). So reuse mirrors
+// that exactly: no arg inc, no old-payload release. That makes it a pure
+// alloc-elision with ZERO over-release surface — the opposite of the
+// struct case, where StructLit construction incs fields and the reuse
+// path must therefore release old fields to balance. On the unique path
+// the old box (rc==1) is repurposed as the new value (rc stays 1); on
+// the aliased / sentinel path it's flat-dec'd and a fresh box allocated,
+// byte-for-byte the baseline. Reuse even leaks strictly less: it
+// reclaims the box the baseline orphans at rc 0.
+//
+// Gated on uniformEnumBoxSize: every payload-carrying variant must share
+// one box size, so the constructed variant always fits the old box no
+// matter which variant it currently holds. freeEligible gates out
+// borrowed locals whose runtime is_unique can spuriously read 1 (the
+// borrow model gives no caller-side inc) — reusing those would corrupt
+// the caller's value, the same UAF guard the array-free overwrite path
+// uses.
+func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
+	if !ast.RcFreeEnabled {
+		return false, nil
+	}
+	call, ok := n.Value.(*ast.Call)
+	if !ok {
+		return false, nil
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false, nil
+	}
+	if _, isLocal := b.locals[callee.Name]; isLocal {
+		return false, nil // shadowed by a local — not a constructor ref
+	}
+	enumName, varIdx, payloadCount, isVariant := b.lookupVariant(callee.Name)
+	if !isVariant || payloadCount == 0 {
+		return false, nil // payloadless ⇒ static sentinel, no box to reuse
+	}
+	et, ok := b.exprStaticType(t).(ast.EnumType)
+	if !ok || et.Name != enumName {
+		return false, nil
+	}
+	if !b.freeEligible[t.Name] {
+		return false, nil
+	}
+	ed, ok := b.info.Enums[enumName]
+	if !ok {
+		return false, nil
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
+	if !sizeOk {
+		return false, nil // variants disagree on box size — can't reuse
+	}
+	const rcHeaderBytes = 8
+
+	// Resolve the constructed variant's payload types (same precedence
+	// as emitEnumNew: checker-substituted concrete types first, else the
+	// declared payload list).
+	var payloadTypes []ast.Type
+	if pts, ok := b.info.VariantCallPayloads[call]; ok {
+		payloadTypes = pts
+	}
+	if payloadTypes == nil && varIdx < len(ed.Variants) {
+		payloadTypes = ed.Variants[varIdx].Payloads
+	}
+	offsets, _ := payloadLayout(payloadTypes, payloadCount, b.ptrW)
+
+	// 1. Evaluate every payload arg into a scratch temp BEFORE the box
+	//    is reused (reads of the old c, still live in slot idx, complete
+	//    first). No inc — emitEnumNew doesn't inc payloads, so the
+	//    drop-side accounting matches a freshly constructed box.
+	type argTemp struct {
+		slot int32
+		typ  ast.Type
+	}
+	temps := make([]argTemp, 0, len(call.Args))
+	for i, a := range call.Args {
+		var pt ast.Type
+		if i < len(payloadTypes) {
+			pt = payloadTypes[i]
+		}
+		if err := b.expr(a); err != nil {
+			return true, err
+		}
+		ts := b.allocSlot()
+		b.locals[fmt.Sprintf("__ereuse_arg_%d", ts)] = ts
+		if pt != nil {
+			b.scratchType[ts] = pt
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: ts})
+		temps = append(temps, argTemp{ts, pt})
+	}
+
+	// 2. reused = is_unique(old); token = reused ? base(old) : 0. On the
+	//    aliased / sentinel path, flat-dec the old box (exactly the
+	//    baseline overwrite-dec) and yield 0 so __alloc_reuse allocates
+	//    fresh. is_unique reads false for payloadless sentinels (rc high
+	//    bit), so they take the fresh-alloc branch.
+	reusedSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__ereuse_uniq_%d", reusedSlot)] = reusedSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+
+	tokenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__ereuse_tok_%d", tokenSlot)] = tokenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpEnd})
+
+	// 3. base = __alloc_reuse(token, size+hdr, size+hdr).
+	boxSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__ereuse_box_%d", boxSlot)] = boxSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
+
+	// 4. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
+	//    otherwise).
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+
+	// 5. Store the tag at [base+hdr+0].
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+	b.emit(Op{Kind: OpStore})
+
+	// 6. Store each payload temp at [base+hdr+offset]. The old payloads
+	//    are overwritten WITHOUT release — the baseline flat-dec leaks
+	//    them too, so this stays rc-neutral (no over-release).
+	for i, tp := range temps {
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
+		b.emit(payloadStoreOpFor(tp.typ, b.ptrW))
+	}
+
+	// 7. c = data (= base + hdr); leave the tee for expression position.
+	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpStoreLocal, I32: idx})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	return true, nil
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
@@ -9451,6 +9624,14 @@ func (b *builder) assign(n *ast.Assign) error {
 		// the whole assignment (old-value drop + construct + store), so
 		// it returns early past the normal expr + dec-on-overwrite.
 		if done, err := b.tryStructReuseOverwrite(n, t, idx); done {
+			return err
+		}
+		// Phase 5e drop-reuse: the enum analogue — `c = Variant(...)`
+		// reuses c's box in place when uniquely owned. Pure alloc-
+		// elision (rc-neutral vs the baseline construct + flat dec); see
+		// tryEnumReuseOverwrite. Handles the whole assignment, so it
+		// returns early past the normal expr + overwrite-dec.
+		if done, err := b.tryEnumReuseOverwrite(n, t, idx); done {
 			return err
 		}
 		if err := b.expr(n.Value); err != nil {

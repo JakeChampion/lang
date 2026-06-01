@@ -1729,73 +1729,108 @@ cancellation — bounded, but separable, so it ships last.
   - `internal/ir/move_on_return_test.go` — template for the
     analysis-level tests.
 
-#### Remaining frontier (NOT STARTED — code-grounded design + risk)
+#### Remaining frontier (code-grounded design + risk)
 
-As of this writing the *clean* drop-reuse + pair-cancellation work is
-merged and verified: drop-reuse for structs (5a/5b/5c) and the full
-pair-cancellation move family — move-on-return, move-on-alias,
-move-on-construction (struct / array / tuple / closure containers), and
-move-on-destructure. An audit of all nine `b.emitAliasInc` call sites
-confirms every genuine last-use move opportunity is now gated on
-`b.moveSites`; the only ungated sites are the `return`-of-field/index
-path (not a local — nothing to move) and the call-arg path (already
-inc-free under the Phase 2d borrow model). What follows is the
-remaining work, each entry deferred for a concrete reason so it can be
-resumed safely.
+As of this writing the drop-reuse + pair-cancellation work is merged and
+verified: drop-reuse for structs (5a/5b/5c) and **enums (5e, below)**,
+plus the full pair-cancellation move family — move-on-return,
+move-on-alias, move-on-construction (struct / array / tuple / closure
+containers), and move-on-destructure. An audit of all nine
+`b.emitAliasInc` call sites confirms every genuine last-use move
+opportunity is now gated on `b.moveSites`; the only ungated sites are the
+`return`-of-field/index path (not a local — nothing to move) and the
+call-arg path (already inc-free under the Phase 2d borrow model).
 
-##### 5e — enum self-overwrite reuse (deferred: low value / high risk)
+That leaves **three** items, each deferred for a concrete, durable
+reason: 5f needs an alias analysis the borrow model postponed, 5g is
+hard-blocked on the in-progress SSO native flip, and 5h (a spec-vs-impl
+gap — block-scoped drops for loop-body locals) needs block-scope drop
+machinery the lowering doesn't carry today. None is a "just do it"
+slice — see below.
 
-The parallel of 5b/5c for enums: `c = Variant(...)` reusing `c`'s box.
-Two reasons it's deferred rather than a quick mirror of
-`tryStructReuseOverwrite`:
+##### 5e — enum self-overwrite reuse (DONE)
 
-  - **The RHS shape differs.** A struct self-overwrite RHS is a clean
-    `*ast.StructLit` the hook pattern-matches directly. A variant
-    constructor RHS is an `*ast.Call` to the variant name (lowered via
-    `emitEnumNew` at `ir.go` ~`b.lookupVariant(id.Name)` in the Call
-    case), so the reuse path would have to reproduce `emitEnumNew`'s
-    payload-type resolution (`b.info.VariantCallPayloads[callNode]`,
-    the pair-form fallback) inside the assign hook — not a 30-line
-    mirror.
-  - **Old-payload release is variant-dependent.** Unlike a struct (one
-    fixed field layout), the reused box may currently hold a *different
-    variant* than the one being constructed, so releasing the old
-    payloads before overwriting them needs the old tag read +
-    `enumVariantDropPlan` tag-dispatch — the exact multi-variant
-    over-release surface this doc's Phase 3 notes spent the most effort
-    closing.
-  - **Risk-reduced scope if revisited:** gate strictly on
-    `uniformEnumDropLoads(ed) && uniformEnumBoxSize(ed)` — the union
-    shape (`type V = A(Foo) | B(Bar)`, identical droppable layout at
-    identical offsets) releases old payloads *branchlessly* at fixed
-    offsets, exactly like the shipped pointer-field struct reuse, with
-    no tag dispatch. Non-uniform enums keep the normal fresh alloc.
-  - **Low payoff regardless:** `c = Variant(...)` self-reassignment in
-    a hot loop is rare — enums are consumed by `match`, not
-    record-updated in place the way structs are. The struct case
-    (5b/5c) was the high-frequency one.
+`c = Variant(...)` reusing `c`'s box in place when uniquely owned —
+`tryEnumReuseOverwrite` in `ir.go`, wired into `assign` after the struct
+hook. Investigation overturned this doc's original "high risk" framing:
 
-##### 5f — freeing-dec for replaced pointer fields (deferred: UAF risk)
+  - **The feared variant-dependent old-payload release does NOT exist.**
+    The original worry was that the reused box might hold a different
+    variant, needing `enumVariantDropPlan` tag-dispatch to release old
+    payloads (the over-release surface). But that release isn't needed
+    at all: enum construction (`emitEnumNew`) does **not** inc its
+    payloads, and the baseline overwrite-dec for a non-array enum target
+    is a flat `__fern_rc_dec` that leaks the old payloads. So the
+    rc-correct reuse mirrors that exactly — **no arg inc, no old-payload
+    release** — making it a pure alloc-elision that is provably
+    rc-neutral vs. baseline, with *zero* over-release surface. This is
+    the mirror image of the struct case: StructLit construction *incs*
+    fields, so struct reuse *must* release old fields to balance; enum
+    construction does neither, so enum reuse does neither.
+  - **Gated on `uniformEnumBoxSize`** (every payload-carrying variant
+    shares one box size ⇒ the constructed variant always fits the old
+    box regardless of which variant it holds — cross-variant reuse is
+    sound), runtime `is_unique`, and `freeEligible` (the borrow-model
+    UAF guard). The `uniformEnumDropLoads` gate the original plan
+    proposed is unnecessary precisely because no payloads are released.
+  - **Eligibility boundary:** fires for free-eligible enum locals —
+    pointer-payload enums built from non-literal args (the
+    allocation-heavy case). Scalar enums built from literal args
+    (`Fwd(0)`) are conservatively tainted by `rhsTainted`'s default and
+    aren't eligible; they leak their box under the baseline too, so not
+    reusing them loses nothing (covered by
+    `TestEnumReuseSkipsLiteralScalar`). Lifting that would mean treating
+    variant-constructor calls as fresh-owned producers in `rhsTainted` +
+    escape-tainting their args in the eligibility walk — a taint-analysis
+    change with broad blast radius, deliberately left out.
+  - Tests: `internal/ir/enum_reuse_test.go` (6 cases) +
+    `internal/e2e/testdata/cases/enum_reuse_churn` (cross-variant box
+    reuse, array payloads, green on all four backends through both
+    free-on/free-off differential gates).
 
-5c's reuse path flat-`dec`s a replaced pointer field's old value
-(`__fern_rc_dec`, no free) — correct and leak-but-never-UAF. Upgrading
-that to a *freeing* dec (reclaim the old field's buffer when it hits
-rc 0) reopens UAF risk: a carried value that aliases the old field
-without an inc (e.g. `items: identity(p.items)` under the borrow model)
-would be freed then used. Doing it safely needs the deferred-alias
-analysis the borrow model postponed — the same class of work as the
-`RcFreeEnabled` flip's hardest weeks. Not worth it for the marginal
-reclamation gain.
+##### 5f — freeing-dec for replaced pointer fields (deferred: UAF risk, needs alias analysis)
 
-##### 5g — heap-string rc (deferred: SSO-blocked)
+5c's struct-reuse path flat-`dec`s a replaced pointer field's old value
+(`ir.go:9410`, `__fern_rc_dec`, no free) — correct and leak-but-never-
+UAF. Upgrading that to a *freeing* dec (reclaim the old field's buffer
+when it hits rc 0) reopens UAF risk, confirmed against the real code:
 
-The highest-value remaining item by memory impact, but blocked: heap
-strings can't grow a live rc header until the SSO native flip settles
-the inline-vs-heap representation (`docs/SSO-NATIVE-FLIP-STATUS.md`,
-in progress). The move-* family already excludes strings everywhere for
-exactly this reason (two-word on wasm, boxed on arm64); they join once
-the SSO work lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit
-`StringType` uniformly.
+  - The reuse path runs only when the struct is `freeEligible` + `is_unique`,
+    so the box's pointer fields are genuinely owned — freeing the OLD
+    value of a field is the same operation scope-exit `emitDec` already
+    does to that field. Safe *in isolation*.
+  - The new risk is the NEW field value aliasing the old buffer
+    *uncounted*. `needsRcIncOnAlias` only eval-incs `Ident` /
+    `FieldAccess` / `Index` RHS, so a fresh producer (`ArrayLit`, …) or
+    an inc'd alias is safe, but a **`*ast.Call` / `*ast.IfExpr` field
+    RHS** (e.g. `items: g(p.items)`) gets no inc and may return a view
+    into the old field — freeing the old buffer would then UAF the new
+    value.
+  - A sound gate ("the new field value can't alias the old field
+    uncounted") *is* the deferred-alias analysis the borrow model
+    postponed; a partial `rhsTainted`-based heuristic risks UAF that the
+    no-free arena masks until free-on, and the differential corpus
+    wouldn't exhaustively exercise the exact aliasing shape. For a
+    second-order gain (reclaiming replaced-field buffers that leak
+    *safely* today) that's not worth the UAF-class risk. Defer until the
+    alias analysis exists.
+
+##### 5g — heap-string rc (deferred: hard-blocked on the SSO native flip)
+
+The highest-value remaining item by memory impact, but genuinely
+blocked, not merely deferred. Heap strings can't grow a live rc header
+until the native string representation settles, and that flip is mid-
+flight: `docs/SSO-NATIVE-FLIP-STATUS.md` shows arm64 at §1 of §1–§9
+(IR gate refactor done; inline-encoding flip, runtime helpers, IR ops,
+ABI/locals, load/store fan-out, captures/globals/fields, map runtime,
+cleanup all still to do), and the whole arc then mirrors on x86_64 —
+~6 sessions per backend. Until then a string is two-word on wasm,
+single-word LSB-tagged on x86_64, and boxed on arm64; there is no
+uniform place to put the rc header. The move-* family already excludes
+strings everywhere for exactly this reason; they join once the SSO work
+lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit `StringType`
+uniformly. **Do not attempt 5g before the SSO native flip is green on
+both native backends.**
 
 ##### 5h — block-scoped drops for loop-body locals (deferred: needs block-scope drop machinery)
 
@@ -1862,15 +1897,17 @@ loop-body-`var` program whose per-iteration buffers get reclaimed+reused
 to a bounded high-water mark, mirroring `TestX86_64FreelistReuse` /
 `pushLoopFreeSrc` in `internal/e2e/rc_freelist_test.go`.
 
-##### Testing-parity caveat
+##### Testing-parity note
 
-All slices above were developed in an environment with only the x86_64
-native toolchain; arm64 + wasm correctness rode CI (differential gate +
-self-host + fuzz-diff). 5e/5f add over-release surface that the x86_64
-differential gate + self-host VM exercise well, but a reviewer with
-local arm64/wasm should confirm before merging either, since their
+Earlier slices (through the move family) were developed x86_64-only and
+rode CI for arm64/wasm. 5e was developed and verified with the full
+local toolchain — arm64 via `aarch64-linux-gnu-gcc` + `qemu-aarch64`,
+wasm via `wasmtime` — through both free-on/free-off differential gates
+on all three, plus the full e2e suite (`ok internal/e2e ~424s`). A
+future 5f (if the alias analysis lands) should clear the same bar: its
 failure mode (a freed-then-reused block) is the kind the no-free arena
-masks.
+masks, so the free-on differential gate on every backend is the
+non-negotiable check.
 
 ### Phase 6: cleanups + measurements
 
