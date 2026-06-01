@@ -380,7 +380,7 @@ func TestInterpScriptHeaderMap(t *testing.T) {
 			source: `import "std/headers";
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
-    h.set("Content-Type", "application/json");
+    h = h.set("Content-Type", "application/json");
     match (h.get("CONTENT-TYPE")) {
         Some(v) => { print(v); },
         None => { print("MISSING"); }
@@ -394,9 +394,9 @@ function main(): i32 {
 			source: `import "std/headers";
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
-    h.append("Set-Cookie", "a=1");
-    h.append("Set-Cookie", "b=2");
-    h.append("Set-Cookie", "c=3");
+    h = h.append("Set-Cookie", "a=1");
+    h = h.append("Set-Cookie", "b=2");
+    h = h.append("Set-Cookie", "c=3");
     var all: string[] = h.get_all("set-cookie");
     var i: i32 = 0;
     while (i < all.len()) {
@@ -412,10 +412,10 @@ function main(): i32 {
 			source: `import "std/headers";
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
-    h.append("X", "first");
-    h.append("Y", "y1");
-    h.append("X", "second");
-    h.set("x", "replaced");
+    h = h.append("X", "first");
+    h = h.append("Y", "y1");
+    h = h.append("X", "second");
+    h = h.set("x", "replaced");
     match (h.get("x")) {
         Some(v) => { print(v); },
         None => { print("MISSING"); }
@@ -430,7 +430,7 @@ function main(): i32 {
 			source: `import "std/headers";
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
-    h.set("X-First", "1");
+    h = h.set("X-First", "1");
     return h.len();
 }`,
 			wantExit: 1,
@@ -440,7 +440,7 @@ function main(): i32 {
 			source: `import "std/headers";
 function main(): i32 {
     var h: HeaderMap = headers.header_map_new();
-    h.append("X", "1");
+    h = h.append("X", "1");
     return (h.get_all("Y")).len();
 }`,
 			wantExit: 0,
@@ -593,8 +593,8 @@ func TestInterpScriptHttpResponseHeaders(t *testing.T) {
 
 function main(): i32 {
     var r: HttpResponse = http.http_response_ok("hello");
-    r.headers.set("X-Trace-Id", "abc123");
-    r.headers.set("Cache-Control", "no-store");
+    r = r.with_header("X-Trace-Id", "abc123");
+    r = r.with_header("Cache-Control", "no-store");
     var wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
@@ -621,7 +621,7 @@ function main(): i32 {
 
 function main(): i32 {
     var r: HttpResponse = http.http_response_ok("hi");
-    r.headers.set("Content-Length", "9999");
+    r = r.with_header("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
@@ -634,8 +634,8 @@ function main(): i32 {
 
 function main(): i32 {
     var r: HttpResponse = http.http_response_ok("hi");
-    r.headers.append("Set-Cookie", "a=1");
-    r.headers.append("Set-Cookie", "b=2");
+    r = r.with_appended_header("Set-Cookie", "a=1");
+    r = r.with_appended_header("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
     print(wire);
     return 0;
@@ -2107,8 +2107,8 @@ func TestInterpScriptBytesWriter(t *testing.T) {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_string("HTTP/1.1 200 OK\r\n");
-    w.write_string("\r\nhello");
+    w = w.write_string("HTTP/1.1 200 OK\r\n");
+    w = w.write_string("\r\nhello");
     print(w.len().to_string());
     print(w.into_string());
     return 0;
@@ -2120,8 +2120,8 @@ function main(): i32 {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_byte(72);  // 'H'
-    w.write_byte(105); // 'i'
+    w = w.write_byte(72);  // 'H'
+    w = w.write_byte(105); // 'i'
     print(w.into_string());
     return 0;
 }`,
@@ -2132,12 +2132,12 @@ function main(): i32 {
 			source: `import "std/io_buffered";
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
-    w.write_string("first");
+    w = w.write_string("first");
     if (w.len() != 5) { return 1; }
-    w.reset();
+    w = w.reset();
     if (w.len() != 0) { return 2; }
     if (!w.is_empty()) { return 3; }
-    w.write_string("second");
+    w = w.write_string("second");
     print(w.into_string());
     return 0;
 }`,
@@ -2149,7 +2149,7 @@ function main(): i32 {
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     var bs: u8[] = "binary".bytes();
-    w.write_bytes(bs);
+    w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }
     print(w.into_string());
     return 0;

@@ -21,16 +21,16 @@ import "std/headers";
 
 function test_case_insensitive_get(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.set("Content-Type", "application/json");
+    h = h.set("Content-Type", "application/json");
     return test.assert_is_some_eq_string(h.get("CONTENT-TYPE"),
                                     "application/json");
 }
 
 function test_get_all_preserves_insertion_order(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.append("Set-Cookie", "a=1");
-    h.append("Set-Cookie", "b=2");
-    h.append("Set-Cookie", "c=3");
+    h = h.append("Set-Cookie", "a=1");
+    h = h.append("Set-Cookie", "b=2");
+    h = h.append("Set-Cookie", "c=3");
     // Original verified via print-each-line + grep on
     // stdout; here we assert the returned array directly
     // so the failure message localises the first
@@ -41,10 +41,10 @@ function test_get_all_preserves_insertion_order(): Option[string] {
 
 function test_set_replaces_then_size_2(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.append("X", "first");
-    h.append("Y", "y1");
-    h.append("X", "second");
-    h.set("x", "replaced");
+    h = h.append("X", "first");
+    h = h.append("Y", "y1");
+    h = h.append("X", "second");
+    h = h.set("x", "replaced");
     // After set("x"), X has exactly one value
     // ("replaced") and Y is still there → size == 2.
     return test.assert_eq_i32(h.len(), 2);
@@ -52,22 +52,22 @@ function test_set_replaces_then_size_2(): Option[string] {
 
 function test_set_replaces_get_returns_new(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.append("X", "first");
-    h.append("Y", "y1");
-    h.append("X", "second");
-    h.set("x", "replaced");
+    h = h.append("X", "first");
+    h = h.append("Y", "y1");
+    h = h.append("X", "second");
+    h = h.set("x", "replaced");
     return test.assert_is_some_eq_string(h.get("x"), "replaced");
 }
 
 function test_set_on_absent_appends(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.set("X-First", "1");
+    h = h.set("X-First", "1");
     return test.assert_eq_i32(h.len(), 1);
 }
 
 function test_get_all_on_missing_is_empty(): Option[string] {
     var h: HeaderMap = headers.header_map_new();
-    h.append("X", "1");
+    h = h.append("X", "1");
     return test.assert_eq_i32((h.get_all("Y")).len(), 0);
 }
 

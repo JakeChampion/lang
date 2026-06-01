@@ -580,12 +580,12 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 29)
 	body = memory.InstI32Store(body, 2, 0)
 
-	// HttpRequest.headers (offset +24) = req_headers.
-	body = inst.InstLocalGet(body, 17)
-	body = inst.InstI32Const(body, 24)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 27)
-	body = memory.InstI32Store(body, 2, 0)
+	// NOTE: HttpRequest.headers (offset +24) is stored AFTER the
+	// populate loop below — __method_HeaderMap_append is now a
+	// functional update (returns a new HeaderMap rather than
+	// mutating in place, per the immutable-data-structures
+	// migration), so local 27 is rebound each iteration and the
+	// FINAL map is what lands in req.headers.
 
 	// ================ Populate HeaderMap from fields.entries ================
 	// fields.entries(req_fields, retptr) → (data_ptr, count) at retptr[0..7].
@@ -637,6 +637,9 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = numeric.InstI32Add(body)
 			body = memory.InstI32Load(body, 2, 0)
 			body = inst.InstCall(body, hmAppend)
+			// append now RETURNS the new HeaderMap — rebind
+			// local 27 so the next iteration appends onto it.
+			body = inst.InstLocalSet(body, 27)
 			// entry_i++
 			body = inst.InstLocalGet(body, 32)
 			body = inst.InstI32Const(body, 1)
@@ -647,6 +650,14 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstEnd(body)
 		body = inst.InstEnd(body)
 	}
+
+	// HttpRequest.headers (offset +24) = the populated HeaderMap
+	// (local 27, after the functional-append loop rebound it).
+	body = inst.InstLocalGet(body, 17)
+	body = inst.InstI32Const(body, 24)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 27)
+	body = memory.InstI32Store(body, 2, 0)
 
 	// Drop request fields, then the incoming-request itself —
 	// fields_drop has to happen before request_drop so the

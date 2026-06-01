@@ -71,9 +71,12 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
 // existing entries with the same name. The canonical "I want
 // duplicate-safe insertion" call (`headers.append("Set-Cookie",
 // "...")` keeps each cookie distinct).
-pub function (h: HeaderMap) append(name: string, value: string) {
-    h.names = h.names.push(name.to_lower());
-    h.values = h.values.push(value);
+pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
+    return HeaderMap {
+        ...h,
+        names: h.names.push(name.to_lower()),
+        values: h.values.push(value),
+    };
 }
 
 // `.set(name, value)` — replace any/all existing entries for
@@ -81,7 +84,7 @@ pub function (h: HeaderMap) append(name: string, value: string) {
 // already existed at index k, the new value lands at index k and
 // further duplicates are dropped; if `name` was absent, the new
 // entry appends.
-pub function (h: HeaderMap) set(name: string, value: string) {
+pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
     var key: string = name.to_lower();
     var new_names: string[] = [];
     var new_values: string[] = [];
@@ -104,13 +107,12 @@ pub function (h: HeaderMap) set(name: string, value: string) {
         new_names = new_names.push(key);
         new_values = new_values.push(value);
     }
-    h.names = new_names;
-    h.values = new_values;
+    return HeaderMap { ...h, names: new_names, values: new_values };
 }
 
 // `.len()` — total entries (duplicates counted separately).
-// `headers.set("Set-Cookie", "a"); headers.append("Set-Cookie",
-// "b"); headers.len()` is 2.
+// `h = h.set("Set-Cookie", "a"); h = h.append("Set-Cookie",
+// "b"); h.len()` is 2. (set/append are functional — rebind.)
 pub function (h: HeaderMap) len(): i32 {
     return h.names.len();
 }
