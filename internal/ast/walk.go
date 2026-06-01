@@ -112,6 +112,9 @@ func walkChildren(n Node, fn func(Node) bool) {
 	case *TryOp:
 		Walk(x.Inner, fn)
 	case *StructLit:
+		if x.Base != nil {
+			Walk(x.Base, fn)
+		}
 		for _, f := range x.Fields {
 			Walk(f.Value, fn)
 		}

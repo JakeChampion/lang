@@ -808,6 +808,60 @@ func TestStructLitWrongFieldType(t *testing.T) {
 	}
 }
 
+// A struct-update literal `P { ...base, y: v }` relaxes the
+// completeness rule: naming only a subset of fields is fine because
+// the base supplies the rest. (A plain `P { y: v }` would be rejected
+// for the missing x — see TestStructLitMissingField.)
+func TestStructUpdateAllowsSubsetFields(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+		function f(): P {
+			var a: P = P { x: 1, y: 2 };
+			return P { ...a, y: 9 };
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("struct-update with a subset of fields should check clean, got: %v", err)
+	}
+}
+
+// A pure-copy struct-update `P { ...base }` (no overrides) checks clean.
+func TestStructUpdatePureCopyChecks(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+		function f(): P {
+			var a: P = P { x: 1, y: 2 };
+			return P { ...a };
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("pure-copy struct-update should check clean, got: %v", err)
+	}
+}
+
+// The struct-update base must have the same struct type as the
+// literal — a mismatched base is rejected.
+func TestStructUpdateRejectsWrongBaseType(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+		struct Q { z: i32 }
+		function f(): P {
+			var q: Q = Q { z: 1 };
+			return P { ...q, y: 9 };
+		}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: struct-update base type Q does not match P")
+	}
+}
+
+// An override naming a field the struct doesn't have is still
+// rejected, even with a base present.
+func TestStructUpdateRejectsUnknownOverrideField(t *testing.T) {
+	src := `struct P { x: i32, y: i32 }
+		function f(): P {
+			var a: P = P { x: 1, y: 2 };
+			return P { ...a, nope: 9 };
+		}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: override names a field P does not have")
+	}
+}
+
 func TestUnknownStructType(t *testing.T) {
 	src := `function f(): i32 {
 		var p: NoSuchStruct = NoSuchStruct { x: 1 };

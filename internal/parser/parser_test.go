@@ -751,6 +751,60 @@ func TestStructLitAndFieldAccess(t *testing.T) {
 	}
 }
 
+// A struct-update literal `P { ...base, field: v }` parses to a
+// StructLit whose Base is the spread source and whose Fields hold
+// only the overrides.
+func TestStructUpdateLitParses(t *testing.T) {
+	prog, err := Parse(`struct P { x: i32, y: i32 }
+		function main(): i32 {
+			var a: P = P { x: 1, y: 2 };
+			var b: P = P { ...a, y: 9 };
+			return b.y;
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := prog.Funcs[0].Body.Stmts[1].(*ast.Var)
+	sl, ok := b.Init.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("init should be StructLit, got %T", b.Init)
+	}
+	if sl.Base == nil {
+		t.Fatal("struct-update literal should have a non-nil Base")
+	}
+	if id, ok := sl.Base.(*ast.Ident); !ok || id.Name != "a" {
+		t.Errorf("Base should be Ident `a`, got %T %v", sl.Base, sl.Base)
+	}
+	if len(sl.Fields) != 1 || sl.Fields[0].Name != "y" {
+		t.Errorf("overrides should be just [y], got %v", sl.Fields)
+	}
+}
+
+// `P { ...base }` with no overrides is a legal pure copy: Base set,
+// zero override fields.
+func TestStructUpdateLitPureCopyParses(t *testing.T) {
+	prog, err := Parse(`struct P { x: i32, y: i32 }
+		function main(): i32 {
+			var a: P = P { x: 1, y: 2 };
+			var b: P = P { ...a };
+			return b.x;
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := prog.Funcs[0].Body.Stmts[1].(*ast.Var)
+	sl, ok := b.Init.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("init should be StructLit, got %T", b.Init)
+	}
+	if sl.Base == nil {
+		t.Fatal("pure-copy struct-update should have a non-nil Base")
+	}
+	if len(sl.Fields) != 0 {
+		t.Errorf("pure copy should have no override fields, got %v", sl.Fields)
+	}
+}
+
 func TestMethodReceiverParsing(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }`)

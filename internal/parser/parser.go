@@ -2749,6 +2749,25 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 		return nil, err
 	}
 	var fields []ast.FieldInit
+	// Struct-update literal: a leading `...base` spread copies the
+	// un-named fields from `base`, the rest are overrides. Must be the
+	// first element (one base). `Foo { ...base }` with no overrides is
+	// a legal pure copy. See docs/IMMUTABILITY-MIGRATION-PLAN.md.
+	var base ast.Expr
+	if _, ok := p.accept(lexer.Punct, "..."); ok {
+		b, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		base = b
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			// No overrides — expect the closing brace (pure copy).
+			if _, err := p.expect(lexer.Punct, "}"); err != nil {
+				return nil, err
+			}
+			return &ast.StructLit{P: pos, TypeName: typeName, Base: base}, nil
+		}
+	}
 	if !p.match(lexer.Punct, "}") {
 		for {
 			fname, err := p.expect(lexer.Ident, "")
@@ -2775,7 +2794,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields}, nil
+	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields, Base: base}, nil
 }
 
 // parseMapLit parses `Map { key: value, key: value, ... }`. Both

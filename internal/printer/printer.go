@@ -436,6 +436,13 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 	case *ast.StructLit:
 		b.WriteString(x.TypeName)
 		b.WriteString(" { ")
+		if x.Base != nil {
+			b.WriteString("...")
+			printExpr(b, x.Base)
+			if len(x.Fields) > 0 {
+				b.WriteString(", ")
+			}
+		}
 		for i, f := range x.Fields {
 			if i > 0 {
 				b.WriteString(", ")

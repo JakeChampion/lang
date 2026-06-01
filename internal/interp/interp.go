@@ -2595,6 +2595,23 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: `?` on unexpected variant %q", ev.VariantName)
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
+		// Struct-update `Foo { ...base, field: v }`: seed from the
+		// base's fields, then apply the overrides on top. The result
+		// is a fresh Struct (immutable-update semantics) — mutating it
+		// never touches the base.
+		if x.Base != nil {
+			bv, err := i.evalExpr(x.Base, env)
+			if err != nil {
+				return nil, err
+			}
+			bs, ok := bv.(*Struct)
+			if !ok {
+				return nil, fmt.Errorf("struct-update base is not a struct: %T", bv)
+			}
+			for k, v := range bs.Fields {
+				s.Fields[k] = v
+			}
+		}
 		for _, f := range x.Fields {
 			v, err := i.evalExpr(f.Value, env)
 			if err != nil {
