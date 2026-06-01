@@ -89,6 +89,8 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"equality-true", "return 7 == 7;", 1, "", ""},
 		{"equality-false", "return 7 == 8;", 0, "", ""},
 		{"locals", "var x = 5; var y = 10; return x + y;", 15, "", ""},
+		{"let-locals", "let x = 5; let y = 10; return x + y;", 15, "", ""},
+		{"let-mixed-with-var", "let x = 40; var y = 2; return x + y;", 42, "", ""},
 		{"reassign", "var x = 5; x = x + 3; return x;", 8, "", ""},
 		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7, "", ""},
 		{"if-then-branch", "var x = 5; if (x < 10) { return 1; } return 2;", 1, "", ""},

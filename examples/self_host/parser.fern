@@ -1137,11 +1137,21 @@ function parse_stmt(p: Par): StmtResult {
         p = fb.par;
         return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
     }
-    if (kw == "var") {
+    // `let` and `var` introduce a binding the same way here — the
+    // self-host compiler doesn't track the immutability distinction
+    // (the Go checker enforces it), so both parse to the same StmtVar.
+    // Without the `let` arm, a statement-level `let (a, b) = E;` /
+    // `let x = E;` fell through to the expression-statement path, which
+    // can't consume the `let` keyword and so never advanced the cursor
+    // — an infinite loop (observed as an OOM/SIGKILL when the self-host
+    // compiler hit `let`). The variant `let Pat(..) = E else { .. }`
+    // form is not used by any self-host source and falls to the
+    // "missing = in var" graceful error rather than looping.
+    if (kw == "var" || kw == "let") {
         p = p.advance();
-        // `var (x, y) = E` — tuple destructuring. The two names are
-        // encoded as "x,y"; the emitter splits them and binds from the
-        // tuple's element slots.
+        // `var (x, y) = E` / `let (x, y) = E` — tuple destructuring.
+        // The two names are encoded as "x,y"; the emitter splits them
+        // and binds from the tuple's element slots.
         if (p.peek_punct() == "(") {
             p = p.advance();
             var tdx: string = p.peek_ident();
