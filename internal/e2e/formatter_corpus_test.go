@@ -36,7 +36,20 @@ import (
 
 func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	var files []string
-	for _, dir := range []string{"../../examples", "../../examples/tests"} {
+	// examples/ and examples/tests/ ship as shipping programs the
+	// CLI -fmt flag promises to round-trip cleanly. internal/stdlib/{std,core}/
+	// ship as the standard library every program imports; a formatter
+	// regression there would silently rewrite library code on every
+	// `-fmt -w` pass against a module that uses these helpers. Coverage
+	// extension closed e.g. the dropped-lambda + UTF-8 lexer corruption
+	// already caught on examples; running the sweep over the stdlib
+	// nets a strictly larger surface (42 production files) for free.
+	for _, dir := range []string{
+		"../../examples",
+		"../../examples/tests",
+		"../../internal/stdlib/std",
+		"../../internal/stdlib/core",
+	} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("read dir %s: %v", dir, err)
