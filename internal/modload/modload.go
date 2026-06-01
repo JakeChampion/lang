@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -189,7 +190,17 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 	// to bare `foo()` by the flat-namespace rewriter above) don't
 	// participate in the method visibility check, so they're fine
 	// either way.
-	for _, mod := range loaded {
+	// Sort by path before merging — Go map iteration order is
+	// randomized, and the combined Program's slice order must be
+	// deterministic so downstream stages emit byte-identical output
+	// across runs (see TestLoadDeterministic).
+	pathsFlat := make([]string, 0, len(loaded))
+	for p := range loaded {
+		pathsFlat = append(pathsFlat, p)
+	}
+	sort.Strings(pathsFlat)
+	for _, p := range pathsFlat {
+		mod := loaded[p]
 		if skipPaths[mod.path] {
 			continue
 		}
@@ -541,7 +552,21 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	for _, mod := range loaded {
+	// Sort modules by path before merging so the combined Program's
+	// function / struct / enum order doesn't depend on Go map
+	// iteration order. Without this, two LoadAll calls on the same
+	// project produce Programs whose Funcs slices differ in order,
+	// which propagates non-determinism through every downstream
+	// stage (IR, codegen) and breaks the byte-identical self-host
+	// fixed-point gates and reproducible builds. Pinned by
+	// TestLoadDeterministic.
+	paths := make([]string, 0, len(loaded))
+	for p := range loaded {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		mod := loaded[p]
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
