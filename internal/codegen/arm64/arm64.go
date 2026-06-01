@@ -6736,7 +6736,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push() // payload (unused for None)
 
 	case ir.OpDrop:
-		g.emit("add sp, sp, #%d", slotBytes)
+		// Width=WidthString drops a two-slot (data, len) pair that
+		// rides the operand stack under the two-word string ABI (the
+		// shape __fern_str_inc / payloadLoadOpFor produce). Mirrors
+		// the wasm OpDrop branch. Set by the Map[K, string] set
+		// retain + by copyprop when it rewrites a dead OpStoreLocal
+		// on a string slot.
+		if op.Width == ir.WidthString {
+			g.emit("add sp, sp, #%d", 2*slotBytes)
+		} else {
+			g.emit("add sp, sp, #%d", slotBytes)
+		}
 
 	// -------- arithmetic --------
 	//

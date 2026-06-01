@@ -2516,9 +2516,14 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// The generated __drop_map_str_values branches on ptrW for the
 				// boxed vs direct shape.
 				if _, isStr := st.Args[1].(ast.StringType); isStr {
-					if b.ptrW == 4 || !ast.UseTwoWordStrings(b.ptrW) {
-						dropValues = "__drop_map_str_values"
-					}
+					// Slice 7: every backend now supports string-VALUE
+					// reclamation in maps — wasm two-word + arm64-
+					// TwoWordOverride take the boxed-cell column-walk
+					// path, x86_64 native single-word takes the direct-
+					// pointer column-walk path. genMapStrValDropFn
+					// branches on UseTwoWordStrings to pick the body
+					// shape internally.
+					dropValues = "__drop_map_str_values"
 				}
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -3627,17 +3632,19 @@ func genMapStrKeyDropFn(ptrW int) *Func {
 func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 	pw := int32(ptrW)
 	entryStride := 2 * pw
-	// Inner block per entry differs by backend:
-	//   wasm (ptrW=4): the kv slot stores a cell pointer; deref to load
-	//     the (data, len) two-word string, __fern_str_dec it, then
+	// Inner block per entry differs by backend layout:
+	//   two-word ABI (wasm ptrW=4 + arm64-TwoWordOverride ptrW=8):
+	//     the kv slot stores a cell pointer; deref to load the
+	//     (data, len) two-word string, __fern_str_dec it, then
 	//     __fern_cell_free the now-dead 16-byte cell.
-	//   natives (ptrW=8): the kv slot stores the string data pointer
-	//     directly (no boxing — the slot is already pointer-wide). One
+	//   native single-word (x86_64 ptrW=8, !TwoWordOverride): the
+	//     kv slot stores the string data pointer directly (no
+	//     boxing — the slot is already pointer-wide). One
 	//     __fern_rc_dec per entry is the whole reclamation; the L2
-	//     header at data-8 + rc-sentinel literals from prereqs 1+2 make
-	//     this safe across heap + literal sources.
+	//     header at data-8 + rc-sentinel literals from prereqs 1+2
+	//     make this safe across heap + literal sources.
 	var inner []Op
-	if ptrW == 4 {
+	if ast.UseTwoWordStrings(ptrW) {
 		inner = []Op{
 			{Kind: OpLoadLocal, I32: 5},
 			{Kind: OpIf, I32: BlockTypeVoid},
@@ -8683,20 +8690,23 @@ func (b *builder) callBody(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
-	// Map[K, string] (wasm) set retain: a string value's heap buffer is
-	// co-owned by the map's boxed (data, len) cell, so retain an aliased
-	// string before it's stored (__fern_str_inc), balancing the
-	// __fern_str_dec at map drop / overwrite. Fresh strings (concat /
-	// literal / call) aren't aliases (needsRcIncOnAlias == false) → moved
-	// in with no inc. Strings stay valKind 1 at runtime (unchanged) — the
+	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
+	// set retain: a string value's heap buffer is co-owned by the
+	// map's boxed (data, len) cell, so retain an aliased string
+	// before it's stored (__fern_str_inc), balancing the
+	// __fern_str_dec at map drop / overwrite. Fresh strings (concat
+	// / literal / call) aren't aliases (needsRcIncOnAlias == false
+	// before #1665's widening; afterwards every string is) → still
+	// no-op via the str_inc sentinel guards on literals + inline
+	// strings. Strings stay valKind 1 at runtime (unchanged) — the
 	// retain is driven by the static type, not the stored tag.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		b.ptrW == 4 && needsRcIncOnAlias(n.Args[2], b) {
+		ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(n.Args[2], b) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[2]); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	}
@@ -8796,15 +8806,17 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpEnd})
 		}
 	}
-	// Map[K, string] (wasm) overwrite pre-drop: m.set(k, v) replacing an
-	// existing string value must reclaim the old buffer (the runtime's
-	// type-erased overwrite-dec is a no-op for valKind 1). Look up the old
+	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
+	// overwrite pre-drop: m.set(k, v) replacing an existing string
+	// value must reclaim the old buffer (the runtime's type-erased
+	// overwrite-dec is a no-op for valKind 1). Look up the old
 	// value cell (non-retaining) and, if present, __fern_str_dec the
-	// (data, len) it holds. The old cell itself leaks (as on map drop).
-	// Scoped to the non-boxed-key fast path; m / k must be call-free (the
-	// set below re-evaluates them — same idempotence as the kind-4 path).
+	// (data, len) it holds. The old cell itself leaks (as on map
+	// drop). Scoped to the non-boxed-key fast path; m / k must be
+	// call-free (the set below re-evaluates them — same idempotence
+	// as the kind-4 path).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && b.ptrW == 4 && !needBoxK &&
+		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK &&
 		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
@@ -8916,13 +8928,14 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: 1})
 				b.emit(payloadLoadOpFor(n.TypeArgs[1], b.ptrW))
-				// Map[K, string].iter().value() retain (wasm boxed): the
-				// returned (data, len) co-owns the buffer alongside the
-				// map's column cell, so __fern_str_inc balances the
-				// column-walk dec at map drop. Mirrors emitMapGetRebox's
+				// Map[K, string].iter().value() retain (two-word ABI
+				// — wasm + arm64-TwoWordOverride): the returned
+				// (data, len) co-owns the buffer alongside the map's
+				// column cell, so __fern_str_inc balances the column-
+				// walk dec at map drop. Mirrors emitMapGetRebox's
 				// boxed-V retain.
-				if _, isStr := n.TypeArgs[1].(ast.StringType); isStr && b.ptrW == 4 {
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+				if _, isStr := n.TypeArgs[1].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 				}
 				return nil
 			}
@@ -11129,12 +11142,14 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		// Payload is a cell pointer — dereference to load the
 		// real V (wide scalar / two-word string) out of the cell.
 		b.emit(payloadLoadOpFor(vType, b.ptrW))
-		// Map[K, string] get retain: the returned Option now co-owns the
-		// string buffer alongside the map's cell, so __fern_str_inc (which
-		// returns the (data, len) pair for the store below). Balanced by the
-		// caller's dec of the gotten string and the map's drop dec.
-		if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 4 {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+		// Map[K, string] get retain (two-word ABI — wasm + arm64-
+		// TwoWordOverride): the returned Option now co-owns the
+		// string buffer alongside the map's cell, so __fern_str_inc
+		// (which returns the (data, len) pair for the store below).
+		// Balanced by the caller's dec of the gotten string and the
+		// map's drop dec.
+		if _, isStr := vType.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 		}
 	} else if _, isStr := vType.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 		// Map[K, string] get retain (native single-word, non-boxed): the

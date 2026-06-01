@@ -2261,15 +2261,16 @@ func TestLowerMapStringValueReclaimOnNative(t *testing.T) {
 	}
 }
 
-// TestLowerMapStringValueNoReclaimOnArm64TwoWord verifies that arm64
-// (ptrW=8 + TwoWordOverride=true — strings are boxed (data, len) cells
-// like wasm but the str_dec / cell_free runtime helpers don't exist
-// natively) is correctly EXCLUDED from the reclaim path. Otherwise the
-// generator's direct-pointer branch would __fern_rc_dec the cell pointer
-// instead of the string buffer, corrupting unrelated heap metadata.
-// The arm64 boxed-string reclaim is a separate slice that needs the
-// native runtime helpers first.
-func TestLowerMapStringValueNoReclaimOnArm64TwoWord(t *testing.T) {
+// TestLowerMapStringValueReclaimOnArm64TwoWord — Slice 7 on arm64:
+// strings are boxed (data, len) cells under arm64-TwoWordOverride
+// the same way as wasm, and #1665's runtime-helper port + the
+// matching IR widening (this PR) hook the same boxed-cell column-
+// walk reclamation. Map[K, string] now routes through
+// __drop_map_str_values at map drop, and the per-entry body calls
+// __fern_str_dec + __fern_cell_free under the two-word ABI.
+// Originally an exclusion-locking gate; flipped to the inclusion-
+// asserting shape once the prereqs landed.
+func TestLowerMapStringValueReclaimOnArm64TwoWord(t *testing.T) {
 	prev := ast.TwoWordOverride
 	ast.TwoWordOverride = true
 	defer func() { ast.TwoWordOverride = prev }()
@@ -2278,8 +2279,8 @@ func TestLowerMapStringValueNoReclaimOnArm64TwoWord(t *testing.T) {
     m = m.set(1, "hello" + "world");
     return 0;
 }`, 8)
-	if callsDirect(p, "build", "__drop_map_str_values") {
-		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must NOT route map drop through __drop_map_str_values — boxed-string reclaim has no native runtime yet:\n%s", p)
+	if !callsDirect(p, "build", "__drop_map_str_values") {
+		t.Errorf("arm64 (ptrW=8 + TwoWordOverride) must route map drop through __drop_map_str_values now that the boxed-string runtime + IR Slice 7 widening have landed:\n%s", p)
 	}
 }
 
