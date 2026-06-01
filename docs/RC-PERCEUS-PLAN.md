@@ -1797,6 +1797,71 @@ exactly this reason (two-word on wasm, boxed on arm64); they join once
 the SSO work lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit
 `StringType` uniformly.
 
+##### 5h — block-scoped drops for loop-body locals (deferred: needs block-scope drop machinery)
+
+The one item here that's a spec-vs-impl *gap* rather than a deferred
+reclamation optimization. "Drop sites" above (§ *Variable goes out of
+scope*) specifies block-scoped drops "at the closing `}` of the block
+where the variable was declared." The lowering never emits them: the
+only dec sweep is `emitRcDecLocalsAtExit` at each `return` (`ir.go`
+`*ast.Return`), and the loop body's `closeScope()` in the `*ast.While` /
+`*ast.For` cases is structural-only (`OpEnd` + `depth--`, no decs).
+Every local is function-scoped — one slot per name, allocated once — so
+a `var` *declared inside a loop body* reuses a single slot across
+iterations.
+
+Consequence: a loop-body `var row = [i, i+1]` (any fresh rc-tracked
+value — array / struct / enum / tuple / closure / owned heap string)
+allocates rc=1 into `row`'s slot every iteration and overwrites the
+previous *without a dec*. The exit sweep dec's `row` exactly once (the
+last iteration's value), so N-1 allocations leak. Safe under the bump
+allocator, but — like the pre-#1724 string-reassign leak — the rc
+undercount keeps the freelist from reclaiming them, so a hot loop that
+builds-and-discards a fresh container per iteration grows unbounded.
+
+Distinct from the two already-handled overwrite shapes:
+  - `x = newValue` *reassignment* dec's the old value (the assign hook —
+    arrays / structs / enums / closures, plus strings on x86_64/wasm
+    since #1724).
+  - `nfuncs = nfuncs.push(...)` (the walked example above) is also a
+    reassignment — its slot always holds a prior value, so dec-on-
+    overwrite is sound.
+A loop-body `var` is *re-declaration*, not reassignment, and is NOT a
+quick mirror of the assign hook: the slot is **uninitialized on the
+first iteration**, so a naive dec-on-overwrite at the `var`-init store
+would dec garbage and UB the first time through. That's the crux of why
+it needs real block-scope machinery.
+
+Two fix shapes:
+  - **(a) Per-iteration block drop.** Track the locals first-declared
+    inside each loop body (a body-scoped subset of `b.info.Locals`) and
+    emit `emitDec` for them just before the back-edge `brTo(loopD)` / at
+    the continue-block close in the `*ast.While` / `*ast.For` cases.
+    Clean — drops fire exactly where § *Variable goes out of scope* says
+    — but needs the lowering to carry per-block local sets it doesn't
+    today (the "architectural" part), and `emitDec` would first have to
+    be hoisted out of `emitRcDecLocalsAtExitExcept` into a reusable
+    method (it's a closure there today, the same blocker the tuple
+    reassignment-dec hit).
+  - **(b) Zero-init + guarded dec-old on var-init.** Zero every loop-
+    body local slot at function entry (extend the Phase 1d-v array
+    zero-init safety net to all rc-tracked loop-body locals), then dec
+    the slot's old value in the `*ast.Var` path the way the assign hook
+    does. The zero makes the first-iteration dec a NULL-guarded no-op.
+    Smaller diff, but leaves the dec at re-declaration rather than at
+    scope close — fine for `var`, which can't be read before its own
+    re-init.
+
+Risk / testing parity: any heap reclaim added here MUST follow the
+x86_64-native + wasm-proven / arm64-deferred split #1724 established —
+native-arm64 string reclaim (and, once 5g lands, the broader path)
+over-releases in ways qemu user-mode masks. A pure leak is also awkward
+to assert: there is no over-*retain* counter (only `__rc_underflow_count`
+for over-release), so a regression test would assert *reuse* instead — a
+loop-body-`var` program whose per-iteration buffers get reclaimed+reused
+to a bounded high-water mark, mirroring `TestX86_64FreelistReuse` /
+`pushLoopFreeSrc` in `internal/e2e/rc_freelist_test.go`.
+
 ##### Testing-parity caveat
 
 All slices above were developed in an environment with only the x86_64
