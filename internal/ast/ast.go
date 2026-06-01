@@ -1173,17 +1173,6 @@ type Defer struct {
 	Expr Expr
 }
 
-// Arena is `arena { … }` — a syntactic scope whose
-// allocations are reclaimed when the block exits. Lowers to
-// `arena_save → body → arena_restore` so the bump-allocator
-// cursor snaps back to its pre-block value. Anything
-// allocated inside the block must NOT escape; the language
-// doesn't (yet) statically enforce this — caller's
-// responsibility for now.
-type Arena struct {
-	P    Position
-	Body *Block
-}
 type Var struct {
 	P    Position
 	Name string
@@ -1319,7 +1308,6 @@ func (s *Break) Pos() Position                  { return s.P }
 func (s *Continue) Pos() Position               { return s.P }
 func (s *Return) Pos() Position                 { return s.P }
 func (s *Defer) Pos() Position                  { return s.P }
-func (s *Arena) Pos() Position                  { return s.P }
 func (s *Var) Pos() Position                    { return s.P }
 func (s *Destructure) Pos() Position            { return s.P }
 func (s *ExprStmt) Pos() Position               { return s.P }
@@ -1339,7 +1327,6 @@ func (*Break) isStmt()       {}
 func (*Continue) isStmt()    {}
 func (*Return) isStmt()      {}
 func (*Defer) isStmt()       {}
-func (*Arena) isStmt()       {}
 func (*Var) isStmt()         {}
 func (*Destructure) isStmt() {}
 func (*ExprStmt) isStmt()    {}

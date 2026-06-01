@@ -227,8 +227,6 @@ func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, enqueue func(string))
 		}
 	case *ast.Defer:
 		walkExpr(x.Expr, byName, enqueue)
-	case *ast.Arena:
-		walkStmt(x.Body, byName, enqueue)
 	case *ast.FuncDecl:
 		// Local FuncDecl (closure-converted) — its body is
 		// reachable via the closure conversion that hoisted

@@ -5,8 +5,9 @@
 // match (over JNull / JBool / JNumber / JString / JArray /
 // JObject), MapIter for ordered object iteration, the
 // `s.repeat(n)` indentation helper, build-once-print-once
-// `arena { }` if you wanted to free the parser's intermediate
-// allocations. The implicit per-handler arena doesn't fire
+// arena_save() / arena_restore() if you wanted to free the
+// parser's intermediate allocations. The implicit per-handler
+// arena (tcp_serve's per-request cursor rewind) doesn't fire
 // for CLI mode — main runs once and the OS reaps the heap.
 //
 //   $ echo '{"a":1,"b":[true,null,3.14]}' | wasmtime json_pretty.wasm

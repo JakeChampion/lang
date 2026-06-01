@@ -1930,10 +1930,6 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 	switch x := s.(type) {
 	case *ast.Block:
 		return i.execBlock(x, e)
-	case *ast.Arena:
-		// The interp doesn't have a bump allocator to snap;
-		// arena {…} just runs the body as a normal scope.
-		return i.execBlock(x.Body, e)
 	case *ast.If:
 		c, err := i.evalExpr(x.Cond, e)
 		if err != nil {

@@ -337,8 +337,6 @@ function main(): i32 {
     for (var i: i32 = id(0); i < 3; i = id(i) + 1) { sum = id(sum) + i; }
     return sum;
 }`},
-		{node: "Arena.Body", src: `function id[T](x: T): T { return x; }
-function main(): i32 { arena { var n: i32 = id(7); return n; } return 0; }`},
 		{node: "Switch.Tag+Cases", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
     var n: i32 = 0;
@@ -485,7 +483,6 @@ func allASTNodesWithChildren() []string {
 		(*ast.Continue)(nil),
 		(*ast.Return)(nil),
 		(*ast.Defer)(nil),
-		(*ast.Arena)(nil),
 		(*ast.Var)(nil),
 		(*ast.Destructure)(nil),
 		(*ast.ExprStmt)(nil),

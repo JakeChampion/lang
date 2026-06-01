@@ -243,8 +243,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		}
 	case *ast.Defer:
 		walkExprForNames(n.Expr, selfName, siblings, seen)
-	case *ast.Arena:
-		walkBodyForNames(n.Body, selfName, siblings, seen)
 	}
 }
 
@@ -470,8 +468,6 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 		return c.hoist(n, ctx)
 	case *ast.Block:
 		return n, c.rewriteBlock(n, ctx)
-	case *ast.Arena:
-		return n, c.rewriteBlock(n.Body, ctx)
 	case *ast.If:
 		nc, err := c.rewriteExpr(n.Cond, ctx)
 		if err != nil {

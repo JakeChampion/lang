@@ -175,8 +175,6 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		if n.Expr != nil {
 			r.walkExpr(n.Expr)
 		}
-	case *ast.Arena:
-		r.walkBlock(n.Body)
 	case *ast.Match:
 		r.walkExpr(n.Tag)
 		for _, arm := range n.Arms {

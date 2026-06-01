@@ -190,10 +190,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 		}
 	case *Defer:
 		Walk(x.Expr, fn)
-	case *Arena:
-		if x.Body != nil {
-			Walk(x.Body, fn)
-		}
 	case *Var:
 		if x.Init != nil {
 			Walk(x.Init, fn)

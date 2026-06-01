@@ -1204,8 +1204,6 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 		return true
 	case *ast.LetElse:
 		return allReturnsArePairFormShape(x.Else, names, pairForm)
-	case *ast.Arena:
-		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Return:
 		return isPairFormReturnExpr(x.Value, names, pairForm)
 	}
@@ -1644,11 +1642,6 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 		}
 	case *ast.Defer:
 		*out = append(*out, x)
-	case *ast.Arena:
-		// Defers inside an arena block still register with
-		// the enclosing function — arena's cursor snap is
-		// independent of defer's per-function cleanup.
-		collectDefers(x.Body, out)
 	}
 }
 
@@ -5402,25 +5395,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		return fmt.Errorf("ir: Defer node not registered (compiler bug)")
-	case *ast.Arena:
-		// arena_save → store cursor → body → load cursor →
-		// arena_restore. The cursor lives in a fresh scratch
-		// slot for the duration of the block. No defer-style
-		// machinery needed — block exit always reaches the
-		// restore (early returns are handled by the function-
-		// level epilogue, which lives further out and doesn't
-		// know about per-block arenas; nested arenas reset
-		// only the inner cursor).
-		slot := b.allocSlot()
-		b.locals[fmt.Sprintf("__arena_%d", slot)] = slot
-		b.emit(Op{Kind: OpCallDirect, Str: "arena_save", I32: 0})
-		b.emit(Op{Kind: OpStoreLocal, I32: slot})
-		if err := b.stmt(n.Body); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpCallDirect, Str: "arena_restore", I32: 1})
-		return nil
 	case *ast.Var:
 		if mc, ok := n.Init.(*ast.MakeClosure); ok {
 			// Single known closure source for this FuncType local —
