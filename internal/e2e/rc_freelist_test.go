@@ -802,6 +802,23 @@ function main(): i32 {
     }
     return acc + __rc_underflow_count();
 }`},
+	// Closure capture: x moved into the closure env; the closure's drop
+	// thunk dec's the capture, balancing the elided inc. The closure is
+	// built, called, and dropped each iteration. 100 cycles.
+	{"closure_capture", `function once(n: i32): i32 {
+    var x: i32[] = [n, n + 5];
+    function get(): i32 { return x[0] + x[1]; }
+    return get();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (2 * i + 5));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
+}`},
 	// Composes with move-on-return: x moved into s, s moved out to the
 	// caller; the caller owns and frees the whole thing.
 	{"returned", `struct Wrap { inner: i32[] }
@@ -813,6 +830,25 @@ function build(n: i32): Wrap {
 function main(): i32 {
     var w: Wrap = build(5);
     return (w.inner[0] + w.inner[1] + w.inner[2] - 18) + __rc_underflow_count();
+}`},
+	// Move-on-destructure: t moved into the destructure temp at its last
+	// use; the temp frees the tuple box once, the extracted array
+	// element gets its own dup so it survives the box free. 100
+	// build/destructure/drop/free cycles. once(n) reads a[0]+a[1]+b =
+	// n + (n+3) + (n+7) = 3n+10.
+	{"destructure", `function once(n: i32): i32 {
+    var t: (i32[], i32) = ([n, n + 3], n + 7);
+    var (a, b) = t;
+    return a[0] + a[1] + b;
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        acc = acc + (once(i) - (3 * i + 10));
+        i = i + 1;
+    }
+    return acc + __rc_underflow_count();
 }`},
 }
 

@@ -60,6 +60,25 @@ function main(): i32 { return f(); }`)
 	}
 }
 
+// Closure captures get the same treatment: an owned rc local captured
+// at its last use is moved into the closure env (the closure's drop
+// thunk dec's the capture), so the capture inc is elided.
+func TestMoveOnConstructionElidesIncForClosureCapture(t *testing.T) {
+	ip := lowerForTest(t, `function f(): () => i32 {
+    var x: i32[] = [1, 2, 3];
+    function get(): i32 { return x[0]; }
+    return get;
+}
+function main(): i32 { return f()(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got != 0 {
+		t.Errorf("owned local moved into a closure capture at last use should emit no __fern_rc_inc, got %d", got)
+	}
+}
+
 // A construction nested in a branch is not a top-level statement, so it
 // does not dominate the exit — the inc is kept (mirrors the move-on-
 // alias branch guard).
@@ -118,5 +137,47 @@ function main(): i32 { return f().inner[0]; }`)
 	}
 	if got := incCount(f); got != 0 {
 		t.Errorf("move-into-struct then move-on-return should carry zero rc traffic, got %d", got)
+	}
+}
+
+// Move-on-destructure: `var (a, b) = t` where t is an owned rc tuple
+// local at its last use moves t into the destructure temp — the temp's
+// alias inc and t's exit-sweep dec cancel. The extracted elements get
+// their own dup-inc, so this only removes the box-aliasing inc/dec pair.
+func TestMoveOnDestructureElidesIncForLastUse(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32 {
+    var t: (i32[], i32) = ([1, 2, 3], 9);
+    var (a, b) = t;
+    return a[0] + b;
+}
+function main(): i32 { return f(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	// The tuple-box alias inc is elided; the only incs that may remain
+	// are the per-element dups (array element a). The move removes one
+	// inc vs. the un-moved baseline — assert it's strictly fewer than
+	// the 2 a non-moved version would emit (box alias + element dup).
+	if got := incCount(f); got > 1 {
+		t.Errorf("move-on-destructure should elide the tuple-box alias inc (≤1 inc for the element dup), got %d", got)
+	}
+}
+
+// A destructured tuple READ again after the destructure is not at its
+// last use, so the box alias inc is kept.
+func TestMoveOnDestructureKeepsIncWhenReadAgain(t *testing.T) {
+	ip := lowerForTest(t, `function f(): i32 {
+    var t: (i32[], i32) = ([1, 2, 3], 9);
+    var (a, b) = t;
+    return a[0] + b + t.1;
+}
+function main(): i32 { return f(); }`)
+	f := funcByName(ip, "f")
+	if f == nil {
+		t.Fatal("no func f")
+	}
+	if got := incCount(f); got == 0 {
+		t.Errorf("destructure of a multi-use tuple must keep its box alias inc, got 0")
 	}
 }

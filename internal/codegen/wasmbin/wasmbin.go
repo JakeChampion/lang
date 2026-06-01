@@ -1,14 +1,13 @@
 // Package wasmbin is a binary WebAssembly emitter that consumes the
 // shared ir.Program and produces a core module's bytes directly,
-// without going through WAT text. Sits next to internal/codegen/wasm
-// (the WAT path) during the cutover — both share the lowering and IR
-// optimisation pipeline, so a feature added to ir.Lower lights up
-// here automatically once the corresponding op handler is wired.
-//
-// The aim is for this package to fully replace the WAT emitter and
-// the `wasm-tools parse` shell-out it depends on. Each PR lands
-// another slice of op coverage; the package is exercised via
-// `fern -target wasm-bin -o prog.wasm prog.fern` end-to-end.
+// without going through WAT text. It is the wasm backend: the older
+// WAT-text emitter (internal/codegen/wasm) it replaced has been
+// removed, along with the `wasm-tools parse` shell-out that depended
+// on it. wasmbin shares the lowering and IR optimisation pipeline
+// with every other backend, so a feature added to ir.Lower lights up
+// here automatically once the corresponding op handler is wired. The
+// package is exercised via `fern -target wasm-bin -o prog.wasm
+// prog.fern` end-to-end.
 //
 // Current op coverage:
 //

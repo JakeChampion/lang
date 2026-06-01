@@ -990,6 +990,21 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 	if fn.Body == nil {
 		return false
 	}
+	// A function that registers a defer can't use the pair-form
+	// (tag, payload) return ABI. The Return lowering's pair-form
+	// fast path is gated on `len(b.defers) == 0`; with defers
+	// present it falls back to the heap-box return path, which
+	// emits a single-pointer OpReturn — a mismatch against the
+	// two-i32 pair signature this function would otherwise be
+	// given (the wasm validator rejects it: "expected i32 but
+	// nothing on stack"; natives read a garbage payload register).
+	// Keep such functions heap-form so the signature and every
+	// return agree.
+	var defers []*ast.Defer
+	collectDefers(fn.Body, &defers)
+	if len(defers) > 0 {
+		return false
+	}
 	return allReturnsArePairFormShape(fn.Body, variantNames, pairForm)
 }
 
@@ -2091,6 +2106,15 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				}
 			case *ast.Return:
 				val = s.Value
+			case *ast.Destructure:
+				// `var (a, b) = t` aliases the source tuple into the
+				// destructure temp (inc at the alias site below). When t
+				// is an owned rc local at its last use, that inc and t's
+				// exit-sweep dec cancel — move t into the temp, which
+				// frees the box once. Keyed on the Destructure node (the
+				// lowering checks b.moveSites[n] there).
+				rhs, _ = s.Init.(*ast.Ident)
+				site = s
 			}
 			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
 				moved[rhs.Name] = true
@@ -2175,6 +2199,24 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 		for _, el := range lit.Elems {
 			mark(el)
 		}
+	case *ast.MakeClosure:
+		// A closure capturing rc-tracked locals: each is inc'd at
+		// MakeEnv (Phase 1d-vii) and dec'd by the closure's drop
+		// (__closure_drop_<name> / __fern_closure_drop at its last
+		// reference), so a moved capture balances — same shape as the
+		// other containers. Eligibility matches hasRcCapture
+		// (arrElemIsRcTracked; strings are reclaimed by the thunk too
+		// but excluded here for the same single-word-temp reason as the
+		// struct/array cases). mark self-filters via isOwnedRcLocal.
+		// Eliding an inc only REMOVES ops, which the Defunctionalise /
+		// ElideClosurePair passes tolerate (they already treat the inc
+		// as a value-preserving pass-through when chasing alias chains);
+		// the defunc/elide unit tests + self-host VM gate this.
+		for _, cap := range lit.Captures {
+			if arrElemIsRcTracked(b.exprType(cap)) {
+				mark(cap)
+			}
+		}
 	}
 }
 
@@ -2221,7 +2263,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// Single-word string value (native single-word, x86_64): caller
 		// loaded a ptr; __fern_rc_dec it (inline-tag / sentinel guards
-		// keep all sources safe). arm64 boxed strings excluded.
+		// keep all sources safe). arm64 / wasm two-word ABIs take the
+		// two-word str_dec branch above.
 		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -2374,7 +2417,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			}
 			// Native single-word string[] (x86_64, !TwoWordOverride): each
 			// element is a single pointer; __fern_drop_arr_ptr walks +
-			// __fern_rc_dec's each one. arm64 boxed strings excluded.
+			// __fern_rc_dec's each one. arm64 / wasm two-word ABIs take
+			// the __fern_drop_arr_str branch above.
 			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
@@ -2453,7 +2497,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				// Native single-word string tuple element (x86_64,
 				// !TwoWordOverride): load WidthPtr + __fern_rc_dec. SSO
 				// inline-tag guard + literal sentinel keep all sources
-				// safe. arm64 boxed excluded.
+				// safe. arm64 / wasm two-word ABIs take the WidthString
+				// + __fern_str_dec branch above.
 				if _, isStr := et.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if offs[i] != 0 {
@@ -3051,7 +3096,8 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		// (balances the __fern_rc_inc at MakeEnv via emitAliasInc).
 		// Inside the env's is_unique branch, so the capture is uniquely
 		// owned; SSO inline-tag low-bit guard + literal sentinel keep
-		// all sources safe. arm64 boxed excluded.
+		// all sources safe. arm64 / wasm two-word ABIs take the
+		// WidthString + __fern_str_dec branch above.
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			ops = append(ops,
 				Op{Kind: OpLoadLocal, I32: 0},
@@ -3752,7 +3798,8 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	// Single-word string value (native single-word, x86_64): the caller
 	// loaded a ptr via payloadLoadOpFor; reclaim via __fern_rc_dec (SSO
 	// inline-tag low-bit guard + literal sentinel keep all sources safe).
-	// arm64 boxed strings excluded.
+	// arm64 / wasm two-word ABIs take the WidthString + __fern_str_dec
+	// branch above.
 	if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
@@ -3840,7 +3887,8 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			// Native single-word string element (x86_64,
 			// !TwoWordOverride): single ptr + __fern_rc_dec. SSO
 			// inline-tag low-bit guard + literal sentinel keep all
-			// sources safe. arm64 boxed excluded.
+			// sources safe. arm64 / wasm two-word ABIs take the
+			// WidthString + __fern_str_dec branch above.
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if offs[i] != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
@@ -5453,7 +5501,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (UAF). A fresh Init (TupleLit / call result) isn't alias-shaped
 		// and reads false, so the temp owns the sole reference and frees
 		// it normally. Mirrors the Var-binding alias inc.
-		if needsRcIncOnAlias(n.Init, b) {
+		//
+		// Phase 4 move-on-destructure: when Init is an owned rc tuple
+		// local at its last use (b.moveSites[n] set in
+		// computeMovedLocals), the alias inc and the source's exit-sweep
+		// dec cancel — move the source into the temp instead.
+		if needsRcIncOnAlias(n.Init, b) && !b.moveSites[n] {
 			b.emitAliasInc(n.Init)
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
@@ -6972,7 +7025,11 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(capExpr); err != nil {
 				return err
 			}
-			if needsRcIncOnAlias(capExpr, b) {
+			// Phase 4 move-on-construction: an owned rc local captured at
+			// its last use is moved into the closure env — the closure's
+			// drop thunk dec's the capture, balancing the skipped inc
+			// (markConstructionMoves sets b.moveSites[capExpr]).
+			if needsRcIncOnAlias(capExpr, b) && !b.moveSites[capExpr] {
 				b.emitAliasInc(capExpr)
 			}
 		}
@@ -8769,8 +8826,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// since needsRcIncOnAlias returns false for strings on ptrW=8.
 	// Gated to non-two-word natives — arm64 stores strings boxed (the
 	// IR runs with TwoWordOverride=true) and rc_inc on a cell pointer
-	// would bump the cell's rc, not the string's. Excluded until the
-	// arm64 boxed-string-reclaim path lands its own set-retain.
+	// would bump the cell's rc, not the string's. arm64 takes the
+	// boxed __fern_str_inc branch above (Slice 7), which retains the
+	// cell-pointed (data, len) instead of the cell itself.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
@@ -8810,8 +8868,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// check inlined since needsRcIncOnAlias returns false for strings on
 	// ptrW=8. Gated to non-two-word natives — arm64 stores keys boxed
 	// (the IR runs with TwoWordOverride=true) so rc_inc on the cell
-	// pointer would bump the cell's rc, not the key string's. Excluded
-	// until the arm64 boxed-string-reclaim path lands.
+	// pointer would bump the cell's rc, not the key string's. arm64
+	// takes the boxed __fern_str_inc branch above (Slice 8), which
+	// retains the cell-pointed (data, len) instead of the cell itself.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
 		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
@@ -9021,8 +9080,10 @@ func (b *builder) callBody(n *ast.Call) error {
 	// could later free (UAF). Lower the call inline and __fern_rc_inc
 	// the returned pointer so the caller co-owns the buffer. Same SSO
 	// inline-tag / literal-sentinel safety as the get / get_or retains.
-	// arm64 (ptrW=8 + TwoWordOverride boxed) is excluded — its map
-	// drop also stays excluded, so no UAF risk.
+	// arm64 (ptrW=8 + TwoWordOverride boxed) takes the boxed branch
+	// above — its map drop reclaims through the same column-walk path
+	// (Slices 7 + 8 landed), so the boxed retain there balances; this
+	// native-single-word inline retain is the !TwoWordOverride sibling.
 	if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && len(n.TypeArgs) >= 2 {
 		var retain bool
 		switch id.Name {
