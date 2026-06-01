@@ -8127,22 +8127,19 @@ function main(): i32 {
     // Type: one functype () -> i32.
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
+    m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
-    m.function_typeidxs = [0u32];
+    m = m.with_functions([0u32]);
 
     // Export: ("main", func, 0).
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var localsBytes: u8[] = inst.put_locals_empty([]);
     var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
 
     var bytes: u8[] = module.build(m);
 
@@ -8216,48 +8213,36 @@ function main(): i32 {
     // Type: one functype () -> ().
     var pe: u8[] = [];
     var re: u8[] = [];
-    m.type_params = [pe];
-    m.type_results = [re];
+    m = m.with_types([pe], [re]);
 
     // Import: one ("env", "h", func, typeidx=0).
-    m.import_modules = ["env"];
-    m.import_names = ["h"];
-    m.import_kinds = [imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32)];
+    m = m.with_imports(["env"], ["h"], [imports.import_func()], [imports.import_desc_func(0u32)]);
 
     // Function: one with typeidx 0.
-    m.function_typeidxs = [0u32];
+    m = m.with_functions([0u32]);
 
     // Memory: present, min=1.
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
+    m = m.with_memory(1u32, 0 - 1);
 
     // Global: one const i32 = 0.
     var g0: u8[] = inst.inst_i32_const([], 0);
     g0 = inst.inst_end(g0);
-    m.global_valtypes = [encode.valtype_i32()];
-    m.global_muts = [imports.mut_const()];
-    m.global_inits = [g0];
+    m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [g0]);
 
     // Export: ("e", memory, 0).
-    m.export_names = ["e"];
-    m.export_kinds = [sections.export_memory()];
-    m.export_idxs = [0u32];
+    m = m.with_exports(["e"], [sections.export_memory()], [0u32]);
 
     // Start: funcidx 1 (the imported func is 0, our func is 1).
-    m.has_start = true;
-    m.start_funcidx = 1u32;
+    m = m.with_start(1u32);
 
     // Code: empty body — just the terminating 0x0B.
     var localsBytes: u8[] = inst.put_locals_empty([]);
     var emptyBody: u8[] = [];
     var fn: u8[] = inst.put_function_body([], localsBytes, emptyBody);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
 
     // Data: one segment at offset 0 with byte 0xAB.
-    m.data_offsets = [0];
-    m.data_inits = [[171u8]];
+    m = m.with_data([0], [[171u8]]);
 
     var bytes: u8[] = module.build(m);
 
@@ -8324,23 +8309,20 @@ function main(): i32 {
     // Type: one functype () -> i32.
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
+    m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
-    m.function_typeidxs = [0u32];
+    m = m.with_functions([0u32]);
 
     // Export: ("main", func, 0). wasm-tools print uses the
     // export to label the function in its output.
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var localsBytes: u8[] = inst.put_locals_empty([]);
     var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
 
     var bytes: u8[] = module.build(m);
 
@@ -8480,16 +8462,13 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var localsBytes: u8[] = inst.put_locals_empty([]);
     var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -8528,19 +8507,16 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 3);
     body = inst.inst_i32_const(body, 4);
     body = numeric.inst_i32_add(body);
     var localsBytes: u8[] = inst.put_locals_empty([]);
     var fn: u8[] = inst.put_function_body([], localsBytes, body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -8587,16 +8563,13 @@ function main(): i32 {
     var r_add: u8[] = [encode.valtype_i32()];
     var p_main: u8[] = [];
     var r_main: u8[] = [encode.valtype_i32()];
-    m.type_params = [p_add, p_main];
-    m.type_results = [r_add, r_main];
+    m = m.with_types([p_add, p_main], [r_add, r_main]);
 
     // Function 0 uses type 0 (add), function 1 uses type 1 (main).
-    m.function_typeidxs = [0u32, 1u32];
+    m = m.with_functions([0u32, 1u32]);
 
     // Export main as funcidx 1.
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [1u32];
+    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
     // add(a, b): local.get 0 ; local.get 1 ; i32.add.
     var add_body: u8[] = inst.inst_local_get([], 0u32);
@@ -8610,7 +8583,7 @@ function main(): i32 {
     main_body = inst.inst_call(main_body, 0u32);
     var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
-    m.code_bodies = [add_fn, main_fn];
+    m = m.with_code([add_fn, main_fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -8682,15 +8655,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Wrap it in a component envelope.
@@ -8775,15 +8745,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["f"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 7);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Component envelope: preamble + core-module + core-instance.
@@ -8876,15 +8843,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["f"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 9);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Component: preamble + core-module + core-instance + alias.
@@ -8968,16 +8932,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.export_names = ["f", "mem"];
-    m.export_kinds = [sections.export_func(), sections.export_memory()];
-    m.export_idxs = [0u32, 0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["f", "mem"], [sections.export_func(), sections.export_memory()], [0u32, 0u32]);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 1));
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     var comp: u8[] = component.put_component_header([]);
@@ -9139,14 +9099,10 @@ function main(): i32 {
     var p_exit: u8[] = [encode.valtype_i32()];
     var r_void: u8[] = [];
     var p_args: u8[] = [];
-    m.type_params = [p_exit, p_args];
-    m.type_results = [r_void, r_void];
-    m.import_modules = ["wasi-exit", "wasi-env"];
-    m.import_names = ["exit", "get-args"];
-    m.import_kinds = [imports.import_func(), imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32), imports.import_desc_func(1u32)];
-    m.function_typeidxs = [];
-    m.code_bodies = [];
+    m = m.with_types([p_exit, p_args], [r_void, r_void]);
+    m = m.with_imports(["wasi-exit", "wasi-env"], ["exit", "get-args"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(1u32)]);
+    m = m.with_functions([]);
+    m = m.with_code([]);
     var core_bytes: u8[] = module.build(m);
 
     // Two WASI imports, threaded in one call.
@@ -11543,14 +11499,10 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [encode.valtype_i32()];
     var r0: u8[] = [];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.import_modules = ["wasi-exit"];
-    m.import_names = ["exit"];
-    m.import_kinds = [imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32)];
-    m.function_typeidxs = [];
-    m.code_bodies = [];
+    m = m.with_types([p0], [r0]);
+    m = m.with_imports(["wasi-exit"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_functions([]);
+    m = m.with_code([]);
     var core_bytes: u8[] = module.build(m);
 
     var pnames: string[] = ["code"];
@@ -11673,21 +11625,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32, 0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.table_present = true;
-    m.table_reftype = imports.reftype_funcref();
-    m.table_min = 1u32;
-    m.table_max = 0 - 1;
-    m.elem_offsets = [0];
-    m.elem_funcidxs = [[0u32]];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [1u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32, 0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_table(imports.reftype_funcref(), 1u32, 0 - 1);
+    m = m.with_elements([0], [[0u32]]);
+    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
     var f0: u8[] = inst.inst_i32_const([], 0);
     f0 = inst.inst_i32_const(f0, 9);
@@ -11704,7 +11647,7 @@ function main(): i32 {
     f1 = inst.inst_call_indirect(f1, 0u32, 0u32);
     var f1body: u8[] = inst.put_function_body([], inst.put_locals_empty([]), f1);
 
-    m.code_bodies = [f0body, f1body];
+    m = m.with_code([f0body, f1body]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -11754,14 +11697,10 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [encode.valtype_i32()];
     var r0: u8[] = [];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.import_modules = ["wasi"];
-    m.import_names = ["exit"];
-    m.import_kinds = [imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32)];
-    m.function_typeidxs = [];
-    m.code_bodies = [];
+    m = m.with_types([p0], [r0]);
+    m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_functions([]);
+    m = m.with_code([]);
     var core_bytes: u8[] = module.build(m);
 
     var pnames: string[] = ["code"];
@@ -11861,14 +11800,10 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [encode.valtype_i32()];
     var r0: u8[] = [];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.import_modules = ["wasi"];
-    m.import_names = ["exit"];
-    m.import_kinds = [imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32)];
-    m.function_typeidxs = [];
-    m.code_bodies = [];
+    m = m.with_types([p0], [r0]);
+    m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_functions([]);
+    m = m.with_code([]);
     var core_bytes: u8[] = module.build(m);
 
     // Component build.
@@ -12898,15 +12833,11 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.import_modules = ["host_a", "host_b"];
-    m.import_names = ["f", "f"];
-    m.import_kinds = [imports.import_func(), imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32), imports.import_desc_func(0u32)];
+    m = m.with_types([p0], [r0]);
+    m = m.with_imports(["host_a", "host_b"], ["f", "f"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(0u32)]);
     // No funcs of our own.
-    m.function_typeidxs = [];
-    m.code_bodies = [];
+    m = m.with_functions([]);
+    m = m.with_code([]);
     var core_bytes: u8[] = module.build(m);
 
     // Component: 1 type, 2 imports, 2 lowers, 2 single-export
@@ -13024,22 +12955,16 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
+    m = m.with_types([p0], [r0]);
     // Type 0 = () -> i32. Import "host"."f" of type 0.
-    m.import_modules = ["host"];
-    m.import_names = ["f"];
-    m.import_kinds = [imports.import_func()];
-    m.import_descs = [imports.import_desc_func(0u32)];
+    m = m.with_imports(["host"], ["f"], [imports.import_func()], [imports.import_desc_func(0u32)]);
     // Function 0 is the imported func (after imports). Function 1
     // is our own; type 0 too. Function 1 = "main", body: call 0.
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [1u32];   // imports shift the export idx by 1
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [1u32]);  // imports shift the export idx by 1
     var bodyExpr: u8[] = inst.inst_call([], 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Component envelope.
@@ -13226,17 +13151,13 @@ function main(): i32 {
     var r0: u8[] = [encode.valtype_i32()];
     var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
     var r1: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0, p1];
-    m.type_results = [r0, r1];
-    m.function_typeidxs = [0u32, 1u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.export_names = ["f", "alloc", "mem"];
-    m.export_kinds = [sections.export_func(), sections.export_func(), sections.export_memory()];
-    m.export_idxs = [0u32, 1u32, 0u32];
+    m = m.with_types([p0, p1], [r0, r1]);
+    m = m.with_functions([0u32, 1u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
     var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 7));
     var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    m.code_bodies = [body_f, body_alloc];
+    m = m.with_code([body_f, body_alloc]);
     var core_bytes: u8[] = module.build(m);
 
     // Component: header + core-module + core-instance + 2 alias
@@ -13346,16 +13267,12 @@ function main(): i32 {
     // type 0: (i32 i32 i32 i32) -> i32 (realloc signature)
     var p0: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.export_names = ["mem", "alloc"];
-    m.export_kinds = [sections.export_memory(), sections.export_func()];
-    m.export_idxs = [0u32, 0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["mem", "alloc"], [sections.export_memory(), sections.export_func()], [0u32, 0u32]);
     var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    m.code_bodies = [body_alloc];
+    m = m.with_code([body_alloc]);
     var core_bytes: u8[] = module.build(m);
 
     var comp: u8[] = component.put_component_header([]);
@@ -13461,18 +13378,14 @@ function main(): i32 {
     var r1: u8[] = [encode.valtype_i32()];
     var p2: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
     var r2: u8[] = [];
-    m.type_params = [p0, p1, p2];
-    m.type_results = [r0, r1, r2];
-    m.function_typeidxs = [0u32, 1u32, 2u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.export_names = ["f", "alloc", "cleanup", "mem"];
-    m.export_kinds = [sections.export_func(), sections.export_func(), sections.export_func(), sections.export_memory()];
-    m.export_idxs = [0u32, 1u32, 2u32, 0u32];
+    m = m.with_types([p0, p1, p2], [r0, r1, r2]);
+    m = m.with_functions([0u32, 1u32, 2u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["f", "alloc", "cleanup", "mem"], [sections.export_func(), sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 2u32, 0u32]);
     var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     var body_cleanup: u8[] = inst.put_function_body([], inst.put_locals_empty([]), []);
-    m.code_bodies = [body_f, body_alloc, body_cleanup];
+    m = m.with_code([body_f, body_alloc, body_cleanup]);
     var core_bytes: u8[] = module.build(m);
 
     var comp: u8[] = component.put_component_header([]);
@@ -13574,15 +13487,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["f"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 11);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Component: preamble + the seven-section recipe.
@@ -13675,17 +13585,13 @@ function main(): i32 {
     var r0: u8[] = [encode.valtype_i32()];
     var p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
     var r1: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0, p1];
-    m.type_results = [r0, r1];
-    m.function_typeidxs = [0u32, 1u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.export_names = ["f", "alloc", "mem"];
-    m.export_kinds = [sections.export_func(), sections.export_func(), sections.export_memory()];
-    m.export_idxs = [0u32, 1u32, 0u32];
+    m = m.with_types([p0, p1], [r0, r1]);
+    m = m.with_functions([0u32, 1u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
     var body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     var body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
-    m.code_bodies = [body_f, body_alloc];
+    m = m.with_code([body_f, body_alloc]);
     var core_bytes: u8[] = module.build(m);
 
     var comp: u8[] = component.put_component_header([]);
@@ -14825,17 +14731,14 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["add"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["add"], [sections.export_func()], [0u32]);
     var body: u8[] = inst.inst_local_get([], 0u32);
     body = inst.inst_local_get(body, 1u32);
     body = numeric.inst_i32_add(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Wrap as a component-level (u32, u32) -> u32.
@@ -14914,15 +14817,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["f"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 99);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // The whole component recipe in one call.
@@ -15001,15 +14901,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["f"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     // Component envelope: full lift-and-export recipe.
@@ -15084,12 +14981,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // Body: i32.const 1 ; if (result i32) { i32.const 100 }
     //       else { i32.const 200 } ; end
@@ -15100,7 +14994,7 @@ function main(): i32 {
     body = inst.inst_i32_const(body, 200);
     body = inst.inst_end(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15134,12 +15028,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // 1 local of type i32 (index 0).
     var localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.valtype_i32());
@@ -15150,7 +15041,7 @@ function main(): i32 {
     body = inst.inst_local_get(body, 0u32);
 
     var fn: u8[] = inst.put_function_body([], localsBytes, body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15187,12 +15078,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // 2 locals of type i32: index 0 = i (counter), index 1 = sum.
     var localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
@@ -15218,7 +15106,7 @@ function main(): i32 {
     body = inst.inst_local_get(body, 1u32);
 
     var fn: u8[] = inst.put_function_body([], localsBytes, body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15294,15 +15182,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     var bodyExpr: u8[] = inst.inst_i32_const([], 42);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var core_bytes: u8[] = module.build(m);
 
     var marker_payload: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 45u8, 108u8, 97u8, 110u8, 103u8];
@@ -15369,22 +15254,16 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
-    m.data_offsets = [0];
-    m.data_inits = [[42u8, 7u8, 99u8, 5u8]];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_data([0], [[42u8, 7u8, 99u8, 5u8]]);
 
     var body: u8[] = inst.inst_i32_const([], 2);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15419,15 +15298,10 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 16);
     body = inst.inst_i32_const(body, 77);
@@ -15435,7 +15309,7 @@ function main(): i32 {
     body = inst.inst_i32_const(body, 16);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15474,25 +15348,18 @@ function main(): i32 {
     // One shared type: () -> i32 (both callees and main).
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
+    m = m.with_types([p0], [r0]);
 
     // func0 / func1 are indirect-call targets; func2 is main.
-    m.function_typeidxs = [0u32, 0u32, 0u32];
+    m = m.with_functions([0u32, 0u32, 0u32]);
 
     // Funcref table holding both targets.
-    m.table_present = true;
-    m.table_reftype = imports.reftype_funcref();
-    m.table_min = 2u32;
-    m.table_max = 0 - 1;
+    m = m.with_table(imports.reftype_funcref(), 2u32, 0 - 1);
 
     // table[0] = func0, table[1] = func1.
-    m.elem_offsets = [0];
-    m.elem_funcidxs = [[0u32, 1u32]];
+    m = m.with_elements([0], [[0u32, 1u32]]);
 
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [2u32];
+    m = m.with_exports(["main"], [sections.export_func()], [2u32]);
 
     // func0 -> 11, func1 -> 22.
     var f0: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 11));
@@ -15503,7 +15370,7 @@ function main(): i32 {
     main_body = inst.inst_call_indirect(main_body, 0u32, 0u32);
     var f2: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
-    m.code_bodies = [f0, f1, f2];
+    m = m.with_code([f0, f1, f2]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15539,17 +15406,11 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
-    m.data_offsets = [0];
-    m.data_inits = [[5u8, 6u8, 7u8, 8u8]];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_data([0], [[5u8, 6u8, 7u8, 8u8]]);
 
     // memory.copy dst=16, src=0, len=2  -> bytes [5,6] land at 16,17.
     var body: u8[] = inst.inst_i32_const([], 16);
@@ -15560,7 +15421,7 @@ function main(): i32 {
     body = inst.inst_i32_const(body, 17);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15595,15 +15456,10 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // memory.fill dst=8, val=9, len=3 -> addrs 8,9,10 = 9.
     var body: u8[] = inst.inst_i32_const([], 8);
@@ -15614,7 +15470,7 @@ function main(): i32 {
     body = inst.inst_i32_const(body, 9);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15649,22 +15505,17 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var initExpr: u8[] = inst.inst_i32_const([], 314);
     initExpr = inst.inst_end(initExpr);
-    m.global_valtypes = [encode.valtype_i32()];
-    m.global_muts = [imports.mut_const()];
-    m.global_inits = [initExpr];
+    m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [initExpr]);
 
     var body: u8[] = inst.inst_global_get([], 0u32);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15701,18 +15552,15 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 0 - 20);
     body = inst.inst_i32_const(body, 3);
     body = numeric.inst_i32_div_s(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15747,18 +15595,15 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // i32.const 255 ; i32.extend8_s -> -1
     var body: u8[] = inst.inst_i32_const([], 255);
     body = convert.inst_i32_extend8_s(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15797,19 +15642,16 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i64_const([], 1000000000000i64);
     body = inst.inst_i64_const(body, 234567890123i64);
     body = numeric.inst_i64_add(body);
     body = convert.inst_i32_wrap_i64(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15845,18 +15687,15 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 12);
     body = inst.inst_i32_const(body, 10);
     body = numeric.inst_i32_xor(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15893,18 +15732,15 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 0 - 1);
     body = inst.inst_i32_const(body, 1);
     body = numeric.inst_i32_lt_s(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15939,12 +15775,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // (1 << 5) = 32 ; then rotr by 1 -> 16.
     var body: u8[] = inst.inst_i32_const([], 1);
@@ -15953,7 +15786,7 @@ function main(): i32 {
     body = inst.inst_i32_const(body, 1);
     body = numeric.inst_i32_rotr(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -15989,12 +15822,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // f32 1.0 bit pattern: 0x3F800000 = 1065353216.
     var body: u8[] = inst.inst_f32_const([], 1065353216u32);
@@ -16002,7 +15832,7 @@ function main(): i32 {
     body = numeric.inst_f32_add(body);
     body = convert.inst_i32_reinterpret_f32(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16036,19 +15866,16 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 7);
     body = inst.inst_i32_const(body, 9);
     body = inst.inst_i32_const(body, 1);
     body = inst.inst_select(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16087,13 +15914,10 @@ function main(): i32 {
     var r_fact: u8[] = [encode.valtype_i32()];
     var p_main: u8[] = [];
     var r_main: u8[] = [encode.valtype_i32()];
-    m.type_params = [p_fact, p_main];
-    m.type_results = [r_fact, r_main];
+    m = m.with_types([p_fact, p_main], [r_fact, r_main]);
 
-    m.function_typeidxs = [0u32, 1u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [1u32];
+    m = m.with_functions([0u32, 1u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
 
     // fact(n): if (n <= 1) 1 else n * fact(n - 1)
     var fact_body: u8[] = inst.inst_local_get([], 0u32);
@@ -16116,7 +15940,7 @@ function main(): i32 {
     main_body = inst.inst_call(main_body, 0u32);
     var main_fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), main_body);
 
-    m.code_bodies = [fact_fn, main_fn];
+    m = m.with_code([fact_fn, main_fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16153,12 +15977,9 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     // f64 1.5 = 0x3FF8000000000000; f64 2.5 = 0x4004000000000000.
     var body: u8[] = inst.inst_f64_const([], 4609434218613702656u64);
@@ -16169,7 +15990,7 @@ function main(): i32 {
     body = numeric.inst_i64_shr_u(body);
     body = convert.inst_i32_wrap_i64(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16203,17 +16024,14 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
 
     var body: u8[] = inst.inst_i32_const([], 16);
     body = numeric.inst_i32_clz(body);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16249,17 +16067,11 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.memory_present = true;
-    m.memory_min = 1u32;
-    m.memory_max = 0 - 1;
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
-    m.data_offsets = [0];
-    m.data_inits = [[10u8, 20u8, 30u8, 40u8]];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_memory(1u32, 0 - 1);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_data([0], [[10u8, 20u8, 30u8, 40u8]]);
 
     var localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
 
@@ -16283,7 +16095,7 @@ function main(): i32 {
     body = inst.inst_local_get(body, 1u32);
 
     var fn: u8[] = inst.put_function_body([], localsBytes, body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
@@ -16591,15 +16403,12 @@ function main(): i32 {
     var m: module.Module = module.module_new();
     var p0: u8[] = [];
     var r0: u8[] = [encode.valtype_i32()];
-    m.type_params = [p0];
-    m.type_results = [r0];
-    m.function_typeidxs = [0u32];
-    m.export_names = ["main"];
-    m.export_kinds = [sections.export_func()];
-    m.export_idxs = [0u32];
+    m = m.with_types([p0], [r0]);
+    m = m.with_functions([0u32]);
+    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
     var body: u8[] = inst.inst_i32_const([], 42);
     var fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
-    m.code_bodies = [fn];
+    m = m.with_code([fn]);
     var bytes: u8[] = module.build(m);
 
     var output: string = "";
