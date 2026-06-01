@@ -1445,9 +1445,23 @@ element drop isn't wired the same way.) Composes with move-on-return
 the Phase 5 reuse path. Covered by IR `TestMoveOnConstruction{ElidesIncForLastUse,
 KeepsIncWhenReadAgain, KeepsIncForBranched, ComposesWithReturn}` + e2e
 `Test{X86_64,Arm64,WASM}MoveOnConstruction` (once / churn / returned,
-value-correct + 0 over-release under free). Still to do: Phase 5
-drop-reuse for non-struct constructors (array / tuple / enum literals)
-and the move-on-alias generalisations.
+value-correct + 0 over-release under free). The same machinery was then
+extended to ARRAY elements, TUPLE elements, and CLOSURE captures (every
+`*ast.{ArrayLit,TupleLit,MakeClosure}` inc site is gated on
+`b.moveSites`), so move-on-construction covers all four inc'ing
+container shapes.
+
+**Move-on-destructure (DONE).** Final pair-cancellation slice: a
+`var (a, b) = t` where `t` is an owned rc tuple local at its last use
+moves `t` into the destructure temp — the temp's box-aliasing inc and
+`t`'s exit-sweep dec cancel. Only the tuple-BOX inc/dec pair is removed;
+the extracted elements keep their own dup-incs (so they survive the
+temp's `box_free`). `computeMovedLocals` gained an `*ast.Destructure`
+case; covered by IR `TestMoveOnDestructure{ElidesIncForLastUse,
+KeepsIncWhenReadAgain}` + the e2e `destructure` case. With this the move
+family is complete — an audit of all nine `emitAliasInc` sites confirms
+every genuine last-use move is gated (see "Remaining frontier" under
+Phase 5 for what's deliberately left).
 
 ### Phase 5: Drop reuse + borrowed params
 
@@ -1714,6 +1728,84 @@ cancellation — bounded, but separable, so it ships last.
     `:4246` `emitEnumNew` (the alloc sites `OpAllocReuse` replaces).
   - `internal/ir/move_on_return_test.go` — template for the
     analysis-level tests.
+
+#### Remaining frontier (NOT STARTED — code-grounded design + risk)
+
+As of this writing the *clean* drop-reuse + pair-cancellation work is
+merged and verified: drop-reuse for structs (5a/5b/5c) and the full
+pair-cancellation move family — move-on-return, move-on-alias,
+move-on-construction (struct / array / tuple / closure containers), and
+move-on-destructure. An audit of all nine `b.emitAliasInc` call sites
+confirms every genuine last-use move opportunity is now gated on
+`b.moveSites`; the only ungated sites are the `return`-of-field/index
+path (not a local — nothing to move) and the call-arg path (already
+inc-free under the Phase 2d borrow model). What follows is the
+remaining work, each entry deferred for a concrete reason so it can be
+resumed safely.
+
+##### 5e — enum self-overwrite reuse (deferred: low value / high risk)
+
+The parallel of 5b/5c for enums: `c = Variant(...)` reusing `c`'s box.
+Two reasons it's deferred rather than a quick mirror of
+`tryStructReuseOverwrite`:
+
+  - **The RHS shape differs.** A struct self-overwrite RHS is a clean
+    `*ast.StructLit` the hook pattern-matches directly. A variant
+    constructor RHS is an `*ast.Call` to the variant name (lowered via
+    `emitEnumNew` at `ir.go` ~`b.lookupVariant(id.Name)` in the Call
+    case), so the reuse path would have to reproduce `emitEnumNew`'s
+    payload-type resolution (`b.info.VariantCallPayloads[callNode]`,
+    the pair-form fallback) inside the assign hook — not a 30-line
+    mirror.
+  - **Old-payload release is variant-dependent.** Unlike a struct (one
+    fixed field layout), the reused box may currently hold a *different
+    variant* than the one being constructed, so releasing the old
+    payloads before overwriting them needs the old tag read +
+    `enumVariantDropPlan` tag-dispatch — the exact multi-variant
+    over-release surface this doc's Phase 3 notes spent the most effort
+    closing.
+  - **Risk-reduced scope if revisited:** gate strictly on
+    `uniformEnumDropLoads(ed) && uniformEnumBoxSize(ed)` — the union
+    shape (`type V = A(Foo) | B(Bar)`, identical droppable layout at
+    identical offsets) releases old payloads *branchlessly* at fixed
+    offsets, exactly like the shipped pointer-field struct reuse, with
+    no tag dispatch. Non-uniform enums keep the normal fresh alloc.
+  - **Low payoff regardless:** `c = Variant(...)` self-reassignment in
+    a hot loop is rare — enums are consumed by `match`, not
+    record-updated in place the way structs are. The struct case
+    (5b/5c) was the high-frequency one.
+
+##### 5f — freeing-dec for replaced pointer fields (deferred: UAF risk)
+
+5c's reuse path flat-`dec`s a replaced pointer field's old value
+(`__fern_rc_dec`, no free) — correct and leak-but-never-UAF. Upgrading
+that to a *freeing* dec (reclaim the old field's buffer when it hits
+rc 0) reopens UAF risk: a carried value that aliases the old field
+without an inc (e.g. `items: identity(p.items)` under the borrow model)
+would be freed then used. Doing it safely needs the deferred-alias
+analysis the borrow model postponed — the same class of work as the
+`RcFreeEnabled` flip's hardest weeks. Not worth it for the marginal
+reclamation gain.
+
+##### 5g — heap-string rc (deferred: SSO-blocked)
+
+The highest-value remaining item by memory impact, but blocked: heap
+strings can't grow a live rc header until the SSO native flip settles
+the inline-vs-heap representation (`docs/SSO-NATIVE-FLIP-STATUS.md`,
+in progress). The move-* family already excludes strings everywhere for
+exactly this reason (two-word on wasm, boxed on arm64); they join once
+the SSO work lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit
+`StringType` uniformly.
+
+##### Testing-parity caveat
+
+All slices above were developed in an environment with only the x86_64
+native toolchain; arm64 + wasm correctness rode CI (differential gate +
+self-host + fuzz-diff). 5e/5f add over-release surface that the x86_64
+differential gate + self-host VM exercise well, but a reviewer with
+local arm64/wasm should confirm before merging either, since their
+failure mode (a freed-then-reused block) is the kind the no-free arena
+masks.
 
 ### Phase 6: cleanups + measurements
 
