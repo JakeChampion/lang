@@ -417,11 +417,81 @@ func TestStructTypechecks(t *testing.T) {
 	src := `struct Point { x: i32, y: i32 }
 		function main(): i32 {
 			var p: Point = Point { x: 1, y: 2 };
-			p.x = 10;
+			p = Point { ...p, x: 10 };
 			return p.x + p.y;
 		}`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// Fields are immutable after construction (E048): an `obj.field = v`
+// assignment is rejected. This is the enforcement half of the
+// immutable-data-structures migration — the fix is a struct-update
+// (`p = Point { ...p, x: 10 }`), which TestStructTypechecks above
+// shows still type-checks.
+func TestFieldAssignmentRejected(t *testing.T) {
+	src := `struct Point { x: i32, y: i32 }
+		function main(): i32 {
+			var p: Point = Point { x: 1, y: 2 };
+			p.x = 10;
+			return p.x;
+		}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected a field-immutability error, got no error")
+	}
+	if !strings.Contains(err.Error(), "fields are immutable after construction") {
+		t.Errorf("expected E048 field-immutability error, got: %v", err)
+	}
+}
+
+// Compound field assignment (`a.v += n`) desugars to `a.v = a.v + n`,
+// so it is rejected the same way as a plain field assignment.
+func TestCompoundFieldAssignmentRejected(t *testing.T) {
+	src := `struct Acc { v: i32 }
+		function main(): i32 {
+			var a: Acc = Acc { v: 7 };
+			a.v += 35;
+			return a.v;
+		}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "fields are immutable after construction") {
+		t.Errorf("expected E048 for compound field assignment, got: %v", err)
+	}
+}
+
+// A nested field path (`o.inner.x = v`) is also a FieldAccess target
+// and is rejected; the fix nests a struct-update
+// (`o = Outer { ...o, inner: Inner { ...o.inner, x: v } }`).
+func TestNestedFieldAssignmentRejected(t *testing.T) {
+	src := `struct Inner { x: i32 }
+		struct Outer { inner: Inner }
+		function main(): i32 {
+			var o: Outer = Outer { inner: Inner { x: 0 } };
+			o.inner.x = 42;
+			return o.inner.x;
+		}`
+	if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "fields are immutable after construction") {
+		t.Errorf("expected E048 for nested field assignment, got: %v", err)
+	}
+}
+
+// Enforcement bans only post-construction mutation, not recursive
+// types: an immutable recursive tree (the self-host parser's own
+// AST shape) must still construct and type-check.
+func TestImmutableRecursiveTypeStillCompiles(t *testing.T) {
+	src := `struct Leaf { v: i32 }
+		struct Node { left: Tree, right: Tree }
+		type Tree = Leaf | Node;
+		function main(): i32 {
+			var t: Tree = Node { left: Leaf { v: 40 }, right: Node { left: Leaf { v: 1 }, right: Leaf { v: 1 } } };
+			match (t) {
+				Leaf(l) => { return l.v; },
+				Node(n) => { return 0; }
+			}
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("recursive immutable type should compile, got: %v", err)
 	}
 }
 

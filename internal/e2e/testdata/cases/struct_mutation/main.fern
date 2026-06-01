@@ -1,4 +1,6 @@
-// In-place mutation of a struct field through a var binding.
+// Rejection fixture: in-place mutation of a struct field is banned
+// (E048). Fields are immutable after construction — rebuild with a
+// struct-update `Counter { ...c, n: c.n + 40 }` instead.
 struct Counter { n: i32 }
 
 function main(): i32 {

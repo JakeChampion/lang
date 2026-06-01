@@ -70,11 +70,15 @@ designed-around but not built yet.
 
 - **Garbage cycles.** Cycles in RC graphs leak. Roc disallows them
   via the type system: there's no mutable field that could form a
-  cycle. Lang already has this property by accident (no mutable
-  struct fields, no mutable closure captures). When mutability via
-  fields is added later, either retain the no-cycles invariant or
-  add a tracing fallback. For phase 1: no fallback, document the
-  invariant.
+  cycle. Fern now has this property *by enforcement*: the checker
+  rejects struct-field assignment (E048,
+  `docs/IMMUTABILITY-MIGRATION-PLAN.md` §4 / `CYCLE-COLLECTION-
+  ANALYSIS.md`), so a post-construction back-pointer — the only way
+  to close a cycle when values are built bottom-up — can't be
+  written. (Mutable closure-capture write-back is the remaining
+  vector; its checker rejection is the follow-up that completes the
+  guarantee.) No cycle collector and no tracing fallback: cycles are
+  unconstructible, not collected.
 - **Thread safety.** Refcounts are non-atomic. Single-threaded.
   When concurrency lands, either atomic ops (slower) or thread-
   local heaps with explicit sharing.
