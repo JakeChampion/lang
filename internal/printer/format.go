@@ -566,11 +566,22 @@ const (
 	precIfExpr  = 3  // if (c) { e } else { e } in expression position
 	precOr      = 4  // ||
 	precAnd     = 5  // &&
-	precEq      = 6  // == !=
-	precCmp     = 7  // < <= > >=
-	precBitOr   = 8  // |
-	precBitXor  = 9  // ^
-	precBitAnd  = 10 // &
+	// Bitwise (|, ^, &) sit BELOW the comparison family in Fern's
+	// grammar — the parser hierarchy is parseLogicalAnd →
+	// parseBitOr → parseBitXor → parseBitAnd → parseEquality →
+	// parseRelational (parser.go:2520-2533), so `==` binds tighter
+	// than `&`. The printer order has to match the parser or
+	// round-trip drops semantically-load-bearing parens (e.g.
+	// `(n & (n - 1)) == 0` formats to `n & n - 1 == 0`, then
+	// re-parses as `n & ((n - 1) == 0)` — the "is power of 2"
+	// idiom silently turns into ANDing a number with a boolean).
+	// Surfaced by the formatter corpus sweep against
+	// internal/stdlib/std/i32.fern's is_power_of_2.
+	precBitOr   = 6  // |
+	precBitXor  = 7  // ^
+	precBitAnd  = 8  // &
+	precEq      = 9  // == !=
+	precCmp     = 10 // < <= > >=
 	precShift   = 11 // << >>
 	precAdd     = 12 // + -
 	precMul     = 13 // * / %
