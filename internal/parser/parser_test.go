@@ -70,6 +70,72 @@ func TestPrecedence(t *testing.T) {
 	}
 }
 
+// Bitwise (& | ^) bind LOOSER than the comparison family (== != < <=
+// > >=) in Fern. Mirrors parser.go's parseLogicalAnd → parseBitOr
+// → parseBitXor → parseBitAnd → parseEquality → parseRelational
+// hierarchy. The printer encodes the same ordering (see
+// TestFormatBitwiseLooserThanCompare); if the two ever diverge,
+// `(n & (n - 1)) == 0` round-trips through `n & n - 1 == 0` and
+// re-parses as `n & ((n - 1) == 0)` — a different AST.
+func TestBitwiseLooserThanCompare(t *testing.T) {
+	// `a & b == c` parses as `a & (b == c)` because `==` binds
+	// tighter than `&`. Outer is `&`.
+	prog, err := Parse("function f(a: i32, b: i32, c: i32): boolean { return a & b == c; }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	bin, ok := ret.Value.(*ast.Binary)
+	if !ok {
+		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
+	}
+	if bin.Op != "&" {
+		t.Fatalf("outer op = %q, want & (== should bind tighter)", bin.Op)
+	}
+	rhs, ok := bin.Right.(*ast.Binary)
+	if !ok || rhs.Op != "==" {
+		t.Fatalf("rhs = %v, want == binary", bin.Right)
+	}
+
+	// `(a & b) == c` parses as `(a & b) == c`. Outer is `==`.
+	prog, err = Parse("function f(a: i32, b: i32, c: i32): boolean { return (a & b) == c; }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret = prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	bin, ok = ret.Value.(*ast.Binary)
+	if !ok {
+		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
+	}
+	if bin.Op != "==" {
+		t.Fatalf("outer op = %q, want == (parens force bitwise-first)", bin.Op)
+	}
+	lhs, ok := bin.Left.(*ast.Binary)
+	if !ok || lhs.Op != "&" {
+		t.Fatalf("lhs = %v, want & binary", bin.Left)
+	}
+
+	// `a & b | c` parses as `(a & b) | c` because `&` binds tighter
+	// than `|`. Outer is `|`. Mirrors the parser hierarchy
+	// parseBitOr → parseBitXor → parseBitAnd.
+	prog, err = Parse("function f(a: i32, b: i32, c: i32): i32 { return a & b | c; }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ret = prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+	bin, ok = ret.Value.(*ast.Binary)
+	if !ok {
+		t.Fatalf("return value = %T, want *ast.Binary", ret.Value)
+	}
+	if bin.Op != "|" {
+		t.Fatalf("outer op = %q, want | (& should bind tighter)", bin.Op)
+	}
+	lhs, ok = bin.Left.(*ast.Binary)
+	if !ok || lhs.Op != "&" {
+		t.Fatalf("lhs = %v, want & binary", bin.Left)
+	}
+}
+
 func TestArrayLitAndIndex(t *testing.T) {
 	prog, err := Parse("function f(): i32 { var a: i32[] = [1,2,3]; return a[1]; }")
 	if err != nil {
