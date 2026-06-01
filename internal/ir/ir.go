@@ -2431,12 +2431,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			for i, et := range tt.Elems {
-				if _, isStr := et.(ast.StringType); isStr && b.ptrW == 4 {
-					// Two-word string element: load (data, len) and reclaim
-					// via __fern_str_dec. Unique here (rc==1 guard), so the
-					// element is uniquely owned; inline / literal strings
-					// no-op. Balances the projection dup (__fern_str_inc) and
-					// the construction retain.
+				if _, isStr := et.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+					// Two-word string element (wasm + arm64-TwoWordOverride):
+					// load (data, len) and reclaim via __fern_str_dec. Unique
+					// here (rc==1 guard), so the element is uniquely owned;
+					// inline / literal strings no-op. Balances the projection
+					// dup (__fern_str_inc) and the construction retain.
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if offs[i] != 0 {
 						b.emit(Op{Kind: OpConstI32, I32: offs[i]})
@@ -3248,7 +3248,10 @@ func tupleNeedsDrop(tt ast.TupleType, ptrW int) bool {
 			return true
 		}
 		if _, isStr := et.(ast.StringType); isStr {
-			if ptrW == 4 || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
+			// Two-word string element (wasm + arm64-TwoWordOverride) or
+			// native single-word: both reach __fern_str_dec / __fern_rc_dec
+			// from the per-tuple drop.
+			if ast.UseTwoWordStrings(ptrW) || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
 				return true
 			}
 		}
@@ -3815,10 +3818,10 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
 	for i, et := range tt.Elems {
-		if _, isStr := et.(ast.StringType); isStr && ptrW == 4 {
-			// Two-word string element: load (data, len) and reclaim
-			// via __fern_str_dec. Mirrors the inline tuple-local
-			// path's wasm branch.
+		if _, isStr := et.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
+			// Two-word string element (wasm + arm64-TwoWordOverride):
+			// load (data, len) and reclaim via __fern_str_dec. Mirrors
+			// the inline tuple-local path's two-word branch.
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if offs[i] != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
@@ -5483,13 +5486,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// deep-drop dec of the same element. Without the dup the
 			// binding and the tuple's drop would both release one
 			// reference for a single count (double free / underflow).
-			if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 4 {
-				// Two-word string element: dup via __fern_str_inc (consumes
-				// + re-pushes the (data, len) pair) so the binding co-owns
-				// the buffer alongside the tuple box. Without it the tuple's
-				// deep-drop __fern_str_dec would free the buffer under the
+			if _, isStr := tup.Elems[i].(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				// Two-word string element (wasm + arm64-TwoWordOverride):
+				// dup via __fern_str_inc (consumes + re-pushes the
+				// (data, len) pair) so the binding co-owns the buffer
+				// alongside the tuple box. Without it the tuple's deep-
+				// drop __fern_str_dec would free the buffer under the
 				// still-live binding (UAF).
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 2})
 			} else if _, isStr := tup.Elems[i].(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				// Native single-word string element: dup via __fern_rc_inc
 				// so the binding co-owns the buffer alongside the tuple
