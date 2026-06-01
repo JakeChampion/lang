@@ -160,6 +160,22 @@ function main(): i32 {
 	}
 	return -1;
 }`,
+
+	// closure_capture — exercises the capturing-closure path: env
+	// block alloc, capture layout (ptrW-aware on arm64), closure
+	// call convention (x86 %r10 / arm64 x9), and OpMakeClosure /
+	// OpMakeEnv lowering. The bare-function `function_value` case
+	// above hits the no-capture path; this one rides the harder
+	// emit surface that historically has been a bug source.
+	"closure_capture": `
+function adder(n: i32): (i32) => i32 {
+	return function (x: i32): i32 { return x + n; };
+}
+function main(): i32 {
+	var add10: (i32) => i32 = adder(10);
+	var add20: (i32) => i32 = adder(20);
+	return add10(1) + add20(2);
+}`,
 }
 
 // optionVariants is the set of emit configurations every feature must
