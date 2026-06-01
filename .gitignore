@@ -6,3 +6,4 @@
 /build/
 *.s
 *.o
+/.claude/

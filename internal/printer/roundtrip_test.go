@@ -263,6 +263,9 @@ func zeroExpr(e ast.Expr) {
 		zeroExpr(x.Inner)
 	case *ast.StructLit:
 		x.P = ast.Position{}
+		if x.Base != nil {
+			zeroExpr(x.Base)
+		}
 		for i := range x.Fields {
 			x.Fields[i].NamePos = ast.Position{}
 			zeroExpr(x.Fields[i].Value)
@@ -301,6 +304,19 @@ func TestRoundtripStruct(t *testing.T) {
 			var p: Point = Point { x: 1, y: 2 };
 			p.x = 10;
 			return p.x + p.y;
+		}`)
+}
+
+// Struct-update literals (`Foo { ...base, field: v }` and the pure
+// copy `Foo { ...base }`) round-trip through parse → print → parse
+// with the spread base preserved.
+func TestRoundtripStructUpdate(t *testing.T) {
+	roundTrip(t, `struct Point { x: i32, y: i32 }
+		function main(): i32 {
+			var a: Point = Point { x: 1, y: 2 };
+			var b: Point = Point { ...a, y: 9 };
+			var c: Point = Point { ...a };
+			return b.y + c.x;
 		}`)
 }
 

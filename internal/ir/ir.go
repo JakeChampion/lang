@@ -6939,6 +6939,23 @@ func (b *builder) expr(e ast.Expr) error {
 		// the SSA-lift's slot accounting.
 		offs, size := structFieldLayout(sd.Fields, b.ptrW)
 		const rcHeaderBytes = 8
+		// Struct-update `Foo { ...base, field: v }`: evaluate the base
+		// once into a scratch slot. The base is *borrowed* for the
+		// copy — evaluating it (typically an Ident local) just loads
+		// the pointer; the local keeps ownership and decs at its own
+		// scope exit, so we must NOT drop the base here. Each un-
+		// overridden pointer-shaped field copied out of the base is
+		// rc-inc'd: the new struct co-owns it, balancing the base
+		// local's eventual dec (same aliasing rule the field-init path
+		// applies). See docs/IMMUTABILITY-MIGRATION-PLAN.md.
+		updBaseSlot := int32(-1)
+		if n.Base != nil {
+			if err := b.expr(n.Base); err != nil {
+				return err
+			}
+			updBaseSlot = b.allocSlot()
+			b.emit(Op{Kind: OpStoreLocal, I32: updBaseSlot})
+		}
 		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 		b.emit(Op{Kind: OpAlloc})
 		baseSlot := b.allocSlot()
@@ -6948,6 +6965,50 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		b.emit(Op{Kind: OpStore})
+		overridden := map[string]bool{}
+		for _, f := range n.Fields {
+			overridden[f.Name] = true
+		}
+		// Copy un-overridden fields from the base into the new box.
+		if updBaseSlot >= 0 {
+			for _, sf := range sd.Fields {
+				if overridden[sf.Name] {
+					continue
+				}
+				off := offs[sf.Name]
+				ft := sf.Type
+				// dst address: newbox + rcHeader + off
+				b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+				b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + off})
+				b.emit(Op{Kind: OpAdd})
+				// value: load from base + off. The base temp holds the
+				// user-visible data pointer (already past the rc
+				// header), so field reads use just `+off` — same as
+				// FieldAccess lowering, NOT the `rcHeader+off` the
+				// dst (raw alloc base) needs.
+				b.emit(Op{Kind: OpLoadLocal, I32: updBaseSlot})
+				if off != 0 {
+					b.emit(Op{Kind: OpConstI32, I32: off})
+					b.emit(Op{Kind: OpAdd})
+				}
+				b.emit(payloadLoadOpFor(ft, b.ptrW))
+				// The new struct co-owns a copied pointer field — inc
+				// it (mirrors emitAliasInc, keyed on the field type
+				// since there's no source expr). Two-word strings go
+				// through __fern_str_inc so the inline-bit tag check
+				// applies; everything else pointer-shaped uses
+				// __fern_rc_inc. Both inc-and-passthrough (leave the
+				// value on the stack for the store).
+				if ast.IsPointerType(ft) {
+					if _, isStr := ft.(ast.StringType); isStr && b.twoWordStrings() {
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+					} else {
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+					}
+				}
+				b.emit(payloadStoreOpFor(ft, b.ptrW))
+			}
+		}
 		for _, f := range n.Fields {
 			off := offs[f.Name]
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})

@@ -885,6 +885,13 @@ type StructLit struct {
 	P        Position
 	TypeName string
 	Fields   []FieldInit
+	// Base is the spread source of a struct-update literal
+	// `Foo { ...base, field: v }`: nil for a plain literal (which
+	// must name every field), non-nil when the literal copies the
+	// un-named fields from `base` and overrides only the listed
+	// ones. `base` must have the same struct type as TypeName. See
+	// docs/IMMUTABILITY-MIGRATION-PLAN.md.
+	Base Expr
 	// TypeArgs is filled by the checker when the literal
 	// instantiates a generic struct (StructDecl with non-empty
 	// TypeParams). Each entry is the inferred concrete type for
