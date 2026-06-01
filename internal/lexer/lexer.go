@@ -617,7 +617,13 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 			}
 			return nil, &Error{Pos: start, Msg: "unmatched `}` in f-string (use `}}` for a literal `}`)"}
 		}
-		lit.WriteRune(c)
+		// Write the raw source byte, not WriteRune(c): same reason as
+		// the plain-string scanner — c is a single byte
+		// (`rune(l.src[l.i])`), so WriteRune would re-encode each byte
+		// of a multi-byte UTF-8 character in an f-string literal
+		// segment (e.g. `f"café {x}"`) into mojibake. Strings are
+		// UTF-8 byte arrays; preserve the source bytes verbatim.
+		lit.WriteByte(l.src[l.i])
 		l.advance()
 	}
 	return nil, &Error{Pos: start, Msg: "unterminated f-string literal"}

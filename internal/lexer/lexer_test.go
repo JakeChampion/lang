@@ -113,6 +113,40 @@ func TestStringLiteralUTF8(t *testing.T) {
 	}
 }
 
+// The f-string literal scanner had the same byte-vs-rune bug as the
+// plain-string scanner (a second `lit.WriteRune(c)` on a single
+// source byte), so multi-byte UTF-8 in a literal *segment* of an
+// f-string — e.g. the `café ` before `{x}` — was corrupted too.
+// The literal pieces must be preserved byte-for-byte.
+func TestFStringLiteralUTF8(t *testing.T) {
+	cases := []struct {
+		src  string
+		want []FStringPart
+	}{
+		{src: `f"café {x}"`, want: []FStringPart{{Lit: "café "}, {Expr: "x"}}},
+		{src: `f"{x} 日本語"`, want: []FStringPart{{Expr: "x"}, {Lit: " 日本語"}}},
+		{src: `f"∃ {n} items"`, want: []FStringPart{{Lit: "∃ "}, {Expr: "n"}, {Lit: " items"}}},
+		{src: `f"héllo"`, want: []FStringPart{{Lit: "héllo"}}},
+	}
+	for _, c := range cases {
+		toks, _, err := Tokenize(c.src)
+		if err != nil {
+			t.Errorf("%s: lex error: %v", c.src, err)
+			continue
+		}
+		got := toks[0].FParts
+		if len(got) != len(c.want) {
+			t.Errorf("%s: got %d FParts, want %d:\ngot: %v", c.src, len(got), len(c.want), got)
+			continue
+		}
+		for i, w := range c.want {
+			if got[i] != w {
+				t.Errorf("%s: FParts[%d] = %q, want %q", c.src, i, got[i], w)
+			}
+		}
+	}
+}
+
 func TestStringLiteralUnterminated(t *testing.T) {
 	if _, _, err := Tokenize(`"oops`); err == nil {
 		t.Error("expected error on unterminated string")
