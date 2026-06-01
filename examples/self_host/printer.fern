@@ -126,10 +126,16 @@ function print_expr(e: parser.Expr): string {
         },
         parser.ExprStructLit(sl) => {
             var out: string = sl.type_name + " {";
+            var first: boolean = true;
+            if (sl.has_base) {
+                out = out + " ..." + print_expr(sl.base);
+                first = false;
+            }
             var i: i32 = 0;
             while (i < sl.field_names.len()) {
-                if (i > 0) { out = out + ","; }
+                if (!first) { out = out + ","; }
                 out = out + " " + sl.field_names[i] + ": " + print_expr(sl.field_values[i]);
+                first = false;
                 i = i + 1;
             }
             return out + " }";

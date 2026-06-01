@@ -215,10 +215,14 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 fvs = fvs.push(rewrite_expr(slit.field_values[i], ctx));
                 i = i + 1;
             }
+            var new_base: parser.Expr = slit.base;
+            if (slit.has_base) { new_base = rewrite_expr(slit.base, ctx); }
             return parser.ExprStructLit {
                 type_name: rewrite_type_name(slit.type_name, ctx),
                 field_names: slit.field_names,
-                field_values: fvs
+                field_values: fvs,
+                has_base: slit.has_base,
+                base: new_base
             };
         },
         parser.ExprLambda(lm) => {

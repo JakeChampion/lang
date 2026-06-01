@@ -236,6 +236,12 @@ pub struct OpMakeTuple { n: i32 }
 // (in source order — first pushed = field 0) and pushes a
 // VStruct with the carried type_name + field_names.
 pub struct OpMakeStruct { type_name: string, field_names: string[] }
+// OpStructUpdate implements `Name { ...base, f: v }`. The stack
+// holds the base VStruct (pushed first) then the override values
+// in source order on top. It pops the overrides + base, starts
+// from the base's fields, overwrites each named override (or
+// appends one not already present), and pushes the new VStruct.
+pub struct OpStructUpdate { type_name: string, field_names: string[] }
 // OpFieldGet pops a VStruct, looks up the named field, pushes
 // its value. Missing field → VErr.
 pub struct OpFieldGet { field_name: string }
@@ -257,7 +263,7 @@ pub type Op = OpPushInt | OpPushBool | OpPushStr | OpPushFloat
             | OpPop | OpCall | OpCallMethod
             | OpMakeFunc | OpMakeClosure | OpLoadCapture | OpCallClosure
             | OpMakeArray | OpMakeTuple | OpIndex | OpLen | OpSlice
-            | OpMakeStruct | OpFieldGet
+            | OpMakeStruct | OpStructUpdate | OpFieldGet
             | OpDup | OpTypeNameEq
             | OpReturn;
 
@@ -287,6 +293,9 @@ function op_len(): Op { return OpLen { tag: 0 }; }
 function op_slice(): Op { return OpSlice { tag: 0 }; }
 function op_make_struct(type_name: string, field_names: string[]): Op {
     return OpMakeStruct { type_name: type_name, field_names: field_names };
+}
+function op_struct_update(type_name: string, field_names: string[]): Op {
+    return OpStructUpdate { type_name: type_name, field_names: field_names };
 }
 function op_field_get(field_name: string): Op { return OpFieldGet { field_name: field_name }; }
 function op_dup(): Op { return OpDup { tag: 0 }; }
@@ -477,6 +486,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             return collect_idents_expr(sl.end, acc);
         },
         parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
                 acc = collect_idents_expr(sl.field_values[i], acc);
@@ -845,6 +855,22 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             return CompileResult { ops: ops, lt: lt };
         },
         parser.ExprStructLit(sl) => {
+            // Struct-update `Name { ...base, f: v }`: compile the base
+            // first (pushes the VStruct), then the override values in
+            // source order; OpStructUpdate pops them and overlays the
+            // overrides onto a copy of the base's fields.
+            if (sl.has_base) {
+                var br: CompileResult = compile_expr(sl.base, ops, lt);
+                ops = br.ops; lt = br.lt;
+                var ui: i32 = 0;
+                while (ui < sl.field_values.len()) {
+                    var ur: CompileResult = compile_expr(sl.field_values[ui], ops, lt);
+                    ops = ur.ops; lt = ur.lt;
+                    ui = ui + 1;
+                }
+                ops = ops.push(op_struct_update(sl.type_name, sl.field_names));
+                return CompileResult { ops: ops, lt: lt };
+            }
             // Compile each field value (in source order); the
             // VM's OpMakeStruct pops them and assembles a
             // VStruct with the carried type_name + field_names.
@@ -2083,6 +2109,57 @@ pub function exec_program(prog: CompiledProgram): Value {
                 while (sj < start) { ns = ns.push(stack[sj]); sj = sj + 1; }
                 stack = ns;
                 stack = stack_push(stack, v_struct(o.type_name, o.field_names, fvs));
+                ip = ip + 1;
+            },
+            OpStructUpdate(o) => {
+                // Stack layout: [..., base, ovr0, ovr1, …, ovr_(N-1)].
+                // Pop the N overrides + the base, then overlay the
+                // overrides (by name) onto a copy of the base's fields.
+                var nf: i32 = o.field_names.len();
+                if (stack.len() < nf + 1) {
+                    stack = stack_push(stack, v_err("struct_update: stack underflow"));
+                    ip = ip + 1;
+                    continue;
+                }
+                var base_idx: i32 = stack.len() - nf - 1;
+                var bval: Value = stack[base_idx];
+                match (bval) {
+                    VStruct(sv) => {
+                        var unames: string[] = sv.field_names;
+                        var uvals: Value[] = sv.field_values;
+                        var oi: i32 = 0;
+                        while (oi < nf) {
+                            var oval: Value = stack[base_idx + 1 + oi];
+                            var oname: string = o.field_names[oi];
+                            var replaced: boolean = false;
+                            var bi: i32 = 0;
+                            while (bi < unames.len()) {
+                                if (unames[bi] == oname) {
+                                    uvals = uvals.set(bi, oval);
+                                    replaced = true;
+                                }
+                                bi = bi + 1;
+                            }
+                            if (!replaced) {
+                                unames = unames.push(oname);
+                                uvals = uvals.push(oval);
+                            }
+                            oi = oi + 1;
+                        }
+                        var ns2: Value[] = [];
+                        var sj2: i32 = 0;
+                        while (sj2 < base_idx) { ns2 = ns2.push(stack[sj2]); sj2 = sj2 + 1; }
+                        stack = ns2;
+                        stack = stack_push(stack, v_struct(o.type_name, unames, uvals));
+                    },
+                    _ => {
+                        var ns3: Value[] = [];
+                        var sj3: i32 = 0;
+                        while (sj3 < base_idx) { ns3 = ns3.push(stack[sj3]); sj3 = sj3 + 1; }
+                        stack = ns3;
+                        stack = stack_push(stack, v_err("struct_update: base is not a struct"));
+                    }
+                }
                 ip = ip + 1;
             },
             OpFieldGet(o) => {
