@@ -99,6 +99,20 @@ pub enum BE { BE1, BE2 }
 pub function b_marker(): i32 { return 2; }
 `,
 	},
+
+	// stdlib_imports: a tiny program that pulls in two stdlib
+	// modules — std/math + std/array. Stdlib resolution goes
+	// through a different code path (the embedded stdlib package)
+	// than relative imports, but lands in the same loaded map and
+	// merge loop. Locks the case where the bulk of the combined
+	// Program's declarations come from stdlib, not from user code.
+	"stdlib_imports": {
+		"main.fern": `
+import "std/math";
+import "std/array";
+function main(): i32 { return 0; }
+`,
+	},
 }
 
 // TestLoadDeterministic loads each project several times and asserts
