@@ -2145,15 +2145,40 @@ and an `enum Arr(i32[])` loop both hold a flat 96 B at N=50 vs N=5000,
 with 0 over-releases over 200 iterations and value-correct sums. The full
 `internal/ir` + `internal/e2e` suite (incl. the heavy self-host VM/parser
 struct/enum users + the free-on==free-off differential gate) stays green.
-Known gap (follow-up): the struct/enum REASSIGNMENT-overwrite path
-(`s = Other{...}`) still flat-dec's when the in-place reuse
-(`tryStructReuseOverwrite` / `tryEnumReuseOverwrite`) doesn't fire — the
-same deep-drop routing could apply there.
+**Struct reassignment-overwrite deep reclamation — SHIPPED ON ALL THREE
+BACKENDS (2026-06-02).** Closes the reassignment half of the struct gap.
+A self-overwrite `b = Box{ data: [...], tag: i }` is intercepted by
+`tryStructReuseOverwrite` (reuses the box in place), which releases the
+box's OLD pointer fields before overwriting — but with a flat
+`__fern_rc_dec` that doesn't free an array field's buffer, so a REPLACED
+array field leaked its buffer every iteration (probe: 1648 → 160048 B).
+The fix routes the old-field release through the new
+`emitFieldDropOnStack` (per-field deep drop: `__fern_arr_dec` for arrays,
+`__drop_*` for nested struct/enum/tuple, flat dec otherwise), freeing the
+replaced buffer at rc 0. Each helper `is_unique`-gates internally, so a
+CARRIED-OVER field (`data: b.data` — its eval-inc bumps it to rc>1) is
+only dec'd, never freed; the rc arithmetic is unchanged (still one dec per
+field), only the rc-0 free is added → zero over-release surface. The
+genuine non-reuse dec-path (`b = call()`, alias) also now deep-drops via
+the shared `emitStructEnumSlotDrop`, gated on `freeEligible` like the
+array / string / tuple reassignment siblings (the conservative call-arg
+taint keeps most call-RHS reassignments on the flat dec — safe). Verified
+by `Test{X86_64,Arm64,WASM}StructReassignReclaim`
+(`internal/e2e/rc_heap_bump_reassign_test.go`): a replaced-field
+reassignment loop holds a flat 80 B at N=50 vs N=5000 (was 1648→160048),
+and a carried-over `data: b.data` loop is value-correct with 0
+over-releases over 200 iterations. The full `internal/ir` + `internal/e2e`
+suite (incl. the heavy self-host struct-reuse users + the differential
+gate) stays green.
+Known gap (follow-up): the ENUM reuse path (`tryEnumReuseOverwrite`) is
+rc-neutral by design (construction doesn't inc payloads, reuse doesn't
+release them — payloads leak in both baseline and reuse); reclaiming them
+needs a balanced payload-release, a separate slice.
 
 Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
 harness over the self-host + edge-handler workloads to profile hot
-allocation sites, then evaluate retiring `strbuf_*`; struct/enum
-reassignment-overwrite deep drop.
+allocation sites, then evaluate retiring `strbuf_*`; enum reuse-path
+payload reclamation.
 
 ## Testing strategy
 
