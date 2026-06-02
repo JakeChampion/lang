@@ -79,6 +79,20 @@ fern -tangle -o prog.fern one.fern.md
 fern -weave  -o prog.md  prog.fern.md
 ```
 
+`fern -weave -html` renders a **self-contained, styled HTML page**
+instead of Markdown — embedded CSS, light Fern syntax highlighting, and
+clickable `<<chunk>>` cross-reference links that jump to each chunk's
+definition (combine with `-o page.html`):
+
+```sh
+fern -weave -html -o prog.html prog.fern.md
+```
+
+The prose is rendered through a small Markdown subset (headings, lists,
+blockquotes, rules, and the inline spans `code`, **bold**, *italic*,
+links); the value over the Markdown weave is the linked, highlighted
+code chunks rather than a full CommonMark engine.
+
 A `.fern.md` file is also accepted directly by every mode that takes a
 `.fern` file — it is tangled in memory first:
 

@@ -69,6 +69,43 @@ func TestLiterateTangleToFile(t *testing.T) {
 	}
 }
 
+// `fern -weave -html` emits a self-contained HTML page (to stdout, or
+// to -o FILE) with clickable chunk cross-references.
+func TestLiterateWeaveHTML(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app.fern.md")
+	if err := os.WriteFile(src, []byte(multiFileDoc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := exec.Command(bin, "-weave", "-html", src)
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("weave -html: %v", err)
+	}
+	got := out.String()
+	for _, w := range []string{"<!DOCTYPE html>", "<style>", `class="ref"`, "</html>"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("weave -html output missing %q", w)
+		}
+	}
+
+	// -o writes the same HTML to a file.
+	outFile := filepath.Join(dir, "app.html")
+	if err := exec.Command(bin, "-weave", "-html", "-o", outFile, src).Run(); err != nil {
+		t.Fatalf("weave -html -o: %v", err)
+	}
+	b, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read html file: %v", err)
+	}
+	if !strings.Contains(string(b), "<!DOCTYPE html>") {
+		t.Errorf("html file missing doctype:\n%s", b)
+	}
+}
+
 // `fern -weave -o FILE` writes the woven Markdown to disk.
 func TestLiterateWeaveToFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)

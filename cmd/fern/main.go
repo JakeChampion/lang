@@ -296,7 +296,7 @@ func (e entry) format(err error) error {
 // multi-file tangle `outPath` is a directory that receives one file per
 // `file=` module (subdirectories created as needed), and for everything
 // else it is a single output file.
-func runLiterateTool(srcPath string, tangle bool, outPath string) (int, error) {
+func runLiterateTool(srcPath string, tangle bool, outPath string, html bool) (int, error) {
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
 		return 1, err
@@ -347,6 +347,9 @@ func runLiterateTool(srcPath string, tangle bool, outPath string) (int, error) {
 		return 0, werr
 	}
 	woven := doc.Weave()
+	if html {
+		woven = doc.WeaveHTML()
+	}
 	if outPath != "" {
 		if err := writeGeneratedFile(outPath, woven); err != nil {
 			return 1, err
@@ -385,7 +388,8 @@ func main() {
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. With -o set, writes to disk instead: -o DIR receives one file per `file=` module (subdirs created as needed); a single-`<<*>>` document writes -o FILE. No codegen.")
-	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. No codegen.")
+	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. Add -html for a self-contained, styled HTML page (highlighted code + clickable chunk references). No codegen.")
+	weaveHTML := flag.Bool("html", false, "with -weave, emit a self-contained styled HTML page (embedded CSS, Fern syntax highlighting, and clickable `<<chunk>>` cross-reference links) instead of Markdown.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
@@ -476,7 +480,7 @@ func main() {
 	}
 
 	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
-		code, err := runLiterateTool(flag.Arg(0), *doTangle, *out)
+		code, err := runLiterateTool(flag.Arg(0), *doTangle, *out, *weaveHTML)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
