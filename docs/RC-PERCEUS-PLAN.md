@@ -2247,14 +2247,22 @@ exercises the rc==1 branch + the differential gate) stays green.
   would UAF a payload shared with a live local (rc-undercounted).
   Reclaiming needs a global enum-payload inc-on-construction + drop
   rebalance — risky; deferred.
-- **Array-of-(rc/string-inner-array)** (`string[][]`, `i32[][][]`): the
-  nested-array fix above handles only PRIMITIVE inner arrays; rc/string
-  inner arrays still keep the flat `__fern_drop_arr_ptr` (inner buffers
-  leak). Needs the recursive inner deep-drop (drop_arr_str / drop_arr_ptr
-  per element).
+- **Array-of-string[] (`string[][]`) — SHIPPED (2026-06-02).** The
+  nested-array slice handled only primitive inner arrays; `string[][]`
+  kept the flat `__fern_drop_arr_ptr`, leaking each inner `string[]`
+  buffer + its strings (3264 B → 320064 B). Now routes through a generated
+  `__drop_arr_arr_str` loop: per outer element reclaim the inner string[]
+  via the ABI-correct helper (`__fern_drop_arr_str` two-word wasm/arm64;
+  `__fern_drop_arr_ptr` native single-word x86_64), then free the outer
+  buffer. `Test{X86_64,Arm64,WASM}ArrayOfStrReclaim` — flat 192 B at N=50
+  vs N=5000, value-correct, 0 over-releases.
+- **Array-of-(struct[]/enum[]/array[]) inner** (`Foo[][]`, `i32[][][]`):
+  still keep the flat `__fern_drop_arr_ptr` (inner buffers leak). Same
+  recursion pattern as `__drop_arr_arr_str` — route the per-element inner
+  drop to `__drop_arr_struct_` / `__drop_arr_arr_*` — a follow-up.
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
-  (96 B), map build (256 B), nested array `i32[][]` (192 B), string-concat
-  bound-var (wasm 64576 B plateau / natives 0 via SSO).
+  (96 B), map build (256 B), nested array `i32[][]` (192 B), `string[][]`
+  (192 B), string-concat bound-var (wasm 64576 B plateau / natives 0 SSO).
 
 Next Phase-6 steps (open): statement-temporary reclamation (the dominant
 remaining leak — design recorded below); array-of-(rc-inner-array) deep
