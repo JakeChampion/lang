@@ -5665,26 +5665,6 @@ func TestWASMGenericResult(t *testing.T) {
 // declared payload was `T`, not `float`) and the operand on
 // the stack was f32. The checker now records the substituted
 // payload type so codegen picks `OpFStore`.
-// arena_save / arena_restore work the same way on the WASM
-// backend (memory[40] is the bump cursor). Same test shape as
-// TestArenaResetReclaimsAllocations but routed through wasmtime.
-func TestWASMArenaReset(t *testing.T) {
-	src := `function main(): i32 {
-		var saved: i32 = arena_save();
-		var a: i32[] = [1, 2, 3, 4, 5];
-		var afterAlloc: i32 = arena_save();
-		arena_restore(saved);
-		var afterRestore: i32 = arena_save();
-		if (afterAlloc <= saved) { return 1; }
-		if (afterRestore != saved) { return 2; }
-		if (a.len() != 5) { return 3; }
-		return 0;
-	}`
-	if got := runWasm(t, src); got != 0 {
-		t.Errorf("WASM arena_save/restore: exit = %d, want 0", got)
-	}
-}
-
 // random_bytes(n) on WASM goes through `wasi_snapshot_preview1.
 // random_get`. Length / non-equality assertions only — no
 // content checks since it's a CSPRNG.

@@ -913,10 +913,10 @@ func TestX86_64Transcendentals(t *testing.T) {
 // `tcp_serve(__port_from_env("PORT", 8080), handle)`),
 // spawns the resulting binary on a Go-picked free port,
 // sends two requests on separate connections, asserts both
-// bodies round-trip. The second request validates the
-// `arena_save` / `arena_restore` cycle inside `tcp_serve` —
-// a leak there would either OOM or scramble state between
-// requests; both pass cleanly.
+// bodies round-trip. The second request validates that the
+// first request's allocations are reclaimed (by reference
+// counting) inside `tcp_serve` — a leak there would either
+// OOM or scramble state between requests; both pass cleanly.
 //
 // Together with `TestArm64HttpHandler` this brings the two
 // native backends to observable parity for the
@@ -1376,21 +1376,18 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 // Chained-alias no-capture closures must not heap-allocate.
 // The elide-closure-pair pass rewrites OpMakeClosure → OpMakeEnv
 // even when the closure value flows through an intermediate
-// `var f = nested_fn` slot. Verify at runtime: bracket the
-// closure flow with arena_save() calls; the cursor must not
-// move (no allocation).
+// `var f = nested_fn` slot. Verify at runtime that the chained
+// alias still returns the right value (the no-allocation
+// property itself is covered by the elide-closure-pair IR tests).
 func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
-    var before: i32 = arena_save();
     var f = answer;
     var x: i32 = f();
-    var after: i32 = arena_save();
-    if (after != before) { return 99; }
     return x;
 }`)
 	if code != 7 {
-		t.Errorf("exit = %d, want 7 (no alloc + f() returned 7); 99 means the closure pair was allocated", code)
+		t.Errorf("exit = %d, want 7 (chained no-capture alias returns 7)", code)
 	}
 }
 
@@ -2552,10 +2549,6 @@ function main(): i32 {
 	}
 }
 
-// Arena scope: arena_save() snapshots the bump cursor and
-// arena_restore(saved) rewinds it. Allocations after the
-// restore reuse the space the freed allocations consumed.
-// Mirrors TestArm64Arena.
 // Slice construction + indexing was previously unavailable on
 // natives: `__slice_make` was emitted only on wasm, so any
 // program containing `a[lo:hi]` failed to link with "undefined
@@ -2614,20 +2607,6 @@ func TestX86_64SliceMake(t *testing.T) {
 		if code != c.want {
 			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
 		}
-	}
-}
-
-func TestX86_64Arena(t *testing.T) {
-	_, code := compileAndRunX86_64(t, `function main(): i32 {
-    var s1: string = "hello, " + "world!"; // alloc
-    var saved: i32 = arena_save();
-    var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
-    arena_restore(saved);
-    var s3: string = "after-" + "restore"; // alloc reuses s2's space
-    return s1.len() + s3.len();
-}`)
-	if code != 13+13 {
-		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
 	}
 }
 

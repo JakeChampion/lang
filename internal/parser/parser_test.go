@@ -1143,10 +1143,10 @@ function main(): i32 { return 0; }`)
 }
 
 // `arena` is no longer a reserved word. The `arena { … }` block
-// construct (sugar for arena_save → body → arena_restore) was
-// removed — the per-request reclaim it desugared to lives in
-// std/tcp via the still-supported arena_save / arena_restore
-// builtins. So bare `arena` now parses as an ordinary identifier.
+// construct and the arena_save / arena_restore builtins it
+// desugared to were all removed; per-request memory is now
+// reclaimed by reference counting. So bare `arena` parses as an
+// ordinary identifier.
 func TestArenaIsNotReserved(t *testing.T) {
 	prog, err := Parse("function f(): i32 { var arena: i32 = 5; return arena; }")
 	if err != nil {

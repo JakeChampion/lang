@@ -393,8 +393,6 @@ func New() *Interp {
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
-	i.Builtins["arena_save"] = &Builtin{Fn: builtinArenaSave}
-	i.Builtins["arena_restore"] = &Builtin{Fn: builtinArenaRestore}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
 	// `f32_bits(x)` / `f32_from_bits(n)` — reinterpret-cast pair.
 	// The checker exposes them for raw-IEEE manipulation in user
@@ -761,19 +759,6 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	return String(out), nil
 }
 
-// builtinArenaSave / builtinArenaRestore are no-ops in the
-// tree-walking interpreter — Go's GC handles object lifetime.
-// The signatures match the ARM64 / WASM runtime helpers
-// (`number` opaque handle in/out) so user code that compiles
-// to either backend behaves identically when run through
-// the REPL.
-func builtinArenaSave(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 0 {
-		return nil, fmt.Errorf("arena_save: expected 0 args, got %d", len(args))
-	}
-	return Number(0), nil
-}
-
 // `(arr: T[]) push(v: T): T[]` — functional append. The codegen
 // path implements push as "alloc a fresh T[] of len+1, memcpy
 // the old elements, store the new one at the tail, return the
@@ -1086,16 +1071,6 @@ func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 		out[i] = Number(int64(b))
 	}
 	return out, nil
-}
-
-func builtinArenaRestore(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("arena_restore: expected 1 arg, got %d", len(args))
-	}
-	if _, ok := args[0].(Number); !ok {
-		return nil, fmt.Errorf("arena_restore: expected number arg, got %T", args[0])
-	}
-	return Void{}, nil
 }
 
 // builtinEnv looks up an environment variable. An explicit i.Env

@@ -242,60 +242,55 @@ process that doesn't tear down — see §4.)
 
 ---
 
-## 4. Arena masking, and request-scoped vs process-lifetime cycles
+## 4. Cycle leaks after the arena removal
 
-### The arena currently masks cycle leaks wholesale
+> **UPDATE (2026-06-01):** the per-request arena reset described in
+> this section has been **removed** — `arena_save` / `arena_restore`
+> and the `__http_entry` / `tcp_serve` bracketing no longer exist (see
+> `docs/ARENA-DECISION.md`). The "safety valve" below is gone; the
+> section is kept to explain what changed and why the cycle exposure
+> is now broader. RC is the only reclaim mechanism.
 
-`arena_save()` snapshots the bump cursor; `arena_restore(handle)`
-rewinds it (`internal/codegen/wasmbin/runtime.go:694-709`:
-*"free everything allocated since the save in one pointer-store"* /
-*"rewinds the bump cursor to handle"*). The rewind is
-refcount-blind: it reclaims live, dead, and cyclic allocations
-identically. So **inside an arena scope, a cycle is harmless** —
-its storage dies with the arena.
+### The arena used to mask request-scoped cycle leaks (removed)
 
-### The per-handler arena makes request-scoped cycles safe
+Historically `arena_save()` snapshotted the bump cursor and
+`arena_restore(handle)` rewound it — a refcount-blind reset that
+reclaimed live, dead, and cyclic allocations identically. The
+wasi-http `__http_entry` wrapper and `std/tcp.fern`'s `tcp_serve`
+loop wrapped each request in that save/restore, so **request-scoped
+cycles did not leak**: anything a handler allocated for a request,
+cycles included, died at request end regardless of refcount. That was
+the design's safety valve for the common edge-function shape.
 
-The wasi-http entry wrapper `__http_entry` wraps each request in an
-arena save/restore:
+### After removal: request-scoped cycles leak too
 
-- `internal/codegen/wasmbin/wasi_http.go:269-271` —
-  `arena_handle = arena_save()` at the top of the handler.
-- `internal/codegen/wasmbin/wasi_http.go:912-913` —
-  `arena_restore(arena_handle)` at the bottom.
+With the arena gone, per-request memory is reclaimed only by RC as
+references drop. RC cannot collect cycles, so a cycle a handler builds
+while serving a request is **no longer reclaimed at request end** — it
+survives until process exit and accumulates across requests.
 
-Everything `handle()` allocates for a request — including any cycle
-it constructs while building a response — is rewound when the
-request finishes. **Request-scoped cycles do not leak**, even with
-pure RC and even with free-on, because the arena reset reclaims
-them regardless of their refcounts. This is the design's existing
-safety valve and it covers the common edge-function shape.
+### Process-lifetime cycles leak (unchanged)
 
-### Process-lifetime cycles leak
-
-The danger is data that lives *across* `arena_restore`:
+These always leaked and still do:
 
 - **`state { }` module-level variables** (`docs/LANGUAGE-DIRECTION.md`
-  ~815-890). State-rooted allocations are deliberately routed to a
-  **persistent heap region** (the two-cursor allocator; persistent
-  cursor survives `arena_restore`) precisely so a `state`-rooted
-  `Map`/`T[]` *survives* request teardown. That persistence is the
-  point — and it is exactly what defeats the arena safety net. A
-  cycle reachable from a `state` var is never rewound. Over many
-  requests it accumulates and the process OOMs.
-- **Any long-lived accumulator** in a native accept-loop server
-  (the arm64 socket/accept model) that isn't inside a per-iteration
-  arena, or any value returned/stored past the arena boundary.
+  ~815-890). State-rooted allocations are routed to a **persistent
+  heap region** (the two-cursor allocator) so a `state`-rooted
+  `Map`/`T[]` survives request teardown. A cycle reachable from a
+  `state` var is never reclaimed.
+- **Any long-lived accumulator** in a native accept-loop server that
+  outlives a single request.
 
-So the precise risk statement is:
+So the precise risk statement is now:
 
-> A long-running Fern process leaks iff it constructs a reference
-> cycle whose storage outlives the arena scope that allocated it —
-> in practice, a cycle reachable from `state { }` or from a
-> persistent accumulator that crosses `arena_restore`.
+> A long-running Fern HTTP server leaks any reference cycle a handler
+> constructs — request-scoped cycles (formerly reclaimed by the arena
+> reset, now leaked) as well as cycles reachable from `state { }` or a
+> persistent accumulator.
 
-Request-scoped cycles: **safe** (arena reclaims). Process-lifetime
-cycles: **leak unboundedly**.
+Request-scoped cycles: **now leak** (previously reclaimed by the
+arena). Process-lifetime cycles: **leak unboundedly** (unchanged).
+This raises the priority of a real cycle collector (§5+).
 
 ---
 

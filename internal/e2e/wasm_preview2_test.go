@@ -1500,9 +1500,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // request HeaderMap's backing string[]s before populating them from
 // fields.entries; this guards that those arrays are valid empty
 // growable arrays (len read from the canonical -4 slot) rather than
-// relying on the bytes preceding the allocation — which a per-request
-// arena reset reuses with stale data, so request 2+ would otherwise
-// read a garbage length.
+// relying on the bytes preceding the allocation, so request 2+ does
+// not read a garbage length from recycled memory.
 func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1570,7 +1569,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(5 * time.Second)
 	// Several distinct values, sent in sequence to the same instance,
-	// so request 2+ runs against arena memory the prior request wrote.
+	// so request 2+ runs against memory the prior request used.
 	wants := []string{"first", "second-value", "third"}
 	for i, want := range wants {
 		var resp *http.Response

@@ -10544,11 +10544,6 @@ func TestArm64Args(t *testing.T) {
 	}
 }
 
-// arm64 arena_save / arena_restore — snapshot the bump cursor
-// and rewind to discard everything allocated between the two
-// calls. Verifies both helpers are wired up and that
-// reclaim is observable as heap_ptr returning to its saved
-// value.
 // Mirror of TestX86_64SliceMake — slice construction +
 // indexing now works on arm64 for all four element strides.
 func TestArm64SliceMake(t *testing.T) {
@@ -10600,20 +10595,6 @@ func TestArm64SliceMake(t *testing.T) {
 		if code != c.want {
 			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
 		}
-	}
-}
-
-func TestArm64Arena(t *testing.T) {
-	_, code := compileAndRunArm64(t, `function main(): i32 {
-    var s1: string = "hello, " + "world!"; // alloc
-    var saved: i32 = arena_save();
-    var s2: string = "throwaway-" + "junk"; // alloc, will be reclaimed
-    arena_restore(saved);
-    var s3: string = "after-" + "restore"; // alloc reuses s2's space
-    return s1.len() + s3.len();
-}`)
-	if code != 13+13 {
-		t.Errorf("exit = %d, want 26 (len(s1) + len(s3))", code)
 	}
 }
 
@@ -10713,10 +10694,10 @@ function main(): i32 {
 // HTTP/1.1 request, calls the user handler, and writes the
 // serialised response back. Then this test sends two
 // back-to-back requests on separate connections and asserts
-// the bodies — the second one round-trips through a freshly
-// reset per-request arena (via `tcp_serve`'s `arena_save` /
-// `arena_restore` wrap), proving the arena reset actually
-// reclaims handler-built allocations rather than leaking.
+// the bodies — the second one reuses the same long-lived
+// process, proving handler-built allocations from the first
+// request are reclaimed (by reference counting) rather than
+// leaking across requests.
 //
 // Runs under qemu-aarch64; the binary opens a real TCP socket
 // on the host's kernel (user-mode emulation forwards syscalls
@@ -10811,9 +10792,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatalf("server never bound on %s within 10s", addr)
 	}
 
-	// Two requests, two connections — second one exercises
-	// the arena_save / arena_restore round-trip that
-	// reclaims the first request's allocations.
+	// Two requests, two connections — the second reuses the
+	// process after the first request's allocations have been
+	// reclaimed by reference counting.
 	cases := []struct {
 		req  string
 		want string
@@ -10931,16 +10912,6 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		{"args", `function main(): i32 {
     return (args()).len();
 }`, 1},
-		// arena_save / arena_restore — snapshot + rewind the
-		// bump cursor. Both leaf helpers (one ldr / one str
-		// against __fern_heap_ptr).
-		{"arena", `function main(): i32 {
-    var s1: string = "hello, " + "world!";
-    var saved: i32 = arena_save();
-    var s2: string = "throwaway-" + "junk";
-    arena_restore(saved);
-    return s1.len();
-}`, 13},
 		// stdin().read_line() — exercises the .bss buffer +
 		// byte-by-byte read syscall + Option[string] result.
 		// CI runs the binary with no stdin attached, so the
@@ -11370,15 +11341,12 @@ function main(): i32 {
 func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
-    var before: i32 = arena_save();
     var f = answer;
     var x: i32 = f();
-    var after: i32 = arena_save();
-    if (after != before) { return 99; }
     return x;
 }`)
 	if code != 7 {
-		t.Errorf("exit = %d, want 7 (no alloc + f() returned 7); 99 means the closure pair was allocated", code)
+		t.Errorf("exit = %d, want 7 (chained no-capture alias returns 7)", code)
 	}
 }
 
@@ -12409,14 +12377,6 @@ func TestArm64ReadWriteFileRoundtrip(t *testing.T) {
 	}
 }
 
-// State-rooted Map.set inside an arena cycle (the HTTP-handler
-// shape). Without the two-cursor allocator, Map.set's grow path
-// would allocate the new backing buffer in the per-request
-// arena and arena_restore would reclaim it — leaving the state
-// Map's data pointer dangling on the next call. The fix routes
-// state-rooted allocs through a separate persistent cursor that
-// arena_save / arena_restore never touch.
-//
 // Function calls with more arguments than the register-arg
 // window (8 on AAPCS64). Args 9+ live on the caller's stack
 // at [sp+0..]. The prologue copies them from there into the

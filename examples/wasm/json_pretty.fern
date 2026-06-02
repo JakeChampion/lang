@@ -4,11 +4,10 @@
 // Showcases: the auto-injected JsonValue enum, recursive
 // match (over JNull / JBool / JNumber / JString / JArray /
 // JObject), MapIter for ordered object iteration, the
-// `s.repeat(n)` indentation helper, build-once-print-once
-// arena_save() / arena_restore() if you wanted to free the
-// parser's intermediate allocations. The implicit per-handler
-// arena (tcp_serve's per-request cursor rewind) doesn't fire
-// for CLI mode — main runs once and the OS reaps the heap.
+// `s.repeat(n)` indentation helper, build-once-print-once.
+// The parser's intermediate allocations are reclaimed by
+// reference counting as they fall out of scope; for CLI mode
+// the OS reaps the heap on exit anyway (main runs once).
 //
 //   $ echo '{"a":1,"b":[true,null,3.14]}' | wasmtime json_pretty.wasm
 //   {
