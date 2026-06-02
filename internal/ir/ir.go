@@ -2019,30 +2019,32 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	}
 }
 
-// discardedOwnedTempType classifies the value left on the operand stack by
-// a bare `expr;` statement whose result is discarded. When that expr
-// materialises a FRESH owned rc-tracked temporary — one that aliases no
-// borrowed value and, being discarded, escapes nowhere — it returns the
-// value's static type and true, so the statement boundary can DEC it
-// (rc==1 → free) instead of OpDrop'ing an owned allocation on the floor.
-// That floor-drop is the unbounded statement-temporary leak documented in
-// docs/RC-PERCEUS-PLAN.md (stage (a): a discarded `a + b;` concat buffer).
-//
-// Scope is deliberately the unambiguous fresh-ALLOCATING shapes that
+// freshOwnedRcTempType classifies an expression that, when evaluated,
+// materialises a FRESH owned rc-tracked temporary — a brand-new box / heap
+// string that aliases no borrowed value. It returns the value's static type
+// and true for exactly the unambiguous fresh-ALLOCATING shapes that
 // rhsTainted / computeFreeEligible treat as untainted-owned: array / struct
 // / tuple literals, string concat (Binary.IsStringConcat), and string slice
 // (SliceExpr whose result is a string — the runtime copies into a new owned
 // buffer). These are exactly the RHS shapes that make a bound `var t = …`
-// freeEligible, so dec'ing the discarded temp is as safe as the already-
-// shipped exit-sweep dec of that bound var. Ident / field / index reads are
-// borrowed VIEWS (the owner upstream or the exit sweep accounts for them)
-// and are never matched. Calls are excluded on purpose — a method call can
-// alias its receiver (`arr.push(x)` returns the receiver buffer), so dec'ing
-// its result would double-free; owned call-ARG temps are a later stage.
-// MakeClosure is also excluded for now (a discarded bare closure literal is
-// effectively nonexistent in real code, and the per-closure capture-drop
-// thunk is keyed by local name) — those keep their prior plain-drop.
-func (b *builder) discardedOwnedTempType(e ast.Expr) (ast.Type, bool) {
+// freeEligible, so DEC'ing such a temp is as safe as the already-shipped
+// exit-sweep dec of that bound var.
+//
+// Two consuming sites use it to reclaim the unbounded statement-temporary
+// leak (docs/RC-PERCEUS-PLAN.md):
+//   - stage (a): a discarded bare-ExprStmt `a + b;` / `[x, y];` decs in place
+//     (emitOwnedTempStackDrop) instead of OpDrop'ing the allocation.
+//   - stage (b): an owned-temp passed as a borrowed arg to a non-retain-sink
+//     call (`foo(a + b)`) is stashed and dec'd after the call.
+//
+// Ident / field / index reads are borrowed VIEWS (the owner upstream or the
+// exit sweep accounts for them) and are never matched — dec'ing one would
+// over-release. Calls are excluded — a method call can alias its receiver
+// (`arr.push(x)` returns the receiver buffer), so dec'ing its result would
+// double-free. MakeClosure is excluded for now (a bare closure temp is
+// effectively nonexistent, and the per-closure capture-drop thunk is keyed
+// by local name) — those keep their prior plain handling.
+func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
 	}
@@ -2068,7 +2070,7 @@ func (b *builder) discardedOwnedTempType(e ast.Expr) (ast.Type, bool) {
 // emitOwnedTempStackDrop releases a FRESH owned rc temporary whose value is
 // currently on top of the operand stack — the stage-(a) replacement for the
 // plain OpDrop a discarded ExprStmt would otherwise emit (see
-// discardedOwnedTempType). The value aliases nothing borrowed and escapes
+// freshOwnedRcTempType). The value aliases nothing borrowed and escapes
 // nowhere, so a single dec is exactly balanced (rc==1 → free). It mirrors
 // the per-type drop bodies the exit sweep / emitVarReinitDropOld use, but
 // consumes the value in place rather than from a named slot — so the only
@@ -5827,13 +5829,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		//
 		// Stage (a) statement-temp reclamation: when the discarded value
 		// is a FRESH owned rc temporary (a literal / concat / string slice
-		// that aliases nothing and escapes nowhere — discardedOwnedTempType),
+		// that aliases nothing and escapes nowhere — freshOwnedRcTempType),
 		// DEC it instead of dropping an owned allocation on the floor.
 		// Without this a bare `a + b;` / `[x, y];` leaks its box every time.
-		// Gated inside discardedOwnedTempType on RcFreeEnabled, so free-off
+		// Gated inside freshOwnedRcTempType on RcFreeEnabled, so free-off
 		// stays byte-identical to the plain-drop baseline below.
 		if exprLeavesValue(n.Expr, b.info) {
-			if t, ok := b.discardedOwnedTempType(n.Expr); ok {
+			if t, ok := b.freshOwnedRcTempType(n.Expr); ok {
 				b.emitOwnedTempStackDrop(t)
 				break
 			}
@@ -8886,6 +8888,43 @@ func (b *builder) call(n *ast.Call) error {
 // future per-call wrapping (formerly state-rooted persistent-
 // mode toggles) can be re-introduced without duplicating every
 // call-lowering case.
+// calleeRetainsAnyArg reports whether a direct-call callee MOVES / retains a
+// fresh rc arg into a container without an inc — making it unsafe for the
+// stage-(b) post-call dec to free that arg (it would UAF the stored element).
+// These are exactly the Call escapes computeFreeEligible taints (so a bound-
+// equivalent temp there is INELIGIBLE): Map_set moves a fresh value / key into
+// the map, Array_push moves a fresh element into the buffer. Variant
+// constructors (the third escape) lower via emitEnumNew and never reach the
+// generic direct-call arg loop, but are listed for completeness / safety.
+func calleeRetainsAnyArg(name string) bool {
+	switch name {
+	case "__method_Map_set", "__method_Array_push":
+		return true
+	}
+	return false
+}
+
+// resultCannotAliasArg reports whether a call result of type t provably
+// cannot BE or CONTAIN any rc-tracked argument value — true only for a
+// CONCRETE scalar (number incl. usize / bool / float / void). This is the
+// stage-(b) safety gate: a post-call arg dec fires immediately, so it is
+// only safe when the arg is dead at that point, which requires the result
+// not to alias it. A pointer-shaped result could be / wrap the arg (a
+// callee returning its own arg — `id`/`pick` — or a struct built from it),
+// and an UNRESOLVED generic result (ast.ParamType `T`, or nil) hides
+// exactly those identity-return shapes (id[T](x)->x, pick[T](c,a,b)->a|b)
+// behind a non-pointer-looking type var — both observed to UAF when the
+// result was bound and read later (diff-oracle seeds 1392/1596/1836). So
+// only a concrete scalar result opts a call into arg reclamation; every
+// other shape keeps its prior safe-leak.
+func resultCannotAliasArg(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
+		return true
+	}
+	return false
+}
+
 func (b *builder) callBody(n *ast.Call) error {
 	id, ok := n.Callee.(*ast.Ident)
 	if !ok {
@@ -9458,7 +9497,59 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// Stage (b) statement-temp reclamation: a FRESH owned rc temporary
+	// passed as a borrowed arg to a normal direct call (`foo(a + b)`) is
+	// never dec'd by anyone — the callee borrows it (no callee-side dec
+	// under the Phase-2d borrow model) and the caller drops the operand on
+	// the floor. So stash each such arg's value in a scratch slot and dec
+	// it right after the call.
+	//
+	// CRITICAL safety gate — CONCRETE-SCALAR RESULT ONLY
+	// (resultCannotAliasArg). The dec fires immediately after the call, so
+	// it is only safe when the arg is DEAD at that point. If the callee
+	// RETURNS its arg (`pick[T](c,a,b)` → `if c { a } else { b }`;
+	// `id[T](x)` → `x`) the result aliases the arg, and a caller that binds
+	// / reads the result later (`var v = pick(false, x, Pair{...}); v.fst`)
+	// would touch freed memory (observed: diff-oracle seeds 1392/1596/1836
+	// segfault). Only a concrete scalar result (number / bool / float /
+	// void) provably cannot BE or CONTAIN the arg. Note a pointer result is
+	// excluded, AND so is an unresolved generic result — b.exprType(n)
+	// returns the generic's bare type var `T` (ast.ParamType), which is the
+	// exact shape an identity-return hides behind, so resultCannotAliasArg
+	// rejects it too. Every excluded shape keeps its prior safe-leak.
+	//
+	// Further gated to the plain direct-call path (a FuncSig callee, not
+	// shadowed by a local, not pair-form, not map_new's arg-injecting
+	// builtin) and EXCLUDING retain sinks: __method_Map_set MOVES a fresh
+	// value/key into the map with no inc (see the set-retain block above —
+	// "transfer their rc=1 to the map"), so dec'ing it would free the stored
+	// element (UAF); __method_Array_push is the array analogue.
+	_, calleeIsLocal := b.locals[id.Name]
+	_, calleeIsFunc := b.info.FuncSigs[id.Name]
+	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
+		resultCannotAliasArg(b.exprType(n)) &&
+		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+	var argTempSlots []int32
+	var argTempTypes []ast.Type
 	for _, a := range n.Args {
+		if reclaimArgTemps {
+			if tt, ok := b.freshOwnedRcTempType(a); ok {
+				// Evaluate into a scratch slot (typed so two-word strings
+				// store/load correctly), then reload for the call. Records
+				// the slot for the post-call dec below.
+				slot := b.allocSlot()
+				b.locals[fmt.Sprintf("__argtmp_%d", slot)] = slot
+				b.scratchType[slot] = tt
+				if err := b.expr(a); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				argTempSlots = append(argTempSlots, slot)
+				argTempTypes = append(argTempTypes, tt)
+				continue
+			}
+		}
 		if err := b.expr(a); err != nil {
 			return err
 		}
@@ -9541,6 +9632,15 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.emitRepackPairAsHeapBox(width); err != nil {
 					return err
 				}
+			}
+			// Stage (b): dec each stashed owned-temp arg now that the
+			// call has consumed (borrowed) it. emitOwnedSlotDrop is
+			// net-zero on the operand stack, so the call's result (if
+			// any) sitting underneath is left untouched. reclaimArgTemps
+			// required kind == OpCallDirect (not pair-form), so the
+			// result is a single value / void — never the rebox'd pair.
+			for i, slot := range argTempSlots {
+				b.emitOwnedSlotDrop(slot, argTempTypes[i])
 			}
 			return nil
 		}
@@ -10039,6 +10139,20 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	if !ok {
 		return
 	}
+	b.emitOwnedSlotDrop(idx, t)
+}
+
+// emitOwnedSlotDrop releases the OWNED rc value in local slot `idx` per its
+// static type `t` — the shared per-type drop body behind emitVarReinitDropOld
+// (loop-body var reinit) and the stage-(b) post-call dec of stashed owned-temp
+// call args. Each branch mirrors the exit sweep exactly (deep array / struct /
+// enum / tuple drop, Map column reclaim, string str_dec/rc_dec) and is net-zero
+// on the operand stack, so a value sitting underneath is left untouched.
+// Callers are responsible for the borrow-aware gating (RcFreeEnabled +
+// owned-ness): emitVarReinitDropOld checks freeEligible / localNameUnique /
+// !movedLocals; the call-arg path only stashes provably-fresh owned temps
+// (freshOwnedRcTempType) passed to non-retain-sink calls.
+func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 	switch ty := t.(type) {
 	case ast.ArrayType:
 		// Owned array: free the buffer at rc 0 — the O(N) loop reclamation.
