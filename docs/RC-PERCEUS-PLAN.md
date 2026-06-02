@@ -1733,6 +1733,36 @@ cancellation — bounded, but separable, so it ships last.
   - `internal/ir/move_on_return_test.go` — template for the
     analysis-level tests.
 
+#### Completion ordering (decided 2026-06-02)
+
+Driving the plan to 100%. Ordering by dependency depth and risk, revised
+as findings land:
+
+1. **5d** — enum/Cons-cell reuse in `match` arms + field-store elision.
+   Ready, no external deps, completes the reuse family.
+2. **5h** — block-scoped drops for loop-body locals (the real
+   unbounded-leak fix). Ready in principle but has live over-release
+   hazards — see the sharpened risk analysis in §5h below before coding.
+3. **5f** — build the alias analysis, then the freeing-dec for replaced
+   pointer fields.
+4. **SSO native flip** — arm64 §1→§9, then mirror on x86_64 (the deep
+   prerequisite for 5g). Tracked in `docs/SSO-NATIVE-FLIP-STATUS.md`.
+5. **5g** — heap-string rc (only after the SSO flip is green on both
+   native backends).
+6. **Phase 6** — measurements, self-host-through-itself, retire
+   `strbuf_*` if reuse makes it redundant.
+
+**Verification constraint (this environment).** Local toolchain is
+x86_64-native + `wasmtime` (+ `wasm-tools`) only — **no `qemu-aarch64`
+and no aarch64 cross-gcc**. Reclaim/free changes must therefore land
+x86_64-local + wasm-local verified (full e2e + the free-on/free-off
+differential gate + `__rc_underflow_count() == 0`), with **arm64 riding
+CI** — the same x86_64-proven / arm64-rides-CI split #1724 established.
+The arm64 differential gate is the non-negotiable check there precisely
+because qemu user-mode masks the over-release class these changes risk;
+when arm64 CI flags one, fall back to the safe-leak path on arm64 (as
+the overwrite-string slice did) until it's verified on hardware.
+
 #### Remaining frontier (code-grounded design + risk)
 
 As of this writing the drop-reuse + pair-cancellation work is merged and
@@ -1890,6 +1920,59 @@ Two fix shapes:
     Smaller diff, but leaves the dec at re-declaration rather than at
     scope close — fine for `var`, which can't be read before its own
     re-init.
+
+###### Code-grounded findings for shape (b) (2026-06-02 investigation)
+
+Shape (b) is the smaller diff, but a *naive* "dec-old on every var-init"
+is unsound. Three concrete hazards, each confirmed against the current
+lowering — a correct shape (b) must gate around all three:
+
+1. **Zero-init dedups by name; shadowed vars have distinct slots.** The
+   Phase 1d-v safety net (`ir.go` ~`zeroSeen[v.Name]`) zeroes each
+   rc-tracked local *once keyed by name*. But `info.Locals[fn]` holds a
+   *separate `*ast.Var` entry per declaration* (checker `:3322` appends
+   unconditionally), so two same-name `var x` in sibling/nested scopes
+   are distinct slots sharing one name — only one gets zeroed. A
+   dec-old on the un-zeroed inner slot reads garbage → UB. Verified:
+   `var x=[1,2]; if(..){ var x=[3,4,5]; sink(x);} return x.len()` returns
+   2 on both interp and x86_64 (distinct slots, correctly managed), so
+   shadowing is real and must be excluded.
+   → **Gate: only fire when the name appears exactly once in
+   `info.Locals[fn]`** (single slot, guaranteed zero-init'd). This is
+   provably safe regardless of the scope-remap mechanism, and the
+   loop-body leak target is virtually always a unique-name `var`.
+
+2. **Move-out + re-declaration over-release (the decisive one).** If a
+   loop-body `var`'s value is *moved out* — `b.moveSites` via
+   move-on-alias (`var y = row`), move-on-return, move-on-construction —
+   ownership transfers and `row` is excluded from the exit dec. A
+   dec-old at `row`'s next-iteration re-declaration would then release a
+   value whose ownership already moved → over-release / UAF under
+   free-on. Call-arg use is *safe* (borrowed, inc-free under the Phase 2d
+   borrow model — `consume(row)` does not move), so the hazard is
+   specifically the move-site shapes.
+   → **Gate: skip dec-old if any use of the var is a move site.**
+   `moveSites` is keyed by AST node, not name, so this needs either a
+   name-keyed "was moved" set derived alongside `computeMovedLocals`, or
+   a conservative "this var participates in no `moveSites`" precheck.
+   Resolving this cleanly is the remaining design work for shape (b).
+
+3. **Closure dec-old leaks captures (acceptable, matches reassignment).**
+   `isArrayTypeOfLocal` includes `FuncType`; a flat `__fern_rc_dec` of an
+   old closure box frees the env but does *not* run the per-closure
+   capture-drop thunk, so captures leak. This mirrors the existing
+   reassignment dec-old exactly (the `else { rc_dec }` branch), so it's
+   consistent and leak-but-never-UAF — not a blocker, just noted.
+
+The dec body itself mirrors the reassignment Ident hook for the SAME
+rc-tracked set and gates (owned arrays → `__fern_arr_dec`; struct / enum
+/ closure → flat `__fern_rc_dec`; owned strings on x86_64/wasm,
+arm64-excluded per 5g; tuples excluded as in the overwrite path), *minus*
+the self-mutation / map-COW branches — those can't arise for a var-init
+RHS, since a fresh binding can never reference its own prior slot value.
+Gate the whole emission on `ast.RcFreeEnabled` so the free-off baseline
+is byte-identical to today (no new ops), keeping the differential gate's
+free-on == free-off comparison the meaningful one.
 
 Risk / testing parity: any heap reclaim added here MUST follow the
 x86_64-native + wasm-proven / arm64-deferred split #1724 established —
