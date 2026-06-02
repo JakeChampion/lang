@@ -688,6 +688,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		off := int32(0)
 		for _, cap := range fn.Captures {
+			off = ast.CaptureAlign(off, cap.Type, c.ptrW)
 			lamCtx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}
 			off += captureSlotSize(cap.Type, c.ptrW)
 		}
@@ -1051,6 +1052,7 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	}
 	off := int32(0)
 	for _, cap := range fn.Captures {
+		off = ast.CaptureAlign(off, cap.Type, c.ptrW)
 		ctx.byName[cap.Name] = capInfo{offset: int(off), typ: cap.Type}
 		off += captureSlotSize(cap.Type, c.ptrW)
 	}

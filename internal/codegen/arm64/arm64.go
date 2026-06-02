@@ -5146,6 +5146,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	slots := make([]slot, n)
 	envSize := int32(0)
 	for i, cap := range hoisted.Captures {
+		envSize = ast.CaptureAlign(envSize, cap.Type, 8)
 		s := arm64CaptureSlotSize(cap.Type, 8)
 		slots[i] = slot{off: envSize, size: s, typ: cap.Type}
 		envSize += s

@@ -2125,6 +2125,10 @@ func emitClosureMakeAlloc(body []byte, site closureMakeSite, ctx *emitCtx) ([]by
 	scratchOff := uint32(0)
 	for i, c := range caps {
 		wasmSlotOffsets[i] = site.scratchBase + scratchOff
+		// Apply the shared capture alignment (a no-op on wasm32,
+		// where ptrW=4 keeps every capture packed) so the env layout
+		// stays in lockstep with the canonical closureconv offsets.
+		envSize = uint32(ast.CaptureAlign(int32(envSize), c.Type, 4))
 		envOffsets[i] = envSize
 		scratchOff += uint32(len(captureScratchValtypes(c.Type)))
 		envSize += uint32(captureSlotSize(c.Type))

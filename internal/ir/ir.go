@@ -3201,6 +3201,10 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 	}
 	off := int32(0)
 	for _, c := range caps {
+		// Same 8-byte alignment the env layout uses (closureconv +
+		// the backend store loops) so the drop reads each capture at
+		// the offset it was written to.
+		off = ast.CaptureAlign(off, c.Type, ptrW)
 		slot := irCaptureSlotSize(c.Type, ptrW)
 		if _, isStr := c.Type.(ast.StringType); isStr && ast.UseTwoWordStrings(ptrW) {
 			// Two-word string capture (wasm + arm64-TwoWordOverride):

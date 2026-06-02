@@ -4048,6 +4048,12 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 
 	c.checkBlock(fn.Body, root)
 
+	// Build the capture list fresh: checkFunc can run more than once
+	// over the same local function (e.g. re-analysis passes), and an
+	// `append` would accumulate duplicates — which broke arm64's
+	// mixed-width capture layout (a `[string, i32]` closure became
+	// `[string, i32, string, i32]` and segfaulted).
+	fn.Captures = nil
 	for _, name := range captureOrder {
 		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
 	}
@@ -5104,6 +5110,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.loopDepth = prevLoop
 		c.switchDepth = prevSwitch
 		c.current = prev
+		// Fresh list, not append — see the matching note in checkFunc;
+		// re-analysis would otherwise duplicate captures.
+		n.Captures = nil
 		for _, name := range captureOrder {
 			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
 		}
