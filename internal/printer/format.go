@@ -19,13 +19,16 @@
 //   - Comments at end-of-file (after the last declaration) emit at
 //     depth zero.
 //
-// Blank lines aren't preserved (the lexer doesn't track them); a
-// future change could either thread a "blank-line set" alongside
-// the comment list or have the lexer emit blank-run markers.
+// Blank lines between statements are preserved as a single separator:
+// the parser records whitespace-only source lines on prog.BlankLines,
+// and formatBlock emits one blank line before a statement whose source
+// had a blank immediately above it (runs collapse to one; a leading
+// blank just inside `{` is dropped). Top-level declarations are always
+// blank-separated.
 //
 // Format → parse → Format is byte-stable: a second pass produces
-// identical output. parse → Format → parse round-trips the AST
-// shape modulo blank lines.
+// identical output (the blank-line rule is local and idempotent).
+// parse → Format → parse round-trips the AST shape.
 package printer
 
 import (
@@ -37,7 +40,11 @@ import (
 
 // Format returns idiomatic source text for prog.
 func Format(prog *ast.Program) string {
-	f := &formatter{comments: prog.Comments}
+	blanks := make(map[int]bool, len(prog.BlankLines))
+	for _, ln := range prog.BlankLines {
+		blanks[ln] = true
+	}
+	f := &formatter{comments: prog.Comments, blanks: blanks}
 	// Imports cluster at the top of the file with no blank line
 	// between consecutive ones — they read like a single block
 	// that introduces the module's dependencies. A blank line
@@ -112,7 +119,21 @@ const formatIndent = "  "
 type formatter struct {
 	b        strings.Builder
 	comments []ast.Comment
-	ci       int // index of the next un-emitted comment in comments
+	ci       int          // index of the next un-emitted comment in comments
+	blanks   map[int]bool // 1-based source lines that were blank
+}
+
+// blankBefore reports whether the source had a blank line immediately
+// above the construct at source line `line` (accounting for any leading
+// comment block, whose first line is `topLine`). The rule is local —
+// "is the line directly above blank?" — so it collapses runs of blank
+// lines to one and stays idempotent across Format passes.
+func (f *formatter) blankBefore(line int) bool {
+	top := line
+	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line < line {
+		top = f.comments[f.ci].Pos.Line
+	}
+	return f.blanks[top-1]
 }
 
 // drainLeading emits every still-pending comment whose source line
@@ -314,7 +335,12 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		return
 	}
 	f.b.WriteString("{\n")
-	for _, s := range blk.Stmts {
+	for i, s := range blk.Stmts {
+		// Preserve an author's blank-line separator between statements
+		// (never a leading blank just inside the opening brace).
+		if i > 0 && f.blankBefore(s.Pos().Line) {
+			f.b.WriteByte('\n')
+		}
 		f.drainLeading(s.Pos().Line, depth+1)
 		f.indent(depth + 1)
 		f.formatStmt(s, depth+1)

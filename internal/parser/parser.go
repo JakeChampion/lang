@@ -65,6 +65,7 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	p := &parser{tokens: tokens, ctx: ctx}
 	prog := p.parseProgram()
 	prog.Comments = comments
+	prog.BlankLines = blankLineNumbers(src)
 	prog.TypeRefs = p.typeRefs
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -73,6 +74,19 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 		return prog, diag.Errors(p.errors)
 	}
 	return prog, nil
+}
+
+// blankLineNumbers returns the 1-based line numbers that are blank
+// (whitespace-only) in src. The formatter uses these to preserve an
+// author's blank-line grouping inside blocks.
+func blankLineNumbers(src string) []int {
+	var out []int
+	for i, line := range strings.Split(src, "\n") {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, i+1)
+		}
+	}
+	return out
 }
 
 // parseExprFromText runs a one-shot parser over `text` and returns

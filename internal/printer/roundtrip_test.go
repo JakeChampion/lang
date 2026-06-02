@@ -135,8 +135,12 @@ func zeroPositions(prog *ast.Program) {
 	// TypeRefs is a parser-recorded side table whose source-position
 	// content varies with whitespace, so positions diverge between
 	// the source and printer output even when the underlying AST
-	// matches. Drop it for the comparison.
+	// matches. Drop it for the comparison. Comments / BlankLines are
+	// likewise whitespace-keyed side tables (their line numbers shift
+	// as formatting re-flows the source), not part of the AST shape.
 	prog.TypeRefs = nil
+	prog.Comments = nil
+	prog.BlankLines = nil
 }
 
 func zeroBlock(b *ast.Block) {

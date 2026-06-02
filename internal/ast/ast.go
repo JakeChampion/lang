@@ -1620,6 +1620,11 @@ type Program struct {
 	// codegen) ignore this field; the formatter walks it alongside
 	// the AST to re-emit comments at their original positions.
 	Comments []Comment
+	// BlankLines lists the 1-based source line numbers that were
+	// blank (whitespace-only). Like Comments, only the formatter
+	// consumes it — to preserve an author's blank-line grouping
+	// inside blocks rather than collapsing every statement together.
+	BlankLines []int
 	// TypeRefs records every named-type reference the parser saw
 	// in a type-annotation slot (`var c: Color`, `Option[T]`,
 	// `pub function f(x: Point): Result[i32, Err]`, field type

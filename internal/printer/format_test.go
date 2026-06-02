@@ -609,3 +609,47 @@ function main(): i32 { return 0; }`)
 		t.Errorf("alias lost on round-trip: %+v", prog.Imports[0])
 	}
 }
+
+// Blank lines between statements inside a block are preserved as a
+// single separator (runs collapse to one); a leading blank just inside
+// the opening brace is dropped, and no blank is invented where the
+// source had none.
+func TestFormatPreservesBlankLines(t *testing.T) {
+	src := "function f(): i32 {\n\n  var x = 1;\n  var y = 2;\n\n\n  return x + y;\n}\n"
+	got := formatSrc(t, src)
+	want := strings.Join([]string{
+		"function f(): i32 {",
+		"  var x = 1;", // leading blank after `{` dropped
+		"  var y = 2;",
+		"", // the author's separator (two source blanks collapsed to one)
+		"  return x + y;",
+		"}",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+	// Idempotent: formatting the output again is a no-op.
+	if again := formatSrc(t, got); again != got {
+		t.Errorf("not idempotent:\nfirst:\n%q\nsecond:\n%q", got, again)
+	}
+}
+
+// A blank line above a leading comment counts as the separator for the
+// statement the comment introduces.
+func TestFormatBlankLineAboveComment(t *testing.T) {
+	src := "function f(): i32 {\n  var x = 1;\n\n  // next group\n  return x;\n}\n"
+	got := formatSrc(t, src)
+	want := strings.Join([]string{
+		"function f(): i32 {",
+		"  var x = 1;",
+		"",
+		"  // next group",
+		"  return x;",
+		"}",
+		"",
+	}, "\n")
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
