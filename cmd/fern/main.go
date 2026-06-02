@@ -33,8 +33,8 @@
 // diagnostics are mapped back to the lines you wrote in the document.
 //
 // The -cc and -qemu flags override the linker and emulator.
-// Note: the formatter strips `//` line comments and blank lines
-// because the lexer drops both before they reach the AST.
+// The formatter preserves `//` line comments (leading, trailing, and
+// standalone) and an author's blank-line grouping between statements.
 package main
 
 import (
