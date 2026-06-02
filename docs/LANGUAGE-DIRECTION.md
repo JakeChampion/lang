@@ -816,78 +816,25 @@ to smallest. Status pending unless marked.
   `url_router.fern`, `todo_api.fern`) and the prelude itself
   use `.push(v)` instead of the per-T helpers.
 
-- **Module-level `var` with handler-scoped lifetime — full
-  shape shipped (scalars + string + Map + T[]).**
-  `state { var hits: i32 = 0; var greeting: string = "hi, "
-  + name(); }` declares module-global mutable variables.
-  Literal scalar inits bake into the wasm `(global $state_NAME
-  (mut T) (T.const N))` directly (or arm64's `.data` label).
-  Non-literal inits and `string` allocations route through a
-  synthesised `__state_init` start function.
+- **Module-level `state { ... }` block — REMOVED.** Fern briefly
+  shipped a `state { var hits: i32 = 0; ... }` construct for
+  module-global mutable variables that persisted across
+  `handle()` calls (process-lifetime state for long-running
+  HTTP servers). It was backed by a **two-cursor allocator** — a
+  persistent heap region selected by an `__fern_alloc_mode` flag,
+  with `OpPersistentSet`/`OpPersistentRestore` toggling the mode
+  around state-rooted call sites so Map/T[] mutations survived
+  the per-request `arena_restore`.
 
-  Init runtime: wasm wires `(start $__state_init)` so it
-  runs at instantiation, before any host-callable export.
-  arm64 calls `__state_init` from `_start` after
-  `__fern_heap_init` and before `main`. State init runs
-  while the bump cursor is still at its initial position, so
-  any allocations the init expression performs (e.g. string
-  concat) end up below the per-request `arena_save` point
-  and are preserved across `arena_restore`.
-
-  IR-level: `OpLoadGlobal` / `OpStoreGlobal` are emitted at
-  Ident reads / Assign writes whose name resolves to a
-  `state{}` var (Info.StateVars on the checker side). The
-  checker registers the state-var table during the first
-  pass so function bodies in the second pass see them as
-  module-global lookups.
-
-  **Type scope today** — `i32`, `u32`, `i64`, `u64`, `f32`,
-  `f64`, `boolean`, `string`, `T[]`, and `Map[K, V]` over
-  any of those. The **two-cursor allocator** (one persistent
-  cursor at mem[44] + a per-request arena cursor at mem[40]
-  + an active-mode flag at mem[48]) routes state-rooted
-  allocations to the persistent heap region so Map / T[]
-  mutations survive `arena_restore` at handler exit. State-
-  rooted call sites are detected at IR-lowering time:
-  `__method_<Type>_<method>(<state-var>, args...)` toggles
-  persistent mode for the duration of the call (including
-  arg evaluation), composing through nested state-rooted
-  calls via a save/restore shape. Same machinery wraps
-  state-var assignments so RHS-side allocations (string
-  concat, struct/enum construction) also land in persistent.
-
-  User structs / enums-with-payload state vars still
-  reject — those mutation patterns vary per method and
-  haven't been audited yet.
-
-  **Persistent region is fixed-size 4 MiB** today (reserved
-  upfront in linear memory between the static data segment
-  and the arena heap). Programs without `state{}` keep the
-  original single-cursor layout (no upfront cost).
-
-  **Host-runtime caveat for wasi-http.** State persistence
-  across `handle()` calls depends on the host keeping the
-  wasm instance alive between requests. `wasmtime serve`
-  instantiates a fresh module per request, so each call
-  re-runs the global init — the `TestWasmPreview2HttpStateCompiles`
-  e2e covers compilation + a single request only.
-  Production hosts that reuse instances (Fastly Compute,
-  Netlify Edge Functions, Unikraft Cloud, custom wasmtime
-  embeddings) DO see persistence; the wasm-level semantics
-  are correct.
-
-  **Backend coverage.** wasm + wasi-http: full two-cursor
-  allocator with state-rooted call-site wrapping. arm64:
-  state{} declarations + init expressions ride the shared IR;
-  the persistent cursor is a no-op today since arm64 is CLI-
-  focused and there's no `arena_save` / `arena_restore` cycle
-  yet. Native HTTP server use cases on arm64 (socket / bind /
-  listen / accept syscalls + an accept loop that calls
-  `handle()` per connection) are tracked separately but
-  follow the same backend-parity principle — when arm64 grows
-  a handler model the persistent-cursor wiring lifts straight
-  from the wasm side.
-
+  The whole feature has since been removed: the `state` syntax,
+  the AST node, the checker state-var table, the IR persistent-
+  mode ops, and (once the arena reset was also dropped) the
+  two-cursor allocator itself — both native backends now use a
+  single bump cursor reclaimed by reference counting. There is
+  currently **no language-level mechanism for process-lifetime
+  state**; if reintroduced it would want a cycle collector
+  alongside it (a `state`-rooted cycle leaks unboundedly — see
+  docs/CYCLE-COLLECTION-ANALYSIS.md).
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix
   promotes to a float literal) all parse as the suffixed type
@@ -960,9 +907,10 @@ example cleanup. Each item lands as its own PR:
    captures + wide (i64 / u64 / f64) captures both live;
    `closureconv.rewriteExpr` CastExpr / SliceExpr cases
    landed alongside.
-9. ~~Module-level `state { ... }` block~~ — **first PR
-   shipped (scalars only).** Pointer-shaped state waits on
-   the two-cursor allocator.
+9. ~~Module-level `state { ... }` block~~ — **shipped, then
+   REMOVED.** See the "Module-level `state { ... }` block —
+   REMOVED" note above; the feature and its two-cursor
+   allocator are gone.
 
 Each landed item gets a follow-up commit that simplifies
 one or more `examples/wasm/` programs, demonstrating the

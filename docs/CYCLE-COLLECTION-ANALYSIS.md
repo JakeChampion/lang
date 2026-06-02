@@ -3,6 +3,20 @@
 Date: 2026-06-01.
 Status: design analysis. No compiler code changed by this doc.
 
+> **UPDATE (2026-06-02): `state { }` and the persistent heap are
+> gone.** This analysis repeatedly frames process-lifetime cycles
+> around `state { }` module variables and proposes collectors
+> scoped to "the persistent heap." Both the `state` feature and
+> the two-cursor allocator's persistent region have since been
+> removed — there is no longer a persistent heap, and no
+> language-level mechanism for process-lifetime state at all.
+> Read the persistent-heap-specific passages below as
+> conditional on `state` (or an equivalent) being reintroduced.
+> The core finding is unchanged and now *broader*: RC cannot
+> collect cycles, and with the per-request arena reset also gone,
+> **any** cycle a long-running handler builds leaks until exit
+> (not just `state`-rooted ones).
+
 ## TL;DR
 
 **Yes — a Fern program can construct a reference cycle today, and
@@ -273,13 +287,15 @@ survives until process exit and accumulates across requests.
 
 These always leaked and still do:
 
-- **`state { }` module-level variables** (`docs/LANGUAGE-DIRECTION.md`
-  ~815-890). State-rooted allocations are routed to a **persistent
-  heap region** (the two-cursor allocator) so a `state`-rooted
-  `Map`/`T[]` survives request teardown. A cycle reachable from a
-  `state` var is never reclaimed.
+- **`state { }` module-level variables** — *removed* (see the banner
+  at the top). While they existed, state-rooted allocations were
+  routed to a persistent heap region (the two-cursor allocator) so a
+  `state`-rooted `Map`/`T[]` survived request teardown, and a cycle
+  reachable from a `state` var was never reclaimed. With `state` gone
+  there is no such process-lifetime root today.
 - **Any long-lived accumulator** in a native accept-loop server that
-  outlives a single request.
+  outlives a single request — this is now the *only* way to root a
+  process-lifetime cycle.
 
 So the precise risk statement is now:
 
@@ -520,9 +536,9 @@ when "cycles eventually become a thing."
 | Free-on-zero on by default | `internal/ast/ast.go:414` (`RcFreeEnabled = true`) |
 | `rc_dec`/drop has no cycle collector | `docs/RC-PERCEUS-PLAN.md:743-756`, `:71-77`, `:2074-2076` |
 | RC plan's "no cycles" assumption (now stale) | `docs/RC-PERCEUS-PLAN.md:71-77`, `:2003-2004` |
-| Arena reset reclaims regardless of rc | `internal/codegen/wasmbin/runtime.go:694-709` |
-| Per-handler arena save/restore | `internal/codegen/wasmbin/wasi_http.go:269-271`, `:912-913` |
-| `state{}` persistent heap survives `arena_restore` | `docs/LANGUAGE-DIRECTION.md` ~815-890 |
+| ~~Arena reset reclaims regardless of rc~~ | removed (see `docs/ARENA-DECISION.md`) |
+| ~~Per-handler arena save/restore~~ | removed (see `docs/ARENA-DECISION.md`) |
+| ~~`state{}` persistent heap survives `arena_restore`~~ | both removed (see top banner) |
 | Roc disallows cycles via types | `docs/RC-PERCEUS-PLAN.md:71-72` |
 | Perceus paper / Bacon-Rajan deferred | `docs/RC-PERCEUS-PLAN.md:2070-2076` |
 

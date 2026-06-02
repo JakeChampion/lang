@@ -119,8 +119,8 @@ shared-value mutation, and the immutability rule does not touch them:
   in-place edit of a shared box. These stay.
 - Tuples have **no** element-assign target (immutable already —
   `CYCLE-COLLECTION-ANALYSIS.md` §1c).
-- `state { }` slot writes are local-variable reassignment, not
-  field mutation.
+- (`state { }` has since been removed, so its slot writes are no
+  longer an assignment-target shape to consider here.)
 
 **So the only assignment-target shape this migration removes is
 `*ast.FieldAccess` (1a) and `*ast.CaptureRef` (1b) in `b.assign`.**

@@ -2696,23 +2696,16 @@ func (g *generator) emitDataSections() {
 		g.line("")
 		g.line(".section .bss")
 		if g.usesAlloc {
-			// Two-cursor bump allocator. See arm64 + the x86-64
-			// emitAllocRuntime comment.
+			// Single-cursor bump allocator. See the x86-64
+			// emitAllocRuntime comment. (The persistent cursor +
+			// mode byte that used to back the `state` feature are
+			// gone.)
 			g.line(".align 8")
 			g.label("__fern_heap_ptr")
 			g.line("\t.quad 0")
 			g.line(".align 8")
 			g.label("__fern_heap_end")
 			g.line("\t.quad 0")
-			g.line(".align 8")
-			g.label("__fern_persistent_ptr")
-			g.line("\t.quad 0")
-			g.line(".align 8")
-			g.label("__fern_persistent_end")
-			g.line("\t.quad 0")
-			g.line(".align 4")
-			g.label("__fern_alloc_mode")
-			g.line("\t.byte 0")
 		}
 		if g.usesEnv {
 			g.line(".align 8")
@@ -2776,13 +2769,13 @@ func (g *generator) emitDataSections() {
 // subsequent allocs stay 16-aligned for any pointer-pair
 // operations the caller might issue.
 //
-// Two-cursor allocator: a 1-byte `__fern_alloc_mode` selects
-// which region to bump. mode 0 → default (transient) region;
-// mode 1 → persistent (state-rooted allocations live for the
-// program lifetime). Both regions are bump-only and reclaimed
-// by reference counting as values die, not by a cursor reset.
-// See the arm64 generator's `emitAllocRuntime` comment for the
-// full rationale.
+// Single-cursor bump allocator: every allocation bumps the one
+// `__fern_heap_ptr` / `__fern_heap_end` pair. A second
+// "persistent" region (selected by a `__fern_alloc_mode` byte)
+// used to back the removed `state` feature; with `state` and the
+// per-request arena reset both gone, the mode flag and the
+// persistent cursors were deleted. See the arm64 generator's
+// `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.fern through itself (its O(N²) string-builder allocates ~290 MB for that)
 	g.line("")
@@ -2796,8 +2789,8 @@ func (g *generator) emitAllocRuntime() {
 	// stepping on the caller. r13 in particular holds the
 	// mmap address hint between the label-pick and the
 	// (possibly skipped) mmap call.
-	g.emit("push rbx") // holds &ptr (heap or persistent cursor)
-	g.emit("push r12") // holds &end
+	g.emit("push rbx") // holds &__fern_heap_ptr
+	g.emit("push r12") // holds &__fern_heap_end
 	g.emit("push r13") // holds mmap address hint
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
@@ -2826,18 +2819,10 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("ret")
 		g.label(".Lalloc_bump")
 	}
-	g.emit("movzx eax, byte ptr [rip + __fern_alloc_mode]")
-	g.emit("test eax, eax")
-	g.emit("jnz .Lalloc_pick_persistent")
+	// Single bump region: rbx/r12 = heap cursor/end.
 	g.emit("lea rbx, [rip + __fern_heap_ptr]")
 	g.emit("lea r12, [rip + __fern_heap_end]")
-	g.emit("mov r13d, 0x10000000") // arena hint (256 MiB)
-	g.emit("jmp .Lalloc_have_labels")
-	g.label(".Lalloc_pick_persistent")
-	g.emit("lea rbx, [rip + __fern_persistent_ptr]")
-	g.emit("lea r12, [rip + __fern_persistent_end]")
-	g.emit("mov r13d, 0x20000000") // persistent hint (512 MiB)
-	g.label(".Lalloc_have_labels")
+	g.emit("mov r13d, 0x10000000") // mmap address hint
 	g.emit("mov rax, [rbx]")
 	g.emit("test rax, rax")
 	g.emit("jnz .Lalloc_have_heap")
