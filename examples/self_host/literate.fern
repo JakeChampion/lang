@@ -1,0 +1,440 @@
+// examples/self_host/literate.fern — a port of internal/literate
+// (the Knuth-style tangle engine) into Fern itself.
+//
+// A literate Fern program is a Markdown document whose `fern` code
+// chunks (`<<name>>=`) are reassembled — *tangled* — from the root
+// chunk `<<*>>` into a compilable program. Chunks resolve out of
+// document order, same-name definitions concatenate, and a chunk
+// reference's indentation is prepended to its expansion.
+//
+// This is the first slice of literate support in the self-hosted
+// compiler. Tangling is a pure `string -> string` transform: it
+// slots in ahead of `lexer.tokenize` in pipeline.fern, so the rest
+// of the self-hosted pipeline needs no changes to compile a literate
+// document. (The Go implementation lives in internal/literate; this
+// is the parity port that lets the feature survive the Go retirement.)
+//
+// Parity with the Go engine covers: out-of-order chunk references,
+// same-name concatenation, indentation-preserving expansion,
+// display-only (headerless) `fern` fences, and the three structured
+// errors — missing root, undefined reference, cyclic reference.
+// Deferred (the Go side has it; not needed until the self-hosted
+// diagnostics grow line rendering): the per-line provenance map that
+// remaps tangled positions back onto the document, and Weave.
+//
+// Data model note: the document's chunk bodies are kept as a single
+// FLAT array of tagged Piece lines (chunk name + text + line), not as
+// an array of chunks each holding its own array of lines. The flat
+// shape is both simpler — concatenation is just "every Piece with this
+// chunk name, in document order" — and it avoids a reference-counting
+// bug in the current native backends: the nested array-of-chunks model
+// (each chunk holding a BodyLine[]) reproducibly segfaulted / returned
+// corrupted >8-byte (heap) strings under x86-64 and arm64 codegen while
+// the AST interpreter ran it correctly. The flat single-level array is
+// robust on all three. The precise minimal trigger hasn't been pinned
+// down (it needs expand's full shape — recursion + a union return over
+// the nested arrays), so this is a deliberate workaround, not a fix;
+// see the backend RC-Perceus path.
+//
+// Goal — like lexer.fern — to validate the language can express the
+// engine's logic end-to-end. `main()` runs assertions and returns 0
+// on success; a non-zero code identifies which one failed. The Go
+// build still owns the production path; this file is run from a Go
+// test that compiles + executes it on both backends.
+
+// ─── byte classifiers ──────────────────────────────────────────────
+
+// is_hspace — horizontal whitespace (space or tab). Lines are split
+// on '\n' before any trimming, so newlines never reach here; '\r' is
+// folded in so CRLF documents trim cleanly.
+function is_hspace(b: i32): boolean { return b == 32 || b == 9 || b == 13; }
+
+function is_backtick(b: i32): boolean { return b == 96; }
+
+// ─── small string helpers ──────────────────────────────────────────
+// The self-hosted modules are deliberately import-free (cf. lexer.fern),
+// so the handful of string utilities the engine needs are inlined here
+// rather than pulled from std/string.
+
+function starts_with(s: string, prefix: string): boolean {
+    var pn: i32 = prefix.len();
+    if (pn > s.len()) { return false; }
+    return s[0:pn] == prefix;
+}
+
+function ends_with(s: string, suffix: string): boolean {
+    var sn: i32 = suffix.len();
+    var n: i32 = s.len();
+    if (sn > n) { return false; }
+    return s[n - sn:n] == suffix;
+}
+
+// contains reports whether `sub` occurs anywhere in `s` (used to
+// reject a `>>` inside a chunk name).
+function contains(s: string, sub: string): boolean {
+    var sn: i32 = sub.len();
+    var n: i32 = s.len();
+    if (sn == 0) { return true; }
+    if (sn > n) { return false; }
+    var i: i32 = 0;
+    while (i + sn <= n) {
+        if (s[i:i + sn] == sub) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// trim strips leading and trailing horizontal whitespace.
+function trim(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && is_hspace(s[a])) { a = a + 1; }
+    while (b > a && is_hspace(s[b - 1])) { b = b - 1; }
+    return s[a:b];
+}
+
+// leading_ws returns the run of leading spaces/tabs (the indentation
+// prepended to a chunk reference's expansion).
+function leading_ws(s: string): string {
+    var k: i32 = 0;
+    var n: i32 = s.len();
+    while (k < n && (s[k] == 32 || s[k] == 9)) { k = k + 1; }
+    return s[0:k];
+}
+
+// split_lines splits on '\n', mirroring Go's strings.Split: a trailing
+// newline yields a trailing empty line, so 1-based line numbers line up
+// with the source.
+function split_lines(src: string): string[] {
+    var lines: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var n: i32 = src.len();
+    while (i < n) {
+        if (src[i] == 10) {
+            lines = lines.push(src[start:i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    lines = lines.push(src[start:n]);
+    return lines;
+}
+
+function join_lines(lines: string[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (i > 0) { s = s + "\n"; }
+        s = s + lines[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// ─── fence + chunk-marker recognition ──────────────────────────────
+
+// fence_open_len returns the length of the backtick run that opens a
+// fenced code block (>= 3), or 0 if the line isn't a fence opener.
+// Leading indentation is allowed.
+function fence_open_len(line: string): i32 {
+    var ws: string = leading_ws(line);
+    var i: i32 = ws.len();
+    var n: i32 = line.len();
+    var count: i32 = 0;
+    while (i < n && is_backtick(line[i])) { count = count + 1; i = i + 1; }
+    if (count >= 3) { return count; }
+    return 0;
+}
+
+// fence_lang returns the info-string language token of a fence opener
+// (the first word after the backtick run).
+function fence_lang(line: string): string {
+    var ws: string = leading_ws(line);
+    var i: i32 = ws.len();
+    var n: i32 = line.len();
+    while (i < n && is_backtick(line[i])) { i = i + 1; }
+    var info: string = trim(line[i:n]);
+    var j: i32 = 0;
+    var m: i32 = info.len();
+    while (j < m && info[j] != 32 && info[j] != 9) { j = j + 1; }
+    return info[0:j];
+}
+
+// is_fence_close reports whether `line` closes a block opened with a
+// run of `open_len` backticks — a line whose only content is a
+// backtick run at least that long.
+function is_fence_close(line: string, open_len: i32): boolean {
+    var t: string = trim(line);
+    var n: i32 = t.len();
+    if (n < open_len) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        if (!is_backtick(t[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// is_header reports whether a trimmed line is a chunk-definition
+// header `<<NAME>>=` with a non-empty NAME free of `>>`.
+function is_header(t: string): boolean {
+    if (!starts_with(t, "<<") || !ends_with(t, ">>=")) { return false; }
+    var inner: string = t[2:t.len() - 3];
+    if (contains(inner, ">>")) { return false; }
+    return trim(inner).len() > 0;
+}
+
+function header_name(t: string): string {
+    return trim(t[2:t.len() - 3]);
+}
+
+// is_ref reports whether a trimmed line is a chunk reference `<<NAME>>`.
+// A header ends in `>>=` (not `>>`), so headers are excluded here.
+function is_ref(t: string): boolean {
+    if (!starts_with(t, "<<") || !ends_with(t, ">>")) { return false; }
+    var inner: string = t[2:t.len() - 2];
+    if (inner.len() == 0) { return false; }
+    if (contains(inner, "<<") || contains(inner, ">>")) { return false; }
+    return true;
+}
+
+function ref_name(t: string): string {
+    return trim(t[2:t.len() - 2]);
+}
+
+// ─── document model ────────────────────────────────────────────────
+
+// Piece is one physical body line of one chunk, tagged with the chunk
+// it belongs to and its 1-based line number in the document. The whole
+// document tangles down to a flat Piece[] in document order; a chunk's
+// body is every Piece whose `chunk` matches, which makes same-name
+// concatenation fall out for free.
+pub struct Piece { chunk: string, text: string, line: i32 }
+
+// header_index returns the index of the `<<NAME>>=` header within a
+// fern block's body lines (skipping leading blanks), or -1 when the
+// first non-blank line isn't a header (a display-only block).
+function header_index(body: string[]): i32 {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var t: string = trim(body[i]);
+        if (t.len() == 0) {
+            i = i + 1;
+        } else {
+            if (is_header(t)) { return i; }
+            return 0 - 1;
+        }
+    }
+    return 0 - 1;
+}
+
+// parse_pieces walks the document and collects every chunk-body line as
+// a tagged Piece. Prose, non-`fern` fences, and headerless `fern`
+// blocks contribute nothing to the tangle.
+pub function parse_pieces(src: string): Piece[] {
+    var pieces: Piece[] = [];
+    var lines: string[] = split_lines(src);
+    var n: i32 = lines.len();
+    var i: i32 = 0;
+    while (i < n) {
+        var open_len: i32 = fence_open_len(lines[i]);
+        if (open_len > 0) {
+            var lang: string = fence_lang(lines[i]);
+            // Gather the block's body lines (and their document line
+            // numbers) up to the closing fence.
+            var body: string[] = [];
+            var body_lines: i32[] = [];
+            var i2: i32 = i + 1;
+            while (i2 < n && !is_fence_close(lines[i2], open_len)) {
+                body = body.push(lines[i2]);
+                body_lines = body_lines.push(i2 + 1);
+                i2 = i2 + 1;
+            }
+            if (lang == "fern") {
+                var hidx: i32 = header_index(body);
+                if (hidx >= 0) {
+                    var name: string = header_name(trim(body[hidx]));
+                    var k: i32 = hidx + 1;
+                    while (k < body.len()) {
+                        pieces = pieces.push(Piece { chunk: name, text: body[k], line: body_lines[k] });
+                        k = k + 1;
+                    }
+                }
+            }
+            if (i2 < n) { i = i2 + 1; } else { i = i2; }
+        } else {
+            i = i + 1;
+        }
+    }
+    return pieces;
+}
+
+function chunk_defined(pieces: Piece[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < pieces.len()) {
+        if (pieces[i].chunk == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function stack_has(stack: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stack.len()) {
+        if (stack[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ─── expansion ─────────────────────────────────────────────────────
+
+pub struct ExpandOk { lines: string[] }
+pub struct ExpandErr { msg: string, line: i32 }
+pub type ExpandResult = ExpandOk | ExpandErr;
+
+// expand emits the expansion of chunk `name`, prefixing every line
+// with `indent`. `active` is the set of chunks currently being
+// expanded, for cycle detection.
+function expand(pieces: Piece[], name: string, indent: string, active: string[]): ExpandResult {
+    if (stack_has(active, name)) {
+        return ExpandErr { msg: "literate: chunk <<" + name + ">> is defined in terms of itself (cyclic chunk reference)", line: 0 };
+    }
+    var active2: string[] = active.push(name);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < pieces.len()) {
+        if (pieces[i].chunk == name) {
+            var text: string = pieces[i].text;
+            var t: string = trim(text);
+            if (is_ref(t)) {
+                var rn: string = ref_name(t);
+                if (!chunk_defined(pieces, rn)) {
+                    return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: pieces[i].line };
+                }
+                var sub: ExpandResult = expand(pieces, rn, indent + leading_ws(text), active2);
+                match (sub) {
+                    ExpandOk(o) => {
+                        var k: i32 = 0;
+                        while (k < o.lines.len()) {
+                            out = out.push(o.lines[k]);
+                            k = k + 1;
+                        }
+                    },
+                    _ => { return sub; }
+                }
+            } else {
+                out = out.push(indent + text);
+            }
+        }
+        i = i + 1;
+    }
+    return ExpandOk { lines: out };
+}
+
+// ─── tangle ────────────────────────────────────────────────────────
+
+pub struct TangleOk { code: string }
+pub struct TangleErr { msg: string, line: i32 }
+pub type TangleResult = TangleOk | TangleErr;
+
+// tangle expands the root chunk `<<*>>` into compilable Fern source.
+// Errors: no root chunk, reference to an undefined chunk, or a cyclic
+// chunk reference.
+pub function tangle(src: string): TangleResult {
+    var pieces: Piece[] = parse_pieces(src);
+    if (!chunk_defined(pieces, "*")) {
+        return TangleErr { msg: "literate: no root chunk <<*>> defined", line: 1 };
+    }
+    var empty: string[] = [];
+    var r: ExpandResult = expand(pieces, "*", "", empty);
+    match (r) {
+        ExpandOk(o) => { return TangleOk { code: join_lines(o.lines) }; },
+        ExpandErr(e) => { return TangleErr { msg: e.msg, line: e.line }; }
+    }
+}
+
+// ─── self-test ─────────────────────────────────────────────────────
+// main() asserts the engine against the same cases as the Go unit
+// tests. Exit 0 = all passed; a non-zero code identifies the failure.
+
+// tangle_code runs tangle and returns the code on success or "" on
+// error (the success assertions compare against the expected code).
+function tangle_code(src: string): string {
+    var r: TangleResult = tangle(src);
+    match (r) {
+        TangleOk(o) => { return o.code; },
+        TangleErr(e) => { return ""; }
+    }
+}
+
+function is_err(src: string): boolean {
+    var r: TangleResult = tangle(src);
+    match (r) {
+        TangleOk(o) => { return false; },
+        TangleErr(e) => { return true; }
+    }
+}
+
+function err_line(src: string): i32 {
+    var r: TangleResult = tangle(src);
+    match (r) {
+        TangleOk(o) => { return 0 - 1; },
+        TangleErr(e) => { return e.line; }
+    }
+}
+
+function main(): i32 {
+    // 1. Root chunk only.
+    var s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
+    if (tangle_code(s1) != "fn main() {}") { return 1; }
+
+    // 2. Out-of-order reference: the helper is defined *after* its use.
+    var s2: string =
+        "```fern\n<<*>>=\n<<greeting>>\ncall();\n```\n"
+        + "\nDefined only now:\n\n"
+        + "```fern\n<<greeting>>=\nfn greeting() {}\n```\n";
+    if (tangle_code(s2) != "fn greeting() {}\ncall();") { return 2; }
+
+    // 3. Same-name definitions concatenate in document order.
+    var s3: string =
+        "```fern\n<<*>>=\n<<body>>\n```\n"
+        + "```fern\n<<body>>=\nline one\n```\n"
+        + "```fern\n<<body>>=\nline two\n```\n";
+    if (tangle_code(s3) != "line one\nline two") { return 3; }
+
+    // 4. A reference's indentation is prepended to its expansion.
+    var s4: string =
+        "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+        + "```fern\n<<body>>=\nreturn 7;\n```\n";
+    if (tangle_code(s4) != "fn main() {\n    return 7;\n}") { return 4; }
+
+    // 5. A headerless `fern` block is display-only — never tangled.
+    var s5: string =
+        "```fern\nnot a chunk, illustrative only\n```\n"
+        + "```fern\n<<*>>=\nfn main() {}\n```\n";
+    if (tangle_code(s5) != "fn main() {}") { return 5; }
+    if (contains(tangle_code(s5), "illustrative")) { return 6; }
+
+    // 6. Missing root chunk is an error.
+    if (!is_err("```fern\n<<helper>>=\nfn h() {}\n```\n")) { return 7; }
+
+    // 7. Undefined reference is an error, reported at the ref's line.
+    var s7: string = "```fern\n<<*>>=\n<<nope>>\n```\n";
+    if (!is_err(s7)) { return 8; }
+    if (err_line(s7) != 3) { return 9; }
+
+    // 8. Cyclic chunk reference is an error.
+    var s8: string =
+        "```fern\n<<*>>=\n<<a>>\n```\n"
+        + "```fern\n<<a>>=\n<<b>>\n```\n"
+        + "```fern\n<<b>>=\n<<a>>\n```\n";
+    if (!is_err(s8)) { return 10; }
+
+    // 9. Longer fences (````) and a header after a blank line.
+    var s9: string = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
+    if (tangle_code(s9) != "fn main() {}") { return 11; }
+
+    return 0;
+}
