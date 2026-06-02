@@ -115,6 +115,21 @@ and a **chunk index** appendix listing every chunk alphabetically —
 each links to its definition and to the chunks that reference it
 (noweb's identifier index), with the root and any unused chunks marked.
 
+`fern -fmt` formats the Fern code inside a document's chunks in place,
+leaving prose, fences, and chunk headers untouched (`-w` writes back,
+`-d` shows a diff):
+
+```sh
+fern -fmt -w prog.fern.md
+```
+
+A chunk body is reformatted when it parses on its own — as either a set
+of top-level declarations or a statement list. Bodies the formatter
+can't parse standalone — fragments split mid-construct, or chunks
+containing `<<reference>>` lines (not valid Fern) — are left **verbatim**,
+so formatting never corrupts a document. Comments and blank-line
+grouping inside a chunk are preserved.
+
 A `.fern.md` file is also accepted directly by every mode that takes a
 `.fern` file — it is tangled in memory first:
 
