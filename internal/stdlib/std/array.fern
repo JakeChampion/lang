@@ -863,10 +863,12 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // `internal/e2e/generic_array_combinators_test.go`.)
 //
 // Eager by design — every combinator returns a fresh array (or a
-// scalar). Arena bump-allocation makes the intermediate copies
-// cheap, which is the right v1 trade for the small-n CLI / edge-
-// handler workloads. A lazy `std/iter` can layer on later without
-// reworking these bodies.
+// scalar). Allocation is a cheap single-cursor heap bump, and the
+// intermediate arrays are reclaimed by reference counting as their
+// last references drop (the OS reclaims the rest at process exit) —
+// the right v1 trade for the small-n CLI / edge-handler workloads.
+// A lazy `std/iter` can layer on later without reworking these
+// bodies.
 
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
 // Empty → empty. The workhorse transform.

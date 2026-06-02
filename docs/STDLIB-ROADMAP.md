@@ -31,8 +31,7 @@ What lang's prelude / built-ins cover today, as a baseline:
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`
   / `delete` / `iter` / `keys` / `values` / `len` / `clear`.
 - **i/o**: `read_file`, `write_file`, `open_reader/writer/appender`,
-  `read_line`, `read_chunk`, `exit`, `arena_save/restore`,
-  `env`, `args`, `random_bytes`.
+  `read_line`, `read_chunk`, `exit`, `env`, `args`, `random_bytes`.
 - **net**: `tcp_listen / accept / recv / send / close`,
   `http_parse_request`, `http_serialize_response`, `tcp_serve`.
 - **misc**: `format(fmt, args)`, f-string literals.
@@ -132,9 +131,10 @@ builds on these. Today `for` + `push` is the only path.
 
 **Inspiration**: Rust Iter, Elixir Enum, Gleam list.
 
-**Notes**: Eager (returns arrays) is fine for v1; arena
-allocation makes copying cheap. Needs the generic-fn-over-`T[]`
-machinery (push already exercises it).
+**Notes**: Eager (returns arrays) is fine for v1; cheap
+single-cursor heap-bump allocation plus RC reclaim of the
+intermediates makes copying acceptable. Needs the
+generic-fn-over-`T[]` machinery (push already exercises it).
 
 **Status**: shipped — all seven landed in `std/array` as free
 generic functions over `T[]` (the exact surface above; the
