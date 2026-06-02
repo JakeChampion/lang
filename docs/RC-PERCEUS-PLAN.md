@@ -2119,15 +2119,41 @@ drop's `is_unique` / null guards no-op). Verified by
 destructure loop holds a flat 96 B (plain tuple 32 B) at N=50 vs N=5000,
 with 0 over-releases over 200 iterations and value-correct sums. The
 differential gate + self-host VM/parser suites stay green.
-Known gap (follow-up): a destructure binding of a STRUCT / ENUM element
-flat-dec's on reinit (matching `emitVarReinitDropOld`'s policy — nested
-fields/payloads leak but never UAF); a deep per-binding drop would mirror
-the exit sweep's struct/enum handling.
+**Struct / enum loop-var deep reclamation — SHIPPED ON ALL THREE
+BACKENDS (2026-06-02).** Closes the gap the destructure slice flagged,
+for ALL loop-body struct/enum vars (regular `var` re-decl + destructure
+bindings, which both go through `emitVarReinitDropOld`).
+`emitVarReinitDropOld`'s `StructType`/`EnumType` case did a flat
+`__fern_rc_dec` — which neither frees the box (`rc_dec` has no free path)
+nor recurses into rc-tracked fields/payloads — so a `var b = Box{ data:
+[...] }` / `var e = Arr([...])` re-declared in a loop leaked its box AND
+its nested heap field every iteration but the last (probe: 2400 →
+240000 B). The fix routes the reinit drop through the generated
+`__drop_struct_<N>` / `__drop_enum_<N>` fn via `dropFnNameFor` (the same
+helper the exit sweep's `dropStructField` uses), which `is_unique`-gates,
+deep-drops fields/payloads, then `__fern_box_free`s the box; generic-enum
+instantiations register into `b.genEnumDrops` for the post-pass worklist.
+Safe because the case is only reached for a `freeEligible` (owned,
+untainted) local — the premature-free that bit escaped values can't arise
+(they're ineligible and skipped) — and every nested drop `is_unique`-gates,
+so a shared field box is only dec'd. Types `dropFnNameFor` declines (Map
+handles, non-uniform / non-heap-boxed generic enums) fall back to the flat
+box dec (leak-but-never-UAF). Verified by
+`Test{X86_64,Arm64,WASM}StructEnumHeapBumpBounded`
+(`internal/e2e/rc_heap_bump_struct_enum_test.go`): a `struct{ data: i32[] }`
+and an `enum Arr(i32[])` loop both hold a flat 96 B at N=50 vs N=5000,
+with 0 over-releases over 200 iterations and value-correct sums. The full
+`internal/ir` + `internal/e2e` suite (incl. the heavy self-host VM/parser
+struct/enum users + the free-on==free-off differential gate) stays green.
+Known gap (follow-up): the struct/enum REASSIGNMENT-overwrite path
+(`s = Other{...}`) still flat-dec's when the in-place reuse
+(`tryStructReuseOverwrite` / `tryEnumReuseOverwrite`) doesn't fire — the
+same deep-drop routing could apply there.
 
 Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
 harness over the self-host + edge-handler workloads to profile hot
-allocation sites, then evaluate retiring `strbuf_*`; destructure-binding
-reclamation for moved tuple/struct elements.
+allocation sites, then evaluate retiring `strbuf_*`; struct/enum
+reassignment-overwrite deep drop.
 
 ## Testing strategy
 

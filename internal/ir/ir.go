@@ -9776,12 +9776,33 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 		b.emit(Op{Kind: OpDrop})
 	case ast.StructType, ast.EnumType:
-		// Single-box rc value: flat dec (nested fields / enum payloads
-		// leak, exactly as the baseline overwrite-dec / exit-sweep flat
-		// path — zero over-release surface).
-		b.emit(Op{Kind: OpLoadLocal, I32: idx})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-		b.emit(Op{Kind: OpDrop})
+		// Owned struct / enum loop var: deep-drop on reinit, mirroring the
+		// exit sweep. A flat __fern_rc_dec here neither frees the box (rc_dec
+		// has no free path) nor recurses into rc-tracked fields / payloads, so
+		// a `var b = Box{ data: [...] }` (or `var e = Arr([...])`) re-declared
+		// in a loop leaked its box AND its nested heap field every iteration
+		// but the last. Route through the generated __drop_struct_<N> /
+		// __drop_enum_<N> fn (via dropFnNameFor — the same one the exit
+		// sweep's dropStructField uses for nested fields), which is_unique-
+		// gates, deep-drops the fields/payloads, then __fern_box_free's the
+		// box. dropFnNameFor registers any generic-enum instantiation into
+		// b.genEnumDrops so the post-pass worklist emits the body.
+		//
+		// We only reach here for a freeEligible (owned, untainted) local, so
+		// the deep recursion is safe — the premature-free that bit escaped
+		// values can't arise (those are ineligible and skipped above). Types
+		// dropFnNameFor declines — Map handles, non-uniform / non-heap-boxed
+		// generic enums — fall back to the flat box dec (leak-but-never-UAF,
+		// exactly as before). Net-zero on the operand stack.
+		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
 	case ast.StringType:
 		// x86_64 / wasm only; arm64 string reclaim is deferred (slice 5g),
 		// so its codegen stays byte-identical (safe-leak) there.
