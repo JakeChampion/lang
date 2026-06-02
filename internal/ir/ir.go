@@ -2537,56 +2537,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// derived) maps and flag-off builds fall through to the plain
 		// box dec.
 		if st, ok := t.(ast.StructType); ok && st.Name == "Map" && ast.RcFreeEnabled && eligible {
-			// Struct/enum-valued maps deep-drop each value via the generated
-			// __drop_map_via_<perValueDrop> loop; array-valued maps use the
-			// generic __map_drop_values (kind 2/3). Both free the buf +
-			// handle via the trailing __fern_map_drop.
-			dropValues := "__map_drop_values"
-			if name, ok := mapValDropName(st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
-				dropValues = name
-			} else if len(st.Args) >= 2 {
-				// Map[K, string]: reclaim each value's string buffer
-				// before freeing the buf + handle.
-				//   wasm (ptrW=4)              : boxed (data, len) cell; str_dec + cell_free.
-				//   native single-word (x86_64): direct data pointer; rc_dec.
-				//   arm64 (ptrW=8 + TwoWord)   : boxed like wasm, but the wasm
-				//                                str_dec / cell_free helpers don't
-				//                                exist on arm64 yet — stay on the
-				//                                pre-slice leaking-but-safe behaviour
-				//                                until a native equivalent lands.
-				// The generated __drop_map_str_values branches on ptrW for the
-				// boxed vs direct shape.
-				if _, isStr := st.Args[1].(ast.StringType); isStr {
-					// Slice 7: every backend now supports string-VALUE
-					// reclamation in maps — wasm two-word + arm64-
-					// TwoWordOverride take the boxed-cell column-walk
-					// path, x86_64 native single-word takes the direct-
-					// pointer column-walk path. genMapStrValDropFn
-					// branches on UseTwoWordStrings to pick the body
-					// shape internally.
-					dropValues = "__drop_map_str_values"
-				}
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			// Map[string, V]: reclaim each key's string buffer.
-			//   two-word ABI (wasm + arm64-TwoWordOverride): boxed (data, len) cell; str_dec + cell_free.
-			//   native single-word (x86_64): direct data pointer; rc_dec.
-			// Generated __drop_map_str_keys branches on UseTwoWordStrings
-			// for the boxed vs direct shape. Independent of the value walk
-			// above (both self-guard on rc==1); runs before the buf + handle
-			// free.
-			if len(st.Args) >= 1 {
-				if _, isStr := st.Args[0].(ast.StringType); isStr {
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-					b.emit(Op{Kind: OpDrop})
-				}
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-			b.emit(Op{Kind: OpDrop})
+			b.emitMapSlotDrop(slot, st)
 			return
 		}
 		// Phase 3 step 3: a user struct with pointer-shaped
@@ -9780,6 +9731,17 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 		b.emit(Op{Kind: OpDrop})
 	case ast.StructType, ast.EnumType:
+		// Map loop var: reclaim the whole map structure (value column +
+		// string-key column + buf + handle) via emitMapSlotDrop, mirroring
+		// the exit sweep. Routing it through emitStructEnumSlotDrop instead
+		// would hit dropFnNameFor's Map decline → a flat box dec that leaks
+		// the buf/handle/values — the `var m = map_new(8)` loop leak the
+		// profiling probe measured (6400 B → 640000 B). Every map-drop helper
+		// self-guards on rc==1, so a shared map only dec's.
+		if st, isMap := ty.(ast.StructType); isMap && st.Name == "Map" {
+			b.emitMapSlotDrop(idx, st)
+			break
+		}
 		// Owned struct / enum loop var: deep-drop on reinit, mirroring the
 		// exit sweep. A flat __fern_rc_dec here neither frees the box (rc_dec
 		// has no free path) nor recurses into rc-tracked fields / payloads, so
@@ -9795,9 +9757,9 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		// We only reach here for a freeEligible (owned, untainted) local, so
 		// the deep recursion is safe — the premature-free that bit escaped
 		// values can't arise (those are ineligible and skipped above). Types
-		// dropFnNameFor declines — Map handles, non-uniform / non-heap-boxed
-		// generic enums — fall back to the flat box dec (leak-but-never-UAF,
-		// exactly as before). Net-zero on the operand stack.
+		// dropFnNameFor declines — non-uniform / non-heap-boxed generic enums
+		// — fall back to the flat box dec (leak-but-never-UAF, exactly as
+		// before). Net-zero on the operand stack.
 		b.emitStructEnumSlotDrop(idx, ty)
 	case ast.StringType:
 		// x86_64 / wasm only; arm64 string reclaim is deferred (slice 5g),
@@ -9923,6 +9885,47 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 		return
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
+// emitMapSlotDrop reclaims the Map value in local slot `slot` — the
+// shared body for the exit sweep and the loop-body re-declaration drop
+// (emitVarReinitDropOld). It frees the value column (struct/enum values
+// via the generated __drop_map_via_<perValueDrop>; array values via the
+// generic __map_drop_values; string values via __drop_map_str_values),
+// then any string-key column (__drop_map_str_keys), then the buf +
+// handle (__fern_map_drop). Every helper self-guards on the map's own
+// rc==1, so a shared map only dec's. Net-zero on the operand stack, so a
+// value sitting underneath (a reinit RHS) is left untouched. Callers gate
+// on RcFreeEnabled + freeEligible.
+func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
+	dropValues := "__map_drop_values"
+	if name, ok := mapValDropName(st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		dropValues = name
+	} else if len(st.Args) >= 2 {
+		// Map[K, string]: reclaim each value's string buffer before freeing
+		// the buf + handle. genMapStrValDropFn branches on UseTwoWordStrings
+		// for the boxed-cell (wasm + arm64-TwoWord) vs direct-pointer
+		// (x86_64 single-word) column shape.
+		if _, isStr := st.Args[1].(ast.StringType); isStr {
+			dropValues = "__drop_map_str_values"
+		}
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	// Map[string, V]: reclaim each key's string buffer. Independent of the
+	// value walk above (both self-guard on rc==1); runs before the buf +
+	// handle free.
+	if len(st.Args) >= 1 {
+		if _, isStr := st.Args[0].(ast.StringType); isStr {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
