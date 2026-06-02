@@ -670,6 +670,27 @@ think they're free additions to make.
   inference fails. Fix shape: seed `sub` from `n.TypeArgs`
   when they're already set. Documented here so the next
   attempt at generic Array methods starts from this context.
+  - **Related gap — FIXED.** A *generic user function* that
+    called an Array method on a `T[]` receiver
+    (`function map[T,U](xs: T[], f) { … out = out.push(f(x)); … }`)
+    failed the post-monomorph re-check with "expected `T[]`, got
+    `i32[]`". Root cause was in `internal/monomorph` rather than
+    the checker: `substituteExpr` had no `*ast.Assign` case, so the
+    `push` call buried in `out = out.push(x)` (typically inside a
+    `for-in` loop body) was never walked, and its stamped
+    `TypeArgs` stayed `[T]` instead of being substituted to the
+    concrete instantiation. The method-signature substitution then
+    ran `T→T` (a no-op) and left the parameter type abstract. Fixed
+    by walking `*ast.Assign` / `*ast.FString` / `*ast.MapLit` /
+    `*ast.EnumLit` in `substituteExpr`, plus `*ast.Defer` /
+    `*ast.Switch` / `For.Step` in `substituteStmt` (every remaining
+    type-bearing node the substitution walker had been skipping).
+    This **unblocks STDLIB-ROADMAP item #1 (generic array
+    combinators)** — `map` / `filter` / `fold` over `T[]` now
+    compile + run on interp, x86-64, and wasm. Guarded by
+    `TestRunSubstitutesMethodCallTypeArgsInGenericBody`
+    (`internal/monomorph`) and `TestGenericArrayCombinators`
+    (`internal/e2e`).
 - **arm64 / x86-64 i64 comparison across the i32::MAX
   boundary returns wrong result**. The expression
   `(la + lb) > 2147483647 as i64` where `la = 2147483647 as

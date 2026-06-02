@@ -114,6 +114,81 @@ function main(): i32 {
 	}
 }
 
+// TestRunSubstitutesMethodCallTypeArgsInGenericBody locks in the
+// fix for a substitution-walker gap: a generic function body that
+// calls an Array method (`push` / `len`) on a `T[]` receiver stamps
+// the method call's `TypeArgs` to `[T]` during the first check. The
+// monomorph clone-substitution walker must rewrite those `TypeArgs`
+// to the concrete instantiation (`[i32]`), or the post-monomorph
+// re-check substitutes the method signature by `T→T` (a no-op) and
+// rejects the concrete element type against the abstract `T[]`.
+//
+// The bug surfaced because `substituteExpr` had no `*ast.Assign`
+// case, so the `push` call inside `out = out.push(x)` (and the
+// whole RHS of any reassignment, e.g. inside a `for-in` loop body)
+// was never walked. Before the fix, monomorph.Run returned
+// "re-check failed (compiler bug): … expected T[], got i32[]".
+func TestRunSubstitutesMethodCallTypeArgsInGenericBody(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "push on T[] inside for-in (map)",
+			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
+    var out: U[] = [];
+    for x in xs { out = out.push(f(x)); }
+    return out;
+}
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var ys: i32[] = map_arr(xs, function (n: i32): i32 { return n * 10; });
+    return ys[0] + ys[1] + ys[2];
+}`,
+		},
+		{
+			name: "push-only generic body",
+			src: `function dup[T](xs: T[]): T[] {
+    var out: T[] = [];
+    for x in xs { out = out.push(x); }
+    return out;
+}
+function main(): i32 {
+    var xs: i32[] = [5, 7];
+    var ys: i32[] = dup(xs);
+    return ys[0] + ys[1];
+}`,
+		},
+		{
+			name: "len method on T[]",
+			src: `function count[T](xs: T[]): i32 {
+    var n: i32 = 0;
+    for x in xs { n = n + xs.len(); }
+    return n;
+}
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    return count(xs);
+}`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(c.src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}
+
 // TestRunHandlesPartiallyInferredGenericCalls — variant
 // constructors like `Ok(x)` and `Err(e)` only fix one of
 // Result[T, E]'s two type parameters via their payload. The
