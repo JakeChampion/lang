@@ -20,6 +20,17 @@
 //	                                     # silent on success, prints
 //	                                     # diagnostics + exits 1 on error.
 //	                                     # `-check -` reads from stdin.
+//	fern -tangle FILE.fern.md            # literate programming: tangle a
+//	                                     # Markdown document's named `fern`
+//	                                     # chunks into plain Fern source on
+//	                                     # stdout (expands the `<<*>>` root).
+//	fern -weave FILE.fern.md             # weave the same document into a
+//	                                     # cross-referenced Markdown reading
+//	                                     # file on stdout.
+//
+// A literate `FILE.fern.md` may be passed to any of the compile / -run /
+// -check / -interp modes directly: it is tangled in memory first, and
+// diagnostics are mapped back to the lines you wrote in the document.
 //
 // The -cc and -qemu flags override the linker and emulator.
 // Note: the formatter strips `//` line comments and blank lines
@@ -46,6 +57,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/literate"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
@@ -70,41 +82,147 @@ func absPath(p string) string {
 	return abs
 }
 
-// formatLoadError renders a structured modload / checker error by
-// pulling each entry's File() and looking that file's source up in
-// the srcs map. Errors without a File() (the checker's pre-decl
-// pass before c.current is set) fall back to entryPath's source.
-// Renders each entry on its own block, matching what the previous
-// in-modload wrapping produced for single-file programs.
-func formatLoadError(err error, srcs map[string]string, entryPath string) error {
+// literateExt marks a literate Fern document — a Markdown file whose
+// `fern` code chunks are tangled into plain Fern before compilation.
+const literateExt = ".fern.md"
+
+// isLiterate reports whether srcPath names a literate Fern document.
+func isLiterate(srcPath string) bool {
+	return strings.HasSuffix(srcPath, literateExt)
+}
+
+// entry bundles a loaded program with everything needed to render its
+// diagnostics. For a literate entry file it also carries the original
+// `.fern.md` source and a position remap from tangled (generated)
+// coordinates back to document coordinates, so a checker error in
+// generated code points at the line the author actually wrote.
+type entry struct {
+	prog   *ast.Program
+	srcs   map[string]string
+	path   string                          // entry path as given (diagnostic headers)
+	src    string                          // source to render entry-file diagnostics against
+	litAbs string                          // abs path of the literate entry, "" when not literate
+	remap  func(ast.Position) ast.Position // tangled→document remap, nil when not literate
+}
+
+// remapFor turns a tangle line map into a position remapper: a tangled
+// position (1-based line into the generated source) maps to its origin
+// line in the `.fern.md` document, with the column shifted back by the
+// indentation tangling prepended. Positions outside the map pass
+// through unchanged.
+func remapFor(lineMap []literate.Line) func(ast.Position) ast.Position {
+	return func(p ast.Position) ast.Position {
+		if p.Line < 1 || p.Line > len(lineMap) {
+			return p
+		}
+		m := lineMap[p.Line-1]
+		col := p.Col - m.ColShift
+		if col < 1 {
+			col = 1
+		}
+		return ast.Position{Line: m.Lit, Col: col}
+	}
+}
+
+// loadEntry loads srcPath through modload. A literate `.fern.md` entry
+// is first parsed and tangled; the generated Fern source is handed to
+// modload via an in-memory override keyed by the document's own path,
+// so disk-relative imports still resolve against its directory. Any
+// load error is returned already formatted (remapped onto the document
+// for a literate entry). The returned entry's format method renders
+// later pipeline errors the same way.
+func loadEntry(srcPath string) (entry, error) {
+	abs := absPath(srcPath)
+	if !isLiterate(srcPath) {
+		prog, srcs, err := modload.Load(srcPath)
+		e := entry{prog: prog, srcs: srcs, path: srcPath}
+		if srcs != nil {
+			e.src = srcs[abs]
+		}
+		if err != nil {
+			return e, e.format(err)
+		}
+		return e, nil
+	}
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return entry{}, err
+	}
+	litSrc := string(srcBytes)
+	doc := literate.Parse(litSrc)
+	tangled, lineMap, err := doc.Tangle()
+	if err != nil {
+		// Tangle errors carry document-coordinate positions already.
+		return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, err))
+	}
+	prog, srcs, lerr := modload.LoadWith(srcPath, map[string]string{abs: tangled})
+	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, litAbs: abs, remap: remapFor(lineMap)}
+	if lerr != nil {
+		return e, e.format(lerr)
+	}
+	return e, nil
+}
+
+// format renders err against the right source for each entry it
+// carries: each diagnostic's File() picks its module's source out of
+// the srcs map, while the literate entry file's diagnostics (and any
+// error with no file attribution) route through the document remap so
+// positions land on the `.fern.md` source. For a non-literate entry
+// (remap nil) this matches the plain per-file modload error rendering.
+func (e entry) format(err error) error {
 	if err == nil {
 		return nil
 	}
-	entryAbs := absPath(entryPath)
-	entrySrc := srcs[entryAbs]
+	entryAbs := absPath(e.path)
 	render := func(one error) string {
 		path := ""
 		if f, ok := one.(diag.Filed); ok {
 			path = f.File()
 		}
-		src := srcs[path]
-		if src == "" {
-			path = entryPath
-			src = entrySrc
+		if path == "" || path == e.litAbs || path == entryAbs {
+			if e.remap != nil {
+				return diag.FormatRemapped(e.path, e.src, e.remap, one)
+			}
+			return diag.Format(e.path, e.src, one)
 		}
-		return diag.Format(path, src, one)
+		if src := e.srcs[path]; src != "" {
+			return diag.Format(path, src, one)
+		}
+		return diag.Format(e.path, e.src, one)
 	}
 	if es, ok := err.(diag.Errors); ok {
 		var b strings.Builder
-		for i, e := range es {
+		for i, one := range es {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			b.WriteString(render(e))
+			b.WriteString(render(one))
 		}
 		return fmt.Errorf("%s", b.String())
 	}
 	return fmt.Errorf("%s", render(err))
+}
+
+// runLiterateTool implements the `-tangle` / `-weave` literate
+// subcommands: parse the `.fern.md` document and write either the
+// tangled Fern source or the woven Markdown to stdout.
+func runLiterateTool(srcPath string, tangle bool) (int, error) {
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return 1, err
+	}
+	src := string(srcBytes)
+	doc := literate.Parse(src)
+	if tangle {
+		code, _, err := doc.Tangle()
+		if err != nil {
+			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		}
+		_, werr := os.Stdout.WriteString(code + "\n")
+		return 0, werr
+	}
+	_, werr := os.Stdout.WriteString(doc.Weave())
+	return 0, werr
 }
 
 func main() {
@@ -122,6 +240,8 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
+	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source and write it to stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. No codegen.")
+	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. No codegen.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
@@ -130,6 +250,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
 		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       fern -tangle FILE.fern.md                  (literate: emit tangled Fern source)")
+		fmt.Fprintln(os.Stderr, "       fern -weave  FILE.fern.md                  (literate: emit woven Markdown)")
 		fmt.Fprintln(os.Stderr, "       fern -targets                                (list supported targets + capabilities)")
 		flag.PrintDefaults()
 	}
@@ -209,6 +331,15 @@ func main() {
 		return
 	}
 
+	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
+		code, err := runLiterateTool(flag.Arg(0), *doTangle)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(code)
+	}
+
 	if flag.NArg() < 1 {
 		flag.Usage()
 		os.Exit(2)
@@ -286,13 +417,13 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 // the full modload pipeline.
 func runInterp(srcPath string, argv []string) (int, error) {
 	var prog *ast.Program
-	var src string
+	var formatErr func(error) error
 	if srcPath == "-" {
 		buf, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return 1, fmt.Errorf("read stdin: %w", err)
 		}
-		src = string(buf)
+		src := string(buf)
 		// modload.LoadSource (not bare parser.Parse) so a piped
 		// program's std/ + core/ imports resolve — the auto-prelude
 		// is gone, so stdlib is in scope only when imported.
@@ -301,23 +432,24 @@ func runInterp(srcPath string, argv []string) (int, error) {
 			return 1, fmt.Errorf("%s", diag.Format("<stdin>", src, err))
 		}
 		prog = p
+		formatErr = func(e error) error { return fmt.Errorf("%s", diag.Format("<stdin>", src, e)) }
 	} else {
-		p, srcs, err := modload.Load(srcPath)
+		e, err := loadEntry(srcPath)
 		if err != nil {
-			return 1, formatLoadError(err, srcs, srcPath)
+			return 1, err
 		}
-		prog = p
-		src = srcs[absPath(srcPath)]
+		prog = e.prog
+		formatErr = e.format
 	}
 	if err := constfold.Fold(prog); err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, formatErr(err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, formatErr(err)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, formatErr(err)
 	}
 
 	ip := interp.New()
@@ -367,14 +499,13 @@ func runInterp(srcPath string, argv []string) (int, error) {
 // are checked too.
 func runCheck(srcPath string) error {
 	var prog *ast.Program
-	var src string
-	var srcs map[string]string
+	var formatErr func(error) error
 	if srcPath == "-" {
 		buf, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("read stdin: %w", err)
 		}
-		src = string(buf)
+		src := string(buf)
 		// modload.LoadSource so a piped program's std/ + core/
 		// imports resolve now that the auto-prelude is gone.
 		p, _, err := modload.LoadSource(src)
@@ -382,25 +513,24 @@ func runCheck(srcPath string) error {
 			return fmt.Errorf("%s", diag.Format("<stdin>", src, err))
 		}
 		prog = p
-		srcPath = "<stdin>"
+		formatErr = func(e error) error { return fmt.Errorf("%s", diag.Format("<stdin>", src, e)) }
 	} else {
-		p, ss, err := modload.Load(srcPath)
+		e, err := loadEntry(srcPath)
 		if err != nil {
-			return formatLoadError(err, ss, srcPath)
+			return err
 		}
-		prog = p
-		srcs = ss
-		src = ss[absPath(srcPath)]
+		prog = e.prog
+		formatErr = e.format
 	}
 	if err := constfold.Fold(prog); err != nil {
-		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return formatErr(err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return formatLoadError(err, srcs, srcPath)
+		return formatErr(err)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
-		return fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return formatErr(err)
 	}
 	return nil
 }
@@ -409,20 +539,20 @@ func runCheck(srcPath string) error {
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
 func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
-	prog, srcs, err := modload.Load(srcPath)
+	e, err := loadEntry(srcPath)
 	if err != nil {
-		return 1, formatLoadError(err, srcs, srcPath)
+		return 1, err
 	}
-	src := srcs[absPath(srcPath)]
+	prog := e.prog
 	if err := constfold.Fold(prog); err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, e.format(err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		return 1, formatLoadError(err, srcs, srcPath)
+		return 1, e.format(err)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		return 1, e.format(err)
 	}
 
 	if target == "wasm-ssa" {

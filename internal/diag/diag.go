@@ -186,6 +186,23 @@ func (es Errors) As(target any) bool {
 // included in the header (Unix-tool style) when non-empty; it's
 // otherwise omitted so unit tests can render without a path prefix.
 func Format(filename, src string, err error) string {
+	return format(filename, src, nil, err)
+}
+
+// FormatRemapped is Format with a position-remapping hook. Every source
+// position (the primary location and any secondary/help labels) is
+// passed through `remap` before rendering, and the source line is
+// looked up in `displaySrc` using the *remapped* line number. It exists
+// for literate programs: the checker reports positions in the tangled
+// (generated) source, but diagnostics should point at the line the
+// author wrote in the `.fern.md` document. Pass the literate source as
+// displaySrc and a closure built from the tangle line map as remap. A
+// nil remap behaves exactly like Format.
+func FormatRemapped(filename, displaySrc string, remap func(ast.Position) ast.Position, err error) string {
+	return format(filename, displaySrc, remap, err)
+}
+
+func format(filename, src string, remap func(ast.Position) ast.Position, err error) string {
 	if err == nil {
 		return ""
 	}
@@ -195,7 +212,7 @@ func Format(filename, src string, err error) string {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			b.WriteString(Format(filename, src, e))
+			b.WriteString(format(filename, src, remap, e))
 		}
 		return b.String()
 	}
@@ -205,6 +222,9 @@ func Format(filename, src string, err error) string {
 		return err.Error()
 	}
 	pos := pe.Position()
+	if remap != nil {
+		pos = remap(pos)
+	}
 	line := pickLine(src, pos.Line)
 	if line == "" && pos.Line == 0 {
 		return err.Error()
@@ -255,6 +275,9 @@ func Format(filename, src string, err error) string {
 		for i, l := range labels {
 			if i == 0 {
 				continue
+			}
+			if remap != nil {
+				l.Pos = remap(l.Pos)
 			}
 			out += "\n" + renderSecondaryLabel(filename, src, l)
 		}
