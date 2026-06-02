@@ -9474,9 +9474,14 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	// 4. REUSE branch only: release the box's OLD pointer-field values
 	//    before the new ones overwrite them. On a fresh box (reused==0)
 	//    the slots are uninitialised, so this is gated on the is_unique
-	//    result. Flat dec (one level, no free): a carried-over field's
-	//    eval-inc above balances it; a replaced field's old reference is
-	//    released.
+	//    result. Per-field deep drop (emitFieldDropOnStack): the field's
+	//    own is_unique gate means a carried-over field (its eval-inc above
+	//    bumped it to rc>1) is only dec'd, while a REPLACED field's old
+	//    reference reaches rc 0 and its buffer/box is freed — fixing the
+	//    leak the prior flat __fern_rc_dec left (rc_dec has no free path,
+	//    so a replaced array field's buffer was orphaned every iteration).
+	//    The rc arithmetic is unchanged (still one dec per field); only the
+	//    rc-0 free is added, so there's zero over-release surface.
 	if hasPtr {
 		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -9488,8 +9493,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
+			b.emitFieldDropOnStack(fieldType(sd.Fields, tp.name))
 		}
 		b.emit(Op{Kind: OpEnd})
 	}
@@ -9794,15 +9798,7 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 		// dropFnNameFor declines — Map handles, non-uniform / non-heap-boxed
 		// generic enums — fall back to the flat box dec (leak-but-never-UAF,
 		// exactly as before). Net-zero on the operand stack.
-		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
-			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		} else {
-			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		}
+		b.emitStructEnumSlotDrop(idx, ty)
 	case ast.StringType:
 		// x86_64 / wasm only; arm64 string reclaim is deferred (slice 5g),
 		// so its codegen stays byte-identical (safe-leak) there.
@@ -9875,6 +9871,59 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
+}
+
+// emitStructEnumSlotDrop releases the struct / enum value currently in
+// local slot `idx` — the shared body for the loop-body re-declaration
+// drop (emitVarReinitDropOld) and the reassignment dec-on-overwrite. A
+// droppable type routes through the generated __drop_struct_<N> /
+// __drop_enum_<N> fn (via dropFnNameFor — the same helper the exit
+// sweep's dropStructField uses), which is_unique-gates, deep-drops the
+// fields/payloads, then __fern_box_free's the box; generic-enum
+// instantiations register into b.genEnumDrops for the post-pass worklist.
+// Types dropFnNameFor declines — Map handles, non-uniform / non-heap-
+// boxed generic enums — fall back to the flat box dec (leak-but-never-
+// UAF). Net-zero on the operand stack, so a value sitting underneath
+// (a reinit/reassign RHS) is left untouched. Callers gate on
+// RcFreeEnabled + freeEligible (+ localNameUnique + !movedLocals for the
+// reinit path) before invoking, so only an OWNED value is deep-dropped.
+func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
+	if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
+// emitFieldDropOnStack consumes a pointer-shaped field value already on
+// the operand stack and releases it per its static type — the
+// struct-reuse-overwrite sibling of the exit sweep's dropStructField.
+// An array field frees its BUFFER via __fern_arr_dec (pointer-element
+// buffers leak their elements, exactly as the array exit-sweep / reinit
+// paths — leak-but-never-UAF); a concrete struct / enum / tuple field
+// recurses through its generated __drop_* fn; everything else (Map
+// handles, closures, non-droppable generics) keeps the flat one-level
+// __fern_rc_dec. Each helper is_unique-gates internally, so a field
+// shared with a live alias (or carried over with an eval-inc) is only
+// dec'd, never freed.
+func (b *builder) emitFieldDropOnStack(t ast.Type) {
+	if at, ok := t.(ast.ArrayType); ok {
+		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
 }
 
 // localDeclType returns the declared type of a param or local by name.
@@ -9991,6 +10040,24 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 				b.emit(Op{Kind: OpDrop})
+			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+				// Struct / enum reassignment-overwrite — `s = Other{...}` /
+				// `e = Variant(...)` ends the old binding's ownership exactly
+				// like a scope exit (or a loop reinit) would, so deep-drop the
+				// OLD box rather than the flat __fern_rc_dec the catch-all else
+				// emits (which neither frees the box nor recurses, leaking the
+				// box + nested fields). Shares emitStructEnumSlotDrop with the
+				// reinit path — routes through __drop_struct_ / __drop_enum_
+				// when droppable, flat dec otherwise (Map handles, non-uniform
+				// generic enums). Gated on freeEligible like the array / string
+				// siblings: only an OWNED (untainted) local frees here — a
+				// borrowed / escaped one keeps the plain dec, so a live alias is
+				// never reclaimed out from under. The in-place reuse paths
+				// (tryStructReuseOverwrite / tryEnumReuseOverwrite) returned
+				// early above, so this is only the genuine-overwrite case.
+				// Net-zero on the operand stack, leaving the new RHS value for
+				// the store below.
+				b.emitStructEnumSlotDrop(idx, sety)
 			} else {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
@@ -10405,6 +10472,24 @@ func tupleTypeOfLocal(name string, b *builder) (ast.TupleType, bool) {
 		}
 	}
 	return ast.TupleType{}, false
+}
+
+// structOrEnumTypeOfLocal returns the declared StructType / EnumType of a
+// param / local named `name` if it is one. Drives the struct/enum
+// dec-on-overwrite deep-drop in assign() — Map (a StructType named "Map")
+// is included but dropFnNameFor declines it, so emitStructEnumSlotDrop
+// falls back to the flat dec for it (its self-mutation case is handled
+// earlier via isSelfMapMutation).
+func structOrEnumTypeOfLocal(name string, b *builder) (ast.Type, bool) {
+	t, ok := b.localDeclType(name)
+	if !ok {
+		return nil, false
+	}
+	switch t.(type) {
+	case ast.StructType, ast.EnumType:
+		return t, true
+	}
+	return nil, false
 }
 
 // localArrayType returns the ArrayType of a param / local named
