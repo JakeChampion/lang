@@ -29,7 +29,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "checker.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -119,6 +119,55 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_, code := runDriver(t, "-check", srcPath)
 		if code != 1 {
 			t.Errorf("-check on ill-typed program exited %d, want 1", code)
+		}
+	})
+
+	t.Run("interp", func(t *testing.T) {
+		// -interp evaluates via the tree-walker; the program's i32
+		// result becomes the exit code (mirrors interp_run.fern).
+		srcPath := filepath.Join(dir, "interp_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 5; var y = 8; return x * y - 1; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		_, code := runDriver(t, "-interp", srcPath)
+		if code != 39 {
+			t.Errorf("-interp program exited %d, want 39", code)
+		}
+	})
+
+	t.Run("fmt", func(t *testing.T) {
+		// -fmt formats the entry file to stdout. We assert it produces
+		// non-empty output and is IDEMPOTENT (formatting the formatted
+		// output is a fixed point) — validating the formatter is wired
+		// + stable without pinning its exact style.
+		srcPath := filepath.Join(dir, "messy.fern")
+		messy := "function   main( ):i32{var x=1;var y=2;return x+y;}\n"
+		if err := os.WriteFile(srcPath, []byte(messy), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Fatalf("-fmt exited %d, want 0", code)
+		}
+		if len(out1) == 0 {
+			t.Fatal("-fmt produced empty output")
+		}
+		// Re-format the formatted output; must be a fixed point.
+		src2Path := filepath.Join(dir, "formatted.fern")
+		if err := os.WriteFile(src2Path, out1, 0o644); err != nil {
+			t.Fatalf("write formatted: %v", err)
+		}
+		out2, code2 := runDriver(t, "-fmt", src2Path)
+		if code2 != 0 {
+			t.Fatalf("second -fmt exited %d, want 0", code2)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("-fmt is not idempotent:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
+		}
+		// And the formatted output must still be well-typed.
+		_, checkCode := runDriver(t, "-check", src2Path)
+		if checkCode != 0 {
+			t.Errorf("formatted output failed -check (exit %d)", checkCode)
 		}
 	})
 

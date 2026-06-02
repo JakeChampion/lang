@@ -6,12 +6,14 @@
 //     fern <entry.fern> [stdlib-root]      emit x86-64 asm to stdout
 //     fern -o OUT <entry.fern>             emit x86-64 asm to OUT
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
+//     fern -interp <entry.fern>            evaluate; exit = program result
+//     fern -fmt <entry.fern>               format the entry file to stdout
 //
 // It is the first slice of a drop-in replacement for cmd/fern: the
-// mode-dispatch seam that -target / -interp / -fmt plug into in
-// follow-ups. Module loading is the import-driven, file-loading scheme
-// from asm_load_run (follow `import "./x"` to sibling files; resolve
-// `std/…` / `core/…` under an optional stdlib root).
+// mode-dispatch seam that -target plugs into in follow-ups. Module
+// loading is the import-driven, file-loading scheme from asm_load_run
+// (follow `import "./x"` to sibling files; resolve `std/…` / `core/…`
+// under an optional stdlib root).
 
 import "core/no_prelude";
 import "./lexer";
@@ -19,6 +21,8 @@ import "./parser";
 import "./flatten";
 import "./asm";
 import "./checker";
+import "./interp";
+import "./printer";
 
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
@@ -109,7 +113,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -120,6 +124,8 @@ function main(): i32 {
     var out_path: string = "";
     var root: string = "";
     var mode_check: boolean = false;
+    var mode_interp: boolean = false;
+    var mode_fmt: boolean = false;
     var have_entry: boolean = false;
 
     var i: i32 = 1;
@@ -127,6 +133,10 @@ function main(): i32 {
         var a: string = av[i];
         if (a == "-check") {
             mode_check = true;
+        } else if (a == "-interp") {
+            mode_interp = true;
+        } else if (a == "-fmt") {
+            mode_fmt = true;
         } else if (a == "-o") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -166,6 +176,26 @@ function main(): i32 {
     }
     var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
+    // -fmt is per-file: format the entry source and emit it, without
+    // loading transitive imports (formatting one file never needs them).
+    if (mode_fmt) {
+        var formatted: string = printer.print_module(entry_mod);
+        if (out_path.len() > 0) {
+            match (write_file(out_path, formatted)) {
+                Some(e) => {
+                    eprint("fern: cannot write output: ");
+                    eprint(out_path);
+                    eprint("\n");
+                    return 1;
+                },
+                None => {},
+            }
+        } else {
+            write(formatted);
+        }
+        return 0;
+    }
+
     var paths: string[] = add_imports([], entry_mod, root);
     var loaded: flatten.LoadedModule[] = [];
     var done: string[] = [];
@@ -199,6 +229,23 @@ function main(): i32 {
         var mt: checker.ModuleTypes = checker.check_module(merged);
         if (mt.all_well_typed) { return 0; }
         return 1;
+    }
+
+    if (mode_interp) {
+        // Evaluate via the tree-walking interpreter; the program's
+        // result becomes the process exit code (VInt → its value,
+        // VBool → 1/0), matching interp_run.fern. A non-i32/bool
+        // result exits 254.
+        var result: interp.Value = interp.eval_module(merged);
+        match (result) {
+            interp.VInt(iv) => { return iv.v; },
+            interp.VBool(bv) => {
+                if (bv.v) { return 1; }
+                return 0;
+            },
+            _ => { return 254; },
+        }
+        return 254;
     }
 
     var out_asm: string = asm.emit_module(parser.module_with_builtins(merged));
