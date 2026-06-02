@@ -1,0 +1,109 @@
+// Reproducer for a reference-counting codegen bug in the native + wasm
+// backends: an aliasing-built nested-array structure
+// (ChunkDef[] whose .body is a BodyLine[] of structs with string fields)
+// is consumed by an `expand`-style function and the inner strings are
+// freed too early — a use-after-free.
+//
+// Observed (compiler @ main, June 2026):
+//   -interp          → 12   (correct: "fn main() {}".len())
+//   -target x86-64   → 255  (abort)
+//   -target arm64    → 137  (SIGKILL)
+//   -target wasm     → trap
+//
+// Bisection (see TestRCNestedArrayAliasingBug): the divergence needs the
+// FULL combination and disappears if any one dimension is removed:
+//   * parse_defs must build `def_body` by re-pushing `body[k]` (so the
+//     inner BodyLine structs — and their string fields — are ALIASED
+//     out of the intermediate `body` array, which is then dropped); a
+//     hardcoded ChunkDef[] does NOT reproduce.
+//   * `expand` must combine the union return, the `indent + text` string
+//     concat, the `active.push(name)` copy, and the (here untaken)
+//     is_ref/chunk_defined recursion branch; dropping any single one
+//     makes it run correctly.
+//
+// This matches PR #1771's own deferred-work list: "Inner arrays of
+// rc / string elements keep the flat __fern_drop_arr_ptr — recursive
+// inner deep-drop is a later slice" and "String concat results
+// (bound-var under-reclaim + statement temporaries)". #1771 fixed the
+// i32[][] *leak*; this *use-after-free* on string-bearing nested arrays
+// is still open. The self-hosted literate engine sidesteps it by using
+// a flat Piece[] model (see examples/self_host/literate.fern).
+
+struct BodyLine { text: string, line: i32 }
+struct ChunkDef { name: string, body: BodyLine[] }
+struct ExOk { lines: string[] }
+struct ExErr { msg: string, line: i32 }
+type Res = ExOk | ExErr;
+
+function split_lines(src: string): string[] {
+    var out: string[] = []; var n: i32 = src.len(); var start: i32 = 0; var i: i32 = 0;
+    while (i < n) { if (src[i] == 10) { out = out.push(src[start:i]); start = i + 1; } i = i + 1; }
+    if (start < n) { out = out.push(src[start:n]); }
+    return out;
+}
+function trim(s: string): string {
+    var a: i32 = 0; var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9)) { a = a + 1; }
+    while (b > a && (s[b-1] == 32 || s[b-1] == 9)) { b = b - 1; }
+    return s[a:b];
+}
+function leading_ws(s: string): string {
+    var i: i32 = 0; var n: i32 = s.len();
+    while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
+    return s[0:i];
+}
+function is_header(t: string): boolean { return t.len() >= 3 && t[0:2] == "<<" && t[t.len()-3:t.len()] == ">>="; }
+function header_name(t: string): string { return trim(t[2:t.len() - 3]); }
+function is_ref(t: string): boolean { return t.len() > 4 && t[0:2] == "<<" && t[t.len()-2:t.len()] == ">>"; }
+function ref_name(t: string): string { return trim(t[2:t.len() - 2]); }
+function header_index(body: BodyLine[]): i32 {
+    var i: i32 = 0;
+    while (i < body.len()) { var t: string = trim(body[i].text); if (t.len() == 0) { i = i + 1; } else { if (is_header(t)) { return i; } return 0 - 1; } }
+    return 0 - 1;
+}
+function parse_defs(src: string): ChunkDef[] {
+    var defs: ChunkDef[] = []; var lines: string[] = split_lines(src); var n: i32 = lines.len(); var i: i32 = 0;
+    while (i < n) {
+        if (lines[i].len() >= 3 && lines[i][0:3] == "```") {
+            var body: BodyLine[] = []; var i2: i32 = i + 1;
+            while (i2 < n && !(lines[i2].len() >= 3 && lines[i2][0:3] == "```")) { body = body.push(BodyLine { text: lines[i2], line: i2 + 1 }); i2 = i2 + 1; }
+            var hidx: i32 = header_index(body);
+            if (hidx >= 0) {
+                var name: string = header_name(trim(body[hidx].text));
+                var def_body: BodyLine[] = []; var k: i32 = hidx + 1;
+                while (k < body.len()) { def_body = def_body.push(body[k]); k = k + 1; }
+                defs = defs.push(ChunkDef { name: name, body: def_body });
+            }
+            if (i2 < n) { i = i2 + 1; } else { i = i2; }
+        } else { i = i + 1; }
+    }
+    return defs;
+}
+function chunk_defined(defs: ChunkDef[], name: string): boolean { var i: i32 = 0; while (i < defs.len()) { if (defs[i].name == name) { return true; } i = i + 1; } return false; }
+function stack_has(stack: string[], name: string): boolean { var i: i32 = 0; while (i < stack.len()) { if (stack[i] == name) { return true; } i = i + 1; } return false; }
+function expand(defs: ChunkDef[], name: string, indent: string, active: string[]): Res {
+    if (stack_has(active, name)) { return ExErr { msg: "cyc", line: 0 }; }
+    var active2: string[] = active.push(name); var out: string[] = []; var i: i32 = 0;
+    while (i < defs.len()) {
+        if (defs[i].name == name) {
+            var body: BodyLine[] = defs[i].body; var j: i32 = 0;
+            while (j < body.len()) {
+                var bl: BodyLine = body[j]; var t: string = trim(bl.text);
+                if (is_ref(t)) {
+                    var rn: string = ref_name(t); if (!chunk_defined(defs, rn)) { return ExErr { msg: "undef", line: bl.line }; }
+                    var sub: Res = expand(defs, rn, indent + leading_ws(bl.text), active2);
+                    match (sub) { ExOk(o) => { var k: i32 = 0; while (k < o.lines.len()) { out = out.push(o.lines[k]); k = k + 1; } }, _ => { return sub; } }
+                } else { out = out.push(indent + bl.text); }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return ExOk { lines: out };
+}
+function main(): i32 {
+    var d: ChunkDef[] = parse_defs("```\n<<*>>=\nfn main() {}\n```\n");
+    var e: string[] = [];
+    var r: Res = expand(d, "*", "", e);
+    match (r) { ExOk(o) => { return o.lines[0].len(); }, _ => { return 88; } }
+}
