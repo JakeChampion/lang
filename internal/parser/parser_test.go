@@ -1141,3 +1141,19 @@ function main(): i32 { return 0; }`)
 		t.Error("`import ... as;` with no alias name should be a parse error")
 	}
 }
+
+// `arena` is no longer a reserved word. The `arena { … }` block
+// construct and the arena_save / arena_restore builtins it
+// desugared to were all removed; per-request memory is now
+// reclaimed by reference counting. So bare `arena` parses as an
+// ordinary identifier.
+func TestArenaIsNotReserved(t *testing.T) {
+	prog, err := Parse("function f(): i32 { var arena: i32 = 5; return arena; }")
+	if err != nil {
+		t.Fatalf("`arena` should parse as an ordinary identifier: %v", err)
+	}
+	v, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	if !ok || v.Name != "arena" {
+		t.Fatalf("expected `var arena`, got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+}

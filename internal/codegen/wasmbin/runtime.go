@@ -177,14 +177,6 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
 					needs.add("__fern_alloc")
 					needs.add("__fern_monotonic_ns")
-				case "__fern_arena_save":
-					// Reads the bump-allocator cursor at mem[40].
-					// No alloc dependency; the cursor lives in
-					// reserved low memory regardless.
-					needs.add("__fern_arena_save")
-				case "__fern_arena_restore":
-					// Writes mem[40] = handle.
-					needs.add("__fern_arena_restore")
 				case "__fern_sqrt_f64":
 					needs.add("__fern_sqrt_f64")
 				case "__fern_abs_f64":
@@ -690,22 +682,6 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildMonotonicNsBody,
-	},
-	"__fern_arena_save": {
-		// () → i32 — snapshot of the bump-allocator cursor.
-		// Pair with __fern_arena_restore to free everything
-		// allocated since the save in one pointer-store.
-		params:  nil,
-		results: []byte{encode.ValtypeI32},
-		body:    buildArenaSaveBody,
-	},
-	"__fern_arena_restore": {
-		// (handle) → () — rewinds the bump cursor to handle.
-		// Pointers into the freed region are no longer valid;
-		// caller discipline enforces non-use.
-		params:  []byte{encode.ValtypeI32},
-		results: nil,
-		body:    buildArenaRestoreBody,
 	},
 	"__fern_sqrt_f64": {
 		// (f64) → f64 — wasm-native f64.sqrt.
@@ -4412,27 +4388,6 @@ func buildArgsBodyP2(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
-}
-
-// buildArenaSaveBody — () → i32. Returns mem[allocCursorAddr]
-// (the bump-allocator cursor). Used by lang's `arena_save()`
-// to snapshot the heap before a transient allocation phase.
-func buildArenaSaveBody(_ map[string]uint32) []byte {
-	var body []byte
-	body = inst.InstI32Const(body, allocCursorAddr)
-	body = memInstI32Load(body)
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
-}
-
-// buildArenaRestoreBody — (handle) → (). Writes mem[allocCursorAddr]
-// = handle. Effectively rewinds the bump cursor to the value an
-// earlier arena_save returned.
-func buildArenaRestoreBody(_ map[string]uint32) []byte {
-	var body []byte
-	body = inst.InstI32Const(body, allocCursorAddr)
-	body = inst.InstLocalGet(body, 0)
-	body = memInstI32Store(body)
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildSqrtF64Body — (f64) → f64. Thin wrapper around the

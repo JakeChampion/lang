@@ -104,9 +104,6 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 	switch x := s.(type) {
 	case *ast.Block:
 		printBlock(b, x)
-	case *ast.Arena:
-		b.WriteString("arena ")
-		printBlock(b, x.Body)
 	case *ast.If:
 		b.WriteString("if (")
 		printExpr(b, x.Cond)

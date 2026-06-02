@@ -206,7 +206,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //	21: $headers
 //	22: $out_body
 //	23: $out_stream
-//	24: $arena_handle
+//	24: (unused; formerly $arena_handle)
 //	25: $plat_struct
 //	26: $req_fields
 //	27: $req_headers
@@ -236,8 +236,6 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 // in the wasi-http parity PR (next in the series).
 func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	arenaSave := idxs["__fern_arena_save"]
-	arenaRestore := idxs["__fern_arena_restore"]
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	handleFn, hasHandle := idxs["handle"]
@@ -265,10 +263,6 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
 	var body []byte
-
-	// arena_handle = arena_save()
-	body = inst.InstCall(body, arenaSave)
-	body = inst.InstLocalSet(body, 24)
 
 	// retptr = alloc(64)
 	body = inst.InstI32Const(body, 64)
@@ -919,11 +913,10 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, outparamSet)
 
-	// Restore arena.
-	body = inst.InstLocalGet(body, 24)
-	body = inst.InstCall(body, arenaRestore)
-
-	// 42 i32 locals after the 2 params (slots 2..43).
+	// 42 i32 locals after the 2 params (slots 2..43). Slot 24
+	// (formerly $arena_handle) is now unused: per-request memory
+	// is reclaimed by reference counting, not a bump-cursor reset.
+	// Kept allocated to avoid renumbering slots 25..43.
 	locals := inst.PutLocalsOneGroup(nil, 42, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

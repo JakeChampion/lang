@@ -131,7 +131,6 @@ var keywords = map[string]bool{
 	"match": true,
 	"when":  true,
 	"defer": true,
-	"arena": true,
 }
 
 // Keywords returns every reserved word the lexer recognises, in

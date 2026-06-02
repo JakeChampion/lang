@@ -533,24 +533,6 @@ func TestInterpTcpSocketEcho(t *testing.T) {
 	}
 }
 
-// `arena { … }` runs as a normal scope at interp time —
-// no allocator snap, but the block body executes and any
-// declared bindings stay confined to the inner scope.
-func TestInterpArenaScope(t *testing.T) {
-	src := `function main(): i32 {
-		var outer: i32 = 1;
-		arena {
-			var inner: i32 = 99;
-			outer = outer + inner;
-		}
-		return outer;
-	}`
-	v, _ := evalProgram(t, src)
-	if n, ok := v.(Number); !ok || n != 100 {
-		t.Errorf("arena scope: got %v, want 100", v)
-	}
-}
-
 // `let (a, b) = expr;` binds each name to the corresponding
 // tuple element. Covers a tuple literal, a function returning
 // a tuple, and a 3-element destructure for arity > 2.

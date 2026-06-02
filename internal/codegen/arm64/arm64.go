@@ -407,9 +407,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
-	if g.usesArena {
-		g.emitArenaRuntime()
-	}
 	if g.usesFloatTranscendentals {
 		g.emitFloatTranscendentalsRuntime()
 	}
@@ -696,19 +693,18 @@ func (g *generator) emitDataSections() {
 // Two-cursor allocator: a 1-byte mode flag at
 // `__fern_alloc_mode` selects which region to bump.
 //
-//	mode == 0 → arena cursor (__fern_heap_ptr / _end).
-//	            arena_save / arena_restore manipulate this
-//	            pair, so the region is per-request scoped
-//	            in HTTP-handler programs (auto-main wraps
-//	            each request in save/restore).
+//	mode == 0 → default cursor (__fern_heap_ptr / _end).
+//	            The transient region for most allocations;
+//	            reclaimed by reference counting as values
+//	            die, not by a bump-cursor reset.
 //	mode == 1 → persistent cursor (__fern_persistent_ptr /
 //	            _end). Never reclaimed; lives as long as
 //	            the process. The IR's OpPersistentSet /
 //	            OpPersistentRestore toggle the mode flag
 //	            around state-rooted method calls so any
 //	            internal allocs (e.g. Map.set's grow path)
-//	            land in this region and survive the
-//	            arena_restore at request boundary.
+//	            land in this region, keeping state-rooted
+//	            data distinct from transient allocations.
 //
 // Each region gets its own lazy-mmap'd 64 MiB virtual
 // reservation. Linux's address hint differs per region
@@ -3563,37 +3559,6 @@ func (g *generator) emitArgsRuntime2W() {
 	g.line(".ltorg")
 }
 
-// emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
-//
-//   - `__fern_arena_save() -> i64` — returns the current
-//     `__fern_heap_ptr`.
-//   - `__fern_arena_restore(saved)` — writes `saved` back into
-//     `__fern_heap_ptr`, reclaiming everything allocated after
-//     the matching save in a single store. Caller is trusted
-//     not to hold pointers into the reclaimed region.
-//
-// Both leaf functions; one load / one store.
-func (g *generator) emitArenaRuntime() {
-	g.line("")
-	g.line(".global __fern_arena_save")
-	g.typeDirective("__fern_arena_save")
-	g.label("__fern_arena_save")
-	g.adrpAdd("x0", "__fern_heap_ptr")
-	g.emit("ldr x0, [x0]")
-	g.emit("ret")
-	g.sizeDirective("__fern_arena_save")
-
-	g.line("")
-	g.line(".global __fern_arena_restore")
-	g.typeDirective("__fern_arena_restore")
-	g.label("__fern_arena_restore")
-	g.adrpAdd("x1", "__fern_heap_ptr")
-	g.emit("str x0, [x1]")
-	g.emit("ret")
-	g.sizeDirective("__fern_arena_restore")
-	g.line(".ltorg")
-}
-
 // emitFloatTranscendentalsRuntime emits the f64 transcendental
 // bundle — __fern_{sin,cos,exp,log,pow}_f64 — plus the shared
 // .rodata table of polynomial coefficients. arm64 has no hardware
@@ -5537,10 +5502,6 @@ type generator struct {
 	// "not yet ported" error (it would need libSystem
 	// stitching or mach_absolute_time + mach_timebase_info).
 	usesNowUnixMs bool
-	// usesArena pulls in `__fern_arena_save` / `__fern_arena_restore`
-	// — bump-cursor snapshot/rewind helpers. Two leaf functions,
-	// one ldr / str each. Cheap scope-bounded reclaim.
-	usesArena bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
 	// shared .rodata polynomial-coefficient table. arm64 has no
@@ -7836,16 +7797,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArgs = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "arena_save":
-			// arena_save(): snapshot the bump cursor.
-			target = "__fern_arena_save"
-			g.usesArena = true
-			g.usesAlloc = true
-		case "arena_restore":
-			// arena_restore(saved): rewind the bump cursor.
-			target = "__fern_arena_restore"
-			g.usesArena = true
-			g.usesAlloc = true
 		case "read_line":
 			// read_line(): byte-by-byte stdin read into a 4 KiB
 			// .bss buffer; returns Option[string].

@@ -994,25 +994,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.FloatType{Width: 64},
 	}
-	// arena_save(): number — snapshots the bump allocator's
-	// current cursor. Pair with arena_restore to free everything
-	// allocated in between in O(1). Designed for long-lived
-	// servers that want to drop per-request allocations between
-	// requests; not safe to retain pointers across the matching
-	// arena_restore call.
-	c.info.FuncSigs["arena_save"] = &ast.FuncType{
-		Params: []ast.Type{},
-		Result: ast.NumberType{},
-	}
-	// arena_restore(handle): void — rewinds the bump allocator
-	// cursor to the value returned by an earlier arena_save.
-	// Anything allocated since that save is reclaimed in one
-	// pointer-store; pointers into that region are no longer
-	// valid (no compile-time enforcement, just discipline).
-	c.info.FuncSigs["arena_restore"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.VoidType{},
-	}
 	// random_bytes(n: number): string — returns a fresh string
 	// of n cryptographic-quality random bytes from the
 	// kernel's CSPRNG (`getrandom(2)` on Linux,
@@ -3004,8 +2985,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		}
 	case *ast.Defer:
 		walkExprForNames(n.Expr, selfName, siblings, seen)
-	case *ast.Arena:
-		walkBodyForNames(n.Body, selfName, siblings, seen)
 	}
 }
 
@@ -3297,13 +3276,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// expression-shaped). The IR builder is responsible
 		// for replaying the expression at function exits.
 		c.checkExpr(n.Expr, s)
-	case *ast.Arena:
-		// `arena { … }` introduces a new lexical scope same
-		// as a plain block; the special semantics (cursor
-		// snap on exit) are an IR-level concern. The body's
-		// scope shadows but doesn't leak — same model as
-		// any other block.
-		c.checkBlock(n.Body, s)
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)

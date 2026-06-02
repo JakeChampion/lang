@@ -303,8 +303,6 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	switch x := st.(type) {
 	case *ast.Block:
 		s.walkBlock(x)
-	case *ast.Arena:
-		s.walkBlock(x.Body)
 	case *ast.If:
 		s.walkExpr(&x.Cond)
 		s.walkStmt(x.Then)

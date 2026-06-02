@@ -292,9 +292,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
-	if g.usesArena {
-		g.emitArenaRuntime()
-	}
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
 	}
@@ -402,7 +399,6 @@ type generator struct {
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
-	usesArena           bool
 	usesAllocU8         bool
 	usesStringFromBytes bool
 	usesStrSlice        bool
@@ -622,11 +618,6 @@ func (g *generator) recordUse(target string) {
 		g.usesArgs = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
-	case "arena_save", "arena_restore":
-		g.usesArena = true
-		// arena helpers read/write __fern_heap_ptr; pull
-		// in the allocator's .bss reservations.
-		g.usesAlloc = true
 	case "__alloc_u8":
 		g.usesAllocU8 = true
 		g.usesAlloc = true
@@ -1724,10 +1715,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_env"
 		case "args":
 			target = "__fern_args"
-		case "arena_save":
-			target = "__fern_arena_save"
-		case "arena_restore":
-			target = "__fern_arena_restore"
 		case "read_file":
 			target = "__fern_read_file"
 		case "write_file":
@@ -2790,10 +2777,12 @@ func (g *generator) emitDataSections() {
 // operations the caller might issue.
 //
 // Two-cursor allocator: a 1-byte `__fern_alloc_mode` selects
-// which region to bump. mode 0 → arena (per-request, scoped by
-// arena_save / arena_restore). mode 1 → persistent (lives for
-// the program lifetime). See the arm64 generator's
-// `emitAllocRuntime` comment for the full rationale.
+// which region to bump. mode 0 → default (transient) region;
+// mode 1 → persistent (state-rooted allocations live for the
+// program lifetime). Both regions are bump-only and reclaimed
+// by reference counting as values die, not by a cursor reset.
+// See the arm64 generator's `emitAllocRuntime` comment for the
+// full rationale.
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 512 * 1024 * 1024 // 512 MiB per region — generous enough for the self-host asm backend to compile lexer.fern through itself (its O(N²) string-builder allocates ~290 MB for that)
 	g.line("")
@@ -4698,28 +4687,6 @@ func (g *generator) emitStdinRuntime() {
 	g.emit("xor eax, eax")
 	g.emit("ret")
 	g.line(".size __fern_stdin, .-__fern_stdin")
-}
-
-// emitArenaRuntime emits the bump-cursor snapshot/rewind pair:
-// `__fern_arena_save()` returns the current heap pointer;
-// `__fern_arena_restore(saved)` resets it. Used by tcp_serve
-// to bracket each request's allocations so they're reclaimed
-// before the next accept.
-func (g *generator) emitArenaRuntime() {
-	g.line("")
-	g.line(".globl __fern_arena_save")
-	g.line(".type __fern_arena_save, @function")
-	g.label("__fern_arena_save")
-	g.emit("mov rax, [rip + __fern_heap_ptr]")
-	g.emit("ret")
-	g.line(".size __fern_arena_save, .-__fern_arena_save")
-	g.line("")
-	g.line(".globl __fern_arena_restore")
-	g.line(".type __fern_arena_restore, @function")
-	g.label("__fern_arena_restore")
-	g.emit("mov [rip + __fern_heap_ptr], rdi")
-	g.emit("ret")
-	g.line(".size __fern_arena_restore, .-__fern_arena_restore")
 }
 
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a

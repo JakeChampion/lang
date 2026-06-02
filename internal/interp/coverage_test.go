@@ -136,7 +136,6 @@ function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.y; }`},
 		// (semantics: return value is evaluated before defers
 		// run) — body just exists to exercise the AST node.
 		},
-		{node: "Arena", src: `function main(): i32 { arena { var n: i32 = 7; return n; } return 0; }`},
 		{node: "Var", src: `function main(): i32 { var x: i32 = 7; return x; }`},
 		{node: "Destructure", src: `function main(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; return a + b; }`},
 		{node: "ExprStmt", src: `function main(): i32 { var n: i32 = 0; n = n + 1; return n; }`},
@@ -286,7 +285,6 @@ func allStmtNodeNames() []string {
 		(*ast.Continue)(nil),
 		(*ast.Return)(nil),
 		(*ast.Defer)(nil),
-		(*ast.Arena)(nil),
 		(*ast.Var)(nil),
 		(*ast.Destructure)(nil),
 		(*ast.ExprStmt)(nil),
