@@ -103,3 +103,100 @@ function main(): i32 {
 		})
 	}
 }
+
+// TestStdArrayCombinators pins the std/array combinators
+// (`map` / `filter` / `fold` / `any` / `all` / `find` /
+// `enumerate`) as they ship in the stdlib — called qualified
+// through `import "std/array"` rather than declared inline.
+//
+// This is a distinct path from TestGenericArrayCombinators: the
+// stdlib bodies are mangled (`map` -> `array__map`) by modload
+// and only then monomorphised, so this guards that generic
+// instantiation survives the import-mangling pipeline on every
+// backend. It also covers the two shapes the inline test
+// doesn't — `find` returning `Option[T]` and `enumerate`
+// returning `(i32, T)[]` — which exercise generic enum and
+// tuple-in-array returns through codegen.
+func TestStdArrayCombinators(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			name: "map+filter+fold qualified",
+			src: `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6];
+    var doubled: i32[] = array.map(xs, function (n: i32): i32 { return n * 2; });
+    var evens: i32[] = array.filter(doubled, function (n: i32): boolean { return n % 4 == 0; });
+    return array.fold(evens, 0, function (a: i32, n: i32): i32 { return a + n; });
+}`,
+			want: 24, // doubled=[2,4,6,8,10,12]; %4==0 -> [4,8,12]; sum=24
+		},
+		{
+			name: "any+all qualified",
+			src: `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [2, 4, 6, 8];
+    var r: i32 = 0;
+    if (array.all(xs, function (n: i32): boolean { return n % 2 == 0; })) { r = r + 10; }
+    if (array.any(xs, function (n: i32): boolean { return n == 6; })) { r = r + 5; }
+    if (array.any(xs, function (n: i32): boolean { return n == 7; })) { r = r + 1; }
+    return r;
+}`,
+			want: 15, // all-even (10) + contains-6 (5); no 7
+		},
+		{
+			name: "find Option arms qualified",
+			src: `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [5, 10, 15, 20];
+    var hit: i32 = 0;
+    match (array.find(xs, function (n: i32): boolean { return n > 12; })) {
+        Some(v) => { hit = v; },
+        None => { hit = 0 - 1; }
+    }
+    var miss: i32 = 0;
+    match (array.find(xs, function (n: i32): boolean { return n > 99; })) {
+        Some(v) => { miss = v; },
+        None => { miss = 1; }
+    }
+    return hit + miss; // 15 + 1
+}`,
+			want: 16,
+		},
+		{
+			name: "enumerate tuple-in-array qualified",
+			src: `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var pairs: (i32, i32)[] = array.enumerate(xs);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < pairs.len()) {
+        var p: (i32, i32) = pairs[i];
+        acc = acc + p.0 + p.1;
+        i = i + 1;
+    }
+    return acc; // (0+10)+(1+20)+(2+30) = 63
+}`,
+			want: 63,
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			if got := runInterpByte(t, c.src); got != c.want {
+				t.Errorf("interp: got exit %d, want %d", got, c.want)
+			}
+			if _, got := compileAndRunX86Native(t, c.src); got != c.want {
+				t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
+			}
+			if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
+				t.Errorf("wasm: got exit %d, want %d", got, c.want)
+			}
+		})
+	}
+}

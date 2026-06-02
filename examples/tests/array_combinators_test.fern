@@ -1,0 +1,179 @@
+import "core/no_prelude";
+import "std/array";
+import "std/test";
+// examples/tests/array_combinators_test.fern — the generic
+// array combinators added to std/array as free functions over
+// a parametric T[]: `map` / `filter` / `fold` / `any` / `all`
+// / `find` / `enumerate` (STDLIB-ROADMAP item #1).
+//
+// These are eager (every combinator returns a fresh array or a
+// scalar). Each test covers the happy path; map / filter / fold
+// / any / all also pin the empty-array semantics, and find pins
+// both the Some and None arms. The closures passed in include a
+// captured-variable case (`test_filter_capture`) so the
+// closure-conversion path is exercised alongside the plain ones.
+
+function test_map(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    var ys: i32[] = array.map(xs, function (n: i32): i32 { return n * 10; });
+    return test.assert_eq_i32(ys[0] + ys[1] + ys[2], 60);
+}
+
+function test_map_empty(): Option[string] {
+    var xs: i32[] = [];
+    var ys: i32[] = array.map(xs, function (n: i32): i32 { return n + 1; });
+    return test.assert_eq_i32(ys.len(), 0);
+}
+
+// map changing the element type (i32 -> string), so the U !=
+// T path is exercised, not just the same-width same-type case.
+function test_map_change_type(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    var ss: string[] = array.map(xs, function (n: i32): string { return n.to_string(); });
+    return test.assert_eq_string(ss.join("-"), "1-2-3");
+}
+
+function test_filter(): Option[string] {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6];
+    var evens: i32[] = array.filter(xs, function (n: i32): boolean { return n % 2 == 0; });
+    return test.assert_eq_i32(evens.len() * 100 + evens[0] + evens[1] + evens[2], 312);
+}
+
+function test_filter_empty(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    var none: i32[] = array.filter(xs, function (n: i32): boolean { return n > 100; });
+    return test.assert_eq_i32(none.len(), 0);
+}
+
+// filter with a closure that captures an outer variable — pins
+// the closure-conversion path through the generic combinator.
+function test_filter_capture(): Option[string] {
+    var threshold: i32 = 3;
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    var big: i32[] = array.filter(xs, function (n: i32): boolean { return n > threshold; });
+    return test.assert_eq_i32(big.len() * 100 + big[0] + big[1], 209);
+}
+
+function test_fold(): Option[string] {
+    var xs: i32[] = [4, 5, 6];
+    var s: i32 = array.fold(xs, 0, function (a: i32, n: i32): i32 { return a + n; });
+    return test.assert_eq_i32(s, 15);
+}
+
+function test_fold_empty(): Option[string] {
+    var xs: i32[] = [];
+    var s: i32 = array.fold(xs, 42, function (a: i32, n: i32): i32 { return a + n; });
+    return test.assert_eq_i32(s, 42);
+}
+
+// fold whose accumulator type differs from the element type
+// (string acc, i32 elements) — the A != T generic shape.
+function test_fold_acc_type(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    var joined: string = array.fold(xs, "", function (a: string, n: i32): string {
+        return a + n.to_string();
+    });
+    return test.assert_eq_string(joined, "123");
+}
+
+function test_any_true(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_true(array.any(xs, function (n: i32): boolean { return n == 2; }));
+}
+
+function test_any_false(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_false(array.any(xs, function (n: i32): boolean { return n == 9; }));
+}
+
+function test_any_empty(): Option[string] {
+    var xs: i32[] = [];
+    return test.assert_false(array.any(xs, function (n: i32): boolean { return true; }));
+}
+
+function test_all_true(): Option[string] {
+    var xs: i32[] = [2, 4, 6];
+    return test.assert_true(array.all(xs, function (n: i32): boolean { return n % 2 == 0; }));
+}
+
+function test_all_false(): Option[string] {
+    var xs: i32[] = [2, 4, 5];
+    return test.assert_false(array.all(xs, function (n: i32): boolean { return n % 2 == 0; }));
+}
+
+function test_all_empty(): Option[string] {
+    var xs: i32[] = [];
+    return test.assert_true(array.all(xs, function (n: i32): boolean { return false; }));
+}
+
+function test_find_some(): Option[string] {
+    var xs: i32[] = [1, 2, 3, 4];
+    match (array.find(xs, function (n: i32): boolean { return n > 2; })) {
+        Some(v) => { return test.assert_eq_i32(v, 3); },
+        None => { return test.fail("find returned None, expected Some(3)"); }
+    }
+    return None;
+}
+
+function test_find_none(): Option[string] {
+    var xs: i32[] = [1, 2, 3];
+    match (array.find(xs, function (n: i32): boolean { return n > 99; })) {
+        Some(v) => { return test.fail("find returned Some, expected None"); },
+        None => { return None; }
+    }
+    return None;
+}
+
+function test_enumerate(): Option[string] {
+    var xs: i32[] = [10, 20, 30];
+    var pairs: (i32, i32)[] = array.enumerate(xs);
+    // index of each entry + the value, summed: (0+10)+(1+20)+(2+30) = 63
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < pairs.len()) {
+        var p: (i32, i32) = pairs[i];
+        acc = acc + p.0 + p.1;
+        i = i + 1;
+    }
+    return test.assert_eq_i32(acc, 63);
+}
+
+function test_enumerate_empty(): Option[string] {
+    var xs: i32[] = [];
+    var pairs: (i32, i32)[] = array.enumerate(xs);
+    return test.assert_eq_i32(pairs.len(), 0);
+}
+
+// A small pipeline: map then fold, the canonical "transform and
+// reduce" shape these combinators are meant to enable.
+function test_map_then_fold(): Option[string] {
+    var xs: i32[] = [1, 2, 3, 4];
+    var doubled: i32[] = array.map(xs, function (n: i32): i32 { return n + n; });
+    var total: i32 = array.fold(doubled, 0, function (a: i32, n: i32): i32 { return a + n; });
+    return test.assert_eq_i32(total, 20);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("array combinators");
+    r = r.it("map",                  test_map());
+    r = r.it("map empty",            test_map_empty());
+    r = r.it("map change type",      test_map_change_type());
+    r = r.it("filter",               test_filter());
+    r = r.it("filter empty",         test_filter_empty());
+    r = r.it("filter capture",       test_filter_capture());
+    r = r.it("fold",                 test_fold());
+    r = r.it("fold empty",           test_fold_empty());
+    r = r.it("fold acc type",        test_fold_acc_type());
+    r = r.it("any true",             test_any_true());
+    r = r.it("any false",            test_any_false());
+    r = r.it("any empty",            test_any_empty());
+    r = r.it("all true",             test_all_true());
+    r = r.it("all false",            test_all_false());
+    r = r.it("all empty",            test_all_empty());
+    r = r.it("find some",            test_find_some());
+    r = r.it("find none",            test_find_none());
+    r = r.it("enumerate",            test_enumerate());
+    r = r.it("enumerate empty",      test_enumerate_empty());
+    r = r.it("map then fold",        test_map_then_fold());
+    return r.finish();
+}

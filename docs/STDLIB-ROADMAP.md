@@ -120,7 +120,7 @@ Each item gets:
 
 ---
 
-### 1. Generic array combinators · medium · ☐
+### 1. Generic array combinators · medium · ☑
 
 **Surface**: `map[T, U](xs: T[], f: fn(T) U) U[]`, `filter`,
 `fold[T, A](xs, init: A, f: fn(A, T) A)`, `any`, `all`,
@@ -135,6 +135,24 @@ builds on these. Today `for` + `push` is the only path.
 **Notes**: Eager (returns arrays) is fine for v1; arena
 allocation makes copying cheap. Needs the generic-fn-over-`T[]`
 machinery (push already exercises it).
+
+**Status**: shipped — all seven landed in `std/array` as free
+generic functions over `T[]` (the exact surface above; the
+function-type syntax is `(T) => U`, not `fn(T) U`). Eager as
+planned. Called qualified: `array.map(xs, f)` etc. Coverage:
+`examples/tests/array_combinators_test.fern` (20 cases through
+the std/test runner — happy path, empty-array semantics,
+type-changing map, accumulator-type-differing fold, a
+captured-variable closure, both Option arms of find) gated by
+`TestRunnerArrayCombinatorsExample`; plus `TestStdArrayCombinators`
+in `internal/e2e/generic_array_combinators_test.go` pins the
+qualified stdlib calls across interp + x86-64 + wasm-bin. The
+enabling monomorph substitution fix (the `*ast.Assign` walker
+gap that blocked `out = out.push(f(x))`) is documented at #1758
+and pinned by `TestGenericArrayCombinators`.
+
+A future lazy `std/iter` and/or pipe / UFCS sugar (`xs.map(f)`)
+can layer on top of these eager bodies without reworking them.
 
 ### 2. Result / Option combinators + `?` operator · medium · ☐
 
