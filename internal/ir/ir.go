@@ -6141,33 +6141,34 @@ func (b *builder) expr(e ast.Expr) error {
 				dw = b.ptrW * 8
 			}
 			switch {
-			case sw == dw:
-				// Same-width cast (signed ↔ unsigned). Bit-
-				// identical at the wasm level.
+			case sw == dw && dw == 64:
+				// i64 ↔ u64: bit-identical reinterpret.
 			case sw <= 32 && dw <= 32:
-				// Sub-i32 ↔ i32 / sub-i32 ↔ sub-i32 stays in i32
-				// storage. Narrowing (32→16, 32→8, 16→8) needs a
-				// mask to keep the upper bits clean. Widening
-				// when SOURCE is signed needs an explicit
-				// sign-extend so high bits become 1s if the
-				// source's MSB was set.
-				if dw < sw {
-					// Narrowing: mask to keep dw bits.
-					b.emit(Op{Kind: OpConstI32, I32: int32((1 << dw) - 1)})
+				// Source and destination both ride in i32 storage.
+				// Produce the destination's *canonical* form so any
+				// later read is correct: a sub-i32 signed dest is
+				// sign-extended from its width, an unsigned dest is
+				// zero-extended (masked); i32 / u32 keep the full
+				// 32-bit pattern. This must run even for a same-width
+				// signed↔unsigned reinterpret — `(-128i8) as u8` has
+				// to clear the sign bits so a following `as i64`
+				// zero-extends to 128 rather than 4294967168. (A
+				// widening read assumes clean upper bits for unsigned
+				// and re-signs from the width for signed, so every
+				// producer stores canonically.)
+				switch {
+				case dw == 8 && dstInt.IsSigned():
+					b.emit(Op{Kind: OpSignExtend8})
+				case dw == 8:
+					b.emit(Op{Kind: OpConstI32, I32: 0xFF})
 					b.emit(Op{Kind: OpAnd})
-				} else if srcInt.IsSigned() {
-					// Widening signed: sign-extend via wasm's
-					// dedicated `i32.extend8_s` / `i32.extend16_s`.
-					switch sw {
-					case 8:
-						b.emit(Op{Kind: OpSignExtend8})
-					case 16:
-						b.emit(Op{Kind: OpSignExtend16})
-					}
+				case dw == 16 && dstInt.IsSigned():
+					b.emit(Op{Kind: OpSignExtend16})
+				case dw == 16:
+					b.emit(Op{Kind: OpConstI32, I32: 0xFFFF})
+					b.emit(Op{Kind: OpAnd})
+					// dw == 32: the 32-bit pattern is the value.
 				}
-				// Widening unsigned within i32 needs no op — the
-				// source's narrow value already has zeros above
-				// its width by construction (every store narrows).
 			case sw <= 32 && dw == 64:
 				// Sub-i32 → i64 first widens to i32 (with sign-
 				// extend if the source was signed), then extends
@@ -6223,10 +6224,12 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpFConvertI32, Width: dw, Unsigned: !srcInt.IsSigned()})
 			}
 		case srcIsFloat && dstIsInt:
-			// float → int (truncate-toward-zero). Width on the
-			// op is the destination's int width; Unsigned chosen
-			// per the destination's signed-ness.
-			dw := dstInt.NormalWidth()
+			// float → int (truncate-toward-zero). The trunc op only
+			// targets i32 / i64, so a sub-i32 destination truncs to
+			// i32; Unsigned is chosen per the destination's
+			// signed-ness.
+			realW := dstInt.NormalWidth()
+			dw := realW
 			if dw < 32 {
 				dw = 32
 			}
@@ -6234,6 +6237,25 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpITruncF64, Width: dw, Unsigned: !dstInt.IsSigned()})
 			} else {
 				b.emit(Op{Kind: OpITruncF32, Width: dw, Unsigned: !dstInt.IsSigned()})
+			}
+			// The trunc produced a 32-bit result; canonicalise it to
+			// a sub-i32 destination's representation (sign-extend a
+			// signed dest, zero-extend/mask an unsigned one) so its
+			// upper bits match how every other producer stores that
+			// type. Without this, `(3e9 as u8) as i64` came out
+			// 3000000000 instead of 64 (the trunc's high bits leaked
+			// through the widening zero-extend).
+			switch {
+			case realW == 8 && !dstInt.IsSigned():
+				b.emit(Op{Kind: OpConstI32, I32: 0xFF})
+				b.emit(Op{Kind: OpAnd})
+			case realW == 8:
+				b.emit(Op{Kind: OpSignExtend8})
+			case realW == 16 && !dstInt.IsSigned():
+				b.emit(Op{Kind: OpConstI32, I32: 0xFFFF})
+				b.emit(Op{Kind: OpAnd})
+			case realW == 16:
+				b.emit(Op{Kind: OpSignExtend16})
 			}
 		default:
 			// Any owned array / slice / string / struct → i32:

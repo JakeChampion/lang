@@ -2219,21 +2219,29 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			return nil, err
 		}
 		if tgt, ok := x.Target.(ast.NumberType); ok {
-			// int → int
+			// int → int: narrow (wrap) to the destination width.
+			// Sub-i32 targets must wrap too — `5000000000 as i8`
+			// is 0 on every codegen backend; the interpreter used
+			// to leave it unnarrowed.
 			if src, ok := v.(Number); ok {
-				if tgt.NormalWidth() == 32 {
-					return Number(int32(int64(src))), nil
-				}
-				return src, nil
+				return Number(narrowInt(int64(src), tgt.NormalWidth(), !tgt.IsSigned())), nil
 			}
 			// float → int (truncate-toward-zero, saturating: NaN
 			// → 0, out-of-range clamps to the destination's
 			// min/max). Matches wasm `trunc_sat` and the native
 			// backends; a plain Go `int64(f)` is implementation-
 			// defined for out-of-range inputs and diverged from
-			// them (it yielded INT_MIN where they saturate).
+			// them (it yielded INT_MIN where they saturate). The
+			// hardware trunc saturates at 32 bits, so a sub-i32
+			// destination saturates to i32 and then wraps to its
+			// width — matching the codegen backends.
 			if src, ok := v.(Float); ok {
-				return Number(saturateFloatToInt(src.V, tgt.NormalWidth(), tgt.IsSigned())), nil
+				sw := tgt.NormalWidth()
+				if sw < 32 {
+					sw = 32
+				}
+				n := saturateFloatToInt(src.V, sw, tgt.IsSigned())
+				return Number(narrowInt(n, tgt.NormalWidth(), !tgt.IsSigned())), nil
 			}
 		}
 		if tgt, ok := x.Target.(ast.FloatType); ok {
@@ -2243,7 +2251,15 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				if w == 0 {
 					w = 32
 				}
+				// An unsigned source converts from its unsigned
+				// magnitude: a u64 max rides as the bit pattern -1,
+				// which a signed conversion would turn into -1.0
+				// instead of ~1.8e19 (the codegen backends' ucvtf /
+				// convert_i64_u result). Source type from InnerType.
 				fv := float64(int64(src))
+				if srcInt, ok := x.InnerType.(ast.NumberType); ok && !srcInt.IsSigned() {
+					fv = float64(uint64(int64(src)))
+				}
 				if w == 32 {
 					fv = float64(float32(fv))
 				}
@@ -2753,10 +2769,14 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 // Width 0 (REPL paths before the checker assigns a width) keeps the
 // historical 64-bit masking.
 func shiftCount(rn Number, width int) Number {
-	if width == 32 {
-		return rn & 31
+	// Sub-i32 and i32 values all shift in 32-bit lanes (the codegen
+	// backends widen u8/i8/u16/i16 to i32 for arithmetic), so their
+	// count masks to 0..31; only i64 masks to 0..63. Width 0 (REPL,
+	// pre-checker) keeps the historical 64-bit masking.
+	if width == 64 || width == 0 {
+		return rn & 63
 	}
-	return rn & 63
+	return rn & 31
 }
 
 // saturateFloatToInt converts a truncated float to a width-bit
@@ -2806,9 +2826,35 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 		return int64(uint64(t))
 	}
 	if t >= 4294967296.0 { // 2^32
-		return -1
+		return 4294967295 // u32 max, stored as its positive value
 	}
-	return int64(int32(uint32(t)))
+	return int64(uint32(t))
+}
+
+// narrowInt wraps an int64 to a `width`-bit integer, matching the
+// codegen backends' int→int narrowing. An unsigned narrow
+// zero-extends (storing the true magnitude so a later widening
+// cast zero-extends); a signed narrow sign-extends. Width 64 is
+// identity (u64 rides as its bit pattern).
+func narrowInt(v int64, width int, unsigned bool) int64 {
+	switch width {
+	case 8:
+		if unsigned {
+			return int64(uint8(v))
+		}
+		return int64(int8(v))
+	case 16:
+		if unsigned {
+			return int64(uint16(v))
+		}
+		return int64(int16(v))
+	case 32:
+		if unsigned {
+			return int64(uint32(v))
+		}
+		return int64(int32(v))
+	}
+	return v
 }
 
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
@@ -2869,6 +2915,10 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		// keeps the historical 64-bit semantics.
 		mask := func(v Number) Number {
 			switch b.IntWidth {
+			case 8:
+				return Number(uint8(int64(v)))
+			case 16:
+				return Number(uint16(int64(v)))
 			case 32:
 				return Number(uint32(int64(v)))
 			case 64:
@@ -2876,8 +2926,36 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			}
 			return v
 		}
+		// signExtend narrows an arithmetic result back to the op's
+		// width so sub-i32 / i32 arithmetic wraps the way every
+		// codegen backend does (`255u8 + 1` → 0, not 256). Every
+		// case honours signedness: an unsigned narrow zero-extends
+		// (an unsigned value stores its true magnitude so a later
+		// widening `as i64` zero-extends rather than sign-extends),
+		// a signed narrow sign-extends. u64 has no positive int64
+		// form, so it rides as its bit pattern (handled by the op's
+		// own uint64 view); width 64 here is identity.
 		signExtend := func(v Number) Number {
-			if b.IntWidth == 32 {
+			switch b.IntWidth {
+			case 8:
+				if b.IsUnsigned {
+					return Number(uint8(int64(v)))
+				}
+				return Number(int8(int64(v)))
+			case 16:
+				if b.IsUnsigned {
+					return Number(uint16(int64(v)))
+				}
+				return Number(int16(int64(v)))
+			case 32:
+				// Unsigned stores its true 0..2^32-1 value (positive
+				// int64) so a widening `u32 as i64` zero-extends; a
+				// sign-extended store would have widened to a negative
+				// i64. Signed stays int32. Both reinterpret correctly
+				// at narrowing casts and via uint32 in to_string.
+				if b.IsUnsigned {
+					return Number(uint32(int64(v)))
+				}
 				return Number(int32(int64(v)))
 			}
 			return v

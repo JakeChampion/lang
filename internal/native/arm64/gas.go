@@ -1295,14 +1295,18 @@ func asmUcvtf(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	if single {
-		return fmt.Errorf("ucvtf Sd, Xn not supported yet")
-	}
 	rn, err := parseReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(UCVTF(rd, rn))
+	// A 32-bit (w) source clears the sf bit (bit 31), mirroring
+	// asmScvtf; the single-dest form uses the type=00 encoder.
+	w := is32(ops[1])
+	if single {
+		a.Emit(clearSF(UCVTFS(rd, rn), w))
+	} else {
+		a.Emit(clearSF(UCVTF(rd, rn), w))
+	}
 	return nil
 }
 

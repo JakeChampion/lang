@@ -34,6 +34,16 @@ func TestFcvtToIntDestWidth(t *testing.T) {
 		{"\tfcvtzu w0, d1\n", 0x1e790020},
 		{"\tfcvtzu w0, s1\n", 0x1e390020},
 		{"\tfcvtzu x0, s1\n", 0x9e390020},
+		// int → float, both signedness and dest/source widths.
+		// ucvtf needs the single-dest (type=00) + 32-bit-source
+		// (sf=0) forms an unsigned `u64 as f32` / `u32 as f32`
+		// reaches; without them the assembler errored / mis-encoded.
+		{"\tucvtf s0, x1\n", 0x9e230020},
+		{"\tucvtf s0, w1\n", 0x1e230020},
+		{"\tucvtf d0, x1\n", 0x9e630020},
+		{"\tucvtf d0, w1\n", 0x1e630020},
+		{"\tscvtf s0, x1\n", 0x9e220020},
+		{"\tscvtf s0, w1\n", 0x1e220020},
 	}
 	for _, c := range cases {
 		got, err := arm64.Assemble(c.asm)
