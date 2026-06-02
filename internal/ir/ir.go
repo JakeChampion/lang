@@ -2113,12 +2113,17 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	return nil, false
 }
 
-// discardedOwnedCallResultType classifies a discarded ExprStmt that is a
-// direct call to a USER function returning a pointer-shaped (rc-tracked)
-// value. That result is dropped on the floor today, leaking a fresh
-// struct / array / string / enum every iteration (`mk(i);` in a loop
-// leaked 800 → 80000). It returns the result's static type + true so the
-// statement can dec it via the is_unique-gated emitOwnedTempStackDrop.
+// ownedCallResultType classifies an expression that is a direct call to a
+// USER function returning a pointer-shaped (rc-tracked) value — a fresh
+// struct / array / string / enum the callee owns. Two consuming sites reclaim
+// it (otherwise it's dropped on the floor and leaks every iteration):
+//   - a discarded ExprStmt `mk(i);` (leaked 800 → 80000 in a loop) — dec'd
+//     in place via the is_unique-gated emitOwnedTempStackDrop;
+//   - a call ARG `take(mk(i))` / `outer(inner(i))` (leaked 800 → 80000 /
+//     1600 → 160000) — stashed and dec'd after the enclosing scalar-
+//     returning call via emitOwnedSlotDrop, alongside the literal-shape
+//     temps freshOwnedRcTempType already handles.
+// It returns the result's static type + true.
 //
 // Safety rests on the is_unique gate inside every emitOwnedTempStackDrop
 // branch: the dec only FREES a uniquely-owned (rc==1) result; an aliased
@@ -2138,7 +2143,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //   - pair-form callees: return a (tag, payload) pair, a different stack
 //     shape.
 //   - indirect (function-typed local) callees: unknown body / borrow shape.
-func (b *builder) discardedOwnedCallResultType(e ast.Expr) (ast.Type, bool) {
+func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
 	}
@@ -6109,8 +6114,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// safe because an aliased return is rc>=2 (return-transfer inc) so
 			// the gate only decs it, never frees a still-owned value. Builtins
 			// / mutators / variant ctors that hand back an uncounted alias are
-			// excluded (discardedOwnedCallResultType).
-			if t, ok := b.discardedOwnedCallResultType(n.Expr); ok {
+			// excluded (ownedCallResultType).
+			if t, ok := b.ownedCallResultType(n.Expr); ok {
 				b.emitOwnedTempStackDrop(t)
 				break
 			}
@@ -9856,7 +9861,20 @@ func (b *builder) callBody(n *ast.Call) error {
 	var argTempTypes []ast.Type
 	for _, a := range n.Args {
 		if reclaimArgTemps {
-			if tt, ok := b.freshOwnedRcTempType(a); ok {
+			// An owned-temp arg is either a fresh-allocating literal shape
+			// (freshOwnedRcTempType) OR a fresh-returning user-function call
+			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the
+			// callee borrows it and nothing dec'd it). Both reclaim the same
+			// way (stash + post-call dec). The call-result case is sound for
+			// the same reasons the discarded `mk(i);` case is — the is_unique
+			// gate in emitOwnedSlotDrop only frees a uniquely-owned rc==1
+			// result, and the enclosing call's concrete-scalar result
+			// (resultCannotAliasArg) means it can't hand the arg back.
+			tt, ok := b.freshOwnedRcTempType(a)
+			if !ok {
+				tt, ok = b.ownedCallResultType(a)
+			}
+			if ok {
 				// Evaluate into a scratch slot (typed so two-word strings
 				// store/load correctly), then reload for the call. Records
 				// the slot for the post-call dec below.
