@@ -2218,15 +2218,30 @@ loop holds a flat 192 B at N=50 vs N=5000 (was 3264→320064), value-correct
 with 0 over-releases over 200 iterations. The full suite (incl. self-host +
 differential gate) stays green.
 
-**Profiling findings (2026-06-02, `__heap_bump_bytes()` over compound
-workloads) — the remaining measured leaks, in priority order:**
-- **String concat results**: a `var s = a + b` loop under-reclaims
-  (1600 B → 64576 B) and a pure temporary `(a + b).len()` leaks fully
-  (1600 B → 160000 B). The shipped string tests only assert 0
-  over-release, never bounded high-water, so this slipped through. The
-  temporary case is the deferred statement-temporary reclamation
-  mechanism (dec transient expression results at statement end without
-  double-freeing bound/returned values).
+**String-concat bound-var — investigated + GUARDED (2026-06-02); the real
+remaining leak is statement TEMPORARIES.** A closer look corrected the
+earlier reading: a `var s = a + b` loop is actually BOUNDED, not leaking —
+the 1600→64576 ramp is a freelist warmup that PLATEAUS (N=5000 == N=50000
+== 64576 on wasm; natives read 0 because a short concat stays SSO-inline,
+no heap). `Test{X86_64,Arm64,WASM}StringConcatBounded`
+(`internal/e2e/rc_heap_bump_string_test.go`) now pins that bounded
+high-water — the guard the over-release-only string tests lacked. Along
+the way, fixed an uninitialised read in `__fern_str_dec`'s rc==1 free:
+it freed `__fern_box_free(data, mem[data-4])`, but `__fern_alloc_rc1`
+writes only rc at base+0, so `data-4` was garbage that misrouted the
+freelist class; it now frees the actual `len`-byte payload (str_dec
+already receives `len`), so an owned heap string returns to the class it
+was allocated from. The full suite (incl. the reassign-free path that
+exercises the rc==1 branch + the differential gate) stays green.
+- **String statement TEMPORARIES** (the genuine unbounded leak): a
+  transient concat result like `(a + b).len()` — not bound to a var —
+  leaks fully on wasm (1600 B → 160000 B → 1600000 B, linear, no
+  plateau), because nothing dec's it (emitVarReinitDropOld only sees
+  declared vars). This is the deferred statement-temporary reclamation
+  mechanism (dec rc-tracked transient expression results at statement end
+  without double-freeing bound / stored / returned values) — the dominant
+  remaining leak, and a dedicated effort (it needs per-statement temp
+  tracking, not a per-type drop slice).
 - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`): rc-neutral by
   design — construction doesn't inc payloads, so an `is_unique`-gated free
   would UAF a payload shared with a live local (rc-undercounted).
@@ -2238,10 +2253,12 @@ workloads) — the remaining measured leaks, in priority order:**
   leak). Needs the recursive inner deep-drop (drop_arr_str / drop_arr_ptr
   per element).
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
-  (96 B), map build (256 B), nested array `i32[][]` (192 B).
+  (96 B), map build (256 B), nested array `i32[][]` (192 B), string-concat
+  bound-var (wasm 64576 B plateau / natives 0 via SSO).
 
-Next Phase-6 steps (open): statement-temporary + bound-var string-concat
-reclamation (the dominant remaining leak); array-of-(rc-inner-array) deep
+Next Phase-6 steps (open): statement-temporary reclamation (the dominant
+remaining leak — dec rc-tracked transient expression results at statement
+end; needs per-statement temp tracking); array-of-(rc-inner-array) deep
 drop; then evaluate retiring `strbuf_*`. Enum reuse-path payloads remain
 deferred (needs the global payload rebalance).
 
