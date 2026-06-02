@@ -96,7 +96,11 @@ fern -weave -html -o prog.html prog.fern.md
 The prose is rendered through a small Markdown subset (headings, lists,
 blockquotes, rules, and the inline spans `code`, **bold**, *italic*,
 links); the value over the Markdown weave is the linked, highlighted
-code chunks rather than a full CommonMark engine.
+code chunks rather than a full CommonMark engine. The page also gets a
+**table of contents** (from the document's headings, which are anchored)
+and a **chunk index** appendix listing every chunk alphabetically —
+each links to its definition and to the chunks that reference it
+(noweb's identifier index), with the root and any unused chunks marked.
 
 A `.fern.md` file is also accepted directly by every mode that takes a
 `.fern` file — it is tangled in memory first:
