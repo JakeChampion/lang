@@ -472,6 +472,12 @@ func (s *Server) updateDoc(uri, src string) []string {
 	if prev, ok := s.docs[uri]; ok && prev.src == src {
 		return nil
 	}
+	// Literate documents (`.fern.md`) are tangled before compilation and
+	// their diagnostics remapped onto the document — handled ahead of the
+	// workspace / single-file paths, which expect plain Fern source.
+	if isLiterateURI(uri) {
+		return s.updateLiterateDoc(uri, src)
+	}
 	// Workspace mode: thread through modload so cross-module imports
 	// load + type-check together. file:// URIs without a real path
 	// (the playground's opaque ones) fall back to single-file.

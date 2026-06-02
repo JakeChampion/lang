@@ -134,6 +134,20 @@ the rendered source snippet all point at what you actually typed, not
 at the generated intermediate. (Internally: `Tangle` returns a line map
 that the CLI turns into a position remapper for `diag.FormatRemapped`.)
 
+## Editor support (LSP)
+
+`fern-lsp` diagnoses `.fern.md` documents: it tangles the source,
+type-checks the generated Fern, and **remaps the diagnostics back onto
+the document** so errors are reported on the line you wrote — including
+tangle errors (missing root, undefined / cyclic chunk). Open a
+`.fern.md` in an editor wired to `fern-lsp` and a type error in a chunk
+squiggles in place.
+
+Position-sensitive features (hover, go-to-definition, completion) are
+intentionally inert for `.fern.md` for now — they'd otherwise report
+results in tangled coordinates the editor would misplace; remapping them
+onto chunk positions is a planned follow-up.
+
 ## Doctests — runnable examples
 
 A ```` ```fern test ```` block is a *doctest*: a runnable example that
