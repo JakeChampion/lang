@@ -6,4 +6,8 @@
 /build/
 *.s
 *.o
-/.claude/
+# Ignore local Claude Code config, but track the shared SessionStart hook
+# + settings so Claude Code on the web provisions the test toolchain.
+/.claude/*
+!/.claude/settings.json
+!/.claude/hooks/
