@@ -155,20 +155,32 @@ document order, same-name definitions concatenate, a reference's
 indentation is prepended to its expansion, and headerless `fern`
 fences are display-only (woven, not tangled).
 
+A document can also tangle to **multiple modules**: a fence with a
+`file=PATH` directive is a file-root (`internal/literate/tanglefiles.go`
+— `TangleFiles` returns one `FileResult{Path,Code,LineMap,IsEntry}`
+per output path; `EntryFile` resolves the compile entry). The generated
+modules `import` each other normally; `loadMultiFileEntry` in
+`cmd/fern/main.go` feeds them all to `modload.LoadWith` as virtual-file
+overrides (keyed by path relative to the document dir) and loads from
+the entry. `expandBody`/`expandChunk` are the shared recursion behind
+both `Tangle` (root chunk) and `TangleFiles` (file-root bodies).
+
 The CLI exposes `-tangle` / `-weave`, and `loadEntry` in
-`cmd/fern/main.go` tangles a `.fern.md` entry in memory (via a
-`modload.LoadWith` override keyed by the document path, so disk
-imports still resolve) before the normal compile/`-check`/`-interp`
-pipeline. Diagnostics are remapped back onto the document through
-`diag.FormatRemapped` (the literate-only sibling of `diag.Format`,
-which applies a position remap built from the tangle line map).
-Coverage: `internal/literate/*_test.go`, `diag` FormatRemapped
-tests, and `internal/e2e/literate_test.go` (interp + tangle + weave
-+ the diagnostic-remap contract). Example:
-`examples/literate/fizzbuzz.fern.md`. When extending the chunk
-grammar or the remap, add cases at the layer you touch — the
-diagnostic-remap (generated line → document line) is the most
-regression-prone surface, mirroring the test-runner contract below.
+`cmd/fern/main.go` tangles a `.fern.md` entry in memory before the
+normal compile/`-check`/`-interp` pipeline. Diagnostics are remapped
+back onto the document through `diag.FormatRemapped` (the literate-only
+sibling of `diag.Format`, which applies a position remap built from the
+tangle line map); for multi-file docs the `entry` struct holds a
+per-module `remaps` map so an error in any generated file lands on the
+right `.fern.md` line. Coverage: `internal/literate/*_test.go` (incl.
+`tanglefiles_test.go`), `diag` FormatRemapped tests, and
+`internal/e2e/literate_test.go` + `literate_multifile_test.go` (interp
++ tangle + weave + the single- and multi-file diagnostic-remap
+contracts). Examples: `examples/literate/fizzbuzz.fern.md` (single) and
+`multi_module.fern.md` (multi). When extending the chunk grammar or the
+remap, add cases at the layer you touch — the diagnostic-remap
+(generated line → document line) is the most regression-prone surface,
+mirroring the test-runner contract below.
 
 ## Test runner
 

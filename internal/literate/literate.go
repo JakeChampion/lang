@@ -102,22 +102,40 @@ type chunkDef struct {
 
 // block is one top-level region of the document: either prose (Markdown
 // to pass through to weave, ignored by tangle) or a fenced ```fern code
-// block. A fern block is a chunk definition when Chunk != "".
+// block. A fern block is a chunk definition when chunk != "", or a
+// file-root when file != "".
 type block struct {
 	isFern  bool
-	chunk   string     // chunk name if this fern block is a definition; "" for prose or display-only
+	chunk   string     // chunk name if this fern block is a `<<name>>=` definition
+	file    string     // output path if this fern block is a `file=PATH` root
 	lines   []bodyLine // body lines (fern blocks only): for a definition, the lines after the header
 	rawText string     // verbatim text including fences (prose + display-only fern), for weave
 }
 
-// Document is a parsed literate program: the ordered blocks (for weave)
-// and the chunk table (for tangle).
+// fileRoot is a tangle output target named by a `file=PATH` fence
+// directive. Its body is expanded like a root chunk to produce PATH's
+// source. Multiple `file=PATH` blocks with the same path concatenate in
+// document order (like same-name chunk pieces).
+type fileRoot struct {
+	path      string
+	body      []bodyLine
+	isEntry   bool
+	firstLine int
+}
+
+// Document is a parsed literate program: the ordered blocks (for weave),
+// the chunk table (for tangle), and the file-root table (for multi-file
+// tangle).
 type Document struct {
 	blocks []block
 	chunks map[string]*chunkDef
 	// order preserves the document order in which chunk names were
 	// first defined, so weave and "defined chunks" listings are stable.
 	order []string
+	// fileIndex accumulates file-root bodies per output path; fileOrder
+	// preserves first-definition order for stable multi-file output.
+	fileIndex map[string]*fileRoot
+	fileOrder []string
 }
 
 // Parse reads literate source (the contents of a `.fern.md` file) into
@@ -126,16 +144,17 @@ type Document struct {
 // reported lazily by Tangle (undefined / cyclic references) rather
 // than here, so Weave works even on an in-progress document.
 func Parse(src string) *Document {
-	doc := &Document{chunks: map[string]*chunkDef{}}
+	doc := &Document{chunks: map[string]*chunkDef{}, fileIndex: map[string]*fileRoot{}}
 	lines := strings.Split(src, "\n")
 	i := 0
 	n := len(lines)
 	for i < n {
 		line := lines[i]
-		if fence, lang, ok := openingFence(line); ok {
+		if fence, lang, info, ok := openingFence(line); ok {
 			// Collect the fenced block up to the matching closing
 			// fence (a line whose trimmed text is the same fence run).
 			start := i
+			fenceLine := i + 1 // 1-based line of the opening fence
 			i++
 			var body []bodyLine
 			for i < n && !isClosingFence(lines[i], fence) {
@@ -148,7 +167,11 @@ func Parse(src string) *Document {
 			}
 			raw := strings.Join(lines[start:i], "\n")
 			if lang == "fern" {
-				doc.addFernBlock(body, raw)
+				if file, isEntry := parseFenceDirectives(info); file != "" {
+					doc.addFileBlock(file, isEntry, body, raw, fenceLine)
+				} else {
+					doc.addFernBlock(body, raw)
+				}
 			} else {
 				doc.blocks = append(doc.blocks, block{rawText: raw})
 			}
@@ -186,6 +209,24 @@ func (doc *Document) addFernBlock(body []bodyLine, raw string) {
 	doc.blocks = append(doc.blocks, block{isFern: true, chunk: name, lines: def, rawText: raw})
 }
 
+// addFileBlock records a `file=PATH` fern block as (part of) the
+// file-root for PATH. Unlike a chunk definition there is no `<<name>>=`
+// header — the whole block body is the file's content (which may itself
+// contain `<<ref>>` lines). Repeated PATHs concatenate in document order.
+func (doc *Document) addFileBlock(path string, isEntry bool, body []bodyLine, raw string, firstLine int) {
+	fr := doc.fileIndex[path]
+	if fr == nil {
+		fr = &fileRoot{path: path, firstLine: firstLine}
+		doc.fileIndex[path] = fr
+		doc.fileOrder = append(doc.fileOrder, path)
+	}
+	fr.body = append(fr.body, body...)
+	if isEntry {
+		fr.isEntry = true
+	}
+	doc.blocks = append(doc.blocks, block{isFern: true, file: path, lines: body, rawText: raw})
+}
+
 // Tangle expands the root chunk into compilable Fern source and returns
 // the generated text plus a per-line provenance map (lineMap[i] is the
 // origin of the (i+1)-th generated line). It errors when the root chunk
@@ -198,22 +239,38 @@ func (doc *Document) Tangle() (string, []Line, error) {
 			Msg: fmt.Sprintf("literate: no root chunk %q defined (every literate program needs a `<<%s>>=` block to tangle from)", "<<"+RootChunk+">>", RootChunk),
 		}
 	}
+	out, lineMap, err := collect(func(emit emitFn) error {
+		return doc.expandChunk(RootChunk, "", map[string]bool{}, emit)
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.Join(out, "\n"), lineMap, nil
+}
+
+// emitFn receives one expanded line plus its document-line provenance.
+type emitFn func(text string, litLine, colShift int)
+
+// collect runs an expansion, accumulating the emitted lines and their
+// provenance map. Shared by single-output Tangle (a root chunk) and
+// per-file TangleFiles (a file-root body).
+func collect(run func(emit emitFn) error) ([]string, []Line, error) {
 	var out []string
 	var lineMap []Line
 	emit := func(text string, litLine, colShift int) {
 		out = append(out, text)
 		lineMap = append(lineMap, Line{Lit: litLine, ColShift: colShift})
 	}
-	if err := doc.expand(RootChunk, "", map[string]bool{}, emit); err != nil {
-		return "", nil, err
+	if err := run(emit); err != nil {
+		return nil, nil, err
 	}
-	return strings.Join(out, "\n"), lineMap, nil
+	return out, lineMap, nil
 }
 
-// expand recursively writes the expansion of chunk `name` through
+// expandChunk recursively writes the expansion of chunk `name` through
 // `emit`, prefixing every emitted line with `indent`. `active` is the
 // set of chunks currently being expanded, for cycle detection.
-func (doc *Document) expand(name, indent string, active map[string]bool, emit func(text string, litLine, colShift int)) error {
+func (doc *Document) expandChunk(name, indent string, active map[string]bool, emit emitFn) error {
 	if active[name] {
 		return &Error{
 			Pos: ast.Position{Line: doc.chunks[name].firstLine, Col: 1},
@@ -223,24 +280,33 @@ func (doc *Document) expand(name, indent string, active map[string]bool, emit fu
 	active[name] = true
 	defer delete(active, name)
 
-	cd := doc.chunks[name]
-	for _, p := range cd.pieces {
-		for _, bl := range p.body {
-			if refIndent, refName, isRef := chunkRef(bl.text); isRef {
-				if _, ok := doc.chunks[refName]; !ok {
-					col := strings.Index(bl.text, "<<") + 1
-					return &Error{
-						Pos: ast.Position{Line: bl.litLine, Col: col},
-						Msg: fmt.Sprintf("literate: reference to undefined chunk %q", "<<"+refName+">>"),
-					}
-				}
-				if err := doc.expand(refName, indent+refIndent, active, emit); err != nil {
-					return err
-				}
-				continue
-			}
-			emit(indent+bl.text, bl.litLine, len(indent))
+	for _, p := range doc.chunks[name].pieces {
+		if err := doc.expandBody(p.body, indent, active, emit); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// expandBody expands one list of body lines: literal lines are emitted
+// (with `indent` prepended), and `<<ref>>` lines recurse into the
+// referenced chunk. Shared by chunk expansion and file-root expansion.
+func (doc *Document) expandBody(body []bodyLine, indent string, active map[string]bool, emit emitFn) error {
+	for _, bl := range body {
+		if refIndent, refName, isRef := chunkRef(bl.text); isRef {
+			if _, ok := doc.chunks[refName]; !ok {
+				col := strings.Index(bl.text, "<<") + 1
+				return &Error{
+					Pos: ast.Position{Line: bl.litLine, Col: col},
+					Msg: fmt.Sprintf("literate: reference to undefined chunk %q", "<<"+refName+">>"),
+				}
+			}
+			if err := doc.expandChunk(refName, indent+refIndent, active, emit); err != nil {
+				return err
+			}
+			continue
+		}
+		emit(indent+bl.text, bl.litLine, len(indent))
 	}
 	return nil
 }
@@ -297,12 +363,13 @@ func chunkRef(text string) (indent, name string, ok bool) {
 }
 
 // openingFence reports whether line opens a fenced code block and, if
-// so, returns the fence run (``` or longer) and the lowercased
-// language token from the info string.
-func openingFence(line string) (fence, lang string, ok bool) {
+// so, returns the fence run (``` or longer), the lowercased language
+// token, and the full (case-preserved) info string after the backticks
+// — the latter carries directives like `file=util.fern`.
+func openingFence(line string) (fence, lang, info string, ok bool) {
 	trimmed := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(trimmed, "```") {
-		return "", "", false
+		return "", "", "", false
 	}
 	// The fence is the leading run of backticks; the info string is
 	// whatever follows on the same line.
@@ -311,17 +378,34 @@ func openingFence(line string) (fence, lang string, ok bool) {
 		n++
 	}
 	fence = trimmed[:n]
-	info := strings.TrimSpace(trimmed[n:])
+	info = strings.TrimSpace(trimmed[n:])
 	lang = info
 	if sp := strings.IndexAny(info, " \t"); sp >= 0 {
 		lang = info[:sp]
 	}
-	return fence, strings.ToLower(lang), true
+	return fence, strings.ToLower(lang), info, true
+}
+
+// parseFenceDirectives extracts the multi-file directives from a fern
+// fence's info string: `file=PATH` marks the block as a tangle output
+// file (its body is a file-root), and a bare `entry` token marks that
+// file as the program's compile entry. The leading language token and
+// any other words are ignored. PATH may be quoted.
+func parseFenceDirectives(info string) (file string, isEntry bool) {
+	for _, f := range strings.Fields(info) {
+		switch {
+		case strings.HasPrefix(f, "file="):
+			file = strings.Trim(strings.TrimPrefix(f, "file="), "\"")
+		case f == "entry":
+			isEntry = true
+		}
+	}
+	return file, isEntry
 }
 
 // isFenceLine reports whether line opens (or closes) any fenced block.
 func isFenceLine(line string) bool {
-	_, _, ok := openingFence(line)
+	_, _, _, ok := openingFence(line)
 	return ok
 }
 

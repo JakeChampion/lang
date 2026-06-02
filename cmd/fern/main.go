@@ -44,6 +44,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -92,17 +93,21 @@ func isLiterate(srcPath string) bool {
 }
 
 // entry bundles a loaded program with everything needed to render its
-// diagnostics. For a literate entry file it also carries the original
-// `.fern.md` source and a position remap from tangled (generated)
-// coordinates back to document coordinates, so a checker error in
-// generated code points at the line the author actually wrote.
+// diagnostics. For a literate document it also carries the original
+// `.fern.md` source and, per generated file, a position remap from
+// tangled coordinates back to document coordinates, so a checker error
+// in generated code points at the line the author actually wrote. A
+// multi-file document (`file=PATH` blocks) tangles to several modules,
+// each with its own remap keyed by that module's absolute path; a
+// single-`<<*>>` document has exactly one remap (keyed by the document
+// path). A non-literate entry has no remaps.
 type entry struct {
-	prog   *ast.Program
-	srcs   map[string]string
-	path   string                          // entry path as given (diagnostic headers)
-	src    string                          // source to render entry-file diagnostics against
-	litAbs string                          // abs path of the literate entry, "" when not literate
-	remap  func(ast.Position) ast.Position // tangled→document remap, nil when not literate
+	prog     *ast.Program
+	srcs     map[string]string
+	path     string                                     // diagnostic-header path: the .fern.md for literate, else the source path
+	src      string                                     // document/entry source for remapped or entry diagnostics
+	entryAbs string                                     // abs path of the entry module
+	remaps   map[string]func(ast.Position) ast.Position // module-abs → tangled→document remap; nil when not literate
 }
 
 // remapFor turns a tangle line map into a position remapper: a tangled
@@ -135,7 +140,7 @@ func loadEntry(srcPath string) (entry, error) {
 	abs := absPath(srcPath)
 	if !isLiterate(srcPath) {
 		prog, srcs, err := modload.Load(srcPath)
-		e := entry{prog: prog, srcs: srcs, path: srcPath}
+		e := entry{prog: prog, srcs: srcs, path: srcPath, entryAbs: abs}
 		if srcs != nil {
 			e.src = srcs[abs]
 		}
@@ -150,18 +155,81 @@ func loadEntry(srcPath string) (entry, error) {
 	}
 	litSrc := string(srcBytes)
 	doc := literate.Parse(litSrc)
+	if doc.HasFiles() {
+		return loadMultiFileEntry(srcPath, abs, litSrc, doc)
+	}
 	tangled, lineMap, err := doc.Tangle()
 	if err != nil {
 		// Tangle errors carry document-coordinate positions already.
 		return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, err))
 	}
 	prog, srcs, lerr := modload.LoadWith(srcPath, map[string]string{abs: tangled})
-	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, litAbs: abs, remap: remapFor(lineMap)}
+	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: abs,
+		remaps: map[string]func(ast.Position) ast.Position{abs: remapFor(lineMap)}}
 	if lerr != nil {
 		return e, e.format(lerr)
 	}
 	return e, nil
 }
+
+// loadMultiFileEntry tangles a `file=PATH` literate document into one
+// virtual module per output file, feeds them all to modload as in-memory
+// overrides (keyed by their paths relative to the document's directory,
+// so the generated modules' `import "./other"` lines resolve), and loads
+// from the entry module. Each module carries its own document remap, so
+// a diagnostic in any generated file points back at the `.fern.md` line.
+func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (entry, error) {
+	results, err := doc.TangleFiles()
+	if err != nil {
+		return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, err))
+	}
+	dir := filepath.Dir(abs)
+	resolve := func(p string) string {
+		if filepath.IsAbs(p) {
+			return absPath(p)
+		}
+		return absPath(filepath.Join(dir, p))
+	}
+	overrides := map[string]string{}
+	remaps := map[string]func(ast.Position) ast.Position{}
+	for _, r := range results {
+		fileAbs := resolve(r.Path)
+		overrides[fileAbs] = r.Code
+		remaps[fileAbs] = remapFor(r.LineMap)
+	}
+	// Pick the compile entry: the marked / sole file, else the unique
+	// module that defines a `main` function.
+	entryRel, eerr := doc.EntryFile()
+	if eerr != nil {
+		var mains []string
+		for _, r := range results {
+			if definesMain(r.Code) {
+				mains = append(mains, r.Path)
+			}
+		}
+		if len(mains) != 1 {
+			return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, eerr))
+		}
+		entryRel = mains[0]
+	}
+	entryFile := filepath.Join(dir, entryRel)
+	if filepath.IsAbs(entryRel) {
+		entryFile = entryRel
+	}
+	prog, srcs, lerr := modload.LoadWith(entryFile, overrides)
+	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: resolve(entryRel), remaps: remaps}
+	if lerr != nil {
+		return e, e.format(lerr)
+	}
+	return e, nil
+}
+
+// definesMain reports whether tangled source declares a top-level
+// `main` function — used to disambiguate the compile entry among a
+// multi-file document's modules when none is marked `entry`.
+var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
+
+func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
 
 // format renders err against the right source for each entry it
 // carries: each diagnostic's File() picks its module's source out of
@@ -173,16 +241,34 @@ func (e entry) format(err error) error {
 	if err == nil {
 		return nil
 	}
-	entryAbs := absPath(e.path)
 	render := func(one error) string {
 		path := ""
 		if f, ok := one.(diag.Filed); ok {
 			path = f.File()
 		}
-		if path == "" || path == e.litAbs || path == entryAbs {
-			if e.remap != nil {
-				return diag.FormatRemapped(e.path, e.src, e.remap, one)
+		if e.remaps != nil {
+			// Literate: an error attributed to a generated module remaps
+			// onto the document; an unattributed one (the checker's
+			// pre-decl pass) is charged to the entry module's remap.
+			if r, ok := e.remaps[path]; ok {
+				return diag.FormatRemapped(e.path, e.src, r, one)
 			}
+			if path == "" {
+				if r, ok := e.remaps[e.entryAbs]; ok {
+					return diag.FormatRemapped(e.path, e.src, r, one)
+				}
+			}
+			// A real (non-generated) module imported by the document —
+			// stdlib or an on-disk `.fern` — renders against its own source.
+			if src := e.srcs[path]; src != "" {
+				return diag.Format(path, src, one)
+			}
+			if r, ok := e.remaps[e.entryAbs]; ok {
+				return diag.FormatRemapped(e.path, e.src, r, one)
+			}
+			return diag.Format(e.path, e.src, one)
+		}
+		if path == "" || path == e.entryAbs {
 			return diag.Format(e.path, e.src, one)
 		}
 		if src := e.srcs[path]; src != "" {
@@ -214,6 +300,24 @@ func runLiterateTool(srcPath string, tangle bool) (int, error) {
 	src := string(srcBytes)
 	doc := literate.Parse(src)
 	if tangle {
+		// A multi-file document (`file=PATH` blocks) tangles to several
+		// modules; print each under a banner so the single stream stays
+		// readable. A single-`<<*>>` document prints just its source.
+		if doc.HasFiles() {
+			results, err := doc.TangleFiles()
+			if err != nil {
+				return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+			}
+			var b strings.Builder
+			for i, r := range results {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				fmt.Fprintf(&b, "// ==> %s <==\n%s\n", r.Path, r.Code)
+			}
+			_, werr := os.Stdout.WriteString(b.String())
+			return 0, werr
+		}
 		code, _, err := doc.Tangle()
 		if err != nil {
 			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
@@ -240,7 +344,7 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
-	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source and write it to stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. No codegen.")
+	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. No codegen.")
 	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. No codegen.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
