@@ -2279,13 +2279,29 @@ exercises the rc==1 branch + the differential gate) stays green.
   inner arrays only dec. `Test{X86_64,Arm64,WASM}ArrayOfRcReclaim` — `P[][]`
   480064→bounded, `i32[][][]` 640064→bounded, value-correct (incl. the
   3-level case), 0 over-releases.
-- **Array-of-(enum[]/closure[]) inner**: still flat (`arrElemStructDropName`
-  declines those element types, so the recursion bottoms out — a follow-up
-  once enum[]/closure[] arrays have their own deep-drop dispatch).
+- **Array-of-enum (`E[]`) — SHIPPED (2026-06-02).** Arrays of variant
+  values (e.g. `Value[]`, pervasive in the self-host compiler) flat-rc_dec'd
+  each element, leaking the enum boxes' rc-tracked payloads (4864 B →
+  480064 B). `arrElemStructDropName` now routes a CONCRETE droppable enum
+  element through a generated `__drop_arr_enum_<Name>` loop whose
+  per-element call is the tag-dispatched `__drop_enum_<Name>`. Unlocks
+  `E[][]` etc. via the recursive `__drop_arr_of_` path. UAF-safe despite
+  enum construction not inc'ing payloads: a payload built from a local
+  taints that local (escapes via the constructor), so its own drop is
+  skipped (no double-free), and the deep-drop only fires at reinit/exit
+  (after the shared local's last use); the reassignment-overwrite path
+  keeps the flat arr_dec. `Test{X86_64,Arm64,WASM}ArrayOfEnumReclaim` —
+  480064→bounded + an adversarial shared-payload (`[Arr(a)]`, `a` live)
+  value-correct with 0 over-releases; `TestSelfHostVM*` (heavy `Value[]`
+  user) green.
+- **Array-of-(generic-enum[]/closure[]) inner**: generic enum
+  instantiations (`Option[…][]`) need the `genEnumDrops` registry
+  `arrElemStructDropName` doesn't carry; `closure[]` needs a per-closure
+  array-drop dispatch — both keep the flat path (follow-up).
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
   (96 B), map build (256 B), nested array `i32[][]` (192 B), `string[][]`
-  (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), string-concat
-  bound-var (wasm 64576 B plateau / natives 0 SSO).
+  (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
+  (256 B wasm), string-concat bound-var (wasm 64576 B plateau / natives 0).
 
 Next Phase-6 steps (open): array-of-(enum[]/closure[]) inner deep drop
 (`arrElemStructDropName` declines those element types today); then evaluate
