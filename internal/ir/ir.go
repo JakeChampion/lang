@@ -2019,6 +2019,126 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	}
 }
 
+// discardedOwnedTempType classifies the value left on the operand stack by
+// a bare `expr;` statement whose result is discarded. When that expr
+// materialises a FRESH owned rc-tracked temporary — one that aliases no
+// borrowed value and, being discarded, escapes nowhere — it returns the
+// value's static type and true, so the statement boundary can DEC it
+// (rc==1 → free) instead of OpDrop'ing an owned allocation on the floor.
+// That floor-drop is the unbounded statement-temporary leak documented in
+// docs/RC-PERCEUS-PLAN.md (stage (a): a discarded `a + b;` concat buffer).
+//
+// Scope is deliberately the unambiguous fresh-ALLOCATING shapes that
+// rhsTainted / computeFreeEligible treat as untainted-owned: array / struct
+// / tuple literals, string concat (Binary.IsStringConcat), and string slice
+// (SliceExpr whose result is a string — the runtime copies into a new owned
+// buffer). These are exactly the RHS shapes that make a bound `var t = …`
+// freeEligible, so dec'ing the discarded temp is as safe as the already-
+// shipped exit-sweep dec of that bound var. Ident / field / index reads are
+// borrowed VIEWS (the owner upstream or the exit sweep accounts for them)
+// and are never matched. Calls are excluded on purpose — a method call can
+// alias its receiver (`arr.push(x)` returns the receiver buffer), so dec'ing
+// its result would double-free; owned call-ARG temps are a later stage.
+// MakeClosure is also excluded for now (a discarded bare closure literal is
+// effectively nonexistent in real code, and the per-closure capture-drop
+// thunk is keyed by local name) — those keep their prior plain-drop.
+func (b *builder) discardedOwnedTempType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	switch x := e.(type) {
+	case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
+		if t := b.exprType(e); ast.IsPointerType(t) {
+			return t, true
+		}
+	case *ast.Binary:
+		if x.IsStringConcat {
+			if t, ok := b.exprType(e).(ast.StringType); ok {
+				return t, true
+			}
+		}
+	case *ast.SliceExpr:
+		if t, ok := b.exprType(e).(ast.StringType); ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// emitOwnedTempStackDrop releases a FRESH owned rc temporary whose value is
+// currently on top of the operand stack — the stage-(a) replacement for the
+// plain OpDrop a discarded ExprStmt would otherwise emit (see
+// discardedOwnedTempType). The value aliases nothing borrowed and escapes
+// nowhere, so a single dec is exactly balanced (rc==1 → free). It mirrors
+// the per-type drop bodies the exit sweep / emitVarReinitDropOld use, but
+// consumes the value in place rather than from a named slot — so the only
+// shape needing a scratch slot is the plain-element tuple, whose inline
+// is_unique + box_free reads the box pointer twice.
+func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
+	switch ty := t.(type) {
+	case ast.StringType:
+		// Mirrors the exit-sweep / reinit string branch exactly: wasm
+		// two-word __fern_str_dec, native single-word x86_64 __fern_rc_dec,
+		// arm64 (two-word, slice 5g deferred) keeps the safe-leak plain drop.
+		// Each dec returns the data ptr, dropped after; the guards
+		// (inline-SSO / literal sentinel / rc>1) keep every source safe.
+		if b.ptrW == 4 {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			// arm64 two-word: still two stack words; drop both.
+			b.emit(Op{Kind: OpDrop, Width: WidthString})
+		}
+	case ast.ArrayType:
+		// An array-of-(struct / tuple / primitive-array) routes to the deep
+		// per-element drop fn (1 arg); a plain / pointer-element array frees
+		// its buffer via __fern_arr_dec(ptr, elemSize). Same dispatch the
+		// exit sweep / reinit use (arrElemStructDropName), so element
+		// reclamation matches the bound-var case.
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+		}
+	case ast.StructType, ast.EnumType:
+		// A droppable struct / enum recurses through its generated __drop_*
+		// fn (1 arg); types dropFnNameFor declines (Map handles can't be a
+		// literal temp, non-uniform generics) fall back to the flat one-level
+		// rc_dec — leak-but-never-UAF, exactly as the slot-drop sibling.
+		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+	case ast.TupleType:
+		// A needs-drop tuple has a generated __drop_tuple_<mangled> fn (1
+		// arg). A plain-element tuple's inline is_unique + box_free reads the
+		// box pointer twice, so stash it in a scratch slot and route through
+		// the shared emitTupleSlotDrop (single-word box pointer → a normal
+		// i32 scratch slot is exact).
+		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			slot := b.allocSlot()
+			b.locals[fmt.Sprintf("__tmpdrop_%d", slot)] = slot
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			b.emitTupleSlotDrop(slot, ty)
+		}
+	default:
+		// Not an rc-tracked shape we reclaim here — keep the plain drop.
+		b.emit(Op{Kind: OpDrop})
+	}
+}
+
 func (b *builder) emitRcDecLocalsAtExit() {
 	b.emitRcDecLocalsAtExitExcept("")
 }
@@ -5704,7 +5824,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// expressions on wasm32 produce two stack values under the
 		// two-word ABI; mark the drop with `Width: WidthString` so the
 		// wasm codegen fans it out to two `drop`s.
+		//
+		// Stage (a) statement-temp reclamation: when the discarded value
+		// is a FRESH owned rc temporary (a literal / concat / string slice
+		// that aliases nothing and escapes nowhere — discardedOwnedTempType),
+		// DEC it instead of dropping an owned allocation on the floor.
+		// Without this a bare `a + b;` / `[x, y];` leaks its box every time.
+		// Gated inside discardedOwnedTempType on RcFreeEnabled, so free-off
+		// stays byte-identical to the plain-drop baseline below.
 		if exprLeavesValue(n.Expr, b.info) {
+			if t, ok := b.discardedOwnedTempType(n.Expr); ok {
+				b.emitOwnedTempStackDrop(t)
+				break
+			}
 			w := 0
 			if _, isString := b.exprType(n.Expr).(ast.StringType); isString && b.twoWordStrings() {
 				w = WidthString
