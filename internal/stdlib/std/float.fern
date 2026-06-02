@@ -20,6 +20,33 @@
 import "std/i32";
 import "std/i64";
 
+// __float_int_part renders a non-negative, integer-valued f64 that
+// is too large for the i64 range (>= 2^63) as decimal digits,
+// working entirely in floating point so no value ever crosses the
+// trapping/non-portable `as i64` boundary. Digits are peeled off
+// least-significant-first via `floor(n / 10)`; the per-step
+// remainder is nominally 0..9 but `n / 10` and `* 10` each round,
+// so for very large magnitudes it can land just outside that range
+// — clamp before indexing the digit table. The printed digits
+// reflect the f64's stored (rounded) value — exact for round
+// magnitudes like 1e20, approximate where the double itself can't
+// represent the integer exactly, which is inherent to f64 and not
+// something this formatter can recover.
+function __float_int_part(n: f64): string {
+    var digits: string = "0123456789";
+    var out: string = "";
+    while (n >= 1.0) {
+        var q: f64 = __floor_f64(n / 10.0);
+        var d: i32 = (n - q * 10.0) as i32;
+        if (d < 0) { d = 0; }
+        if (d > 9) { d = 9; }
+        out = digits[d:d + 1] + out;
+        n = q;
+    }
+    if (out == "") { return "0"; }
+    return out;
+}
+
 function __float_to_string(n: f64, k: i32): string {
     if (n != n) { return "NaN"; }
     var out: string = "";
@@ -33,6 +60,14 @@ function __float_to_string(n: f64, k: i32): string {
     // extracted the sign and ruled out NaN, so `n` here is
     // either zero, finite-positive, or +Inf.
     if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    // Magnitudes at or above 2^63 overflow the `n as i64` cast
+    // below — and that overflow is *not* portable: x86 yields
+    // INT_MIN, arm64 saturates to INT_MAX, and wasm traps
+    // outright (`integer overflow`). Any f64 this large is already
+    // integer-valued (the exponent leaves no fractional bits), so
+    // format the integer digits in the float domain instead, which
+    // never touches the i64 range and agrees across every backend.
+    if (n >= 9223372036854775808.0) { return out + __float_int_part(n); }
     // Integer part.
     var intPart: i64 = n as i64;
     out = out + intPart.to_string();

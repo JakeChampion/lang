@@ -2194,11 +2194,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	case *ast.NumberLit:
 		return Number(x.Value), nil
 	case *ast.FloatLit:
-		// Width comes from the checker; default to 32 for back-
-		// compat with the previous "f32 is the only float" policy.
+		// Width comes from the checker. An unsettled literal
+		// (Width 0 — no expected-type pressure) defaults to f64,
+		// the double-precision default and the language's primary
+		// float; only an explicit f32 context stamps Width 32.
+		// (Matches the IR lowering's Width-0 → OpConstF64 path.)
 		w := x.Width
 		if w == 0 {
-			w = 32
+			w = 64
 		}
 		v := x.Value
 		if w == 32 {
@@ -2740,6 +2743,21 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
+// shiftCount masks a runtime shift amount to the operand width, the
+// same way the hardware backends (x86 `shl eax`/`shl rax`, arm64
+// `lsl w`/`lsl x`) and wasm (shift count modulo bit-width) do: a
+// 32-bit shift uses count & 31, a 64-bit shift uses count & 63. An
+// unmasked count let `-8 >> 33` saturate to -1 in the interpreter
+// while every codegen backend (count 33 & 31 == 1) returned -4.
+// Width 0 (REPL paths before the checker assigns a width) keeps the
+// historical 64-bit masking.
+func shiftCount(rn Number, width int) Number {
+	if width == 32 {
+		return rn & 31
+	}
+	return rn & 63
+}
+
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	// Short-circuit logical operators.
 	switch b.Op {
@@ -2842,12 +2860,13 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		case "^":
 			return signExtend(ln ^ rn), nil
 		case "<<":
-			return signExtend(ln << rn), nil
+			return signExtend(ln << shiftCount(rn, b.IntWidth)), nil
 		case ">>":
+			sc := shiftCount(rn, b.IntWidth)
 			if b.IsUnsigned {
-				return signExtend(Number(uint64(ln) >> uint64(rn))), nil
+				return signExtend(Number(uint64(ln) >> sc)), nil
 			}
-			return signExtend(signExtend(ln) >> rn), nil
+			return signExtend(signExtend(ln) >> sc), nil
 		case "==":
 			return Bool(ln == rn), nil
 		case "!=":

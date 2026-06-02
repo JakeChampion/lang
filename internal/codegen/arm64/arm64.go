@@ -6794,20 +6794,31 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("eor x0, x1, x0")
 		g.push()
 	case ir.OpShl:
+		// Width matters: an i32 value rides zero-extended in the
+		// low half of x0, so the w-form (`lsl w0, w1, w0`) masks
+		// the count to 0..31 and keeps the result in the i32 lane,
+		// while the x-form would mask to 0..63 — diverging from the
+		// wasm / interp shift-count semantics for i32.
 		g.binPop()
-		g.emit("lsl x0, x1, x0")
+		r := g.regForWidth(op.Width)
+		g.emit("lsl %s0, %s1, %s0", r, r, r)
 		g.push()
 	case ir.OpShrS:
 		// Right shift: `asr` (arithmetic) shifts in the sign
 		// bit — correct for signed types but it leaves
 		// `(u64::MAX >> 1)` at `0xFFFF…` instead of
 		// `0x7FFF…` because the sign bit propagates. Pick
-		// `lsr` (logical) for unsigned operands.
+		// `lsr` (logical) for unsigned operands. Width matters
+		// for `asr`: a negative i32 rides zero-extended in x0
+		// (top 32 bits clear), so the x-form would read bit 63
+		// (= 0) as the sign and yield a logical-looking result.
+		// The w-form reads the real i32 sign bit (bit 31).
 		g.binPop()
+		r := g.regForWidth(op.Width)
 		if op.Unsigned {
-			g.emit("lsr x0, x1, x0")
+			g.emit("lsr %s0, %s1, %s0", r, r, r)
 		} else {
-			g.emit("asr x0, x1, x0")
+			g.emit("asr %s0, %s1, %s0", r, r, r)
 		}
 		g.push()
 

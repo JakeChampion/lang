@@ -5756,10 +5756,10 @@ func (b *builder) expr(e ast.Expr) error {
 		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
 		// the f-const path with the integer Value cast to float.
 		if n.IsFloat {
-			if n.FloatWidth == 64 {
-				b.emit(Op{Kind: OpConstF64, F64: float64(n.Value)})
-			} else {
+			if n.FloatWidth == 32 {
 				b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+			} else {
+				b.emit(Op{Kind: OpConstF64, F64: float64(n.Value)})
 			}
 		} else if n.Width == 64 || (n.Width == ast.WidthPtr && b.ptrW == 8) {
 			// usize literals on natives (ptrW=8) emit as i64
@@ -6018,12 +6018,14 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 	case *ast.FloatLit:
 		// The checker stamps `Width` on the literal once a
-		// concrete float type is known; Width=0 means the literal
-		// stayed at the f32 default (no expected-type pressure).
-		if n.Width == 64 {
-			b.emit(Op{Kind: OpConstF64, F64: n.Value})
-		} else {
+		// concrete float type is known. Width=0 means the literal
+		// stayed unsettled (no expected-type pressure); it defaults
+		// to f64 — the double-precision default and the language's
+		// primary float. Only an explicit f32 context stamps 32.
+		if n.Width == 32 {
 			b.emit(Op{Kind: OpConstF32, F32: float32(n.Value)})
+		} else {
+			b.emit(Op{Kind: OpConstF64, F64: n.Value})
 		}
 	case *ast.Ident:
 		// A top-level function name in non-callee position is a function
@@ -7252,6 +7254,9 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if x.Width != 0 {
 			return ast.FloatType{Width: x.Width}
 		}
+		// Unsettled float literal: defaults to f64 (8-byte slot),
+		// matching the Width-0 → OpConstF64 lowering above.
+		return ast.FloatType{Polymorphic: true}
 	case *ast.StructLit:
 		// A struct literal is pointer-shaped; without this case
 		// `payloadSlotSize(nil)` defaults to 4 and an enclosing
@@ -7837,13 +7842,17 @@ func (b *builder) binary(n *ast.Binary) error {
 		if !ok {
 			return fmt.Errorf("ir: unsupported float binary %q", n.Op)
 		}
-		// FloatWidth=0 means "unannotated by the checker", which
-		// happens for IR-test inputs that bypass the checker.
-		// Treat as f32 so existing tests pass; checker-produced
-		// trees set it explicitly for f64 ops.
+		// FloatWidth=0 means "unannotated" — an unsettled float
+		// binary with no expected-type pressure (e.g. an inferred
+		// `var y = 1.0 / 3.0`). Default to f64 so the op width
+		// matches the f64 default its operand literals lower to;
+		// a 32-bit default here left the operands as f64 consts
+		// feeding an f32 op (wasm rejected the type mismatch, the
+		// natives mis-read the result). Only an explicit f32
+		// context stamps 32.
 		w := n.FloatWidth
 		if w == 0 {
-			w = 32
+			w = 64
 		}
 		b.emit(Op{Kind: op, Width: w})
 		return nil
@@ -10746,7 +10755,7 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
 		return int32(ptrW)
 	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+	if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 		return 8
 	}
 	if _, isString := t.(ast.StringType); isString {
@@ -10801,7 +10810,7 @@ func isWideScalar(t ast.Type) bool {
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return true
 	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+	if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 		return true
 	}
 	return false
@@ -10905,7 +10914,7 @@ func pairPayloadWidth(t ast.Type) int {
 func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
-		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 			w = 64
 		}
 		return Op{Kind: OpFStore, Width: w}
@@ -10935,7 +10944,7 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
-		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 			w = 64
 		}
 		return Op{Kind: OpFStore, Width: w}
@@ -10967,7 +10976,7 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 	if isFloat(t) {
 		w := 0
-		if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+		if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 			w = 64
 		}
 		return Op{Kind: OpFLoad, Width: w}
@@ -10999,7 +11008,7 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return true
 	}
-	if f, ok := t.(ast.FloatType); ok && f.Width == 64 {
+	if f, ok := t.(ast.FloatType); ok && f.NormalWidth() == 64 {
 		return true
 	}
 	return false

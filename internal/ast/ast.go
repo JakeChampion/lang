@@ -85,9 +85,11 @@ type VoidType struct{}
 type StringType struct{}
 
 // FloatType represents an IEEE-754 binary float. Width is 32 or
-// 64; the zero value is f32 to keep `FloatType{}` working
-// unchanged after the f64 type was added. Currently only Width=32
-// is wired through the backends; f64 is reserved for a follow-up.
+// 64; the non-polymorphic zero value is f32 (the parser spells
+// `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
+// keep meaning f32 there). Both widths are wired through every
+// backend. An unsettled float literal carries Polymorphic=true,
+// for which NormalWidth defaults to f64 — see NormalWidth.
 //
 // Spelling matches NumberType.Spelling — captures the keyword
 // the parser saw (`"float"`, `"f32"`, ...) so the formatter can
@@ -291,9 +293,21 @@ func (n NumberType) IsSigned() bool {
 }
 
 // NormalWidth returns the canonical bit-width of a FloatType.
-// Width=0 maps to 32 (legacy `float` / `FloatType{}`).
+// An unsettled float literal (Polymorphic, Width=0) defaults to
+// f64 — the double-precision default every mainstream language
+// uses for untyped float literals, and the language's primary
+// float type. Defaulting these to f32 silently halved the
+// precision of any literal not explicitly annotated `f64` (e.g.
+// `var x = 1.0 / 3.0` or a bare `(3.14159).to_string()` receiver).
+// An explicit `f32` is spelled `FloatType{Width:0, Spelling:"f32"}`
+// by the parser (the historical zero-value-is-f32 convention), so a
+// NON-polymorphic Width=0 still maps to 32 — only the Polymorphic
+// flag promotes the default to f64.
 func (f FloatType) NormalWidth() int {
 	if f.Width == 0 {
+		if f.Polymorphic {
+			return 64
+		}
 		return 32
 	}
 	return f.Width
