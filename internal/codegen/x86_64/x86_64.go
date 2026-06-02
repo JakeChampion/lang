@@ -2606,6 +2606,39 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	return nil
 }
 
+// emitArrBoundsCheck emits the array index bounds check shared by
+// every `__arr_idx*` variant: with the array base in rax and the
+// element index in rcx, the length prefix at [rax-4] is compared
+// and an out-of-range index aborts with exit code 134 (matching the
+// string-slice trap and wasm's `unreachable`). A single unsigned
+// compare catches a negative index (huge as unsigned) and index >=
+// len; rdx is scratch.
+func (g *generator) emitArrBoundsCheck() {
+	ok := g.freshLabel(".Larr_ok")
+	g.emit("mov edx, [rax - 4]") // len prefix
+	g.emit("cmp ecx, edx")
+	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
+	g.emit("mov edi, 134")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.label(ok)
+}
+
+// emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
+// is in the slice header at [rax+4] (data_ptr at [rax+0]), read
+// before the helper overwrites rax with the data pointer. rdx is
+// scratch.
+func (g *generator) emitSliceBoundsCheck() {
+	ok := g.freshLabel(".Lslice_ok")
+	g.emit("mov edx, [rax + 4]") // len at [slice+4]
+	g.emit("cmp ecx, edx")
+	g.emit(fmt.Sprintf("jb %s", ok))
+	g.emit("mov edi, 134")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall")
+	g.label(ok)
+}
+
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
 // `__slice_idx_*` bounds-check call as a plain address
 // compute (`base + index * stride`). The IR walker emits
@@ -2656,28 +2689,35 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// idx. Split from __str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `test rax, 1` check.
+		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx]")
 	case "__arr_idx_2":
+		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx*2]")
 	case "__arr_idx":
+		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__arr_idx_8":
+		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx*8]")
-	// Slice indexing must first dereference the slice header to
-	// recover its data_ptr field (4 bytes at [slice + 0]; len is
-	// at +4 but we trust the IR's bounds-check pass to have
-	// validated `i < len` upstream). After the deref it's the
-	// same stride-add shape as the array helpers.
+	// Slice indexing first bounds-checks `i` against the slice
+	// header's len (at [slice+4]), then dereferences its data_ptr
+	// field (4 bytes at [slice+0]). After the deref it's the same
+	// stride-add shape as the array helpers.
 	case "__slice_idx_1":
+		g.emitSliceBoundsCheck()
 		g.emit("mov eax, [rax]") // data_ptr (i32)
 		g.emit("add rax, rcx")
 	case "__slice_idx_2":
+		g.emitSliceBoundsCheck()
 		g.emit("mov eax, [rax]")
 		g.emit("lea rax, [rax + rcx*2]")
 	case "__slice_idx":
+		g.emitSliceBoundsCheck()
 		g.emit("mov eax, [rax]")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__slice_idx_8":
+		g.emitSliceBoundsCheck()
 		g.emit("mov eax, [rax]")
 		g.emit("lea rax, [rax + rcx*8]")
 	default:

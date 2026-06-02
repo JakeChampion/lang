@@ -1982,6 +1982,38 @@ func (g *generator) emitStrcatRuntime2W() {
 	g.line(".ltorg")
 }
 
+// emitArrBoundsCheck emits the array index bounds check shared by
+// every `__arr_idx*` variant: with the element index in x0 and the
+// array base in x1, the length prefix at [base-4] is compared and
+// an out-of-range index aborts the process with exit code 134 (the
+// same trap the string-slice helper uses, and what wasm's
+// `unreachable` produces under wasmtime). A single unsigned compare
+// catches both a negative index (huge as unsigned) and index >=
+// len. x2 is scratch.
+func (g *generator) emitArrBoundsCheck() {
+	ok := g.freshLabel("arr_ok")
+	g.emit("ldur w2, [x1, #-4]") // len prefix
+	g.emit("cmp w0, w2")
+	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
+	g.emit("mov x0, #134")
+	g.syscallExit()
+	g.label(ok)
+}
+
+// emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the
+// length lives in the slice header at [slice+4] (data_ptr is at
+// [slice+0]), so it must be read before the helper overwrites x1
+// with the data pointer. x2 is scratch.
+func (g *generator) emitSliceBoundsCheck() {
+	ok := g.freshLabel("slice_ok")
+	g.emit("ldur w2, [x1, #4]") // len at [slice+4]
+	g.emit("cmp w0, w2")
+	g.emit("b.lo %s", ok)
+	g.emit("mov x0, #134")
+	g.syscallExit()
+	g.label(ok)
+}
+
 // emitInlineIdxHelper inlines a `__str_idx` / `__arr_idx` /
 // `__slice_idx_*` bounds-check call as a plain address compute
 // (`base + index * stride`). The IR walker follows the helper
@@ -2049,34 +2081,43 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// idx. Split from $__str_idx so the string helper can
 		// own the SSO inline-spill dispatch without forcing
 		// byte arrays through the same `tbnz` check.
+		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0")
 	case "__arr_idx_2":
+		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0, lsl #1")
 	case "__arr_idx":
+		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__arr_idx_8":
+		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0, lsl #3")
 	case "__arr_idx_16":
 		// 16-byte stride — two-word `string[]` element load.
+		g.emitArrBoundsCheck()
 		g.emit("add x0, x1, x0, lsl #4")
-	// Slice indexing first dereferences the slice header to
-	// recover its 32-bit data_ptr field, then does the same
-	// stride-shifted add as the array helpers. The IR's
-	// bounds-check pass has already validated `i < len`
-	// upstream, so we skip the runtime length check inline.
+	// Slice indexing first bounds-checks `i` against the slice
+	// header's len (at [slice+4]), then dereferences its 32-bit
+	// data_ptr field (at [slice+0]) and does the same
+	// stride-shifted add as the array helpers.
 	case "__slice_idx_1":
+		g.emitSliceBoundsCheck()
 		g.emit("ldr w1, [x1]") // data_ptr (i32)
 		g.emit("add x0, x1, x0")
 	case "__slice_idx_2":
+		g.emitSliceBoundsCheck()
 		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #1")
 	case "__slice_idx":
+		g.emitSliceBoundsCheck()
 		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #2")
 	case "__slice_idx_8":
+		g.emitSliceBoundsCheck()
 		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #3")
 	case "__slice_idx_16":
+		g.emitSliceBoundsCheck()
 		g.emit("ldr w1, [x1]")
 		g.emit("add x0, x1, x0, lsl #4")
 	default:
