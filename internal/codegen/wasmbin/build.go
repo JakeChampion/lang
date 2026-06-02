@@ -76,6 +76,16 @@ type BuildOptions struct {
 	// other imports stay on preview-1 until their own migrations
 	// land. Forwarded to EmitOptions.Preview2WASI.
 	Preview2WASI bool
+	// CliRunResult tells the SynthCliRun wrapper that its i32
+	// return will be canon-lifted as a `wasi:cli/run` `result<_, _>`
+	// (0 = ok, non-zero = err) rather than surfaced raw. Only 0 and
+	// 1 are valid result discriminants, so the wrapper normalises
+	// main's value to 0/1; without this, a main returning >= 2 traps
+	// the host with "invalid expected discriminant". Left off for the
+	// `-component-wrap` u32-export shape, where the raw value is the
+	// legitimate result (`--invoke main()` → 42). Forwarded to
+	// EmitOptions.CliRunResult.
+	CliRunResult bool
 }
 
 // Build is BuildWithOptions with the default (zero-value) options.
@@ -170,5 +180,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		HttpHandler:        opts.HttpHandler,
 		Preview2WASI:       opts.Preview2WASI,
 		SynthCliRun:        opts.SynthCliRun,
+		CliRunResult:       opts.CliRunResult,
 	})
 }

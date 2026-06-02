@@ -3377,8 +3377,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		tagT := c.checkExpr(n.Tag, s)
 		// Floats compare with NaN edge cases that switch's "exact
 		// match" semantics aren't well-defined for. Reject them up
-		// front rather than letting WASM's f32.eq surprise us.
-		if tagT != nil && ast.Equal(tagT, ast.FloatType{}) {
+		// front rather than letting WASM's f32.eq surprise us. Match
+		// any float width (an `ast.Equal` against `FloatType{}` only
+		// caught the default width, so an f64 tag slipped through).
+		if _, isFloat := tagT.(ast.FloatType); isFloat {
 			c.errfCode(n.Tag.Pos(), "E025", "switch on float values is not supported")
 		}
 		// `break` inside case bodies should leave the switch but not
@@ -4083,7 +4085,30 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// width so the IR emits an i64.const, not an i32.const
 		// that overflows. Without this, a literal like
 		// `4611686018427387904 as u64` silently truncated to 0.
-		c.settleNumeric(n.Inner, n.Target)
+		//
+		// Exception: a float→int cast must NOT settle its inner
+		// toward the integer target — `settleNumeric` would route
+		// a float binary/literal through `settleInt`, stamping it
+		// with an integer width. The cast then sees `srcIsInt` and
+		// lowers as an int→int identity, dropping the truncation
+		// (the raw float bit-pattern leaked into the i32 result:
+		// `(7.9 - 0.0) as i32` returned 154, the low byte of the
+		// f64, instead of 7). Settle the inner toward its own float
+		// type so polymorphic float literals still commit to the
+		// f64 default, then lower as the float→int truncation.
+		if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
+			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt {
+				floatHint := ast.FloatType(ft)
+				if ft.Polymorphic {
+					floatHint = ast.FloatType{Width: 64}
+				}
+				c.settleNumeric(n.Inner, floatHint)
+			} else {
+				c.settleNumeric(n.Inner, n.Target)
+			}
+		} else {
+			c.settleNumeric(n.Inner, n.Target)
+		}
 		inner = postSettleType(n.Inner, inner)
 		n.InnerType = inner
 		_, innerIsNum := inner.(ast.NumberType)

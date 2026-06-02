@@ -105,6 +105,12 @@ type EmitOptions struct {
 	// wasi:cli/run::run sees a `() -> i32` core export even when
 	// the user's main returns void.
 	SynthCliRun bool
+	// CliRunResult normalises the SynthCliRun wrapper's i32 return
+	// to a valid `wasi:cli/run` `result<_, _>` discriminant (0 = ok,
+	// 1 = err) when its value is fed to that canon lift. Only 0/1 are
+	// valid discriminants, so without this a main returning >= 2 traps
+	// the host. Off for the raw u32-export (`-component-wrap`) shape.
+	CliRunResult bool
 	// Preview2WASI rewrites preview-1-shaped WASI imports to their
 	// preview-2 component-model equivalents. Currently scoped to
 	// `proc_exit` — the only import whose core-wasm signature is
@@ -735,8 +741,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			// __fern_print (so e2e tests can observe it over stdout, the
 			// same as the _start path) and returns 0 — preview-2's
 			// wasi:cli/run only surfaces ok/err, not the value. Falls back
-			// to passing main's i32 through as the run result when no
+			// to normalising main's i32 to the run result when no
 			// int_to_string variant survived tree-shake.
+			printed := false
 			if opts.PrintMainResult {
 				intToStrName := ""
 				if _, ok := funcIdx["int_to_string"]; ok {
@@ -752,10 +759,22 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 					}
 					body = inst.InstCall(body, printIdx)
 					body = inst.InstI32Const(body, 0)
+					printed = true
 				}
-				// else: main's i32 stays on the stack as our return.
 			}
-			// else: main's i32 stays on the stack as our return.
+			if !printed && opts.CliRunResult {
+				// main's i32 becomes the run result, which the canon
+				// lift treats as the discriminant of `result<_, _>`:
+				// only 0 (ok) and 1 (err) are valid — any other value
+				// traps the host with "invalid expected discriminant".
+				// Normalise to the documented contract (0 = ok, non-zero
+				// = err) with a double i32.eqz: eqz(eqz(v)) is 0 when v
+				// is 0 and 1 for every non-zero v. Skipped for the raw
+				// u32-export shape (CliRunResult off), where main's full
+				// value is the legitimate result.
+				body = numeric.InstI32Eqz(body)
+				body = numeric.InstI32Eqz(body)
+			}
 		default:
 			return nil, fmt.Errorf("wasmbin: SynthCliRun: `main` must return void or i32, got %v", mainResults)
 		}

@@ -711,6 +711,10 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			Preview2WASI: componentWrap || componentWrapCli,
 			SynthCliRun:  componentWrap || componentWrapCli,
+			// -component-wrap-cli lifts _lang_run as a wasi:cli/run
+			// result (needs a 0/1 discriminant); -component-wrap lifts
+			// it raw as a u32 export, so leave it unnormalised there.
+			CliRunResult: componentWrapCli,
 		})
 		if err != nil {
 			return 1, err
@@ -763,6 +767,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 				Preview2WASI: true,
 				SynthCliRun:  true,
+				CliRunResult: true,
 			})
 			if err != nil {
 				return 1, err
@@ -1188,6 +1193,9 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 			ForceMemorySection: true,
 			Preview2WASI:       true,
 			SynthCliRun:        true,
+			// A server always lifts wasi:cli/run (never a u32 --invoke
+			// export), so its result is a 0/1 discriminant.
+			CliRunResult: true,
 		})
 		if err != nil {
 			return nil, err
@@ -1205,6 +1213,9 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 			ForceMemorySection: true,
 			Preview2WASI:       true,
 			SynthCliRun:        true,
+			// cli/run lift (empty exportName) needs a 0/1 discriminant;
+			// a named u32 export surfaces _lang_run's value raw.
+			CliRunResult: exportName == "",
 		})
 		if err != nil {
 			return nil, err

@@ -1024,19 +1024,31 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpShl:
 		// x86 shift count comes from cl (low 8 of rcx). The
 		// binPop's pop-rhs-first order already puts the count
-		// in rcx, so we can shift directly.
+		// in rcx, so we can shift directly. The destination
+		// register width must match the integer width: a 32-bit
+		// value rides zero-extended in the low half of rax, so a
+		// 64-bit `shl rax` would mask the count to 0..63 and let
+		// bits spill above bit 31 — `shl eax` masks to 0..31 and
+		// keeps the result in the canonical i32 lane (matching the
+		// wasm / interp shift-count semantics).
 		g.binPop()
-		g.emit("shl rax, cl")
+		g.emit(fmt.Sprintf("shl %s, cl", g.aRegForWidth(op.Width)))
 		g.push()
 	case ir.OpShrS:
 		// sar (arithmetic right shift) preserves the sign
 		// bit for signed values; shr (logical) zero-fills
-		// for unsigned.
+		// for unsigned. Width matters for `sar`: a negative i32
+		// rides zero-extended in rax (high half all zero), so
+		// `sar rax` would read bit 63 (= 0) as the sign and
+		// produce a logical-looking result. `sar eax` reads the
+		// real i32 sign bit (bit 31). Both forms also mask the
+		// count to the width (0..31 for i32, 0..63 for i64).
 		g.binPop()
+		reg := g.aRegForWidth(op.Width)
 		if op.Unsigned {
-			g.emit("shr rax, cl")
+			g.emit(fmt.Sprintf("shr %s, cl", reg))
 		} else {
-			g.emit("sar rax, cl")
+			g.emit(fmt.Sprintf("sar %s, cl", reg))
 		}
 		g.push()
 
@@ -2020,6 +2032,18 @@ func (g *generator) cmpForWidth(width int) {
 		return
 	}
 	g.emit("cmp eax, ecx")
+}
+
+// aRegForWidth names the accumulator register (rax) sized to the
+// integer width: `rax` for i64 / u64 / usize (64 or pointer-width),
+// `eax` for i32 and narrower. Operations whose result depends on the
+// register width — notably `sar` (the sign bit position) and the
+// shift-count mask (0..31 vs 0..63) — must select the matching form.
+func (g *generator) aRegForWidth(width int) string {
+	if width == 64 || width == ir.WidthPtr {
+		return "rax"
+	}
+	return "eax"
 }
 
 // fbinPop pops two float-shaped values off the operand stack
