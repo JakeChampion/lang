@@ -14,7 +14,11 @@
 //	                                     # the input file in place; use -d
 //	                                     # to print a unified diff against
 //	                                     # the on-disk version and exit
-//	                                     # non-zero when they differ)
+//	                                     # non-zero when they differ). A
+//	                                     # FILE.fern.md formats the code
+//	                                     # inside each chunk in place,
+//	                                     # leaving prose / fences / headers
+//	                                     # and any unparseable chunk verbatim.
 //	fern -check FILE.fern                # type-check the codebase rooted
 //	                                     # at FILE.fern (follows imports);
 //	                                     # silent on success, prints
@@ -657,6 +661,47 @@ func main() {
 	os.Exit(code)
 }
 
+// formatChunkBody formats one literate chunk body. A body is formattable
+// when it parses either as a complete program (top-level declarations) or
+// — wrapped in a synthetic function — as a statement list. Bodies that
+// parse as neither (fragments split mid-construct, or bodies containing
+// `<<ref>>` chunk references, which aren't valid Fern) are declined with
+// ok=false so FormatCode keeps them verbatim. Whitespace-only bodies are
+// left as-is.
+func formatChunkBody(code string) (string, bool) {
+	if strings.TrimSpace(code) == "" {
+		return "", false
+	}
+	if prog, err := parser.Parse(code); err == nil {
+		return strings.TrimRight(printer.Format(prog), "\n"), true
+	}
+	// Retry as a statement list wrapped in a throwaway function.
+	const open = "function __fern_fmt_wrap__() {\n"
+	if prog, err := parser.Parse(open + code + "\n}\n"); err == nil {
+		return unwrapFormattedBody(printer.Format(prog)), true
+	}
+	return "", false
+}
+
+// unwrapFormattedBody strips the synthetic `function __fern_fmt_wrap__()`
+// wrapper that formatChunkBody added, returning the body de-indented by
+// one level so it sits at the chunk's own column.
+func unwrapFormattedBody(formatted string) string {
+	lines := strings.Split(strings.TrimRight(formatted, "\n"), "\n")
+	if len(lines) < 2 {
+		return "" // empty wrapped block: `function …() {}`
+	}
+	inner := lines[1 : len(lines)-1] // drop the `function …{` and `}` lines
+	for i, ln := range inner {
+		inner[i] = strings.TrimPrefix(ln, formatIndentUnit)
+	}
+	return strings.Join(inner, "\n")
+}
+
+// formatIndentUnit is one level of the formatter's indentation, stripped
+// when unwrapping a wrapped chunk body.
+const formatIndentUnit = "  "
+
 // formatFile parses the file at srcPath, formats it, and either
 // writes the result to stdout / back to the file / prints a unified
 // diff against the on-disk version. Returns the exit code the CLI
@@ -668,11 +713,19 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 		return 1, err
 	}
 	src := string(srcBytes)
-	prog, err := parser.Parse(src)
-	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	var formatted string
+	if isLiterate(srcPath) {
+		// A literate document reformats the fern code inside each chunk
+		// (leaving prose, fences, and headers untouched); fragments /
+		// `<<ref>>`-bearing chunks the formatter can't parse stay verbatim.
+		formatted = literate.Parse(src).FormatCode(formatChunkBody)
+	} else {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+		}
+		formatted = printer.Format(prog)
 	}
-	formatted := printer.Format(prog)
 	if diffMode {
 		diff := printer.UnifiedDiff(src, formatted, srcPath, srcPath)
 		if diff == "" {
