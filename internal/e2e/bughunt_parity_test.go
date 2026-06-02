@@ -109,6 +109,37 @@ func TestBugHunt_FloatBinaryToIntCast(t *testing.T) {
 	}
 }
 
+// TestBugHunt_FloatToIntSaturation pins the saturating float→int
+// contract across every backend: NaN → 0, +overflow → INT_MAX,
+// −overflow → INT_MIN (unsigned: < 0 / NaN → 0, overflow → the
+// all-ones max). Before this the four backends each did something
+// different — x86 / interp returned INT_MIN for every out-of-range
+// input, arm64 saturated the i64 path but truncated f→i32 to -1/0
+// (a 32-bit-dest encoding bug), and wasm trapped outright. Each
+// case checks the cast result internally and returns 7 on success,
+// so a backend that mis-saturates diverges from the interp's 7.
+func TestBugHunt_FloatToIntSaturation(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		// signed i32
+		{"i32_pos_ovf", `function main(): i32 { var x: f64 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
+		{"i32_neg_ovf", `function main(): i32 { var x: f64 = 0.0 - 1e30; if ((x as i32) == 0 - 2147483647 - 1) { return 7; } return 1; }`},
+		{"i32_nan", `function main(): i32 { var x: f64 = 0.0 / 0.0; if ((x as i32) == 0) { return 7; } return 1; }`},
+		{"i32_in_range", `function main(): i32 { var x: f64 = 0.0 - 42.9; if ((x as i32) == 0 - 42) { return 7; } return 1; }`},
+		// signed i64
+		{"i64_pos_ovf", `function main(): i32 { var x: f64 = 1e30; if ((x as i64) == 9223372036854775807) { return 7; } return 1; }`},
+		{"i64_neg_ovf", `function main(): i32 { var x: f64 = 0.0 - 1e30; if ((x as i64) == 0 - 9223372036854775807 - 1) { return 7; } return 1; }`},
+		{"i64_nan", `function main(): i32 { var x: f64 = 0.0 / 0.0; var r: i64 = x as i64; if (r == 0) { return 7; } return 1; }`},
+		// f32 source (exercises the arm64 32-bit-dest encoding fix)
+		{"f32_i32_ovf", `function main(): i32 { var x: f32 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
+	}
+	for _, c := range cases {
+		assertBackendsAgreeWithInterp(t, c.name, c.src)
+	}
+}
+
 // TestBugHunt_FloatToStringLargeMagnitude guards `float.to_string`
 // for magnitudes at/above 2^63: the `n as i64` cast in the formatter
 // overflowed non-portably (x86 INT_MIN, arm64 INT_MAX, wasm trapped),

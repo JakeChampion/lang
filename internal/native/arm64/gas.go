@@ -185,7 +185,7 @@ func assembleInsn(a *Assembler, line string) error {
 	case "ucvtf":
 		return asmUcvtf(a, ops)
 	case "fcvtzu":
-		return asmFcvtToInt(a, ops, FCVTZU, nil)
+		return asmFcvtToInt(a, ops, FCVTZU, FCVTZUS)
 	case "lsl", "lsr", "asr":
 		return asmShift(a, mnem, ops)
 	case "sxtb", "sxth", "sxtw":
@@ -1320,13 +1320,21 @@ func asmFcvtToInt(a *Assembler, ops []string, encD, encS func(rd, rn uint32) uin
 	if err != nil {
 		return err
 	}
+	// The encoders (FCVTZS / FCVTZSS / FCVTZU / FCVTZUS) are the
+	// sf=1 (64-bit destination) forms. A `w` destination is the
+	// sf=0 form — clearing bit 31 — and saturates to the 32-bit
+	// integer range. Without this every `fcvtzs w0, d0` was emitted
+	// as the 64-bit conversion, so an out-of-range f→i32 saturated
+	// to the i64 limit and the low 32 bits read back as -1 / 0
+	// instead of INT32_MAX / INT32_MIN.
+	w := is32(ops[0])
 	if single {
 		if encS == nil {
 			return fmt.Errorf("single-precision source not supported yet")
 		}
-		a.Emit(encS(rd, rn))
+		a.Emit(clearSF(encS(rd, rn), w))
 	} else {
-		a.Emit(encD(rd, rn))
+		a.Emit(clearSF(encD(rd, rn), w))
 	}
 	return nil
 }

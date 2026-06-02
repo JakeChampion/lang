@@ -12,6 +12,7 @@ arithmetic** but deliberately **under-specify** the edge cases:
 | `a + b`, `a - b`, `a * b`, `a / b`         | ✅        |
 | Comparisons (`<`, `<=`, `==`, etc.)        | ✅        |
 | Float-to-int truncation (in-range value)   | ✅        |
+| Float-to-int truncation of NaN / out-of-range (saturating) | ✅ |
 | Sign of finite zero results                | ✅        |
 | Default rounding (round-to-nearest-even)   | ✅        |
 | NaN production (any op that should produce NaN) | ✅   |
@@ -19,8 +20,25 @@ arithmetic** but deliberately **under-specify** the edge cases:
 | **NaN bit-pattern** (which exact qNaN)     | ❌        |
 | **Sign-of-zero round-tripping** (-0.0 vs +0.0 through arithmetic) | ❌ |
 | **Denormal handling** (subnormal → zero, or kept) | ❌ |
-| **Float-to-int truncation of NaN / out-of-range** | ❌ |
 | **Non-default rounding modes** (no API to switch — `RNE` only) | n/a |
+
+### Float-to-int conversion is saturating
+
+`f as i32` / `i64` / `u32` / `u64` (and the f32 sources) **saturate**,
+identically on every backend:
+
+- `NaN` → `0`
+- a value above the destination's max → its max (`INT_MAX`, or the
+  all-ones `UINT_MAX` for the unsigned types)
+- a value below the destination's min → its min (`INT_MIN`, or `0`
+  for the unsigned types)
+- everything in range → truncated toward zero, as before
+
+This matches wasm's `trunc_sat_*` ops and arm64's `fcvtz*`; the
+interpreter and x86-64 clamp explicitly to the same contract (x86's
+`cvtt*2si` traps to `INT_MIN` on any invalid input, so the backend
+fixes up `+overflow` / `NaN` with a compare). A conversion never
+traps and never leaks a platform-specific sentinel.
 
 "Portable" means: the result is identical across every backend
 (`interp`, `arm64`, `arm64-darwin`, `x86_64`, `wasm`) for the same
@@ -73,23 +91,24 @@ function clamp(x: f32, lo: f32, hi: f32): f32 {
 Don't write:
 
 ```
-// Comparing NaN bit-patterns — non-portable
-var n: i32 = (0.0f32 / 0.0f32) as i32;
-return n;   // each backend gives a different byte
+// Reading a NaN's exact bit-pattern — non-portable
+var n: i32 = f32_bits(0.0f32 / 0.0f32);
+return n;   // each backend may give a different qNaN payload
 
 // Discriminating -0.0 from +0.0 after arithmetic — non-portable
 var z: f32 = -1.0f32 * 0.0f32;
-return (1.0f32 / z > 0.0f32) as i32;   // not guaranteed across backends
-
-// Returning a NaN as an `i32` exit code — non-portable
-function main(): i32 {
-    return (0.0f32 / 0.0f32) as i32;
-}
+return f32_bits(z);   // sign bit not guaranteed across backends
 ```
 
-If you need portability across NaN/Inf edges, do the check at the
-source level using the IEEE NaN-test idiom and a finite-range
-threshold:
+Note that `(0.0f32 / 0.0f32) as i32` is now **portable** — a NaN
+saturates to `0` on every backend (see the conversion table above).
+It's reading the NaN's *bit-pattern* (via `f32_bits`) that stays
+non-portable.
+
+If you want a NaN/Inf to map to a sentinel of your own choosing
+rather than the saturating default (`0` / `INT_MAX` / `INT_MIN`),
+do the check at the source level with the IEEE NaN-test idiom and a
+finite-range threshold:
 
 ```
 function safe(x: f32): i32 {
@@ -103,14 +122,11 @@ function safe(x: f32): i32 {
 implements ordinary float comparison honours it because NaN
 inequality is part of the "portable" comparison guarantee above.
 
-Today the interpreter and parser have some narrowing gaps that
-prevent the NaN-test idiom from running cross-backend in the
-diff-oracle (the interp doesn't yet handle `*ast.FloatLit`; the
-parser doesn't yet accept scientific-notation literals like
-`1.0e38f32`). Both are tracked separately. Until those land,
-treat the NaN / Inf snippets above as documentation of the
-*intended* portable form — supported on the native backends,
-not yet through the differential oracle.
+The NaN-test idiom runs on every backend (the interpreter handles
+`*ast.FloatLit` and the parser accepts scientific-notation literals
+like `1.0e38f32`). The differential oracle still excludes f32 from
+its generated programs by policy (see below), but the snippets above
+are supported everywhere, not just on the native backends.
 
 ## Generator + oracle implications
 
@@ -125,11 +141,13 @@ not yet through the differential oracle.
 - `ProfileRunnable` — drives the cross-backend differential
   oracle (`FuzzGenerate_ExecutionAgrees`, `TestDifferential_LangsmithMain`).
   f32 is **deliberately excluded from the type pool** because the
-  oracle compares `main()`'s 1-byte return code across backends,
-  and any NaN/Inf result would be a non-portable mismatch by
-  policy. This isn't a workaround — it's the policy applied at
-  the generator level so the oracle stays a clean signal for
-  real codegen bugs.
+  oracle compares `main()`'s 1-byte return code across backends and
+  the non-portable float edges (NaN bit-patterns, `-0.0`-vs-`+0.0`)
+  would surface as mismatches if a generated program reinterpreted a
+  float's bits. (Float→int *conversion* is now portable — it
+  saturates — but the bit-level edges above still aren't.) This
+  isn't a workaround — it's the policy applied at the generator
+  level so the oracle stays a clean signal for real codegen bugs.
 
 If a future feature needs the generator to exercise float code in
 the runnable profile, the program-generator side (not the oracle)

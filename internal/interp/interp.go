@@ -2226,13 +2226,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				}
 				return src, nil
 			}
-			// float → int (truncate-toward-zero; matches wasm
-			// `i32.trunc_f32_s` and the arm64 equivalent).
+			// float → int (truncate-toward-zero, saturating: NaN
+			// → 0, out-of-range clamps to the destination's
+			// min/max). Matches wasm `trunc_sat` and the native
+			// backends; a plain Go `int64(f)` is implementation-
+			// defined for out-of-range inputs and diverged from
+			// them (it yielded INT_MIN where they saturate).
 			if src, ok := v.(Float); ok {
-				if tgt.NormalWidth() == 32 {
-					return Number(int64(int32(src.V))), nil
-				}
-				return Number(int64(src.V)), nil
+				return Number(saturateFloatToInt(src.V, tgt.NormalWidth(), tgt.IsSigned())), nil
 			}
 		}
 		if tgt, ok := x.Target.(ast.FloatType); ok {
@@ -2756,6 +2757,58 @@ func shiftCount(rn Number, width int) Number {
 		return rn & 31
 	}
 	return rn & 63
+}
+
+// saturateFloatToInt converts a truncated float to a width-bit
+// signed/unsigned integer with saturating (non-trapping) semantics:
+// NaN → 0, and a magnitude past the destination's range clamps to
+// its min (or 0 for unsigned) / max. This mirrors wasm's
+// `trunc_sat_*` ops and the native backends' fcvtz / cvtt + fixup,
+// so a `f as i32` cast agrees on every backend. The width-32 result
+// is stored int32-truncated to match the interpreter's i32/u32
+// storage convention (unsigned values ride sign-extended; callers
+// reinterpret via uint32 at use). 2^63 / 2^64 are the first floats
+// at/above the signed-i64 / unsigned-u64 max, so the `>=` guards
+// keep the final Go conversion in range.
+func saturateFloatToInt(f float64, width int, signed bool) int64 {
+	if f != f { // NaN
+		return 0
+	}
+	t := math.Trunc(f)
+	if signed {
+		if width == 64 {
+			if t <= -9223372036854775808.0 {
+				return math.MinInt64
+			}
+			if t >= 9223372036854775808.0 {
+				return math.MaxInt64
+			}
+			return int64(t)
+		}
+		if t <= -2147483648.0 {
+			return math.MinInt32
+		}
+		if t >= 2147483647.0 {
+			return math.MaxInt32
+		}
+		return int64(int32(t))
+	}
+	// unsigned. The max (2^32-1 / 2^64-1) rides as all-ones, which
+	// is -1 in the int64/int32-truncated storage the interpreter
+	// uses for u32/u64.
+	if t <= 0.0 {
+		return 0
+	}
+	if width == 64 {
+		if t >= 18446744073709551616.0 { // 2^64
+			return -1
+		}
+		return int64(uint64(t))
+	}
+	if t >= 4294967296.0 { // 2^32
+		return -1
+	}
+	return int64(int32(uint32(t)))
 }
 
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {

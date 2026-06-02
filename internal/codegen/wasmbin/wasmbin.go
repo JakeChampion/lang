@@ -1571,27 +1571,30 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		}
 		return convert.InstF32ConvertI64S(body), nil
 	case ir.OpITruncF32:
+		// Saturating (trunc_sat): NaN → 0, out-of-range clamps to
+		// the destination's min/max instead of trapping — matches
+		// the native backends' saturating contract.
 		if op.Width == 64 {
 			if op.Unsigned {
-				return convert.InstI64TruncF32U(body), nil
+				return convert.InstI64TruncSatF32U(body), nil
 			}
-			return convert.InstI64TruncF32S(body), nil
+			return convert.InstI64TruncSatF32S(body), nil
 		}
 		if op.Unsigned {
-			return convert.InstI32TruncF32U(body), nil
+			return convert.InstI32TruncSatF32U(body), nil
 		}
-		return convert.InstI32TruncF32S(body), nil
+		return convert.InstI32TruncSatF32S(body), nil
 	case ir.OpITruncF64:
 		if op.Width == 64 {
 			if op.Unsigned {
-				return convert.InstI64TruncF64U(body), nil
+				return convert.InstI64TruncSatF64U(body), nil
 			}
-			return convert.InstI64TruncF64S(body), nil
+			return convert.InstI64TruncSatF64S(body), nil
 		}
 		if op.Unsigned {
-			return convert.InstI32TruncF64U(body), nil
+			return convert.InstI32TruncSatF64U(body), nil
 		}
-		return convert.InstI32TruncF64S(body), nil
+		return convert.InstI32TruncSatF64S(body), nil
 
 	// ---- Memory (slice 4) ----
 	// Alignment is the *natural* alignment of the access — wasm

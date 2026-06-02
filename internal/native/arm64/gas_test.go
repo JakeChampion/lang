@@ -11,6 +11,42 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 )
 
+// TestFcvtToIntDestWidth pins the destination-width handling of the
+// float→int converts. The encoders are the sf=1 (x-register) forms;
+// a `w` destination must clear bit 31 to select the sf=0 (32-bit)
+// instruction, which saturates to the 32-bit range. Without that a
+// `fcvtzs w0, d1` was wrongly assembled as the 64-bit conversion, so
+// an out-of-range f→i32 cast saturated to the i64 limit. Single-
+// precision sources (type=00) must also reach the right encoding.
+// Known encodings (no external assembler needed):
+//
+//	fcvtzs w0, d1 = 0x1e780020   fcvtzs x0, d1 = 0x9e780020
+//	fcvtzs w0, s1 = 0x1e380020   fcvtzu w0, d1 = 0x1e790020
+//	fcvtzu w0, s1 = 0x1e390020   fcvtzu x0, s1 = 0x9e390020
+func TestFcvtToIntDestWidth(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tfcvtzs w0, d1\n", 0x1e780020},
+		{"\tfcvtzs x0, d1\n", 0x9e780020},
+		{"\tfcvtzs w0, s1\n", 0x1e380020},
+		{"\tfcvtzu w0, d1\n", 0x1e790020},
+		{"\tfcvtzu w0, s1\n", 0x1e390020},
+		{"\tfcvtzu x0, s1\n", 0x9e390020},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
+
 // TestAssembleBasic checks Assemble without external tools: a tiny
 // exit(42) snippet must produce the known movz/movz/svc bytes, and
 // labels + a comment must be handled.

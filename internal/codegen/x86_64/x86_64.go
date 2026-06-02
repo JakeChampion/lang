@@ -1359,59 +1359,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// op picks the right register bank (general-purpose
 		// vs XMM) via `movd` when needed. Nothing to emit.
 	case ir.OpITruncF32, ir.OpITruncF64:
-		// f32 / f64 → i32 / i64 (truncate toward zero). x86
-		// only has signed cvttsX2si; we handle unsigned
-		// outputs by:
-		//   u32: convert to i64, the low 32 bits are the u32.
-		//   u64: if value < 2^63, signed conversion is correct.
-		//        Else subtract 2^63 (as a double), convert, then
-		//        set bit 63 to add 2^63 back.
+		// f32 / f64 → i32 / i64, saturating (NaN → 0, out-of-range
+		// clamps to the destination min/max). See emitFloatToIntSat.
 		g.pop()
 		isF64 := op.Kind == ir.OpITruncF64
-		suf := "ss"
-		if isF64 {
-			suf = "sd"
-		}
 		if isF64 {
 			g.emit("movq xmm0, rax")
 		} else {
 			g.emit("movd xmm0, eax")
 		}
-		if op.Unsigned && op.Width == 64 {
-			// f → u64 with 2^63 trick.
-			label := fmt.Sprintf(".Lf2u64_%d", g.labelCounter)
-			g.labelCounter++
-			// Load 2^63 as a double / float into xmm1.
-			if isF64 {
-				g.emit("mov rax, 0x43E0000000000000") // 2^63 as f64
-				g.emit("movq xmm1, rax")
-				g.emit("ucomisd xmm0, xmm1")
-			} else {
-				g.emit("mov eax, 0x5F000000") // 2^63 as f32
-				g.emit("movd xmm1, eax")
-				g.emit("ucomiss xmm0, xmm1")
-			}
-			g.emit(fmt.Sprintf("jae %s_big", label))
-			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
-			g.emit(fmt.Sprintf("jmp %s_done", label))
-			g.label(label + "_big")
-			if isF64 {
-				g.emit("subsd xmm0, xmm1")
-			} else {
-				g.emit("subss xmm0, xmm1")
-			}
-			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
-			g.emit("btc rax, 63")
-			g.label(label + "_done")
-		} else if op.Unsigned {
-			// f → u32. Convert to i64 (room for the full
-			// u32 range), then read low 32 bits.
-			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
-		} else if op.Width == 64 {
-			g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
-		} else {
-			g.emit(fmt.Sprintf("cvtt%s2si eax, xmm0", suf))
-		}
+		g.emitFloatToIntSat(isF64, op.Width, op.Unsigned)
 		g.push()
 
 	// -------- logical / unary --------
@@ -2044,6 +2001,140 @@ func (g *generator) aRegForWidth(width int) string {
 		return "rax"
 	}
 	return "eax"
+}
+
+// emitFloatToIntSat lowers a saturating float→int truncation (the
+// IR's OpITruncF32 / OpITruncF64) with the source in xmm0 and the
+// result left in rax. x86's `cvtt*2si` returns the "integer
+// indefinite" (INT_MIN) for *every* invalid input — NaN, ±Inf, and
+// out-of-range — so on its own it neither saturates nor zeroes NaN.
+// Float-domain compares + cmov fix that up to the wasm `trunc_sat`
+// / arm64 fcvtz contract: NaN → 0, +overflow → MAX, −overflow → MIN
+// (unsigned: < 0 / NaN → 0, overflow → the all-ones max). The
+// `cvtt` sentinel is already the wanted INT_MIN for the signed
+// −overflow / −Inf cases, so only +overflow and NaN need a fixup.
+func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
+	suf := "sd"
+	if !isF64 {
+		suf = "ss"
+	}
+	// loadXmm1 materialises a float constant (given its f64 / f32
+	// bit-pattern) into xmm1 via a GPR — x86 has no float-immediate
+	// move.
+	loadXmm1 := func(bitsF64 uint64, bitsF32 uint32) {
+		if isF64 {
+			g.emit(fmt.Sprintf("mov rcx, 0x%X", bitsF64))
+			g.emit("movq xmm1, rcx")
+		} else {
+			g.emit(fmt.Sprintf("mov ecx, 0x%X", bitsF32))
+			g.emit("movd xmm1, ecx")
+		}
+	}
+
+	// loadZeroXmm1 puts +0.0 into xmm1 (no float-immediate move;
+	// the all-zero bit pattern is +0.0 for both widths).
+	loadZeroXmm1 := func() {
+		if isF64 {
+			g.emit("mov rcx, 0")
+			g.emit("movq xmm1, rcx")
+		} else {
+			g.emit("mov ecx, 0")
+			g.emit("movd xmm1, ecx")
+		}
+	}
+	lbl := func(s string) string { return fmt.Sprintf(".Lf2i_%d_%s", g.labelCounter, s) }
+	g.labelCounter++
+
+	if !unsigned {
+		reg, maxConst := "eax", "0x7FFFFFFF"
+		if width == 64 {
+			reg, maxConst = "rax", "0x7FFFFFFFFFFFFFFF"
+		}
+		// cvtt yields the desired INT_MIN sentinel for −overflow /
+		// −Inf, and a correct value for in-range x; only NaN and
+		// +overflow need a fixup.
+		g.emit(fmt.Sprintf("cvtt%s2si %s, xmm0", suf, reg))
+		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm0", suf)) // NaN → PF
+		g.emit(fmt.Sprintf("jp %s", lbl("nan")))
+		if width == 64 {
+			loadXmm1(0x43E0000000000000, 0x5F000000) // 2^63
+		} else {
+			loadXmm1(0x41E0000000000000, 0x4F000000) // 2^31
+		}
+		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
+		g.emit(fmt.Sprintf("jae %s", lbl("max"))) // x >= 2^(w-1)
+		g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+		g.label(lbl("nan"))
+		g.emit(fmt.Sprintf("mov %s, 0", reg))
+		g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+		g.label(lbl("max"))
+		g.emit(fmt.Sprintf("mov %s, %s", reg, maxConst))
+		g.label(lbl("done"))
+		return
+	}
+
+	if width == 32 {
+		// Convert with 64-bit headroom (room for the whole u32
+		// range), then clamp to [0, 2^32-1]. x < 0 / NaN → 0.
+		g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+		loadZeroXmm1()
+		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
+		g.emit(fmt.Sprintf("jb %s", lbl("zero"))) // x < 0 or NaN (CF set)
+		loadXmm1(0x41F0000000000000, 0x4F800000)   // 2^32
+		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
+		g.emit(fmt.Sprintf("jae %s", lbl("max"))) // x >= 2^32
+		g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+		g.label(lbl("zero"))
+		g.emit("mov eax, 0")
+		g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+		g.label(lbl("max"))
+		g.emit("mov eax, 0xFFFFFFFF")
+		g.label(lbl("done"))
+		return
+	}
+
+	// Unsigned 64. Preserve the original x in xmm2 (the 2^63 trick
+	// mutates xmm0), convert [0, 2^64) via the trick, then clamp
+	// the edges against the saved value: x < 0 / NaN → 0, x >= 2^64
+	// → all-ones.
+	g.emit("movaps xmm2, xmm0")
+	if isF64 {
+		g.emit("mov rcx, 0x43E0000000000000") // 2^63
+		g.emit("movq xmm1, rcx")
+	} else {
+		g.emit("mov ecx, 0x5F000000")
+		g.emit("movd xmm1, ecx")
+	}
+	g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
+	g.emit(fmt.Sprintf("jae %s", lbl("big")))
+	g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+	g.emit(fmt.Sprintf("jmp %s", lbl("sat")))
+	g.label(lbl("big"))
+	if isF64 {
+		g.emit("subsd xmm0, xmm1")
+	} else {
+		g.emit("subss xmm0, xmm1")
+	}
+	g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
+	// Add 2^63 back. The converted (x − 2^63) is in [0, 2^63) so
+	// bit 63 is clear; xor-ing it sets the bit (= +2^63) without
+	// needing `btc`, which the in-process assembler doesn't carry.
+	g.emit("mov rcx, 0x8000000000000000")
+	g.emit("xor rax, rcx")
+	g.label(lbl("sat"))
+	loadZeroXmm1()
+	g.emit(fmt.Sprintf("ucomi%s xmm2, xmm1", suf))
+	g.emit(fmt.Sprintf("jb %s", lbl("zero"))) // x < 0 or NaN
+	loadXmm1(0x43F0000000000000, 0x5F800000)  // 2^64
+	g.emit(fmt.Sprintf("ucomi%s xmm2, xmm1", suf))
+	g.emit(fmt.Sprintf("jae %s", lbl("umax"))) // x >= 2^64
+	g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+	g.label(lbl("zero"))
+	g.emit("mov rax, 0")
+	g.emit(fmt.Sprintf("jmp %s", lbl("done")))
+	g.label(lbl("umax"))
+	g.emit("mov rax, -1")
+	g.label(lbl("done"))
 }
 
 // fbinPop pops two float-shaped values off the operand stack
