@@ -398,6 +398,33 @@ func UseTwoWordStrings(ptrW int) bool {
 // which `CodegenMu` enforces.
 var TwoWordOverride bool
 
+// CaptureNeeds8 reports whether a closure capture of type t must be
+// 8-byte aligned in the env block. Only a two-word string on a
+// native (ptrW=8) target qualifies: its (data, len) pair is loaded
+// with arm64's `ldp`, which faults on an unaligned address. Every
+// other capture — i64 / f64 / pointers / single-word strings — uses
+// a plain ldr/str that tolerates any offset, so they stay packed
+// (keeping the layout, and every existing offset test, unchanged).
+func CaptureNeeds8(t Type, ptrW int) bool {
+	_, isStr := t.(StringType)
+	return isStr && UseTwoWordStrings(ptrW) && ptrW == 8
+}
+
+// CaptureAlign rounds a running env-block offset up to the alignment
+// the next capture of type t requires (8 for pointer/wide/two-word
+// captures, 4 otherwise). Every closure-env layout — the canonical
+// one in closureconv plus each backend's store loop — must apply
+// this identically so a backend's store offsets match the
+// CaptureRef load offsets. Without it, an i32 capture before a
+// string left the string at a 4-aligned offset and arm64 segfaulted
+// on the unaligned two-word load.
+func CaptureAlign(off int32, t Type, ptrW int) int32 {
+	if !CaptureNeeds8(t, ptrW) {
+		return off
+	}
+	return (off + 7) &^ 7
+}
+
 // RcFreeEnabled gates the Phase 3 freelist allocator. When true (the
 // DEFAULT, as of step 5), codegen emits a segregated freelist:
 // `__fern_free` returns a block to its size class and `__fern_alloc`
