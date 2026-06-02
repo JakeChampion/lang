@@ -161,6 +161,54 @@ function fence_lang(line: string): string {
     return info[0:j];
 }
 
+// fence_info returns the trimmed info string after a fence's backtick
+// run — the language token plus any directives (`file=…`, `entry`).
+function fence_info(line: string): string {
+    var ws: string = leading_ws(line);
+    var i: i32 = ws.len();
+    var n: i32 = line.len();
+    while (i < n && is_backtick(line[i])) { i = i + 1; }
+    return trim(line[i:n]);
+}
+
+// split_ws splits a string on runs of spaces/tabs into non-empty words.
+function split_ws(s: string): string[] {
+    var words: string[] = [];
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    while (i < n) {
+        while (i < n && (s[i] == 32 || s[i] == 9)) { i = i + 1; }
+        var start: i32 = i;
+        while (i < n && s[i] != 32 && s[i] != 9) { i = i + 1; }
+        if (i > start) { words = words.push(s[start:i]); }
+    }
+    return words;
+}
+
+// fence_file returns the `file=PATH` directive value of a fence opener,
+// or "" when the fence has no `file=` directive.
+function fence_file(line: string): string {
+    var words: string[] = split_ws(fence_info(line));
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (starts_with(words[i], "file=")) { return words[i][5:words[i].len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// fence_is_entry reports whether a fence opener carries a bare `entry`
+// directive, marking its file-root as the compile entry.
+function fence_is_entry(line: string): boolean {
+    var words: string[] = split_ws(fence_info(line));
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (words[i] == "entry") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // is_fence_close reports whether `line` closes a block opened with a
 // run of `open_len` backticks — a line whose only content is a
 // backtick run at least that long.
@@ -355,6 +403,161 @@ pub function tangle(src: string): TangleResult {
     }
 }
 
+// ─── multi-file tangle ─────────────────────────────────────────────
+// A `file=PATH` fence is a *file-root*: its body becomes the module
+// PATH (expanding `<<ref>>` chunks like the `<<*>>` root). One document
+// can declare several, so a multi-module program is described as one
+// narrative and partitioned into modules. This mirrors the Go engine's
+// `TangleFiles` / `EntryFile` (internal/literate/tanglefiles.go).
+
+// FilePiece is one body line of a `file=PATH` block, tagged with its
+// output path, document line, and whether the block was marked `entry`.
+// Like Piece, the document flattens to a FilePiece[] so same-path
+// concatenation is "every piece with this path".
+pub struct FilePiece { path: string, text: string, line: i32, is_entry: boolean }
+
+// parse_file_pieces collects every `file=PATH` block's body lines as
+// tagged FilePieces. Non-`fern` and directive-less fences contribute
+// nothing here (they go through parse_pieces as chunks / display-only).
+pub function parse_file_pieces(src: string): FilePiece[] {
+    var pieces: FilePiece[] = [];
+    var lines: string[] = split_lines(src);
+    var n: i32 = lines.len();
+    var i: i32 = 0;
+    while (i < n) {
+        var open_len: i32 = fence_open_len(lines[i]);
+        if (open_len > 0) {
+            var lang: string = fence_lang(lines[i]);
+            var path: string = fence_file(lines[i]);
+            var ent: boolean = fence_is_entry(lines[i]);
+            var i2: i32 = i + 1;
+            while (i2 < n && !is_fence_close(lines[i2], open_len)) {
+                if (lang == "fern" && path.len() > 0) {
+                    pieces = pieces.push(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
+                }
+                i2 = i2 + 1;
+            }
+            if (i2 < n) { i = i2 + 1; } else { i = i2; }
+        } else {
+            i = i + 1;
+        }
+    }
+    return pieces;
+}
+
+// file_paths returns the distinct output paths in first-definition order.
+function file_paths(fp: FilePiece[]): string[] {
+    var paths: string[] = [];
+    var i: i32 = 0;
+    while (i < fp.len()) {
+        if (!stack_has(paths, fp[i].path)) { paths = paths.push(fp[i].path); }
+        i = i + 1;
+    }
+    return paths;
+}
+
+// path_is_entry reports whether any block contributing to `path` carried
+// the `entry` marker.
+function path_is_entry(fp: FilePiece[], path: string): boolean {
+    var i: i32 = 0;
+    while (i < fp.len()) {
+        if (fp[i].path == path && fp[i].is_entry) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// expand_file expands one file-root's body (the FilePieces for `path`),
+// resolving `<<ref>>` lines into the shared chunk table just like the
+// `<<*>>` root.
+function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < fp.len()) {
+        if (fp[i].path == path) {
+            var text: string = fp[i].text;
+            var t: string = trim(text);
+            if (is_ref(t)) {
+                var rn: string = ref_name(t);
+                if (!chunk_defined(chunks, rn)) {
+                    return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: fp[i].line };
+                }
+                var empty: string[] = [];
+                var sub: ExpandResult = expand(chunks, rn, leading_ws(text), empty);
+                match (sub) {
+                    ExpandOk(o) => {
+                        var k: i32 = 0;
+                        while (k < o.lines.len()) {
+                            out = out.push(o.lines[k]);
+                            k = k + 1;
+                        }
+                    },
+                    _ => { return sub; }
+                }
+            } else {
+                out = out.push(text);
+            }
+        }
+        i = i + 1;
+    }
+    return ExpandOk { lines: out };
+}
+
+pub struct FileResult { path: string, code: string, is_entry: boolean }
+pub struct FileTangleOk { files: FileResult[] }
+pub struct FileTangleErr { msg: string, line: i32 }
+pub type FileTangleResult = FileTangleOk | FileTangleErr;
+
+// tangle_files expands every `file=PATH` root into its own module. Chunk
+// definitions are shared across the whole document; each file-root pulls
+// in whichever it references. Errors (undefined / cyclic chunk) carry the
+// document line, exactly like single-file tangle.
+pub function tangle_files(src: string): FileTangleResult {
+    var chunks: Piece[] = parse_pieces(src);
+    var fp: FilePiece[] = parse_file_pieces(src);
+    var paths: string[] = file_paths(fp);
+    if (paths.len() == 0) {
+        return FileTangleErr { msg: "literate: no file=PATH blocks defined", line: 1 };
+    }
+    var results: FileResult[] = [];
+    var i: i32 = 0;
+    while (i < paths.len()) {
+        var p: string = paths[i];
+        var r: ExpandResult = expand_file(fp, chunks, p);
+        match (r) {
+            ExpandOk(o) => { results = results.push(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) }); },
+            ExpandErr(e) => { return FileTangleErr { msg: e.msg, line: e.line }; }
+        }
+        i = i + 1;
+    }
+    return FileTangleOk { files: results };
+}
+
+// entry_file picks the compile entry among tangled modules: the file
+// marked `entry`, the sole file, or the unique module defining `main`.
+// Returns "" when the choice is ambiguous.
+pub function entry_file(files: FileResult[]): string {
+    var marked: string[] = [];
+    var i: i32 = 0;
+    while (i < files.len()) {
+        if (files[i].is_entry) { marked = marked.push(files[i].path); }
+        i = i + 1;
+    }
+    if (marked.len() == 1) { return marked[0]; }
+    if (marked.len() > 1) { return ""; }
+    if (files.len() == 1) { return files[0].path; }
+    var mains: string[] = [];
+    var j: i32 = 0;
+    while (j < files.len()) {
+        if (contains(files[j].code, "function main") || contains(files[j].code, "fn main")) {
+            mains = mains.push(files[j].path);
+        }
+        j = j + 1;
+    }
+    if (mains.len() == 1) { return mains[0]; }
+    return "";
+}
+
 // ─── self-test ─────────────────────────────────────────────────────
 // main() asserts the engine against the same cases as the Go unit
 // tests. Exit 0 = all passed; a non-zero code identifies the failure.
@@ -383,6 +586,25 @@ function err_line(src: string): i32 {
         TangleOk(o) => { return 0 - 1; },
         TangleErr(e) => { return e.line; }
     }
+}
+
+// tf_files runs tangle_files and returns the modules ([] on error).
+function tf_files(src: string): FileResult[] {
+    var r: FileTangleResult = tangle_files(src);
+    match (r) {
+        FileTangleOk(o) => { return o.files; },
+        FileTangleErr(e) => { var empty: FileResult[] = []; return empty; }
+    }
+}
+
+// file_code returns the tangled code for `path` ("" if absent).
+function file_code(files: FileResult[], path: string): string {
+    var i: i32 = 0;
+    while (i < files.len()) {
+        if (files[i].path == path) { return files[i].code; }
+        i = i + 1;
+    }
+    return "";
 }
 
 function main(): i32 {
@@ -435,6 +657,48 @@ function main(): i32 {
     // 9. Longer fences (````) and a header after a blank line.
     var s9: string = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
     if (tangle_code(s9) != "fn main() {}") { return 11; }
+
+    // 10. Multi-file: a `file=` document tangles to two modules, with a
+    // chunk shared across them. The entry module references the helper.
+    var m1: string =
+        "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+        + "```fern file=u.fern\n<<g>>\n```\n"
+        + "```fern\n<<g>>=\npub fn g() {}\n```\n";
+    var f1: FileResult[] = tf_files(m1);
+    if (f1.len() != 2) { return 12; }
+    if (file_code(f1, "main.fern") != "import \"./u\";\npub fn g() {}") { return 13; }
+    if (file_code(f1, "u.fern") != "pub fn g() {}") { return 14; }
+    if (entry_file(f1) != "main.fern") { return 15; }
+
+    // 11. Same `file=PATH` repeated concatenates in document order.
+    var m2: string =
+        "```fern file=a.fern\nL1\n```\n"
+        + "```fern file=a.fern\nL2\n```\n";
+    var f2: FileResult[] = tf_files(m2);
+    if (f2.len() != 1) { return 16; }
+    if (file_code(f2, "a.fern") != "L1\nL2") { return 17; }
+
+    // 12. A lone file needs no `entry` marker.
+    var f3: FileResult[] = tf_files("```fern file=only.fern\nx\n```\n");
+    if (entry_file(f3) != "only.fern") { return 18; }
+
+    // 13. Ambiguous (two unmarked files, neither defines main) → "".
+    var f4: FileResult[] = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
+    if (entry_file(f4) != "") { return 19; }
+
+    // 14. None marked but exactly one defines main → that module.
+    var m5: string =
+        "```fern file=lib.fern\npub fn h() {}\n```\n"
+        + "```fern file=app.fern\nfn main() {}\n```\n";
+    if (entry_file(tf_files(m5)) != "app.fern") { return 20; }
+
+    // 15. An undefined chunk referenced from a file-root is an error,
+    // reported at the reference's document line.
+    var r6: FileTangleResult = tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
+    match (r6) {
+        FileTangleOk(o) => { return 21; },
+        FileTangleErr(e) => { if (e.line != 2) { return 22; } }
+    }
 
     return 0;
 }
