@@ -155,6 +155,7 @@ func loadEntry(srcPath string) (entry, error) {
 	}
 	litSrc := string(srcBytes)
 	doc := literate.Parse(litSrc)
+	warnUnusedChunks(srcPath, doc)
 	if doc.HasFiles() {
 		return loadMultiFileEntry(srcPath, abs, litSrc, doc)
 	}
@@ -289,6 +290,15 @@ func (e entry) format(err error) error {
 	return fmt.Errorf("%s", render(err))
 }
 
+// warnUnusedChunks prints a non-fatal lint note to stderr for each
+// chunk a literate document defines but never reaches from a tangle
+// root — typically a typo in a `<<ref>>` or a leftover definition.
+func warnUnusedChunks(srcPath string, doc *literate.Document) {
+	for _, name := range doc.UnusedChunks() {
+		fmt.Fprintf(os.Stderr, "%s: warning: chunk <<%s>> is defined but never used\n", srcPath, name)
+	}
+}
+
 // runLiterateTool implements the `-tangle` / `-weave` literate
 // subcommands: parse the `.fern.md` document and write either the
 // tangled Fern source or the woven Markdown. With `outPath` empty the
@@ -303,6 +313,7 @@ func runLiterateTool(srcPath string, tangle bool, outPath string, html bool) (in
 	}
 	src := string(srcBytes)
 	doc := literate.Parse(src)
+	warnUnusedChunks(srcPath, doc)
 	if tangle {
 		// A multi-file document (`file=PATH` blocks) tangles to several
 		// modules. To stdout they print under `// ==> path <==` banners;

@@ -117,6 +117,15 @@ the rendered source snippet all point at what you actually typed, not
 at the generated intermediate. (Internally: `Tangle` returns a line map
 that the CLI turns into a position remapper for `diag.FormatRemapped`.)
 
+## Lints
+
+- **Unused chunk** — a chunk defined but never reached from a tangle
+  root (the `<<*>>` root, or any `file=` file-root) is reported as a
+  non-fatal warning on stderr (`chunk <<name>> is defined but never
+  used`). Reachability-based, so an entire dead subtree surfaces — it
+  most often means a typo in a `<<reference>>`. Compilation still
+  proceeds.
+
 ## Errors specific to tangling
 
 - **No root chunk** — the document defines no `<<*>>=` block.
