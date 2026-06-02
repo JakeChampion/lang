@@ -237,6 +237,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcUnderflowCount {
 		g.emitRcUnderflowCountRuntime()
 	}
+	if g.usesHeapBumpBytes {
+		g.emitHeapBumpBytesRuntime()
+	}
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
@@ -455,6 +458,11 @@ type generator struct {
 	// counter __fern_rc_dec bumps). Set when the IR emits the
 	// matching OpCallDirect.
 	usesRcUnderflowCount bool
+	// usesHeapBumpBytes gates the Phase 6 measurement reader
+	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
+	// the bump high-water mark). Set when the IR emits the matching
+	// OpCallDirect; also pulls in the allocator (it reads its cursor).
+	usesHeapBumpBytes bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -535,6 +543,9 @@ func (g *generator) recordUse(target string) {
 		g.usesRcDec = true   // tail-called otherwise
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
+	case "__fern_heap_bump_bytes":
+		g.usesHeapBumpBytes = true
+		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
 	case "__fern_arr_push_grow":
 		g.usesArrPushGrow = true
 		g.usesAlloc = true
@@ -2706,6 +2717,12 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label("__fern_heap_end")
 			g.line("\t.quad 0")
+			// Phase 6: the region base captured at the lazy mmap, so
+			// __fern_heap_bump_bytes can report (cursor − base) — the
+			// bump high-water mark. Zero until the first allocation.
+			g.line(".align 8")
+			g.label("__fern_heap_base")
+			g.line("\t.quad 0")
 		}
 		if g.usesEnv {
 			g.line(".align 8")
@@ -2842,6 +2859,8 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("cmp rax, 0")
 	g.emit("jl .Lalloc_oom")
 	g.emit("mov [rbx], rax")
+	// Phase 6: record the region base for __fern_heap_bump_bytes.
+	g.emit("mov [rip + __fern_heap_base], rax")
 	g.emit("lea rcx, [rax + " + fmt.Sprintf("%d", heapBytes) + "]")
 	g.emit("mov [r12], rcx")
 	g.label(".Lalloc_have_heap")
@@ -2938,14 +2957,14 @@ func (g *generator) emitAllocReuseRuntime() {
 	// size (rdx) across the call, then fall into the fresh alloc.
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rdx") // save size
+	g.emit("push rdx")   // save size
 	g.emit("sub rsp, 8") // 16-byte align for the call
 	g.emit("call __fern_free")
 	g.emit("add rsp, 8")
 	g.emit("pop rdx") // restore size
 	g.emit("pop rbp")
 	g.label(".Lreuse_fresh")
-	g.emit("mov rdi, rdx") // size
+	g.emit("mov rdi, rdx")     // size
 	g.emit("jmp __fern_alloc") // tail call
 	g.line(".size __fern_alloc_reuse, .-__fern_alloc_reuse")
 }
@@ -3342,6 +3361,26 @@ func (g *generator) emitRcUnderflowCountRuntime() {
 	g.emit("mov eax, dword ptr [rip + __fern_rc_underflow]")
 	g.emit("ret")
 	g.line(".size __fern_rc_underflow_count, .-__fern_rc_underflow_count")
+}
+
+// emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
+// the Phase 6 measurement reader: returns the bump high-water mark
+// (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
+// allocation seeds the cursor. Leaf; no frame.
+func (g *generator) emitHeapBumpBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_heap_bump_bytes")
+	g.line(".type __fern_heap_bump_bytes, @function")
+	g.label("__fern_heap_bump_bytes")
+	g.emit("mov rax, [rip + __fern_heap_ptr]")
+	g.emit("test rax, rax") // never allocated → cursor 0 → 0
+	g.emit("jz .Lheap_bump_zero")
+	g.emit("sub rax, [rip + __fern_heap_base]")
+	g.emit("ret")
+	g.label(".Lheap_bump_zero")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.line(".size __fern_heap_bump_bytes, .-__fern_heap_bump_bytes")
 }
 
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data`

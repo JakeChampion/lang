@@ -2053,6 +2053,27 @@ the self-host through itself, profile hot allocations, retire
 the `strbuf_*` primitive if Perceus + drop-reuse make it
 redundant.
 
+**Measurement probe — `__heap_bump_bytes()` (SHIPPED).** A builtin
+returning the bump allocator's high-water mark in bytes (current cursor
+− region base; 0 before the first alloc). The cursor advances only on a
+fresh bump, never on a freelist reuse, so it's the direct "did reclaim
+happen?" metric: a reclaiming loop keeps it flat regardless of iteration
+count, a leak grows it linearly. Implemented on all three backends —
+natives capture the mmap base in `__fern_heap_base` and the reader
+returns `__fern_heap_ptr − __fern_heap_base`; wasm records the cursor
+seed at `heapBaseAddr` and returns `cursor − seed`; the interpreter
+returns 0 (Go allocator, no bump cursor). This unblocks the rest of
+Phase 6 (it makes RSS/allocation behaviour assertable in tests and
+profilable) and retroactively pins the reclamation wins:
+`internal/e2e/rc_heap_bump_test.go` asserts a build-and-discard loop's
+bump growth is identical at N=50 and N=5000 on x86_64 + arm64 + wasm —
+the proof that Phase 5h / push-loop reclamation holds memory bounded,
+which the soundness-only tests couldn't show.
+
+Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
+harness over the self-host + edge-handler workloads to profile hot
+allocation sites, then evaluate retiring `strbuf_*`.
+
 ## Testing strategy
 
 Three layers:

@@ -8693,6 +8693,21 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
+	// bump allocator's high-water mark in bytes (current cursor minus the
+	// region base; 0 before the first allocation). The cursor only moves
+	// forward on a fresh bump and never on a freelist reuse, so this is
+	// exactly the "did the freelist reclaim?" metric: a loop that frees +
+	// reuses each iteration keeps it flat, a leaking loop grows it. Lowered
+	// to a runtime-helper call so each backend reads its own cursor store
+	// (wasm a fixed linear-memory slot minus allocMinStart, the natives
+	// __fern_heap_ptr minus __fern_heap_base).
+	if id.Name == "__heap_bump_bytes" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_heap_bump_bytes", I32: 0})
+			return nil
+		}
+	}
 	// f64_bits / f64_from_bits: 64-bit cousin of the f32 pair.
 	// Same zero-cost reinterpret on natives; wasm needs the
 	// typed `i64.reinterpret_f64` / `f64.reinterpret_i64` op.
