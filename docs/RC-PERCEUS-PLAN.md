@@ -2381,6 +2381,25 @@ sinks (`Map_set`/`Array_push` move a fresh arg in uncounted) are also
 excluded. Stages (a) and (c) have no such hazard — the temp is fully
 consumed and demonstrably dead, identical safety to a discarded temp.
 
+**FOLLOW-UP: nested-concat intermediates (SHIPPED 2026-06-02).** The
+per-statement mechanism above dec's the OUTERMOST owned temp of a
+statement-position expression, but a sub-expression temp consumed
+*mid-expression by another operator* slips through: in `a + b + c`
+(= `(a + b) + c`) the inner `(a + b)` is consumed by the outer
+`OpStrConcat`, which copies its bytes but never frees its buffer — so a
+chained / parenthesised concat leaked one buffer per join (`(a+b+a).len()`
+in a loop, 192288 B → 1632288 B, unbounded). Fixed in the concat lowering
+(`b.binary`): an operand that is itself an owned string temp
+(`isOwnedStringTemp` — a sub-concat or string slice) is stashed in a
+scratch slot, used for the concat, then dec'd (ABI-correct __fern_str_dec
+two-word / __fern_rc_dec x86_64). Recurses, so the whole left-/right-nested
+chain reclaims; borrowed operands (idents / literals) are not stashed (a
+live value would be freed). `Test{X86_64,Arm64,WASM}NestedConcatReclaim` —
+`(a+b+a+b).len()` loop flat (was 1632288), deep-chain value-correct
+(length + content) with 0 over-releases. Analogous sub-expression
+intermediates for non-string operators (none today produce owned temps
+fed to another op) would extend the same way.
+
 ## Testing strategy
 
 Three layers:

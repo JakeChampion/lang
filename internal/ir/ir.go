@@ -8349,6 +8349,25 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 	return nil
 }
 
+// isOwnedStringTemp reports whether `e` produces a FRESH owned heap
+// string — one that allocates a new rc=1 buffer the surrounding
+// expression must reclaim if it doesn't bind / store / return it. True
+// for a string concat (`a + b`, which always copies into a fresh buffer)
+// and a string slice (which copies its bytes out). Idents / field / index
+// reads (borrowed views) and literals (static .rodata) are NOT owned
+// temps — freeing them would corrupt a live value, so they read false.
+// Used by the concat lowering to dec a nested-concat intermediate.
+func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Binary:
+		return x.IsStringConcat
+	case *ast.SliceExpr:
+		_, isStr := b.exprType(x).(ast.StringType)
+		return isStr
+	}
+	return false
+}
+
 func (b *builder) binary(n *ast.Binary) error {
 	// Short-circuit operators don't fit the "both sides then op" pattern;
 	// lower them as small if/else chains over the IR.
@@ -8425,17 +8444,66 @@ func (b *builder) binary(n *ast.Binary) error {
 			return folded
 		}
 	}
+	if n.IsStringConcat {
+		// Reclaim NESTED concat intermediates: in `a + b + c`
+		// (= `(a + b) + c`) the inner `(a + b)` is a fresh owned heap
+		// string consumed by the outer OpStrConcat, then orphaned —
+		// OpStrConcat copies its bytes but never frees its buffer, so a
+		// chained / parenthesised concat leaks one buffer per join. An
+		// operand that is itself an owned string temp (a sub-concat or a
+		// string slice — isOwnedStringTemp) is stashed in a scratch slot,
+		// used for the concat, then __fern_str_dec'd. Recurses: each level
+		// frees its own immediate intermediate, so a whole left-/right-
+		// nested chain reclaims. Borrowed operands (idents / fields / index
+		// / literals) are NOT stashed — decing them would free a live value.
+		// Gated on RcFreeEnabled (free-off stays byte-identical).
+		stash := func(e ast.Expr) (int32, error) {
+			if err := b.expr(e); err != nil {
+				return -1, err
+			}
+			if !ast.RcFreeEnabled || !b.isOwnedStringTemp(e) {
+				return -1, nil
+			}
+			sl := b.allocSlot()
+			b.locals[fmt.Sprintf("__cattmp_%d", sl)] = sl
+			b.scratchType[sl] = ast.StringType{}
+			b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
+			b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the concat
+			return sl, nil
+		}
+		slL, err := stash(n.Left)
+		if err != nil {
+			return err
+		}
+		slR, err := stash(n.Right)
+		if err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStrConcat})
+		// Reclaim each stashed owned-temp operand. ABI-correct dec, matching
+		// the exit sweep: two-word ABIs (wasm + arm64-TwoWord) consume the
+		// (data,len) pair via __fern_str_dec; native single-word (x86_64)
+		// dec's the single pointer via __fern_rc_dec (its inline-tag / SSO
+		// guards make it safe for short concats that never heap-allocated).
+		decHelper := "__fern_rc_dec"
+		if ast.UseTwoWordStrings(b.ptrW) {
+			decHelper = "__fern_str_dec"
+		}
+		for _, sl := range []int32{slL, slR} {
+			if sl < 0 {
+				continue
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: sl})
+			b.emit(Op{Kind: OpCallDirect, Str: decHelper, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+		return nil
+	}
 	if err := b.expr(n.Left); err != nil {
 		return err
 	}
 	if err := b.expr(n.Right); err != nil {
 		return err
-	}
-	if n.IsStringConcat {
-		// Both operands have been pushed; concatenation is a
-		// single dedicated op that mirrors the WASM runtime helper.
-		b.emit(Op{Kind: OpStrConcat})
-		return nil
 	}
 	if n.IsStringCmp {
 		// Same shape as concat but for content equality. `!=` is
