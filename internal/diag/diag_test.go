@@ -362,3 +362,66 @@ func TestFormatExplainWrapsBody(t *testing.T) {
 		t.Errorf("FormatExplain dropped body:\n%s", got)
 	}
 }
+
+// FormatRemapped with a nil remap is identical to Format.
+func TestFormatRemappedNilIsIdentity(t *testing.T) {
+	src := "function f() {\n    return x + 1;\n}\n"
+	e := &fakeErr{pos: ast.Position{Line: 2, Col: 12}, msg: "undefined identifier \"x\""}
+	if got, want := FormatRemapped("", src, nil, e), Format("", src, e); got != want {
+		t.Errorf("FormatRemapped(nil) =\n%s\n--- want (Format) ---\n%s", got, want)
+	}
+}
+
+// FormatRemapped rewrites the reported line/column and looks the source
+// line up in displaySrc using the remapped line — the literate case
+// where the checker reports a position in tangled source but the
+// document line is elsewhere.
+func TestFormatRemappedRewritesPosition(t *testing.T) {
+	// displaySrc is the ".fern.md" document; the offending code lives on
+	// document line 4 with 4 columns of tangling indentation to undo.
+	displaySrc := "# Title\n\n```fern\n    let x = y;\n```\n"
+	// The checker saw it on generated line 2, column 9 (= doc col 5 + 4
+	// of added indent).
+	remap := func(p ast.Position) ast.Position {
+		if p.Line == 2 {
+			return ast.Position{Line: 4, Col: p.Col - 4}
+		}
+		return p
+	}
+	e := &fakeErr{pos: ast.Position{Line: 2, Col: 9}, msg: "undefined identifier \"y\""}
+	out := FormatRemapped("prog.fern.md", displaySrc, remap, e)
+	if !strings.HasPrefix(out, "prog.fern.md:4:5: error:") {
+		t.Errorf("expected remapped header prog.fern.md:4:5, got:\n%s", out)
+	}
+	// The rendered snippet must be the document line, not the generated one.
+	if !strings.Contains(out, "    let x = y;") {
+		t.Errorf("expected document source line in output:\n%s", out)
+	}
+}
+
+// Secondary/help label positions are remapped too.
+func TestFormatRemappedRemapsLabels(t *testing.T) {
+	displaySrc := "aaa\nbbb\nccc\nddd\neee\n"
+	remap := func(p ast.Position) ast.Position {
+		return ast.Position{Line: p.Line + 2, Col: p.Col} // shift every line by 2
+	}
+	e := &fakeLabeledErr{
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 1}, msg: "primary"},
+		labels: []Label{
+			{Pos: ast.Position{Line: 1, Col: 1}, Message: "primary", Kind: LabelPrimary},
+			{Pos: ast.Position{Line: 2, Col: 1}, Message: "see here", Kind: LabelSecondary},
+		},
+	}
+	out := FormatRemapped("", displaySrc, remap, e)
+	// Primary header: line 1 -> 3.
+	if !strings.HasPrefix(out, "3:1: error: primary") {
+		t.Errorf("primary not remapped to line 3:\n%s", out)
+	}
+	// Secondary label: line 2 -> 4, and its snippet line is "ddd".
+	if !strings.Contains(out, "4:1: note: see here") {
+		t.Errorf("secondary label not remapped to line 4:\n%s", out)
+	}
+	if !strings.Contains(out, "ddd") {
+		t.Errorf("secondary label snippet should be document line 4 (ddd):\n%s", out)
+	}
+}

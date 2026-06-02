@@ -63,10 +63,22 @@ wasmtime run --invoke 'main()' factorial.wasm   # prints 720
 ./fern -fmt -w examples/factorial.fern     # overwrite the file in place
 ./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
+
+# Literate programming (Knuth-style named chunks; see docs/LITERATE.md)
+./fern -interp examples/literate/fizzbuzz.fern.md   # tangle in memory, then run
+./fern -tangle examples/literate/fizzbuzz.fern.md   # emit plain Fern source
+./fern -weave  examples/literate/fizzbuzz.fern.md   # emit cross-referenced Markdown
 ```
 
 The formatter re-emits from the parsed tree, so `//` comments and blank lines
 are dropped; format → parse → format is byte-stable.
+
+A `.fern.md` file is a Markdown document whose `fern` code chunks (`<<name>>=`)
+are reassembled — *tangled* — from the root chunk `<<*>>` into a compilable
+program; chunks may be defined in any order. A literate file works anywhere a
+`.fern` file does (compile / `--run` / `-check` / `-interp`): it's tangled in
+memory first, and diagnostics are mapped back to the line you wrote in the
+document. See [docs/LITERATE.md](docs/LITERATE.md).
 
 `go test ./...` runs the unit and IR-pass tests. The e2e tests in
 `internal/e2e` exercise the full pipeline on both backends (linking arm64 with

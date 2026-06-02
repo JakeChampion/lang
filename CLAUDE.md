@@ -142,6 +142,34 @@ flow rather than driving manual CI checks after the fact.
   fix it in the same PR with its own test rather than leaving it
   for later.
 
+## Literate programming
+
+Fern supports Knuth-style literate programming via `.fern.md`
+documents — see `docs/LITERATE.md`. The engine is
+`internal/literate` (`Parse` → `Document`; `(*Document).Tangle`
+expands the root chunk `<<*>>` and returns generated Fern source
+plus a per-line provenance map; `(*Document).Weave` renders
+cross-referenced Markdown). Chunks are `<<name>>=` definition
+blocks referenced by `<<name>>` lines; references resolve out of
+document order, same-name definitions concatenate, a reference's
+indentation is prepended to its expansion, and headerless `fern`
+fences are display-only (woven, not tangled).
+
+The CLI exposes `-tangle` / `-weave`, and `loadEntry` in
+`cmd/fern/main.go` tangles a `.fern.md` entry in memory (via a
+`modload.LoadWith` override keyed by the document path, so disk
+imports still resolve) before the normal compile/`-check`/`-interp`
+pipeline. Diagnostics are remapped back onto the document through
+`diag.FormatRemapped` (the literate-only sibling of `diag.Format`,
+which applies a position remap built from the tangle line map).
+Coverage: `internal/literate/*_test.go`, `diag` FormatRemapped
+tests, and `internal/e2e/literate_test.go` (interp + tangle + weave
++ the diagnostic-remap contract). Example:
+`examples/literate/fizzbuzz.fern.md`. When extending the chunk
+grammar or the remap, add cases at the layer you touch — the
+diagnostic-remap (generated line → document line) is the most
+regression-prone surface, mirroring the test-runner contract below.
+
 ## Test runner
 
 `internal/stdlib/std/test.fern` is the pure-Fern test runner —
