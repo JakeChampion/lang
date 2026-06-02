@@ -3,23 +3,27 @@
 // (asm_load_run = emit, checker_run = check, interp_run = evaluate),
 // this is a single binary that parses argv flags and dispatches:
 //
-//     fern <entry.fern> [stdlib-root]      emit x86-64 asm to stdout
-//     fern -o OUT <entry.fern>             emit x86-64 asm to OUT
+//     fern <entry.fern> [stdlib-root]      emit asm to stdout (def x86-64)
+//     fern -target arm64 <entry.fern>      emit arm64 asm instead
+//     fern -o OUT <entry.fern>             emit asm to OUT
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
 //     fern -interp <entry.fern>            evaluate; exit = program result
 //     fern -fmt <entry.fern>               format the entry file to stdout
 //
-// It is the first slice of a drop-in replacement for cmd/fern: the
-// mode-dispatch seam that -target plugs into in follow-ups. Module
-// loading is the import-driven, file-loading scheme from asm_load_run
-// (follow `import "./x"` to sibling files; resolve `std/…` / `core/…`
-// under an optional stdlib root).
+// It is a drop-in-shaped replacement for cmd/fern: one binary hosting
+// both the x86-64 (asm.fern) and arm64 (asm_arm64.fern) emitters,
+// selected at runtime by -target — where the codebase previously had
+// two separate compilers. Module loading is the import-driven,
+// file-loading scheme from asm_load_run (follow `import "./x"` to
+// sibling files; resolve `std/…` / `core/…` under an optional stdlib
+// root).
 
 import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./flatten";
 import "./asm";
+import "./asm_arm64";
 import "./checker";
 import "./interp";
 import "./printer";
@@ -113,7 +117,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-target x86-64|arm64] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -123,6 +127,7 @@ function main(): i32 {
     var entry_path: string = "";
     var out_path: string = "";
     var root: string = "";
+    var target: string = "x86-64";
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
@@ -137,6 +142,10 @@ function main(): i32 {
             mode_interp = true;
         } else if (a == "-fmt") {
             mode_fmt = true;
+        } else if (a == "-target") {
+            i = i + 1;
+            if (i >= av.len()) { return usage(); }
+            target = av[i];
         } else if (a == "-o") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -158,6 +167,13 @@ function main(): i32 {
     }
 
     if (!have_entry) { return usage(); }
+
+    if (target != "x86-64" && target != "arm64") {
+        eprint("fern: unknown -target: ");
+        eprint(target);
+        eprint(" (want x86-64 or arm64)\n");
+        return 2;
+    }
 
     // Load the entry + its transitive imports off disk and flatten them
     // into one module (the import-driven scheme from asm_load_run).
@@ -248,7 +264,13 @@ function main(): i32 {
         return 254;
     }
 
-    var out_asm: string = asm.emit_module(parser.module_with_builtins(merged));
+    var full: parser.Module = parser.module_with_builtins(merged);
+    var out_asm: string = "";
+    if (target == "arm64") {
+        out_asm = asm_arm64.emit_module(full);
+    } else {
+        out_asm = asm.emit_module(full);
+    }
     if (out_path.len() > 0) {
         match (write_file(out_path, out_asm)) {
             Some(e) => {
