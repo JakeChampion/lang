@@ -2233,15 +2233,27 @@ freelist class; it now frees the actual `len`-byte payload (str_dec
 already receives `len`), so an owned heap string returns to the class it
 was allocated from. The full suite (incl. the reassign-free path that
 exercises the rc==1 branch + the differential gate) stays green.
-- **String statement TEMPORARIES** (the genuine unbounded leak): a
-  transient concat result like `(a + b).len()` — not bound to a var —
-  leaks fully on wasm (1600 B → 160000 B → 1600000 B, linear, no
-  plateau), because nothing dec's it (emitVarReinitDropOld only sees
-  declared vars). This is the deferred statement-temporary reclamation
-  mechanism (dec rc-tracked transient expression results at statement end
-  without double-freeing bound / stored / returned values) — the dominant
-  remaining leak, and a dedicated effort (it needs per-statement temp
-  tracking, not a per-type drop slice).
+- **Statement TEMPORARIES — SHIPPED ON ALL THREE BACKENDS (2026-06-02).**
+  An OWNED rc temporary materialised in a *consuming* position
+  (`(a + b).len()`, `foo(a + b)`, a discarded `a + b;`) was never dec'd —
+  the genuine unbounded leak (wasm `(a + b).len()`: 1600 → 160000 →
+  1600000, linear, no plateau), because nothing released it
+  (emitVarReinitDropOld only sees declared vars). Fixed as a three-stage
+  slice gated on `RcFreeEnabled`, all reusing the `freshOwnedRcTempType`
+  classifier (the fresh-allocating shapes `rhsTainted`/`computeFreeEligible`
+  already treat as untainted-owned) + the shared `emitOwnedSlotDrop` per-type
+  drop: **(a)** a discarded bare-ExprStmt temp decs in place instead of a
+  floor `OpDrop`; **(b)** an owned call-arg temp passed to a CONCRETE-SCALAR-
+  returning call (`resultCannotAliasArg` — number/bool/float/void) is stashed
+  + dec'd after the call; **(c)** a value-consuming `.len()` receiver is
+  stashed + dec'd after the length op. `Test{X86_64,Arm64,WASM}` ×
+  `{StmtTempReclaim, CallArgTempReclaim, LenReceiverReclaim}` — flat
+  bump high-water (was linear) on wasm, value-correct + 0 over-release on all
+  three. Safety note: stage (b)'s gate is concrete-scalar-result ONLY — a
+  pointer or UNRESOLVED-GENERIC result (`id[T](x)->x`, `pick[T](c,a,b)->a|b`;
+  `b.exprType` reads the bare type var `T` as non-pointer) could RETURN the
+  arg, and dec'ing an arg the caller then reads is a UAF (diff-oracle seeds
+  1392/1596/1836 segfaulted on the first, too-loose "non-pointer" cut).
 - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`): rc-neutral by
   design — construction doesn't inc payloads, so an `is_unique`-gated free
   would UAF a payload shared with a live local (rc-undercounted).
@@ -2275,12 +2287,14 @@ exercises the rc==1 branch + the differential gate) stays green.
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), string-concat
   bound-var (wasm 64576 B plateau / natives 0 SSO).
 
-Next Phase-6 steps (open): statement-temporary reclamation (the dominant
-remaining leak — design recorded below); array-of-(rc-inner-array) deep
-drop; then evaluate retiring `strbuf_*`. Enum reuse-path payloads remain
-deferred (needs the global payload rebalance).
+Next Phase-6 steps (open): array-of-(enum[]/closure[]) inner deep drop
+(`arrElemStructDropName` declines those element types today); then evaluate
+retiring `strbuf_*`. Statement-temporary reclamation is now SHIPPED (all
+three stages — see the bullet above; design note retained below for the
+record). Enum reuse-path payloads remain deferred (needs the global payload
+rebalance).
 
-### Statement-temporary reclamation — design note (next major slice)
+### Statement-temporary reclamation — design note (SHIPPED, all three stages 2026-06-02)
 
 The remaining unbounded leak. An OWNED rc temporary materialised in a
 *consuming* position is never released, because the two things that
@@ -2329,6 +2343,27 @@ receivers (`(a+b).len()`): stash the receiver ptr before the consuming
 op, dec after. Each stage ships with bounded-growth probes (`foo(a+b)` /
 `(a+b).len()` loops flat at N=5000 vs N=50000) + 0-over-release + the full
 gate. Likely a multi-PR slice on its own — budget a focused session.
+
+**OUTCOME (shipped, three PRs).** Implemented as `freshOwnedRcTempType`
+(the fresh-allocating shape classifier — ArrayLit/StructLit/TupleLit, string
+concat, string slice; MakeClosure excluded as a bare closure temp is
+effectively nonexistent and its capture-drop thunk is name-keyed) +
+`emitOwnedSlotDrop` (the per-type slot drop extracted from
+`emitVarReinitDropOld`). Two refinements vs the sketch above:
+(1) **Stages dec at the precise consumption point, not a generic
+"statement boundary"** — (a) on the discarded ExprStmt's stack value,
+(b) right after the call, (c) right after the length op. This is simpler
+and avoids tracking a per-statement temp list.
+(2) **Stage (b)'s "didn't escape" became a hard CONCRETE-SCALAR-RESULT gate**
+(`resultCannotAliasArg`: number/bool/float/void). The dec fires immediately
+after the call, so the arg must be DEAD then — but a callee that returns its
+arg (`id`/`pick`) makes the result alias the arg, and a non-pointer-only gate
+let an unresolved generic result (`ast.ParamType` `T`, which reads
+non-pointer) slip through → diff-oracle seeds 1392/1596/1836 SEGFAULTED.
+Only a concrete scalar result provably can't be / contain the arg. Retain
+sinks (`Map_set`/`Array_push` move a fresh arg in uncounted) are also
+excluded. Stages (a) and (c) have no such hazard — the temp is fully
+consumed and demonstrably dead, identical safety to a discarded temp.
 
 ## Testing strategy
 
