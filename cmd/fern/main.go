@@ -318,6 +318,89 @@ func warnUnusedChunks(srcPath string, doc *literate.Document) {
 	}
 }
 
+// runDoctests tangles and runs every `test` block in a literate
+// document, reporting TAP. Each example is a standalone program (its
+// `<<refs>>` expanded against the document's chunks); it passes when it
+// compiles and main returns 0. Diagnostics in a failing example are
+// remapped back onto the `.fern.md`. Exits non-zero if any example fails.
+func runDoctests(srcPath string) (int, error) {
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		return 1, err
+	}
+	src := string(srcBytes)
+	doc := literate.Parse(src)
+	tests, err := doc.Doctests()
+	if err != nil {
+		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+	}
+	fmt.Printf("1..%d\n", len(tests))
+	if len(tests) == 0 {
+		fmt.Fprintf(os.Stderr, "%s: no `test` blocks found\n", srcPath)
+		return 0, nil
+	}
+	failed := 0
+	for i, tc := range tests {
+		if err := runDoctestCase(srcPath, src, tc); err != nil {
+			failed++
+			fmt.Printf("not ok %d - %s\n", i+1, tc.Name)
+			for _, line := range strings.Split(strings.TrimRight(err.Error(), "\n"), "\n") {
+				fmt.Printf("# %s\n", line)
+			}
+		} else {
+			fmt.Printf("ok %d - %s\n", i+1, tc.Name)
+		}
+	}
+	if failed > 0 {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// runDoctestCase compiles and runs one tangled example through the
+// interpreter. A virtual entry in the document's directory lets the
+// example resolve disk-relative imports (and stdlib); compile errors are
+// remapped onto the document.
+func runDoctestCase(srcPath, src string, tc literate.Doctest) error {
+	remap := remapFor(tc.LineMap)
+	fmtErr := func(e error) error {
+		return fmt.Errorf("%s", diag.FormatRemapped(srcPath, src, remap, e))
+	}
+	entry := filepath.Join(filepath.Dir(srcPath), "__doctest__.fern")
+	prog, _, err := modload.LoadWith(entry, map[string]string{absPath(entry): tc.Code})
+	if err != nil {
+		return fmtErr(err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		return fmtErr(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		return fmtErr(err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		return fmtErr(err)
+	}
+	ip := interp.New()
+	for _, ed := range prog.Enums {
+		ip.RegisterEnum(ed)
+	}
+	for _, fn := range prog.Funcs {
+		ip.Register(fn)
+	}
+	if _, ok := ip.Funcs["main"]; !ok {
+		return fmt.Errorf("doctest has no `main` function to run")
+	}
+	v, err := ip.CallByName("main", nil)
+	if err != nil {
+		return err
+	}
+	if n, ok := v.(interp.Number); ok && int(n) != 0 {
+		return fmt.Errorf("example failed: main returned %d (expected 0)", int(n))
+	}
+	return nil
+}
+
 // runLiterateTool implements the `-tangle` / `-weave` literate
 // subcommands: parse the `.fern.md` document and write either the
 // tangled Fern source or the woven Markdown. With `outPath` empty the
@@ -438,6 +521,7 @@ func main() {
 	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. Add -html for a self-contained, styled HTML page (highlighted code + clickable chunk references). No codegen.")
 	weaveHTML := flag.Bool("html", false, "with -weave, emit a self-contained styled HTML page (embedded CSS, Fern syntax highlighting, and clickable `<<chunk>>` cross-reference links) instead of Markdown.")
 	tangleChunk := flag.String("chunk", "", "with -tangle, expand and print only the named chunk (e.g. -chunk 'the main loop') instead of the <<*>> root — for inspecting or extracting one chunk. Works on single- and multi-file documents.")
+	doDoctest := flag.Bool("doctest", false, "run the `test`-directive example blocks in a literate FILE.fern.md. Each ```fern test block is tangled (its `<<refs>>` expand against the document's chunks) into a standalone program, compiled, and run; exit 0 = pass. Results print as TAP; the command exits non-zero if any example fails.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
@@ -529,6 +613,15 @@ func main() {
 
 	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
 		code, err := runLiterateTool(flag.Arg(0), *doTangle, *out, *tangleChunk, *weaveHTML)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(code)
+	}
+
+	if *doDoctest && flag.NArg() >= 1 {
+		code, err := runDoctests(flag.Arg(0))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

@@ -136,6 +136,17 @@ type Document struct {
 	// preserves first-definition order for stable multi-file output.
 	fileIndex map[string]*fileRoot
 	fileOrder []string
+	// tests holds `test`-directive blocks in document order (doctests).
+	tests []*testBlock
+}
+
+// testBlock is a `test`-directive fern fence: a runnable example whose
+// body tangles (resolving `<<refs>>` against the document's chunks) to a
+// complete program that `fern -doctest` compiles and runs.
+type testBlock struct {
+	name      string
+	body      []bodyLine
+	firstLine int
 }
 
 // Parse reads literate source (the contents of a `.fern.md` file) into
@@ -167,9 +178,12 @@ func Parse(src string) *Document {
 			}
 			raw := strings.Join(lines[start:i], "\n")
 			if lang == "fern" {
-				if file, isEntry := parseFenceDirectives(info); file != "" {
-					doc.addFileBlock(file, isEntry, body, raw, fenceLine)
-				} else {
+				switch d := parseFenceDirectives(info); {
+				case d.file != "":
+					doc.addFileBlock(d.file, d.entry, body, raw, fenceLine)
+				case d.test:
+					doc.addTestBlock(d.name, body, raw, fenceLine)
+				default:
 					doc.addFernBlock(body, raw)
 				}
 			} else {
@@ -225,6 +239,14 @@ func (doc *Document) addFileBlock(path string, isEntry bool, body []bodyLine, ra
 		fr.isEntry = true
 	}
 	doc.blocks = append(doc.blocks, block{isFern: true, file: path, lines: body, rawText: raw})
+}
+
+// addTestBlock records a `test`-directive block as a doctest and also
+// emits it as a display-only block so it still appears in the woven
+// document (it is an illustrative example, never part of the tangle).
+func (doc *Document) addTestBlock(name string, body []bodyLine, raw string, firstLine int) {
+	doc.tests = append(doc.tests, &testBlock{name: name, body: body, firstLine: firstLine})
+	doc.blocks = append(doc.blocks, block{isFern: true, rawText: raw})
 }
 
 // Tangle expands the root chunk into compilable Fern source and returns
@@ -428,16 +450,30 @@ func openingFence(line string) (fence, lang, info string, ok bool) {
 // file (its body is a file-root), and a bare `entry` token marks that
 // file as the program's compile entry. The leading language token and
 // any other words are ignored. PATH may be quoted.
-func parseFenceDirectives(info string) (file string, isEntry bool) {
+// fenceDirectives holds the parsed directives of a fern fence's info
+// string: `file=PATH` (file-root), `entry` (compile entry), `test` (a
+// doctest block), and `name=…` (a doctest's label).
+type fenceDirectives struct {
+	file  string
+	name  string
+	entry bool
+	test  bool
+}
+
+func parseFenceDirectives(info string) (d fenceDirectives) {
 	for _, f := range strings.Fields(info) {
 		switch {
 		case strings.HasPrefix(f, "file="):
-			file = strings.Trim(strings.TrimPrefix(f, "file="), "\"")
+			d.file = strings.Trim(strings.TrimPrefix(f, "file="), "\"")
+		case strings.HasPrefix(f, "name="):
+			d.name = strings.Trim(strings.TrimPrefix(f, "name="), "\"")
 		case f == "entry":
-			isEntry = true
+			d.entry = true
+		case f == "test":
+			d.test = true
 		}
 	}
-	return file, isEntry
+	return d
 }
 
 // isFenceLine reports whether line opens (or closes) any fenced block.

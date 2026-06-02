@@ -134,6 +134,37 @@ the rendered source snippet all point at what you actually typed, not
 at the generated intermediate. (Internally: `Tangle` returns a line map
 that the CLI turns into a position remapper for `diag.FormatRemapped`.)
 
+## Doctests — runnable examples
+
+A ```` ```fern test ```` block is a *doctest*: a runnable example that
+`fern -doctest` tangles (its `<<refs>>` expand against the document's
+chunks, so an example can pull in the very code the prose explains) into
+a standalone program, compiles, and runs. The example **passes when it
+compiles and `main` returns 0** — so it can't silently rot as the code
+around it changes.
+
+````markdown
+```fern test name=greeting-says-hi
+import "core/no_prelude";
+<<greeting>>
+function main(): i32 {
+    if (greeting() != "hello") { return 1; }
+    return 0;
+}
+```
+````
+
+```sh
+fern -doctest prog.fern.md
+```
+
+Output is TAP (`ok N - name` / `not ok N - name`); the command exits
+non-zero if any example fails. An optional `name=…` directive labels the
+example (otherwise it's numbered). A compile error in an example is
+reported against the document line you wrote. The example resolves
+stdlib and disk-relative imports against the document's directory; a
+`test` block is shown in the woven output but never part of the tangle.
+
 ## Lints
 
 - **Unused chunk** — a chunk defined but never reached from a tangle
