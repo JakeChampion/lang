@@ -79,6 +79,14 @@ fern -tangle -o prog.fern one.fern.md
 fern -weave  -o prog.md  prog.fern.md
 ```
 
+`fern -tangle -chunk NAME` expands and prints just one named chunk (and
+its transitive references) instead of the `<<*>>` root — handy for
+inspecting or extracting a single chunk:
+
+```sh
+fern -tangle -chunk 'the main loop' prog.fern.md
+```
+
 `fern -weave -html` renders a **self-contained, styled HTML page**
 instead of Markdown — embedded CSS, light Fern syntax highlighting, and
 clickable `<<chunk>>` cross-reference links that jump to each chunk's
