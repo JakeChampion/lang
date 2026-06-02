@@ -2175,10 +2175,53 @@ rc-neutral by design (construction doesn't inc payloads, reuse doesn't
 release them — payloads leak in both baseline and reuse); reclaiming them
 needs a balanced payload-release, a separate slice.
 
-Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
-harness over the self-host + edge-handler workloads to profile hot
-allocation sites, then evaluate retiring `strbuf_*`; enum reuse-path
-payload reclamation.
+**Map loop-var reclamation — SHIPPED ON ALL THREE BACKENDS
+(2026-06-02).** Found by profiling diverse compound workloads with the
+`__heap_bump_bytes()` probe: a `var m = map_new(8)` re-declared in a loop
+leaked the entire map structure every iteration (6400 B → 640000 B),
+even though the EXIT sweep already reclaims an owned Map. The reinit path
+routed Map through `emitStructEnumSlotDrop`, whose `dropFnNameFor`
+declines Map → a flat `__fern_rc_dec` that frees nothing. The fix
+extracts the exit sweep's Map-drop body into a shared `emitMapSlotDrop`
+(value column via `__map_drop_values` / `__drop_map_via_*` /
+`__drop_map_str_values`; string-key column via `__drop_map_str_keys`;
+then `__fern_map_drop` for buf + handle — every helper self-guards on
+rc==1) and routes Map loop-var reinit through it. Verified by
+`Test{X86_64,Arm64,WASM}MapReinitReclaim`
+(`internal/e2e/rc_heap_bump_map_reinit_test.go`): a `Map[i32,i32]` loop
+holds a flat high-water at N=50 vs N=5000 (was 6400→640000), and a
+`Map[string,i32]` loop (string key + value columns) is value-correct with
+0 over-releases over 200 iterations. The full `internal/ir` +
+`internal/e2e` suite (incl. the heavy self-host map users + the
+differential gate) stays green.
+
+**Profiling findings (2026-06-02, `__heap_bump_bytes()` over compound
+workloads) — the remaining measured leaks, in priority order:**
+- **Nested array `i32[][]`**: a `var g = [[..],[..]]` loop leaks the INNER
+  buffers (3264 B → 320064 B). Both the reinit `__fern_arr_dec` and the
+  exit sweep's `__fern_drop_arr_ptr` free only the OUTER buffer and
+  flat-`rc_dec` each element (no inner-buffer free). Needs a recursive
+  array-of-array drop helper (the `__drop_arr_struct_` analogue for array
+  elements) — the long-documented "array-of-array inner buffers" gap.
+- **String concat results**: a `var s = a + b` loop under-reclaims
+  (1600 B → 64576 B) and a pure temporary `(a + b).len()` leaks fully
+  (1600 B → 160000 B). The shipped string tests only assert 0
+  over-release, never bounded high-water, so this slipped through. The
+  temporary case is the deferred statement-temporary reclamation
+  mechanism (dec transient expression results at statement end without
+  double-freeing bound/returned values).
+- **Enum reuse-path payloads** (`tryEnumReuseOverwrite`): rc-neutral by
+  design — construction doesn't inc payloads, so an `is_unique`-gated free
+  would UAF a payload shared with a live local (rc-undercounted).
+  Reclaiming needs a global enum-payload inc-on-construction + drop
+  rebalance — risky; deferred.
+- BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
+  (96 B), map build (256 B, this slice).
+
+Next Phase-6 steps (open): nested-array inner-buffer reclamation
+(most tractable, machinery exists); statement-temporary + bound-var
+string-concat reclamation; then evaluate retiring `strbuf_*`. Enum
+reuse-path payloads remain deferred (needs the global payload rebalance).
 
 ## Testing strategy
 
