@@ -843,3 +843,97 @@ pub function avg_f64(arr: f64[]): Option[f64] {
     if (n == 0) { return None; }
     return Some(sum_f64(arr) / (n as f64));
 }
+
+// =================== GENERIC ARRAY COMBINATORS ===================
+//
+// `map` / `filter` / `fold` / `any` / `all` / `find` /
+// `enumerate` over a parametric `T[]` — STDLIB-ROADMAP item #1,
+// "the single biggest expressivity win; everything else builds
+// on these." Free generic functions (not `__method_Array_*`
+// receiver methods) because lang's Array-method dispatch keys on
+// the method name only and can't fan out on element type, and
+// because the roadmap pins this exact free-function surface.
+//
+// The generic-fn-over-`T[]` machinery is the same one `push`
+// already exercises: a body that does `out = out.push(f(x))`
+// stamps the `push` call's TypeArgs to the body's type params,
+// and monomorph rewrites them to the concrete instantiation at
+// each call site. (That substitution walker had an `*ast.Assign`
+// gap that blocked this exact shape; fixed and pinned by
+// `internal/e2e/generic_array_combinators_test.go`.)
+//
+// Eager by design — every combinator returns a fresh array (or a
+// scalar). Arena bump-allocation makes the intermediate copies
+// cheap, which is the right v1 trade for the small-n CLI / edge-
+// handler workloads. A lazy `std/iter` can layer on later without
+// reworking these bodies.
+
+// `map(xs, f)` — fresh `U[]` with `f` applied to every element.
+// Empty → empty. The workhorse transform.
+pub function map[T, U](xs: T[], f: (T) => U): U[] {
+    var out: U[] = [];
+    for x in xs { out = out.push(f(x)); }
+    return out;
+}
+
+// `filter(xs, keep)` — fresh `T[]` of the elements for which
+// `keep` returns true, original order preserved. Empty → empty.
+pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
+    var out: T[] = [];
+    for x in xs {
+        if (keep(x)) { out = out.push(x); }
+    }
+    return out;
+}
+
+// `fold(xs, init, f)` — left fold. Threads `acc` (starting at
+// `init`) through `f(acc, x)` for each element, returning the
+// final accumulator. The general reduction; `sum` / `product` /
+// `min` / `max` are all special cases.
+pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
+    var acc: A = init;
+    for x in xs { acc = f(acc, x); }
+    return acc;
+}
+
+// `any(xs, pred)` — true if `pred` holds for at least one
+// element. Short-circuits on the first match. Empty → false.
+pub function any[T](xs: T[], pred: (T) => boolean): boolean {
+    for x in xs {
+        if (pred(x)) { return true; }
+    }
+    return false;
+}
+
+// `all(xs, pred)` — true if `pred` holds for every element.
+// Short-circuits on the first failure. Empty → true (vacuous).
+pub function all[T](xs: T[], pred: (T) => boolean): boolean {
+    for x in xs {
+        if (!pred(x)) { return false; }
+    }
+    return true;
+}
+
+// `find(xs, pred)` — `Some(x)` for the first element matching
+// `pred`, else `None`. Short-circuits. The Option return keeps
+// "not found" out-of-band rather than leaning on a sentinel.
+pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
+    for x in xs {
+        if (pred(x)) { return Some(x); }
+    }
+    return None;
+}
+
+// `enumerate(xs)` — pair each element with its 0-based index:
+// `[(0, xs[0]), (1, xs[1]), ...]`. Lets a single `for (i, x) in
+// enumerate(xs)`-style loop carry the index without a manual
+// counter. Empty → empty.
+pub function enumerate[T](xs: T[]): (i32, T)[] {
+    var out: (i32, T)[] = [];
+    var i: i32 = 0;
+    for x in xs {
+        out = out.push((i, x));
+        i = i + 1;
+    }
+    return out;
+}

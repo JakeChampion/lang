@@ -956,6 +956,40 @@ func TestRunnerArrayReductionsExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_combinators_test.fern` exercises the
+// generic array combinators added as free functions over a
+// parametric T[] to std/array: `map` / `filter` / `fold` /
+// `any` / `all` / `find` / `enumerate` (STDLIB-ROADMAP item
+// #1). Twenty cases cover the happy path, empty-array
+// semantics, element-type-changing map (i32 -> string),
+// accumulator-type-differing fold, a captured-variable closure
+// through filter, both Option arms of find, and a map-then-fold
+// pipeline.
+func TestRunnerArrayCombinatorsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - map",
+		"ok 3 - map change type",
+		"ok 6 - filter capture",
+		"ok 9 - fold acc type",
+		"ok 16 - find some",
+		"ok 17 - find none",
+		"ok 18 - enumerate",
+		"ok 20 - map then fold",
+		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/set_eq_test.fern` exercises the order-
 // independent (multiset) array assertions:
 // `assert_set_eq_i32` / `_string` and `assert_subset_i32` /
