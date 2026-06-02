@@ -600,25 +600,17 @@ func (g *generator) emitDataSections() {
 		}
 	}
 	if g.usesAlloc {
-		// Two-cursor bump allocator. Mode byte at +0 (0 =
-		// arena, 1 = persistent); each region has its own
-		// `_ptr` / `_end` pair that __fern_alloc bumps. See
-		// emitAllocRuntime for the design rationale.
+		// Single-cursor bump allocator: `__fern_heap_ptr` /
+		// `__fern_heap_end` are the live region's cursors that
+		// __fern_alloc bumps. (A second "persistent" cursor + a
+		// mode byte used to exist for the removed `state`
+		// feature; both are gone.)
 		g.line(`.align 3`)
 		g.label("__fern_heap_ptr")
 		g.line(`	.quad 0`)
 		g.line(`.align 3`)
 		g.label("__fern_heap_end")
 		g.line(`	.quad 0`)
-		g.line(`.align 3`)
-		g.label("__fern_persistent_ptr")
-		g.line(`	.quad 0`)
-		g.line(`.align 3`)
-		g.label("__fern_persistent_end")
-		g.line(`	.quad 0`)
-		g.line(`.align 2`)
-		g.label("__fern_alloc_mode")
-		g.line(`	.byte 0`)
 	}
 	if g.usesEnv {
 		g.line(`.align 3`)
@@ -690,31 +682,22 @@ func (g *generator) emitDataSections() {
 // First call lazily reserves the heap arena via mmap; later
 // calls bump the cursor.
 //
-// Two-cursor allocator: a 1-byte mode flag at
-// `__fern_alloc_mode` selects which region to bump.
+// Single-cursor bump allocator: every allocation bumps the one
+// `__fern_heap_ptr` / `__fern_heap_end` pair. A second
+// "persistent" region (selected by a `__fern_alloc_mode` byte)
+// used to exist so `state`-rooted allocations survived the
+// per-request arena reset; both the `state` feature and the
+// arena reset have since been removed, so the mode flag and the
+// persistent cursors are gone and there is nothing to select.
 //
-//	mode == 0 → default cursor (__fern_heap_ptr / _end).
-//	            The transient region for most allocations;
-//	            reclaimed by reference counting as values
-//	            die, not by a bump-cursor reset.
-//	mode == 1 → persistent cursor (__fern_persistent_ptr /
-//	            _end). Never reclaimed; lives as long as
-//	            the process. The IR's OpPersistentSet /
-//	            OpPersistentRestore toggle the mode flag
-//	            around state-rooted method calls so any
-//	            internal allocs (e.g. Map.set's grow path)
-//	            land in this region, keeping state-rooted
-//	            data distinct from transient allocations.
-//
-// Each region gets its own lazy-mmap'd 64 MiB virtual
-// reservation. Linux's address hint differs per region
-// (0x10000000 arena, 0x20000000 persistent) so they don't
-// collide; both fit in 32 bits so the lang prelude's
+// The region is a lazy-mmap'd virtual reservation at hint
+// 0x10000000 (fits in 32 bits so the lang prelude's
 // __store_i32 / __load_i32 round-trip pointers without
-// truncation.
+// truncation).
 //
-// Bump-only — no free. The OS reclaims everything at process
-// exit.
+// Bump-only at the cursor level — freed blocks return to the
+// segregated freelist (see __fern_free) when RcFreeEnabled; the
+// OS reclaims everything at process exit regardless.
 func (g *generator) emitAllocRuntime() {
 	// 512 MiB per region — matches the x86 backend's heap size so
 	// the arm64 native self-host driver can compile programs
@@ -754,19 +737,10 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("ret")
 		g.label(".Lalloc_bump")
 	}
-	// Pick cursor + end labels into x11 / x12 based on mode.
-	g.adrpAdd("x6", "__fern_alloc_mode")
-	g.emit("ldrb w7, [x6]")
-	g.emit("cbnz w7, .Lalloc_pick_persistent")
+	// Single bump region: x11/x12 = heap cursor/end.
 	g.adrpAdd("x11", "__fern_heap_ptr")
 	g.adrpAdd("x12", "__fern_heap_end")
-	g.emit("mov x13, #1") // hint shift base = 0x1000_0000 (will be lsl-ed)
-	g.emit("b .Lalloc_have_labels")
-	g.label(".Lalloc_pick_persistent")
-	g.adrpAdd("x11", "__fern_persistent_ptr")
-	g.adrpAdd("x12", "__fern_persistent_end")
-	g.emit("mov x13, #2") // hint shift base = 0x2000_0000
-	g.label(".Lalloc_have_labels")
+	g.emit("mov x13, #1") // mmap hint base = 0x1000_0000 (lsl #28 below)
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).

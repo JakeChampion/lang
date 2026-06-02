@@ -22,7 +22,7 @@ import (
 //
 // The bump allocator only advances its cursor; the freelist
 // (RcFreeEnabled) recycles freed blocks without advancing it. So
-// the persistent cursor's high-water mark — reflected in the
+// the bump cursor's high-water mark — reflected in the
 // process's peak RSS (touched pages) — is bounded under churn iff
 // reclamation is on. We compile + run the SAME program with the
 // freelist on and off and compare ru_maxrss.

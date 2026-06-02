@@ -51,15 +51,18 @@ removal (see "Consequence" below) and accepted.
   functional result; the no-allocation property is still covered by the
   elide-closure-pair IR tests.
 
-### What was deliberately left alone
+### Follow-up: the two-cursor allocator was collapsed
 
-The native **two-cursor allocator** (a transient region + a persistent region
-for `state`-rooted allocations, toggled by `OpPersistentSet` /
-`OpPersistentRestore`) stays. With no `arena_restore`, the transient region is
-never bulk-reset, so the two-region split is now largely vestigial — but
-collapsing it touches the allocator and the persistent-set IR ops and is a
-separate, larger change. Comments that described the regions in terms of
-`arena_save` / `arena_restore` were updated to describe RC reclaim.
+At the time of the arena removal the native **two-cursor allocator** (a
+transient region + a persistent region for `state`-rooted allocations) was left
+in place as "largely vestigial." With both the `state` feature and the arena
+reset gone, nothing ever selected the persistent region (`__fern_alloc_mode`
+was hardwired to 0), so a subsequent change **collapsed it to a single bump
+cursor** on both native backends — deleting `__fern_persistent_ptr/_end`, the
+`__fern_alloc_mode` byte, and the unreachable mode-1 branch in
+`emitAllocRuntime`. Behavior is unchanged (the persistent path was never
+taken); allocations bump the one `__fern_heap_ptr`/`_end` pair and are
+reclaimed by reference counting.
 
 ## Consequence (accepted regression)
 

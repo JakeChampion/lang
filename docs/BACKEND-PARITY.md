@@ -74,50 +74,22 @@ through the same `__fern_reader_read_line` runtime as
 round-trip, `read_chunk` partial reads, line-by-line
 streaming).
 
-### ~~`State[T]` persistent storage~~ ✅ done (program-lifetime interpretation)
+### ~~`State[T]` persistent storage + two-cursor allocator~~ ❌ REMOVED
 
-Landed on both natives: each `state { var NAME: T = INIT; }` block
-becomes a labelled `.data` (literal init) or `.bss` (runtime init)
-slot. `OpLoadGlobal` / `OpStoreGlobal` lower to rip-relative
-(x86-64) or adrp+ldr/str (arm64) with width chosen by
-`stateWidthBytes(t)` (8 for i64 / f64 / pointer-shaped, 4 for
-everything else). `OpPersistentSet` / `OpPersistentRestore` are
-no-ops (push 0 / drop 16-byte slot) since natives only have one
-heap.
+These shipped on both natives and were then **removed** with the
+`state` feature (and the arena reset that motivated the second
+cursor). For the record, what existed was: `state { var NAME: T
+= INIT; }` blocks lowering to labelled `.data`/`.bss` slots via
+`OpLoadGlobal`/`OpStoreGlobal`; a synthesised `__state_init`
+start function; and a two-cursor bump allocator (an
+`__fern_alloc_mode` byte selecting a transient vs. a persistent
+region, toggled around state-rooted call sites so a state Map's
+grow survived `arena_restore`).
 
-For non-literal initialisers the checker synthesises
-`__state_init`; arm64 / x86-64 `_start` calls it before `main`,
-so all init allocations sit safely below any subsequent
-`arena_save`.
-
-Covered shapes (`TestArm64State` / `TestX86_64State`): scalar i32
-counter, scalar i64, computed scalar init, `f64 + boolean` mix,
-string with concat init, Map[K, V] mutated across function calls.
-
-### ~~Two-cursor allocator for state-rooted mutations~~ ✅ done
-
-Landed alongside the State[T] follow-up. Each native backend
-now has two bump-allocator cursors — an arena cursor (mode 0,
-the per-request region `arena_save` / `arena_restore`
-manipulate) and a persistent cursor (mode 1, never reclaimed).
-A 1-byte `__fern_alloc_mode` flag selects which region
-`__fern_alloc` bumps; `OpPersistentSet` / `OpPersistentRestore`
-real-toggle the flag (no longer no-ops). The IR already wraps
-state-rooted method calls in `OpPersistentSet(1)` /
-`OpPersistentRestore`, so e.g. `Map.set`'s grow path inside
-`handle()` now lands in the persistent region and survives the
-request-boundary `arena_restore`.
-
-Coverage: `Test{Arm64,X86_64}StateMapGrowInsideArena` — 50
-inserts into a `cap=2` state Map, each wrapped in a
-fresh `arena_save / arena_restore` window. Triggers multiple
-grows across arena cycles; passes only with the two-cursor
-allocator.
-
-Heap layout: two 64 MiB regions (so 128 MiB total virtual
-reservation), lazy-mmap'd on first use, hinted at
-`0x10000000` and `0x20000000` so both fit in 32 bits (the
-prelude's `__store_i32` / `__load_i32` truncation constraint).
+All of it is gone: no `state` syntax, no AST/checker/IR support,
+no `OpPersistent*` ops, and the allocator is back to a single
+bump cursor (`__fern_heap_ptr`/`_end`) reclaimed by reference
+counting. The `Test*State*` cases were removed with the feature.
 
 ---
 
@@ -154,18 +126,13 @@ natives alongside the sign-extend ops above; covered by
 - **x86-64:** `movsx eax, byte ptr [rax]` / `movzx eax, word ptr [rax]` /
   `movsx eax, word ptr [rax]`
 
-### ~~`OpLoadGlobal` / `OpStoreGlobal` on both natives~~ ✅ done
+### ~~`OpLoadGlobal` / `OpStoreGlobal` / `OpPersistentSet` / `OpPersistentRestore`~~ ❌ REMOVED
 
-Landed alongside `State[T]`. arm64: `adrp x1, .Lstate_<name>; ldr
-w0/x0, [x1, :lo12:.Lstate_<name>]` (width per `stateWidthBytes`).
-x86-64: `mov eax/rax, [rip + .Lstate_<name>]`.
-
-### ~~`OpPersistentSet` / `OpPersistentRestore` on both natives~~ ✅ done
-
-Landed as no-ops (push 0 / drop 16-byte slot) — natives only have
-one heap, so the wasm-side allocator-mode toggle has no native
-analog. See the "State[T]" section for the caveat about
-state-rooted Map grow inside `handle()`.
+These IR ops existed only to support the `state` feature
+(global-slot loads/stores and the persistent-allocator-mode
+toggle). They were removed with it — the ops no longer exist in
+`internal/ir`. See the "`State[T]` persistent storage" section
+above.
 
 ---
 
