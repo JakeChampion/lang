@@ -2257,10 +2257,59 @@ exercises the rc==1 branch + the differential gate) stays green.
   bound-var (wasm 64576 B plateau / natives 0 via SSO).
 
 Next Phase-6 steps (open): statement-temporary reclamation (the dominant
-remaining leak — dec rc-tracked transient expression results at statement
-end; needs per-statement temp tracking); array-of-(rc-inner-array) deep
+remaining leak — design recorded below); array-of-(rc-inner-array) deep
 drop; then evaluate retiring `strbuf_*`. Enum reuse-path payloads remain
 deferred (needs the global payload rebalance).
+
+### Statement-temporary reclamation — design note (next major slice)
+
+The remaining unbounded leak. An OWNED rc temporary materialised in a
+*consuming* position is never released, because the two things that
+consume it don't dec:
+  1. **Borrowed call args.** Under the Phase-2d borrow model the callee
+     does NOT dec a borrowed arg, so `foo(a + b)` (a fresh concat passed
+     to `foo(s: string)`) leaks the concat buffer — the caller created an
+     owned temp, handed it over borrowed, and nothing frees it. This is
+     the real-code case (the dominant source).
+  2. **Value-consuming ops.** `(a + b).len()` lowers to `b.expr(receiver)`
+     then `OpStrLen` (ir.go ~8869), which consumes the (data,len) and
+     returns an i32 — the concat buffer is dropped on the floor. Same for
+     other inline consumers.
+  3. **Discarded ExprStmt results.** A bare `a + b;` / `xs.map(...);`
+     statement `OpDrop`s an owned rc result without a dec (ir.go ~5624).
+Measured (wasm): `(a + b).len()` in a loop leaks 1600→160000→1600000
+(linear, no plateau). Bound-var / stored / returned temps are NOT leaks —
+they already get a dec (emitVarReinitDropOld / exit sweep) or are retained.
+
+**Mechanism.** Per-statement owned-temp tracking. While lowering an
+expression, when `b.expr` materialises an OWNED rc temporary, stash its
+pointer in a scratch slot and dec it at the enclosing statement boundary
+(after the operand stack is consumed). "Owned temporary" is the same
+classification `rhsTainted` / `computeFreeEligible` already compute:
+fresh-allocating shapes (string concat `Binary{IsStringConcat}`, string
+`SliceExpr`, `ArrayLit` / `StructLit` / `TupleLit` / `MakeClosure`,
+fresh-returning calls) are owned; idents / field / index reads are
+borrowed and must NOT be dec'd (over-release). A temp that ALSO flows
+into a retain sink (stored into a container, returned, bound to a var)
+must be excluded — it already has its dec / is retained — so reuse the
+escape-taint walk to skip those.
+
+**Hazards.** This is the highest double-free surface of the whole
+Perceus effort — temporaries appear in every expression. A wrong "owned"
+verdict on a borrowed value is an immediate UAF. Mitigations: gate on
+`RcFreeEnabled` (free-off stays byte-identical), reuse the proven
+`rhsTainted` classifier rather than inventing one, and lean on the full
+differential + self-host gate (the self-host compiler is temp-dense).
+
+**Safe incremental ordering.** (a) Discarded bare-ExprStmt owned temp
+(localised at ir.go ~5624: dec instead of plain `OpDrop` when the expr is
+an owned rc shape) — smallest, safest, but rare in real code. (b) Owned
+call-arg temps (the real win — `foo(a + b)`): after the call, dec each
+arg that was an owned temp and didn't escape. (c) Value-consuming
+receivers (`(a+b).len()`): stash the receiver ptr before the consuming
+op, dec after. Each stage ships with bounded-growth probes (`foo(a+b)` /
+`(a+b).len()` loops flat at N=5000 vs N=50000) + 0-over-release + the full
+gate. Likely a multi-PR slice on its own — budget a focused session.
 
 ## Testing strategy
 
