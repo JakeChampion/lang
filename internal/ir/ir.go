@@ -5490,6 +5490,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if needsRcIncOnAlias(n.Init, b) && !b.moveSites[n] {
 			b.emitAliasInc(n.Init)
 		}
+		// Loop-body reclamation: a destructure inside a loop reuses the
+		// synthetic temp slot across iterations, so the prior iteration's
+		// tuple box must be released before this iteration overwrites it —
+		// otherwise every iteration but the last leaks its box (the exit
+		// sweep only reclaims the final one). emitVarReinitDropOld deep-
+		// drops the old temp (via __drop_tuple_ / box_free, is_unique-gated)
+		// and is net-zero on the operand stack, so the new box ptr (and any
+		// alias-inc above it) is left in place for the store. Gated inside
+		// on RcFreeEnabled + freeEligible + localNameUnique + !movedLocals;
+		// the temp is an untainted owned TupleType local, so it qualifies.
+		// First-iteration safe: the slot is zero-init'd at entry, so the
+		// drop's is_unique / null guards no-op on the NULL.
+		b.emitVarReinitDropOld(n.TempName, tempIdx)
 		b.emit(Op{Kind: OpStoreLocal, I32: tempIdx})
 		// Recover the tuple element types from the synthetic
 		// temp so we can pick the right per-element load op +
@@ -5540,6 +5553,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			} else if arrElemIsRcTracked(tup.Elems[i]) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 			}
+			// Loop-body reclamation: like the temp above, a binding declared
+			// by a destructure inside a loop reuses one slot per iteration.
+			// The dup-on-projection inc made this binding an owned co-owner,
+			// so releasing the prior iteration's value here (before the
+			// overwrite) balances that inc and reclaims the per-element
+			// storage — matching the exit-sweep dec that fires on the final
+			// iteration. Net-zero on the stack, leaving the freshly-loaded
+			// element value in place for the store; gated identically inside
+			// (RcFreeEnabled + freeEligible + unique + !moved). b is zero-
+			// init'd at entry, so the first-iteration drop no-ops on NULL.
+			b.emitVarReinitDropOld(name, nameIdx)
 			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
 		}
 	case *ast.ExprStmt:
