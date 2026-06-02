@@ -80,6 +80,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 	for _, fn := range prog.Funcs {
 		for _, op := range fn.Ops {
 			switch op.Kind {
+			case ir.OpDivS, ir.OpRemS:
+				// Guarded division: the helper implements the
+				// never-trap contract (x/0 = 0, x%0 = x, INT_MIN/-1
+				// = INT_MIN, INT_MIN%-1 = 0) so the raw wasm div/rem
+				// instruction never faults.
+				needs.add(intDivRemHelperName(op.Width == 64, op.Unsigned, op.Kind == ir.OpRemS))
 			case ir.OpStrLen:
 				needs.add("__fern_str_len")
 			case ir.OpAlloc:
@@ -587,7 +593,140 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 
 // runtimeHelperSpecs is the registry. Keyed by the canonical
 // helper name; the entry's body() builds the wasm bytes lazily.
+// intDivRemHelperName maps an (i64?, unsigned?, rem?) shape to the
+// runtime-helper name that implements the never-trap contract for
+// that division. The wasm div/rem instructions trap on a zero
+// divisor (and the signed forms on INT_MIN / -1); the helper
+// sanitises the divisor so the hardware op can't fault, then
+// selects the contract result: x / 0 = 0, x % 0 = x, INT_MIN / -1
+// = INT_MIN, INT_MIN % -1 = 0.
+func intDivRemHelperName(w64, unsigned, isRem bool) string {
+	op := "idiv"
+	if isRem {
+		op = "irem"
+	}
+	sign := "s"
+	if unsigned {
+		sign = "u"
+	}
+	width := "32"
+	if w64 {
+		width = "64"
+	}
+	return "__fern_" + op + "_" + sign + width
+}
+
+// buildIntDivRemBody emits a guarded div/rem helper body. Params
+// (locals 0, 1) are the dividend and divisor; local 2 holds the
+// sanitised divisor. The sanitised divisor is 1 whenever the real
+// divisor would fault (== 0, or the signed INT_MIN / -1 overflow),
+// which also yields the right answers for those cases: lhs / 1 =
+// lhs = INT_MIN for the overflow quotient, and lhs % 1 = 0 for the
+// overflow remainder. A final `select` substitutes the divide-by-
+// zero result (0 for div, the dividend for rem).
+func buildIntDivRemBody(w64, unsigned, isRem bool) func(map[string]uint32) []byte {
+	return func(_ map[string]uint32) []byte {
+		vt := encode.ValtypeI32
+		if w64 {
+			vt = encode.ValtypeI64
+		}
+		eqz := numeric.InstI32Eqz
+		eq := numeric.InstI32Eq
+		ne := numeric.InstI32Ne
+		// `and` / `or` combine i32 comparison results (eqz / eq / ne
+		// all yield i32 booleans), so they stay i32 even for the
+		// i64 helpers.
+		and := numeric.InstI32And
+		or := numeric.InstI32Or
+		konst := func(b []byte, v int64) []byte { return inst.InstI32Const(b, int32(v)) }
+		minConst := func(b []byte) []byte { return inst.InstI32Const(b, int32(-0x80000000)) }
+		divOp := numeric.InstI32DivS
+		switch {
+		case w64 && unsigned && isRem:
+			divOp = numeric.InstI64RemU
+		case w64 && unsigned:
+			divOp = numeric.InstI64DivU
+		case w64 && isRem:
+			divOp = numeric.InstI64RemS
+		case w64:
+			divOp = numeric.InstI64DivS
+		case unsigned && isRem:
+			divOp = numeric.InstI32RemU
+		case unsigned:
+			divOp = numeric.InstI32DivU
+		case isRem:
+			divOp = numeric.InstI32RemS
+		}
+		if w64 {
+			eqz = numeric.InstI64Eqz
+			eq = numeric.InstI64Eq
+			ne = numeric.InstI64Ne
+			konst = inst.InstI64Const
+			minConst = func(b []byte) []byte { return inst.InstI64Const(b, int64(-0x8000000000000000)) }
+		}
+
+		locals := inst.PutLocalsOneGroup(nil, 1, vt) // local 2 = safe divisor
+		var b []byte
+		// bad = (rhs == 0)  [ | (lhs == INT_MIN & rhs == -1) for signed ]
+		b = inst.InstLocalGet(b, 1)
+		b = eqz(b)
+		if !unsigned {
+			b = inst.InstLocalGet(b, 0)
+			b = minConst(b)
+			b = eq(b)
+			b = inst.InstLocalGet(b, 1)
+			b = konst(b, -1)
+			b = eq(b)
+			b = and(b)
+			b = or(b)
+		}
+		// safe = bad ? 1 : rhs
+		b = inst.InstIfStart(b, vt)
+		b = konst(b, 1)
+		b = inst.InstElse(b)
+		b = inst.InstLocalGet(b, 1)
+		b = inst.InstEnd(b)
+		b = inst.InstLocalSet(b, 2)
+		// q = lhs <op> safe
+		b = inst.InstLocalGet(b, 0)
+		b = inst.InstLocalGet(b, 2)
+		b = divOp(b)
+		// select(q, zeroCase, rhs != 0): rem's zero-case is the
+		// dividend (x % 0 = x), div's is 0.
+		if isRem {
+			b = inst.InstLocalGet(b, 0)
+		} else {
+			b = konst(b, 0)
+		}
+		b = inst.InstLocalGet(b, 1)
+		b = konst(b, 0)
+		b = ne(b)
+		b = inst.InstSelect(b)
+		return inst.PutFunctionBody(nil, locals, b)
+	}
+}
+
+func intDivRemSpec(w64, unsigned, isRem bool) runtimeHelperSpec {
+	vt := encode.ValtypeI32
+	if w64 {
+		vt = encode.ValtypeI64
+	}
+	return runtimeHelperSpec{
+		params:  []byte{vt, vt},
+		results: []byte{vt},
+		body:    buildIntDivRemBody(w64, unsigned, isRem),
+	}
+}
+
 var runtimeHelperSpecs = map[string]runtimeHelperSpec{
+	"__fern_idiv_s32": intDivRemSpec(false, false, false),
+	"__fern_idiv_u32": intDivRemSpec(false, true, false),
+	"__fern_irem_s32": intDivRemSpec(false, false, true),
+	"__fern_irem_u32": intDivRemSpec(false, true, true),
+	"__fern_idiv_s64": intDivRemSpec(true, false, false),
+	"__fern_idiv_u64": intDivRemSpec(true, true, false),
+	"__fern_irem_s64": intDivRemSpec(true, false, true),
+	"__fern_irem_u64": intDivRemSpec(true, true, true),
 	"__fern_str_len": {
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32}, // (data, len)
 		results: []byte{encode.ValtypeI32},

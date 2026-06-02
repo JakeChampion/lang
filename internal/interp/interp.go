@@ -2969,16 +2969,23 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		case "*":
 			return signExtend(ln * rn), nil
 		case "/":
+			// Division never traps: x / 0 = 0 (the well-defined,
+			// no-exceptions contract, matching arm64's sdiv/udiv).
+			// INT_MIN / -1 wraps to INT_MIN, which Go's `/` already
+			// defines (it only panics on a zero divisor).
 			if rn == 0 {
-				return nil, fmt.Errorf("division by zero")
+				return signExtend(0), nil
 			}
 			if b.IsUnsigned {
 				return signExtend(Number(uint64(ln) / uint64(rn))), nil
 			}
 			return signExtend(signExtend(ln) / signExtend(rn)), nil
 		case "%":
+			// Remainder never traps: x % 0 = x (matching arm64's
+			// msub: rem = x - (x/0)*0 = x). INT_MIN % -1 = 0 is
+			// already what Go's `%` yields.
 			if rn == 0 {
-				return nil, fmt.Errorf("modulo by zero")
+				return signExtend(ln), nil
 			}
 			if b.IsUnsigned {
 				return signExtend(Number(uint64(ln) % uint64(rn))), nil
