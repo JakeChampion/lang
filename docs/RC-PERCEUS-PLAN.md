@@ -2074,6 +2074,21 @@ Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
 harness over the self-host + edge-handler workloads to profile hot
 allocation sites, then evaluate retiring `strbuf_*`.
 
+**NEXT ACTION (measured 2026-06-02, via the probe): tuple reclamation.**
+A first audit with `__heap_bump_bytes()` confirms array / struct / string
+loop-body vars reclaim to a flat high-water (array = 64 B at any N), but
+**tuple loop-body vars are the prime remaining leak suspect** — Phase 5h
+deliberately SKIPS `TupleType` in `emitVarReinitDropOld` (a tuple needs
+the exit sweep's per-element deep drop, not a flat dec). The slice:
+extend dec-on-reinit (and verify the reassignment-overwrite path) to
+deep-drop tuple elements — mirror the exit sweep's `TupleType` branch
+(`emitRcDecLocalsAtExitExcept`, the `if tt, ok := t.(ast.TupleType)` arm
+with its per-element `__fern_str_dec` / element decs), gated identically
+on `freeEligible` + `localNameUnique` + `!movedLocals`. Verify on all
+three backends with the differential gate + a `rc_heap_bump_test`-style
+bounded-growth assertion (tuple loop-var growth equal at N=50 vs N=5000).
+Tooling auto-provisions via the SessionStart hook; run the gate locally.
+
 ## Testing strategy
 
 Three layers:
