@@ -8424,6 +8424,15 @@ func (b *builder) binary(n *ast.Binary) error {
 				return nil
 			}
 		}
+		// Not a const-foldable pair: lower with operand reclamation. A
+		// chained `a + b + c` (== `(a + b) + c`) or an f-string desugar
+		// (`"x" + int_to_string(i) + "y"`) feeds a FRESH owned string temp
+		// (the inner concat / a fresh-returning call) as an operand; the
+		// concat COPIES both operands into a new buffer and dropped the temp
+		// on the floor, leaking it every iteration (nested-concat probe:
+		// 276928 → 2436928). emitStringConcat stashes each fresh-temp operand
+		// and dec's it after the copy.
+		return b.emitStringConcat(n)
 	}
 	if n.IsStringCmp {
 		if folded, ok := b.maybeFoldStringEq(n); ok {
@@ -8436,12 +8445,8 @@ func (b *builder) binary(n *ast.Binary) error {
 	if err := b.expr(n.Right); err != nil {
 		return err
 	}
-	if n.IsStringConcat {
-		// Both operands have been pushed; concatenation is a
-		// single dedicated op that mirrors the WASM runtime helper.
-		b.emit(Op{Kind: OpStrConcat})
-		return nil
-	}
+	// IsStringConcat is fully handled by emitStringConcat above (it returns
+	// before reaching this generic operand eval), so no OpStrConcat here.
 	if n.IsStringCmp {
 		// Same shape as concat but for content equality. `!=` is
 		// the negation of `==`.
@@ -8547,6 +8552,86 @@ func (b *builder) binary(n *ast.Binary) error {
 // folded: comparisons against 0/1 still need to produce a
 // 0/1 result, and `/` / `%` would change observable behaviour
 // when the divisor is zero.
+// emitStringConcat lowers a non-folded string concat `L + R`, reclaiming any
+// operand that is a FRESH owned string temp the concat copies and would
+// otherwise drop on the floor (a chained `a + b + c`'s inner `(a + b)`, a
+// string slice, or a fresh-returning string call — the f-string desugar's
+// `int_to_string(i)`). Each such operand is stashed in a scratch slot,
+// OpStrConcat runs off the reloads, then the operand is dec'd via the rc-
+// gated emitOwnedSlotDrop (an aliased call operand, rc>=2 via the return-
+// transfer inc, is only dec'd — never freed under the still-live source).
+// Idents / literals / borrowed reads aren't temps and lower in place.
+func (b *builder) emitStringConcat(n *ast.Binary) error {
+	lSlot, err := b.stashConcatOperand(n.Left)
+	if err != nil {
+		return err
+	}
+	rSlot, err := b.stashConcatOperand(n.Right)
+	if err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStrConcat})
+	if lSlot >= 0 {
+		b.emitOwnedSlotDrop(lSlot, ast.StringType{})
+	}
+	if rSlot >= 0 {
+		b.emitOwnedSlotDrop(rSlot, ast.StringType{})
+	}
+	return nil
+}
+
+// stashConcatOperand evaluates a string-concat operand. When it's a fresh
+// owned STRING temp (freshOwnedRcTempType — nested concat / slice — or a
+// fresh-returning string call — ownedCallResultType), and the target's
+// string dec actually fires (wasm two-word, or native single-word x86_64;
+// arm64 heap-string reclaim is deferred per slice 5g), it evaluates into a
+// typed scratch slot and returns that slot (>= 0) for a post-concat dec.
+// Otherwise it evaluates in place and returns -1.
+func (b *builder) stashConcatOperand(e ast.Expr) (int32, error) {
+	reclaim := ast.RcFreeEnabled &&
+		(b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW)))
+	if reclaim {
+		if b.concatOperandReclaimableString(e) {
+			slot := b.allocSlot()
+			b.locals[fmt.Sprintf("__catop_%d", slot)] = slot
+			b.scratchType[slot] = ast.StringType{}
+			if err := b.expr(e); err != nil {
+				return -1, err
+			}
+			b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			return slot, nil
+		}
+	}
+	if err := b.expr(e); err != nil {
+		return -1, err
+	}
+	return -1, nil
+}
+
+// concatOperandReclaimableString reports whether a string-concat operand is a
+// FRESH owned string the concat copies and can safely dec afterward — the
+// union of the two proven statement-temp classifiers, narrowed to a string
+// result: a fresh-allocating string temp (freshOwnedRcTempType — a nested
+// concat or a string slice) or a fresh-returning user-function string call
+// (ownedCallResultType). Idents / field / index reads are borrowed views
+// (owned by a live local / container) and are never matched. The post-concat
+// dec is the rc-gated str_dec, so an aliased call result (rc>=2 via the
+// return-transfer inc) is only dec'd, never freed.
+func (b *builder) concatOperandReclaimableString(e ast.Expr) bool {
+	if t, ok := b.freshOwnedRcTempType(e); ok {
+		if _, isStr := t.(ast.StringType); isStr {
+			return true
+		}
+	}
+	if t, ok := b.ownedCallResultType(e); ok {
+		if _, isStr := t.(ast.StringType); isStr {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 	numL, lok := constNumber(n.Left)
 	numR, rok := constNumber(n.Right)
