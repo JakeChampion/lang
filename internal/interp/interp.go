@@ -399,6 +399,12 @@ func New() *Interp {
 	// code (Float-to-byte buffer encoders, NaN bit-pattern tests).
 	// Now that the interp models floats, route them through Go's
 	// math.Float32bits / math.Float32frombits at full precision.
+	// __heap_bump_bytes(): the bump high-water mark on the compiled
+	// backends. The interpreter uses Go's allocator (no bump cursor), so
+	// there's nothing to report — return 0 so programs that probe it run
+	// under -interp without erroring (the metric is only meaningful in
+	// codegen).
+	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}

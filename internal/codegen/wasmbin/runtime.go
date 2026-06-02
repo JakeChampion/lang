@@ -505,6 +505,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_rc_is_unique")
 				case "__fern_rc_underflow_count":
 					needs.add("__fern_rc_underflow_count")
+				case "__fern_heap_bump_bytes":
+					needs.add("__fern_heap_bump_bytes")
 				case "__str_idx":
 					// Same byte-fetch SSO seam used by
 					// __fern_str_byte but returns a byte
@@ -1045,6 +1047,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildRcUnderflowCountBody,
 	},
+	"__fern_heap_bump_bytes": {
+		// () → i32. Phase 6 measurement probe. Returns the bump
+		// high-water mark (cursor at allocCursorAddr − seed at
+		// heapBaseAddr). The natives implement the same entry point
+		// over __fern_heap_ptr − __fern_heap_base.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildHeapBumpBytesBody,
+	},
 	"__alloc_u8": {
 		// (n) → i32 — allocates a length-prefixed u8[] of
 		// length n. Layout: 4-byte i32 length prefix at
@@ -1411,6 +1422,16 @@ const rcLowAddrGuard = 1024
 // zero-initialised) and is read back by the `__rc_underflow_count`
 // builtin so tests can assert it stays 0 across a program.
 const rcUnderflowAddr = 48
+
+// heapBaseAddr is a 4-byte slot in the reserved low-memory gap (mem
+// [52..56), between rcUnderflowAddr at 48 and the first allocation at
+// 64). Phase 6 measurement: the bump cursor's SEED value (its position
+// at program start = end-of-string-pool floor), written by the same
+// data segment that seeds the cursor. __fern_heap_bump_bytes returns
+// (cursor − heapBase), so it reads 0 at start and grows only on fresh
+// bumps — matching the natives' (heap_ptr − heap_base) and giving a
+// backend-consistent "bytes bump-allocated since start" high-water mark.
+const heapBaseAddr = 52
 
 // buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
@@ -2902,6 +2923,20 @@ func buildRcUnderflowCountBody(_ map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, rcUnderflowAddr)
 	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildHeapBumpBytesBody assembles __fern_heap_bump_bytes: () → i32.
+// Returns the bump high-water mark (cursor at allocCursorAddr minus the
+// seed at heapBaseAddr) — 0 at start, growing only on fresh bumps and
+// flat across freelist reuse. Mirrors the natives' heap_ptr − heap_base.
+func buildHeapBumpBytesBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, allocCursorAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, heapBaseAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Sub(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

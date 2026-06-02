@@ -92,6 +92,20 @@ removed. **Do not add arm32-specific code back.** If a comment in
 the codebase still says "on arm32" or "same as arm32", treat it
 as a TODO to clean up.
 
+## Autonomy — always proceed, never ask permission
+
+**Just start the work. Never ask for permission to proceed.** When
+the next step is clear (the next slice in a plan, an obvious fix, a
+follow-up), begin it immediately — do NOT stop to ask "want me to
+start?", "should I proceed?", "shall I do X next?", or offer a menu
+of options when one is clearly best. Pick the best option using your
+own judgement and ordering, do it, and report what you did. Reserve
+questions for genuine forks where the user's answer changes the work
+and you cannot resolve it from the code or sensible defaults — not for
+permission, sequencing you've been delegated, or confirmation that a
+plan is good. Momentum over check-ins; the PR + the report are how you
+keep the user informed, not a pre-flight ask.
+
 ## Working with PRs
 
 **Always open a PR for completed work — no exceptions, never ask

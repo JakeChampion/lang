@@ -643,6 +643,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 		m.DataOffsets = append(m.DataOffsets, allocCursorAddr)
 		m.DataInits = append(m.DataInits, le32(int32(start)))
+		// Phase 6: record the cursor's seed at heapBaseAddr so
+		// __fern_heap_bump_bytes can report (cursor − seed) — the bump
+		// high-water mark, 0 at start (mirrors the natives' heap_base).
+		m.DataOffsets = append(m.DataOffsets, heapBaseAddr)
+		m.DataInits = append(m.DataInits, le32(int32(start)))
 	}
 
 	// Synth `_start` wrapper when requested. The body is just

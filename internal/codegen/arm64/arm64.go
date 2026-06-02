@@ -349,6 +349,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcUnderflowCount {
 		g.emitRcUnderflowCountRuntime()
 	}
+	if g.usesHeapBumpBytes {
+		g.emitHeapBumpBytesRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -611,6 +614,12 @@ func (g *generator) emitDataSections() {
 		g.line(`.align 3`)
 		g.label("__fern_heap_end")
 		g.line(`	.quad 0`)
+		// Phase 6: region base captured at the lazy mmap so
+		// __fern_heap_bump_bytes can report (cursor − base). 0 until
+		// the first allocation.
+		g.line(`.align 3`)
+		g.label("__fern_heap_base")
+		g.line(`	.quad 0`)
 	}
 	if g.usesEnv {
 		g.line(`.align 3`)
@@ -765,6 +774,9 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("blt .Lalloc_oom")
 	g.emit("mov x10, x0")
 	g.emit("str x10, [x11]")
+	// Phase 6: record the region base for __fern_heap_bump_bytes.
+	g.adrpAdd("x14", "__fern_heap_base")
+	g.emit("str x10, [x14]")
 	g.emit("ldr x3, =%d", heapBytes)
 	g.emit("add x3, x10, x3")
 	g.emit("str x3, [x12]")
@@ -854,7 +866,7 @@ func (g *generator) emitAllocReuseRuntime() {
 	g.emit("ldr x2, [sp], #16") // restore size
 	g.emit("ldp x29, x30, [sp], #16")
 	g.label(".Lreuse_fresh")
-	g.emit("mov x0, x2") // size
+	g.emit("mov x0, x2")     // size
 	g.emit("b __fern_alloc") // tail call
 	g.sizeDirective("__fern_alloc_reuse")
 	g.line(".ltorg")
@@ -1261,6 +1273,28 @@ func (g *generator) emitRcUnderflowCountRuntime() {
 	g.sizeDirective("__fern_rc_underflow_count")
 }
 
+// emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
+// the Phase 6 measurement reader: returns the bump high-water mark
+// (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
+// allocation seeds the cursor. Mirrors the x86_64 helper.
+func (g *generator) emitHeapBumpBytesRuntime() {
+	g.line("")
+	g.line(".global __fern_heap_bump_bytes")
+	g.typeDirective("__fern_heap_bump_bytes")
+	g.label("__fern_heap_bump_bytes")
+	g.adrpAdd("x1", "__fern_heap_ptr")
+	g.emit("ldr x0, [x1]")
+	g.emit("cbz x0, .Lheap_bump_zero") // never allocated → 0
+	g.adrpAdd("x2", "__fern_heap_base")
+	g.emit("ldr x2, [x2]")
+	g.emit("sub x0, x0, x2")
+	g.emit("ret")
+	g.label(".Lheap_bump_zero")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_bump_bytes")
+}
+
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data` —
 // the arm64 counterpart of the x86_64 helper. Allocates
 // `size + 8` bytes, writes the static-sentinel 0x80000000 at
@@ -1640,7 +1674,7 @@ func (g *generator) emitDropArrStrRuntime() {
 	// (x0, x1) = (data, len) of element i = (mem[ptr+i*stride],
 	// mem[ptr+i*stride+8]).
 	g.emit("mul x0, x22, x20")
-	g.emit("add x0, x19, x0") // x0 = &elem[i]
+	g.emit("add x0, x19, x0")  // x0 = &elem[i]
 	g.emit("ldr x1, [x0, #8]") // x1 = elem.len
 	g.emit("ldr x0, [x0]")     // x0 = elem.data
 	g.emit("bl __fern_str_dec")
@@ -5386,6 +5420,11 @@ type generator struct {
 	// counter that __fern_rc_dec bumps). Set when the IR emits the
 	// matching OpCallDirect (the `__rc_underflow_count()` builtin).
 	usesRcUnderflowCount bool
+	// usesHeapBumpBytes gates the Phase 6 measurement reader
+	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
+	// the bump high-water mark). Set when the IR emits the matching
+	// OpCallDirect; also pulls in the allocator (it reads its cursor).
+	usesHeapBumpBytes bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -7560,6 +7599,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesFree = true
 		case "__fern_rc_underflow_count":
 			g.usesRcUnderflowCount = true
+		case "__fern_heap_bump_bytes":
+			g.usesHeapBumpBytes = true
+			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
 		case "__fern_arr_push_grow":
 			g.usesArrPushGrow = true
 			g.usesAlloc = true

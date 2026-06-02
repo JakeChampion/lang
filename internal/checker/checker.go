@@ -924,6 +924,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
+	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
+	// bump allocator's high-water mark (cursor − region base) in bytes; 0
+	// before the first alloc. The cursor only advances on a fresh bump,
+	// never on a freelist reuse, so a reclaiming loop keeps it flat while
+	// a leaking loop grows it — the metric for asserting reclaim/boundedness
+	// and for profiling hot allocations. See the IR lowering / per-backend
+	// runtime reader.
+	c.info.FuncSigs["__heap_bump_bytes"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /
