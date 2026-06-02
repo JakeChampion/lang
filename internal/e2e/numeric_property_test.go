@@ -145,19 +145,13 @@ func genIntBinary(r *rand.Rand) string {
 	t := pick(r, intTypes)
 	lits := litsFor(t)
 	op := pick(r, []string{"+", "-", "*", "&", "|", "^", "/", "%"})
-	a := pick(r, lits)
-	b := pick(r, lits)
-	if op == "/" || op == "%" {
-		// Avoid the two cross-backend-divergent edges: ÷0 and
-		// (for signed) INT_MIN / −1. Force a safe small divisor.
-		if t.unsigned {
-			b = pick(r, []string{"1", "3", "7", "42"})
-		} else {
-			b = pick(r, []string{"1", "3", "7", "0 - 3"})
-		}
-	}
+	// Division / modulo have a defined, never-trap contract now
+	// (x/0 = 0, x%0 = x, INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0), so
+	// the operands — including 0 and -1 divisors and the INT_MIN
+	// dividend — are drawn from the full edge pool like every other
+	// op. The pool already contains 0, 1, -1, and the type min/max.
 	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    %s\n",
-		t.name, a, t.name, b, printInt(t, "a "+op+" b"))
+		t.name, pick(r, lits), t.name, pick(r, lits), printInt(t, "a "+op+" b"))
 	return wrapMain(body)
 }
 
@@ -383,6 +377,32 @@ func TestNumericProperty_Regressions(t *testing.T) {
     print((a as f32).to_string());`},
 		{"u32_to_f32", `    var a: u32 = 4000000000;
     print((a as f32).to_string());`},
+		// Integer division never traps (well-defined contract):
+		// x/0 = 0, x%0 = x, INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0.
+		{"i32_div_zero", `    var z: i32 = 0;
+    var n: i32 = 10;
+    print((n / z).to_string());`},
+		{"i32_mod_zero", `    var z: i32 = 0;
+    var n: i32 = 10;
+    print((n % z).to_string());`},
+		{"i32_min_div_neg1", `    var a: i32 = 0 - 2147483647 - 1;
+    var b: i32 = 0 - 1;
+    print((a / b).to_string());`},
+		{"i32_min_mod_neg1", `    var a: i32 = 0 - 2147483647 - 1;
+    var b: i32 = 0 - 1;
+    print((a % b).to_string());`},
+		{"i64_div_zero", `    var z: i64 = 0;
+    var n: i64 = 100;
+    print((n / z).to_string());`},
+		{"i64_min_div_neg1", `    var a: i64 = 0 - 9223372036854775807 - 1;
+    var b: i64 = 0 - 1;
+    print((a / b).to_string());`},
+		{"u32_div_zero", `    var z: u32 = 0;
+    var n: u32 = 4000000000;
+    print((n / z).to_string());`},
+		{"u8_mod_zero", `    var z: u8 = 0;
+    var n: u8 = 200;
+    print(((n % z) as i64).to_string());`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -1356,28 +1356,17 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 			return numeric.InstI64Mul(body), nil
 		}
 		return numeric.InstI32Mul(body), nil
-	case ir.OpDivS:
-		if op.Width == 64 {
-			if op.Unsigned {
-				return numeric.InstI64DivU(body), nil
-			}
-			return numeric.InstI64DivS(body), nil
+	case ir.OpDivS, ir.OpRemS:
+		// Route through the guarded runtime helper so division
+		// follows the never-trap contract (x/0 = 0, x%0 = x,
+		// INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0) instead of the raw
+		// div/rem instruction, which traps on those edges.
+		name := intDivRemHelperName(op.Width == 64, op.Unsigned, op.Kind == ir.OpRemS)
+		idx, ok := ctx.funcIdx[name]
+		if !ok {
+			return nil, fmt.Errorf("%s: %s helper not registered (scanRuntimeHelpers gap)", op.Kind, name)
 		}
-		if op.Unsigned {
-			return numeric.InstI32DivU(body), nil
-		}
-		return numeric.InstI32DivS(body), nil
-	case ir.OpRemS:
-		if op.Width == 64 {
-			if op.Unsigned {
-				return numeric.InstI64RemU(body), nil
-			}
-			return numeric.InstI64RemS(body), nil
-		}
-		if op.Unsigned {
-			return numeric.InstI32RemU(body), nil
-		}
-		return numeric.InstI32RemS(body), nil
+		return inst.InstCall(body, idx), nil
 	case ir.OpAnd:
 		if op.Width == 64 {
 			return numeric.InstI64And(body), nil

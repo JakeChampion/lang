@@ -956,59 +956,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("imul rax, rcx")
 		g.push()
 	case ir.OpDivS:
-		// Signed/unsigned divide. Width-aware: i32 / u32 go
-		// through eax/ecx; i64 / u64 / usize through rax/rcx.
-		// `cdq` (i32) and `cqo` (i64) sign-extend rax into
-		// rdx; `xor edx, edx` / `xor rdx, rdx` clear rdx for
-		// unsigned. Without the width split, i64 dividends
-		// truncated to their lower 32 bits — `mag / 10`
-		// inside __int_to_string_u64 stringified large i64s
-		// as their mod-2^32 projections.
-		g.binPop()
-		if op.Width == 64 {
-			if op.Unsigned {
-				g.emit("xor rdx, rdx")
-				g.emit("div rcx")
-			} else {
-				g.emit("cqo")
-				g.emit("idiv rcx")
-			}
-		} else {
-			if op.Unsigned {
-				g.emit("xor edx, edx")
-				g.emit("div ecx")
-			} else {
-				g.emit("cdq")
-				g.emit("idiv ecx")
-			}
-		}
-		g.push()
+		g.emitIntDivRem(op, false)
 	case ir.OpRemS:
-		// Same prologue as OpDivS; remainder lives in
-		// rdx / edx post-instruction. `mov rax, rdx` /
-		// `mov eax, edx` routes it back to the canonical
-		// "result in rax" lane before the push.
-		g.binPop()
-		if op.Width == 64 {
-			if op.Unsigned {
-				g.emit("xor rdx, rdx")
-				g.emit("div rcx")
-			} else {
-				g.emit("cqo")
-				g.emit("idiv rcx")
-			}
-			g.emit("mov rax, rdx")
-		} else {
-			if op.Unsigned {
-				g.emit("xor edx, edx")
-				g.emit("div ecx")
-			} else {
-				g.emit("cdq")
-				g.emit("idiv ecx")
-			}
-			g.emit("mov eax, edx")
-		}
-		g.push()
+		g.emitIntDivRem(op, true)
 	case ir.OpAnd:
 		g.binPop()
 		g.emit("and rax, rcx")
@@ -2003,6 +1953,82 @@ func (g *generator) aRegForWidth(width int) string {
 	return "eax"
 }
 
+// emitIntDivRem lowers OpDivS / OpRemS (signed + unsigned, i32 /
+// i64) with the never-trap integer-division contract: x / 0 = 0,
+// x % 0 = x, and (signed) INT_MIN / -1 = INT_MIN, INT_MIN % -1 = 0.
+// x86's `idiv` / `div` raise #DE on a zero divisor AND on the
+// INT_MIN / -1 overflow, so both are branch-guarded — the hardware
+// divide only runs on operands it can't fault on. After binPop the
+// dividend is in rax and the divisor in rcx; the result lands in
+// rax. Width-aware: i32 / u32 use eax/ecx/edx, i64 / u64 / usize
+// use rax/rcx/rdx (cdq / cqo sign-extend into edx / rdx; the
+// unsigned forms clear it).
+func (g *generator) emitIntDivRem(op ir.Op, isRem bool) {
+	g.binPop()
+	w64 := op.Width == 64
+	a, c, d := "eax", "ecx", "edx"
+	if w64 {
+		a, c, d = "rax", "rcx", "rdx"
+	}
+	n := g.labelCounter
+	g.labelCounter++
+	lZero := fmt.Sprintf(".Ldiv_zero_%d", n)
+	lNorm := fmt.Sprintf(".Ldiv_norm_%d", n)
+	lOvf := fmt.Sprintf(".Ldiv_ovf_%d", n)
+	lDone := fmt.Sprintf(".Ldiv_done_%d", n)
+
+	g.emit(fmt.Sprintf("test %s, %s", c, c))
+	g.emit(fmt.Sprintf("jz %s", lZero))
+	if !op.Unsigned {
+		// INT_MIN / -1 overflow: only when divisor == -1 and
+		// dividend == INT_MIN. Both faults are routed away from idiv.
+		g.emit(fmt.Sprintf("cmp %s, -1", c))
+		g.emit(fmt.Sprintf("jne %s", lNorm))
+		if w64 {
+			g.emit("mov r8, 0x8000000000000000")
+			g.emit("cmp rax, r8")
+		} else {
+			g.emit("cmp eax, -2147483648")
+		}
+		g.emit(fmt.Sprintf("je %s", lOvf))
+	}
+	g.label(lNorm)
+	if op.Unsigned {
+		g.emit(fmt.Sprintf("xor %s, %s", d, d))
+		g.emit(fmt.Sprintf("div %s", c))
+	} else if w64 {
+		g.emit("cqo")
+		g.emit("idiv rcx")
+	} else {
+		g.emit("cdq")
+		g.emit("idiv ecx")
+	}
+	if isRem {
+		g.emit(fmt.Sprintf("mov %s, %s", a, d))
+	}
+	g.emit(fmt.Sprintf("jmp %s", lDone))
+
+	g.label(lZero)
+	if isRem {
+		// x % 0 = x: the dividend is already in rax — nothing to do.
+	} else {
+		g.emit("xor eax, eax") // x / 0 = 0
+	}
+	g.emit(fmt.Sprintf("jmp %s", lDone))
+
+	if !op.Unsigned {
+		g.label(lOvf)
+		if isRem {
+			g.emit("xor eax, eax") // INT_MIN % -1 = 0
+		}
+		// INT_MIN / -1 = INT_MIN: the dividend is already INT_MIN in
+		// rax — nothing to do.
+		g.emit(fmt.Sprintf("jmp %s", lDone))
+	}
+	g.label(lDone)
+	g.push()
+}
+
 // emitFloatToIntSat lowers a saturating float→int truncation (the
 // IR's OpITruncF32 / OpITruncF64) with the source in xmm0 and the
 // result left in rax. x86's `cvtt*2si` returns the "integer
@@ -2080,7 +2106,7 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 		loadZeroXmm1()
 		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
 		g.emit(fmt.Sprintf("jb %s", lbl("zero"))) // x < 0 or NaN (CF set)
-		loadXmm1(0x41F0000000000000, 0x4F800000)   // 2^32
+		loadXmm1(0x41F0000000000000, 0x4F800000)  // 2^32
 		g.emit(fmt.Sprintf("ucomi%s xmm0, xmm1", suf))
 		g.emit(fmt.Sprintf("jae %s", lbl("max"))) // x >= 2^32
 		g.emit(fmt.Sprintf("jmp %s", lbl("done")))
