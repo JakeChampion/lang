@@ -2096,10 +2096,33 @@ duplicating `dropStructField` / `decValueOnStack`, the blocker the prior
 (`internal/e2e/rc_heap_bump_tuple_test.go`): a plain `(i32, i32)` loop and
 a deep-drop `(i32[], i32)` loop both hold a flat high-water at N=50 vs
 N=5000 (pre-fix the latter grew 2400 → 240000 B); 0 over-releases.
-Known gap (out of scope): destructuring a tuple-of-rc in a loop
-(`var (a, b) = p`) MOVES the elements out (`p` is marked moved → skipped),
-and the destructure-bound locals (`a`, `b`) are a separate reclamation
-site — a follow-up slice.
+**Destructure-binding reclamation — SHIPPED ON ALL THREE BACKENDS
+(2026-06-02).** The follow-up the tuple slice flagged: `var (a, b) = p`
+inside a loop reuses the synthetic destructure temp slot AND each binding
+slot across iterations, but the `*ast.Destructure` lowering gave neither a
+per-iteration dec-on-reinit — so every iteration but the last leaked the
+tuple box and each rc-tracked element (the probe measured a `(i32[], i32)`
+destructure loop growing 2400 → 240000 B). The fix routes both through the
+existing `emitVarReinitDropOld` before their re-stores: the temp (an
+untainted owned `TupleType` local → its deep-drop / `box_free`) right
+before the temp `OpStoreLocal`, and each binding (made an owned co-owner
+by the dup-on-projection inc the lowering already emits) right before its
+binding `OpStoreLocal`. The rc stays balanced because each drop is
+`is_unique`-gated: the temp's deep-drop dec's a shared element (e.g. rc
+2→1) without freeing, and the binding's own dec frees it (1→0) — verified
+both for the move-on-destructure case (`p` moved, temp sole owner) and the
+alias case (`p` + temp co-own, the merged tuple slice dec's `p` first).
+First-iteration-safe via the entry zero-init (the slot is NULL, so the
+drop's `is_unique` / null guards no-op). Verified by
+`Test{X86_64,Arm64,WASM}DestructureHeapBumpBounded`
+(`internal/e2e/rc_heap_bump_destructure_test.go`): the `(i32[], i32)`
+destructure loop holds a flat 96 B (plain tuple 32 B) at N=50 vs N=5000,
+with 0 over-releases over 200 iterations and value-correct sums. The
+differential gate + self-host VM/parser suites stay green.
+Known gap (follow-up): a destructure binding of a STRUCT / ENUM element
+flat-dec's on reinit (matching `emitVarReinitDropOld`'s policy — nested
+fields/payloads leak but never UAF); a deep per-binding drop would mirror
+the exit sweep's struct/enum handling.
 
 Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
 harness over the self-host + edge-handler workloads to profile hot
