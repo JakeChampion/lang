@@ -55,7 +55,7 @@ func (doc *Document) weaveChunk(b *strings.Builder, blk block, continuation bool
 			fmt.Fprintf(b, "%s⟨%s⟩\n", indent, ref)
 			continue
 		}
-		b.WriteString(bl.text)
+		b.WriteString(deEscapeRef(bl.text))
 		b.WriteString("\n")
 	}
 	b.WriteString("```\n")
@@ -80,7 +80,7 @@ func (doc *Document) weaveFile(b *strings.Builder, blk block, continuation bool)
 			fmt.Fprintf(b, "%s⟨%s⟩\n", indent, ref)
 			continue
 		}
-		b.WriteString(bl.text)
+		b.WriteString(deEscapeRef(bl.text))
 		b.WriteString("\n")
 	}
 	b.WriteString("```\n")

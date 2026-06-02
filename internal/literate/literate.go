@@ -306,7 +306,7 @@ func (doc *Document) expandBody(body []bodyLine, indent string, active map[strin
 			}
 			continue
 		}
-		emit(indent+bl.text, bl.litLine, len(indent))
+		emit(indent+deEscapeRef(bl.text), bl.litLine, len(indent))
 	}
 	return nil
 }
@@ -351,6 +351,11 @@ func parseDefHeader(trimmed string) (string, bool) {
 // definition header, not a reference.
 func chunkRef(text string) (indent, name string, ok bool) {
 	trimmed := strings.TrimSpace(text)
+	// A leading backslash escapes the marker: `\<<name>>` is a literal,
+	// not a reference. deEscapeRef strips the backslash at emit time.
+	if strings.HasPrefix(trimmed, `\<<`) {
+		return "", "", false
+	}
 	if !strings.HasPrefix(trimmed, "<<") || !strings.HasSuffix(trimmed, ">>") {
 		return "", "", false
 	}
@@ -360,6 +365,18 @@ func chunkRef(text string) (indent, name string, ok bool) {
 	}
 	indent = text[:len(text)-len(strings.TrimLeft(text, " \t"))]
 	return indent, strings.TrimSpace(inner), true
+}
+
+// deEscapeRef strips a single backslash that escapes a chunk marker —
+// `\<<name>>` becomes the literal `<<name>>` — preserving indentation.
+// A line that doesn't begin (after indentation) with `\<<` is returned
+// unchanged, so it is safe to apply to every emitted literal line.
+func deEscapeRef(text string) string {
+	i := len(text) - len(strings.TrimLeft(text, " \t"))
+	if strings.HasPrefix(text[i:], `\<<`) {
+		return text[:i] + text[i+1:]
+	}
+	return text
 }
 
 // openingFence reports whether line opens a fenced code block and, if
