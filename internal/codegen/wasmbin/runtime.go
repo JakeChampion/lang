@@ -2034,7 +2034,17 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// rc = mem[data-8]; if rc == 1 → box_free(data, mem[data-4]); return
+	// rc = mem[data-8]; if rc == 1 → box_free(data, len); return.
+	// The buffer's PAYLOAD size is the byte count `len` (local 1): an owned
+	// heap string (concat / slice result) is allocated as
+	// __fern_alloc_rc1(len) — base+8 with exactly `len` payload bytes — so
+	// __fern_box_free(data, len) frees `len+8` bytes, rounding to the same
+	// 16-byte class the alloc came from, returning the block to the
+	// freelist for reuse. (The previous read of `mem[data-4]` was an
+	// uninitialised header word — alloc_rc1 writes only rc at base+0 — so it
+	// passed a garbage size, misrouting the free out of the size class and
+	// leaking the buffer: it could never be reused.) The inline-string high
+	// bit was already handled above, so `len` here is a real byte count.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Sub(body)
@@ -2043,10 +2053,7 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 	body = numeric.InstI32Eq(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0) // data
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Sub(body)
-	body = memory.InstI32Load(body, 2, 0) // size at data-4
+	body = inst.InstLocalGet(body, 1) // len (payload byte count)
 	body = inst.InstCall(body, boxFree)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
