@@ -29,7 +29,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -168,6 +168,37 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_, checkCode := runDriver(t, "-check", src2Path)
 		if checkCode != 0 {
 			t.Errorf("formatted output failed -check (exit %d)", checkCode)
+		}
+	})
+
+	t.Run("emit-target-arm64", func(t *testing.T) {
+		// The driver (x86-64 host binary) emits arm64 asm under
+		// -target arm64; cross-assemble it and run under qemu.
+		arm64gcc, qemu := arm64Tooling(t) // skips if cross toolchain absent
+		srcPath := filepath.Join(dir, "arm_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		asm, code := runDriver(t, "-target", "arm64", srcPath)
+		if code != 0 {
+			t.Fatalf("-target arm64 emit exited %d, want 0", code)
+		}
+		if len(asm) == 0 {
+			t.Fatal("-target arm64 produced 0 bytes of asm")
+		}
+		progBin := buildBinArm64(t, arm64gcc, dir, "arm_prog", string(asm))
+		cmd := exec.Command(qemu, progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("arm64-emitted program exited %d, want 42", c)
+		}
+	})
+
+	t.Run("unknown-target-exits-2", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "ret42.fern")
+		_, code := runDriver(t, "-target", "riscv", srcPath)
+		if code != 2 {
+			t.Errorf("unknown -target exited %d, want 2", code)
 		}
 	})
 
