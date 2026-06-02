@@ -67,6 +67,18 @@ fern -tangle prog.fern.md     # write the tangled Fern source to stdout
 fern -weave  prog.fern.md     # write a cross-referenced Markdown reading copy
 ```
 
+Both accept `-o` to write to disk instead of stdout. For a multi-file
+document (`file=` blocks) `-tangle -o DIR` ejects one file per module
+under `DIR` (creating subdirectories), so the generated tree can be
+inspected or built directly; a single-`<<*>>` document writes
+`-tangle -o FILE`. `-weave -o FILE` writes the woven Markdown.
+
+```sh
+fern -tangle -o gen/ prog.fern.md    # eject each module under gen/
+fern -tangle -o prog.fern one.fern.md
+fern -weave  -o prog.md  prog.fern.md
+```
+
 A `.fern.md` file is also accepted directly by every mode that takes a
 `.fern` file — it is tangled in memory first:
 
