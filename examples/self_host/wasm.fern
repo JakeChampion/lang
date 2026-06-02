@@ -1,0 +1,106 @@
+// examples/self_host/wasm.fern — the self-hosted WebAssembly emitter
+// (first slice). Walks a parser.Module and emits a WASI **core module**
+// in the text format (WAT) whose `_start` computes the program's result
+// and calls `proc_exit` with it — so `wasmtime run prog.wat` exits with
+// that value, matching the native backends' "return value = exit code"
+// contract.
+//
+// This is the wasm analogue of asm.fern's first milestone (return +
+// integer arithmetic). WAT's folded S-expression form means the
+// expression lowering is a direct recursive string build — no operand
+// stack bookkeeping (wasm is itself a stack machine, and the folded
+// syntax nests operands inside the operator). Subsequent slices add
+// locals, calls, control flow, strings, and the wasi:cli/http shapes
+// the Go wasmbin/wasmssa backends cover, building toward retiring the
+// Go wasm backend.
+//
+// Covered now: integer literals, unary `-`, and binary `+ - * / %`
+// over i32. Known gap (tracked, follow-up): wasm's `i32.div_s` /
+// `i32.rem_s` trap on divide-by-zero and INT_MIN/-1, whereas Fern's
+// integer division never traps — the non-trapping guards land with the
+// locals/control-flow slice.
+
+import "core/no_prelude";
+import "./parser";
+
+// wasm_binop maps a Fern binary operator to its i32 wasm instruction.
+function wasm_binop(op: string): string {
+    if (op == "+") { return "i32.add"; }
+    if (op == "-") { return "i32.sub"; }
+    if (op == "*") { return "i32.mul"; }
+    if (op == "/") { return "i32.div_s"; }
+    if (op == "%") { return "i32.rem_s"; }
+    // Unsupported in this slice — fall back to add so output stays
+    // well-formed WAT; the differential test only feeds covered ops.
+    return "i32.add";
+}
+
+// emit_expr lowers an integer expression to a folded WAT instruction
+// tree, e.g. `(i32.add (i32.const 1) (i32.mul (i32.const 2) (i32.const 3)))`.
+function emit_expr(e: parser.Expr): string {
+    match (e) {
+        parser.ExprNumber(n) => {
+            return "(i32.const " + n.text + ")";
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") {
+                return "(i32.sub (i32.const 0) " + emit_expr(u.operand) + ")";
+            }
+            // `+x` / unsupported unary: pass the operand through.
+            return emit_expr(u.operand);
+        },
+        parser.ExprBinary(b) => {
+            return "(" + wasm_binop(b.op) + " " + emit_expr(b.left) + " " + emit_expr(b.right) + ")";
+        },
+        _ => {
+            // Unsupported expression form in this slice → 0.
+            return "(i32.const 0)";
+        },
+    }
+    return "(i32.const 0)";
+}
+
+// first_return_expr returns the WAT for the first `return <expr>;` found
+// in a statement list, or "" when there is none.
+function first_return_expr(body: parser.Stmt[]): string {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtReturn(r) => { return emit_expr(r.value); },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// emit_module produces the full WAT text for a module. The exit value is
+// the first return found in `main`'s body, or — supporting the bare
+// top-statement program shape (e.g. `return 42;`) — in the module's
+// top-level statements. With no return anywhere, the program exits 0.
+pub function emit_module(mod: parser.Module): string {
+    var body_expr: string = "(i32.const 0)";
+
+    var i: i32 = 0;
+    var found: boolean = false;
+    while (i < mod.funcs.len() && !found) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (f.name == "main" && f.receiver_type.len() == 0) {
+            var got: string = first_return_expr(f.body);
+            if (got.len() > 0) { body_expr = got; found = true; }
+        }
+        i = i + 1;
+    }
+    if (!found) {
+        var topret: string = first_return_expr(mod.top_stmts);
+        if (topret.len() > 0) { body_expr = topret; }
+    }
+
+    var out: string = "(module\n";
+    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+    out = out + "  (memory (export \"memory\") 1)\n";
+    out = out + "  (func $_start\n";
+    out = out + "    (call $proc_exit " + body_expr + "))\n";
+    out = out + "  (export \"_start\" (func $_start)))\n";
+    return out;
+}
