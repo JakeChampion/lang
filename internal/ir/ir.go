@@ -9157,6 +9157,29 @@ func (b *builder) callBody(n *ast.Call) error {
 		if err := b.expr(n.Args[0]); err != nil {
 			return err
 		}
+		// Stage (c) statement-temp reclamation: when the receiver is a
+		// FRESH owned rc temporary (`(a + b).len()` — a string concat /
+		// slice), the value-consuming op below (OpStrLen / the array
+		// length load) consumes its (data,len) / pointer and returns an
+		// i32, dropping the buffer on the floor — nothing dec's it. That's
+		// the measured `(a + b).len()` loop leak (1600 → 160000 → 1600000
+		// on wasm, no plateau). The receiver is created solely for this
+		// call and is DEAD after it (the i32 length cannot alias it), so
+		// reclaiming it is exactly as safe as a discarded stage-(a) temp.
+		// Stash it in a typed scratch slot, run the op off a reload, then
+		// dec the slot — emitOwnedSlotDrop is net-zero, leaving the i32
+		// result on top. Non-temp receivers (idents / fields) don't match
+		// freshOwnedRcTempType and keep the plain consume. (Array / struct
+		// literal receivers are const-folded above, so the shape reaching
+		// here in practice is a string concat / slice.)
+		lenTempSlot := int32(-1)
+		if tt, ok := b.freshOwnedRcTempType(n.Args[0]); ok {
+			lenTempSlot = b.allocSlot()
+			b.locals[fmt.Sprintf("__lentmp_%d", lenTempSlot)] = lenTempSlot
+			b.scratchType[lenTempSlot] = tt
+			b.emit(Op{Kind: OpStoreLocal, I32: lenTempSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: lenTempSlot})
+		}
 		switch id.Name {
 		case "__method_slice_len":
 			b.emit(Op{Kind: OpConstI32, I32: 4})
@@ -9168,6 +9191,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpConstI32, I32: 4})
 			b.emit(Op{Kind: OpSub})
 			b.emit(Op{Kind: OpLoad})
+		}
+		if lenTempSlot >= 0 {
+			b.emitOwnedSlotDrop(lenTempSlot, b.scratchType[lenTempSlot])
 		}
 		return nil
 	}
