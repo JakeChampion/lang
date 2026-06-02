@@ -718,6 +718,11 @@ func FCVTZUS(rd, rn uint32) uint32 { return 0x9E390000 | ((rn & regMask) << 5) |
 func UCVTF(rd, rn uint32) uint32  { return 0x9E630000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FCVTZU(rd, rn uint32) uint32 { return 0x9E790000 | ((rn & regMask) << 5) | (rd & regMask) }
 
+// UCVTFS Sd, Xn — unsigned int -> single. The single-precision
+// (type=00) twin of UCVTF's double form; the caller clears bit 31
+// (clearSF) for a `w` (32-bit) source.
+func UCVTFS(rd, rn uint32) uint32 { return 0x9E230000 | ((rn & regMask) << 5) | (rd & regMask) }
+
 // ADRP encodes `adrp Xd, <target>` — form the PC-relative page address
 // of a symbol: Xd = (PC & ~0xfff) + (pageDelta << 12). pageDelta is the
 // signed 21-bit difference, in 4 KiB pages, between the target's page
