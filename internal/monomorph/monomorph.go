@@ -478,11 +478,25 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 			substituteStmt(x.Init, sub)
 		}
 		substituteExpr(x.Cond, sub)
+		if x.Step != nil {
+			substituteStmt(x.Step, sub)
+		}
 		substituteStmt(x.Body, sub)
 	case *ast.ExprStmt:
 		substituteExpr(x.Expr, sub)
 	case *ast.Return:
 		substituteExpr(x.Value, sub)
+	case *ast.Defer:
+		substituteExpr(x.Expr, sub)
+	case *ast.Switch:
+		substituteExpr(x.Tag, sub)
+		for _, cs := range x.Cases {
+			for _, v := range cs.Values {
+				substituteExpr(v, sub)
+			}
+			substituteBlock(cs.Body, sub)
+		}
+		substituteBlock(x.Default, sub)
 	case *ast.Match:
 		substituteExpr(x.Tag, sub)
 		for _, arm := range x.Arms {
@@ -556,6 +570,32 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		for _, a := range x.Args {
 			substituteExpr(a, sub)
 		}
+	case *ast.Assign:
+		// `out = out.push(x)` — the RHS (and a FieldAccess /
+		// Index LHS) can hold a method-call whose stamped
+		// TypeArgs reference the enclosing generic's params. Without
+		// walking it, the cloned body keeps `push`'s TypeArgs as
+		// `[T]`, the post-monomorph re-check substitutes the method
+		// signature by `T→T` (a no-op), and the abstract `T[]`
+		// expected type mismatches the concrete element type.
+		substituteExpr(x.Target, sub)
+		substituteExpr(x.Value, sub)
+	case *ast.FString:
+		for i := range x.Parts {
+			substituteExpr(x.Parts[i].Expr, sub)
+		}
+		substituteExpr(x.Desugared, sub)
+	case *ast.MapLit:
+		x.KeyType = substituteType(x.KeyType, sub)
+		x.ValueType = substituteType(x.ValueType, sub)
+		for i := range x.Entries {
+			substituteExpr(x.Entries[i].Key, sub)
+			substituteExpr(x.Entries[i].Value, sub)
+		}
+	case *ast.EnumLit:
+		for _, a := range x.Args {
+			substituteExpr(a, sub)
+		}
 	case *ast.CastExpr:
 		x.Target = substituteType(x.Target, sub)
 		substituteExpr(x.Inner, sub)
@@ -574,6 +614,7 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	case *ast.FieldAccess:
 		substituteExpr(x.Target, sub)
 	case *ast.TryOp:
+		x.Type = substituteType(x.Type, sub)
 		substituteExpr(x.Inner, sub)
 	case *ast.IfExpr:
 		substituteExpr(x.Cond, sub)
