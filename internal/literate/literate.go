@@ -248,6 +248,26 @@ func (doc *Document) Tangle() (string, []Line, error) {
 	return strings.Join(out, "\n"), lineMap, nil
 }
 
+// TangleChunk expands a single named chunk (rather than the `<<*>>`
+// root) into its source plus a provenance map — for extracting or
+// inspecting one chunk in isolation. Errors when the chunk is undefined,
+// or when its expansion hits an undefined / cyclic reference.
+func (doc *Document) TangleChunk(name string) (string, []Line, error) {
+	if _, ok := doc.chunks[name]; !ok {
+		return "", nil, &Error{
+			Pos: ast.Position{Line: 1, Col: 1},
+			Msg: fmt.Sprintf("literate: no chunk %q defined", "<<"+name+">>"),
+		}
+	}
+	out, lineMap, err := collect(func(emit emitFn) error {
+		return doc.expandChunk(name, "", map[string]bool{}, emit)
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.Join(out, "\n"), lineMap, nil
+}
+
 // emitFn receives one expanded line plus its document-line provenance.
 type emitFn func(text string, litLine, colShift int)
 

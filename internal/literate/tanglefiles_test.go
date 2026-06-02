@@ -147,3 +147,20 @@ func TestTangleFilesUndefinedRef(t *testing.T) {
 		t.Errorf("error = %v (type %T), want *Error at line 2", err, err)
 	}
 }
+
+// TangleChunk expands a single named chunk (and its transitive refs),
+// not the <<*>> root; an undefined chunk errors.
+func TestTangleChunk(t *testing.T) {
+	src := "```fern\n<<*>>=\n<<g>>\n```\n```fern\n<<g>>=\nfn g() {\n    <<inner>>\n}\n```\n```fern\n<<inner>>=\nreturn 7;\n```\n"
+	doc := Parse(src)
+	code, _, err := doc.TangleChunk("g")
+	if err != nil {
+		t.Fatalf("TangleChunk: %v", err)
+	}
+	if code != "fn g() {\n    return 7;\n}" {
+		t.Errorf("TangleChunk(g) =\n%s", code)
+	}
+	if _, _, err := doc.TangleChunk("missing"); err == nil {
+		t.Error("expected an error for an undefined chunk")
+	}
+}
