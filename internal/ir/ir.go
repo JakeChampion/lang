@@ -2140,7 +2140,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// its buffer via __fern_arr_dec(ptr, elemSize). Same dispatch the
 		// exit sweep / reinit use (arrElemStructDropName), so element
 		// reclamation matches the bound-var case.
-		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else {
@@ -2458,7 +2458,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// must fall back to the always-present __fern_drop_arr_ptr
 			// (whose own buffer-free is internally RcFreeEnabled-gated).
 			// Array-of-array / enum / closure keep __fern_drop_arr_ptr.
-			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
+			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
 				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				return
@@ -2528,7 +2528,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// (inner buffers are array-of-array, a later slice); plain
 			// arrays (i32[]) free the buffer via arr_dec. Previously all
 			// of these flat-dec'd, leaking the buffer.
-			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
+			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 				b.emit(Op{Kind: OpDrop})
 				return
@@ -3245,7 +3245,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr})
 			if at, isArr := c.Type.(ast.ArrayType); isArr {
-				if drop, ok := arrElemStructDropName(at.Elem, info, tupleReg, ptrW); ok {
+				if drop, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW); ok {
 					// Array of concrete structs: deep-drop each element
 					// box + the buffer (Stage B loop).
 					ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
@@ -3524,7 +3524,7 @@ func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
 // statically exact (no union ambiguity), so it's safe to dispatch a
 // type-specific per-element drop. Array-of-array / array-of-enum /
 // array-of-closure return ("", false) and keep __fern_drop_arr_ptr.
-func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
+func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
 	if v, ok := elem.(ast.StructType); ok {
 		if v.Name == "Map" {
 			return "", false
@@ -3548,6 +3548,22 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[strin
 		mangled := mangleTupleInst(tt)
 		tupleReg[mangled] = tt
 		return "__drop_arr_tuple_" + mangled, true
+	}
+	// Enum-element array (`E[]`): each element is a pointer to an enum box
+	// whose rc-tracked payloads (string / array / struct / nested enum) must
+	// reclaim, not just be flat-rc_dec'd by __fern_drop_arr_ptr (which frees
+	// the box but leaks its payloads). Route through the generic
+	// __drop_arr_of_<__drop_enum_E> loop: genArrOfArrDropFn calls the enum's
+	// own deep drop (__drop_enum_<E>, is_unique-gated) per element, then frees
+	// the outer buffer. dropFnNameFor declines scalar-only / non-heap enums
+	// (Option[i32], payload-less) — no payload to reclaim, so those keep the
+	// flat path. A generic instantiation registers its substituted decl into
+	// `reg` so the worklist regenerates the __drop_enum_<mangled> body.
+	if _, ok := elem.(ast.EnumType); ok {
+		if perElem, ok := dropFnNameFor(elem, info, reg, tupleReg, ptrW); ok {
+			return "__drop_arr_of_" + perElem, true
+		}
+		return "", false
 	}
 	// Array-of-array element (`i32[][]`'s outer drop): each element is
 	// itself an array whose BUFFER must be freed, not just flat-rc_dec'd
@@ -3578,9 +3594,10 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[strin
 		if !arrElemIsRcTracked(inner.Elem) {
 			return fmt.Sprintf("__drop_arr_arr_%d", ast.ElemSizeBytesFor(inner.Elem, ptrW)), true
 		}
-		// rc-tracked inner element (struct / array / tuple): recurse to the
-		// inner array's drop (also registers any tuple shape it discovers).
-		if perElem, ok := arrElemStructDropName(inner.Elem, info, tupleReg, ptrW); ok {
+		// rc-tracked inner element (struct / array / tuple / enum): recurse to
+		// the inner array's drop (also registers any tuple / generic-enum
+		// shape it discovers).
+		if perElem, ok := arrElemStructDropName(inner.Elem, info, reg, tupleReg, ptrW); ok {
 			return "__drop_arr_of_" + perElem, true
 		}
 	}
@@ -3851,13 +3868,15 @@ func genArrArrStrDropFn(ptrW int) *Func {
 }
 
 // genArrOfArrDropFn builds __drop_arr_of_<perElem>(ptr) — the generic
-// array-of-(rc-inner-array) outer drop. On the outer array's last
-// reference (rc==1) it walks each element (a pointer to an inner array
-// buffer, outer stride ptrW) and drops that inner array through its own
-// recursive deep-drop `perElemDrop` (a 1-arg __drop_arr_struct_<E> /
-// __drop_arr_arr_<n> / __drop_arr_arr_str / __drop_arr_of_<…> — each
-// frees the inner buffer + its rc-tracked contents and is_unique-gates
-// internally), then frees the outer buffer. The worklist regenerates
+// "array of pointer-shaped, deeply-droppable element" outer drop. On the
+// outer array's last reference (rc==1) it walks each element (a pointer,
+// outer stride ptrW) and drops it through the 1-arg `perElemDrop` (each
+// frees the element's storage + its rc-tracked contents and is_unique-gates
+// internally), then frees the outer buffer. perElemDrop is any generated
+// 1-arg → i32 deep drop: an INNER ARRAY's own drop for array-of-array
+// (__drop_arr_struct_<E> / __drop_arr_arr_<n> / __drop_arr_arr_str /
+// __drop_arr_of_<…>), OR the ENUM's own __drop_enum_<E> for array-of-enum
+// (arrElemStructDropName's EnumType branch). The worklist regenerates
 // perElemDrop transitively from this body. Slots: 0=ptr, 1=i, 2=len.
 func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 	outerStride := int32(ptrW)
@@ -4175,7 +4194,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		// Any array field frees its buffer (see dropStructField for the
 		// rationale): array-of-struct deep-drops elements + buffer,
 		// array-of-rc frees the outer buffer, plain arrays arr_dec.
-		if name, ok := arrElemStructDropName(at.Elem, info, tupleReg, ptrW); ok {
+		if name, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW); ok {
 			return append(ops,
 				Op{Kind: OpCallDirect, Str: name, I32: 1},
 				Op{Kind: OpDrop})
@@ -8783,7 +8802,7 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// applies), so this changes the DROP, not the retain. Other arrays
 	// (plain / nested / enum-elem) keep __map_drop_values.
 	if at, ok := v.(ast.ArrayType); ok {
-		return arrElemStructDropName(at.Elem, info, genTupleDrops, ptrW)
+		return arrElemStructDropName(at.Elem, info, genEnumDrops, genTupleDrops, ptrW)
 	}
 	// Every other value with a generated recursive drop — concrete user
 	// struct (__drop_struct_<V>), concrete enum (__drop_enum_<V>), or a
@@ -10327,7 +10346,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// element buffers (array-of-rc whose element isn't deep-droppable
 		// here) still leak their elements via the plain arr_dec — safe under
 		// no-double-free.
-		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
 			b.emit(Op{Kind: OpDrop})
