@@ -59,6 +59,11 @@ Three more rules round it out:
   block with no `<<NAME>>=` header is woven into the document but never
   tangled, so you can show illustrative snippets that aren't part of the
   build.
+- **Escaping.** A line you want to emit *literally* as `<<name>>`
+  (rather than expand) is written with a leading backslash —
+  `\<<name>>`. Tangling strips the backslash and emits `<<name>>`
+  verbatim (the chunk needn't exist); weaving shows it literally too.
+  Useful for code/templates that themselves contain `<<…>>` tokens.
 
 ## The CLI
 
@@ -204,6 +209,5 @@ entry, or import a specific generated `.fern` instead).
 ## Scope and current limitations
 
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.
-  Literal `<<` / `>>` in code aren't currently part of Fern's syntax,
-  so there is no escaping mechanism; if that changes, references will
-  need an escape.
+  A whole-line literal `<<name>>` is written `\<<name>>` (see Escaping
+  above); `<<` / `>>` elsewhere on a line are never treated as markers.

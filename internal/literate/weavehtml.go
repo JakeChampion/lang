@@ -114,7 +114,7 @@ func weaveBodyHTML(lines []bodyLine) string {
 				htmlEscape(indent), chunkAnchor(ref), htmlEscape(ref))
 			continue
 		}
-		b.WriteString(highlightFern(bl.text))
+		b.WriteString(highlightFern(deEscapeRef(bl.text)))
 		b.WriteByte('\n')
 	}
 	b.WriteString("</code></pre>\n")
