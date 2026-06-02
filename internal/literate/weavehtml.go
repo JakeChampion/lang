@@ -48,8 +48,105 @@ func (doc *Document) WeaveHTML() string {
 	fmt.Fprintf(&b, "<title>%s</title>\n", htmlEscape(doc.htmlTitle()))
 	b.WriteString("<style>\n" + weaveCSS + "</style>\n")
 	b.WriteString("</head>\n<body>\n<main>\n")
+	b.WriteString(doc.tocHTML())
 	b.WriteString(body.String())
+	b.WriteString(doc.chunkIndexHTML())
 	b.WriteString("</main>\n</body>\n</html>\n")
+	return b.String()
+}
+
+// tocEntry is one heading captured for the table of contents.
+type tocEntry struct {
+	level int
+	text  string
+}
+
+// collectHeadings gathers the document's prose ATX headings in order,
+// skipping any inside fenced code blocks carried as prose.
+func (doc *Document) collectHeadings() []tocEntry {
+	var out []tocEntry
+	for _, blk := range doc.blocks {
+		if blk.isFern {
+			continue
+		}
+		inFence := 0
+		for _, line := range strings.Split(blk.rawText, "\n") {
+			t := strings.TrimSpace(line)
+			if fl := fenceRunLen(t); fl >= 3 {
+				if inFence == 0 {
+					inFence = fl
+				} else if fl >= inFence && t == strings.Repeat("`", len(t)) {
+					inFence = 0
+				}
+				continue
+			}
+			if inFence > 0 {
+				continue
+			}
+			if n := headingLevel(t); n > 0 {
+				out = append(out, tocEntry{level: n, text: strings.TrimSpace(t[n+1:])})
+			}
+		}
+	}
+	return out
+}
+
+// tocHTML renders a table of contents (links to heading anchors), or
+// "" when the document has fewer than two headings to navigate.
+func (doc *Document) tocHTML() string {
+	hs := doc.collectHeadings()
+	if len(hs) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<nav class="toc"><div class="toc-title">Contents</div>` + "\n<ul>\n")
+	for _, h := range hs {
+		fmt.Fprintf(&b, `<li class="toc-l%d"><a href="#%s">%s</a></li>`+"\n",
+			h.level, slugify(h.text), inlineMarkdown(h.text))
+	}
+	b.WriteString("</ul>\n</nav>\n")
+	return b.String()
+}
+
+// chunkIndexHTML renders an appendix indexing every chunk alphabetically
+// — each links to its definition, and (for non-root chunks) lists the
+// chunks that reference it, mirroring noweb's identifier index. Chunks
+// reached only from a `file=` root, or not reached at all, are marked.
+func (doc *Document) chunkIndexHTML() string {
+	names := doc.DefinedChunks()
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	usedIn := doc.usedIn()
+	unused := map[string]bool{}
+	for _, u := range doc.UnusedChunks() {
+		unused[u] = true
+	}
+	var b strings.Builder
+	b.WriteString(`<section class="chunk-index">` + "\n")
+	b.WriteString(`<h2 id="chunk-index">Chunk index</h2>` + "\n<ul>\n")
+	for _, n := range names {
+		fmt.Fprintf(&b, `<li><a class="ref" href="#%s">⟨%s⟩</a>`, chunkAnchor(n), htmlEscape(n))
+		switch {
+		case n == RootChunk:
+			b.WriteString(` <span class="idx-note">(root)</span>`)
+		case unused[n]:
+			b.WriteString(` <span class="idx-note">(unused)</span>`)
+		case len(usedIn[n]) > 0:
+			users := append([]string(nil), usedIn[n]...)
+			sort.Strings(users)
+			links := make([]string, len(users))
+			for i, u := range users {
+				links[i] = fmt.Sprintf(`<a class="ref" href="#%s">⟨%s⟩</a>`, chunkAnchor(u), htmlEscape(u))
+			}
+			fmt.Fprintf(&b, ` <span class="idx-note">used in %s</span>`, strings.Join(links, ", "))
+		default:
+			b.WriteString(` <span class="idx-note">(used by a file root)</span>`)
+		}
+		b.WriteString("</li>\n")
+	}
+	b.WriteString("</ul>\n</section>\n")
 	return b.String()
 }
 

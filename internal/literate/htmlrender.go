@@ -82,7 +82,8 @@ func markdownToHTML(prose string) string {
 		case headingLevel(t) > 0:
 			flushPara()
 			n := headingLevel(t)
-			fmt.Fprintf(&b, "<h%d>%s</h%d>\n", n, inlineMarkdown(strings.TrimSpace(t[n+1:])), n)
+			text := strings.TrimSpace(t[n+1:])
+			fmt.Fprintf(&b, "<h%d id=%q>%s</h%d>\n", n, slugify(text), inlineMarkdown(text), n)
 			i++
 		case strings.HasPrefix(t, "> "):
 			flushPara()
@@ -134,6 +135,29 @@ func fenceRunLen(t string) int {
 		n++
 	}
 	return n
+}
+
+// slugify turns heading text into a URL-safe anchor id: lowercase,
+// runs of non-alphanumerics collapsed to single dashes, trimmed. Inline
+// markup is ignored (it's stripped of its markers by the alnum filter).
+// Duplicate heading texts produce duplicate ids — rare in practice, and
+// browsers simply jump to the first.
+func slugify(text string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 func headingLevel(t string) int {
@@ -343,4 +367,15 @@ a.ref{font-weight:600}
 .code .s{color:var(--str)}
 .code .c{color:var(--com);font-style:italic}
 .code .n{color:var(--num)}
+nav.toc{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin:0 0 2rem}
+nav.toc .toc-title{font-weight:600;font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:.4em}
+nav.toc ul{list-style:none;margin:0;padding:0}
+nav.toc li{margin:.15em 0}
+nav.toc .toc-l2{padding-left:1rem}
+nav.toc .toc-l3{padding-left:2rem}
+nav.toc .toc-l4,nav.toc .toc-l5,nav.toc .toc-l6{padding-left:3rem}
+section.chunk-index{margin-top:3rem;border-top:1px solid var(--border);padding-top:1rem}
+section.chunk-index ul{list-style:none;margin:0;padding:0}
+section.chunk-index li{margin:.25em 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9rem}
+.idx-note{color:var(--muted);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:.82rem}
 `

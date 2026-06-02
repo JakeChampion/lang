@@ -27,16 +27,17 @@ func TestWeaveHTMLStructure(t *testing.T) {
 
 	wants := []string{
 		"<!DOCTYPE html>",
-		"<title>My Program</title>", // title from the first H1
-		"<h1>My Program</h1>",       // heading rendered
-		"<strong>bold</strong>",     // inline emphasis
-		"<em>italic</em>",           //
-		"<code>code</code>",         //
+		"<title>My Program</title>",           // title from the first H1
+		`<h1 id="my-program">My Program</h1>`, // heading rendered + anchored
+		"<strong>bold</strong>",               // inline emphasis
+		"<em>italic</em>",                     //
+		"<code>code</code>",                   //
 		`<a href="https://example.com">link</a>`,
 		`id="chunk-`,                            // a chunk definition anchor
 		`<a class="ref" href="#chunk-body">`,    // the <<body>> reference links to its def
 		`<span class="k">fn</span>`,             // keyword highlight
 		`<span class="s">&quot;hi&quot;</span>`, // string highlight + escape
+		`<section class="chunk-index">`,         // the chunk index appendix
 		"</html>",
 	}
 	for _, w := range wants {
