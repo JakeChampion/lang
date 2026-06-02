@@ -72,6 +72,11 @@ fern -tangle prog.fern.md     # write the tangled Fern source to stdout
 fern -weave  prog.fern.md     # write a cross-referenced Markdown reading copy
 ```
 
+Both weaves end with a **chunk index** appendix — every chunk listed
+with the chunks that reference it (noweb's identifier index), the root
+and any unused chunks marked. (Omitted for a trivial one-chunk
+document.)
+
 Both accept `-o` to write to disk instead of stdout. For a multi-file
 document (`file=` blocks) `-tangle -o DIR` ejects one file per module
 under `DIR` (creating subdirectories), so the generated tree can be

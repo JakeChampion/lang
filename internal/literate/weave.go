@@ -37,7 +37,43 @@ func (doc *Document) Weave() string {
 			b.WriteString("\n")
 		}
 	}
+	doc.weaveChunkIndex(&b, usedIn)
 	return b.String()
+}
+
+// weaveChunkIndex appends a "Chunk index" appendix listing every chunk
+// alphabetically with the chunks that reference it (noweb's identifier
+// index), marking the root and any unused chunks — mirroring the HTML
+// weave's index. Omitted for a trivial (one-chunk) document.
+func (doc *Document) weaveChunkIndex(b *strings.Builder, usedIn map[string][]string) {
+	names := doc.DefinedChunks()
+	if len(names) < 2 {
+		return
+	}
+	sort.Strings(names)
+	unused := map[string]bool{}
+	for _, u := range doc.UnusedChunks() {
+		unused[u] = true
+	}
+	b.WriteString("\n## Chunk index\n\n")
+	for _, n := range names {
+		switch {
+		case n == RootChunk:
+			fmt.Fprintf(b, "- ⟨%s⟩ — *(root)*\n", n)
+		case unused[n]:
+			fmt.Fprintf(b, "- ⟨%s⟩ — *(unused)*\n", n)
+		case len(usedIn[n]) > 0:
+			users := append([]string(nil), usedIn[n]...)
+			sort.Strings(users)
+			labels := make([]string, len(users))
+			for i, u := range users {
+				labels[i] = "⟨" + u + "⟩"
+			}
+			fmt.Fprintf(b, "- ⟨%s⟩ — used in %s\n", n, strings.Join(labels, ", "))
+		default:
+			fmt.Fprintf(b, "- ⟨%s⟩ — *(used by a file root)*\n", n)
+		}
+	}
 }
 
 // weaveChunk renders one chunk-definition block with its label, body,
