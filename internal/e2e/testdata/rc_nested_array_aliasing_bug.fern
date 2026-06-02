@@ -1,17 +1,26 @@
-// Reproducer for a reference-counting codegen bug in the native + wasm
-// backends: an aliasing-built nested-array structure
+// Regression gate for a (now fixed) reference-counting codegen bug in
+// the native + wasm backends: an aliasing-built nested-array structure
 // (ChunkDef[] whose .body is a BodyLine[] of structs with string fields)
-// is consumed by an `expand`-style function and the inner strings are
+// is consumed by an `expand`-style function and the inner strings were
 // freed too early — a use-after-free.
 //
-// Observed (compiler @ main, June 2026):
+// Before the fix (compiler @ main, June 2026):
 //   -interp          → 12   (correct: "fn main() {}".len())
 //   -target x86-64   → 255  (abort)
 //   -target arm64    → 137  (SIGKILL)
 //   -target wasm     → trap
+// After the fix: 12 on every backend.
 //
-// Bisection (see TestRCNestedArrayAliasingBug): the divergence needs the
-// FULL combination and disappears if any one dimension is removed:
+// Root cause: `def_body.push(body[k])` retains the inner BodyLine
+// structs (and their string pointers) out of `body` WITHOUT an inc, but
+// computeFreeEligible's escape analysis only tainted a directly-named
+// pushed element — it missed the `body[k]` projection, so `body` stayed
+// free-eligible and its scope-exit deep-drop freed strings `def_body`
+// still aliased. The fix taints the root container of a pointer-shaped
+// projection (index / field / array-slice) at the non-inc retain sinks.
+//
+// Bisection (see TestRCNestedArrayAliasingBug): the divergence needed the
+// FULL combination and disappeared if any one dimension was removed:
 //   * parse_defs must build `def_body` by re-pushing `body[k]` (so the
 //     inner BodyLine structs — and their string fields — are ALIASED
 //     out of the intermediate `body` array, which is then dropped); a

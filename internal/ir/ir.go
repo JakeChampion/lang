@@ -1746,10 +1746,44 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// borrow model — only the owner counts). Freeing the local at
 	// scope exit would then use-after-free the alias the container
 	// still holds (e.g. `var arr = [val]; m.set(k, arr)` in
-	// std/url's __query_pair). Only direct Idents are tainted here;
-	// nested sinks (`m.set(k, JArray(inner))`) are caught when the
-	// walk visits the inner EnumLit / StructLit / TupleLit node.
-	escape := func(e ast.Expr) {
+	// std/url's __query_pair).
+	//
+	// A pointer-shaped value read OUT of a container and retained into
+	// a sink — `def_body.push(body[k])`, `m.set(k, row[i])`,
+	// `Arr(grid[j])` — copies the pointer without an inc too, so the
+	// SOURCE container (`body` / `row` / `grid`) must not free it out
+	// from under the sink either. escape unwraps such projection chains
+	// (index / field / array-slice) to the root local and taints that.
+	// The unwrap is gated on the projected value being pointer-shaped:
+	// a scalar element (`i32[]`) can't alias, so its source stays
+	// reclaimable. A string slice copies into a fresh owned buffer
+	// (not a view), so it isn't unwrapped.
+	var escape func(e ast.Expr)
+	escape = func(e ast.Expr) {
+		switch x := e.(type) {
+		case *ast.Ident:
+			tainted[x.Name] = true
+		case *ast.Index:
+			if ast.IsPointerType(b.exprType(x)) {
+				escape(x.Array)
+			}
+		case *ast.FieldAccess:
+			if ast.IsPointerType(b.exprType(x)) {
+				escape(x.Target)
+			}
+		case *ast.SliceExpr:
+			if !x.IsString {
+				escape(x.Source)
+			}
+		}
+	}
+	// escapeOwned is the variant for the INC-ing sinks (StructLit /
+	// TupleLit construction dups every stored pointer value), so only a
+	// direct-Ident source can strand an uncounted alias — a projection
+	// (`Holder { items: p.items }`) is inc'd into the box, so its
+	// container stays reclaimable, and tainting it would needlessly
+	// defeat constructor reuse (TestStructReuseFiresForPointerField).
+	escapeOwned := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok {
 			tainted[id.Name] = true
 		}
@@ -1845,11 +1879,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			}
 		case *ast.StructLit:
 			for _, f := range s.Fields {
-				escape(f.Value)
+				escapeOwned(f.Value)
 			}
 		case *ast.TupleLit:
 			for _, e := range s.Elems {
-				escape(e)
+				escapeOwned(e)
 			}
 		case *ast.MapLit:
 			for _, ent := range s.Entries {
