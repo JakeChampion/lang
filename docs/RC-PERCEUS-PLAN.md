@@ -2074,20 +2074,37 @@ Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
 harness over the self-host + edge-handler workloads to profile hot
 allocation sites, then evaluate retiring `strbuf_*`.
 
-**NEXT ACTION (measured 2026-06-02, via the probe): tuple reclamation.**
-A first audit with `__heap_bump_bytes()` confirms array / struct / string
-loop-body vars reclaim to a flat high-water (array = 64 B at any N), but
-**tuple loop-body vars are the prime remaining leak suspect** — Phase 5h
-deliberately SKIPS `TupleType` in `emitVarReinitDropOld` (a tuple needs
-the exit sweep's per-element deep drop, not a flat dec). The slice:
-extend dec-on-reinit (and verify the reassignment-overwrite path) to
-deep-drop tuple elements — mirror the exit sweep's `TupleType` branch
-(`emitRcDecLocalsAtExitExcept`, the `if tt, ok := t.(ast.TupleType)` arm
-with its per-element `__fern_str_dec` / element decs), gated identically
-on `freeEligible` + `localNameUnique` + `!movedLocals`. Verify on all
-three backends with the differential gate + a `rc_heap_bump_test`-style
-bounded-growth assertion (tuple loop-var growth equal at N=50 vs N=5000).
-Tooling auto-provisions via the SessionStart hook; run the gate locally.
+**Tuple reclamation — SHIPPED ON ALL THREE BACKENDS (2026-06-02).**
+A `__heap_bump_bytes()` audit confirmed array / struct / string loop-body
+vars reclaim to a flat high-water (array = 64 B at any N), but
+**tuple loop-body vars leaked** — Phase 5h SKIPPED `TupleType` in
+`emitVarReinitDropOld`, so a `var t = (…)` re-declared in a loop orphaned
+every prior iteration's box (and its rc-tracked elements). The fix:
+`emitVarReinitDropOld` (loop-body re-declaration) and the assignment
+dec-on-overwrite (`b.assign` Ident case) now both route a tuple through
+the new shared `b.emitTupleSlotDrop`, which mirrors the exit sweep's
+inline `TupleType` branch — a needs-drop tuple (rc-tracked / string
+elements) calls the generated `__drop_tuple_<mangled>` fn (`is_unique`
+gate → per-element deep drop → `__fern_box_free`), registering the shape
+into `b.genTupleDrops` for the post-pass worklist; a plain-element tuple
+(`(i32, i32)`) emits the `is_unique`-gated `__fern_box_free` directly.
+Gated identically to the array / string siblings on `RcFreeEnabled` +
+`freeEligible` (+ `localNameUnique` + `!movedLocals` for the reinit
+path). Routing through the existing generated `__drop_tuple_` fn avoids
+duplicating `dropStructField` / `decValueOnStack`, the blocker the prior
+"out of scope" note cited. Verified by `Test{X86_64,Arm64,WASM}TupleHeapBumpBounded`
+(`internal/e2e/rc_heap_bump_tuple_test.go`): a plain `(i32, i32)` loop and
+a deep-drop `(i32[], i32)` loop both hold a flat high-water at N=50 vs
+N=5000 (pre-fix the latter grew 2400 → 240000 B); 0 over-releases.
+Known gap (out of scope): destructuring a tuple-of-rc in a loop
+(`var (a, b) = p`) MOVES the elements out (`p` is marked moved → skipped),
+and the destructure-bound locals (`a`, `b`) are a separate reclamation
+site — a follow-up slice.
+
+Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
+harness over the self-host + edge-handler workloads to profile hot
+allocation sites, then evaluate retiring `strbuf_*`; destructure-binding
+reclamation for moved tuple/struct elements.
 
 ## Testing strategy
 

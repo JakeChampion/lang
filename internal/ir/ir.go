@@ -9770,14 +9770,66 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
-		// FuncType (closure) and TupleType are deliberately skipped:
-		//   - a closure dec emitted between OpMakeClosure and OpStoreLocal
-		//     breaks the defunctionalise / closure-pair-elide pattern match,
-		//     and a flat closure dec leaks captures anyway;
-		//   - a tuple needs the exit sweep's per-element deep drop, not a flat
-		//     dec — out of scope for this slice.
-		// Both keep their prior safe-leak behaviour.
+	case ast.TupleType:
+		// Tuple reclamation on loop-body re-declaration — mirrors the exit
+		// sweep's TupleType branch (emitRcDecLocalsAtExitExcept). A tuple is
+		// heap-boxed with an rc header, so a `var t = (a, b)` re-declared in
+		// a loop reuses one slot across iterations; without a dec on reinit
+		// every prior iteration's box (and its rc-tracked elements) leaks.
+		//
+		// A needs-drop tuple (rc-tracked / string elements) routes through
+		// the generated __drop_tuple_<mangled> fn, which is_unique-gates,
+		// deep-drops each pointer-shaped element (string str_dec, recursive
+		// element drops), then box_frees — exactly the body the exit sweep
+		// emits inline. dropFnNameFor registers the shape into
+		// b.genTupleDrops so the post-pass worklist generates that body. A
+		// plain-element tuple ((i32, i32) etc.) has no element to drop, so
+		// emit the is_unique-gated box_free directly to reclaim its box, as
+		// the exit sweep's inline branch does for every eligible tuple.
+		//
+		// Net-zero on the operand stack (load → call → drop, the OpIf
+		// consuming is_unique's result), so the new RHS value already
+		// sitting underneath is left in place for the store.
+		b.emitTupleSlotDrop(idx, ty)
+		// FuncType (closure) is deliberately skipped: a closure dec emitted
+		// between OpMakeClosure and OpStoreLocal breaks the defunctionalise /
+		// closure-pair-elide pattern match, and a flat closure dec leaks
+		// captures anyway — it keeps its prior safe-leak behaviour.
 	}
+}
+
+// emitTupleSlotDrop releases the tuple value currently in local slot
+// `idx` — the shared body for the loop-body re-declaration drop
+// (emitVarReinitDropOld) and the reassignment dec-on-overwrite. It
+// mirrors the exit sweep's inline TupleType branch (emitDec in
+// emitRcDecLocalsAtExitExcept): a needs-drop tuple routes through the
+// generated __drop_tuple_<mangled> fn (is_unique gate → per-element
+// deep drop → box_free), registering the shape into b.genTupleDrops so
+// the post-pass worklist emits that body; a plain-element tuple
+// box_frees directly under the same is_unique gate. Net-zero on the
+// operand stack, so a value sitting underneath (a reinit/reassign RHS)
+// is left untouched. Callers gate on RcFreeEnabled + freeEligible +
+// localNameUnique + !movedLocals before invoking.
+func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
+	if name, ok := dropFnNameFor(tt, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	_, size := tupleElemLayout(tt.Elems, b.ptrW)
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
 }
 
 // localDeclType returns the declared type of a param or local by name.
@@ -9937,9 +9989,6 @@ func (b *builder) assign(n *ast.Assign) error {
 			// Gated on freeEligible like the exit dec: an INELIGIBLE
 			// (borrowed param / escaped) string is skipped here AND at exit,
 			// so the two stay balanced and a borrow is never over-released.
-			// Tuples are deliberately NOT handled here — their is_unique
-			// deep-drop pulls in dropStructField / decValueOnStack and
-			// belongs with the emitDec refactor, not a duplicated inline.
 			if b.ptrW == 4 {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
@@ -9949,6 +9998,15 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
+		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			// Tuple reassignment-overwrite — `t = (a, b)` ends the old
+			// binding's ownership exactly like a scope exit would, so the
+			// same eligible-gated deep-drop applies. Shares the exit sweep's
+			// body via emitTupleSlotDrop (is_unique → per-element deep drop →
+			// box_free, or a plain box_free for plain-element tuples). Net-
+			// zero on the operand stack, so the new RHS value underneath is
+			// left in place for the store below.
+			b.emitTupleSlotDrop(idx, tt)
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
@@ -10282,6 +10340,26 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// tupleTypeOfLocal returns the TupleType of a param / local named
+// `name` if it is tuple-typed. Used by the dec-on-overwrite to route
+// tuple targets through their deep-drop on reassignment, mirroring the
+// array / string branches.
+func tupleTypeOfLocal(name string, b *builder) (ast.TupleType, bool) {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			tt, ok := p.Type.(ast.TupleType)
+			return tt, ok
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			tt, ok := v.Type.(ast.TupleType)
+			return tt, ok
+		}
+	}
+	return ast.TupleType{}, false
 }
 
 // localArrayType returns the ArrayType of a param / local named
