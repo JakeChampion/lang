@@ -2195,14 +2195,31 @@ holds a flat high-water at N=50 vs N=5000 (was 6400→640000), and a
 `internal/e2e` suite (incl. the heavy self-host map users + the
 differential gate) stays green.
 
+**Nested-array (array-of-array) inner-buffer reclamation — SHIPPED ON ALL
+THREE BACKENDS (2026-06-02).** `i32[][]` is array-of-rc-element
+(`arrElemIsRcTracked(ArrayType)` is true), so the outer drop freed only
+the OUTER buffer — the exit sweep's `__fern_drop_arr_ptr` flat-`rc_dec`'d
+each element and `emitVarReinitDropOld`'s plain `__fern_arr_dec` ignored
+them, leaking every INNER buffer (profiling probe: 3264 B → 320064 B).
+The fix adds an array-of-array case to `arrElemStructDropName`: when the
+inner array's elements are PRIMITIVE (non-rc, non-string — freeable by a
+plain `__fern_arr_dec`), it routes to a stride-keyed generated
+`__drop_arr_arr_<innerStride>` loop (`genArrArrDropFn`: is_unique →
+free each inner buffer via `__fern_arr_dec(elem, innerStride)` → free the
+outer). Stride-keyed so `i32[][]` / `f32[][]` (both inner stride 4) share
+one fn. Auto-applies at the exit-sweep / field / child-drop sites (all
+call `arrElemStructDropName`); `emitVarReinitDropOld`'s ArrayType case now
+consults the same dispatch (so array-of-struct / -tuple reinit also
+deep-drops, matching the exit sweep). Inner arrays of rc / string elements
+keep the flat `__fern_drop_arr_ptr` (recursive deep drop — a later slice).
+Verified by `Test{X86_64,Arm64,WASM}NestedArrayReclaim`
+(`internal/e2e/rc_heap_bump_nested_array_test.go`): a `var g = [[..],[..]]`
+loop holds a flat 192 B at N=50 vs N=5000 (was 3264→320064), value-correct
+with 0 over-releases over 200 iterations. The full suite (incl. self-host +
+differential gate) stays green.
+
 **Profiling findings (2026-06-02, `__heap_bump_bytes()` over compound
 workloads) — the remaining measured leaks, in priority order:**
-- **Nested array `i32[][]`**: a `var g = [[..],[..]]` loop leaks the INNER
-  buffers (3264 B → 320064 B). Both the reinit `__fern_arr_dec` and the
-  exit sweep's `__fern_drop_arr_ptr` free only the OUTER buffer and
-  flat-`rc_dec` each element (no inner-buffer free). Needs a recursive
-  array-of-array drop helper (the `__drop_arr_struct_` analogue for array
-  elements) — the long-documented "array-of-array inner buffers" gap.
 - **String concat results**: a `var s = a + b` loop under-reclaims
   (1600 B → 64576 B) and a pure temporary `(a + b).len()` leaks fully
   (1600 B → 160000 B). The shipped string tests only assert 0
@@ -2215,13 +2232,18 @@ workloads) — the remaining measured leaks, in priority order:**
   would UAF a payload shared with a live local (rc-undercounted).
   Reclaiming needs a global enum-payload inc-on-construction + drop
   rebalance — risky; deferred.
+- **Array-of-(rc/string-inner-array)** (`string[][]`, `i32[][][]`): the
+  nested-array fix above handles only PRIMITIVE inner arrays; rc/string
+  inner arrays still keep the flat `__fern_drop_arr_ptr` (inner buffers
+  leak). Needs the recursive inner deep-drop (drop_arr_str / drop_arr_ptr
+  per element).
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
-  (96 B), map build (256 B, this slice).
+  (96 B), map build (256 B), nested array `i32[][]` (192 B).
 
-Next Phase-6 steps (open): nested-array inner-buffer reclamation
-(most tractable, machinery exists); statement-temporary + bound-var
-string-concat reclamation; then evaluate retiring `strbuf_*`. Enum
-reuse-path payloads remain deferred (needs the global payload rebalance).
+Next Phase-6 steps (open): statement-temporary + bound-var string-concat
+reclamation (the dominant remaining leak); array-of-(rc-inner-array) deep
+drop; then evaluate retiring `strbuf_*`. Enum reuse-path payloads remain
+deferred (needs the global payload rebalance).
 
 ## Testing strategy
 
