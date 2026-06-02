@@ -809,6 +809,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if name == "__drop_arr_arr_str" {
+				// Array-of-string[] outer drop: per element reclaim the inner
+				// string[] via __fern_drop_arr_str (walk + str_dec + free), then
+				// free the outer buffer.
+				fn = genArrArrStrDropFn(ptrW)
 			} else if strideStr := strings.TrimPrefix(name, "__drop_arr_arr_"); strideStr != name {
 				// Array-of-(primitive-array) outer drop. The name encodes the
 				// inner element stride; the loop frees each inner buffer +
@@ -3385,17 +3390,23 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[strin
 	// Array-of-array element (`i32[][]`'s outer drop): each element is
 	// itself an array whose BUFFER must be freed, not just flat-rc_dec'd
 	// (the __fern_drop_arr_ptr fallback frees the outer buffer but leaks
-	// the inner ones). When the inner array's elements are PRIMITIVE
-	// (non-rc, non-string — freeable by a plain __fern_arr_dec), route to
-	// a stride-keyed __drop_arr_arr_<innerStride> loop. Inner arrays of
-	// rc / string elements need a recursive deep drop (a later slice), so
-	// they keep the flat __fern_drop_arr_ptr (inner buffers still leak,
-	// but safe under no-double-free).
+	// the inner ones). The per-element drop depends on the inner array's
+	// element type:
+	//   - PRIMITIVE inner (`i32[][]`): a plain __fern_arr_dec frees the
+	//     inner buffer → stride-keyed __drop_arr_arr_<innerStride>.
+	//   - STRING inner (`string[][]`): each inner buffer's string elements
+	//     must reclaim too → __drop_arr_arr_str, whose loop calls
+	//     __fern_drop_arr_str per element (walk + str_dec each (data,len) +
+	//     free the inner buffer). Two-word ABIs (wasm + arm64-TwoWord) and
+	//     native single-word both back __fern_drop_arr_str.
+	// Deeper inner shapes (struct[]/enum[]/array-of-array) still keep the
+	// flat __fern_drop_arr_ptr (inner buffers leak — safe, a later slice).
 	if inner, ok := elem.(ast.ArrayType); ok {
+		if _, isStr := inner.Elem.(ast.StringType); isStr {
+			return "__drop_arr_arr_str", true
+		}
 		if !arrElemIsRcTracked(inner.Elem) {
-			if _, isStr := inner.Elem.(ast.StringType); !isStr {
-				return fmt.Sprintf("__drop_arr_arr_%d", ast.ElemSizeBytesFor(inner.Elem, ptrW)), true
-			}
+			return fmt.Sprintf("__drop_arr_arr_%d", ast.ElemSizeBytesFor(inner.Elem, ptrW)), true
 		}
 	}
 	return "", false
@@ -3586,6 +3597,78 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 	return &Func{
 		Name:         fmt.Sprintf("__drop_arr_arr_%d", innerStride),
 		Params:       []ast.Param{{Name: "__aa", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
+// genArrArrStrDropFn builds __drop_arr_arr_str(ptr) — the array-of-string[]
+// outer drop. On the outer array's last reference (rc==1) it walks each
+// element (a pointer to an inner string[] buffer, outer stride ptrW) and
+// reclaims that inner array via __fern_drop_arr_str(elem, stringStride) —
+// which walks the inner buffer's (data,len) string elements, str_dec's
+// each, and frees the inner buffer — then frees the outer buffer. The
+// string element stride is ElemSizeBytesFor(string) (2*ptrW two-word /
+// ptrW single-word). Each helper is_unique-gates internally, so a shared
+// inner array or string only dec's. Slots: 0=ptr, 1=i, 2=len.
+func genArrArrStrDropFn(ptrW int) *Func {
+	outerStride := int32(ptrW)
+	strStride := int32(ast.ElemSizeBytesFor(ast.StringType{}, ptrW))
+	// Inner string[] reclamation helper, matching the exit sweep's string[]
+	// routing: two-word ABIs (wasm + arm64-TwoWord) walk (data,len) pairs
+	// via __fern_drop_arr_str; native single-word (x86_64) elements are
+	// single pointers, so __fern_drop_arr_ptr (rc_dec each, SSO-safe) is the
+	// available helper (__fern_drop_arr_str isn't emitted there).
+	innerDrop := "__fern_drop_arr_str"
+	if !ast.UseTwoWordStrings(ptrW) {
+		innerDrop = "__fern_drop_arr_ptr"
+	}
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpSub},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// __fern_drop_arr_str(mem[ptr + i*outerStride], strStride); drop result.
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: outerStride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpConstI32, I32: strStride},
+		{Kind: OpCallDirect, Str: innerDrop, I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: outerStride},
+		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         "__drop_arr_arr_str",
+		Params:       []ast.Param{{Name: "__aas", Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
