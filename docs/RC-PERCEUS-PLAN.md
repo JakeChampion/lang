@@ -1741,8 +1741,11 @@ as findings land:
 1. **5d** — enum/Cons-cell reuse in `match` arms + field-store elision.
    Ready, no external deps, completes the reuse family.
 2. **5h** — block-scoped drops for loop-body locals (the real
-   unbounded-leak fix). Ready in principle but has live over-release
-   hazards — see the sharpened risk analysis in §5h below before coding.
+   unbounded-leak fix). **SHIPPED** — see §5h. The over-release hazards
+   the risk analysis flagged are all closed by gating dec-on-reinit on
+   `freeEligible` + `localNameUnique` + `!movedLocals` and skipping
+   closures/tuples; verified on x86_64 + wasm + arm64 (qemu) through the
+   free-on/free-off differential gate.
 3. **5f** — build the alias analysis, then the freeing-dec for replaced
    pointer fields.
 4. **SSO native flip** — arm64 §1→§9, then mirror on x86_64 (the deep
@@ -1775,12 +1778,10 @@ opportunity is now gated on `b.moveSites`; the only ungated sites are the
 `return`-of-field/index path (not a local — nothing to move) and the
 call-arg path (already inc-free under the Phase 2d borrow model).
 
-That leaves **three** items, each deferred for a concrete, durable
-reason: 5f needs an alias analysis the borrow model postponed, 5g is
-hard-blocked on the in-progress SSO native flip, and 5h (a spec-vs-impl
-gap — block-scoped drops for loop-body locals) needs block-scope drop
-machinery the lowering doesn't carry today. None is a "just do it"
-slice — see below.
+5h (loop-body local drops) is now **SHIPPED** (see §5h). That leaves
+**two** items, each deferred for a concrete, durable reason: 5f needs an
+alias analysis the borrow model postponed, and 5g is hard-blocked on the
+in-progress SSO native flip. Neither is a "just do it" slice — see below.
 
 ##### 5e — enum self-overwrite reuse (DONE)
 
@@ -1866,7 +1867,56 @@ lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit `StringType`
 uniformly. **Do not attempt 5g before the SSO native flip is green on
 both native backends.**
 
-##### 5h — block-scoped drops for loop-body locals (deferred: needs block-scope drop machinery)
+##### 5h — block-scoped drops for loop-body locals (DONE)
+
+**Shipped** via shape (b) (zero-init + guarded dec-on-reinit), realised as
+`emitVarReinitDropOld` in `ir.go`, called from the `*ast.Var` lowering
+after the alias-inc and before the store. A loop-body `var row = …` now
+releases the slot's previous value each iteration, so the freelist
+reclaims it instead of leaking N-1 allocations (and the rc undercount no
+longer pins the buffers live). The new value sits on the stack underneath
+while the dec runs (net-zero load → dec → drop), so the store is
+unaffected.
+
+The three hazards the analysis below flagged are all closed by the gates:
+  - **zero-init dedup / shadowing** → `localNameUnique(name)`: fire only
+    for a name with exactly one `info.Locals` entry, whose single slot the
+    Phase 1d-v net is guaranteed to have zeroed (NULL-guarding the first
+    dec). Shadowed names keep the safe-leak.
+  - **move-out over-release** → `!b.movedLocals[name]`: a var whose
+    reference was moved out (all moves are top-level / last-use) is
+    excluded; combined with the fact that loop-body aliases are never
+    marked moved, no moved value is ever dec'd.
+  - **unbalanced alias (the regression the corpus caught)** → gate the
+    whole emission on `b.freeEligible[name]`, mirroring the EXIT sweep. A
+    `var a1 = match (o) { _ => a0 }` aliases `a0` WITHOUT an inc (a
+    matchexpr isn't an alias shape `needsRcIncOnAlias` recognises), so it
+    doesn't own a reference; `freeEligible` is false for it, so dec-on-
+    reinit skips it — no over-release of the shared buffer.
+
+Dispatch is by exact declared type (`localDeclType`): owned arrays →
+`__fern_arr_dec` (the O(N) buffer reclaim), struct / enum → flat
+`__fern_rc_dec` (nested payloads leak, zero over-release surface, as the
+baseline overwrite-dec does), owned strings → the str_dec path on
+x86_64 / wasm only (arm64 deferred per 5g). **Closures and tuples are
+deliberately skipped**: a dec spliced between `OpMakeClosure` and
+`OpStoreLocal` breaks the defunctionalise / closure-pair-elide pattern
+match (and a flat closure dec leaks captures anyway), and a tuple needs
+the exit sweep's per-element deep drop. Gated on `ast.RcFreeEnabled` so
+the free-off baseline is byte-identical.
+
+Tests: `internal/ir/loop_var_drop_test.go` (dec-on-reinit fires for an
+eligible loop-body array var; is skipped for a closure var) +
+`internal/e2e/rc_loop_var_test.go` (array / struct / enum / string churn
+loops, value-correct-only-if-reuse-sound folded with
+`__rc_underflow_count()`, on x86_64 + arm64 + wasm) +
+`internal/e2e/testdata/cases/loop_var_reclaim` (free-on == free-off
+differential fixture). Full e2e + rc-correctness corpus + the existing
+freelist / reuse suites stay green on all three backends.
+
+The original design notes are kept below for the record.
+
+##### 5h — original analysis (deferred: needs block-scope drop machinery)
 
 The one item here that's a spec-vs-impl *gap* rather than a deferred
 reclamation optimization. "Drop sites" above (§ *Variable goes out of

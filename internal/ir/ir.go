@@ -5452,6 +5452,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if needsRcIncOnAlias(n.Init, b) && !b.moveSites[n] {
 			b.emitAliasInc(n.Init)
 		}
+		// Phase 5h: release the slot's previous value before this
+		// (re-)init store. For a loop-body `var` this reclaims the prior
+		// iteration's allocation instead of leaking it; for a once-run
+		// `var` the zero-init makes it a NULL-guarded no-op. The new value
+		// is on the stack underneath — emitVarReinitDropOld is net-zero —
+		// so it survives for the store below.
+		b.emitVarReinitDropOld(n.Name, idx)
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
@@ -9643,6 +9650,134 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	return true, nil
+}
+
+// localNameUnique reports whether `name` has exactly one declaration in
+// the current function's locals — i.e. it is not shadowed by a same-name
+// `var` in a sibling/nested scope. The Phase 1d-v zero-init safety net
+// keys on name (`zeroSeen[v.Name]`), so a unique name's single slot is
+// guaranteed zero-initialised at function entry; a shadowed name has
+// multiple distinct slots sharing one name-keyed zero, only one of which
+// is actually zeroed. emitVarReinitDropOld relies on the zero-init to
+// NULL-guard its first dec, so it fires only for unique names.
+func (b *builder) localNameUnique(name string) bool {
+	n := 0
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			n++
+			if n > 1 {
+				return false
+			}
+		}
+	}
+	return n == 1
+}
+
+// emitVarReinitDropOld releases the value currently in a var's slot
+// before its (re-)initialisation store — Phase 5h (loop-body local
+// drops). A `var row = …` declared inside a loop reuses one slot across
+// iterations; without this the prior iteration's value is overwritten
+// with no dec, so N-1 allocations leak — and the rc undercount keeps the
+// freelist from reclaiming them, so a hot build-and-discard loop grows
+// unbounded. A loop-body `var` is a re-DECLARATION (not a reassignment),
+// so the assign hook's dec-on-overwrite never ran for it.
+//
+// Mirrors the reassignment dec-on-overwrite (the assign Ident case) for
+// the SAME rc-tracked set and dec choice — owned arrays free via
+// `__fern_arr_dec`, other single-box rc types (struct / enum / closure)
+// flat `__fern_rc_dec`, owned strings on x86_64/wasm (arm64 deferred per
+// slice 5g) — MINUS the self-mutation / map-COW branches, which cannot
+// arise for a var-init RHS: a fresh binding can never reference its own
+// prior slot value. Net-zero on the operand stack (load → dec → drop), so
+// the new value already sitting underneath is left in place for the store.
+//
+// Safety gates:
+//   - ast.RcFreeEnabled: the free-off baseline emits nothing here, so it
+//     stays byte-identical to before this slice — the differential gate's
+//     free-on == free-off comparison is the meaningful one.
+//   - localNameUnique: the var's single slot is zero-init'd at entry
+//     (Phase 1d-v), so the first-iteration dec is a NULL-guarded no-op.
+//     Shadowed names (multiple distinct slots, one name-keyed zero) are
+//     skipped — dec-ing an un-zeroed slot would read garbage.
+//   - !movedLocals: a var whose reference was MOVED out (move-on-alias /
+//     -construction / -destructure / -return — all top-level, last-use)
+//     is excluded from the exit sweep; dec-ing its slot would over-
+//     release. Moves are top-level only, so a loop-body var is never
+//     marked; this guards the rare top-level re-declaration case.
+func (b *builder) emitVarReinitDropOld(name string, idx int32) {
+	if !ast.RcFreeEnabled {
+		return
+	}
+	// freeEligible is the borrow-aware verdict the EXIT sweep uses: true
+	// only for an OWNED local that genuinely holds its own reference.
+	// Ineligible locals — borrowed params, and crucially a var whose init
+	// ALIASES another live local WITHOUT an inc (e.g. `var a1 = match (o)
+	// { _ => a0 }`, an alias shape needsRcIncOnAlias doesn't catch) — must
+	// be skipped entirely: they don't own a reference to release, so a dec
+	// here would over-release the shared buffer. Mirroring the exit
+	// sweep's gate keeps dec-on-reinit balanced against the binding's inc.
+	if !b.freeEligible[name] {
+		return
+	}
+	if !b.localNameUnique(name) || b.movedLocals[name] {
+		return
+	}
+	t, ok := b.localDeclType(name)
+	if !ok {
+		return
+	}
+	switch ty := t.(type) {
+	case ast.ArrayType:
+		// Owned array: free the buffer at rc 0 — the O(N) loop
+		// reclamation. Pointer-element buffers leak their elements (as the
+		// exit sweep's arr_dec and the reassignment overwrite-dec both do —
+		// leak-but-never-UAF); the buffer itself returns to the freelist.
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+		b.emit(Op{Kind: OpDrop})
+	case ast.StructType, ast.EnumType:
+		// Single-box rc value: flat dec (nested fields / enum payloads
+		// leak, exactly as the baseline overwrite-dec / exit-sweep flat
+		// path — zero over-release surface).
+		b.emit(Op{Kind: OpLoadLocal, I32: idx})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	case ast.StringType:
+		// x86_64 / wasm only; arm64 string reclaim is deferred (slice 5g),
+		// so its codegen stays byte-identical (safe-leak) there.
+		if b.ptrW == 4 {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+		// FuncType (closure) and TupleType are deliberately skipped:
+		//   - a closure dec emitted between OpMakeClosure and OpStoreLocal
+		//     breaks the defunctionalise / closure-pair-elide pattern match,
+		//     and a flat closure dec leaks captures anyway;
+		//   - a tuple needs the exit sweep's per-element deep drop, not a flat
+		//     dec — out of scope for this slice.
+		// Both keep their prior safe-leak behaviour.
+	}
+}
+
+// localDeclType returns the declared type of a param or local by name.
+func (b *builder) localDeclType(name string) (ast.Type, bool) {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return p.Type, true
+		}
+	}
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			return v.Type, true
+		}
+	}
+	return nil, false
 }
 
 func (b *builder) assign(n *ast.Assign) error {

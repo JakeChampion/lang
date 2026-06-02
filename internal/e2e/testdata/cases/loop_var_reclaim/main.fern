@@ -1,0 +1,44 @@
+// Phase 5h loop-body local drops. A `var` re-declared inside a loop
+// reuses one slot per iteration; the dec-on-reinit releases the prior
+// iteration's value so the freelist reclaims it (instead of leaking
+// N-1 allocations and undercounting the rc). The differential gate runs
+// this both free-off and free-on and the result must be byte-identical,
+// proving the per-iteration dec is rc-neutral vs the baseline — no
+// over-release, no use-after-free — across the array / struct / enum
+// loop-body var shapes.
+
+struct Pt { x: i32, y: i32 }
+
+enum Box { Val(i32[]), Empty }
+
+function head(b: Box): i32 {
+    match (b) {
+        Val(xs) => { return xs[0]; },
+        Empty => { return 0; }
+    }
+}
+
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        // array loop-body var: built and discarded each iteration
+        var row: i32[] = [i, i * 2, i * 3];
+        // struct loop-body var
+        var p: Pt = Pt { x: i, y: i + 1 };
+        // enum loop-body var with an array payload
+        var b: Box = Val([i, i + 5]);
+        acc = acc + (row[0] + row[1] + row[2]) - (i * 6); // + 0
+        acc = acc + (p.y - p.x) - 1;                      // + 0
+        acc = acc + head(b) - i;                          // + 0
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    // acc stays 0 every iteration unless a reclaimed buffer was handed
+    // out while still live (which would drift a read-back); + 42 so a
+    // non-zero exit pinpoints corruption.
+    return churn(300) + 42;
+}
