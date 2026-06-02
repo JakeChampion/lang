@@ -10,8 +10,11 @@
 // Includes the post-MVP sign-extension ops (0xC0..0xC4) — they
 // were added in the same proposal and use the same encoding
 // shape so they ride along here rather than in a separate
-// package. Saturating-truncate ops (multi-byte 0xFC prefix)
-// aren't included; the production wasm backend doesn't use them.
+// package. The saturating-truncate ops (the multi-byte 0xFC
+// prefix, from the nontrapping-float-to-int-conversions proposal)
+// are included below: the production wasm backend uses them so a
+// float→int cast saturates (NaN → 0, out-of-range → INT_MIN /
+// INT_MAX) instead of trapping, matching the other backends.
 package convert
 
 // ---- Width conversions (0xA7, 0xAC, 0xAD) ----
@@ -30,6 +33,23 @@ func InstI64TruncF32S(buf []byte) []byte { return append(buf, 0xae) }
 func InstI64TruncF32U(buf []byte) []byte { return append(buf, 0xaf) }
 func InstI64TruncF64S(buf []byte) []byte { return append(buf, 0xb0) }
 func InstI64TruncF64U(buf []byte) []byte { return append(buf, 0xb1) }
+
+// ---- Saturating float -> int truncations (0xFC prefix, subops 0..7) ----
+//
+// The 0xFC-prefixed encoding is the opcode byte followed by a
+// ULEB128 subopcode; subops 0..7 fit in a single byte. Unlike the
+// 0xA8..0xB1 family these never trap: NaN converts to 0 and an
+// out-of-range value clamps to the destination's INT_MIN / INT_MAX
+// (or 0 / UINT_MAX for the unsigned variants).
+
+func InstI32TruncSatF32S(buf []byte) []byte { return append(buf, 0xfc, 0x00) }
+func InstI32TruncSatF32U(buf []byte) []byte { return append(buf, 0xfc, 0x01) }
+func InstI32TruncSatF64S(buf []byte) []byte { return append(buf, 0xfc, 0x02) }
+func InstI32TruncSatF64U(buf []byte) []byte { return append(buf, 0xfc, 0x03) }
+func InstI64TruncSatF32S(buf []byte) []byte { return append(buf, 0xfc, 0x04) }
+func InstI64TruncSatF32U(buf []byte) []byte { return append(buf, 0xfc, 0x05) }
+func InstI64TruncSatF64S(buf []byte) []byte { return append(buf, 0xfc, 0x06) }
+func InstI64TruncSatF64U(buf []byte) []byte { return append(buf, 0xfc, 0x07) }
 
 // ---- Int -> float conversions (0xB2..0xB5, 0xB7..0xBA) ----
 

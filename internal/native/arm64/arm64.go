@@ -708,6 +708,11 @@ func FCVTDtoS(rd, rn uint32) uint32 { return 0x1E624000 | ((rn & regMask) << 5) 
 func SCVTFS(rd, rn uint32) uint32  { return 0x9E220000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FCVTZSS(rd, rn uint32) uint32 { return 0x9E380000 | ((rn & regMask) << 5) | (rd & regMask) }
 
+// FCVTZUS Xd, Sn — single → unsigned int (truncate). The
+// single-precision (type=00) twin of FCVTZU's double form; the
+// caller clears bit 31 (clearSF) for a `w` destination.
+func FCVTZUS(rd, rn uint32) uint32 { return 0x9E390000 | ((rn & regMask) << 5) | (rd & regMask) }
+
 // UCVTF Dd, Xn — unsigned int -> double; FCVTZU Xd, Dn — double ->
 // unsigned int (truncate).
 func UCVTF(rd, rn uint32) uint32  { return 0x9E630000 | ((rn & regMask) << 5) | (rd & regMask) }
