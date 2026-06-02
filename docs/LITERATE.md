@@ -99,18 +99,64 @@ that the CLI turns into a position remapper for `diag.FormatRemapped`.)
 - **Cyclic chunk reference** — a chunk is defined in terms of itself
   (directly or transitively).
 
+## Multiple modules from one document
+
+A single document can tangle to **several** Fern modules. A fern fence
+with a `file=PATH` directive is a *file-root*: its body becomes the
+module `PATH`, expanding any `<<ref>>` lines just like the `<<*>>` root.
+
+````markdown
+```fern file=main.fern entry
+import "./mathx";
+function main(): i32 { return mathx.square(6); }
+```
+
+```fern file=mathx.fern
+<<square>>
+```
+
+```fern
+<<square>>=
+pub function square(n: i32): i32 { return n * n; }
+```
+````
+
+Rules:
+
+- **Chunk definitions are shared** across the whole document; each
+  file-root pulls in whichever chunks it references. So you describe the
+  architecture as one narrative and partition it into modules with
+  `file=` blocks.
+- The generated modules **`import` each other normally** (`import
+  "./mathx"`), resolved against the document's directory. The whole set
+  is tangled in memory, so nothing is written to disk for a plain
+  compile / `-interp` / `-check`.
+- **Same `file=PATH` repeated** concatenates in document order, exactly
+  like same-name chunk pieces.
+- The **compile entry** is the file marked `entry` (or, if exactly one
+  file is defined, that one; or the sole module defining a `main`
+  function). Mark one block `file=app.fern entry` to be explicit.
+- **`fern -tangle`** prints every module under a `// ==> path <==`
+  banner; **`fern -weave`** labels each file-root `📄 path`.
+- **Diagnostics still map back to the document**: each module carries
+  its own provenance map, so a type error in any generated file points
+  at the `.fern.md` line you wrote.
+
+A document either uses `file=` blocks (multi-module) or the single
+`<<*>>` root (one module) — `<<*>>` is the shorthand for the common
+one-file case.
+
 ## Example
 
 See [`examples/literate/fizzbuzz.fern.md`](../examples/literate/fizzbuzz.fern.md)
-for a complete, runnable program that defines its chunks out of order,
+for a complete single-file program that defines its chunks out of order,
 references a chunk inside an indented `while` body, and reads as prose
-top to bottom.
+top to bottom; and
+[`examples/literate/multi_module.fern.md`](../examples/literate/multi_module.fern.md)
+for a two-module program assembled with `file=` roots.
 
 ## Scope and current limitations
 
-- Literate documents are **entry files**. A `.fern.md` can `import`
-  ordinary `.fern` modules (and `std/`/`core/`), but a `.fern` file
-  cannot yet `import` a `.fern.md` document.
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.
   Literal `<<` / `>>` in code aren't currently part of Fern's syntax,
   so there is no escaping mechanism; if that changes, references will

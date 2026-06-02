@@ -28,6 +28,9 @@ func (doc *Document) Weave() string {
 			seen[blk.chunk]++
 			continuation := seen[blk.chunk] > 1
 			doc.weaveChunk(&b, blk, continuation, usedIn[blk.chunk])
+		case blk.isFern && blk.file != "":
+			seen[blk.file]++
+			doc.weaveFile(&b, blk, seen[blk.file] > 1)
 		default:
 			// Prose or display-only fern block: verbatim.
 			b.WriteString(blk.rawText)
@@ -60,6 +63,27 @@ func (doc *Document) weaveChunk(b *strings.Builder, blk block, continuation bool
 		b.WriteString(note)
 		b.WriteString("\n")
 	}
+}
+
+// weaveFile renders one `file=PATH` root block with a file label —
+// 📄 PATH ≡ for its first piece, +≡ for a continuation — and its body
+// (with `<<ref>>` lines shown as ⟨ref⟩).
+func (doc *Document) weaveFile(b *strings.Builder, blk block, continuation bool) {
+	marker := "≡"
+	if continuation {
+		marker = "+≡"
+	}
+	fmt.Fprintf(b, "**📄 `%s`%s**\n\n", blk.file, marker)
+	b.WriteString("```fern\n")
+	for _, bl := range blk.lines {
+		if indent, ref, ok := chunkRef(bl.text); ok {
+			fmt.Fprintf(b, "%s⟨%s⟩\n", indent, ref)
+			continue
+		}
+		b.WriteString(bl.text)
+		b.WriteString("\n")
+	}
+	b.WriteString("```\n")
 }
 
 // crossRefNote produces the italic "⟨X⟩ is used in …" footer for a
