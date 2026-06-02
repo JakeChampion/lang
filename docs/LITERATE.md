@@ -181,6 +181,26 @@ top to bottom; and
 [`examples/literate/multi_module.fern.md`](../examples/literate/multi_module.fern.md)
 for a two-module program assembled with `file=` roots.
 
+## A literate document as an importable library
+
+A `.fern` file (or another `.fern.md`) can `import` a literate document
+as an ordinary module — write `import "./greet"` and, when no plain
+`greet.fern` exists, a sibling `greet.fern.md` is tangled in memory and
+loaded in its place:
+
+```fern
+import "./greet";   // resolves to greet.fern, or greet.fern.md
+function main(): i32 { return greet.greeting(); }
+```
+
+The document is tangled like any single-root program, so its `pub` decls
+are the module's exported surface. A plain `greet.fern` always wins over
+a same-named `greet.fern.md`. A diagnostic in the imported library is
+reported against *its* document, at the line you wrote there — the same
+remap the entry document gets. A **multi-file** (`file=`) document has no
+single importable module, so importing one is an error (compile it as an
+entry, or import a specific generated `.fern` instead).
+
 ## Scope and current limitations
 
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.

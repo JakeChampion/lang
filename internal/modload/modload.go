@@ -35,6 +35,7 @@
 package modload
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/literate"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/stdlib"
 )
@@ -67,7 +69,32 @@ func Load(entryPath string) (*ast.Program, map[string]string, error) {
 // editor's in-memory document buffer instead of stale on-disk
 // content. Empty overrides == Load.
 func LoadWith(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
-	return loadCore(entryPath, overrides)
+	prog, srcs, _, err := loadCoreLit(entryPath, overrides)
+	return prog, srcs, err
+}
+
+// LiterateModule describes a module whose source was tangled from a
+// `.fern.md` literate document during loading (a `.fern` import that
+// resolved to a `<<*>>`-rooted document). It carries what a caller
+// needs to map diagnostics in the generated source back to the lines
+// the author wrote: the document path + source, and the tangle line
+// map (generated line → document line). Keyed in the LoadWithLiterate
+// result by the module's canonical (`.fern`) path.
+type LiterateModule struct {
+	DocPath string
+	DocSrc  string
+	LineMap []literate.Line
+}
+
+// LoadWithLiterate is LoadWith plus a third result: the literate
+// modules tangled while loading (empty when no import resolved to a
+// `.fern.md`). The CLI uses it to remap diagnostics in an imported
+// literate library back onto its document. A `.fern` import resolves to
+// a single-root `.fern.md` when no plain `.fern` of that name exists;
+// importing a multi-file (`file=`) document is an error (it has no
+// single importable module).
+func LoadWithLiterate(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, map[string]*LiterateModule, error) {
+	return loadCoreLit(entryPath, overrides)
 }
 
 // LoadSource loads a program whose entry source is held in memory
@@ -85,22 +112,28 @@ func LoadSource(src string) (*ast.Program, map[string]string, error) {
 }
 
 func loadCore(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, error) {
+	prog, srcs, _, err := loadCoreLit(entryPath, overrides)
+	return prog, srcs, err
+}
+
+func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, map[string]string, map[string]*LiterateModule, error) {
 	entryAbs, err := filepath.Abs(entryPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	loaded := map[string]*module{} // path → loaded module
-	stack := map[string]bool{}     // path → true while in flight (cycle detection)
-	srcs := map[string]string{}    // path → source text (for diag formatting)
-	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides); err != nil {
-		return nil, nil, err
+	loaded := map[string]*module{}      // path → loaded module
+	stack := map[string]bool{}          // path → true while in flight (cycle detection)
+	srcs := map[string]string{}         // path → source text (for diag formatting)
+	lit := map[string]*LiterateModule{} // path → literate provenance (tangled imports)
+	if err := loadRecursive(entryAbs, loaded, stack, srcs, overrides, lit); err != nil {
+		return nil, nil, nil, err
 	}
 	resolveCyclicImports(loaded)
 	prog, err := combine(loaded, entryAbs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return prog, srcs, nil
+	return prog, srcs, lit, nil
 }
 
 // LoadStdlibFlat loads each stdlib path in `paths` (and every
@@ -152,7 +185,7 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 			return nil, fmt.Errorf("LoadStdlibFlat: %q is not a stdlib path (must start with `std/` or `core/`)", p)
 		}
 		canonical := resolveImportPath("", p)
-		if err := loadRecursive(canonical, loaded, stack, srcs, nil); err != nil {
+		if err := loadRecursive(canonical, loaded, stack, srcs, nil, map[string]*LiterateModule{}); err != nil {
 			return nil, err
 		}
 	}
@@ -256,7 +289,7 @@ type module struct {
 // not to enforce a strict DAG). When a stdlib cycle is detected
 // we just return without recursing; the back-edge's `imports`
 // pointer is patched up in the second pass below.
-func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string, overrides map[string]string) error {
+func loadRecursive(path string, loaded map[string]*module, stack map[string]bool, srcs map[string]string, overrides map[string]string, lit map[string]*LiterateModule) error {
 	if _, done := loaded[path]; done {
 		return nil
 	}
@@ -269,11 +302,14 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	stack[path] = true
 	defer delete(stack, path)
 
-	src, err := readSource(path, overrides)
+	src, litMod, err := readModuleSource(path, overrides)
 	if err != nil {
 		return err
 	}
 	srcs[path] = src
+	if litMod != nil {
+		lit[path] = litMod
+	}
 	prog, err := parser.Parse(src)
 	if err != nil {
 		// Stamp the path on each structured error so callers
@@ -303,7 +339,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	childPaths := make([]string, len(prog.Imports))
 	for i, imp := range prog.Imports {
 		childPaths[i] = resolveImportPath(dir, imp.Path)
-		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides); err != nil {
+		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides, lit); err != nil {
 			return err
 		}
 	}
@@ -467,6 +503,49 @@ func readSource(path string, overrides map[string]string) (string, error) {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	return string(b), nil
+}
+
+// readModuleSource reads a module's source like readSource, but when a
+// disk `.fern` target doesn't exist it falls back to a sibling `.fern.md`
+// literate document: the document is tangled and its generated source
+// becomes the module, with the tangle provenance returned for diagnostic
+// remapping. A plain `.fern` always wins over a `.fern.md` of the same
+// name; importing a multi-file (`file=`) document is an error.
+func readModuleSource(path string, overrides map[string]string) (string, *LiterateModule, error) {
+	src, err := readSource(path, overrides)
+	if err == nil {
+		return src, nil, nil
+	}
+	// Only a missing local `.fern` triggers the literate fallback —
+	// stdlib paths and genuine read errors propagate unchanged.
+	if strings.HasPrefix(path, stdlibPrefix) || !strings.HasSuffix(path, ".fern") || !os.IsNotExist(underlyingErr(err)) {
+		return "", nil, err
+	}
+	docPath := path + ".md" // foo.fern → foo.fern.md
+	docSrc, derr := readSource(docPath, overrides)
+	if derr != nil {
+		// No literate sibling either: report the original `.fern` error.
+		return "", nil, err
+	}
+	doc := literate.Parse(docSrc)
+	if doc.HasFiles() {
+		return "", nil, fmt.Errorf("cannot import multi-file literate document %s: it tangles to several modules, not one importable module", docPath)
+	}
+	code, lineMap, terr := doc.Tangle()
+	if terr != nil {
+		// Tangle errors carry document-coordinate positions already.
+		return "", nil, fmt.Errorf("%s", diag.Format(docPath, docSrc, terr))
+	}
+	return code, &LiterateModule{DocPath: docPath, DocSrc: docSrc, LineMap: lineMap}, nil
+}
+
+// underlyingErr unwraps the fmt.Errorf("read %s: %w") that readSource
+// returns so os.IsNotExist can see the *PathError underneath.
+func underlyingErr(err error) error {
+	if u := errors.Unwrap(err); u != nil {
+		return u
+	}
+	return err
 }
 
 // importClosures computes, for each loaded module, the set of

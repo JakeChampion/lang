@@ -92,22 +92,41 @@ func isLiterate(srcPath string) bool {
 	return strings.HasSuffix(srcPath, literateExt)
 }
 
+// litRemap remaps one module's tangled diagnostics back onto the
+// literate document it was generated from: docPath / docSrc identify
+// the `.fern.md` to render against, and remap turns a generated-source
+// position into a document position.
+type litRemap struct {
+	docPath string
+	docSrc  string
+	remap   func(ast.Position) ast.Position
+}
+
 // entry bundles a loaded program with everything needed to render its
-// diagnostics. For a literate document it also carries the original
-// `.fern.md` source and, per generated file, a position remap from
-// tangled coordinates back to document coordinates, so a checker error
-// in generated code points at the line the author actually wrote. A
-// multi-file document (`file=PATH` blocks) tangles to several modules,
-// each with its own remap keyed by that module's absolute path; a
-// single-`<<*>>` document has exactly one remap (keyed by the document
-// path). A non-literate entry has no remaps.
+// diagnostics. Each module generated from a literate document — the
+// entry `.fern.md` (single or multi-file), or an imported `.fern.md`
+// library — gets a litRemap keyed by that module's path, so a checker
+// error in any generated module points at the line the author wrote in
+// the right document. Plain `.fern` / stdlib modules render against
+// their own source from srcs; a fully non-literate program has no
+// remaps.
 type entry struct {
 	prog     *ast.Program
 	srcs     map[string]string
-	path     string                                     // diagnostic-header path: the .fern.md for literate, else the source path
-	src      string                                     // document/entry source for remapped or entry diagnostics
-	entryAbs string                                     // abs path of the entry module
-	remaps   map[string]func(ast.Position) ast.Position // module-abs → tangled→document remap; nil when not literate
+	path     string               // diagnostic-header path for the entry module
+	src      string               // entry-module source (non-literate fallback rendering)
+	entryAbs string               // abs path of the entry module
+	remaps   map[string]*litRemap // module path → its literate-document remap
+}
+
+// litRemaps builds the per-module remap table for the literate modules
+// modload tangled while loading (imported `.fern.md` libraries).
+func litRemaps(litMods map[string]*modload.LiterateModule) map[string]*litRemap {
+	out := map[string]*litRemap{}
+	for modPath, lm := range litMods {
+		out[modPath] = &litRemap{docPath: lm.DocPath, docSrc: lm.DocSrc, remap: remapFor(lm.LineMap)}
+	}
+	return out
 }
 
 // remapFor turns a tangle line map into a position remapper: a tangled
@@ -139,8 +158,10 @@ func remapFor(lineMap []literate.Line) func(ast.Position) ast.Position {
 func loadEntry(srcPath string) (entry, error) {
 	abs := absPath(srcPath)
 	if !isLiterate(srcPath) {
-		prog, srcs, err := modload.Load(srcPath)
-		e := entry{prog: prog, srcs: srcs, path: srcPath, entryAbs: abs}
+		// A plain `.fern` entry may still import `.fern.md` libraries,
+		// so capture their remaps for diagnostics.
+		prog, srcs, litMods, err := modload.LoadWithLiterate(srcPath, nil)
+		e := entry{prog: prog, srcs: srcs, path: srcPath, entryAbs: abs, remaps: litRemaps(litMods)}
 		if srcs != nil {
 			e.src = srcs[abs]
 		}
@@ -163,9 +184,10 @@ func loadEntry(srcPath string) (entry, error) {
 		// Tangle errors carry document-coordinate positions already.
 		return entry{}, fmt.Errorf("%s", diag.Format(srcPath, litSrc, err))
 	}
-	prog, srcs, lerr := modload.LoadWith(srcPath, map[string]string{abs: tangled})
-	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: abs,
-		remaps: map[string]func(ast.Position) ast.Position{abs: remapFor(lineMap)}}
+	prog, srcs, litMods, lerr := modload.LoadWithLiterate(srcPath, map[string]string{abs: tangled})
+	remaps := litRemaps(litMods)
+	remaps[abs] = &litRemap{docPath: srcPath, docSrc: litSrc, remap: remapFor(lineMap)}
+	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: abs, remaps: remaps}
 	if lerr != nil {
 		return e, e.format(lerr)
 	}
@@ -191,11 +213,11 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 		return absPath(filepath.Join(dir, p))
 	}
 	overrides := map[string]string{}
-	remaps := map[string]func(ast.Position) ast.Position{}
+	remaps := map[string]*litRemap{}
 	for _, r := range results {
 		fileAbs := resolve(r.Path)
 		overrides[fileAbs] = r.Code
-		remaps[fileAbs] = remapFor(r.LineMap)
+		remaps[fileAbs] = &litRemap{docPath: srcPath, docSrc: litSrc, remap: remapFor(r.LineMap)}
 	}
 	// Pick the compile entry: the marked / sole file, else the unique
 	// module that defines a `main` function.
@@ -216,7 +238,10 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 	if filepath.IsAbs(entryRel) {
 		entryFile = entryRel
 	}
-	prog, srcs, lerr := modload.LoadWith(entryFile, overrides)
+	prog, srcs, litMods, lerr := modload.LoadWithLiterate(entryFile, overrides)
+	for modPath, lr := range litRemaps(litMods) {
+		remaps[modPath] = lr // imported `.fern.md` libraries
+	}
 	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: resolve(entryRel), remaps: remaps}
 	if lerr != nil {
 		return e, e.format(lerr)
@@ -241,38 +266,32 @@ func (e entry) format(err error) error {
 	if err == nil {
 		return nil
 	}
+	renderRemap := func(lr *litRemap, one error) string {
+		return diag.FormatRemapped(lr.docPath, lr.docSrc, lr.remap, one)
+	}
 	render := func(one error) string {
 		path := ""
 		if f, ok := one.(diag.Filed); ok {
 			path = f.File()
 		}
-		if e.remaps != nil {
-			// Literate: an error attributed to a generated module remaps
-			// onto the document; an unattributed one (the checker's
-			// pre-decl pass) is charged to the entry module's remap.
-			if r, ok := e.remaps[path]; ok {
-				return diag.FormatRemapped(e.path, e.src, r, one)
-			}
-			if path == "" {
-				if r, ok := e.remaps[e.entryAbs]; ok {
-					return diag.FormatRemapped(e.path, e.src, r, one)
-				}
-			}
-			// A real (non-generated) module imported by the document —
-			// stdlib or an on-disk `.fern` — renders against its own source.
-			if src := e.srcs[path]; src != "" {
-				return diag.Format(path, src, one)
-			}
-			if r, ok := e.remaps[e.entryAbs]; ok {
-				return diag.FormatRemapped(e.path, e.src, r, one)
-			}
-			return diag.Format(e.path, e.src, one)
-		}
+		// The entry module, and any unattributed pre-decl error, render
+		// against the entry — remapped onto its document if literate.
 		if path == "" || path == e.entryAbs {
+			if lr, ok := e.remaps[e.entryAbs]; ok {
+				return renderRemap(lr, one)
+			}
 			return diag.Format(e.path, e.src, one)
 		}
+		// An imported literate module → its own document.
+		if lr, ok := e.remaps[path]; ok {
+			return renderRemap(lr, one)
+		}
+		// A plain imported module (stdlib / on-disk `.fern`) → its source.
 		if src := e.srcs[path]; src != "" {
 			return diag.Format(path, src, one)
+		}
+		if lr, ok := e.remaps[e.entryAbs]; ok {
+			return renderRemap(lr, one)
 		}
 		return diag.Format(e.path, e.src, one)
 	}

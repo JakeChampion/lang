@@ -165,7 +165,17 @@ overrides (keyed by path relative to the document dir) and loads from
 the entry. `expandBody`/`expandChunk` are the shared recursion behind
 both `Tangle` (root chunk) and `TangleFiles` (file-root bodies).
 
-The CLI exposes `-tangle` / `-weave`, and `loadEntry` in
+A `.fern` (or `.fern.md`) can also **import** a single-root `.fern.md`
+as a library: `modload.readModuleSource` falls back to a sibling
+`.fern.md` when a `.fern` import target is missing, tangles it, and
+`LoadWithLiterate` returns the per-module `LiterateModule{DocPath,
+DocSrc,LineMap}` provenance so the CLI's `entry.remaps` (now a
+per-module `litRemap{docPath,docSrc,remap}`) maps an imported library's
+diagnostics onto *its* document. Plain `.fern` wins over `.fern.md`;
+importing a multi-file (`file=`) document is an error.
+
+The CLI exposes `-tangle` / `-weave` (each takes `-o`; `-weave -html`
+emits a styled HTML page), and `loadEntry` in
 `cmd/fern/main.go` tangles a `.fern.md` entry in memory before the
 normal compile/`-check`/`-interp` pipeline. Diagnostics are remapped
 back onto the document through `diag.FormatRemapped` (the literate-only
