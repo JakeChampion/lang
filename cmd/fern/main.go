@@ -291,8 +291,12 @@ func (e entry) format(err error) error {
 
 // runLiterateTool implements the `-tangle` / `-weave` literate
 // subcommands: parse the `.fern.md` document and write either the
-// tangled Fern source or the woven Markdown to stdout.
-func runLiterateTool(srcPath string, tangle bool) (int, error) {
+// tangled Fern source or the woven Markdown. With `outPath` empty the
+// result goes to stdout; otherwise it is written to disk — for a
+// multi-file tangle `outPath` is a directory that receives one file per
+// `file=` module (subdirectories created as needed), and for everything
+// else it is a single output file.
+func runLiterateTool(srcPath string, tangle bool, outPath string) (int, error) {
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
 		return 1, err
@@ -301,12 +305,22 @@ func runLiterateTool(srcPath string, tangle bool) (int, error) {
 	doc := literate.Parse(src)
 	if tangle {
 		// A multi-file document (`file=PATH` blocks) tangles to several
-		// modules; print each under a banner so the single stream stays
-		// readable. A single-`<<*>>` document prints just its source.
+		// modules. To stdout they print under `// ==> path <==` banners;
+		// with -o DIR each is written to its own file under DIR.
 		if doc.HasFiles() {
 			results, err := doc.TangleFiles()
 			if err != nil {
 				return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+			}
+			if outPath != "" {
+				for _, r := range results {
+					dest := filepath.Join(outPath, filepath.FromSlash(r.Path))
+					if err := writeGeneratedFile(dest, r.Code); err != nil {
+						return 1, err
+					}
+					fmt.Fprintf(os.Stderr, "wrote %s\n", dest)
+				}
+				return 0, nil
 			}
 			var b strings.Builder
 			for i, r := range results {
@@ -322,11 +336,37 @@ func runLiterateTool(srcPath string, tangle bool) (int, error) {
 		if err != nil {
 			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
 		}
+		if outPath != "" {
+			if err := writeGeneratedFile(outPath, code+"\n"); err != nil {
+				return 1, err
+			}
+			fmt.Fprintf(os.Stderr, "wrote %s\n", outPath)
+			return 0, nil
+		}
 		_, werr := os.Stdout.WriteString(code + "\n")
 		return 0, werr
 	}
-	_, werr := os.Stdout.WriteString(doc.Weave())
+	woven := doc.Weave()
+	if outPath != "" {
+		if err := writeGeneratedFile(outPath, woven); err != nil {
+			return 1, err
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", outPath)
+		return 0, nil
+	}
+	_, werr := os.Stdout.WriteString(woven)
 	return 0, werr
+}
+
+// writeGeneratedFile writes content to path, creating any missing
+// parent directories (so a multi-file tangle can emit `sub/util.fern`).
+func writeGeneratedFile(path, content string) error {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 func main() {
@@ -344,8 +384,8 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
-	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. No codegen.")
-	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. No codegen.")
+	doTangle := flag.Bool("tangle", false, "tangle a literate FILE.fern.md (Knuth-style named chunks) into plain Fern source on stdout. Expands the root chunk `<<*>>`, resolving `<<chunk>>` references in definition order. A document using `file=PATH` blocks tangles to multiple modules, each printed under a `// ==> path <==` banner. With -o set, writes to disk instead: -o DIR receives one file per `file=` module (subdirs created as needed); a single-`<<*>>` document writes -o FILE. No codegen.")
+	doWeave := flag.Bool("weave", false, "weave a literate FILE.fern.md into a cross-referenced Markdown reading document on stdout (or -o FILE) — chunk definitions get ⟨name⟩≡ labels and \"used in\" cross-references. No codegen.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
@@ -436,7 +476,7 @@ func main() {
 	}
 
 	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
-		code, err := runLiterateTool(flag.Arg(0), *doTangle)
+		code, err := runLiterateTool(flag.Arg(0), *doTangle, *out)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
