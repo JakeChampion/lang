@@ -787,6 +787,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
+					strings.HasPrefix(op.Str, "__drop_arr_arr_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
 					op.Str == "__drop_map_str_values" ||
 					op.Str == "__drop_map_str_keys" ||
@@ -808,6 +809,16 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			var fn *Func
 			if elem := strings.TrimPrefix(name, "__drop_arr_struct_"); elem != name {
 				fn = genArrStructDropFn(elem, ptrW)
+			} else if strideStr := strings.TrimPrefix(name, "__drop_arr_arr_"); strideStr != name {
+				// Array-of-(primitive-array) outer drop. The name encodes the
+				// inner element stride; the loop frees each inner buffer +
+				// the outer (genArrArrDropFn). Stride-keyed, so i32[][] and
+				// f32[][] (both inner stride 4) share one generated fn.
+				stride, err := strconv.Atoi(strideStr)
+				if err != nil {
+					continue
+				}
+				fn = genArrArrDropFn(int32(stride), ptrW)
 			} else if mangled := strings.TrimPrefix(name, "__drop_arr_tuple_"); mangled != name {
 				// Routing recorded the tuple shape in genTupleDrops at
 				// the call site (arrElemStructDropName), so the
@@ -3371,6 +3382,22 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, tupleReg map[strin
 		tupleReg[mangled] = tt
 		return "__drop_arr_tuple_" + mangled, true
 	}
+	// Array-of-array element (`i32[][]`'s outer drop): each element is
+	// itself an array whose BUFFER must be freed, not just flat-rc_dec'd
+	// (the __fern_drop_arr_ptr fallback frees the outer buffer but leaks
+	// the inner ones). When the inner array's elements are PRIMITIVE
+	// (non-rc, non-string — freeable by a plain __fern_arr_dec), route to
+	// a stride-keyed __drop_arr_arr_<innerStride> loop. Inner arrays of
+	// rc / string elements need a recursive deep drop (a later slice), so
+	// they keep the flat __fern_drop_arr_ptr (inner buffers still leak,
+	// but safe under no-double-free).
+	if inner, ok := elem.(ast.ArrayType); ok {
+		if !arrElemIsRcTracked(inner.Elem) {
+			if _, isStr := inner.Elem.(ast.StringType); !isStr {
+				return fmt.Sprintf("__drop_arr_arr_%d", ast.ElemSizeBytesFor(inner.Elem, ptrW)), true
+			}
+		}
+	}
 	return "", false
 }
 
@@ -3491,6 +3518,74 @@ func genArrTupleDropFn(mangled string, ptrW int) *Func {
 	return &Func{
 		Name:         "__drop_arr_tuple_" + mangled,
 		Params:       []ast.Param{{Name: "__at", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
+// genArrArrDropFn builds __drop_arr_arr_<innerStride>(ptr) — the
+// array-of-array sibling of genArrStructDropFn. On the OUTER array's last
+// reference (rc==1) it walks each element (a pointer to an INNER array
+// buffer, so the outer stride is ptrW) and frees that inner buffer via
+// __fern_arr_dec(elem, innerStride) — which is_unique-gates the inner
+// array, so a shared inner buffer only dec's — then frees the outer
+// buffer. Generated only for inner arrays of PRIMITIVE elements
+// (arrElemStructDropName's array-of-array branch gates on that), so the
+// inner __fern_arr_dec is the complete reclamation; inner arrays of rc /
+// string elements keep the flat __fern_drop_arr_ptr (a later slice).
+// Slots: 0=ptr (param), 1=i, 2=len (scratch).
+func genArrArrDropFn(innerStride int32, ptrW int) *Func {
+	outerStride := int32(ptrW)
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		// len = mem[ptr-4]
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpSub},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		// i = 0
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// __fern_arr_dec(mem[ptr + i*outerStride], innerStride); drop result.
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: outerStride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpConstI32, I32: innerStride},
+		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpDrop},
+		// i = i + 1; continue.
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		// Dec / free the outer buffer itself (arr_dec re-checks rc==1).
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: outerStride},
+		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         fmt.Sprintf("__drop_arr_arr_%d", innerStride),
+		Params:       []ast.Param{{Name: "__aa", Type: ast.NumberType{}}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -9722,10 +9817,22 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	}
 	switch ty := t.(type) {
 	case ast.ArrayType:
-		// Owned array: free the buffer at rc 0 — the O(N) loop
-		// reclamation. Pointer-element buffers leak their elements (as the
-		// exit sweep's arr_dec and the reassignment overwrite-dec both do —
-		// leak-but-never-UAF); the buffer itself returns to the freelist.
+		// Owned array: free the buffer at rc 0 — the O(N) loop reclamation.
+		// An array-of-(struct / tuple / primitive-array) routes to the
+		// deep per-element loop (__drop_arr_struct_ / __drop_arr_tuple_ /
+		// __drop_arr_arr_) so the element boxes / inner buffers reclaim too,
+		// mirroring the exit sweep (arrElemStructDropName). Without this a
+		// `var g = [[..],[..]]` loop leaked the INNER buffers every iteration
+		// (the profiling probe measured 3264 B → 320064 B). Other pointer-
+		// element buffers (array-of-rc whose element isn't deep-droppable
+		// here) still leak their elements via the plain arr_dec — safe under
+		// no-double-free.
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			break
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
