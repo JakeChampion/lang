@@ -2113,6 +2113,59 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	return nil, false
 }
 
+// discardedOwnedCallResultType classifies a discarded ExprStmt that is a
+// direct call to a USER function returning a pointer-shaped (rc-tracked)
+// value. That result is dropped on the floor today, leaking a fresh
+// struct / array / string / enum every iteration (`mk(i);` in a loop
+// leaked 800 → 80000). It returns the result's static type + true so the
+// statement can dec it via the is_unique-gated emitOwnedTempStackDrop.
+//
+// Safety rests on the is_unique gate inside every emitOwnedTempStackDrop
+// branch: the dec only FREES a uniquely-owned (rc==1) result; an aliased
+// return (a function handing back a param / field) carries the return-
+// transfer inc, so its rc is >= 2 and the gate merely decs it — never frees
+// a value the caller's source still owns. This is exactly the shipped
+// `var t = call(); /* t unused */` exit-sweep dec (computeFreeEligible marks
+// such a t eligible), so it inherits that proven safety.
+//
+// Excluded — the callees that hand back an UNCOUNTED rc==1 alias the
+// is_unique gate cannot distinguish from a fresh value:
+//   - `__`-prefixed builtins / method lowerings: `arr.push(x)` /
+//     `m.set(k, v)` return the receiver's buffer in place at rc==1 (no
+//     inc), so dec'ing would free a live container.
+//   - variant constructors (`Some(p)`): not in FuncSigs, and they store a
+//     borrowed payload uncounted.
+//   - pair-form callees: return a (tag, payload) pair, a different stack
+//     shape.
+//   - indirect (function-typed local) callees: unknown body / borrow shape.
+func (b *builder) discardedOwnedCallResultType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return nil, false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return nil, false
+	}
+	if _, ok := b.info.FuncSigs[id.Name]; !ok {
+		return nil, false // not a known function (excludes variant constructors)
+	}
+	if strings.HasPrefix(id.Name, "__") || b.pairForm[id.Name] {
+		return nil, false
+	}
+	t := b.exprType(e)
+	if t == nil || !ast.IsPointerType(t) {
+		return nil, false
+	}
+	return t, true
+}
+
 // emitOwnedTempStackDrop releases a FRESH owned rc temporary whose value is
 // currently on top of the operand stack — the stage-(a) replacement for the
 // plain OpDrop a discarded ExprStmt would otherwise emit (see
@@ -6047,6 +6100,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// stays byte-identical to the plain-drop baseline below.
 		if exprLeavesValue(n.Expr, b.info) {
 			if t, ok := b.freshOwnedRcTempType(n.Expr); ok {
+				b.emitOwnedTempStackDrop(t)
+				break
+			}
+			// Discarded owned call result: a bare `mk(i);` whose user-function
+			// result is a fresh struct / array / string / enum leaks it (the
+			// floor-drop below). Dec it via the is_unique-gated drop instead —
+			// safe because an aliased return is rc>=2 (return-transfer inc) so
+			// the gate only decs it, never frees a still-owned value. Builtins
+			// / mutators / variant ctors that hand back an uncounted alias are
+			// excluded (discardedOwnedCallResultType).
+			if t, ok := b.discardedOwnedCallResultType(n.Expr); ok {
 				b.emitOwnedTempStackDrop(t)
 				break
 			}
