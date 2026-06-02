@@ -2256,13 +2256,24 @@ exercises the rc==1 branch + the differential gate) stays green.
   `__fern_drop_arr_ptr` native single-word x86_64), then free the outer
   buffer. `Test{X86_64,Arm64,WASM}ArrayOfStrReclaim` — flat 192 B at N=50
   vs N=5000, value-correct, 0 over-releases.
-- **Array-of-(struct[]/enum[]/array[]) inner** (`Foo[][]`, `i32[][][]`):
-  still keep the flat `__fern_drop_arr_ptr` (inner buffers leak). Same
-  recursion pattern as `__drop_arr_arr_str` — route the per-element inner
-  drop to `__drop_arr_struct_` / `__drop_arr_arr_*` — a follow-up.
+- **Array-of-(struct[]/array[]) inner (`P[][]`, `i32[][][]`) — SHIPPED
+  (2026-06-02).** Generalised the array-of-array recursion to ANY
+  rc-tracked inner element: `arrElemStructDropName` now routes an
+  rc-inner-array through a generated `__drop_arr_of_<perElem>` loop whose
+  per-element call is the INNER array's own deep drop —
+  `arrElemStructDropName(inner.Elem)`, recursively (`__drop_arr_struct_P`
+  for `P[][]`, `__drop_arr_arr_4` for `i32[][][]`; the worklist
+  regenerates it transitively). Each helper is_unique-gates, so shared
+  inner arrays only dec. `Test{X86_64,Arm64,WASM}ArrayOfRcReclaim` — `P[][]`
+  480064→bounded, `i32[][][]` 640064→bounded, value-correct (incl. the
+  3-level case), 0 over-releases.
+- **Array-of-(enum[]/closure[]) inner**: still flat (`arrElemStructDropName`
+  declines those element types, so the recursion bottoms out — a follow-up
+  once enum[]/closure[] arrays have their own deep-drop dispatch).
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
   (96 B), map build (256 B), nested array `i32[][]` (192 B), `string[][]`
-  (192 B), string-concat bound-var (wasm 64576 B plateau / natives 0 SSO).
+  (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), string-concat
+  bound-var (wasm 64576 B plateau / natives 0 SSO).
 
 Next Phase-6 steps (open): statement-temporary reclamation (the dominant
 remaining leak — design recorded below); array-of-(rc-inner-array) deep
