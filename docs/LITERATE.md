@@ -148,10 +148,15 @@ tangle errors (missing root, undefined / cyclic chunk). Open a
 `.fern.md` in an editor wired to `fern-lsp` and a type error in a chunk
 squiggles in place.
 
-Position-sensitive features (hover, go-to-definition, completion) are
-intentionally inert for `.fern.md` for now — they'd otherwise report
-results in tangled coordinates the editor would misplace; remapping them
-onto chunk positions is a planned follow-up.
+The **cursor-driven features work too**: hover, go-to-definition,
+find-all-references, completion, and signature help. A request position
+is translated from the document onto the generated source, the tangled
+program is queried, and any result ranges are remapped back onto the
+document — so go-to-definition on a chunk reference jumps to the chunk's
+definition line, references span every use across chunks, and so on. A
+cursor on a non-tangled line (prose, a chunk header, an unused chunk)
+simply returns nothing. Whole-document features (semantic tokens, inlay
+hints, document symbols, rename) remain inert for `.fern.md` for now.
 
 ## Doctests — runnable examples
 

@@ -88,6 +88,12 @@ type docState struct {
 	prog  *ast.Program
 	info  *checker.Info
 	diags []Diagnostic
+
+	// lit is set for literate (`.fern.md`) documents: the top-level
+	// prog/info stay nil (so features that aren't literate-aware stay
+	// inert), while lit carries the tangled program and the line maps
+	// the cursor-driven handlers use to query + remap positions.
+	lit *literateDoc
 }
 
 // ExitCode returns the process exit code the server thinks the
@@ -267,6 +273,21 @@ func (s *Server) handleHover(raw json.RawMessage) (any, *rpcError) {
 	if !ok {
 		return nil, nil
 	}
+	if state.lit != nil {
+		tpos, ok := state.lit.toTangled(p.Position)
+		if !ok {
+			return nil, nil
+		}
+		r := runHover(state.lit.tangled, tpos)
+		if r == nil {
+			return nil, nil
+		}
+		if r.Range != nil {
+			dr := state.lit.toDocRange(*r.Range)
+			r.Range = &dr
+		}
+		return r, nil
+	}
 	if r := runHover(state, p.Position); r != nil {
 		return r, nil
 	}
@@ -282,6 +303,23 @@ func (s *Server) handleDefinition(raw json.RawMessage) (any, *rpcError) {
 	if !ok {
 		return nil, nil
 	}
+	if state.lit != nil {
+		tpos, ok := state.lit.toTangled(p.Position)
+		if !ok {
+			return nil, nil
+		}
+		loc := runDefinition(state.lit.tangled, p.TextDocument.URI, tpos)
+		if loc == nil {
+			return nil, nil
+		}
+		// In-document definitions carry the .fern.md URI; remap their
+		// range back onto the document. (Single-file parse never yields
+		// cross-module locations here.)
+		if loc.URI == p.TextDocument.URI {
+			loc.Range = state.lit.toDocRange(loc.Range)
+		}
+		return loc, nil
+	}
 	if loc := runDefinition(state, p.TextDocument.URI, p.Position); loc != nil {
 		return loc, nil
 	}
@@ -296,6 +334,15 @@ func (s *Server) handleCompletion(raw json.RawMessage) (any, *rpcError) {
 	state, ok := s.docs[p.TextDocument.URI]
 	if !ok {
 		return &completionList{Items: []completionItem{}}, nil
+	}
+	if state.lit != nil {
+		tpos, ok := state.lit.toTangled(p.Position)
+		if !ok {
+			return &completionList{Items: []completionItem{}}, nil
+		}
+		// Completion items are plain insertions (no doc-positioned text
+		// edits), so only the query position needs translating.
+		return runCompletion(state.lit.tangled, tpos), nil
 	}
 	return runCompletion(state, p.Position), nil
 }
@@ -358,6 +405,19 @@ func (s *Server) handleReferences(raw json.RawMessage) (any, *rpcError) {
 	if !ok {
 		return []Location{}, nil
 	}
+	if state.lit != nil {
+		tpos, ok := state.lit.toTangled(p.Position)
+		if !ok {
+			return []Location{}, nil
+		}
+		locs := runReferences(state.lit.tangled, p.TextDocument.URI, tpos)
+		for i := range locs {
+			if locs[i].URI == p.TextDocument.URI {
+				locs[i].Range = state.lit.toDocRange(locs[i].Range)
+			}
+		}
+		return locs, nil
+	}
 	return runReferences(state, p.TextDocument.URI, p.Position), nil
 }
 
@@ -405,6 +465,16 @@ func (s *Server) handleSignatureHelp(raw json.RawMessage) (any, *rpcError) {
 	}
 	state, ok := s.docs[p.TextDocument.URI]
 	if !ok {
+		return nil, nil
+	}
+	if state.lit != nil {
+		tpos, ok := state.lit.toTangled(p.Position)
+		if !ok {
+			return nil, nil
+		}
+		if sh := runSignatureHelp(state.lit.tangled, tpos); sh != nil {
+			return sh, nil
+		}
 		return nil, nil
 	}
 	if sh := runSignatureHelp(state, p.Position); sh != nil {
