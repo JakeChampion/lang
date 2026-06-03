@@ -6189,7 +6189,7 @@ function check_module(mod: parser.Module, s: EmitState): string {
     return errs;
 }
 
-pub function emit_module(mod: parser.Module): string {
+pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
     // into a fresh string at the tail via strbuf_take().
@@ -6365,18 +6365,35 @@ pub function emit_module(mod: parser.Module): string {
     s = s.write("__fern_now_unix_ms:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    s = s.write("    sub sp, sp, #16\n");        // timespec
-    s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
-    s = s.write("    mov x1, sp\n");             // &timespec
-    s = s.write("    mov x8, #113\n");           // clock_gettime
-    s = s.write("    svc #0\n");
-    s = s.write("    ldr x9, [sp]\n");           // tv_sec
-    s = s.write("    mov x10, #1000\n");
-    s = s.write("    mul x9, x9, x10\n");        // sec * 1000
-    s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
-    s = s.write("    ldr x12, =1000000\n");
-    s = s.write("    udiv x11, x11, x12\n");     // nsec / 1e6
-    s = s.write("    add x0, x9, x11\n");
+    s = s.write("    sub sp, sp, #16\n");        // time buffer
+    if (darwin) {
+        // Darwin has no clock_gettime syscall; gettimeofday(tp, NULL)
+        // (BSD 116) fills `struct timeval { i64 tv_sec @0; i32 tv_usec
+        // @8 }`. ms = tv_sec*1000 + tv_usec/1000.
+        s = s.write("    mov x0, sp\n");             // &timeval
+        s = s.write("    mov x1, #0\n");             // tz = NULL
+        s = s.write("    mov x16, #116\n");          // gettimeofday
+        s = s.write("    svc #0x80\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    mov x10, #1000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1000
+        s = s.write("    ldr w11, [sp, #8]\n");      // tv_usec (i32)
+        s = s.write("    mov x12, #1000\n");
+        s = s.write("    udiv x11, x11, x12\n");     // usec / 1000
+        s = s.write("    add x0, x9, x11\n");
+    } else {
+        s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
+        s = s.write("    mov x1, sp\n");             // &timespec
+        s = s.write("    mov x8, #113\n");           // clock_gettime
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    mov x10, #1000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1000
+        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
+        s = s.write("    ldr x12, =1000000\n");
+        s = s.write("    udiv x11, x11, x12\n");     // nsec / 1e6
+        s = s.write("    add x0, x9, x11\n");
+    }
     s = s.write("    mov sp, x29\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
@@ -9049,24 +9066,63 @@ pub function emit_module(mod: parser.Module): string {
         s = s.write(".globl __fern_random_bytes\n");
         s = s.write(".type __fern_random_bytes, %function\n");
         s = s.write("__fern_random_bytes:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // n
-        s = s.write("    bl __fern_alloc\n");        // alloc n bytes (x0 = n)
-        s = s.write("    mov x20, x0\n");           // buf
-        s = s.write("    mov x0, x20\n");           // getrandom(buf, n, 0)
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #0\n");
-        s = s.write("    mov x8, #278\n");          // sys_getrandom
-        s = s.write("    svc #0\n");
-        s = s.write("    mov x0, #16\n");           // string box
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");          // data@0
-        s = s.write("    str x19, [x0, #8]\n");      // len@8
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        if (darwin) {
+            // Darwin: getentropy(buf, len) (BSD 500), max 256 bytes per
+            // call, no flags arg — loop in 256-byte chunks. x21 (cursor)
+            // / x22 (remaining) are callee-save so they survive the
+            // syscall. Mirrors the Go backend's emitRandomBytesRuntime.
+            s = s.write("    stp x29, x30, [sp, #-16]!\n");
+            s = s.write("    mov x29, sp\n");
+            s = s.write("    stp x19, x20, [sp, #-16]!\n");
+            s = s.write("    stp x21, x22, [sp, #-16]!\n");
+            s = s.write("    mov x19, x0\n");           // n
+            s = s.write("    bl __fern_alloc\n");        // alloc n bytes (x0 = n)
+            s = s.write("    mov x20, x0\n");           // buf
+            s = s.write("    mov x21, x20\n");          // write cursor
+            s = s.write("    mov x22, x19\n");          // bytes remaining
+            s = s.write(".Lrb_loop:\n");
+            s = s.write("    cbz x22, .Lrb_done\n");
+            s = s.write("    mov x0, x21\n");
+            s = s.write("    mov x1, #256\n");
+            s = s.write("    cmp x22, x1\n");
+            s = s.write("    csel x1, x22, x1, lo\n");   // min(remaining, 256)
+            s = s.write("    mov x16, #500\n");          // getentropy
+            s = s.write("    svc #0x80\n");
+            s = s.write("    mov x1, #256\n");           // recompute chunk size
+            s = s.write("    cmp x22, x1\n");
+            s = s.write("    csel x1, x22, x1, lo\n");
+            s = s.write("    add x21, x21, x1\n");
+            s = s.write("    sub x22, x22, x1\n");
+            s = s.write("    b .Lrb_loop\n");
+            s = s.write(".Lrb_done:\n");
+            s = s.write("    mov x0, #16\n");           // string box
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    str x20, [x0]\n");          // data@0
+            s = s.write("    str x19, [x0, #8]\n");      // len@8
+            s = s.write("    ldp x21, x22, [sp], #16\n");
+            s = s.write("    ldp x19, x20, [sp], #16\n");
+            s = s.write("    ldp x29, x30, [sp], #16\n");
+            s = s.write("    ret\n");
+        } else {
+            s = s.write("    stp x29, x30, [sp, #-16]!\n");
+            s = s.write("    mov x29, sp\n");
+            s = s.write("    stp x19, x20, [sp, #-16]!\n");
+            s = s.write("    mov x19, x0\n");           // n
+            s = s.write("    bl __fern_alloc\n");        // alloc n bytes (x0 = n)
+            s = s.write("    mov x20, x0\n");           // buf
+            s = s.write("    mov x0, x20\n");           // getrandom(buf, n, 0)
+            s = s.write("    mov x1, x19\n");
+            s = s.write("    mov x2, #0\n");
+            s = s.write("    mov x8, #278\n");          // sys_getrandom
+            s = s.write("    svc #0\n");
+            s = s.write("    mov x0, #16\n");           // string box
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    str x20, [x0]\n");          // data@0
+            s = s.write("    str x19, [x0, #8]\n");      // len@8
+            s = s.write("    ldp x19, x20, [sp], #16\n");
+            s = s.write("    ldp x29, x30, [sp], #16\n");
+            s = s.write("    ret\n");
+        }
         s = s.write(".size __fern_random_bytes, .-__fern_random_bytes\n");
 
         // __fern_i32_gcd(x0 = n, x1 = other) → gcd(|n|, |other|) by
@@ -10305,7 +10361,7 @@ function contains(haystack: string, needle: string): boolean {
 }
 
 function emit_source(src: string): string {
-    return emit_module(parser.parse_module(lexer.tokenize(src)));
+    return emit_module(parser.parse_module(lexer.tokenize(src)), false);
 }
 
 function main(): i32 {
@@ -10496,6 +10552,28 @@ function main(): i32 {
     if (contains(d1, ".type ")) { return 268; }
     if (contains(d1, ".size ")) { return 269; }
     if (contains(d1, ".note.GNU-stack")) { return 270; }
+
+    // arm64-darwin ABI-divergent syscall builtins: emit_module(_, true)
+    // selects gettimeofday for now_unix_ms (Darwin has no clock_gettime
+    // syscall) and chunked getentropy for random_bytes (no getrandom).
+    // These are emitted directly by the code generator (the darwin flag),
+    // not by the darwinize post-pass — so check emit_module output, which
+    // keeps it cheap (no O(n^2) post-pass over a full module). We assert
+    // the positive marker on each path: x16 is a general scratch register,
+    // so "absence of #116/#500" would be a flaky check.
+    var nowsrc: string = "var t: i64 = now_unix_ms(); return 0;";
+    var nowd: string = emit_module(parser.parse_module(lexer.tokenize(nowsrc)), true);
+    if (!contains(nowd, "mov x16, #116")) { return 280; }   // Darwin: gettimeofday
+    if (!contains(nowd, "svc #0x80")) { return 281; }
+    var nowl: string = emit_module(parser.parse_module(lexer.tokenize(nowsrc)), false);
+    if (!contains(nowl, "mov x8, #113")) { return 282; }    // Linux: clock_gettime
+
+    var rbsrc: string = "var b: string = random_bytes(8); return 0;";
+    var rbd: string = emit_module(parser.parse_module(lexer.tokenize(rbsrc)), true);
+    if (!contains(rbd, "mov x16, #500")) { return 283; }    // Darwin: getentropy
+    if (!contains(rbd, ".Lrb_loop:")) { return 284; }       // chunked-loop marker
+    var rbl: string = emit_module(parser.parse_module(lexer.tokenize(rbsrc)), false);
+    if (!contains(rbl, "mov x8, #278")) { return 285; }     // Linux: getrandom
 
     return 0;
 }

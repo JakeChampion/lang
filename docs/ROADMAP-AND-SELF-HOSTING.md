@@ -321,15 +321,31 @@ into the Mach-O dialect:
 Mirrors the Go backend's `EmitWithOptions{Darwin}` branch one-for-one.
 Supported surface is the **core language** (arithmetic, control flow,
 functions, structs, enums, arrays, strings incl. heap concat, closures,
-maps, stdout/stdin I/O). The ABI-divergent syscalls — `clock_gettime` →
-`gettimeofday` (now_unix_ms), `getrandom` → chunked `getentropy`
-(random_bytes), `fstat` (different `st_size` offset; file metadata), and
-the subprocess family — have no number-only Darwin form and are left as
-their Linux encoding, so programs using them aren't yet covered. Gated by
-`internal/e2e/self_host_macho_test.go` (cross-links each program with
-clang + lld and asserts a valid arm64 Mach-O executable off Apple
-Silicon; executes + checks exit codes on the macOS arm64 CI runner) plus
-the `darwinize` self-test cases in `asm_arm64.fern`'s own `main()`.
+maps, stdout/stdin I/O).
+
+The **ABI-divergent** syscalls (different struct layout / chunking, not
+just a number swap) are emitted directly by the code generator via a
+`darwin` flag threaded into `asm_arm64.emit_module` — `darwinize`'s
+lexical post-pass can't restructure them. Ported so far:
+
+- `now_unix_ms` → `gettimeofday` (BSD 116; Darwin has no `clock_gettime`
+  syscall), reading `struct timeval`'s `tv_usec` and dividing by 1000;
+- `random_bytes` → chunked `getentropy` (BSD 500, 256-byte cap per call,
+  no flags arg) in place of Linux `getrandom`.
+
+Still on their Linux encoding (out of scope, documented gaps): `monotonic_ns`
+(needs `mach_absolute_time` + `mach_timebase_info` — the Go backend
+doesn't port it either), `read_file`'s `fstat` (different `st_size`
+offset), and the subprocess family. These are emitted but only misbehave
+if a program actually calls them on Darwin.
+
+Gated by `internal/e2e/self_host_macho_test.go` — cross-links each
+program with clang + lld and asserts a valid arm64 Mach-O executable off
+Apple Silicon, and on the macOS arm64 CI runner builds the self-host CLI
+natively, runs it, and **executes** the emitted Mach-O (incl. the
+`now_unix_ms` / `random_bytes` cases) asserting exit codes — plus the
+`darwinize` + Darwin-builtin self-test cases in `asm_arm64.fern`'s
+own `main()`.
 
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 

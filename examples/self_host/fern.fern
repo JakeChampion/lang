@@ -270,13 +270,14 @@ function main(): i32 {
     var full: parser.Module = parser.module_with_builtins(merged);
     var out_asm: string = "";
     if (target == "arm64") {
-        out_asm = asm_arm64.emit_module(full);
+        out_asm = asm_arm64.emit_module(full, false);
     } else if (target == "arm64-darwin") {
-        // Same arm64 code generator; darwinize() reskins the GAS
-        // output into the Mach-O dialect clang/ld64 link on Apple
-        // Silicon. See asm_arm64.darwinize for the transform + the
-        // supported-feature surface.
-        out_asm = asm_arm64.darwinize(asm_arm64.emit_module(full));
+        // Same arm64 code generator with the Darwin syscall builtins
+        // (gettimeofday / getentropy) selected via the darwin flag;
+        // darwinize() then reskins the GAS output into the Mach-O
+        // dialect clang/ld64 link on Apple Silicon. See
+        // asm_arm64.darwinize for the transform + supported surface.
+        out_asm = asm_arm64.darwinize(asm_arm64.emit_module(full, true));
     } else if (target == "wasm") {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.

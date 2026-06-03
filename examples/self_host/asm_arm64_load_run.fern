@@ -136,6 +136,6 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
-    write(asm_arm64.emit_module(parser.module_with_builtins(merged)));
+    write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
     return 0;
 }

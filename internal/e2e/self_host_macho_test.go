@@ -114,6 +114,14 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		// Option payload + match — exercises the enum-box runtime.
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42},
+		// now_unix_ms — the Darwin gettimeofday(116) port (vs Linux
+		// clock_gettime). A plausible post-2023 wall-clock value → 7.
+		{"now_unix_ms", `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`, 7},
+		// random_bytes — the Darwin chunked getentropy(500) port (vs
+		// Linux getrandom). Assert the length round-trips AND the bytes
+		// were actually written (OR of 8 bytes != 0 → the syscall filled
+		// the buffer; a zero OR would mean it silently failed).
+		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 	}
 
 	for _, c := range cases {
