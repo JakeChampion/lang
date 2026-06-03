@@ -117,6 +117,9 @@ struct Ctx {
     // map_str_names: the subset of map_names whose values are strings, so
     // `.get` / `.get_or` results are typed as string.
     map_str_names: string[],
+    // map_str_key_names: the subset whose keys are strings (built via
+    // map_new, not map_new_i32), so `.keys()` is typed as string[].
+    map_str_key_names: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -290,6 +293,72 @@ function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: stri
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
                     acc = collect_str_val_map_names(m.arms[k].body, cx, map_names, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// map_root_is_str: does a map-rooted expression's constructor select
+// string keys (map_new) rather than i32 keys (map_new_i32)?
+function map_root_is_str(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "map_new"; },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "set") { return map_root_is_str(fa.obj); }
+                    return false;
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// is_str_key_map is true when `e` denotes a string-keyed map: a tracked
+// map_str_key_names local, or a string-keyed constructor / `.set` chain.
+function is_str_key_map(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.map_str_key_names, id.name); },
+        _ => { return map_root_is_str(e); },
+    }
+    return false;
+}
+
+// collect_str_key_map_names returns the subset of map_names built with a
+// string-keyed constructor (map_new), found by scanning the map-building
+// `var` / assignment for each.
+function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (contains_str(map_names, v.name) && !contains_str(acc, v.name) && map_root_is_str(v.init)) {
+                    acc = acc.push(v.name);
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (contains_str(map_names, a.target) && !contains_str(acc, a.target) && map_root_is_str(a.value)) {
+                    acc = acc.push(a.target);
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_str_key_map_names(f.then_body, map_names, acc);
+                acc = collect_str_key_map_names(f.else_body, map_names, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_str_key_map_names(w.body, map_names, acc); },
+            parser.StmtFor(f) => { acc = collect_str_key_map_names(f.body, map_names, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_str_key_map_names(m.arms[k].body, map_names, acc);
                     k = k + 1;
                 }
             },
@@ -1122,6 +1191,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (fa.field == "delete" && c.args.len() == 1) {
                             return "(call $__fern_map_delete " + mrecv + " " + emit_expr(c.args[0], cx, depth + 1) + ")";
                         }
+                        if (fa.field == "keys" && c.args.len() == 0) {
+                            return "(call $__fern_map_keys " + mrecv + ")";
+                        }
+                        if (fa.field == "values" && c.args.len() == 0) {
+                            return "(call $__fern_map_values " + mrecv + ")";
+                        }
                     }
                     // The remaining string methods are string-only.
                     if (is_string_expr(fa.obj, cx)) {
@@ -1945,6 +2020,32 @@ function map_helpers(): string {
     o = o + "      (i32.store (local.get $box) (i32.sub (i32.load (local.get $box)) (i32.const 1)))\n";
     o = o + "      (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.add (i32.load (i32.add (local.get $box) (i32.const 24))) (i32.const 1)))))\n";
     o = o + "    (local.get $box))\n";
+    // $__fern_map_keys(box) / $__fern_map_values(box) → a fresh array block
+    // ([len][cap][elems]) of the live keys / values, in probe order. count
+    // sits at box+0; keys at box+8, vals at box+12 — $src selects which.
+    o = o + "  (func $__fern_map_snapshot (param $box i32) (param $src i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $arr i32) (local $cap i32) (local $used i32) (local $base i32) (local $i i32) (local $j i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $box)))\n";
+    o = o + "    (local.set $arr (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 4)))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "    (local.set $base (i32.load (i32.add (local.get $box) (local.get $src))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (local.set $j (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $cap)))\n";
+    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "        (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $j) (i32.const 4))) (i32.load (i32.add (local.get $base) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    o = o + "  (func $__fern_map_keys (param $box i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 8))))\n";
+    o = o + "  (func $__fern_map_values (param $box i32) (result i32)\n";
+    o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 12))))\n";
     return o;
 }
 
@@ -2601,6 +2702,10 @@ function is_string_array_expr(e: parser.Expr, cx: Ctx): boolean {
                 parser.ExprFieldAccess(fa) => {
                     // s.split(sep) yields a string[].
                     if (fa.field == "split") { return is_string_expr(fa.obj, cx); }
+                    // m.keys() on a string-keyed map / m.values() on a
+                    // string-valued map yields a string[].
+                    if (fa.field == "keys" && is_str_key_map(fa.obj, cx)) { return true; }
+                    if (fa.field == "values" && is_str_val_map(fa.obj, cx)) { return true; }
                     // A receiver method declared to return string[].
                     return is_str_array_type(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
                 },
@@ -2779,10 +2884,15 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         f64_names: f64_names, f64_funcs: f64_funcs,
         ret_f64: is_float_type(f.ret_type),
         map_names: map_names, map_str_names: [],
+        map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
     };
-    // Discover string locals first, then (with accurate is_string_expr)
-    // the maps whose values are strings.
-    var cx2: Ctx = collect_str_locals_stmts(f.body, cx);
+    // String-valued maps are needed during collect_str_locals_stmts (so a
+    // `for v in m.values()` binds v as string). Seed them from
+    // string-literal set values first (is_string_expr is accurate for
+    // those even with no locals known), then run the string-locals pass,
+    // then refine once more to catch string-local set values.
+    var cx0: Ctx = Ctx { ...cx, map_str_names: collect_str_val_map_names(f.body, cx, map_names, []) };
+    var cx2: Ctx = collect_str_locals_stmts(f.body, cx0);
     return Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
 }
 
