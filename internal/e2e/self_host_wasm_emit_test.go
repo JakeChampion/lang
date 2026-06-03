@@ -180,6 +180,17 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-upper-concat", "function main(): i32 { write(\"hi \".to_upper() + \"there\"); return 0; }", 0, "HI there"},
 		{"str-method-chain", "function main(): i32 { write(\"AbC\".to_lower().to_upper()); return 0; }", 0, "ABC"},
 		{"str-upper-len", "function main(): i32 { return \"abc\".to_upper().len(); }", 3, ""},
+		// i32 arrays (read side): literal, index, .len(), while-sum.
+		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3, ""},
+		{"arr-index-first", "function main(): i32 { var a = [42, 99, 7]; return a[0]; }", 42, ""},
+		{"arr-index-middle", "function main(): i32 { var a = [42, 99, 7]; return a[1]; }", 99, ""},
+		{"arr-index-last", "function main(): i32 { var a = [42, 99, 7]; return a[2]; }", 7, ""},
+		{"arr-index-via-var", "function main(): i32 { var a = [10, 20, 30, 40]; var i = 2; return a[i]; }", 30, ""},
+		{"arr-sum-while", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 15, ""},
+		{"arr-of-exprs", "function main(): i32 { var x = 4; var a = [x, x + 1, x * 2]; return a[0] + a[1] + a[2]; }", 17, ""},
+		{"arr-empty-len", "function main(): i32 { var a = [0]; var b = a; return b.len(); }", 1, ""},
+		{"arr-index-computed", "function main(): i32 { var a = [5, 10, 15, 20]; return a[1 + 1]; }", 15, ""},
+		{"arr-param", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { return sum([10, 20, 12]); }", 42, ""},
 	}
 
 	for _, tc := range cases {
