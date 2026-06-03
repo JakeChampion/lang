@@ -3,8 +3,16 @@
 Implementation plan for refcounted heap values with compile-time
 Perceus optimisation.
 
-Date: 2026-05-20.
-Status: design, not implementation.
+Date: 2026-05-20 (design); implementation tracked inline below.
+Status: IMPLEMENTED. Phases 0–3 + the Phase-6 reclamation work have
+shipped (RC with compile-time drop placement, the real freelist allocator,
+and per-type reclamation for arrays / structs / enums / maps / tuples /
+closures / strings, including nested/generic shapes and statement
+temporaries). The remaining open items are collected at the end of the
+Phase-6 section ("Next Phase-6 steps (open)") and in the deferred 5f / 5g
+notes; the per-phase prose below is kept as the historical record. The
+design "Open questions" at the very bottom were all resolved during
+implementation — see the resolutions noted there.
 
 ## Why
 
@@ -540,7 +548,12 @@ volume.
 
 #### Phase 1e: widen to strings / structs / enums / closures
 
-NOT YET STARTED. Each non-array type category needs:
+SHIPPED. Structs, enums, closures, tuples and (wasm + x86_64) strings all
+grew rc tracking + inc/dec at alias/exit/overwrite sites + per-type drop
+handlers in the phases that followed (see Phase 3's "Drop handlers" record
+and the Phase-6 bullets). Native-arm64 heap strings are the one exception —
+hard-blocked on the SSO native flip (deferred item 5g below). The original
+checklist is kept for the record:
 
   - Layout migration (Phase 0-style) adding the rc slot.
   - rc=1 init at every alloc site.
@@ -2070,9 +2083,11 @@ bump growth is identical at N=50 and N=5000 on x86_64 + arm64 + wasm —
 the proof that Phase 5h / push-loop reclamation holds memory bounded,
 which the soundness-only tests couldn't show.
 
-Next Phase-6 steps (open): wire `__heap_bump_bytes()` into a benchmark
-harness over the self-host + edge-handler workloads to profile hot
-allocation sites, then evaluate retiring `strbuf_*`.
+Next Phase-6 steps (at the time): wire `__heap_bump_bytes()` into a
+profiling pass over compound workloads, then evaluate retiring `strbuf_*`.
+(DONE — the profiling pass drove the tuple / map / nested-array / string
+slices recorded below; the current open list lives at the END of this
+section, not here.)
 
 **Tuple reclamation — SHIPPED ON ALL THREE BACKENDS (2026-06-02).**
 A `__heap_bump_bytes()` audit confirmed array / struct / string loop-body
@@ -2294,21 +2309,41 @@ exercises the rc==1 branch + the differential gate) stays green.
   480064→bounded + an adversarial shared-payload (`[Arr(a)]`, `a` live)
   value-correct with 0 over-releases; `TestSelfHostVM*` (heavy `Value[]`
   user) green.
-- **Array-of-(generic-enum[]/closure[]) inner**: generic enum
-  instantiations (`Option[…][]`) need the `genEnumDrops` registry
-  `arrElemStructDropName` doesn't carry; `closure[]` needs a per-closure
-  array-drop dispatch — both keep the flat path (follow-up).
+- **Generic-enum-array (`Option[T][]`) — SHIPPED.** Threaded the
+  `genEnumDrops` registry into `arrElemStructDropName` and routed the enum
+  element through `dropFnNameFor`, which substitutes the type args,
+  registers the substituted decl, and returns the per-element
+  `__drop_enum_<mangled>`. `Test{X86_64,Arm64,WASM}GenericEnumArrayReclaim`
+  pin it (240064→bounded + adversarial shared-payload, 0 over-releases).
+  Array-of-enum is now complete (concrete + generic).
+- **`closure[]` inner**: only `closure[]` arrays still keep the flat path —
+  `arrElemStructDropName` declines `FuncType` elements (needs a per-closure
+  array-drop dispatch). See "Next Phase-6 steps (open)" below.
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
   (96 B), map build (256 B), nested array `i32[][]` (192 B), `string[][]`
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
-  (256 B wasm), string-concat bound-var (wasm 64576 B plateau / natives 0).
+  (256 B wasm), `Option[i32[]][]` (160 B wasm), string-concat bound-var
+  (wasm 64576 B plateau / natives 0), nested concat `(a+b+c)` (wasm 64576 B
+  plateau / x86_64 0 / arm64 144 B).
 
-Next Phase-6 steps (open): array-of-(enum[]/closure[]) inner deep drop
-(`arrElemStructDropName` declines those element types today); then evaluate
-retiring `strbuf_*`. Statement-temporary reclamation is now SHIPPED (all
-three stages — see the bullet above; design note retained below for the
-record). Enum reuse-path payloads remain deferred (needs the global payload
-rebalance).
+Next Phase-6 steps (open):
+  - **`closure[]` array-element drop** — `arrElemStructDropName` declines
+    `FuncType` elements, so an array of closures flat-dec's them and leaks
+    their captured env blocks. Needs a per-closure array-drop dispatch (the
+    `__drop_arr_struct_` / `__drop_arr_enum_` analogue). The only clean,
+    safe, do-it-now reclamation item left. (Array-of-enum — concrete `E[]`
+    and generic `Option[T][]` — and nested `E[][]` already SHIPPED via the
+    `__drop_arr_enum_` / `__drop_arr_of_` recursion.)
+  - **Retire `strbuf_*`** — evaluate dropping the legacy string builder now
+    that string concat/slice + nested-concat intermediates reclaim. Cleanup,
+    not a leak.
+  - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
+    rc-neutral by design, reclaiming needs the global "inc enum payloads on
+    construction + rebalance every drop" change. Risky.
+
+Statement-temporary reclamation is SHIPPED (all three stages + the
+nested-concat-intermediate follow-up — see the bullets above; design note
+retained below for the record).
 
 ### Statement-temporary reclamation — design note (SHIPPED, all three stages 2026-06-02)
 
@@ -2428,10 +2463,18 @@ The semantic surface doesn't change. After each phase, the full
 existing e2e suite must pass with identical exit codes, stdout,
 and stderr.
 
-## Open questions
+## Open questions (ALL RESOLVED during implementation)
 
-These need decisions before implementation starts. Listed in
-roughly-decreasing order of how blocking they are.
+These were the pre-implementation decisions; every one was settled and the
+shipped code follows the "Recommended" answer in each (kept below for the
+rationale): rc is **i32, panic on overflow** (1); the rc word sits at a
+**fixed `-8` offset** from the data pointer (2); drop handlers are
+**per-type generated direct calls** — `__fern_drop_*` / `__drop_*`, no
+runtime vtable (3); drops are placed **at the IR level** during lowering
+(4); a drop-time fault **aborts** (5); strings are **special-cased per
+backend** (two-word wasm / LSB-tagged x86_64 / boxed arm64), which is why
+native-arm64 heap-string rc is still blocked on the SSO flip — item 5g
+(6, 7). Original discussion follows.
 
 1. **rc width: i32 or u32 or i64?**
    - i32: 4 bytes, 2 billion ref ceiling. Cheap. Saturation
