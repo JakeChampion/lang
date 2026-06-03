@@ -40,6 +40,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
+	// A fixed file in the preopened dir for read_file() cases.
+	if err := os.WriteFile(filepath.Join(dir, "rf_test.txt"), []byte("file-contents-123"), 0o644); err != nil {
+		t.Fatalf("write rf_test.txt: %v", err)
+	}
+
 	cases := []struct {
 		name   string
 		source string
@@ -313,6 +318,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"args-index", "function main(): i32 { var a = args(); write(a[1]); write(a[2]); return 0; }", 0, "ALPHABETA"},
 		{"args-for", "function main(): i32 { var a = args(); var n = 0; for s in a { n = n + s.len(); } if (n > 0) { write(a[1]); return 0; } return 1; }", 0, "ALPHA"},
 		{"args-method", "function main(): i32 { var a = args(); write(a[1].to_lower()); return 0; }", 0, "alpha"},
+		// read_file(path): Result[string, IoError] via wasi path_open/fd_read
+		// (runner preopens the project dir, which contains rf_test.txt =
+		// "file-contents-123").
+		{"readfile-ok", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 1; } } return 2; }", 0, "file-contents-123"},
+		{"readfile-len", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { return s.len(); }, Err(e) => { return 0; } } return 1; }", 17, ""},
+		{"readfile-method", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { if (s.starts_with(\"file-\")) { return 42; } return 1; }, Err(e) => { return 2; } } return 3; }", 42, ""},
+		{"readfile-missing", "function main(): i32 { match (read_file(\"nope_missing.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 0; } } return 2; }", 0, "err"},
 	}
 
 	for _, tc := range cases {
@@ -329,7 +341,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 			// (harmless for the other cases).
 			// Fixed env vars + trailing argv ("ALPHA" "BETA") so env()/
 			// args() cases have something to read (harmless otherwise).
-			cmd := exec.Command("wasmtime", "run", "--env", "FERNTEST=hello123", "--env", "EMPTYVAR=", watPath, "ALPHA", "BETA")
+			cmd := exec.Command("wasmtime", "run", "--env", "FERNTEST=hello123", "--env", "EMPTYVAR=", "--dir", dir, watPath, "ALPHA", "BETA")
 			out, _ := cmd.Output() // captures the program's stdout
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
