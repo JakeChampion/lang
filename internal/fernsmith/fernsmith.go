@@ -97,6 +97,25 @@ func GenMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainProgram()
 }
 
+// GenPrintableMain emits a runnable `main` that PRINTS a sequence
+// of computed values to stdout (then returns 0), rather than packing
+// one byte into the return code. The printable profile re-admits
+// float (f32) and exercises string expressions, observing each
+// result through a portable channel (booleans, raw string bytes, or
+// a truncating `as i32` cast) so the stdout differential oracle in
+// internal/e2e can compare them across interp / x86-64 / arm64 / wasm
+// without tripping over float formatting. Deterministic in seed.
+func GenPrintableMain(seed uint64) string {
+	return newRandGen(seed, DefaultConfig()).MainPrintableProgram()
+}
+
+// GenPrintableMainBytes is GenPrintableMain's byte-stream counterpart
+// for `testing.F` — each generator decision consumes one byte, so the
+// fuzzer's mutations drive generation and corpus minimisation works.
+func GenPrintableMainBytes(data []byte) string {
+	return newByteGen(data, DefaultConfig()).MainPrintableProgram()
+}
+
 // New constructs a generator with default limits, drawing from rng.
 func New(rng *rand.Rand) *Generator { return NewWithConfig(rng, DefaultConfig()) }
 
@@ -232,12 +251,27 @@ type Profile int
 const (
 	ProfileFree Profile = iota
 	ProfileRunnable
+	// ProfilePrintable is the stdout-oracle path. Like
+	// ProfileRunnable it produces a runnable `main`, but it
+	// observes results by PRINTING them (rather than packing one
+	// byte into the return code), which lets the differential
+	// oracle compare full stdout across backends. Crucially it
+	// re-admits float (f32) expressions — the bug class the
+	// return-byte oracle can't reach — but only ever observes a
+	// float through a PORTABLE channel: a boolean comparison
+	// ("T"/"F") or a truncating `as i32` cast. Raw float
+	// formatting (whose digit count Lang under-specifies — see
+	// docs/FLOAT-SEMANTICS.md) is never compared, so NaN / Inf /
+	// rounding stay off the oracle's diff while the codegen for
+	// float arithmetic and comparison is still exercised.
+	ProfilePrintable
 )
 
 // floatsAllowed reports whether the current profile's
-// production set includes f32 / float-typed values. Today only
-// ProfileFree allows them.
-func (p Profile) floatsAllowed() bool { return p == ProfileFree }
+// production set includes f32 / float-typed values. ProfileFree
+// and ProfilePrintable allow them; ProfileRunnable (the return-
+// byte oracle) does not.
+func (p Profile) floatsAllowed() bool { return p == ProfileFree || p == ProfilePrintable }
 
 // Generator emits source text directly while tracking an in-scope
 // set of typed identifiers. Each expression production picks
@@ -634,6 +668,149 @@ func (g *Generator) MainProgram() string {
 	return b.String()
 }
 
+// MainPrintableProgram emits the printable-oracle counterpart of
+// MainProgram: a `main` that prints a sequence of computed values and
+// returns 0. See ProfilePrintable for the portability contract. Var
+// declarations stay on the float-free runnable type pool (so floats
+// only ever appear inside the print observations, never as a bare
+// `var` whose formatting would be compared); the observations
+// themselves draw in float (f32) arithmetic + comparison, including a
+// guaranteed NaN/Inf-aware float comparison so the oracle reaches the
+// unordered-comparison codegen the return-byte path can't.
+func (g *Generator) MainPrintableProgram() string {
+	prevProfile := g.profile
+	prevHelpers := g.helpers
+	prevStructShapes := g.structShapes
+	prevEnumShapes := g.enumShapes
+	prevNextNominal := g.nextNominal
+	g.profile = ProfilePrintable
+	g.helpers = nil
+	g.structShapes = nil
+	g.enumShapes = nil
+	g.nextNominal = 0
+	defer func() {
+		g.profile = prevProfile
+		g.helpers = prevHelpers
+		g.structShapes = prevStructShapes
+		g.enumShapes = prevEnumShapes
+		g.nextNominal = prevNextNominal
+	}()
+
+	var b strings.Builder
+	g.preludeDecls(&b)
+
+	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
+	for i := 0; i < nHelpers; i++ {
+		g.funcDecl(&b, i)
+	}
+
+	sc := newScope(nil)
+	b.WriteString("function main(): i32 { ")
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
+	defer func() { g.currentReturnType = prevRet }()
+	prevLocals := g.localHelpers
+	g.localHelpers = nil
+	defer func() { g.localHelpers = prevLocals }()
+
+	// Runtime float 0.0 / 1.0 for the special-value (NaN / Inf)
+	// comparison observation. Runtime vars (not literals) so
+	// constfold neither rejects nor pre-evaluates `__fz / __fz`.
+	b.WriteString("var __fz: f32 = 0.0f32; var __fo: f32 = 1.0f32; ")
+
+	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
+	for i := 0; i < n; i++ {
+		if g.maybeEmitWhile(&b, sc) {
+			continue
+		}
+		if g.maybeEmitForEach(&b, sc) {
+			continue
+		}
+		vt := g.pickMainVarType()
+		vname := fmt.Sprintf("v%d", i)
+		fmt.Fprintf(&b, "var %s: %s = ", vname, g.typeName(vt))
+		g.expr(&b, sc, vt, 0)
+		b.WriteString("; ")
+		sc.declare(vt, vname)
+	}
+
+	// One mandatory NaN/Inf-aware float comparison (guarantees the
+	// unordered path is covered every program, and that __fz/__fo are
+	// referenced), then a handful of random observations.
+	g.emitFloatSpecialObservation(&b, sc)
+	nObs := g.ch.intN(maxInt(g.cfg.MaxStmts, 1))
+	for i := 0; i < nObs; i++ {
+		g.emitPrintObservation(&b, sc)
+	}
+
+	b.WriteString("return 0; }\n")
+	return b.String()
+}
+
+// emitPrintObservation writes one `print(...)` statement observing a
+// generated expression through a backend-portable channel: integers
+// via .to_string(), booleans (including float comparisons) as
+// "T"/"F", strings raw, and floats truncated through `as i32`.
+func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
+	switch g.ch.intN(6) {
+	case 0:
+		b.WriteString("print((")
+		g.expr(b, sc, tI32, 0)
+		b.WriteString(").to_string()); ")
+	case 1:
+		b.WriteString("print((")
+		g.expr(b, sc, tI64, 0)
+		b.WriteString(").to_string()); ")
+	case 2:
+		b.WriteString("print(if (")
+		g.expr(b, sc, tBool, 0)
+		b.WriteString(") { \"T\" } else { \"F\" }); ")
+	case 3:
+		b.WriteString("print(")
+		g.expr(b, sc, tString, 0)
+		b.WriteString("); ")
+	case 4:
+		// Float value observed by truncation — exercises float
+		// arithmetic + the saturating float→int conversion, both
+		// portable.
+		b.WriteString("print(((")
+		g.expr(b, sc, tF32, 0)
+		b.WriteString(") as i32).to_string()); ")
+	default:
+		g.emitFloatSpecialObservation(b, sc)
+	}
+}
+
+// emitFloatSpecialObservation prints the result of a float comparison
+// ("T"/"F") whose operands may be NaN or ±Inf (built from the runtime
+// __fz / __fo zeros and ones). Float division is well-defined (never
+// traps) so these are safe to emit; the boolean result is portable,
+// which is what makes the unordered-comparison codegen testable.
+func (g *Generator) emitFloatSpecialObservation(b *strings.Builder, sc *scope) {
+	op := []string{"<", "<=", ">", ">=", "==", "!="}[g.ch.intN(6)]
+	b.WriteString("print(if ((")
+	g.emitFloatSpecialOperand(b, sc)
+	fmt.Fprintf(b, ") %s (", op)
+	g.emitFloatSpecialOperand(b, sc)
+	b.WriteString(")) { \"T\" } else { \"F\" }); ")
+}
+
+// emitFloatSpecialOperand writes one operand of a special-value float
+// comparison: NaN (0/0), +Inf (1/0), -Inf ((0-1)/0), or an ordinary
+// finite f32 expression.
+func (g *Generator) emitFloatSpecialOperand(b *strings.Builder, sc *scope) {
+	switch g.ch.intN(4) {
+	case 0:
+		b.WriteString("(__fz / __fz)") // NaN
+	case 1:
+		b.WriteString("(__fo / __fz)") // +Inf
+	case 2:
+		b.WriteString("((__fz - __fo) / __fz)") // -Inf
+	default:
+		g.expr(b, sc, tF32, 1) // ordinary finite f32 expression
+	}
+}
+
 // mainVarTypes are the gtypes legal for `var v<N>` declarations
 // inside `main` under ProfileRunnable. Strings are exercised
 // through `len(s)` in the i32 path (see tryCompositeProduction),
@@ -671,6 +848,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// load generated source through modload, not bare parser.Parse.
 	b.WriteString("import \"core/no_prelude\";\n")
 	b.WriteString("import \"std/i32\";\n")
+	b.WriteString("import \"std/i64\";\n")
 	b.WriteString("import \"std/string\";\n")
 	b.WriteString("import \"std/array\";\n")
 	b.WriteString("import \"core/int\";\n")
