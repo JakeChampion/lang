@@ -229,6 +229,19 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	runCase("stat_missing",
 		`function main(): i32 { match (stat("`+filepath.Join(dir, "no_such_stat_zzz")+`")) { Ok(fs) => { return 1; }, Err(e) => { return 99; } } }`,
 		99)
+
+	// remove_file — unlinkat(35) -> Darwin 472, AT_FDCWD -2. Full file
+	// lifecycle: write a file, delete it, then stat must report it gone
+	// (the Err arm). Returns 7 iff write + remove + the "now gone" stat
+	// all behaved.
+	rmPath := filepath.Join(dir, "rm_target.txt")
+	runCase("remove_file_lifecycle",
+		`function main(): i32 {
+  match (write_file("`+rmPath+`", "x")) { Some(e) => { return 1; }, None => {} }
+  match (remove_file("`+rmPath+`")) { Some(e) => { return 2; }, None => {} }
+  match (stat("`+rmPath+`")) { Ok(fs) => { return 3; }, Err(e) => { return 7; } }
+}`,
+		7)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,

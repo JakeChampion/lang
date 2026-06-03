@@ -355,15 +355,17 @@ Ported so far via the flag:
   stat, vs u32@16 / i64@48 on Linux arm64). `S_IFMT`/`S_IFREG`/`S_IFDIR`
   are the same POSIX constants. is_file / is_dir / size all read back
   correctly.
+- `remove_file` — `unlinkat` (#35) -> Darwin #472 (same args, flags 0)
+  + `AT_FDCWD` -2 + errno normalisation.
 
 Still on their Linux encoding (out of scope, documented gaps):
-`monotonic_ns` (needs `mach_absolute_time` + `mach_timebase_info` — the
-Go backend doesn't port it either), the directory-enumeration builtins
-(`read_dir` / `remove_dir_all` use `getdents64`, whose Darwin equivalent
-`getdirentries` has a different `dirent` layout; `temp_dir` / the
-`*at`-based removers still use Linux `AT_FDCWD` / syscall numbers), and
-the subprocess family. These are emitted but only misbehave if a program
-actually calls them on Darwin.
+`monotonic_ns` (needs `mach_absolute_time` / `CNTVCT_EL0` — the Go
+backend doesn't port it either), `temp_dir` (depends on `monotonic_ns`
+for its unique suffix, and on `mkdirat`), and the directory-enumeration
+builtins (`read_dir` / `remove_dir_all` use `getdents64`, whose Darwin
+equivalent `getdirentries` has a different `dirent` layout — the
+genuinely structural one), and the subprocess family. These are emitted
+but only misbehave if a program actually calls them on Darwin.
 
 Gated by `internal/e2e/self_host_macho_test.go` — cross-links each
 program with clang + lld and asserts a valid arm64 Mach-O executable off
