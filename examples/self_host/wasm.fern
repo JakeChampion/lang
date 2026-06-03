@@ -89,6 +89,42 @@ struct Ctx {
     sv_types: string[],
     sf_names: string[],
     sf_types: string[],
+    of_names: string[],
+    of_payloads: string[],
+    ol_names: string[],
+    ol_payloads: string[],
+}
+
+// parse_option_payload extracts the Some/Ok payload type from an
+// `Option[T]` / `Result[T, E]` type spelling, or "" otherwise.
+function parse_option_payload(t: string): string {
+    if (t.len() > 8 && t[0:7] == "Option[" && t[t.len() - 1] == 93) {
+        return t[7:t.len() - 1];
+    }
+    if (t.len() > 8 && t[0:7] == "Result[" && t[t.len() - 1] == 93) {
+        var inner: string = t[7:t.len() - 1];
+        // First top-level comma separates Ok payload from Err type.
+        var i: i32 = 0;
+        var depth: i32 = 0;
+        while (i < inner.len()) {
+            var c: i32 = inner[i];
+            if (c == 91) { depth = depth + 1; }
+            else if (c == 93) { depth = depth - 1; }
+            else if (c == 44 && depth == 0) { return trim_str(inner[0:i]); }
+            i = i + 1;
+        }
+        return trim_str(inner);
+    }
+    return "";
+}
+
+// trim_str strips leading/trailing ASCII spaces.
+function trim_str(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && s[a] == 32) { a = a + 1; }
+    while (b > a && s[b - 1] == 32) { b = b - 1; }
+    return s[a:b];
 }
 
 // struct_field_index returns the 0-based field position of `field` in the
@@ -179,6 +215,23 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
             if (is_struct_type(cx.structs, ft)) { return ft; }
             return "";
         },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// scrutinee_payload returns the Some/Ok payload type of an Option/Result-
+// typed expression: a call to an option-returning function, or an
+// option-typed local. "" when unknown.
+function scrutinee_payload(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return lookup_pair(cx.of_names, cx.of_payloads, id.name); },
+                _ => { return ""; },
+            }
+        },
+        parser.ExprIdent(id) => { return lookup_pair(cx.ol_names, cx.ol_payloads, id.name); },
         _ => { return ""; },
     }
     return "";
@@ -1416,9 +1469,15 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
+                // Option/Result-typed var → track its payload type so a
+                // later `match (v)` types the Some/Ok binding.
+                var optpay: string = parse_option_payload(v.type_name);
+                if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
                 var styp: string = v.type_name;
                 if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
-                if (is_struct_type(cx.structs, styp)) {
+                if (optpay.len() > 0) {
+                    cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
+                } else if (is_struct_type(cx.structs, styp)) {
                     cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
                 } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
                     cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
@@ -1441,8 +1500,26 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 cx = collect_str_locals_stmts(f.body, cx);
             },
             parser.StmtMatch(m) => {
+                // Type each Some/Ok arm's binding with the scrutinee's
+                // payload type (string / string[] / struct), so the arm
+                // body's string/struct operations resolve.
+                var pt: string = scrutinee_payload(m.scrutinee, cx);
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
+                    match (m.arms[k].pattern) {
+                        parser.PatVariant(pv) => {
+                            if ((pv.type_name == "Some" || pv.type_name == "Ok") && pv.binding.len() > 0 && pv.binding != "_") {
+                                if (pt == "string") {
+                                    cx = Ctx { ...cx, locals: cx.locals.push(pv.binding) };
+                                } else if (is_str_array_type(pt)) {
+                                    cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(pv.binding) };
+                                } else if (is_struct_type(cx.structs, pt)) {
+                                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pt) };
+                                }
+                            }
+                        },
+                        _ => {},
+                    }
                     cx = collect_str_locals_stmts(m.arms[k].body, cx);
                     k = k + 1;
                 }
@@ -1454,14 +1531,20 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[]): Ctx {
     var locals: string[] = [];
     var str_arrays: string[] = [];
     var sv_names: string[] = [];
     var sv_types: string[] = [];
+    var ol_names: string[] = [];
+    var ol_payloads: string[] = [];
     var i: i32 = 0;
     while (i < f.params.len()) {
-        if (is_struct_type(structs, f.params[i].type_name)) {
+        var pop: string = parse_option_payload(f.params[i].type_name);
+        if (pop.len() > 0) {
+            ol_names = ol_names.push(f.params[i].name);
+            ol_payloads = ol_payloads.push(pop);
+        } else if (is_struct_type(structs, f.params[i].type_name)) {
             sv_names = sv_names.push(f.params[i].name);
             sv_types = sv_types.push(f.params[i].type_name);
         } else if (is_str_array_type(f.params[i].type_name)) {
@@ -1474,8 +1557,36 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var cx: Ctx = Ctx {
         tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
         structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
+        of_names: of_names, of_payloads: of_payloads, ol_names: ol_names, ol_payloads: ol_payloads,
     };
     return collect_str_locals_stmts(f.body, cx);
+}
+
+// collect_opt_func_names / _payloads: free functions returning
+// Option[T] / Result[T, E], with their Some/Ok payload type T.
+function collect_opt_func_names(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && parse_option_payload(mod.funcs[i].ret_type).len() > 0) {
+            out = out.push(mod.funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_opt_func_payloads(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0) {
+            var p: string = parse_option_payload(mod.funcs[i].ret_type);
+            if (p.len() > 0) { out = out.push(p); }
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // collect_struct_funcs returns parallel arrays (names→struct return type)
@@ -1518,7 +1629,7 @@ function returns_value(ret_type: string): boolean {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[]): string {
     var head: string = "  (func $" + f.name;
     var pnames: string[] = [];
     var i: i32 = 0;
@@ -1549,7 +1660,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
@@ -1896,6 +2007,8 @@ pub function emit_module(mod: parser.Module): string {
     var str_arr_funcs: string[] = collect_str_arr_funcs(mod);
     var sf_names: string[] = collect_struct_func_names(mod);
     var sf_types: string[] = collect_struct_func_types(mod);
+    var of_names: string[] = collect_opt_func_names(mod);
+    var of_payloads: string[] = collect_opt_func_payloads(mod);
 
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
@@ -1942,7 +2055,7 @@ pub function emit_module(mod: parser.Module): string {
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
         if (f.receiver_type.len() == 0) {
-            out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types);
+            out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads);
             if (f.name == "main") { has_main = true; }
         }
         j = j + 1;
@@ -1958,7 +2071,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads);
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";

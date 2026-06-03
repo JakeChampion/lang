@@ -261,6 +261,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"try-err-propagates", "function inner(): Result[i32, i32] { return Err(13); } function f(): Result[i32, i32] { var v = inner()?; return Ok(v + 1); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
 		{"try-chain", "function a(): Option[i32] { return Some(10); } function b(): Option[i32] { return Some(20); } function f(): Option[i32] { var x = a()?; var y = b()?; return Some(x + y + 12); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 		{"try-inline", "function inner(): Option[i32] { return Some(20); } function f(): Option[i32] { return Some(inner()? + inner()? + 2); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
+		// PROBE: Option[string] payload operations.
+		{"payload-len", "function f(): Option[string] { return Some(\"hello\"); } function main(): i32 { match (f()) { Some(s) => { return s.len(); }, None => { return 0; } } return 1; }", 5, ""},
+		{"payload-write", "function f(): Option[string] { return Some(\"hi\"); } function main(): i32 { match (f()) { Some(s) => { write(s); return 0; }, None => { return 0; } } return 1; }", 0, "hi"},
+		{"payload-method", "function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { match (f()) { Some(s) => { write(s.to_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
+		{"payload-concat", "function f(): Option[string] { return Some(\"foo\"); } function g(): Option[string] { return Some(\"bar\"); } function main(): i32 { match (f()) { Some(a) => { match (g()) { Some(b) => { write(a + b); return 0; }, None => { return 0; } } }, None => { return 0; } } return 1; }", 0, "foobar"},
+		{"payload-local-scrut", "function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { var o: Option[string] = f(); match (o) { Some(s) => { write(s.to_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
+		{"payload-struct", "struct P { x: i32, y: i32 } function f(): Option[P] { return Some(P { x: 40, y: 2 }); } function main(): i32 { match (f()) { Some(p) => { return p.x + p.y; }, None => { return 0; } } return 1; }", 42, ""},
+		{"payload-try-string", "function f(): Option[string] { return Some(\"hello\"); } function g(): Option[i32] { var s = f()?; return Some(s.len()); } function main(): i32 { match (g()) { Some(n) => { return n; }, None => { return 0; } } return 1; }", 5, ""},
 	}
 
 	for _, tc := range cases {
