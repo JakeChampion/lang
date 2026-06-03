@@ -83,6 +83,22 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			mang := mangle(id.Name, c.TypeArgs)
 			instantiations[instKey{name: id.Name, mang: mang}] = c.TypeArgs
 			id.Name = mang
+			// The checker may have stamped the callee's type
+			// parameters onto the argument expressions (e.g. an
+			// array literal passed for a `T[]` param gets ElemType=T).
+			// The caller isn't a generic clone, so nothing else
+			// substitutes those — do it here from the concrete
+			// TypeArgs, unless they're still parametric (a generic
+			// caller; the clone loop handles that case).
+			if !hasParamType(c.TypeArgs) && len(gen.TypeParams) == len(c.TypeArgs) {
+				sub := make(map[string]ast.Type, len(gen.TypeParams))
+				for i, name := range gen.TypeParams {
+					sub[name] = c.TypeArgs[i]
+				}
+				for _, arg := range c.Args {
+					substituteExpr(arg, sub)
+				}
+			}
 			c.TypeArgs = nil
 		})
 		// Rewrite generic StructLits in the same body — TypeArgs
@@ -629,6 +645,12 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 			substituteExpr(arm.Body, sub)
 		}
 	case *ast.ArrayLit:
+		// Substitute the literal's element-type annotation too — it
+		// drives the per-element store width at codegen, so leaving a
+		// ParamType here built a `string[]` / pointer-element array
+		// with single-word stores into two-word slots (the len word
+		// stayed uninitialised → corruption on drop).
+		x.ElemType = substituteType(x.ElemType, sub)
 		for _, e := range x.Elems {
 			substituteExpr(e, sub)
 		}

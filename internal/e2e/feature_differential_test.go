@@ -218,6 +218,169 @@ function main(): i32 {
     print(s.1.to_string());
     return 0;
 }`},
+
+		// ---- generics / monomorphisation ----
+		// Includes a generic over a pointer-element array (struct[]):
+		// the array literal's ElemType used to keep the unsubstituted
+		// type parameter, building single-word stores into the
+		// pointer-width slots and corrupting the array.
+		{"generics", `import "std/i32";
+struct Box { v: i32 }
+function identity[T](x: T): T { return x; }
+function snd[A, B](a: A, b: B): B { return b; }
+function len_of[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 {
+    print(identity(42).to_string());
+    print(identity("hi"));
+    print(snd(1, "x"));
+    print(snd("y", 99).to_string());
+    print(len_of([1, 2, 3, 4]).to_string());
+    print(len_of([Box{v: 1}, Box{v: 2}, Box{v: 3}]).to_string());
+    print(len_of(["a", "b"]).to_string());
+    return 0;
+}`},
+
+		// ---- recursive enum (binary tree) ----
+		{"recursive_enum_tree", `import "std/i32";
+enum Tree { Leaf(i32), Node(Tree, Tree) }
+function sum(t: Tree): i32 {
+    match (t) { Leaf(v) => { return v; }, Node(l, r) => { return sum(l) + sum(r); } }
+}
+function depth(t: Tree): i32 {
+    match (t) {
+        Leaf(v) => { return 1; },
+        Node(l, r) => { var dl = depth(l); var dr = depth(r); if (dl > dr) { return dl + 1; } return dr + 1; }
+    }
+}
+function main(): i32 {
+    var t: Tree = Node(Node(Leaf(1), Leaf(2)), Leaf(3));
+    print(sum(t).to_string());
+    print(depth(t).to_string());
+    return 0;
+}`},
+
+		// ---- struct arrays with string fields ----
+		{"struct_array_string_field", `import "std/i32";
+struct P { x: i32, name: string }
+function main(): i32 {
+    var ps: P[] = [P{x: 1, name: "a"}, P{x: 2, name: "b"}, P{x: 3, name: "c"}];
+    var i: i32 = 0;
+    var out: string = "";
+    while (i < ps.len()) { out = out + ps[i].name + ps[i].x.to_string(); i = i + 1; }
+    print(out);
+    return 0;
+}`},
+
+		// ---- nested closures (closure returning closure) ----
+		{"nested_closures", `import "std/i32";
+function adder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function compose(n: i32): (i32) => i32 {
+    var f = adder(n);
+    function g(x: i32): i32 { return f(f(x)); }
+    return g;
+}
+function main(): i32 { var h = compose(5); print(h(10).to_string()); return 0; }`},
+
+		// ---- enum with string payloads, in an array ----
+		{"enum_string_payloads", `import "std/i32";
+enum Msg { Text(string), Num(i32), Pair(string, i32) }
+function show(m: Msg): string {
+    match (m) {
+        Text(s) => { return "T:" + s; },
+        Num(n) => { return "N:" + n.to_string(); },
+        Pair(s, n) => { return "P:" + s + ":" + n.to_string(); }
+    }
+}
+function main(): i32 {
+    var msgs: Msg[] = [Text("hi"), Num(42), Pair("k", 7)];
+    var i: i32 = 0;
+    while (i < msgs.len()) { print(show(msgs[i])); i = i + 1; }
+    return 0;
+}`},
+
+		// ---- the ? propagation operator ----
+		{"try_operator", `import "std/i32";
+function parse(s: string): Option[i32] { if (s == "42") { return Some(42); } return None; }
+function chain(s: string): Option[i32] { var v = parse(s)?; return Some(v * 2); }
+function main(): i32 {
+    match (chain("42")) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
+    match (chain("xx")) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
+    return 0;
+}`},
+
+		// ---- map keys()/values() iteration ----
+		{"map_iteration", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m.set(1, 10); m.set(2, 20); m.set(3, 30);
+    var total: i32 = 0;
+    for k in m.keys() { total = total + k; }
+    print(total.to_string());
+    var vsum: i32 = 0;
+    for v in m.values() { vsum = vsum + v; }
+    print(vsum.to_string());
+    return 0;
+}`},
+
+		// ---- floats in aggregates (struct / tuple / array / map) ----
+		{"float_aggregates", `import "std/float";
+import "std/i32";
+import "core/map";
+struct V3 { x: f64, y: f64, z: f64 }
+function dot(a: V3, b: V3): f64 { return a.x*b.x + a.y*b.y + a.z*b.z; }
+function main(): i32 {
+    var a: V3 = V3{x: 1.0, y: 2.0, z: 3.0};
+    var b: V3 = V3{x: 4.0, y: 5.0, z: 6.0};
+    print(dot(a, b).to_string());
+    var fs: f64[] = [1.5, 2.5, 3.5];
+    var sum: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < fs.len()) { sum = sum + fs[i]; i = i + 1; }
+    print(sum.to_string());
+    var m: Map[i32, f64] = map_new(8);
+    m.set(1, 3.14);
+    print(m.get_or(1, 0.0).to_string());
+    return 0;
+}`},
+
+		// ---- stdlib: json / hex / base64 / math / format ----
+		{"stdlib_json", `import "std/json";
+import "std/i32";
+function main(): i32 {
+    match (json.json_parse("{\"a\": 42, \"b\": \"hi\"}")) {
+        Some(v) => {
+            match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("noa"); } }
+            match (json.json_get_string(v, "b")) { Some(s) => { print(s); }, None => { print("nob"); } }
+        },
+        None => { print("parsefail"); }
+    }
+    return 0;
+}`},
+		{"stdlib_hex_base64", `import "std/hex";
+import "std/base64";
+function main(): i32 {
+    print(hex.hex_encode("AB"));
+    print(base64.base64_encode("Hello"));
+    print(base64.base64_decode("TWFu"));
+    print(hex.hex_decode("4142"));
+    return 0;
+}`},
+		{"stdlib_array_combinators", `import "std/i32";
+import "std/array";
+function main(): i32 {
+    var xs: i32[] = [5, 2, 8, 1, 9, 3];
+    var s = xs.sorted_asc();
+    print(s[0].to_string());
+    print(s[5].to_string());
+    print(xs.sum().to_string());
+    match (xs.median()) { Some(m) => { print(m.to_string()); }, None => {} }
+    match (xs.min_max()) { Some(p) => { print(p.0.to_string() + ".." + p.1.to_string()); }, None => {} }
+    return 0;
+}`},
 	}
 	for _, c := range cases {
 		c := c
