@@ -1483,6 +1483,73 @@ family is complete — an audit of all nine `emitAliasInc` sites confirms
 every genuine last-use move is gated (see "Remaining frontier" under
 Phase 5 for what's deliberately left).
 
+**Precise drops — the garbage-free property (slice 1 SHIPPED, straight-line
+subset).** This is the defining Perceus feature: free a value right after its
+LAST USE rather than at scope/function exit, so peak memory matches the live
+set. Until now drops were placed at the function-exit sweep (plus the move
+optimisations + a runtime low-address guard that let the IR skip control-flow-
+sensitive liveness). `computePreciseDrops` adds true last-use placement for
+a deliberately narrow, obviously-sound subset: an owned, `freeEligible`,
+single-declaration, non-reassigned, non-moved local that is a
+**PRIMITIVE-element array** (`i32[]` / `u8[]` / `f32[]` / `i64[]` /
+`boolean[]` — the large data buffers; `preciseDroppableType`) whose every
+reference is a top-level statement (none inside a nested if / while / for /
+match block) is dropped right after its last top-level use. `lowerFunc`
+iterates the body's top-level statements and splices the per-statement
+`emitPreciseDrop` (`__fern_arr_dec` + zero-slot) in.
+
+Why primitive arrays only (slice 1): their drop is a PURE buffer free — no
+element/field decs — so it can never touch a buffer shared via an aliased
+element, which keeps the change both sound AND free of rc-count churn (a
+container drop that decs a shared field would change `__rc_get` assertions in
+the `RcAliasInc*` tests without any real bug). They're also the bulk of the
+peak-memory win.
+
+Two alias gates keep it sound against UNCOUNTED aliases (a precise drop frees,
+so a live uncounted alias would dangle — exactly the class the broader
+exit-sweep avoids via the taint analysis):
+  - `flowsIntoUncountedAlias`: skip a local that flows into a pointer-result
+    call / slice / if-expr / match-expr after declaration (`f(x)` may RETURN
+    x with no inc — `id(x)` / a borrowed-param-returning function).
+  - `initMayAliasLive`: skip a local whose INIT is such an alias producer
+    (`var v3 = id(v2)` binds v3 to v2's buffer uncounted). A scalar-arg call
+    (`fill(100)`) returns a FRESH value and stays eligible — the common
+    builder-call win. Both gates treat an unresolved-generic (`ParamType`)
+    result as possibly-pointer, since `b.exprType` doesn't instantiate generic
+    call results (the bug a `id[T]`-of-a-struct differential seed caught:
+    `mayAliasResult`). Counted-alias inits (`var y = x` / `x.field` / `x[i]`,
+    `needsRcIncOnAlias`) are also skipped — precise-dropping them only cancels
+    the alias inc (sound, but marginal and churns the rc-count tests).
+
+Soundness otherwise rests on **zeroing the slot after the drop**: the exit
+sweep (and any earlier `return`'s sweep) loads the zeroed slot and
+null-guards to a no-op, so there's no double-drop on any path; and the deeper
+invariant is that **a precise drop is the exact dec the exit sweep would do,
+moved earlier to a point with no later use — sound exactly when the
+exit-sweep dec is, since rc accuracy is unchanged**. A mis-analysis surfaces
+as a null-slot read (trap / wrong value caught by the differential corpus),
+never a silent UAF.
+
+Measured win (`internal/e2e/rc_heap_bump_precise_drop_test.go`): 4
+sequentially-dead size-class arrays reclaim to ~1 block instead of 4 (wasm
+416 B vs the live-set 4×; natives' freelist arena makes the bump probe
+insensitive but the RSS benefit is real). Value-correctness + the
+aliased-into-a-container + function-return-of-arg invariants + 0 over-release
+pinned on all three backends; self-host + the full differential gate stay
+green.
+
+**Remaining for true garbage-free (later slices):** (a) widen the type scope
+to structs / enums / tuples / rc-element + string arrays (their deep drops
+dec nested references — needs the rc-count tests reframed for early release);
+(b) control-flow-AWARE placement — drop a local in the branch where it
+becomes dead, or before an `if` when dead in both arms (slice 1
+conservatively skips any local used inside a nested block); (c) reassigned /
+multi-declaration locals; (d) dead-alias cancellation (the counted-alias
+inits skipped above). And the orthogonal big Perceus lever — **general FBIP
+reuse tokens** (drop-guided in-place reuse of a freed cell by an adjacent
+same-shape allocation, beyond today's pattern-matched
+`tryStructReuseOverwrite` / `tryEnumReuseOverwrite` / array push).
+
 ### Phase 5: Drop reuse + borrowed params
 
 Two separate PRs:

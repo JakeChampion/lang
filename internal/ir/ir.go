@@ -2384,6 +2384,290 @@ func (b *builder) emitRcDecLocalsAtExit() {
 	b.emitRcDecLocalsAtExitExcept("")
 }
 
+// computePreciseDrops implements the Perceus "garbage-free" precise-drop
+// placement for the STRAIGHT-LINE subset: an owned, free-eligible rc local
+// (array / struct / Map / enum / tuple) whose every reference is a top-level
+// statement (none inside a nested if / while / for / match block) and that
+// isn't moved or reassigned is dropped right AFTER its last top-level use,
+// instead of waiting for the function-exit sweep. Freeing the value at its
+// last use rather than at scope end lowers peak memory — a later same-shaped
+// allocation reuses the freed block instead of bumping a new one (measured:
+// two sequentially-dead 2 KiB arrays go 4128 → ~2064 B high-water on wasm,
+// four go 8256 → ~2064).
+//
+// Soundness: the drop is the SAME deep-drop the exit sweep emits, followed by
+// ZEROING the slot. Zeroing makes it control-flow-robust and fail-loud:
+//   - the function-exit sweep (and any earlier `return`'s sweep) loads the
+//     zeroed slot and null-guards to a no-op, so there's no double-drop on
+//     any path — a `return` BEFORE the precise point still drops the live
+//     value via that sweep, a `return` after sees the zeroed slot.
+//   - correctness never depends on the drop being the TRUE last use: it's a
+//     dec, freeing only at rc 0, so a value aliased (inc'd) into a container
+//     survives; and a mis-analysis surfaces as a null-slot read (trap / wrong
+//     value caught by the differential corpus), not a silent UAF.
+//
+// Conservative gates (single declaration, no reassignment, no nested-block
+// use) keep slice 1 obviously sound; control-flow-aware placement inside
+// branches is a later slice. Returns stmtIndex → names to drop after lowering
+// that top-level statement.
+func (b *builder) computePreciseDrops() map[int][]string {
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return nil
+	}
+	stmts := b.fn.Body.Stmts
+	declIdx := map[string]int{}
+	reassigned := map[string]bool{}
+	for i, st := range stmts {
+		switch s := st.(type) {
+		case *ast.Var:
+			if _, dup := declIdx[s.Name]; dup {
+				reassigned[s.Name] = true // shadowed redeclaration — bail
+			} else {
+				declIdx[s.Name] = i
+			}
+		case *ast.ExprStmt:
+			if a, ok := s.Expr.(*ast.Assign); ok {
+				if id, ok := a.Target.(*ast.Ident); ok {
+					reassigned[id.Name] = true
+				}
+			}
+		}
+	}
+	isNestedStmt := func(st ast.Stmt) bool {
+		switch st.(type) {
+		case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
+			return true
+		}
+		return false
+	}
+	references := func(st ast.Node, name string) bool {
+		found := false
+		ast.Walk(st, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == name {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	out := map[int][]string{}
+	for name, di := range declIdx {
+		if reassigned[name] || b.movedLocals[name] || !b.freeEligible[name] || !b.localNameUnique(name) {
+			continue
+		}
+		if !b.preciseDroppableType(name) {
+			continue
+		}
+		// The local's INIT may itself produce an uncounted alias of a still-
+		// live value — a slice (view), a pointer-typed if/match expr, or a
+		// call whose result could BE a pointer argument (`var v3 = id(v2)`).
+		// Precise-dropping such a local would free a buffer the source still
+		// holds. A scalar-arg call (`fill(100)`) returns a fresh value and
+		// stays eligible (the common builder-call win). The OTHER end — the
+		// source flowing INTO the call — is handled by flowsIntoUncountedAlias
+		// below.
+		if v, ok := stmts[di].(*ast.Var); ok {
+			if b.initMayAliasLive(v.Init) {
+				continue
+			}
+			// Slice 1 targets dead OWNED values (fresh literals / scalar-arg
+			// builder calls) — the clear peak-memory win. A local whose init
+			// is a counted ALIAS (`var y = x` / `x.field` / `x[i]` —
+			// needsRcIncOnAlias) is excluded: precise-dropping it only cancels
+			// the alias inc (sound, but a marginal win that needlessly churns
+			// the rc-count golden tests). Dead-alias cancellation is a later
+			// slice.
+			if needsRcIncOnAlias(v.Init, b) {
+				continue
+			}
+		}
+		nested := false
+		unsafe := false
+		last := -1
+		for i := di + 1; i < len(stmts); i++ {
+			if !references(stmts[i], name) {
+				continue
+			}
+			if isNestedStmt(stmts[i]) {
+				nested = true
+				break
+			}
+			// A reference inside a pointer-producing call / slice / if-expr /
+			// match-expr can create an UNCOUNTED alias of `name` that outlives
+			// the drop point (e.g. `var v3 = id(v2)` — a generic identity
+			// returns its borrowed arg with no inc, so v3 shares v2's box). The
+			// inc'd-alias sites (`var y = x` / `x.field` / `x[i]` via
+			// needsRcIncOnAlias, and container literals which inc the stored
+			// value) are SAFE — the precise drop only decs there. Bail on the
+			// uncounted-alias shapes; freeing `name` there would strand the
+			// alias. (Conservative: also skips a scalar-returning call's
+			// pointer-typed sibling args — refined in a later slice.)
+			if b.flowsIntoUncountedAlias(stmts[i], name) {
+				unsafe = true
+				break
+			}
+			last = i
+		}
+		if nested || unsafe {
+			continue
+		}
+		if last < 0 {
+			// Declared but never used after — drop right after the decl
+			// (a dead owned alloc reclaims immediately).
+			last = di
+		}
+		// A `return` whose value is this local is handled by the Return
+		// lowering's own move-on-return / sweep; dropping after it is dead
+		// code. Skip — the value reclaims at the return instead.
+		if _, isRet := stmts[last].(*ast.Return); isRet {
+			continue
+		}
+		out[last] = append(out[last], name)
+	}
+	return out
+}
+
+// flowsIntoUncountedAlias reports whether `name` appears inside an
+// expression that produces an UNCOUNTED pointer alias of it within `st`: a
+// pointer-returning call (the result may BE the arg, e.g. `id(x)` / a
+// borrowed-param-returning function, with no inc at the binding), a slice
+// (always a view into its source), or a pointer-typed if/match expression
+// (whose value position aliases a branch operand without an inc). References
+// via needsRcIncOnAlias shapes (bare ident / field / index) and container
+// literals are NOT flagged — those inc the value, so a precise drop only
+// decs and the alias survives. Used to gate precise-drop placement.
+func (b *builder) flowsIntoUncountedAlias(st ast.Node, name string) bool {
+	hasName := func(n ast.Node) bool {
+		found := false
+		ast.Walk(n, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == name {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	bad := false
+	ast.Walk(st, func(n ast.Node) bool {
+		if bad {
+			return false
+		}
+		switch e := n.(type) {
+		case *ast.SliceExpr:
+			if hasName(e) {
+				bad = true
+			}
+		case *ast.Call:
+			if b.mayAliasResult(e) && hasName(e) {
+				bad = true
+			}
+		case *ast.IfExpr:
+			if b.mayAliasResult(e) && hasName(e) {
+				bad = true
+			}
+		case *ast.MatchExpr:
+			if b.mayAliasResult(e) && hasName(e) {
+				bad = true
+			}
+		}
+		return !bad
+	})
+	return bad
+}
+
+// mayAliasResult reports whether expression `e`'s result may be a heap pointer
+// that aliases one of its operands — conservatively treating an UNRESOLVED
+// generic result (a `ParamType`, e.g. `id[T]`'s `T`) or an unknown type as
+// pointer-shaped, since `b.exprType` doesn't instantiate generic call results.
+// Concrete scalar results (i32 / bool / float) are not aliasing.
+func (b *builder) mayAliasResult(e ast.Expr) bool {
+	t := b.exprType(e)
+	if t == nil {
+		return true
+	}
+	if _, isParam := t.(ast.ParamType); isParam {
+		return true
+	}
+	return ast.IsPointerType(t)
+}
+
+// initMayAliasLive reports whether a Var initialiser may bind an UNCOUNTED
+// pointer alias of a value that outlives it: a slice (a view into its
+// source), a pointer-typed if / match expression (aliases a branch operand),
+// or a pointer-returning call with at least one pointer-typed argument /
+// receiver (the result may be that argument — `id(v2)` returns its arg). A
+// call with only scalar args (`fill(100)` / `make(n)`) returns a fresh value
+// that can't alias a live pointer local, so it stays precise-droppable.
+func (b *builder) initMayAliasLive(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.SliceExpr:
+		return true
+	case *ast.IfExpr:
+		return ast.IsPointerType(b.exprType(x))
+	case *ast.MatchExpr:
+		return ast.IsPointerType(b.exprType(x))
+	case *ast.Call:
+		// The local is droppable (pointer-shaped), so the call's result is
+		// pointer regardless of what b.exprType reports for a generic. The
+		// alias risk is a pointer-shaped ARGUMENT / receiver the result could
+		// be (`id(v2)` returns its arg); a scalar-only-arg call (`fill(100)`)
+		// returns a fresh value.
+		for _, a := range x.Args {
+			if b.mayAliasResult(a) {
+				return true
+			}
+		}
+		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.mayAliasResult(fa.Target) {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// preciseDroppableType reports whether `name`'s declared type is in slice 1's
+// scope: an owned array with PRIMITIVE (non-rc-tracked, non-string) elements —
+// i32[] / u8[] / f32[] / i64[] / boolean[] etc. These are the large data
+// buffers whose early reclamation drives the peak-memory win, and their drop
+// (`__fern_arr_dec`) is a pure buffer free with NO element/field decs — so it
+// never touches a buffer shared via an aliased element, keeping the change
+// sound AND free of rc-count churn. Structs / enums / tuples / rc-element and
+// string arrays (whose deep drops dec nested references) are deferred to a
+// later slice.
+func (b *builder) preciseDroppableType(name string) bool {
+	t, ok := b.localDeclType(name)
+	if !ok {
+		return false
+	}
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return false
+	}
+	if arrElemIsRcTracked(at.Elem) {
+		return false
+	}
+	if _, isStr := at.Elem.(ast.StringType); isStr {
+		return false
+	}
+	return true
+}
+
+// emitPreciseDrop deep-drops the owned local `name` at its last use and
+// zeroes the slot (see computePreciseDrops). Net-zero on the operand stack.
+func (b *builder) emitPreciseDrop(name string) {
+	slot, ok := b.locals[name]
+	if !ok {
+		return
+	}
+	t, ok := b.localDeclType(name)
+	if !ok {
+		return
+	}
+	b.emitOwnedSlotDrop(slot, t)
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: slot})
+}
+
 // isOwnedRcLocal reports whether `name` is a declared rc-tracked local
 // (array / struct incl. Map / enum / closure) that the exit sweep would
 // dec. Params are borrowed (not in info.Locals, never swept) so they're
@@ -4852,8 +5136,21 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
-	if err := b.stmt(fn.Body); err != nil {
-		return nil, err
+	// Perceus precise drops (garbage-free, straight-line subset): drop an
+	// owned rc local right after its last top-level use instead of at the
+	// exit sweep, lowering peak memory. Iterate the function body's top-
+	// level statements directly (the Block case is a bare loop) so we can
+	// splice the per-statement precise drops in; nested blocks still lower
+	// through b.stmt unchanged. precise[i] is empty when RcFreeEnabled is
+	// off, so this is identical to b.stmt(fn.Body) on the no-free path.
+	precise := b.computePreciseDrops()
+	for i, st := range fn.Body.Stmts {
+		if err := b.stmt(st); err != nil {
+			return nil, err
+		}
+		for _, name := range precise[i] {
+			b.emitPreciseDrop(name)
+		}
 	}
 	// Record the type of every synthetic slot the lowering pass
 	// conjured beyond the user-visible params + locals — ArrayLit
