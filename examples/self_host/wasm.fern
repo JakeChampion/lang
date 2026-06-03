@@ -80,7 +80,7 @@ struct Ctx { tab: StrTable, locals: string[], funcs: string[] }
 // WState threads the WAT body being built (out), a fresh-label counter
 // (n), the current loop's break / continue labels (brk / cont, "" when
 // not inside a loop), and the emission context (cx).
-struct WState { out: string, n: i32, brk: string, cont: string, cx: Ctx }
+struct WState { out: string, n: i32, brk: string, cont: string, cx: Ctx, fd: i32 }
 
 // w appends text to the WAT body. Fern struct fields are immutable, so
 // this returns a rebuilt WState (functional update) rather than mutating
@@ -249,6 +249,11 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                     if (fa.field == "len" && c.args.len() == 0) {
                         return "(i32.load " + emit_expr(fa.obj, cx) + ")";
                     }
+                    // `.push(v)` is array-only (strings have no push), so it
+                    // needs no type gate. Returns the (possibly grown) array.
+                    if (fa.field == "push" && c.args.len() == 1) {
+                        return "(call $__fern_arr_push " + emit_expr(fa.obj, cx) + " " + emit_expr(c.args[0], cx) + ")";
+                    }
                     // The remaining string methods are string-only.
                     if (is_string_expr(fa.obj, cx)) {
                         var recv: string = emit_expr(fa.obj, cx);
@@ -309,6 +314,15 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
     return "(i32.const 0)";
 }
 
+// is_reserved_local is true for the emitter's internal temp locals, so a
+// user var of the same name doesn't get a duplicate (local …) decl.
+function is_reserved_local(n: string): boolean {
+    if (n == "__ap") { return true; }
+    if (n == "__fi0" || n == "__fi1" || n == "__fi2" || n == "__fi3") { return true; }
+    if (n == "__fa0" || n == "__fa1" || n == "__fa2" || n == "__fa3") { return true; }
+    return false;
+}
+
 // contains_str is a small membership helper for local-name dedup.
 function contains_str(xs: string[], n: string): boolean {
     var i: i32 = 0;
@@ -335,6 +349,10 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
             },
             parser.StmtWhile(w) => {
                 acc = collect_locals(w.body, acc);
+            },
+            parser.StmtFor(f) => {
+                if (!contains_str(acc, f.var_name)) { acc = acc.push(f.var_name); }
+                acc = collect_locals(f.body, acc);
             },
             _ => {},
         }
@@ -386,6 +404,10 @@ function stmts_use_divrem(body: parser.Stmt[]): boolean {
             parser.StmtWhile(w) => {
                 if (expr_uses_divrem(w.cond)) { return true; }
                 if (stmts_use_divrem(w.body)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_uses_divrem(f.iter)) { return true; }
+                if (stmts_use_divrem(f.body)) { return true; }
             },
             _ => {},
         }
@@ -467,6 +489,36 @@ function heap_alloc_helpers(heap_base: i32): string {
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
     o = o + "    (local.get $p))\n";
+    return o;
+}
+
+// arr_helpers emits the array runtime: $__fern_arr_push appends v to the
+// array, growing geometrically (cap 0 → 4, else ×2) into a fresh block
+// and copying the elements when full. Returns the (possibly new) pointer,
+// matching `xs = xs.push(v)`. Depends on $__fern_alloc.
+function arr_helpers(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_push (param $a i32) (param $v i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
+    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
+    o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (return (local.get $a))))\n";
+    o = o + "    (local.set $ncap (i32.const 4))\n";
+    o = o + "    (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))\n";
+    o = o + "    (local.set $na (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $ncap) (i32.const 4)))))\n";
+    o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
+    o = o + "    (local.get $na))\n";
     return o;
 }
 
@@ -684,6 +736,10 @@ function collect_strings_stmts(body: parser.Stmt[], t: StrTable): StrTable {
                 t = collect_strings_expr(w.cond, t);
                 t = collect_strings_stmts(w.body, t);
             },
+            parser.StmtFor(f) => {
+                t = collect_strings_expr(f.iter, t);
+                t = collect_strings_stmts(f.body, t);
+            },
             _ => {},
         }
         i = i + 1;
@@ -756,6 +812,11 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                             if (id.name == "print_int" && c.args.len() == 1) {
                                 return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.cx) + ")\n");
                             }
+                            if (id.name == "__set_index" && c.args.len() == 3) {
+                                // arr[idx] = v  (parser desugar). Store v
+                                // at arr + 8 + idx*4.
+                                return st.w("    (i32.store (i32.add (i32.add " + emit_expr(c.args[0], st.cx) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx) + " (i32.const 4))) " + emit_expr(c.args[2], st.cx) + ")\n");
+                            }
                         },
                         _ => {},
                     }
@@ -806,6 +867,47 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
         },
         parser.StmtContinue(_) => {
             return st.w("    (br " + st.cont + ")\n");
+        },
+        parser.StmtFor(f) => {
+            // `for v in arr { body }` → index walk. The iterated array is
+            // evaluated once into $__fa<d>; $__fi<d> is the index; v is
+            // bound to arr[idx] each turn. Depth d (0..3) keeps nested
+            // loops from clobbering each other's temps.
+            var d: i32 = st.fd;
+            var fi: string = "$__fi" + i32_to_string(d);
+            var fa: string = "$__fa" + i32_to_string(d);
+            var id: i32 = st.n;
+            var brk: string = "$fbrk_" + i32_to_string(id);
+            var loop: string = "$floop_" + i32_to_string(id);
+            // `continue` must still run the index increment, so it
+            // branches to the END of a body block (bodycont), after which
+            // the increment + loop-back run. `break` branches to brk.
+            var bodycont: string = "$fcont_" + i32_to_string(id);
+            var outer_brk: string = st.brk;
+            var outer_cont: string = st.cont;
+            var head: string =
+                "    (local.set " + fa + " " + emit_expr(f.iter, st.cx) + ")\n"
+                + "    (local.set " + fi + " (i32.const 0))\n"
+                + "    (block " + brk + " (loop " + loop + "\n"
+                + "    (br_if " + brk + " (i32.ge_s (local.get " + fi + ") (i32.load (local.get " + fa + "))))\n"
+                + "    (local.set $" + f.var_name + " (i32.load (i32.add (i32.add (local.get " + fa + ") (i32.const 8)) (i32.mul (local.get " + fi + ") (i32.const 4)))))\n"
+                + "    (block " + bodycont + "\n";
+            var inner: WState = WState {
+                ...st,
+                out: st.out + head,
+                n: id + 1,
+                brk: brk,
+                cont: bodycont,
+                fd: d + 1,
+            };
+            inner = emit_stmts(f.body, inner);
+            return WState {
+                ...inner,
+                out: inner.out + "    )\n    (local.set " + fi + " (i32.add (local.get " + fi + ") (i32.const 1)))\n    (br " + loop + ")))\n",
+                brk: outer_brk,
+                cont: outer_cont,
+                fd: d,
+            };
         },
         _ => {
             // Unsupported statement in this slice — emit nothing.
@@ -882,6 +984,9 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
             parser.StmtWhile(w) => {
                 cx = collect_str_locals_stmts(w.body, cx);
             },
+            parser.StmtFor(f) => {
+                cx = collect_str_locals_stmts(f.body, cx);
+            },
             _ => {},
         }
         i = i + 1;
@@ -930,19 +1035,22 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[]): stri
     head = head + "\n";
 
     var locals: string[] = collect_locals(f.body, []);
-    // $__ap is the array-literal build temp (reserved in every function;
-    // one extra i32 local is harmless).
+    // Reserved temps (one extra i32 local each, harmless): $__ap holds a
+    // fresh array-literal pointer; $__fi<d> / $__fa<d> are the loop index
+    // and iterated-array pointer for a `for` at nesting depth d (0..3).
     var decls: string = "    (local $__ap i32)\n";
+    decls = decls + "    (local $__fi0 i32) (local $__fi1 i32) (local $__fi2 i32) (local $__fi3 i32)\n";
+    decls = decls + "    (local $__fa0 i32) (local $__fa1 i32) (local $__fa2 i32) (local $__fa3 i32)\n";
     var li: i32 = 0;
     while (li < locals.len()) {
-        if (!contains_str(pnames, locals[li]) && locals[li] != "__ap") {
+        if (!contains_str(pnames, locals[li]) && !is_reserved_local(locals[li])) {
             decls = decls + "    (local $" + locals[li] + " i32)\n";
         }
         li = li + 1;
     }
 
     var cx: Ctx = build_ctx(f, tab, str_funcs);
-    var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx };
+    var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0 };
     st = emit_stmts(f.body, st);
 
     var tail: string = "  )\n";
@@ -1005,6 +1113,10 @@ function stmts_have_array(body: parser.Stmt[]): boolean {
                 if (expr_has_array(w.cond)) { return true; }
                 if (stmts_have_array(w.body)) { return true; }
             },
+            parser.StmtFor(f) => {
+                if (expr_has_array(f.iter)) { return true; }
+                if (stmts_have_array(f.body)) { return true; }
+            },
             _ => {},
         }
         i = i + 1;
@@ -1050,6 +1162,9 @@ function stmt_calls_print_int(body: parser.Stmt[]): boolean {
             },
             parser.StmtWhile(w) => {
                 if (stmt_calls_print_int(w.body)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (stmt_calls_print_int(f.body)) { return true; }
             },
             _ => {},
         }
@@ -1122,6 +1237,9 @@ pub function emit_module(mod: parser.Module): string {
     }
     if (has_strings) {
         out = out + strcat_helpers();
+    }
+    if (has_arrays) {
+        out = out + arr_helpers();
     }
 
     var has_main: boolean = false;
