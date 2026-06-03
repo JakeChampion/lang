@@ -1,106 +1,267 @@
-// examples/self_host/wasm.fern — the self-hosted WebAssembly emitter
-// (first slice). Walks a parser.Module and emits a WASI **core module**
-// in the text format (WAT) whose `_start` computes the program's result
-// and calls `proc_exit` with it — so `wasmtime run prog.wat` exits with
-// that value, matching the native backends' "return value = exit code"
-// contract.
+// examples/self_host/wasm.fern — the self-hosted WebAssembly emitter.
+// Walks a parser.Module and emits a WASI **core module** in the text
+// format (WAT) whose `_start` calls `proc_exit(main())` — so
+// `wasmtime run prog.wat` exits with main's result, matching the native
+// backends' "return value == exit code" contract.
 //
-// This is the wasm analogue of asm.fern's first milestone (return +
-// integer arithmetic). WAT's folded S-expression form means the
-// expression lowering is a direct recursive string build — no operand
-// stack bookkeeping (wasm is itself a stack machine, and the folded
-// syntax nests operands inside the operator). Subsequent slices add
-// locals, calls, control flow, strings, and the wasi:cli/http shapes
-// the Go wasmbin/wasmssa backends cover, building toward retiring the
-// Go wasm backend.
+// WAT's folded S-expression form makes the lowering a direct recursive
+// string build: expressions nest their operands inside the operator
+// (no operand-stack bookkeeping), and statements append to a WState
+// accumulator that also threads the fresh-label counter and the
+// enclosing loop's break/continue labels.
 //
-// Covered now: integer literals, unary `-`, and binary `+ - * / %`
-// over i32. Known gap (tracked, follow-up): wasm's `i32.div_s` /
-// `i32.rem_s` trap on divide-by-zero and INT_MIN/-1, whereas Fern's
-// integer division never traps — the non-trapping guards land with the
-// locals/control-flow slice.
+// Slice coverage:
+//   - integer literals, bool literals, idents (locals)
+//   - unary `-` and `!`; binary `+ - * / %`, comparisons
+//     (`< <= > >= == !=`), and logical `&& ||`
+//   - statements: var/let, assignment, return, if/else, while,
+//     break, continue, bare expression
+//
+// Known gaps (tracked, follow-ups):
+//   - `&&` / `||` lower to `i32.and` / `i32.or` (no short-circuit) —
+//     correct while conditions are side-effect-free (no calls yet).
+//   - `i32.div_s` / `i32.rem_s` trap on /0 and INT_MIN/-1 whereas Fern
+//     never traps — the guarded helpers land in the div/rem slice.
+//   - function calls, match, for, strings/memory: later slices.
 
 import "core/no_prelude";
 import "./parser";
 
-// wasm_binop maps a Fern binary operator to its i32 wasm instruction.
+// WState threads the WAT body being built (out), a fresh-label counter
+// (n), and the current loop's break / continue labels (brk / cont, ""
+// when not inside a loop).
+struct WState { out: string, n: i32, brk: string, cont: string }
+
+// w appends text to the WAT body. Fern struct fields are immutable, so
+// this returns a rebuilt WState (functional update) rather than mutating
+// in place. Output here is small (one function body), so `out + text` is
+// fine — asm.fern's strbuf optimisation is only needed for the huge
+// self-compile bundles.
+function (s: WState) w(text: string): WState {
+    return WState { ...s, out: s.out + text };
+}
+
+// i32_to_string renders an i32 as decimal (used for fresh label
+// numbers). Mirrors asm.fern's helper — the self-host doesn't expose an
+// `(i32).to_string()` method to emitter code, so each emitter carries
+// its own.
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// wasm_binop maps a Fern operator to its i32 wasm instruction.
 function wasm_binop(op: string): string {
     if (op == "+") { return "i32.add"; }
     if (op == "-") { return "i32.sub"; }
     if (op == "*") { return "i32.mul"; }
     if (op == "/") { return "i32.div_s"; }
     if (op == "%") { return "i32.rem_s"; }
-    // Unsupported in this slice — fall back to add so output stays
-    // well-formed WAT; the differential test only feeds covered ops.
+    if (op == "<") { return "i32.lt_s"; }
+    if (op == "<=") { return "i32.le_s"; }
+    if (op == ">") { return "i32.gt_s"; }
+    if (op == ">=") { return "i32.ge_s"; }
+    if (op == "==") { return "i32.eq"; }
+    if (op == "!=") { return "i32.ne"; }
+    if (op == "&&") { return "i32.and"; }
+    if (op == "||") { return "i32.or"; }
     return "i32.add";
 }
 
-// emit_expr lowers an integer expression to a folded WAT instruction
-// tree, e.g. `(i32.add (i32.const 1) (i32.mul (i32.const 2) (i32.const 3)))`.
+// emit_expr lowers an expression to a folded WAT instruction tree.
 function emit_expr(e: parser.Expr): string {
     match (e) {
         parser.ExprNumber(n) => {
             return "(i32.const " + n.text + ")";
         },
+        parser.ExprBool(b) => {
+            if (b.value) { return "(i32.const 1)"; }
+            return "(i32.const 0)";
+        },
+        parser.ExprIdent(id) => {
+            return "(local.get $" + id.name + ")";
+        },
         parser.ExprUnary(u) => {
             if (u.op == "-") {
                 return "(i32.sub (i32.const 0) " + emit_expr(u.operand) + ")";
             }
-            // `+x` / unsupported unary: pass the operand through.
+            if (u.op == "!") {
+                return "(i32.eqz " + emit_expr(u.operand) + ")";
+            }
             return emit_expr(u.operand);
         },
         parser.ExprBinary(b) => {
             return "(" + wasm_binop(b.op) + " " + emit_expr(b.left) + " " + emit_expr(b.right) + ")";
         },
         _ => {
-            // Unsupported expression form in this slice → 0.
             return "(i32.const 0)";
         },
     }
     return "(i32.const 0)";
 }
 
-// first_return_expr returns the WAT for the first `return <expr>;` found
-// in a statement list, or "" when there is none.
-function first_return_expr(body: parser.Stmt[]): string {
+// contains_str is a small membership helper for local-name dedup.
+function contains_str(xs: string[], n: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_locals gathers every `var`/`let` name declared anywhere in a
+// statement list (recursing into if / while bodies), deduped — wasm
+// requires all locals declared at the top of the function.
+function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
-            parser.StmtReturn(r) => { return emit_expr(r.value); },
+            parser.StmtVar(v) => {
+                if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_locals(f.then_body, acc);
+                acc = collect_locals(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => {
+                acc = collect_locals(w.body, acc);
+            },
             _ => {},
         }
         i = i + 1;
     }
-    return "";
+    return acc;
 }
 
-// emit_module produces the full WAT text for a module. The exit value is
-// the first return found in `main`'s body, or — supporting the bare
-// top-statement program shape (e.g. `return 42;`) — in the module's
-// top-level statements. With no return anywhere, the program exits 0.
-pub function emit_module(mod: parser.Module): string {
-    var body_expr: string = "(i32.const 0)";
-
+// emit_stmts lowers a statement list, appending to st.out.
+function emit_stmts(body: parser.Stmt[], st: WState): WState {
     var i: i32 = 0;
-    var found: boolean = false;
-    while (i < mod.funcs.len() && !found) {
+    while (i < body.len()) {
+        st = emit_stmt(body[i], st);
+        i = i + 1;
+    }
+    return st;
+}
+
+// emit_stmt lowers a single statement.
+function emit_stmt(stmt: parser.Stmt, st: WState): WState {
+    match (stmt) {
+        parser.StmtVar(v) => {
+            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init) + ")\n");
+        },
+        parser.StmtAssign(a) => {
+            return st.w("    (local.set $" + a.target + " " + emit_expr(a.value) + ")\n");
+        },
+        parser.StmtReturn(r) => {
+            return st.w("    (return " + emit_expr(r.value) + ")\n");
+        },
+        parser.StmtExpr(e) => {
+            return st.w("    (drop " + emit_expr(e.value) + ")\n");
+        },
+        parser.StmtIf(f) => {
+            st = st.w("    (if " + emit_expr(f.cond) + " (then\n");
+            st = emit_stmts(f.then_body, st);
+            st = st.w("    )");
+            if (f.else_body.len() > 0) {
+                st = st.w(" (else\n");
+                st = emit_stmts(f.else_body, st);
+                st = st.w("    )");
+            }
+            return st.w(")\n");
+        },
+        parser.StmtWhile(w) => {
+            var id: i32 = st.n;
+            var brk: string = "$brk_" + i32_to_string(id);
+            var cont: string = "$cont_" + i32_to_string(id);
+            // Save the enclosing loop's labels; restore after the body.
+            var outer_brk: string = st.brk;
+            var outer_cont: string = st.cont;
+            // Bump the label counter and enter this loop's label scope.
+            var inner: WState = WState {
+                ...st,
+                out: st.out + "    (block " + brk + " (loop " + cont + "\n"
+                    + "    (br_if " + brk + " (i32.eqz " + emit_expr(w.cond) + "))\n",
+                n: id + 1,
+                brk: brk,
+                cont: cont,
+            };
+            inner = emit_stmts(w.body, inner);
+            // Restore the enclosing loop's labels; keep accumulated
+            // output + the advanced counter.
+            return WState {
+                ...inner,
+                out: inner.out + "    (br " + cont + ")))\n",
+                brk: outer_brk,
+                cont: outer_cont,
+            };
+        },
+        parser.StmtBreak(_) => {
+            return st.w("    (br " + st.brk + ")\n");
+        },
+        parser.StmtContinue(_) => {
+            return st.w("    (br " + st.cont + ")\n");
+        },
+        _ => {
+            // Unsupported statement in this slice — emit nothing.
+            return st;
+        },
+    }
+    return st;
+}
+
+// body_stmts returns the statement list that forms the program's entry:
+// `main`'s body when a `main` function exists, else the module's
+// top-level statements (the bare `return 42;` program shape).
+function body_stmts(mod: parser.Module): parser.Stmt[] {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
         if (f.name == "main" && f.receiver_type.len() == 0) {
-            var got: string = first_return_expr(f.body);
-            if (got.len() > 0) { body_expr = got; found = true; }
+            return f.body;
         }
         i = i + 1;
     }
-    if (!found) {
-        var topret: string = first_return_expr(mod.top_stmts);
-        if (topret.len() > 0) { body_expr = topret; }
-    }
+    return mod.top_stmts;
+}
+
+// emit_module produces the full WAT text for a module.
+pub function emit_module(mod: parser.Module): string {
+    var body: parser.Stmt[] = body_stmts(mod);
+
+    var locals: string[] = collect_locals(body, []);
+
+    var st: WState = WState { out: "", n: 0, brk: "", cont: "" };
+    st = emit_stmts(body, st);
 
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     out = out + "  (memory (export \"memory\") 1)\n";
-    out = out + "  (func $_start\n";
-    out = out + "    (call $proc_exit " + body_expr + "))\n";
+    out = out + "  (func $main (result i32)\n";
+    var li: i32 = 0;
+    while (li < locals.len()) {
+        out = out + "    (local $" + locals[li] + " i32)\n";
+        li = li + 1;
+    }
+    out = out + st.out;
+    // Fallthrough result when no `return` fired.
+    out = out + "    (i32.const 0))\n";
+    out = out + "  (func $_start (call $proc_exit (call $main)))\n";
     out = out + "  (export \"_start\" (func $_start)))\n";
     return out;
 }

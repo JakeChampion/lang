@@ -55,6 +55,31 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5},
 		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39},
 		{"no-return-exits-0", "function main(): i32 { }", 0},
+		// Locals + reassignment.
+		{"locals", "function main(): i32 { var x = 5; var y = 10; return x + y; }", 15},
+		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }", 8},
+		{"compound-assign", "function main(): i32 { var x = 1; x *= 6; x += 1; return x; }", 7},
+		// Comparisons (0/1 results).
+		{"comparison-true", "function main(): i32 { return 5 < 10; }", 1},
+		{"comparison-false", "function main(): i32 { return 10 < 5; }", 0},
+		{"equality-true", "function main(): i32 { return 7 == 7; }", 1},
+		// Logical + not.
+		{"and", "function main(): i32 { if (true && true) { return 1; } return 0; }", 1},
+		{"or", "function main(): i32 { if (false || true) { return 1; } return 0; }", 1},
+		{"not", "function main(): i32 { if (!false) { return 1; } return 0; }", 1},
+		{"and-with-comparison", "function main(): i32 { var x = 5; if (x > 0 && x < 10) { return 1; } return 0; }", 1},
+		// if / else.
+		{"if-then-branch", "function main(): i32 { var x = 5; if (x < 10) { return 1; } return 2; }", 1},
+		{"if-else-branch", "function main(): i32 { var x = 20; if (x < 10) { return 1; } return 2; }", 2},
+		{"if-else-explicit", "function main(): i32 { if (true) { return 9; } else { return 0; } }", 9},
+		// while.
+		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s; }", 15},
+		{"while-early-return", "function main(): i32 { var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 99; }", 7},
+		// break / continue.
+		{"break-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { if (i == 5) { break; } s = s + i; i = i + 1; } return s; }", 10},
+		{"continue-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 10) { i = i + 1; if (i == 5) { continue; } s = s + i; } return s; }", 50},
+		// Mixed.
+		{"mixed", "function main(): i32 { var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1; }", 23},
 	}
 
 	for _, tc := range cases {
