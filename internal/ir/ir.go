@@ -1906,6 +1906,26 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			for _, a := range s.Args {
 				escape(a)
 			}
+		case *ast.CastExpr:
+			// Casting a pointer-shaped local to a raw integer (`buf as usize`)
+			// hands out an address the rc analysis can't follow: code then
+			// reads / writes through that raw pointer (random_bytes fills
+			// `buf as usize`; int_to_string indexes an `as usize` scratch), so
+			// the source buffer must stay live — freeing it at scope exit would
+			// reclaim memory the raw pointer still uses. Taint the cast source
+			// (escape unwraps any projection to the root local). This is the
+			// load-bearing guard that lets the scalar-arg untaint below stay
+			// safe: without it, untainting a literal / scalar-binary size arg
+			// would make an `__alloc_u8(...) as usize` buffer eligible and
+			// over-release it. Pointer→pointer casts keep rc tracking and are
+			// left alone.
+			it := s.InnerType
+			if it == nil {
+				it = b.exprType(s.Inner)
+			}
+			if ast.IsPointerType(it) && !ast.IsPointerType(s.Target) {
+				escape(s.Inner)
+			}
 		}
 		return true
 	})
@@ -2016,6 +2036,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return false
 	case *ast.Ident:
 		return tainted[x.Name]
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
+		// A scalar literal aliases nothing, so a fresh owned result whose only
+		// "borrowed" input is a literal arg is reclaimable — e.g.
+		// int_to_string's `__alloc_u8(16)` buffer, or split's literal-length
+		// allocations. Without this the literal fell through to the tainted
+		// default and stranded those buffers (unbounded leak in a loop). The
+		// raw-pointer liveness such code threads via `buf as usize` is held by
+		// the CastExpr escape taint in computeFreeEligible, not here.
+		return false
 	case *ast.FieldAccess, *ast.Index:
 		return true
 	case *ast.SliceExpr:
@@ -2029,8 +2058,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.Binary:
 		// String concat (`a + b`) copies both operands into a fresh owned
 		// heap buffer regardless of operand provenance, so the result is
-		// always reclaimable. Non-concat binaries are scalar (never an
-		// rc-tracked local's RHS), so their value here is moot.
+		// always reclaimable. Non-concat binaries stay tainted (the original
+		// conservative default): untainting a scalar-binary SIZE arg
+		// (`__alloc_u8(out_len)`, out_len from `k + 1`) made buffers eligible
+		// that the escape/move analysis can't prove safe to reclaim — it
+		// over-released int_to_string_radix's result buffer (to_rgb_hex
+		// returned the wrong hex). The win is in the NumberLit case above
+		// (literal-sized temps); the scalar-binary case is marginal — most
+		// such buffers are `as usize`-threaded or moved into the return — and
+		// not worth the over-release risk.
 		return !x.IsStringConcat
 	case *ast.Call:
 		// Map builtins return the MAP HANDLE, which aliases only the
@@ -2047,6 +2083,20 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "random_bytes":
+				// random_bytes returns a string the two-word backends
+				// (arm64 / wasm) allocate as RAW n bytes with NO rc header
+				// (__fern_alloc, not __fern_alloc_rc1), so it is not a
+				// reclaimable owned string — str_dec'ing it at scope exit
+				// reads garbage for the rc and corrupts / over-releases the
+				// buffer (TestArm64RandomBytes: 83 bytes, want 16). It must
+				// stay ineligible. This was protected only by accident before
+				// the scalar-arg untaint below — the literal size arg used to
+				// taint the result; now it's marked explicitly. (The runtime
+				// fills the buffer through a raw pointer too, which the
+				// CastExpr escape taint can't see — it lives in asm, not Fern
+				// source.)
+				return true
 			}
 		}
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.rhsTainted(fa.Target, tainted) {
