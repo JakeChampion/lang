@@ -5978,7 +5978,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("stp x29, x30, [sp, #-16]!")
 	g.emit("mov x29, sp")
 	if localsSize > 0 {
-		g.emit("sub sp, sp, #%d", localsSize)
+		g.emitSpSub(localsSize)
 	}
 	// Spill parameter registers x0..x{regArgs-1} into their
 	// slots. Args at index >= regArgs come from the caller's
@@ -6087,11 +6087,52 @@ func (g *generator) pop() {
 // store / load). Positive offsets follow the same pattern
 // with `add`.
 //
-// Frames over 4095 bytes would need a multi-instruction
-// `add` sequence; we don't emit those today and panic if
-// asked, leaving room for a real implementation when the
-// first user trips it. Practical frames sit well under that
-// — the largest in the current test suite is ~600 bytes.
+// Frames over 4095 bytes (|off| > 4095) overflow the 12-bit
+// add/sub immediate; frameAddrX16 then materialises the
+// offset into x16 via movz(+movk) and uses a register-operand
+// add/sub instead (the self-host compiler's emit_expr trips
+// this once its locals pass ~4 KiB).
+// frameAddrX16 materialises the address `x29 + off` into x16 for a frame
+// offset whose magnitude exceeds the 12-bit add/sub immediate range
+// (|off| > 4095). The absolute offset is loaded into x16 via `movz`
+// (+`movk` for the high half when it exceeds 16 bits — frames up to 4 GiB),
+// then added to / subtracted from the frame pointer with a register-operand
+// add/sub. x16 (IP0) is the call-clobberable scratch and never carries a
+// live value across a frame load/store, so reusing it for both the offset
+// and the resulting address is safe.
+// emitSpSub allocates `bytes` of stack in the prologue: `sub sp, sp, #bytes`
+// when the size fits the 12-bit add/sub immediate (<= 4095), otherwise the
+// size is materialised into x16 (movz +movk) and a register-operand `sub`
+// adjusts sp. x16 (IP0) is free in the prologue — params haven't been spilled
+// yet. The epilogue restores sp via `mov sp, x29`, so it needs no counterpart.
+func (g *generator) emitSpSub(bytes int) {
+	if bytes <= 4095 {
+		g.emit("sub sp, sp, #%d", bytes)
+		return
+	}
+	g.emit("movz x16, #%d", bytes&0xFFFF)
+	if bytes > 0xFFFF {
+		g.emit("movk x16, #%d, lsl #16", (bytes>>16)&0xFFFF)
+	}
+	g.emit("sub sp, sp, x16")
+}
+
+func (g *generator) frameAddrX16(off int32) {
+	abs := off
+	if abs < 0 {
+		abs = -abs
+	}
+	g.emit("movz x16, #%d", abs&0xFFFF)
+	if abs > 0xFFFF {
+		g.emit("movk x16, #%d, lsl #16", (abs>>16)&0xFFFF)
+	}
+	if off < 0 {
+		g.emit("sub x16, x29, x16")
+	} else {
+		g.emit("add x16, x29, x16")
+	}
+}
+
 func (g *generator) frameLoad(reg string, off int32) {
 	if off >= -256 && off <= 255 {
 		g.emit("ldur %s, [x29, #%d]", reg, off)
@@ -6101,13 +6142,14 @@ func (g *generator) frameLoad(reg string, off int32) {
 	if abs < 0 {
 		abs = -abs
 	}
-	if abs > 4095 {
-		panic(fmt.Sprintf("arm64: frame offset %d exceeds 12-bit add/sub imm range; multi-step materialisation not implemented", off))
-	}
-	if off < 0 {
-		g.emit("sub x16, x29, #%d", -off)
+	if abs <= 4095 {
+		if off < 0 {
+			g.emit("sub x16, x29, #%d", -off)
+		} else {
+			g.emit("add x16, x29, #%d", off)
+		}
 	} else {
-		g.emit("add x16, x29, #%d", off)
+		g.frameAddrX16(off)
 	}
 	g.emit("ldr %s, [x16]", reg)
 }
@@ -6123,13 +6165,14 @@ func (g *generator) frameStore(reg string, off int32) {
 	if abs < 0 {
 		abs = -abs
 	}
-	if abs > 4095 {
-		panic(fmt.Sprintf("arm64: frame offset %d exceeds 12-bit add/sub imm range; multi-step materialisation not implemented", off))
-	}
-	if off < 0 {
-		g.emit("sub x16, x29, #%d", -off)
+	if abs <= 4095 {
+		if off < 0 {
+			g.emit("sub x16, x29, #%d", -off)
+		} else {
+			g.emit("add x16, x29, #%d", off)
+		}
 	} else {
-		g.emit("add x16, x29, #%d", off)
+		g.frameAddrX16(off)
 	}
 	g.emit("str %s, [x16]", reg)
 }
