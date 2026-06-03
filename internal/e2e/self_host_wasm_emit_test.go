@@ -357,6 +357,33 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"monotonic-non-decreasing", "function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b - a >= 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"now-unix-ms-recent", "function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1000000000000) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"now-ns-positive", "function main(): i32 { var t: i64 = now_ns(); if (t > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+
+		// f64 value path. Floats lower to f64 wasm ops; printed by casting
+		// the result to an integer (`x as i32` → i32.trunc_f64_s) since the
+		// backend has no float formatter yet. Casts also exercise the
+		// `as <ty>` desugar (unhandled on wasm before this slice).
+		{"f64-literal-cast", "function main(): i32 { var x: f64 = 3.5; print_int(x as i32); return 0; }", 0, "3"},
+		{"f64-add", "function main(): i32 { var a: f64 = 2.5; var b: f64 = 1.5; print_int((a + b) as i32); return 0; }", 0, "4"},
+		{"f64-sub", "function main(): i32 { var a: f64 = 5.5; var b: f64 = 2.5; print_int((a - b) as i32); return 0; }", 0, "3"},
+		{"f64-mul", "function main(): i32 { var a: f64 = 2.5; var b: f64 = 4.0; print_int((a * b) as i32); return 0; }", 0, "10"},
+		{"f64-div", "function main(): i32 { var a: f64 = 9.0; var b: f64 = 2.0; print_int((a / b) as i32); return 0; }", 0, "4"},
+		{"f64-neg", "function main(): i32 { var a: f64 = 4.0; print_int((-a) as i32); return 0; }", 0, "-4"},
+		{"f64-compare-gt", "function main(): i32 { if (3.5 > 2.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"f64-compare-eq", "function main(): i32 { var a: f64 = 1.5; var b: f64 = 1.5; if (a == b) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"f64-compare-le", "function main(): i32 { var a: f64 = 2.0; if (a <= 2.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"f64-int-to-float", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; print_int((x + 0.5) as i32); return 0; }", 0, "7"},
+		{"f64-mixed-int-literal", "function main(): i32 { print_int((3.5 + 2) as i32); return 0; }", 0, "5"},
+		{"f64-reassign", "function main(): i32 { var a: f64 = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
+		{"f64-loop-accumulate", "function main(): i32 { var sum: f64 = 0.0; var i: i32 = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } print_int(sum as i32); return 0; }", 0, "6"},
+		{"f64-func-return", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { print_int(half(9.0) as i32); return 0; }", 0, "4"},
+		{"f64-param-int-arg", "function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { print_int(addhalf(3) as i32); return 0; }", 0, "3"},
+		{"f64-sqrt", "function main(): i32 { print_int(__sqrt_f64(16.0) as i32); return 0; }", 0, "4"},
+		{"f64-floor", "function main(): i32 { print_int(__floor_f64(3.9) as i32); return 0; }", 0, "3"},
+		{"f64-ceil", "function main(): i32 { print_int(__ceil_f64(3.1) as i32); return 0; }", 0, "4"},
+		{"f64-trunc", "function main(): i32 { print_int(__trunc_f64(3.9) as i32); return 0; }", 0, "3"},
+		{"f64-abs", "function main(): i32 { print_int(__abs_f64(-5.0) as i32); return 0; }", 0, "5"},
+		{"f64-to-i64-cast", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_int(r); return 0; }", 0, "5000000000"},
+		{"f64-to-i64-direct-print", "function main(): i32 { print_int(9000000000.0 as i64); return 0; }", 0, "9000000000"},
 	}
 
 	for _, tc := range cases {

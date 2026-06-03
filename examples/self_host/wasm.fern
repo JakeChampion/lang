@@ -106,6 +106,11 @@ struct Ctx {
     // module's free/method decls, used to coerce call args to i64 params.
     ret_i64: boolean,
     mod_funcs: parser.FuncDecl[],
+    // f64 mirror of the i64 fields: float-typed locals/params (f64_names),
+    // f64-returning free functions (f64_funcs), and the i64-return flag.
+    f64_names: string[],
+    f64_funcs: string[],
+    ret_f64: boolean,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -116,6 +121,21 @@ function func_param_is_i64(cx: Ctx, fn: string, idx: i32): boolean {
         if (cx.mod_funcs[i].receiver_type.len() == 0 && cx.mod_funcs[i].name == fn) {
             if (idx < cx.mod_funcs[i].params.len()) {
                 return cx.mod_funcs[i].params[idx].type_name == "i64";
+            }
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// func_param_is_f64 is the f64 analogue of func_param_is_i64.
+function func_param_is_f64(cx: Ctx, fn: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < cx.mod_funcs.len()) {
+        if (cx.mod_funcs[i].receiver_type.len() == 0 && cx.mod_funcs[i].name == fn) {
+            if (idx < cx.mod_funcs[i].params.len()) {
+                return is_float_type(cx.mod_funcs[i].params[idx].type_name);
             }
             return false;
         }
@@ -142,6 +162,7 @@ function is_i64_expr(e: parser.Expr, cx: Ctx): boolean {
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") { return is_i64_expr(u.operand, cx); }
+            if (u.op == "as_i64" || u.op == "as_u64") { return true; }
             return false;
         },
         parser.ExprBinary(b) => {
@@ -204,6 +225,17 @@ function emit_i64(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (u.op == "-") {
                 return "(i64.sub (i64.const 0) " + emit_i64(u.operand, cx, depth) + ")";
             }
+            if (u.op == "as_i64" || u.op == "as_u64") {
+                // `x as i64`: from f64 truncate, from i64 pass through,
+                // from i32 sign-extend (the emit_i64 default).
+                if (is_f64_expr(u.operand, cx)) {
+                    return "(i64.trunc_f64_s " + emit_f64(u.operand, cx, depth) + ")";
+                }
+                if (is_i64_expr(u.operand, cx)) {
+                    return emit_i64(u.operand, cx, depth);
+                }
+                return "(i64.extend_i32_s " + emit_expr(u.operand, cx, depth) + ")";
+            }
         },
         parser.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
@@ -237,6 +269,155 @@ function emit_i64(e: parser.Expr, cx: Ctx, depth: i32): string {
     }
     // i32-producing expression in an i64 context — widen it.
     return "(i64.extend_i32_s " + emit_expr(e, cx, depth) + ")";
+}
+
+// is_float_type names the floating-point spellings (all lowered to f64 —
+// matching the native backends, which carry no distinct f32).
+function is_float_type(t: string): boolean {
+    return t == "f64" || t == "f32" || t == "float";
+}
+
+// is_cast_to is true when a unary op is the `as <ty>` cast desugar
+// (`as_<ty>`) targeting `ty` (e.g. is_cast_to(u.op, "f64")).
+function is_cast_op(op: string): boolean {
+    return op.len() > 3 && op[0:3] == "as_";
+}
+
+function cast_target(op: string): string {
+    return op[3:];
+}
+
+// is_f64_math_builtin names the math intrinsics with a direct wasm f64
+// instruction (sin/cos/exp/log/pow have no primitive and are deferred).
+function is_f64_math_builtin(name: string): boolean {
+    return name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"
+        || name == "__trunc_f64" || name == "__round_f64" || name == "__abs_f64";
+}
+
+function f64_math_instr(name: string): string {
+    if (name == "__sqrt_f64") { return "f64.sqrt"; }
+    if (name == "__floor_f64") { return "f64.floor"; }
+    if (name == "__ceil_f64") { return "f64.ceil"; }
+    if (name == "__trunc_f64") { return "f64.trunc"; }
+    if (name == "__round_f64") { return "f64.nearest"; }
+    return "f64.abs";
+}
+
+// is_f64_expr is true when an expression evaluates to an f64 value: a
+// float literal, an f64-typed local/param, an f64-returning function /
+// method, an `as f64` cast, a unary minus on an f64, an f64 math
+// builtin, or an arithmetic binary op with an f64 operand. Comparisons
+// yield an i32 bool even over f64 operands, so they are NOT f64.
+function is_f64_expr(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprNumber(n) => {
+            return n.is_float;
+        },
+        parser.ExprIdent(id) => {
+            return contains_str(cx.f64_names, id.name);
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") { return is_f64_expr(u.operand, cx); }
+            if (is_cast_op(u.op)) { return is_float_type(cast_target(u.op)); }
+            return false;
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                return is_f64_expr(b.left, cx) || is_f64_expr(b.right, cx);
+            }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (is_f64_math_builtin(id.name)) { return true; }
+                    return contains_str(cx.f64_funcs, id.name);
+                },
+                parser.ExprFieldAccess(fa) => {
+                    return is_float_type(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// wasm_binop_f64 maps a Fern operator to its f64 wasm instruction;
+// comparisons produce an i32 result from f64 operands. (Float `%` is not
+// a primitive and is not supported.)
+function wasm_binop_f64(op: string): string {
+    if (op == "+") { return "f64.add"; }
+    if (op == "-") { return "f64.sub"; }
+    if (op == "*") { return "f64.mul"; }
+    if (op == "/") { return "f64.div"; }
+    if (op == "<") { return "f64.lt"; }
+    if (op == "<=") { return "f64.le"; }
+    if (op == ">") { return "f64.gt"; }
+    if (op == ">=") { return "f64.ge"; }
+    if (op == "==") { return "f64.eq"; }
+    if (op == "!=") { return "f64.ne"; }
+    return "f64.add";
+}
+
+// emit_f64 lowers an expression to an instruction tree yielding an f64
+// value. Any int-producing sub-expression in an f64 context is converted
+// (f64.convert_i32_s / _i64_s), so `3.5 + n` and an int passed to an f64
+// param both work.
+function emit_f64(e: parser.Expr, cx: Ctx, depth: i32): string {
+    match (e) {
+        parser.ExprNumber(n) => {
+            return "(f64.const " + n.text + ")";
+        },
+        parser.ExprIdent(id) => {
+            if (contains_str(cx.f64_names, id.name)) {
+                return "(local.get $" + id.name + ")";
+            }
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") {
+                return "(f64.neg " + emit_f64(u.operand, cx, depth) + ")";
+            }
+            if (is_cast_op(u.op) && is_float_type(cast_target(u.op))) {
+                return emit_f64(u.operand, cx, depth);
+            }
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                return "(" + wasm_binop_f64(b.op) + " " + emit_f64(b.left, cx, depth) + " " + emit_f64(b.right, cx, depth) + ")";
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (is_f64_math_builtin(id.name) && c.args.len() == 1) {
+                        return "(" + f64_math_instr(id.name) + " " + emit_f64(c.args[0], cx, depth) + ")";
+                    }
+                    if (contains_str(cx.f64_funcs, id.name)) {
+                        var s: string = "(call $" + id.name;
+                        var i: i32 = 0;
+                        while (i < c.args.len()) {
+                            if (func_param_is_f64(cx, id.name, i)) {
+                                s = s + " " + emit_f64(c.args[i], cx, depth + 1);
+                            } else {
+                                s = s + " " + emit_expr(c.args[i], cx, depth);
+                            }
+                            i = i + 1;
+                        }
+                        return s + ")";
+                    }
+                },
+                _ => {},
+            }
+        },
+        _ => {},
+    }
+    // int-producing expression in an f64 context — convert it.
+    if (is_i64_expr(e, cx)) {
+        return "(f64.convert_i64_s " + emit_i64(e, cx, depth) + ")";
+    }
+    return "(f64.convert_i32_s " + emit_expr(e, cx, depth) + ")";
 }
 
 // has_method / method_ret look a receiver method (receiver-type T, name n)
@@ -588,10 +769,13 @@ function wasm_binop(op: string): string {
 // string value is a pointer (i32) to its `[len:i32][bytes]` block; a
 // string literal's value is the constant block offset interned in tab.
 function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
-    // i64-typed expressions (clocks, i64 locals, i64 arithmetic) lower
-    // through the dedicated i64 instruction path.
+    // i64- / f64-typed expressions lower through their dedicated
+    // instruction paths; everything else stays in the uniform i32 model.
     if (is_i64_expr(e, cx)) {
         return emit_i64(e, cx, depth);
+    }
+    if (is_f64_expr(e, cx)) {
+        return emit_f64(e, cx, depth);
     }
     match (e) {
         parser.ExprNumber(n) => {
@@ -627,6 +811,27 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 s = s + " (i32.load (i32.add (local.get " + ap + ") (i32.const 4))))";
                 return s;
             }
+            if (is_cast_op(u.op)) {
+                // `x as <ty>` to an i32-width target (f64 / i64 / f32 /
+                // u64 targets are intercepted by the emit_expr-top
+                // dispatch). Source: f64 → truncate, i64 → wrap, else the
+                // i32 value itself; then mask / sign-extend for sub-word
+                // targets (u8 / i8 / u16 / i16).
+                var ty: string = cast_target(u.op);
+                var inner: string = "";
+                if (is_f64_expr(u.operand, cx)) {
+                    inner = "(i32.trunc_f64_s " + emit_f64(u.operand, cx, depth) + ")";
+                } else if (is_i64_expr(u.operand, cx)) {
+                    inner = "(i32.wrap_i64 " + emit_i64(u.operand, cx, depth) + ")";
+                } else {
+                    inner = emit_expr(u.operand, cx, depth);
+                }
+                if (ty == "u8") { return "(i32.and " + inner + " (i32.const 255))"; }
+                if (ty == "i8") { return "(i32.extend8_s " + inner + ")"; }
+                if (ty == "u16") { return "(i32.and " + inner + " (i32.const 65535))"; }
+                if (ty == "i16") { return "(i32.extend16_s " + inner + ")"; }
+                return inner;
+            }
             return emit_expr(u.operand, cx, depth);
         },
         parser.ExprBinary(b) => {
@@ -654,6 +859,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // sides to i64 and use the i64 comparison instruction.
             if (is_i64_expr(b.left, cx) || is_i64_expr(b.right, cx)) {
                 return "(" + wasm_binop_i64(b.op) + " " + emit_i64(b.left, cx, depth) + " " + emit_i64(b.right, cx, depth) + ")";
+            }
+            // Likewise an f64 comparison (f64 arithmetic is intercepted
+            // above) — coerce both sides to f64 and use the f64 compare.
+            if (is_f64_expr(b.left, cx) || is_f64_expr(b.right, cx)) {
+                return "(" + wasm_binop_f64(b.op) + " " + emit_f64(b.left, cx, depth) + " " + emit_f64(b.right, cx, depth) + ")";
             }
             return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, cx, depth) + " " + emit_expr(b.right, cx, depth) + ")";
         },
@@ -1741,10 +1951,14 @@ function emit_stmts(body: parser.Stmt[], st: WState): WState {
 function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     match (stmt) {
         parser.StmtVar(v) => {
-            // An i64-typed binding coerces its initialiser to i64 so a
-            // bare literal (`var t: i64 = 0;`) becomes i64.const.
+            // An i64- / f64-typed binding coerces its initialiser to that
+            // type so a bare literal (`var t: i64 = 0;` / `var x: f64 =
+            // 1;`) becomes the right const.
             if (v.type_name == "i64") {
                 return st.w("    (local.set $" + v.name + " " + emit_i64(v.init, st.cx, 0) + ")\n");
+            }
+            if (is_float_type(v.type_name)) {
+                return st.w("    (local.set $" + v.name + " " + emit_f64(v.init, st.cx, 0) + ")\n");
             }
             return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
@@ -1752,13 +1966,19 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             if (contains_str(st.cx.i64_names, a.target)) {
                 return st.w("    (local.set $" + a.target + " " + emit_i64(a.value, st.cx, 0) + ")\n");
             }
+            if (contains_str(st.cx.f64_names, a.target)) {
+                return st.w("    (local.set $" + a.target + " " + emit_f64(a.value, st.cx, 0) + ")\n");
+            }
             return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.cx, 0) + ")\n");
         },
         parser.StmtReturn(r) => {
-            // In an i64-returning function the return value is coerced to
-            // i64 to match the wasm `(result i64)`.
+            // In an i64- / f64-returning function the return value is
+            // coerced to match the wasm `(result …)`.
             if (st.cx.ret_i64) {
                 return st.w("    (return " + emit_i64(r.value, st.cx, 0) + ")\n");
+            }
+            if (st.cx.ret_f64) {
+                return st.w("    (return " + emit_f64(r.value, st.cx, 0) + ")\n");
             }
             return st.w("    (return " + emit_expr(r.value, st.cx, 0) + ")\n");
         },
@@ -2133,19 +2353,23 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[]): Ctx {
     var locals: string[] = [];
     var str_arrays: string[] = [];
     var sv_names: string[] = [];
     var sv_types: string[] = [];
     var ol_names: string[] = [];
     var ol_payloads: string[] = [];
-    // i64-typed params, plus the i64-declared `var`/`let` names in the body.
+    // i64- / f64-typed params, plus the i64- / f64-declared names in the body.
     var i64_names: string[] = collect_i64_var_names(f.body, []);
+    var f64_names: string[] = collect_f64_var_names(f.body, []);
     var pj: i32 = 0;
     while (pj < f.params.len()) {
         if (f.params[pj].type_name == "i64" && !contains_str(i64_names, f.params[pj].name)) {
             i64_names = i64_names.push(f.params[pj].name);
+        }
+        if (is_float_type(f.params[pj].type_name) && !contains_str(f64_names, f.params[pj].name)) {
+            f64_names = f64_names.push(f.params[pj].name);
         }
         pj = pj + 1;
     }
@@ -2179,6 +2403,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         mr_types: mr_types, mr_names: mr_names, mr_rets: mr_rets,
         i64_names: i64_names, i64_funcs: i64_funcs,
         ret_i64: f.ret_type == "i64", mod_funcs: mod_funcs,
+        f64_names: f64_names, f64_funcs: f64_funcs,
+        ret_f64: is_float_type(f.ret_type),
     };
     return collect_str_locals_stmts(f.body, cx);
 }
@@ -2282,7 +2508,7 @@ function returns_value(ret_type: string): boolean {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[]): string {
     // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
     // receiver prepended as the first param; a free function as `$name`.
     var fname: string = f.name;
@@ -2295,14 +2521,18 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     } else {
         head = head + fname;
     }
-    // The set of i64-typed locals/params drives both the (param/local i64)
-    // decls here and the i64 instruction path in Ctx.
+    // The i64- / f64-typed local/param sets drive both the (param/local …)
+    // decls here and the typed instruction paths in Ctx.
     var i64_set: string[] = collect_i64_var_names(f.body, []);
+    var f64_set: string[] = collect_f64_var_names(f.body, []);
     var i: i32 = 0;
     while (i < f.params.len()) {
         if (f.params[i].type_name == "i64") {
             head = head + " (param $" + f.params[i].name + " i64)";
             if (!contains_str(i64_set, f.params[i].name)) { i64_set = i64_set.push(f.params[i].name); }
+        } else if (is_float_type(f.params[i].type_name)) {
+            head = head + " (param $" + f.params[i].name + " f64)";
+            if (!contains_str(f64_set, f.params[i].name)) { f64_set = f64_set.push(f.params[i].name); }
         } else {
             head = head + " (param $" + f.params[i].name + " i32)";
         }
@@ -2311,8 +2541,10 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     }
     var has_result: boolean = returns_value(f.ret_type);
     var i64_result: boolean = f.ret_type == "i64";
+    var f64_result: boolean = is_float_type(f.ret_type);
     if (has_result) {
         if (i64_result) { head = head + " (result i64)"; }
+        else if (f64_result) { head = head + " (result f64)"; }
         else { head = head + " (result i32)"; }
     }
     head = head + "\n";
@@ -2332,6 +2564,8 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         if (!contains_str(pnames, locals[li]) && !is_reserved_local(locals[li])) {
             if (contains_str(i64_set, locals[li])) {
                 decls = decls + "    (local $" + locals[li] + " i64)\n";
+            } else if (contains_str(f64_set, locals[li])) {
+                decls = decls + "    (local $" + locals[li] + " f64)\n";
             } else {
                 decls = decls + "    (local $" + locals[li] + " i32)\n";
             }
@@ -2339,13 +2573,14 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
     var tail: string = "  )\n";
     if (has_result) {
         if (i64_result) { tail = "    (i64.const 0))\n"; }
+        else if (f64_result) { tail = "    (f64.const 0))\n"; }
         else { tail = "    (i32.const 0))\n"; }
     }
     return head + decls + st.out + tail;
@@ -2742,6 +2977,51 @@ function collect_i64_func_names(mod: parser.Module): string[] {
     return out;
 }
 
+// collect_f64_var_names / collect_f64_func_names mirror the i64 collectors
+// for floating-point (f64 / f32 / float) bindings and return types.
+function collect_f64_var_names(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (is_float_type(v.type_name) && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_f64_var_names(f.then_body, acc);
+                acc = collect_f64_var_names(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => {
+                acc = collect_f64_var_names(w.body, acc);
+            },
+            parser.StmtFor(f) => {
+                acc = collect_f64_var_names(f.body, acc);
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_f64_var_names(m.arms[k].body, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function collect_f64_func_names(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && is_float_type(mod.funcs[i].ret_type)) {
+            out = out.push(mod.funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // module_uses_clocks is true when the program calls any clock builtin.
 function module_uses_clocks(mod: parser.Module): boolean {
     return module_calls(mod, "now_unix_ms") || module_calls(mod, "monotonic_ns") || module_calls(mod, "now_ns");
@@ -2759,15 +3039,83 @@ function func_declares_i64(f: parser.FuncDecl): boolean {
     return collect_i64_var_names(f.body, []).len() > 0;
 }
 
+// expr_uses_i64_cast / stmts_use_i64_cast detect an `as i64` / `as u64`
+// cast anywhere — such a cast yields an i64 value (and may feed
+// print_int → print_int64) even with no i64-typed declaration, so it must
+// also pull in the i64 runtime.
+function expr_uses_i64_cast(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprUnary(u) => {
+            if (u.op == "as_i64" || u.op == "as_u64") { return true; }
+            return expr_uses_i64_cast(u.operand);
+        },
+        parser.ExprBinary(b) => {
+            return expr_uses_i64_cast(b.left) || expr_uses_i64_cast(b.right);
+        },
+        parser.ExprCall(c) => {
+            if (expr_uses_i64_cast(c.callee)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_uses_i64_cast(c.args[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprIndex(ix) => { return expr_uses_i64_cast(ix.array) || expr_uses_i64_cast(ix.index); },
+        parser.ExprFieldAccess(fa) => { return expr_uses_i64_cast(fa.obj); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_use_i64_cast(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_uses_i64_cast(v.init)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_uses_i64_cast(a.value)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_uses_i64_cast(r.value)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_uses_i64_cast(e.value)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_uses_i64_cast(f.cond)) { return true; }
+                if (stmts_use_i64_cast(f.then_body)) { return true; }
+                if (stmts_use_i64_cast(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_uses_i64_cast(w.cond)) { return true; }
+                if (stmts_use_i64_cast(w.body)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_uses_i64_cast(f.iter)) { return true; }
+                if (stmts_use_i64_cast(f.body)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_uses_i64_cast(m.scrutinee)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_use_i64_cast(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // module_uses_i64 is true when the module touches i64 anywhere: a clock
-// builtin call, or any i64-typed return / param / local. Gates the i64
-// runtime (print_int64 + guarded div/rem) and the reserved scratch.
+// builtin call, any i64-typed return / param / local, or an `as i64` /
+// `as u64` cast. Gates the i64 runtime (print_int64 + guarded div/rem)
+// and the reserved scratch.
 function module_uses_i64(mod: parser.Module): boolean {
     if (module_uses_clocks(mod)) { return true; }
     if (collect_i64_var_names(mod.top_stmts, []).len() > 0) { return true; }
+    if (stmts_use_i64_cast(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (func_declares_i64(mod.funcs[i])) { return true; }
+        if (stmts_use_i64_cast(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -2855,6 +3203,7 @@ pub function emit_module(mod: parser.Module): string {
     var mr_rets: string[] = collect_method_rets(mod);
 
     var i64_funcs: string[] = collect_i64_func_names(mod);
+    var f64_funcs: string[] = collect_f64_func_names(mod);
 
     var has_env: boolean = module_calls(mod, "env");
     var has_random: boolean = module_calls(mod, "random_bytes");
@@ -2947,7 +3296,7 @@ pub function emit_module(mod: parser.Module): string {
         var f: parser.FuncDecl = mod.funcs[j];
         // Emit free functions and receiver methods alike; emit_func
         // mangles a method's name to `$<RecvType>__<name>`.
-        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs);
+        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs);
         if (f.receiver_type.len() == 0 && f.name == "main") { has_main = true; }
         j = j + 1;
     }
@@ -2962,7 +3311,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs);
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";

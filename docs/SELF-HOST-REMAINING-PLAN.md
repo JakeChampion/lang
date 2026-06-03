@@ -29,10 +29,12 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   arrays, structs + methods, Option/Result + `match`/`?`, struct-union
   match, generics-by-erasure, the wasi runtime builtins (`env`,
   `random_bytes`, `args`, `read_file` / `write_file`, and the clocks
-  `now_unix_ms` / `monotonic_ns` / `now_ns` via `clock_time_get`), and a
+  `now_unix_ms` / `monotonic_ns` / `now_ns` via `clock_time_get`), a
   real i64 value path (i64 locals / params / returns, i64 arithmetic +
   comparison with guarded 64-bit div/rem, and an i64 formatter for the
-  64-bit clock timestamps). Gated by 248 differential cases under
+  64-bit clock timestamps), and an f64 floating-point path (f64 locals /
+  params / returns, arithmetic + comparison, `as` casts f64↔i32/i64, and
+  the primitive math builtins). Gated by 270 differential cases under
   `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm: the
   `wasi:cli/run` / `wasi:http` component shapes and binary wasm encoding
   (it emits WAT text today).
