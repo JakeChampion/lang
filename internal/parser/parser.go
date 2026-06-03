@@ -602,6 +602,28 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	return id, methods, nil
 }
 
+// parseOptBounds parses an optional trait-bound list on a type
+// parameter: `: Display + Eq`. Returns nil when no `:` follows. See
+// docs/TRAITS.md.
+func (p *parser) parseOptBounds() ([]string, error) {
+	if _, ok := p.accept(lexer.Punct, ":"); !ok {
+		return nil, nil
+	}
+	var bounds []string
+	for {
+		b, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		bounds = append(bounds, b.Text)
+		if _, ok := p.accept(lexer.Punct, "+"); ok {
+			continue
+		}
+		break
+	}
+	return bounds, nil
+}
+
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	kw, err := p.expect(lexer.Keyword, "function")
 	if err != nil {
@@ -617,6 +639,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// we collect this leading-position form into the same
 	// `typeParams` slot.
 	var typeParams []string
+	var bounds map[string][]string
 	if p.match(lexer.Punct, "[") {
 		p.advance() // [
 		for {
@@ -625,6 +648,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 				return nil, err
 			}
 			typeParams = append(typeParams, pname.Text)
+			bs, err := p.parseOptBounds()
+			if err != nil {
+				return nil, err
+			}
+			if len(bs) > 0 {
+				if bounds == nil {
+					bounds = map[string][]string{}
+				}
+				bounds[pname.Text] = bs
+			}
 			if _, ok := p.accept(lexer.Punct, ","); ok {
 				continue
 			}
@@ -675,6 +708,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 				return nil, err
 			}
 			typeParams = append(typeParams, pname.Text)
+			bs, err := p.parseOptBounds()
+			if err != nil {
+				return nil, err
+			}
+			if len(bs) > 0 {
+				if bounds == nil {
+					bounds = map[string][]string{}
+				}
+				bounds[pname.Text] = bs
+			}
 			if _, ok := p.accept(lexer.Punct, ","); ok {
 				continue
 			}
@@ -733,6 +776,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		Name:       name.Text,
 		NamePos:    funcNamePos,
 		TypeParams: typeParams,
+		Bounds:     bounds,
 		Params:     params,
 		ReturnType: ret,
 		Body:       body,

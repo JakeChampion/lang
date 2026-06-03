@@ -1735,6 +1735,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			fn.Receiver = nil
 			c.info.Methods[methodKey] = mangled
 			c.info.MethodSources[mangled] = fn.SourceModule
+		} else if strings.HasPrefix(fn.Name, "__method_") &&
+			!strings.Contains(fn.Name[len("__method_"):], "__") {
+			// Already-hoisted method whose Receiver was consumed by a
+			// previous Check pass — this is what the monomorph
+			// re-check sees (Check rebuilds Info from scratch, but the
+			// FuncDecl no longer carries a Receiver). Re-register it so
+			// method dispatch resolves after monomorphisation. The
+			// `__` guard skips monomorphised clones
+			// (`__method_Foo__i32_bar`). Idempotent: only fills a
+			// missing key. See docs/TRAITS.md §4.
+			rest := fn.Name[len("__method_"):]
+			if idx := strings.IndexByte(rest, '_'); idx > 0 {
+				key := rest[:idx] + "." + rest[idx+1:]
+				if _, exists := c.info.Methods[key]; !exists {
+					c.info.Methods[key] = fn.Name
+					c.info.MethodSources[fn.Name] = fn.SourceModule
+				}
+			}
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
@@ -1836,6 +1854,20 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 		if conforms {
 			c.info.Impls[impl.Trait][typeName] = true
+		}
+	}
+
+	// Validate that every trait named in a function's type-parameter
+	// bounds actually exists. Catches typos / unknown traits before
+	// the deferred-dispatch path silently fails to resolve. See
+	// docs/TRAITS.md.
+	for _, fn := range prog.Funcs {
+		for tp, traits := range fn.Bounds {
+			for _, traitName := range traits {
+				if _, ok := c.info.Traits[traitName]; !ok {
+					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", traitName, tp)
+				}
+			}
 		}
 	}
 
@@ -1949,6 +1981,29 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 		}
 	}
 	return ast.Equal(sig.Result, wantRet)
+}
+
+// resolveTraitMethodForParam looks up method `field` among the traits
+// bound on type parameter `paramName` in the function currently being
+// checked. Returns the matching trait-method signature and the trait
+// name. Used by the deferred-dispatch path for trait-bounded generics.
+// See docs/TRAITS.md.
+func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.TraitMethod, string, bool) {
+	if c.current == nil {
+		return ast.TraitMethod{}, "", false
+	}
+	for _, traitName := range c.current.Bounds[paramName] {
+		td, ok := c.info.Traits[traitName]
+		if !ok {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Name == field {
+				return m, traitName, true
+			}
+		}
+	}
+	return ast.TraitMethod{}, "", false
 }
 
 func (c *checker) methodVisibleHere(mangled string) bool {
@@ -4682,6 +4737,37 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// function call.
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			tt := c.checkExpr(fa.Target, s)
+			// Trait-bounded type parameter: `x.m(...)` where `x: T`
+			// and `T: SomeTrait`. We type-check against the trait's
+			// signature here but DON'T rewrite the callee — the
+			// receiver type is still abstract. monomorph clones the
+			// body with `T` substituted by the concrete type and
+			// re-runs Check, at which point the ordinary dispatch
+			// path below resolves the now-concrete receiver to the
+			// impl's mangled method. See docs/TRAITS.md §4.
+			if pt, ok := tt.(ast.ParamType); ok {
+				tm, _, found := c.resolveTraitMethodForParam(pt.Name, fa.Field)
+				if !found {
+					c.errfCode(n.P, "E021",
+						"no method %q on type parameter %s; add a trait bound such as [%s: SomeTrait] that provides it",
+						fa.Field, pt.Name, pt.Name)
+					return nil
+				}
+				wantParams := tm.Params[1:] // drop `self`
+				if len(n.Args) != len(wantParams) {
+					c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+					return ast.SubstSelf(tm.Result, tt)
+				}
+				for i, arg := range n.Args {
+					at := c.checkExpr(arg, s)
+					want := ast.SubstSelf(wantParams[i].Type, tt)
+					if at != nil && !assignable(want, at) {
+						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+					}
+				}
+				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt}
+				return ast.SubstSelf(tm.Result, tt)
+			}
 			var typeName string
 			switch t := tt.(type) {
 			case ast.StructType:
@@ -4938,6 +5024,24 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete {
+				// Trait-bound satisfaction: every concrete type
+				// argument must implement the traits its type
+				// parameter is bound by. A still-parametric arg
+				// (generic-into-generic) is left for the eventual
+				// monomorphic call. See docs/TRAITS.md §5.
+				for i, tp := range genericFn.TypeParams {
+					if _, isParam := args[i].(ast.ParamType); isParam {
+						continue
+					}
+					for _, traitName := range genericFn.Bounds[tp] {
+						tn, ok := methodTypeName(args[i])
+						if !ok || !c.info.Impls[traitName][tn] {
+							c.errfCode(n.P, "E021",
+								"type argument %s = %s does not implement trait %s required by %s",
+								tp, args[i], traitName, genericFn.Name)
+						}
+					}
+				}
 				n.TypeArgs = args
 				return substituteType(ft.Result, sub)
 			}

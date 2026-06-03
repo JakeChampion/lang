@@ -1245,3 +1245,33 @@ impl T for Self { function f(self: Self): void {} }`); err == nil {
 		t.Error("`impl T for Self` should be a parse error")
 	}
 }
+
+// Type-parameter trait bounds parse into FuncDecl.Bounds:
+// `function f[T: Display + Eq, U: Ord](…)`. See docs/TRAITS.md.
+func TestTypeParamBoundsParse(t *testing.T) {
+	prog, err := Parse(`function show[T: Display + Eq, U: Ord](a: T, b: U): string { return "x"; }`)
+	if err != nil {
+		t.Fatalf("bounded type params should parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if len(fn.TypeParams) != 2 || fn.TypeParams[0] != "T" || fn.TypeParams[1] != "U" {
+		t.Fatalf("type params = %v", fn.TypeParams)
+	}
+	if got := fn.Bounds["T"]; len(got) != 2 || got[0] != "Display" || got[1] != "Eq" {
+		t.Errorf("Bounds[T] = %v, want [Display Eq]", got)
+	}
+	if got := fn.Bounds["U"]; len(got) != 1 || got[0] != "Ord" {
+		t.Errorf("Bounds[U] = %v, want [Ord]", got)
+	}
+}
+
+// An unbounded type param records no bounds entry.
+func TestTypeParamNoBounds(t *testing.T) {
+	prog, err := Parse(`function id[T](x: T): T { return x; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.Funcs[0].Bounds) != 0 {
+		t.Errorf("expected no bounds, got %v", prog.Funcs[0].Bounds)
+	}
+}
