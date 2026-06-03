@@ -243,6 +243,17 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 40 }, k: 2 }; return o.inner.v + o.k; }", 42, ""},
 		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, ""},
 		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a.total = a.total + i; i = i + 1; } return a.total; }", 15, ""},
+		// Option / Result via tag boxes + match.
+		{"opt-some", "function find(): Option[i32] { return Some(42); } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
+		{"opt-none", "function find(): Option[i32] { return None; } function main(): i32 { match (find()) { Some(v) => { return v; }, None => { return 7; } } return 1; }", 7, ""},
+		{"opt-some-payload-add", "function mk(): Option[i32] { return Some(40); } function main(): i32 { match (mk()) { Some(v) => { return v + 2; }, None => { return 0; } } return 1; }", 42, ""},
+		{"result-ok", "function run(): Result[i32, i32] { return Ok(40); } function main(): i32 { match (run()) { Ok(v) => { return v + 2; }, Err(e) => { return e; } } return 1; }", 42, ""},
+		{"result-err", "function run(): Result[i32, i32] { return Err(13); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
+		{"opt-wildcard", "function mk(): Option[i32] { return None; } function main(): i32 { match (mk()) { Some(v) => { return v; }, _ => { return 99; } } return 1; }", 99, ""},
+		{"opt-local", "function main(): i32 { var o: Option[i32] = Some(5); match (o) { Some(v) => { return v * 2; }, None => { return 0; } } return 1; }", 10, ""},
+		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
+		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},
+		{"opt-nested-match", "function a(): Option[i32] { return Some(1); } function b(): Option[i32] { return Some(2); } function main(): i32 { match (a()) { Some(x) => { match (b()) { Some(y) => { return x + y + 39; }, None => { return 0; } } }, None => { return 0; } } return 1; }", 42, ""},
 	}
 
 	for _, tc := range cases {
