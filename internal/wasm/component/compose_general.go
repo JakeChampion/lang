@@ -138,8 +138,9 @@ func (g *gComposer) ensureUdp() {
 		return
 	}
 	g.ensureNetwork()
+	g.ensureIoPoll()
 	inst := g.c.importInstance("wasi:sockets/udp@0.2.0",
-		g.c.typeRaw(WasiSocketsUdpInstanceTypeBody(g.surfaced["network"], g.surfaced["error-code"], g.surfaced["ip-socket-address"])))
+		g.c.typeRaw(WasiSocketsUdpInstanceTypeBody(g.surfaced["network"], g.surfaced["error-code"], g.surfaced["ip-socket-address"], g.surfaced["pollable"])))
 	g.inst["wasi:sockets/udp@0.2.0"] = inst
 	g.surfaced["udp-socket"] = g.c.aliasType(inst, "udp-socket")
 	g.surfaced["incoming-datagram-stream"] = g.c.aliasType(inst, "incoming-datagram-stream")

@@ -150,10 +150,20 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: udp, name: "[method]udp-socket.stream", kind: gMem, params: udpBindStreamParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.check-send", kind: gMem, params: udpSelfRetParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.send", kind: gMem, params: udpSendParams},
+			gImport{iface: udp, name: "[method]outgoing-datagram-stream.subscribe", kind: gNoOpt},
 			gImport{iface: udp, name: "[resource-drop]udp-socket", kind: gDrop, resourceT: g.surfaced["udp-socket"]},
 			gImport{iface: udp, name: "[resource-drop]incoming-datagram-stream", kind: gDrop, resourceT: g.surfaced["incoming-datagram-stream"]},
 			gImport{iface: udp, name: "[resource-drop]outgoing-datagram-stream", kind: gDrop, resourceT: g.surfaced["outgoing-datagram-stream"]},
 		)
+		// The send path blocks on the outgoing-datagram-stream's
+		// pollable until a datagram is permitted; pull in poll.block /
+		// drop unless the TCP block already declared them.
+		if !req.Tcp {
+			g.add(
+				gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
+				gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]},
+			)
+		}
 	}
 	if req.Tcp || req.Udp {
 		g.add(gImport{iface: "wasi:sockets/instance-network@0.2.0", name: "instance-network", kind: gNoOpt})
