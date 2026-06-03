@@ -10290,7 +10290,11 @@ pub function darwinize(asm: string): string {
     var n: i32 = asm.len();
     var start: i32 = 0;
     var i: i32 = 0;
-    var prev_sys_mov: boolean = false;
+    // prev_sys_num holds the Darwin number of a remapped syscall whose
+    // `mov x16, #M` we just emitted, so the following `svc` knows whether
+    // (and how) to flip the trap + normalise the errno. -1 = none.
+    var prev_sys_num: i32 = 0 - 1;
+    var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
     while (i <= n) {
         if (i == n || asm[i] == 10) {
             var line: string = asm[start:i];
@@ -10298,7 +10302,7 @@ pub function darwinize(asm: string): string {
             var body: string = darwin_lstrip(line);
             var keep: boolean = true;
             var out_line: string = line;
-            var this_sys_mov: boolean = false;
+            var this_sys_num: i32 = 0 - 1;
 
             if (darwin_starts_with(body, ".type ") || darwin_starts_with(body, ".size ")) {
                 keep = false;
@@ -10324,11 +10328,22 @@ pub function darwinize(asm: string): string {
                 var m: i32 = darwin_sysno(num);
                 if (m >= 0) {
                     out_line = "    mov x16, #" + i32_to_string(m);
-                    this_sys_mov = true;
+                    this_sys_num = m;
                 }
             } else if (line == "    svc #0") {
-                if (prev_sys_mov) {
+                if (prev_sys_num == 1) {
+                    // exit / exit_group: never returns, so no errno
+                    // normalisation — just flip the trap.
                     out_line = "    svc #0x80";
+                } else if (prev_sys_num >= 0) {
+                    // Fallible syscall. Darwin returns +errno with the
+                    // carry flag SET on error; Linux returns -errno. The
+                    // self-host's callers test `x0 < 0`, so negate x0 when
+                    // carry is set to restore the Linux-shaped -errno.
+                    // Mirrors the Go backend's syscall() normalisation.
+                    var lbl: string = ".Ldwsc_" + i32_to_string(norm_n);
+                    norm_n = norm_n + 1;
+                    out_line = "    svc #0x80\n    b.cc " + lbl + "\n    neg x0, x0\n" + lbl + ":";
                 }
             }
 
@@ -10339,7 +10354,7 @@ pub function darwinize(asm: string): string {
                     out = out + out_line;
                 }
             }
-            prev_sys_mov = this_sys_mov;
+            prev_sys_num = this_sys_num;
             start = i + 1;
         }
         i = i + 1;
@@ -10552,6 +10567,11 @@ function main(): i32 {
     if (contains(d1, ".type ")) { return 268; }
     if (contains(d1, ".size ")) { return 269; }
     if (contains(d1, ".note.GNU-stack")) { return 270; }
+    // Fallible syscalls (write here) get Darwin errno normalisation:
+    // `b.cc <lbl>; neg x0, x0; <lbl>:` after the trap so the self-host's
+    // `x0 < 0` error checks see Linux-shaped -errno. exit (#1) doesn't.
+    if (!contains(d1, "b.cc .Ldwsc_")) { return 271; }
+    if (!contains(d1, "neg x0, x0")) { return 272; }
 
     // arm64-darwin ABI-divergent syscall builtins: emit_module(_, true)
     // selects gettimeofday for now_unix_ms (Darwin has no clock_gettime

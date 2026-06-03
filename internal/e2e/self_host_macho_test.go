@@ -124,13 +124,16 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			srcPath := filepath.Join(dir, c.name+".fern")
-			if err := os.WriteFile(srcPath, []byte(c.src+"\n"), 0o644); err != nil {
+	// runCase: emit `src` via the self-host CLI for arm64-darwin, link it,
+	// assert it's a valid arm64 Mach-O, and (on Apple Silicon) execute it
+	// and check the exit code.
+	runCase := func(name, src string, wantExit int) {
+		t.Run(name, func(t *testing.T) {
+			srcPath := filepath.Join(dir, name+".fern")
+			if err := os.WriteFile(srcPath, []byte(src+"\n"), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
-			asmPath := filepath.Join(dir, c.name+".s")
+			asmPath := filepath.Join(dir, name+".s")
 			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", asmPath, srcPath).CombinedOutput()
 			if err != nil {
 				if native {
@@ -143,7 +146,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 				t.Fatalf("self-host emit failed: %v\n%s", err, out)
 			}
 
-			binPath := filepath.Join(dir, c.name+".bin")
+			binPath := filepath.Join(dir, name+".bin")
 			if out, err := exec.Command("clang", linkArgs(asmPath, binPath)...).CombinedOutput(); err != nil {
 				t.Fatalf("clang Mach-O link failed: %v\n%s", err, out)
 			}
@@ -170,11 +173,33 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 			if ps == nil || !ps.Exited() {
 				t.Skipf("Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
 			}
-			if code := ps.ExitCode(); code != c.wantExit {
-				t.Errorf("self-host arm64-darwin %q exit = %d, want %d", c.name, code, c.wantExit)
+			if code := ps.ExitCode(); code != wantExit {
+				t.Errorf("self-host arm64-darwin %q exit = %d, want %d", name, code, wantExit)
 			}
 		})
 	}
+
+	for _, c := range cases {
+		runCase(c.name, c.src, c.wantExit)
+	}
+
+	// read_file — exercises openat/lseek/read/close (number-compatible
+	// Darwin syscalls) plus the carry-flag errno normalisation darwinize
+	// injects so the self-host's `x0 < 0` error checks see Linux-shaped
+	// -errno. The Ok path reads a known file and returns its length; the
+	// missing-file path must hit the Err arm (proving errno normalisation
+	// works — without it openat's +errno would look like a valid fd).
+	const rfContent = "hello, fern!" // 12 bytes
+	okPath := filepath.Join(dir, "rf_data.txt")
+	if err := os.WriteFile(okPath, []byte(rfContent), 0o644); err != nil {
+		t.Fatalf("write rf data: %v", err)
+	}
+	runCase("read_file_ok",
+		`function main(): i32 { match (read_file("`+okPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } }`,
+		len(rfContent))
+	runCase("read_file_missing",
+		`function main(): i32 { match (read_file("`+filepath.Join(dir, "no_such_file_zzz")+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } }`,
+		99)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
