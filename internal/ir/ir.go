@@ -2433,13 +2433,21 @@ func (b *builder) computePreciseDrops() map[int][]string {
 			}
 		}
 	}
-	isNestedStmt := func(st ast.Stmt) bool {
-		switch st.(type) {
-		case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
-			return true
+	// A precise drop now allows the last use to sit inside a nested block
+	// (control-flow-aware placement — slice 5), so reassignment must be
+	// detected at ANY depth: a `name = ...` inside an `if`/`while` rebinds the
+	// slot, and precise-dropping the post-loop value at its last use is only
+	// sound if the slot wasn't re-overwritten on some path in a way the
+	// straight-line `last` index can't see. Conservatively bail on any
+	// assignment to the local anywhere in the body.
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
 		}
-		return false
-	}
+		return true
+	})
 	references := func(st ast.Node, name string) bool {
 		found := false
 		ast.Walk(st, func(n ast.Node) bool {
@@ -2481,40 +2489,70 @@ func (b *builder) computePreciseDrops() map[int][]string {
 				continue
 			}
 		}
-		nested := false
 		unsafe := false
 		last := -1
 		for i := di + 1; i < len(stmts); i++ {
 			if !references(stmts[i], name) {
 				continue
 			}
-			if isNestedStmt(stmts[i]) {
-				nested = true
-				break
-			}
+			// Control-flow-aware placement (slice 5): the last use may now sit
+			// INSIDE a nested if / while / for / match. We still drop the local
+			// right after the whole top-level statement that contains its last
+			// use — by then the local is dead on EVERY path through that
+			// statement, so a single top-level drop + zero-slot is sound, and
+			// any early `return` on a path keeps the value live to its own exit
+			// sweep (the zeroed slot makes the post-statement drop a no-op on
+			// the paths that already returned). Slightly less precise than a
+			// per-branch drop, but it reclaims before the (often long) tail
+			// after an `if`, which is where the win is.
+			//
 			// A reference inside a pointer-producing call / slice / if-expr /
 			// match-expr can create an UNCOUNTED alias of `name` that outlives
 			// the drop point (e.g. `var v3 = id(v2)` — a generic identity
-			// returns its borrowed arg with no inc, so v3 shares v2's box). The
-			// inc'd-alias sites (`var y = x` / `x.field` / `x[i]` via
-			// needsRcIncOnAlias, and container literals which inc the stored
-			// value) are SAFE — the precise drop only decs there. Bail on the
-			// uncounted-alias shapes; freeing `name` there would strand the
-			// alias. (Conservative: also skips a scalar-returning call's
-			// pointer-typed sibling args — refined in a later slice.)
+			// returns its borrowed arg with no inc). The inc'd-alias sites
+			// (`var y = x` / `x.field` / `x[i]`, container literals) are SAFE —
+			// the precise drop only decs there. Bail on the uncounted-alias
+			// shapes (flowsIntoUncountedAlias walks the whole nested statement).
 			if b.flowsIntoUncountedAlias(stmts[i], name) {
 				unsafe = true
 				break
 			}
 			last = i
 		}
-		if nested || unsafe {
+		if unsafe {
 			continue
 		}
 		if last < 0 {
 			// Declared but never used after — drop right after the decl
 			// (a dead owned alloc reclaims immediately).
 			last = di
+		}
+		// Control-flow placement guard: when the last use sits INSIDE a
+		// nested control-flow statement (if / while / for / match / block),
+		// the precise drop fires after that whole top-level statement —
+		// the slice-5 extension over the straight-line slices 1-3, which
+		// only placed drops after a simple top-level use. That extension is
+		// only enabled for PRIMITIVE-element arrays (i32[] / f64[] / …): a
+		// dead `int[]` freed early is the clean peak-memory win (the
+		// headline two-KiB-array case) with no per-element rc to balance.
+		//
+		// A pointer-element array (string[] / struct[] / T[][] / tuple[])
+		// is EXCLUDED from this nested placement: its deep drop dec's each
+		// element, and an element aliased out across the drop point (e.g.
+		// the self-host driver's `entry_path = av[1]` / `root = av[2]` from
+		// `var av: string[] = args()`, last-used at `av[2]` inside an `if`)
+		// relies on the per-element retain/release balancing exactly on
+		// EVERY backend. On arm64 two-word heap strings that balance rides
+		// the native heap-string reclamation path the plan still defers
+		// (slice 5g, "arm64 native heap-string rc — verify on hardware"),
+		// so an early drop there corrupts under allocation-reuse pressure
+		// (the args buffer reclaimed and reused while a still-live element
+		// alias points into it). Falling back to the exit sweep for these
+		// keeps the nested-use win for primitive arrays without crossing
+		// that unverified arm64 boundary. Straight-line (simple top-level
+		// last use) placement keeps the full slice 1-3 element scope.
+		if b.isControlFlowStmt(stmts[last]) && b.arrayElemIsPointer(name) {
+			continue
 		}
 		// A `return` whose value is this local is handled by the Return
 		// lowering's own move-on-return / sweep; dropping after it is dead
@@ -2525,6 +2563,38 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		out[last] = append(out[last], name)
 	}
 	return out
+}
+
+// isControlFlowStmt reports whether `st` is a control-flow statement whose
+// body holds a nested block — an if / while / for / match / bare block. A
+// reference to a local inside one of these is a "nested" use, so a precise
+// drop placed after the whole statement is the slice-5 control-flow
+// extension (vs a simple top-level Var / ExprStmt / Return use).
+func (b *builder) isControlFlowStmt(st ast.Node) bool {
+	switch st.(type) {
+	case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
+		return true
+	}
+	return false
+}
+
+// arrayElemIsPointer reports whether `name`'s declared array type has a
+// pointer-shaped element (string / array / struct / enum / tuple / closure /
+// slice). Primitive-element arrays (i32[] / f64[] / bool[] / …) return false.
+// Gates the slice-5 control-flow placement: only primitive-element arrays
+// take the nested-use precise drop (no per-element rc to balance across the
+// drop), keeping the unverified arm64 two-word heap-string reclamation path
+// out of the early-drop scope.
+func (b *builder) arrayElemIsPointer(name string) bool {
+	t, ok := b.localDeclType(name)
+	if !ok {
+		return true // unknown — be conservative (exclude from nested placement)
+	}
+	at, ok := t.(ast.ArrayType)
+	if !ok {
+		return true
+	}
+	return ast.IsPointerType(at.Elem)
 }
 
 // flowsIntoUncountedAlias reports whether `name` appears inside an
