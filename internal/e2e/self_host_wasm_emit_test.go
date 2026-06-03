@@ -420,6 +420,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strmap-content-equality", "function main(): i32 { var k = \"h\" + \"i\"; var m = map_new(8); m = m.set(k, 7); print_int(m.get_or(\"hi\", 0)); return 0; }", 0, "7"},
 		{"strmap-prefix-distinct", "function main(): i32 { var m = Map { \"ab\": 1, \"abc\": 2 }; print_int(m.get_or(\"ab\", 0)); print_int(m.get_or(\"abc\", 0)); return 0; }", 0, "12"},
 		{"strmap-grow", "function main(): i32 { var m = map_new(8); var i: i32 = 1; while (i <= 20) { m = m.set(\"x\".repeat(i), i); i = i + 1; } print_int(m.get_or(\"x\".repeat(5), -1)); print_int(m.len()); return 0; }", 0, "520"},
+
+		// String-valued maps. The runtime stores i32 slots (a string is a
+		// pointer), so this is purely value-type tracking: `.get` / `.get_or`
+		// results are typed as string so they print / concat correctly.
+		{"strval-get-or", "function main(): i32 { var m = Map { 1: \"one\", 2: \"two\" }; write(m.get_or(1, \"?\")); return 0; }", 0, "one"},
+		{"strval-get-or-missing", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(3, \"none\")); return 0; }", 0, "none"},
+		{"strval-string-key", "function main(): i32 { var m = Map { \"x\": \"hello\" }; write(m.get_or(\"x\", \"?\")); return 0; }", 0, "hello"},
+		{"strval-get-some", "function main(): i32 { var m = Map { 1: \"one\", 2: \"two\" }; match (m.get(2)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "two"},
+		{"strval-get-none", "function main(): i32 { var m = Map { 1: \"one\" }; match (m.get(9)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "none"},
+		{"strval-concat", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(1, \"?\") + \"!\"); return 0; }", 0, "one!"},
+		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.set(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
+		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.set(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
+		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
 	}
 
 	for _, tc := range cases {
