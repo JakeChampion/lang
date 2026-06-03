@@ -484,6 +484,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-slice-index", "function main(): i32 { var xs = [5, 6, 7, 8]; var sub = xs[2:4]; print_int(sub[0]); print_int(sub[1]); return 0; }", 0, "78"},
 		{"arr-slice-string-elems", "function main(): i32 { var xs = [\"a\", \"b\", \"c\", \"d\"]; var sub = xs[1:3]; var i: i32 = 0; while (i < sub.len()) { write(sub[i]); i = i + 1; } return 0; }", 0, "bc"},
 		{"arr-slice-for", "function main(): i32 { var xs = [1, 2, 3, 4, 5, 6]; var s: i32 = 0; for v in xs[2:5] { s = s + v; } print_int(s); return 0; }", 0, "12"},
+
+		// Tuples `(a, b, …)` — N consecutive slots accessed by the numeric
+		// `.N` field. Element types are tracked so a string element prints
+		// / concats / supports methods.
+		{"tuple-i32-fields", "function main(): i32 { var t = (10, 20); print_int(t.0); print_int(t.1); return 0; }", 0, "1020"},
+		{"tuple-inline-access", "function main(): i32 { print_int((5, 7).1); return 0; }", 0, "7"},
+		{"tuple-three", "function main(): i32 { var t = (1, 2, 3); print_int(t.0 + t.1 + t.2); return 0; }", 0, "6"},
+		{"tuple-from-exprs", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; var t = (a, b); print_int(t.0 * t.1); return 0; }", 0, "12"},
+		{"tuple-string-elem", "function main(): i32 { var t = (1, \"hi\"); write(t.1); return 0; }", 0, "hi"},
+		{"tuple-mixed-kinds", "function main(): i32 { var t = (\"a\", 42); write(t.0); print_int(t.1); return 0; }", 0, "a42"},
+		{"tuple-string-concat", "function main(): i32 { var t = (1, \"x\"); write(t.1 + \"y\"); return 0; }", 0, "xy"},
+		{"tuple-string-len", "function main(): i32 { var t = (0, \"hello\"); print_int(t.1.len()); return 0; }", 0, "5"},
+		{"tuple-nested", "function main(): i32 { var t = (1, (2, 3)); var inner = t.1; print_int(inner.0 + inner.1); return 0; }", 0, "5"},
 	}
 
 	for _, tc := range cases {

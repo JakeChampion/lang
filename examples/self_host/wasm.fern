@@ -120,6 +120,10 @@ struct Ctx {
     // map_str_key_names: the subset whose keys are strings (built via
     // map_new, not map_new_i32), so `.keys()` is typed as string[].
     map_str_key_names: string[],
+    // Tuple locals (tup_names) with a per-element kind string (tup_kinds):
+    // one char per element, 's' = string, else 'i'. Drives `t.N` typing.
+    tup_names: string[],
+    tup_kinds: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -367,6 +371,72 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
         i = i + 1;
     }
     return acc;
+}
+
+// tuple_kind_string builds the per-element kind tag for a tuple literal:
+// one char per element, 's' for a string element, else 'i'.
+function tuple_kind_string(elements: parser.Expr[], cx: Ctx): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < elements.len()) {
+        if (is_string_expr(elements[i], cx)) { out = out + "s"; } else { out = out + "i"; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// tuple_elem_is_string reports whether element `n` of a tuple expression
+// is a string: from a tracked tuple local's kind string, or directly from
+// a tuple literal's element.
+function tuple_elem_is_string(obj: parser.Expr, n: i32, cx: Ctx): boolean {
+    match (obj) {
+        parser.ExprIdent(id) => {
+            var ks: string = lookup_pair(cx.tup_names, cx.tup_kinds, id.name);
+            return n >= 0 && n < ks.len() && ks[n] == 115;
+        },
+        parser.ExprTuple(t) => {
+            return n >= 0 && n < t.elements.len() && is_string_expr(t.elements[n], cx);
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// collect_tuple_locals records each `var t = (…)` tuple local with its
+// element-kind string (so `t.N` types correctly). Run after string locals
+// are known. Returns cx with tup_names / tup_kinds extended.
+function collect_tuple_locals(body: parser.Stmt[], cx: Ctx): Ctx {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprTuple(t) => {
+                        if (!contains_str(cx.tup_names, v.name)) {
+                            cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)) };
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            parser.StmtIf(f) => {
+                cx = collect_tuple_locals(f.then_body, cx);
+                cx = collect_tuple_locals(f.else_body, cx);
+            },
+            parser.StmtWhile(w) => { cx = collect_tuple_locals(w.body, cx); },
+            parser.StmtFor(f) => { cx = collect_tuple_locals(f.body, cx); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    cx = collect_tuple_locals(m.arms[k].body, cx);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return cx;
 }
 
 // is_clock_builtin is true for the wall-clock / monotonic builtins, which
@@ -930,7 +1000,27 @@ function i32_to_string(n: i32): string {
     return out;
 }
 
-// hex_digit renders 0..15 as a lowercase hex character.
+// is_all_digits / digits_to_i32 recognise + parse a tuple-index field name
+// (`.0`, `.1`, …) — the parser stores it as a numeric string.
+function is_all_digits(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] < 48 || s[i] > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function digits_to_i32(s: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        n = n * 10 + (s[i] - 48);
+        i = i + 1;
+    }
+    return n;
+}
 function hex_digit(d: i32): string {
     if (d == 0) { return "0"; } else if (d == 1) { return "1"; }
     else if (d == 2) { return "2"; } else if (d == 3) { return "3"; }
@@ -1283,6 +1373,24 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             s = s + " (local.get " + ap + "))";
             return s;
         },
+        parser.ExprTuple(t) => {
+            // Tuple block: N consecutive i32 slots, element i at offset
+            // i*4 (no header — `t.N` knows the offset statically). Built in
+            // a (block (result i32) …) with a depth-indexed temp.
+            var ap: string = "$__lit" + i32_to_string(depth);
+            var n: i32 = t.elements.len();
+            var bytes: i32 = n * 4;
+            if (bytes == 0) { bytes = 4; }
+            var s: string = "(block (result i32)";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(bytes) + ")))";
+            var i: i32 = 0;
+            while (i < n) {
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(i * 4) + ")) " + emit_expr(t.elements[i], cx, depth + 1) + ")";
+                i = i + 1;
+            }
+            s = s + " (local.get " + ap + "))";
+            return s;
+        },
         parser.ExprIndex(ix) => {
             // arr[i] → load the i32 element at base + 8 + i*4.
             return "(i32.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 4))))";
@@ -1329,6 +1437,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             return s;
         },
         parser.ExprFieldAccess(fa) => {
+            // Tuple index `t.N` (numeric field) → load at base + N*4.
+            if (is_all_digits(fa.field)) {
+                return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(digits_to_i32(fa.field) * 4) + ")))";
+            }
             // Bare field read s.f → load at base + 4 + index*4 (slot 0 is
             // the type id).
             var ot: string = struct_type_of(fa.obj, cx);
@@ -2376,6 +2488,14 @@ function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
             t = collect_strings_expr(sl.start, t);
             return collect_strings_expr(sl.end, t);
         },
+        parser.ExprTuple(tu) => {
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) {
+                t = collect_strings_expr(tu.elements[ti], t);
+                ti = ti + 1;
+            }
+            return t;
+        },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
@@ -2759,6 +2879,10 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
             return is_string_expr(sl.array, cx);
         },
         parser.ExprFieldAccess(fa) => {
+            // Tuple index `t.N` is string when element N is a string.
+            if (is_all_digits(fa.field)) {
+                return tuple_elem_is_string(fa.obj, digits_to_i32(fa.field), cx);
+            }
             // s.f is string-typed when f is a `string` field.
             var ot: string = struct_type_of(fa.obj, cx);
             if (ot.len() == 0) { return false; }
@@ -3008,6 +3132,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_f64: is_float_type(f.ret_type),
         map_names: map_names, map_str_names: [],
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
+        tup_names: [], tup_kinds: [],
     };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
@@ -3016,7 +3141,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // then refine once more to catch string-local set values.
     var cx0: Ctx = Ctx { ...cx, map_str_names: collect_str_val_map_names(f.body, cx, map_names, []) };
     var cx2: Ctx = collect_str_locals_stmts(f.body, cx0);
-    return Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
+    var cx3: Ctx = Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
+    // Tuple-local element kinds (after string locals are known).
+    return collect_tuple_locals(f.body, cx3);
 }
 
 // collect_opt_func_names / _payloads: free functions returning
@@ -3218,6 +3345,7 @@ function expr_has_array(e: parser.Expr): boolean {
         parser.ExprBinary(b) => { return expr_has_array(b.left) || expr_has_array(b.right); },
         parser.ExprIndex(ix) => { return expr_has_array(ix.array) || expr_has_array(ix.index); },
         parser.ExprSlice(_) => { return true; },
+        parser.ExprTuple(_) => { return true; },
         parser.ExprFieldAccess(fa) => { return expr_has_array(fa.obj); },
         parser.ExprCall(c) => {
             if (expr_has_array(c.callee)) { return true; }
@@ -3457,6 +3585,14 @@ function expr_calls(e: parser.Expr, fn: string): boolean {
         parser.ExprBinary(b) => { return expr_calls(b.left, fn) || expr_calls(b.right, fn); },
         parser.ExprIndex(ix) => { return expr_calls(ix.array, fn) || expr_calls(ix.index, fn); },
         parser.ExprSlice(sl) => { return expr_calls(sl.array, fn) || expr_calls(sl.start, fn) || expr_calls(sl.end, fn); },
+        parser.ExprTuple(tu) => {
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) {
+                if (expr_calls(tu.elements[ti], fn)) { return true; }
+                ti = ti + 1;
+            }
+            return false;
+        },
         parser.ExprFieldAccess(fa) => { return expr_calls(fa.obj, fn); },
         parser.ExprArray(a) => {
             var i: i32 = 0;
