@@ -1769,7 +1769,9 @@ as findings land:
 5. **5g** — heap-string rc (only after the SSO flip is green on both
    native backends).
 6. **Phase 6** — measurements, self-host-through-itself, retire
-   `strbuf_*` if reuse makes it redundant.
+   `strbuf_*` if reuse makes it redundant. (Evaluated: NOT redundant —
+   keep it; see the Phase-6 open-items resolution + § "strbuf_* becomes a
+   more specific optimisation".)
 
 **Verification constraint (this environment).** Local toolchain is
 x86_64-native + `wasmtime` (+ `wasm-tools`) only — **no `qemu-aarch64`
@@ -2072,7 +2074,9 @@ non-negotiable check.
 End-state verification: run the benchmarks, compare RSS, build
 the self-host through itself, profile hot allocations, retire
 the `strbuf_*` primitive if Perceus + drop-reuse make it
-redundant.
+redundant. (Evaluated: NOT redundant — strbuf is orthogonal to rc and
+faster for hot string-building, and the self-host emitters depend on it;
+keep it. See the Phase-6 open-items resolution.)
 
 **Measurement probe — `__heap_bump_bytes()` (SHIPPED).** A builtin
 returning the bump allocator's high-water mark in bytes (current cursor
@@ -2357,9 +2361,19 @@ Next Phase-6 steps (open):
     (Array-of-enum — concrete `E[]` and generic `Option[T][]` — and nested
     `E[][]` already SHIPPED via the `__drop_arr_enum_` / `__drop_arr_of_`
     recursion.)
-  - **Retire `strbuf_*`** — evaluate dropping the legacy string builder now
-    that string concat/slice + nested-concat intermediates reclaim. Cleanup,
-    not a leak.
+  - **`strbuf_*` — EVALUATED: KEEP (do not retire).** The open question was
+    whether the string builder is now redundant given rc string concat/slice
+    reclaim. It is not. Per the design conclusion below (§ "strbuf_* becomes
+    a more specific optimisation"), strbuf builds bytes in a scratch buffer
+    with NO per-byte rc bookkeeping, then `strbuf_take`s the result as one
+    string — orthogonal to rc, and strictly faster for hot string-building.
+    It is also load-bearing: the self-host emitters use it heavily for their
+    O(N) output building (`asm.fern` 39×, `asm_arm64.fern` 52×; `wasm.fern`
+    notes "asm.fern's strbuf optimisation is only needed for the huge
+    output"), backed by `strbuf_append/data/len/reset/take` runtime helpers
+    on all three backends. Retiring it would push that hot path onto
+    rc-string concat and reintroduce the exact overhead strbuf exists to
+    avoid. Keep it.
   - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
     rc-neutral by design, reclaiming needs the global "inc enum payloads on
     construction + rebalance every drop" change. Risky.
