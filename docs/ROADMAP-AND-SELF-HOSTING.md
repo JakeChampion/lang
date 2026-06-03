@@ -317,8 +317,12 @@ language**:
   indexing rides on a shared 1-element-array counter threaded through the
   (otherwise pure) `emit_expr`. **The core language is now complete on the
   wasm backend.**
+- **`.to_string()` + f-strings** — `(n).to_string()` (the f-string
+  desugaring) formats an i32 / i64 into a fresh `[len][bytes]` block via the
+  integer→string runtime; a string receiver is the identity. f-strings work
+  end-to-end (the parser lowers them to `"…" + (expr).to_string() + …`).
 
-Gated by 375 differential cases as of this writing. What remains for the
+Gated by 386 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

@@ -526,6 +526,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Captures are by value (snapshot at creation): add always sees
 		// total == 0, so this sums 1+2+3.
 		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "6"},
+
+		// `.to_string()` (integer→string runtime) + f-strings (which the
+		// parser desugars to `"…" + (expr).to_string() + …`).
+		{"tostring-i32", "function main(): i32 { var n: i32 = 42; write(n.to_string()); return 0; }", 0, "42"},
+		{"tostring-zero", "function main(): i32 { write((0).to_string()); return 0; }", 0, "0"},
+		{"tostring-negative", "function main(): i32 { var n: i32 = 0 - 17; write(n.to_string()); return 0; }", 0, "-17"},
+		{"tostring-concat", "function main(): i32 { var n: i32 = 5; write(\"n=\" + n.to_string()); return 0; }", 0, "n=5"},
+		{"tostring-string-identity", "function main(): i32 { var s: string = \"hi\"; write(s.to_string()); return 0; }", 0, "hi"},
+		{"tostring-i64", "function main(): i32 { var b: i64 = 5000000000; write(b.to_string()); return 0; }", 0, "5000000000"},
+		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
+		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
+		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
+		{"fstring-string-interp", "function main(): i32 { var who: string = \"world\"; write(f\"hello {who}\"); return 0; }", 0, "hello world"},
+		{"fstring-only-interp", "function main(): i32 { var n: i32 = 9; write(f\"{n}\"); return 0; }", 0, "9"},
 	}
 
 	for _, tc := range cases {
