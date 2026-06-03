@@ -7778,12 +7778,51 @@ func (b *builder) expr(e ast.Expr) error {
 				return fmt.Errorf("ir: struct %s has no field %q", st, n.Field)
 			}
 		}
-		if err := b.expr(n.Target); err != nil {
-			return err
+		// Reclaim a FRESH owned struct/tuple container consumed by a SCALAR
+		// field access — `mk(i).x` (mk returns a fresh struct) loaded field x
+		// and dropped the box on the floor, leaking it (240000 -> 2400000 in
+		// a loop). Stash the container, load the field off the reload, then
+		// deep-drop it after via the is_unique-gated emitOwnedSlotDrop (which
+		// also reclaims the struct's OTHER rc fields — we only took a scalar).
+		// Gated to a NON-POINTER field: the loaded scalar can't alias the box,
+		// so freeing it is safe; a pointer field (`mk().data` -> array) WOULD
+		// alias and is left alone. The is_unique gate protects an aliased
+		// container (a callee returning its param, rc>=2 — only dec'd). Idents
+		// / nested fields aren't fresh temps and lower in place.
+		faContainerSlot := int32(-1)
+		if ft != nil && !ast.IsPointerType(ft) {
+			ct, ok := b.freshOwnedRcTempType(n.Target)
+			if !ok {
+				ct, ok = b.ownedCallResultType(n.Target)
+			}
+			if ok {
+				if _, isStruct := ct.(ast.StructType); isStruct {
+					faContainerSlot = b.allocSlot()
+				} else if _, isTuple := ct.(ast.TupleType); isTuple {
+					faContainerSlot = b.allocSlot()
+				}
+				if faContainerSlot >= 0 {
+					b.locals[fmt.Sprintf("__fabase_%d", faContainerSlot)] = faContainerSlot
+					b.scratchType[faContainerSlot] = ct
+					if err := b.expr(n.Target); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpStoreLocal, I32: faContainerSlot})
+					b.emit(Op{Kind: OpLoadLocal, I32: faContainerSlot})
+				}
+			}
+		}
+		if faContainerSlot < 0 {
+			if err := b.expr(n.Target); err != nil {
+				return err
+			}
 		}
 		b.emit(Op{Kind: OpConstI32, I32: off})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(ft, b.ptrW))
+		if faContainerSlot >= 0 {
+			b.emitOwnedSlotDrop(faContainerSlot, b.scratchType[faContainerSlot])
+		}
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
