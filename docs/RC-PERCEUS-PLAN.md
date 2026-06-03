@@ -8,9 +8,12 @@ Status: IMPLEMENTED. Phases 0–3 + the Phase-6 reclamation work have
 shipped (RC with compile-time drop placement, the real freelist allocator,
 and per-type reclamation for arrays / structs / enums / maps / tuples /
 closures / strings, including nested/generic shapes and statement
-temporaries). The remaining open items are collected at the end of the
-Phase-6 section ("Next Phase-6 steps (open)") and in the deferred 5f / 5g
-notes; the per-phase prose below is kept as the historical record. The
+temporaries). Native heap-string rc (item 5g) is now ALSO working — the
+SSO native flip went green on both backends (2026-06-03), unblocking it.
+The remaining open items are collected at the end of the Phase-6 section
+("Next Phase-6 steps (open)") and the still-deferred 5f note (struct
+replaced-field free — needs alias analysis); the per-phase prose below is
+kept as the historical record. The
 design "Open questions" at the very bottom were all resolved during
 implementation — see the resolutions noted there.
 
@@ -548,12 +551,12 @@ volume.
 
 #### Phase 1e: widen to strings / structs / enums / closures
 
-SHIPPED. Structs, enums, closures, tuples and (wasm + x86_64) strings all
+SHIPPED, all categories. Structs, enums, closures, tuples and strings all
 grew rc tracking + inc/dec at alias/exit/overwrite sites + per-type drop
 handlers in the phases that followed (see Phase 3's "Drop handlers" record
-and the Phase-6 bullets). Native-arm64 heap strings are the one exception —
-hard-blocked on the SSO native flip (deferred item 5g below). The original
-checklist is kept for the record:
+and the Phase-6 bullets). Native heap strings — the last holdout, gated on
+the SSO native flip (item 5g) — landed once that flip went green on both
+backends (2026-06-03). The original checklist is kept for the record:
 
   - Layout migration (Phase 0-style) adding the rc slot.
   - rc=1 init at every alloc site.
@@ -1863,22 +1866,27 @@ when it hits rc 0) reopens UAF risk, confirmed against the real code:
     *safely* today) that's not worth the UAF-class risk. Defer until the
     alias analysis exists.
 
-##### 5g — heap-string rc (deferred: hard-blocked on the SSO native flip)
+##### 5g — heap-string rc (UNBLOCKED + working; 2026-06-03)
 
-The highest-value remaining item by memory impact, but genuinely
-blocked, not merely deferred. Heap strings can't grow a live rc header
-until the native string representation settles, and that flip is mid-
-flight: `docs/SSO-NATIVE-FLIP-STATUS.md` shows arm64 at §1 of §1–§9
-(IR gate refactor done; inline-encoding flip, runtime helpers, IR ops,
-ABI/locals, load/store fan-out, captures/globals/fields, map runtime,
-cleanup all still to do), and the whole arc then mirrors on x86_64 —
-~6 sessions per backend. Until then a string is two-word on wasm,
-single-word LSB-tagged on x86_64, and boxed on arm64; there is no
-uniform place to put the rc header. The move-* family already excludes
-strings everywhere for exactly this reason; they join once the SSO work
-lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit `StringType`
-uniformly. **Do not attempt 5g before the SSO native flip is green on
-both native backends.**
+Was "the highest-value remaining item by memory impact," hard-blocked on
+the SSO native flip. **The SSO native flip is now COMPLETE on both
+backends** (see `docs/SSO-NATIVE-FLIP-STATUS.md` — green on arm64 +
+x86_64, verified through the full e2e suite), so the blocker is cleared
+AND native heap-string rc has effectively landed with it: a string is now
+two-word on wasm + arm64 and (top-bit-tagged) on x86_64 with a uniform
+rc-header home, `isOwnedRcLocal` admits `StringType` uniformly, and
+**native heap strings (>15 B) reclaim to a bounded high-water and are
+sound (0 over-releases) on both backends** — verified for loop var-reinit
+(`var s = a + b`), reassignment-overwrite (`s = s + chunk`), and
+concat-temp shapes. Bound-var short strings stay inline-SSO (no heap, so
+0 bump) as before.
+
+Remaining (cleanup, not correctness): several `internal/ir/ir.go` comments
+still say "arm64 string reclaim deferred / slice 5g" (emitVarReinitDropOld's
+StringType case, the assign-overwrite string branch). These are now STALE —
+reclamation works. Refresh/remove them, but do NOT add a second dec where
+one already fires (it would double-free); confirm each path's current
+reclamation before touching it.
 
 ##### 5h — block-scoped drops for loop-body locals (DONE)
 
@@ -2324,7 +2332,9 @@ exercises the rc==1 branch + the differential gate) stays green.
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
   (256 B wasm), `Option[i32[]][]` (160 B wasm), string-concat bound-var
   (wasm 64576 B plateau / natives 0), nested concat `(a+b+c)` (wasm 64576 B
-  plateau / x86_64 0 / arm64 144 B).
+  plateau / x86_64 0 / arm64 144 B), and (post-SSO-flip) NATIVE heap
+  strings `>15 B` — `var s = a + b` / `s = s + chunk` loops bounded + 0
+  over-releases on x86_64 + arm64 (item 5g).
 
 Next Phase-6 steps (open):
   - **`closure[]` array-element drop** — `arrElemStructDropName` declines
