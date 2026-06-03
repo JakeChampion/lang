@@ -2060,6 +2060,21 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return false
 	case *ast.IfExpr:
 		return b.rhsTainted(x.Then, tainted) || b.rhsTainted(x.Else, tainted)
+	case *ast.MatchExpr:
+		// A match-expression is owned iff every arm body is — the exact
+		// mirror of IfExpr. Without this case it fell through to the tainted
+		// default, leaving `var s = match (k) { 0 => a + b, _ => b + a }` (all
+		// arms fresh concats) permanently ineligible and unreclaimed (leaked
+		// 240000 → 2400000 in a loop). A bare-local arm is still caught: the
+		// escape(arm.Body) in computeFreeEligible taints that local, so
+		// rhsTainted reads it back as tainted here and the match stays
+		// protected — same belt-and-suspenders as IfExpr.
+		for _, arm := range x.Arms {
+			if b.rhsTainted(arm.Body, tainted) {
+				return true
+			}
+		}
+		return false
 	default:
 		return true
 	}
