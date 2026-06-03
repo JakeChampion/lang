@@ -39,11 +39,12 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   hash runtime, both i32 and string keys, i32 and string values, plus
   `.delete` via tombstones, `.keys` / `.values` snapshot arrays, and
   `for (k, v) in m` pair iteration — the map surface is complete), and
-  slices `x[a:b]` (string + array, preserving the source element type).
-  Gated by 346 differential cases under `wasmtime`
-  (`self_host_wasm_emit_test.go`). Remaining for wasm: the `wasi:cli/run` /
-  `wasi:http` component shapes and binary wasm encoding (it emits WAT text
-  today).
+  slices `x[a:b]` (string + array, preserving the source element type),
+  and tuples `(a, b, …)` with `.N` access + per-element kind tracking.
+  Gated by 355 differential cases under `wasmtime`
+  (`self_host_wasm_emit_test.go`). Remaining for wasm: lambdas / closures,
+  the `wasi:cli/run` / `wasi:http` component shapes, and binary wasm
+  encoding (it emits WAT text today).
 
 ---
 

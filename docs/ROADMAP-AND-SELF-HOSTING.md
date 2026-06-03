@@ -302,13 +302,17 @@ language**:
   (reusing `substr`), an array slice copying the element range into a fresh
   `[len][cap][elems]` block; the result keeps the source's element type
   (`string` / `string[]` / i32[]) so methods, concat, indexing and
-  `for v in xs[a:b]` all resolve.
+  `for v in xs[a:b]` all resolve;
+- **tuples** `(a, b, …)` — N consecutive slots accessed by the numeric
+  `.N` field; per-element kind tracking types a `t.N` read (so a string
+  element prints / concats / supports methods), incl. nested tuples.
 
-Gated by 346 differential cases as of this writing. What remains for the
-wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
-`wasi:http` component shapes** (the Component-Model packaging in
-`internal/wasm/component`, ported to Fern, on top of this core module),
-and binary wasm encoding (today it emits WAT text, runnable directly by
+Gated by 355 differential cases as of this writing. What remains for the
+wasm backend to retire the Go wasm path: **lambdas / closures** (still
+Go-only on this backend), the **`wasi:cli/run` / `wasi:http` component
+shapes** (the Component-Model packaging in `internal/wasm/component`,
+ported to Fern, on top of this core module), and binary wasm encoding
+(today it emits WAT text, runnable directly by
 `wasmtime`).
 The core wasi builtins (clock / file / env / random) are now covered.
 
