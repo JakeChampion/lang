@@ -433,6 +433,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.set(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
 		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.set(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
 		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
+
+		// Map .delete — tombstone deletion (used slot → 2; the probe skips
+		// past it, set reclaims it, grow drops it).
+		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.delete(1); if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.delete(1); print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
+		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; m = m.delete(2); print_int(m.len()); return 0; }", 0, "2"},
+		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; m = m.delete(99); print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
+		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; m = m.delete(1); match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
+		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; m = m.delete(1); m = m.set(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
+		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(i, i); i = i + 1; } m = m.delete(5); print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
+		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.set(i, i); i = i + 1; } i = 0; while (i < 30) { m = m.delete(i); i = i + 1; } print_int(m.len()); m = m.set(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
+		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; m = m.delete(\"a\"); print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
 	}
 
 	for _, tc := range cases {

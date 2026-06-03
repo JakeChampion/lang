@@ -290,17 +290,18 @@ language**:
   + rehash). Both **i32 keys** and **string keys** (content hash via FNV-1a
   + `__fern_streq` compare, selected by a key-kind flag in the map box), and
   both **i32 values** and **string values** (value-type tracking types
-  `.get` / `.get_or` results so they print / concat correctly). `.delete` /
-  `.keys` / `.values` and `for (k, v)` iteration are the follow-on slices.
+  `.get` / `.get_or` results so they print / concat correctly), plus
+  `.delete` (tombstone deletion — the probe skips tombstones, `set`
+  reclaims them, and growth/rehash drops them). `.keys` / `.values` and
+  `for (k, v)` iteration are the follow-on slices.
 
-Gated by 307 differential cases as of this writing. What remains for the
+Gated by 316 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
 binary wasm encoding (today it emits WAT text, runnable directly by
-`wasmtime`), and the rest of the map surface (delete / keys / values +
-iteration). The core wasi builtins (clock / file / env / random) are now
-covered.
+`wasmtime`), and the rest of the map surface (keys / values + iteration).
+The core wasi builtins (clock / file / env / random) are now covered.
 
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
 
