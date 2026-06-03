@@ -44,60 +44,71 @@ func TestSelfHostWasmRun(t *testing.T) {
 		name   string
 		source string
 		exit   int
+		stdout string // checked only when non-empty
 	}{
-		{"return-literal", "function main(): i32 { return 42; }", 42},
-		{"bare-return", "return 42;", 42},
-		{"arithmetic", "function main(): i32 { return 1 + 2 * 3; }", 7},
-		{"parens", "function main(): i32 { return (1 + 2) * 3; }", 9},
-		{"subtraction", "function main(): i32 { return 100 - 23; }", 77},
-		{"division", "function main(): i32 { return 84 / 2; }", 42},
-		{"modulo", "function main(): i32 { return 23 % 5; }", 3},
-		{"div-rem-combined", "function main(): i32 { return 84 / 2 + 23 % 5; }", 45},
+		{"return-literal", "function main(): i32 { return 42; }", 42, ""},
+		{"bare-return", "return 42;", 42, ""},
+		{"arithmetic", "function main(): i32 { return 1 + 2 * 3; }", 7, ""},
+		{"parens", "function main(): i32 { return (1 + 2) * 3; }", 9, ""},
+		{"subtraction", "function main(): i32 { return 100 - 23; }", 77, ""},
+		{"division", "function main(): i32 { return 84 / 2; }", 42, ""},
+		{"modulo", "function main(): i32 { return 23 % 5; }", 3, ""},
+		{"div-rem-combined", "function main(): i32 { return 84 / 2 + 23 % 5; }", 45, ""},
 		// Non-trapping div/rem (would trap with naked i32.div_s/rem_s).
-		{"div-by-zero", "function main(): i32 { return 5 / 0; }", 0},
-		{"mod-by-zero", "function main(): i32 { return 7 % 0; }", 7},
+		{"div-by-zero", "function main(): i32 { return 5 / 0; }", 0, ""},
+		{"mod-by-zero", "function main(): i32 { return 7 % 0; }", 7, ""},
 		// INT_MIN / -1 == INT_MIN (no overflow trap); INT_MIN % -1 == 0.
 		// INT_MIN is spelled `0 - 2147483647 - 1` to avoid a literal that
 		// doesn't fit i32; the divisor `0 - 1` keeps it a runtime value.
-		{"int-min-div-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x / d == x) { return 42; } return 1; }", 42},
-		{"int-min-mod-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x % d == 0) { return 42; } return 1; }", 42},
-		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5},
-		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39},
-		{"no-return-exits-0", "function main(): i32 { }", 0},
+		{"int-min-div-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x / d == x) { return 42; } return 1; }", 42, ""},
+		{"int-min-mod-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x % d == 0) { return 42; } return 1; }", 42, ""},
+		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5, ""},
+		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39, ""},
+		{"no-return-exits-0", "function main(): i32 { }", 0, ""},
 		// Locals + reassignment.
-		{"locals", "function main(): i32 { var x = 5; var y = 10; return x + y; }", 15},
-		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }", 8},
-		{"compound-assign", "function main(): i32 { var x = 1; x *= 6; x += 1; return x; }", 7},
+		{"locals", "function main(): i32 { var x = 5; var y = 10; return x + y; }", 15, ""},
+		{"reassign", "function main(): i32 { var x = 5; x = x + 3; return x; }", 8, ""},
+		{"compound-assign", "function main(): i32 { var x = 1; x *= 6; x += 1; return x; }", 7, ""},
 		// Comparisons (0/1 results).
-		{"comparison-true", "function main(): i32 { return 5 < 10; }", 1},
-		{"comparison-false", "function main(): i32 { return 10 < 5; }", 0},
-		{"equality-true", "function main(): i32 { return 7 == 7; }", 1},
+		{"comparison-true", "function main(): i32 { return 5 < 10; }", 1, ""},
+		{"comparison-false", "function main(): i32 { return 10 < 5; }", 0, ""},
+		{"equality-true", "function main(): i32 { return 7 == 7; }", 1, ""},
 		// Logical + not.
-		{"and", "function main(): i32 { if (true && true) { return 1; } return 0; }", 1},
-		{"or", "function main(): i32 { if (false || true) { return 1; } return 0; }", 1},
-		{"not", "function main(): i32 { if (!false) { return 1; } return 0; }", 1},
-		{"and-with-comparison", "function main(): i32 { var x = 5; if (x > 0 && x < 10) { return 1; } return 0; }", 1},
+		{"and", "function main(): i32 { if (true && true) { return 1; } return 0; }", 1, ""},
+		{"or", "function main(): i32 { if (false || true) { return 1; } return 0; }", 1, ""},
+		{"not", "function main(): i32 { if (!false) { return 1; } return 0; }", 1, ""},
+		{"and-with-comparison", "function main(): i32 { var x = 5; if (x > 0 && x < 10) { return 1; } return 0; }", 1, ""},
 		// if / else.
-		{"if-then-branch", "function main(): i32 { var x = 5; if (x < 10) { return 1; } return 2; }", 1},
-		{"if-else-branch", "function main(): i32 { var x = 20; if (x < 10) { return 1; } return 2; }", 2},
-		{"if-else-explicit", "function main(): i32 { if (true) { return 9; } else { return 0; } }", 9},
+		{"if-then-branch", "function main(): i32 { var x = 5; if (x < 10) { return 1; } return 2; }", 1, ""},
+		{"if-else-branch", "function main(): i32 { var x = 20; if (x < 10) { return 1; } return 2; }", 2, ""},
+		{"if-else-explicit", "function main(): i32 { if (true) { return 9; } else { return 0; } }", 9, ""},
 		// while.
-		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s; }", 15},
-		{"while-early-return", "function main(): i32 { var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 99; }", 7},
+		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s; }", 15, ""},
+		{"while-early-return", "function main(): i32 { var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 99; }", 7, ""},
 		// break / continue.
-		{"break-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { if (i == 5) { break; } s = s + i; i = i + 1; } return s; }", 10},
-		{"continue-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 10) { i = i + 1; if (i == 5) { continue; } s = s + i; } return s; }", 50},
+		{"break-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { if (i == 5) { break; } s = s + i; i = i + 1; } return s; }", 10, ""},
+		{"continue-in-while", "function main(): i32 { var i = 0; var s = 0; while (i < 10) { i = i + 1; if (i == 5) { continue; } s = s + i; } return s; }", 50, ""},
 		// Mixed.
-		{"mixed", "function main(): i32 { var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1; }", 23},
+		{"mixed", "function main(): i32 { var a = 1 + 2; var b = 4 * 5; var c = a + b; if (c < 100) { return c; } return 0 - 1; }", 23, ""},
 		// Function calls: free functions, args, locals, recursion,
 		// mutual recursion.
-		{"func-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5},
-		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60},
-		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11},
-		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
-		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
-		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1},
-		{"call-in-condition", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { if (dbl(5) == 10) { return 42; } return 1; }", 42},
+		{"func-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5, ""},
+		{"func-three-args", "function sum3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return sum3(10, 20, 30); }", 60, ""},
+		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
+		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120, ""},
+		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
+		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
+		{"call-in-condition", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { if (dbl(5) == 10) { return 42; } return 1; }", 42, ""},
+		// Strings + linear memory: write (verbatim) and print (+\n) of
+		// string literals, lowered to fd_write on the data section.
+		{"write-verbatim", "function main(): i32 { write(\"hi\"); return 0; }", 0, "hi"},
+		{"print-adds-newline", "function main(): i32 { print(\"hello\"); return 0; }", 0, "hello\n"},
+		{"print-twice", "function main(): i32 { print(\"line 1\"); print(\"line 2\"); return 0; }", 0, "line 1\nline 2\n"},
+		{"write-then-return", "function main(): i32 { write(\"out\"); return 42; }", 42, "out"},
+		{"hello-world", "function main(): i32 { print(\"Hello, world!\"); return 0; }", 0, "Hello, world!\n"},
+		{"write-with-embedded-newline", "function main(): i32 { write(\"a\\nb\"); return 0; }", 0, "a\nb"},
+		{"print-in-function", "function greet(): i32 { print(\"hi from greet\"); return 7; } function main(): i32 { return greet(); }", 7, "hi from greet\n"},
+		{"print-dedup-same-literal", "function main(): i32 { write(\"x\"); write(\"x\"); return 0; }", 0, "xx"},
 	}
 
 	for _, tc := range cases {
@@ -111,9 +122,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 				t.Fatalf("write wat: %v", err)
 			}
 			cmd := exec.Command("wasmtime", "run", watPath)
-			_ = cmd.Run()
+			out, _ := cmd.Output() // captures the program's stdout
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
+			}
+			if tc.stdout != "" && string(out) != tc.stdout {
+				t.Errorf("%s: wasm stdout = %q, want %q\n--- WAT ---\n%s", tc.name, string(out), tc.stdout, wat)
 			}
 		})
 	}
