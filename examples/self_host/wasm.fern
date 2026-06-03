@@ -313,6 +313,45 @@ function divrem_helpers(): string {
     return out;
 }
 
+// print_int_helper emits the `$__fern_print_int` runtime: format an i32
+// as decimal into a 16-byte scratch buffer at `buf` (placed above all
+// string data) and fd_write it. Digits are written backwards from the
+// buffer end; negatives get a leading '-'. The magnitude is taken with
+// unsigned div/rem after a (possibly overflowing) negation, which yields
+// the correct digits even for INT_MIN (0 - INT_MIN = INT_MIN, whose
+// unsigned value is exactly 2147483648). No trailing newline — matching
+// the native print_int.
+function print_int_helper(buf: i32): string {
+    var b: string = i32_to_string(buf);
+    var be: string = i32_to_string(buf + 16);
+    var o: string = "";
+    o = o + "  (func $__fern_print_int (param $n i32)\n";
+    o = o + "    (local $i i32)\n";
+    o = o + "    (local $neg i32)\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then\n";
+    o = o + "      (i32.store8 (i32.const " + b + ") (i32.const 48))\n";
+    o = o + "      (i32.store (i32.const 0) (i32.const " + b + "))\n";
+    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
+    o = o + "      (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (return)))\n";
+    o = o + "    (local.set $neg (i32.lt_s (local.get $n) (i32.const 0)))\n";
+    o = o + "    (if (local.get $neg) (then (local.set $n (i32.sub (i32.const 0) (local.get $n)))))\n";
+    o = o + "    (local.set $i (i32.const " + be + "))\n";
+    o = o + "    (block $done (loop $lp\n";
+    o = o + "      (br_if $done (i32.eqz (local.get $n)))\n";
+    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
+    o = o + "      (i32.store8 (local.get $i) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))\n";
+    o = o + "      (local.set $n (i32.div_u (local.get $n) (i32.const 10)))\n";
+    o = o + "      (br $lp)))\n";
+    o = o + "    (if (local.get $neg) (then\n";
+    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
+    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
+    o = o + "    (i32.store (i32.const 0) (local.get $i))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.sub (i32.const " + be + ") (local.get $i)))\n";
+    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+    return o;
+}
+
 // collect_strings_expr interns every string literal reachable from an
 // expression into the table.
 function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
@@ -425,6 +464,9 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         parser.ExprIdent(id) => {
                             if (id.name == "write" || id.name == "print") {
                                 return emit_output(id.name, c.args, st);
+                            }
+                            if (id.name == "print_int" && c.args.len() == 1) {
+                                return st.w("    (call $__fern_print_int " + emit_expr(c.args[0]) + ")\n");
                             }
                         },
                         _ => {},
@@ -544,6 +586,52 @@ function module_uses_divrem(mod: parser.Module): boolean {
     return false;
 }
 
+// stmt_calls_print_int / module_uses_print_int detect whether the
+// program calls the print_int builtin (statement position; recursing
+// if/while bodies), so the helper is emitted only when used.
+function stmt_calls_print_int(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtExpr(e) => {
+                match (e.value) {
+                    parser.ExprCall(c) => {
+                        match (c.callee) {
+                            parser.ExprIdent(id) => {
+                                if (id.name == "print_int") { return true; }
+                            },
+                            _ => {},
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            parser.StmtIf(f) => {
+                if (stmt_calls_print_int(f.then_body)) { return true; }
+                if (stmt_calls_print_int(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (stmt_calls_print_int(w.body)) { return true; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_uses_print_int(mod: parser.Module): boolean {
+    if (stmt_calls_print_int(mod.top_stmts)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0) {
+            if (stmt_calls_print_int(mod.funcs[i].body)) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // emit_module produces the full WAT text for a module: the proc_exit
 // import + memory, the guarded div/rem helpers (when used), every free
 // function (so calls + recursion + mutual recursion resolve by name),
@@ -577,6 +665,10 @@ pub function emit_module(mod: parser.Module): string {
     }
     if (module_uses_divrem(mod)) {
         out = out + divrem_helpers();
+    }
+    // The print_int scratch buffer sits just above all string data.
+    if (module_uses_print_int(mod)) {
+        out = out + print_int_helper(tab.next);
     }
 
     var has_main: boolean = false;
