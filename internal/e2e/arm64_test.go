@@ -12936,7 +12936,12 @@ function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var matrix: u8[][] = [inner];
     var alias: u8[] = matrix[0];
-    return __rc_get(inner) - 3;
+    // Precise drops (RC-Perceus) release the now-dead matrix at its last
+    // use; reference it in the return so it stays live through the check —
+    // this measures the fully-aliased rc (inner + the array element + alias),
+    // which is what the test asserts. matrix.len()-1 == 0, so the result is
+    // unchanged.
+    return __rc_get(inner) - 3 + matrix.len() - 1;
 }`},
 	} {
 		t.Run(c.name, func(t *testing.T) {

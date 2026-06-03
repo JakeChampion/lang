@@ -2625,15 +2625,17 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 	return false
 }
 
-// preciseDroppableType reports whether `name`'s declared type is in slice 1's
-// scope: an owned array with PRIMITIVE (non-rc-tracked, non-string) elements —
-// i32[] / u8[] / f32[] / i64[] / boolean[] etc. These are the large data
-// buffers whose early reclamation drives the peak-memory win, and their drop
-// (`__fern_arr_dec`) is a pure buffer free with NO element/field decs — so it
-// never touches a buffer shared via an aliased element, keeping the change
-// sound AND free of rc-count churn. Structs / enums / tuples / rc-element and
-// string arrays (whose deep drops dec nested references) are deferred to a
-// later slice.
+// preciseDroppableType reports whether `name`'s declared type is in the
+// precise-drop scope: an owned ARRAY whose element is primitive (slice 1) or
+// rc-tracked (slice 2 — `struct[]` / `enum[]` / `T[][]` / `tuple[]`, the large
+// arrays-of-boxes). emitOwnedSlotDrop reclaims both fully — primitive via
+// `__fern_arr_dec` (pure buffer free), rc-element via the deep
+// `__drop_arr_*` loop (frees the element boxes/inner buffers + the outer
+// buffer, each is_unique-gated). string[] is excluded: emitOwnedSlotDrop's
+// array path doesn't str_dec the elements (it would leak them vs the exit
+// sweep's __fern_drop_arr_str) — a later slice. Structs / enums / tuples
+// (small boxes whose deep drops dec shared fields and churn the rc-count
+// golden tests) are also deferred.
 func (b *builder) preciseDroppableType(name string) bool {
 	t, ok := b.localDeclType(name)
 	if !ok {
@@ -2641,9 +2643,6 @@ func (b *builder) preciseDroppableType(name string) bool {
 	}
 	at, ok := t.(ast.ArrayType)
 	if !ok {
-		return false
-	}
-	if arrElemIsRcTracked(at.Elem) {
 		return false
 	}
 	if _, isStr := at.Elem.(ast.StringType); isStr {
