@@ -445,6 +445,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(i, i); i = i + 1; } m = m.delete(5); print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
 		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.set(i, i); i = i + 1; } i = 0; while (i < 30) { m = m.delete(i); i = i + 1; } print_int(m.len()); m = m.set(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
 		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; m = m.delete(\"a\"); print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
+
+		// Map .keys() / .values() — snapshot arrays (probe order, so tests
+		// assert order-independent facts: lengths and sums).
+		{"map-keys-len", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; print_int(m.keys().len()); return 0; }", 0, "3"},
+		{"map-values-len", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.values().len()); return 0; }", 0, "2"},
+		{"map-values-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "60"},
+		{"map-keys-sum", "function main(): i32 { var m = Map { 4: 1, 5: 1, 6: 1 }; var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "15"},
+		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.delete(2); var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
+		{"map-empty-keys-len", "function main(): i32 { var m = map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
+		{"map-keys-sum-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.set(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
+		{"strmap-keys-charcount", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for k in m.keys() { n = n + k.len(); } print_int(n); return 0; }", 0, "5"},
+		{"strval-values-charcount", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for v in m.values() { n = n + v.len(); } print_int(n); return 0; }", 0, "5"},
 	}
 
 	for _, tc := range cases {

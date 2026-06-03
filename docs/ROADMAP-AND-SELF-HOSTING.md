@@ -292,15 +292,17 @@ language**:
   both **i32 values** and **string values** (value-type tracking types
   `.get` / `.get_or` results so they print / concat correctly), plus
   `.delete` (tombstone deletion — the probe skips tombstones, `set`
-  reclaims them, and growth/rehash drops them). `.keys` / `.values` and
-  `for (k, v)` iteration are the follow-on slices.
+  reclaims them, and growth/rehash drops them), and `.keys` / `.values`
+  (snapshot arrays in probe order — `string[]` for string keys / values, so
+  `for k in m.keys()` / `for v in m.values()` type correctly).
+  `for (k, v)` direct pair iteration is the one remaining map slice.
 
-Gated by 316 differential cases as of this writing. What remains for the
+Gated by 325 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
 binary wasm encoding (today it emits WAT text, runnable directly by
-`wasmtime`), and the rest of the map surface (keys / values + iteration).
+`wasmtime`), and `for (k, v)` map pair-iteration.
 The core wasi builtins (clock / file / env / random) are now covered.
 
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
