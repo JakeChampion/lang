@@ -157,6 +157,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-len-literal", "function main(): i32 { return \"abcd\".len(); }", 4, ""},
 		{"str-len-concat", "function main(): i32 { var s = \"ab\" + \"cde\"; return s.len(); }", 5, ""},
 		{"str-len-param", "function l(s: string): i32 { return s.len(); } function main(): i32 { return l(\"seven!!\"); }", 7, ""},
+		// String predicate methods (starts_with / ends_with / contains /
+		// index_of) — read-only, return i32.
+		{"str-starts-with-true", "function main(): i32 { var s = \"hello\"; if (s.starts_with(\"he\")) { return 1; } return 0; }", 1, ""},
+		{"str-starts-with-false", "function main(): i32 { var s = \"hello\"; if (s.starts_with(\"lo\")) { return 1; } return 0; }", 0, ""},
+		{"str-ends-with-true", "function main(): i32 { var s = \"hello\"; if (s.ends_with(\"lo\")) { return 1; } return 0; }", 1, ""},
+		{"str-ends-with-false", "function main(): i32 { var s = \"hello\"; if (s.ends_with(\"he\")) { return 1; } return 0; }", 0, ""},
+		{"str-contains-true", "function main(): i32 { var s = \"hello world\"; if (s.contains(\"o w\")) { return 1; } return 0; }", 1, ""},
+		{"str-contains-false", "function main(): i32 { var s = \"hello\"; if (s.contains(\"xyz\")) { return 1; } return 0; }", 0, ""},
+		{"str-index-of", "function main(): i32 { var s = \"hello\"; return s.index_of(\"ll\"); }", 2, ""},
+		{"str-index-of-zero", "function main(): i32 { return \"abc\".index_of(\"a\"); }", 0, ""},
+		{"str-index-of-missing", "function main(): i32 { var s = \"abc\"; var r = s.index_of(\"z\"); if (r < 0) { return 1; } return 0; }", 1, ""},
+		{"str-contains-literal-recv", "function main(): i32 { if (\"foobar\".contains(\"oba\")) { return 42; } return 0; }", 42, ""},
+		{"str-starts-with-after-concat", "function main(): i32 { var s = \"foo\" + \"bar\"; if (s.starts_with(\"foob\")) { return 1; } return 0; }", 1, ""},
 	}
 
 	for _, tc := range cases {
