@@ -116,6 +116,23 @@ function emit_expr(e: parser.Expr): string {
         parser.ExprBinary(b) => {
             return "(" + wasm_binop(b.op) + " " + emit_expr(b.left) + " " + emit_expr(b.right) + ")";
         },
+        parser.ExprCall(c) => {
+            // Direct call to a free function named by an ident:
+            // `f(a, b)` → `(call $f <a> <b>)`. Receiver methods and
+            // builtin (write/print/…) calls are later slices.
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var s: string = "(call $" + id.name;
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        s = s + " " + emit_expr(c.args[i]);
+                        i = i + 1;
+                    }
+                    return s + ")";
+                },
+                _ => { return "(i32.const 0)"; },
+            }
+        },
         _ => {
             return "(i32.const 0)";
         },
@@ -168,6 +185,14 @@ function expr_uses_divrem(e: parser.Expr): boolean {
         },
         parser.ExprUnary(u) => {
             return expr_uses_divrem(u.operand);
+        },
+        parser.ExprCall(c) => {
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_uses_divrem(c.args[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
         },
         _ => { return false; },
     }
@@ -299,45 +324,103 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     return st;
 }
 
-// body_stmts returns the statement list that forms the program's entry:
-// `main`'s body when a `main` function exists, else the module's
-// top-level statements (the bare `return 42;` program shape).
-function body_stmts(mod: parser.Module): parser.Stmt[] {
+// returns_value is true when a function's declared return type carries
+// an i32-shaped value (i32 / boolean / …). The void / unannotated case
+// emits no `(result …)` and no fallthrough constant.
+function returns_value(ret_type: string): boolean {
+    if (ret_type.len() == 0) { return false; }
+    if (ret_type == "void") { return false; }
+    return true;
+}
+
+// emit_func emits one wasm function. Params become wasm params (locals
+// 0..n-1, referenced by `$name`); declared `var`/`let` names that aren't
+// params become `(local …)` decls. An i32-returning function gets a
+// trailing `(i32.const 0)` as the fallthrough result when no `return`
+// fires.
+function emit_func(f: parser.FuncDecl): string {
+    var head: string = "  (func $" + f.name;
+    var pnames: string[] = [];
+    var i: i32 = 0;
+    while (i < f.params.len()) {
+        head = head + " (param $" + f.params[i].name + " i32)";
+        pnames = pnames.push(f.params[i].name);
+        i = i + 1;
+    }
+    var has_result: boolean = returns_value(f.ret_type);
+    if (has_result) { head = head + " (result i32)"; }
+    head = head + "\n";
+
+    var locals: string[] = collect_locals(f.body, []);
+    var decls: string = "";
+    var li: i32 = 0;
+    while (li < locals.len()) {
+        if (!contains_str(pnames, locals[li])) {
+            decls = decls + "    (local $" + locals[li] + " i32)\n";
+        }
+        li = li + 1;
+    }
+
+    var st: WState = WState { out: "", n: 0, brk: "", cont: "" };
+    st = emit_stmts(f.body, st);
+
+    var tail: string = "  )\n";
+    if (has_result) { tail = "    (i32.const 0))\n"; }
+    return head + decls + st.out + tail;
+}
+
+// module_uses_divrem is true when any free function body or the
+// top-level statements contain a `/` or `%`.
+function module_uses_divrem(mod: parser.Module): boolean {
+    if (stmts_use_divrem(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var f: parser.FuncDecl = mod.funcs[i];
-        if (f.name == "main" && f.receiver_type.len() == 0) {
-            return f.body;
+        if (mod.funcs[i].receiver_type.len() == 0) {
+            if (stmts_use_divrem(mod.funcs[i].body)) { return true; }
         }
         i = i + 1;
     }
-    return mod.top_stmts;
+    return false;
 }
 
-// emit_module produces the full WAT text for a module.
+// emit_module produces the full WAT text for a module: the proc_exit
+// import + memory, the guarded div/rem helpers (when used), every free
+// function (so calls + recursion + mutual recursion resolve by name),
+// and a `_start` that calls `proc_exit(main())`. A program with no
+// `main` function (bare top-level statements) synthesises one from the
+// module's top statements.
 pub function emit_module(mod: parser.Module): string {
-    var body: parser.Stmt[] = body_stmts(mod);
-
-    var locals: string[] = collect_locals(body, []);
-
-    var st: WState = WState { out: "", n: 0, brk: "", cont: "" };
-    st = emit_stmts(body, st);
-
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     out = out + "  (memory (export \"memory\") 1)\n";
-    if (stmts_use_divrem(body)) {
+    if (module_uses_divrem(mod)) {
         out = out + divrem_helpers();
     }
-    out = out + "  (func $main (result i32)\n";
-    var li: i32 = 0;
-    while (li < locals.len()) {
-        out = out + "    (local $" + locals[li] + " i32)\n";
-        li = li + 1;
+
+    var has_main: boolean = false;
+    var j: i32 = 0;
+    while (j < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[j];
+        if (f.receiver_type.len() == 0) {
+            out = out + emit_func(f);
+            if (f.name == "main") { has_main = true; }
+        }
+        j = j + 1;
     }
-    out = out + st.out;
-    // Fallthrough result when no `return` fired.
-    out = out + "    (i32.const 0))\n";
+
+    if (!has_main) {
+        var noparams: parser.ParamDecl[] = [];
+        var synth: parser.FuncDecl = parser.FuncDecl {
+            name: "main",
+            receiver_name: "",
+            receiver_type: "",
+            params: noparams,
+            ret_type: "i32",
+            body: mod.top_stmts,
+        };
+        out = out + emit_func(synth);
+    }
+
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";
     out = out + "  (export \"_start\" (func $_start)))\n";
     return out;
