@@ -284,19 +284,20 @@ language**:
   with `i32.trunc_f64_s` / `f64.convert_*` and integer narrowing masks),
   and the primitive math builtins (`__sqrt_f64` / `__floor_f64` /
   `__ceil_f64` / `__trunc_f64` / `__round_f64` / `__abs_f64`);
-- **i32-keyed maps** — a `Map { … }` literal (desugared to
-  `map_new_i32(n).set(…)…`) with `.set` / `.get` (→ `Option`) / `.get_or`
-  / `.has` / `.len`, backed by an open-addressing hash runtime (linear
-  probing, load-factor-0.75 growth + rehash). String keys, string values,
-  `.delete` / `.keys` / `.values`, and `for (k, v)` iteration are the
-  follow-on slices.
+- **maps** — a `Map { … }` literal (desugared to `map_new[_i32](n).set(…)…`)
+  with `.set` / `.get` (→ `Option`) / `.get_or` / `.has` / `.len`, backed by
+  an open-addressing hash runtime (linear probing, load-factor-0.75 growth
+  + rehash). Both **i32 keys** and **string keys** (content hash via FNV-1a
+  + `__fern_streq` compare, selected by a key-kind flag in the map box).
+  Values are i32 for now; string values, `.delete` / `.keys` / `.values`,
+  and `for (k, v)` iteration are the follow-on slices.
 
-Gated by 286 differential cases as of this writing. What remains for the
+Gated by 298 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
 binary wasm encoding (today it emits WAT text, runnable directly by
-`wasmtime`), and the rest of the map surface (string K/V + iteration).
+`wasmtime`), and the rest of the map surface (string values + iteration).
 The core wasi builtins (clock / file / env / random) are now covered.
 
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
