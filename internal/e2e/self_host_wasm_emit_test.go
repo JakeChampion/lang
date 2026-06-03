@@ -497,6 +497,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"tuple-string-concat", "function main(): i32 { var t = (1, \"x\"); write(t.1 + \"y\"); return 0; }", 0, "xy"},
 		{"tuple-string-len", "function main(): i32 { var t = (0, \"hello\"); print_int(t.1.len()); return 0; }", 0, "5"},
 		{"tuple-nested", "function main(): i32 { var t = (1, (2, 3)); var inner = t.1; print_int(inner.0 + inner.1); return 0; }", 0, "5"},
+
+		// Non-capturing lambdas — a lambda value is a [table_idx] closure
+		// box; calls lower to call_indirect through the function table.
+		{"lambda-call", "function main(): i32 { var f = function(x: i32): i32 { return x * 2; }; print_int(f(5)); return 0; }", 0, "10"},
+		{"lambda-two-args", "function main(): i32 { var add = function(a: i32, b: i32): i32 { return a + b; }; print_int(add(3, 4)); return 0; }", 0, "7"},
+		{"lambda-zero-args", "function main(): i32 { var k = function(): i32 { return 42; }; print_int(k()); return 0; }", 0, "42"},
+		{"lambda-called-twice", "function main(): i32 { var sq = function(x: i32): i32 { return x * x; }; print_int(sq(3)); print_int(sq(4)); return 0; }", 0, "916"},
+		{"lambda-two-distinct", "function main(): i32 { var inc = function(x: i32): i32 { return x + 1; }; var dec = function(x: i32): i32 { return x - 1; }; print_int(inc(10)); print_int(dec(10)); return 0; }", 0, "119"},
+		{"lambda-interleaved", "function main(): i32 { var a = function(x: i32): i32 { return x + 100; }; var b = function(x: i32): i32 { return x + 200; }; var c = function(x: i32): i32 { return x + 300; }; print_int(b(1)); print_int(a(1)); print_int(c(1)); return 0; }", 0, "201101301"},
+		{"lambda-string-return", "function main(): i32 { var g = function(): string { return \"hi\"; }; write(g()); return 0; }", 0, "hi"},
+		{"lambda-calls-toplevel", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { var f = function(x: i32): i32 { return dbl(x) + 1; }; print_int(f(5)); return 0; }", 0, "11"},
+		{"lambda-as-fn-param", "function apply(g: fn, n: i32): i32 { return g(n); } function main(): i32 { print_int(apply(function(x: i32): i32 { return x * 3; }, 6)); return 0; }", 0, "18"},
+		{"lambda-fn-param-twice", "function twice(g: fn, n: i32): i32 { return g(g(n)); } function main(): i32 { print_int(twice(function(x: i32): i32 { return x + 5; }, 0)); return 0; }", 0, "10"},
+		{"lambda-prints-inside", "function main(): i32 { var f = function(): i32 { print_int(7); return 0; }; return f(); }", 0, "7"},
 	}
 
 	for _, tc := range cases {

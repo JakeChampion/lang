@@ -40,11 +40,14 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   `.delete` via tombstones, `.keys` / `.values` snapshot arrays, and
   `for (k, v) in m` pair iteration — the map surface is complete), and
   slices `x[a:b]` (string + array, preserving the source element type),
-  and tuples `(a, b, …)` with `.N` access + per-element kind tracking.
-  Gated by 355 differential cases under `wasmtime`
-  (`self_host_wasm_emit_test.go`). Remaining for wasm: lambdas / closures,
-  the `wasi:cli/run` / `wasi:http` component shapes, and binary wasm
-  encoding (it emits WAT text today).
+  tuples `(a, b, …)` with `.N` access + per-element kind tracking, and
+  non-capturing lambdas (a `[table_idx]` closure box + `call_indirect`
+  through a function table; `fn`-typed params dispatch the same way).
+  Gated by 366 differential cases under `wasmtime`
+  (`self_host_wasm_emit_test.go`). Remaining for wasm: capturing closures
+  (env layout on top of the table machinery), the `wasi:cli/run` /
+  `wasi:http` component shapes, and binary wasm encoding (it emits WAT
+  text today).
 
 ---
 
