@@ -2006,3 +2006,56 @@ function main(): i32 { return 0; }`, "trait method \"f\" redeclared"},
 		}
 	}
 }
+
+// A bounded generic body may call trait methods on its type param;
+// a call site whose concrete type argument implements the bound
+// type-checks. See docs/TRAITS.md (Phase 2).
+func TestBoundedGenericAccepted(t *testing.T) {
+	src := `trait Display { function to_string(self: Self): string; }
+struct Point { x: i32 }
+impl Display for Point { function to_string(self: Self): string { return "p"; } }
+function show[T: Display](v: T): string { return v.to_string(); }
+function main(): i32 { var p: Point = Point { x: 1 }; var s: string = show(p); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("bounded generic should typecheck: %v", err)
+	}
+}
+
+func TestBoundedGenericErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// Type argument doesn't implement the bound.
+		{`trait Display { function to_string(self: Self): string; }
+struct A { x: i32 }
+struct B { y: i32 }
+impl Display for A { function to_string(self: Self): string { return "a"; } }
+function show[T: Display](v: T): string { return v.to_string(); }
+function main(): i32 { var b: B = B { y: 1 }; var s: string = show(b); return 0; }`,
+			"does not implement trait Display"},
+		// Method not provided by any bound on the type param.
+		{`trait Display { function to_string(self: Self): string; }
+function show[T: Display](v: T): string { return v.bogus(); }
+function main(): i32 { return 0; }`,
+			"no method \"bogus\" on type parameter T"},
+		// Unbounded type param: calling a method on it is rejected.
+		{`function show[T](v: T): string { return v.to_string(); }
+function main(): i32 { return 0; }`,
+			"add a trait bound"},
+		// Unknown trait in a bound.
+		{`function show[T: Nope](v: T): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown trait \"Nope\" in bound"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}

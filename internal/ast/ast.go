@@ -1466,6 +1466,15 @@ type FuncDecl struct {
 	// before IR lowering. After monomorphisation runs, every
 	// FuncDecl that survives has TypeParams empty.
 	TypeParams []string
+	// Bounds maps a type-parameter name to the traits it is
+	// constrained by — `function f[T: Display + Eq](…)` records
+	// Bounds["T"] = ["Display", "Eq"]. The checker uses bounds to
+	// (a) resolve method calls on a `T`-typed value against the
+	// trait's signature inside the generic body and (b) verify each
+	// concrete type argument implements the required traits at the
+	// call site. Nil when the function has no bounded type params.
+	// See docs/TRAITS.md.
+	Bounds     map[string][]string
 	Params     []Param
 	ReturnType Type
 	Body       *Block
