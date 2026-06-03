@@ -327,7 +327,18 @@ language**:
   integration capstone — word count, a reduce taking an `fn`, and a
   struct-method loop, all compiled and run together).
 
-Gated by 390 differential cases as of this writing. What remains for the
+A second integration-hardening pass (nested structs, struct array / string
+fields, fn-returns-struct, recursion + mutual recursion, the `?`-operator
+chain, `Result` match, and a string-builder loop) all compiled + ran on the
+first try — and surfaced a pre-existing **parser** robustness bug:
+`parse_module` could spin forever on a reserved keyword used where a
+declaration / statement is expected (e.g. a function named `use`). The
+top-level loop now guarantees forward progress (skips the offending token)
+so the compiler terminates instead of hanging; valid programs (incl. the
+self-host compiler's own source — the fixpoint stays byte-identical) are
+unaffected.
+
+Gated by 399 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

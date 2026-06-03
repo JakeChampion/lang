@@ -1983,6 +1983,13 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         var stmtR: StmtResult = parse_stmt(p);
+        // Guarantee forward progress: if a malformed top-level token (e.g.
+        // a reserved keyword where a declaration / statement is expected)
+        // leaves the cursor un-advanced, skip it rather than spin forever.
+        if (stmtR.par.pos == p.pos) {
+            p = p.advance();
+            continue;
+        }
         p = stmtR.par;
         top_stmts = top_stmts.push(stmtR.stmt);
     }
