@@ -652,3 +652,57 @@ function main(): i32 {
 		t.Fatalf("monomorph (nested generic name mismatch): %v", err)
 	}
 }
+
+// TestRunSubstitutesArrayLiteralElemTypeAtCallSite locks in the fix
+// for a codegen-corrupting gap: an array literal passed to a generic
+// `T[]` parameter is stamped by the checker with ElemType = the type
+// parameter (e.g. `T`). The caller isn't a generic clone, so the
+// clone-substitution walker never reached it, and the unsubstituted
+// ParamType drove the wrong per-element store width at codegen — a
+// pointer-element array (struct[]) got single-word stores into
+// pointer-width slots, corrupting the array on drop. monomorph.Run
+// must substitute the concrete instantiation into the argument's
+// ElemType at the call site.
+func TestRunSubstitutesArrayLiteralElemTypeAtCallSite(t *testing.T) {
+	src := `import "core/no_prelude";
+import "std/i32";
+struct Box { v: i32 }
+function len_of[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 {
+    return len_of([Box{v: 1}, Box{v: 2}]);
+}`
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	// Find the array-literal argument in main and confirm its
+	// ElemType is the concrete StructType, not a leftover ParamType.
+	var lit *ast.ArrayLit
+	for _, fn := range prog.Funcs {
+		if fn.Name != "main" {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			if al, ok := n.(*ast.ArrayLit); ok {
+				lit = al
+			}
+			return true
+		})
+	}
+	if lit == nil {
+		t.Fatal("array literal not found in main")
+	}
+	if _, isParam := lit.ElemType.(ast.ParamType); isParam {
+		t.Errorf("array literal ElemType is still a ParamType after monomorph: %#v", lit.ElemType)
+	}
+	if _, isStruct := lit.ElemType.(ast.StructType); !isStruct {
+		t.Errorf("array literal ElemType = %T, want ast.StructType (Box)", lit.ElemType)
+	}
+}

@@ -4721,8 +4721,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// before assignable / unifyType run, otherwise
 				// the i32-default would mismatch the expected
 				// param type.
-				c.settleNumeric(n.Args[i], expected)
-				at = postSettleType(n.Args[i], at)
+				//
+				// Skip it when the expected param is parametric
+				// (a generic `T` / `T[]`): settling an array literal
+				// against `T[]` would stamp the literal's ElemType to
+				// the bare ParamType, which then makes inference
+				// circular (`unifyType(T[], T[])` binds nothing) and
+				// leaves a `[Box{…}]` argument with a ParamType
+				// element type — codegen then picks the wrong store
+				// width and corrupts pointer-/two-word-element arrays.
+				// Leaving the argument at its natural element type
+				// (`Box[]`) lets unifyType bind `T = Box`.
+				if !(sub != nil && containsParamType(expected)) {
+					c.settleNumeric(n.Args[i], expected)
+					at = postSettleType(n.Args[i], at)
+				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				// If the arg is itself a generic call with
 				// partially-inferred TypeArgs (e.g. `pick(c,
