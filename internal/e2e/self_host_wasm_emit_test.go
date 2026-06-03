@@ -301,6 +301,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"env-empty", "function main(): i32 { match (env(\"EMPTYVAR\")) { Some(v) => { return v.len() + 7; }, None => { return 0; } } return 1; }", 7, ""},
 		{"env-payload-method", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v.to_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "HELLO123"},
 		{"env-len", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { return v.len(); }, None => { return 0; } } return 1; }", 8, ""},
+		// random_bytes(n): u8[] via wasi random_get — non-deterministic
+		// values, so assert length + byte range (0..255).
+		{"random-len", "function main(): i32 { var b = random_bytes(8); return b.len(); }", 8, ""},
+		{"random-zero", "function main(): i32 { var b = random_bytes(0); return b.len(); }", 0, ""},
+		{"random-range", "function main(): i32 { var b = random_bytes(100); for x in b { if (x < 0) { return 1; } if (x > 255) { return 2; } } return 42; }", 42, ""},
+		{"random-index", "function main(): i32 { var b = random_bytes(4); var x = b[0]; if (x >= 0 && x <= 255) { return 7; } return 1; }", 7, ""},
 	}
 
 	for _, tc := range cases {
