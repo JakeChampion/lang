@@ -124,6 +124,16 @@ struct Ctx {
     // one char per element, 's' = string, else 'i'. Drives `t.N` typing.
     tup_names: string[],
     tup_kinds: string[],
+    // Closure support. fn_names: locals/params that hold a closure value
+    // (a lambda or an `fn`-typed param), so calling them lowers to
+    // call_indirect. lam_ctr / lamdefs are module-wide shared cells (a
+    // 1-element array each, mutated in place): lam_ctr[0] is the next
+    // lambda's table index, lamdefs[0] accumulates the emitted
+    // `$__lambda<i>` function texts. arities[0] records which call_indirect
+    // param-counts have been used (digits, for emitting the $clos<N> types).
+    fn_names: string[],
+    lam_ctr: i32[],
+    lamdefs: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -363,6 +373,40 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
                     acc = collect_str_key_map_names(m.arms[k].body, map_names, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// collect_fn_var_names gathers `var f = function(...) {...}` binding names
+// (closure-valued locals), recursing nested bodies.
+function collect_fn_var_names(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprLambda(_) => {
+                        if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                    },
+                    _ => {},
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_fn_var_names(f.then_body, acc);
+                acc = collect_fn_var_names(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_fn_var_names(m.arms[k].body, acc);
                     k = k + 1;
                 }
             },
@@ -1248,6 +1292,20 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (id.name == "map_new" && c.args.len() == 1) {
                         return "(call $__fern_map_new_str " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
+                    // Closure call: the callee is a local/param holding a
+                    // closure box. Indirect-call through the function table
+                    // — push the box as the $__env arg, then the args, then
+                    // the table index (box[0]).
+                    if (contains_str(cx.fn_names, id.name)) {
+                        var ci: string = "(call_indirect (type $clos" + i32_to_string(c.args.len()) + ") (local.get $" + id.name + ")";
+                        var k: i32 = 0;
+                        while (k < c.args.len()) {
+                            ci = ci + " " + emit_expr(c.args[k], cx, depth);
+                            k = k + 1;
+                        }
+                        ci = ci + " (i32.load (local.get $" + id.name + ")))";
+                        return ci;
+                    }
                     // Direct call to a free function: `f(a, b)` →
                     // `(call $f <a> <b>)`. Args bound to an i64 param are
                     // coerced to i64 (so a bare literal becomes i64.const).
@@ -1370,6 +1428,22 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                 s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(8 + i * 4) + ")) " + emit_expr(a.elements[i], cx, depth + 1) + ")";
                 i = i + 1;
             }
+            s = s + " (local.get " + ap + "))";
+            return s;
+        },
+        parser.ExprLambda(lm) => {
+            // A lambda value is a 1-slot closure box [table_idx]. The body
+            // is emitted as $__lambda<idx> (appended to the shared lamdefs
+            // cell) and registered in the function table at `idx`. Calling
+            // the value goes through call_indirect (see the ExprCall path).
+            // Non-capturing: the $__env param is ignored.
+            var idx: i32 = cx.lam_ctr[0];
+            cx.lam_ctr[0] = idx + 1;
+            cx.lamdefs[0] = cx.lamdefs[0] + emit_lambda(lm, idx, cx);
+            var ap: string = "$__lit" + i32_to_string(depth);
+            var s: string = "(block (result i32)";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const 4)))";
+            s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(idx) + "))";
             s = s + " (local.get " + ap + "))";
             return s;
         },
@@ -1548,6 +1622,7 @@ function expr_uses_divrem(e: parser.Expr): boolean {
             }
             return false;
         },
+        parser.ExprLambda(lm) => { return stmts_use_divrem(lm.body); },
         _ => { return false; },
     }
     return false;
@@ -2496,6 +2571,11 @@ function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
             }
             return t;
         },
+        parser.ExprLambda(lm) => {
+            // Intern string literals inside the lambda body (it compiles
+            // against the same module string table).
+            return collect_strings_stmts(lm.body, t);
+        },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
@@ -3074,7 +3154,16 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[]): Ctx {
+    // Closure-typed locals/params: `fn` params + vars bound to a lambda.
+    var fn_names: string[] = collect_fn_var_names(f.body, []);
+    var fp: i32 = 0;
+    while (fp < f.params.len()) {
+        if (f.params[fp].type_name == "fn" && !contains_str(fn_names, f.params[fp].name)) {
+            fn_names = fn_names.push(f.params[fp].name);
+        }
+        fp = fp + 1;
+    }
     var locals: string[] = [];
     var str_arrays: string[] = [];
     var sv_names: string[] = [];
@@ -3133,6 +3222,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         map_names: map_names, map_str_names: [],
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
         tup_names: [], tup_kinds: [],
+        fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
     };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
@@ -3240,12 +3330,35 @@ function returns_value(ret_type: string): boolean {
     return true;
 }
 
+// emit_lambda emits a lambda body as a top-level wasm function
+// `$__lambda<idx>` with a leading `$__env` param (the closure box ptr,
+// ignored by a non-capturing lambda) followed by the lambda's params.
+// It reuses emit_func via a synthesised FuncDecl, threading the shared
+// lambda cells so nested lambdas keep counting.
+function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx): string {
+    var ps: parser.ParamDecl[] = [];
+    ps = ps.push(parser.ParamDecl { name: "__env", type_name: "i32" });
+    var i: i32 = 0;
+    while (i < lm.params.len()) {
+        ps = ps.push(lm.params[i]);
+        i = i + 1;
+    }
+    var rt: string = lm.ret_type;
+    if (rt.len() == 0) { rt = "i32"; }
+    var synth: parser.FuncDecl = parser.FuncDecl {
+        name: "__lambda" + i32_to_string(idx),
+        receiver_name: "", receiver_type: "",
+        params: ps, ret_type: rt, body: lm.body,
+    };
+    return emit_func(synth, cx.tab, cx.funcs, cx.str_arr_funcs, cx.structs, cx.sf_names, cx.sf_types, cx.of_names, cx.of_payloads, cx.mr_types, cx.mr_names, cx.mr_rets, cx.i64_funcs, cx.mod_funcs, cx.f64_funcs, cx.lam_ctr, cx.lamdefs);
+}
+
 // emit_func emits one wasm function. Params become wasm params (locals
 // 0..n-1, referenced by `$name`); declared `var`/`let` names that aren't
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[]): string {
     // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
     // receiver prepended as the first param; a free function as `$name`.
     var fname: string = f.name;
@@ -3310,7 +3423,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs, lam_ctr, lamdefs);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
@@ -3346,6 +3459,7 @@ function expr_has_array(e: parser.Expr): boolean {
         parser.ExprIndex(ix) => { return expr_has_array(ix.array) || expr_has_array(ix.index); },
         parser.ExprSlice(_) => { return true; },
         parser.ExprTuple(_) => { return true; },
+        parser.ExprLambda(_) => { return true; },
         parser.ExprFieldAccess(fa) => { return expr_has_array(fa.obj); },
         parser.ExprCall(c) => {
             if (expr_has_array(c.callee)) { return true; }
@@ -3434,6 +3548,7 @@ function expr_has_struct(e: parser.Expr): boolean {
             }
             return false;
         },
+        parser.ExprLambda(lm) => { return stmts_have_struct(lm.body); },
         _ => { return false; },
     }
     return false;
@@ -3525,6 +3640,7 @@ function expr_has_option(e: parser.Expr): boolean {
             }
             return false;
         },
+        parser.ExprLambda(lm) => { return stmts_have_option(lm.body); },
         _ => { return false; },
     }
     return false;
@@ -3625,6 +3741,7 @@ function expr_calls(e: parser.Expr, fn: string): boolean {
             }
             return false;
         },
+        parser.ExprLambda(lm) => { return stmts_call(lm.body, fn); },
         _ => { return false; },
     }
     return false;
@@ -3811,6 +3928,7 @@ function expr_uses_i64_cast(e: parser.Expr): boolean {
         },
         parser.ExprIndex(ix) => { return expr_uses_i64_cast(ix.array) || expr_uses_i64_cast(ix.index); },
         parser.ExprFieldAccess(fa) => { return expr_uses_i64_cast(fa.obj); },
+        parser.ExprLambda(lm) => { return stmts_use_i64_cast(lm.body); },
         _ => { return false; },
     }
     return false;
@@ -3885,7 +4003,23 @@ function stmt_calls_print_int(body: parser.Stmt[]): boolean {
                             },
                             _ => {},
                         }
+                        // A lambda passed as a call argument may print.
+                        var ai: i32 = 0;
+                        while (ai < c.args.len()) {
+                            match (c.args[ai]) {
+                                parser.ExprLambda(lm) => { if (stmt_calls_print_int(lm.body)) { return true; } },
+                                _ => {},
+                            }
+                            ai = ai + 1;
+                        }
                     },
+                    _ => {},
+                }
+            },
+            parser.StmtVar(v) => {
+                // `var f = function(){ … print_int … }` — scan the body.
+                match (v.init) {
+                    parser.ExprLambda(lm) => { if (stmt_calls_print_int(lm.body)) { return true; } },
                     _ => {},
                 }
             },
@@ -4043,13 +4177,19 @@ pub function emit_module(mod: parser.Module): string {
         out = out + writefile_func();
     }
 
+    // Shared lambda cells (1-element arrays, mutated in place so the index
+    // counter + accumulated $__lambda<i> defs persist across every
+    // function's emission).
+    var lam_ctr: i32[] = [0];
+    var lamdefs: string[] = [""];
+
     var has_main: boolean = false;
     var j: i32 = 0;
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
         // Emit free functions and receiver methods alike; emit_func
         // mangles a method's name to `$<RecvType>__<name>`.
-        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs);
+        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs);
         if (f.receiver_type.len() == 0 && f.name == "main") { has_main = true; }
         j = j + 1;
     }
@@ -4064,7 +4204,30 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs);
+    }
+
+    // Closure support: the accumulated lambda functions, the shared
+    // call_indirect signature types ($clos<N> = env + N i32 args → i32),
+    // and the function table + elem segment indexing them.
+    if (lam_ctr[0] > 0) {
+        var ai: i32 = 0;
+        while (ai <= 8) {
+            out = out + "  (type $clos" + i32_to_string(ai) + " (func (param i32";
+            var pj: i32 = 0;
+            while (pj < ai) { out = out + " i32"; pj = pj + 1; }
+            out = out + ") (result i32)))\n";
+            ai = ai + 1;
+        }
+        out = out + lamdefs[0];
+        out = out + "  (table " + i32_to_string(lam_ctr[0]) + " funcref)\n";
+        out = out + "  (elem (i32.const 0)";
+        var ei: i32 = 0;
+        while (ei < lam_ctr[0]) {
+            out = out + " $__lambda" + i32_to_string(ei);
+            ei = ei + 1;
+        }
+        out = out + ")\n";
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";

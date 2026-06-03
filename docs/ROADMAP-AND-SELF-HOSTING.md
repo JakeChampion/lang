@@ -305,13 +305,21 @@ language**:
   `for v in xs[a:b]` all resolve;
 - **tuples** `(a, b, …)` — N consecutive slots accessed by the numeric
   `.N` field; per-element kind tracking types a `t.N` read (so a string
-  element prints / concats / supports methods), incl. nested tuples.
+  element prints / concats / supports methods), incl. nested tuples;
+- **non-capturing lambdas** — a lambda value is a `[table_idx]` closure
+  box; the body is emitted as a top-level `$__lambda<i>` (with a leading
+  ignored `$__env` param) and registered in a function table, so calls —
+  whether of a lambda-bound local or an `fn`-typed param — lower to
+  `call_indirect` through a per-arity `$clos<N>` type. Module-wide lambda
+  indexing rides on a shared 1-element-array counter threaded through the
+  (otherwise pure) `emit_expr`. **Captures are the next slice.**
 
-Gated by 355 differential cases as of this writing. What remains for the
-wasm backend to retire the Go wasm path: **lambdas / closures** (still
-Go-only on this backend), the **`wasi:cli/run` / `wasi:http` component
-shapes** (the Component-Model packaging in `internal/wasm/component`,
-ported to Fern, on top of this core module), and binary wasm encoding
+Gated by 366 differential cases as of this writing. What remains for the
+wasm backend to retire the Go wasm path: **capturing closures** (the env
+layout on top of the table machinery above), the **`wasi:cli/run` /
+`wasi:http` component shapes** (the Component-Model packaging in
+`internal/wasm/component`, ported to Fern, on top of this core module),
+and binary wasm encoding
 (today it emits WAT text, runnable directly by
 `wasmtime`).
 The core wasi builtins (clock / file / env / random) are now covered.
