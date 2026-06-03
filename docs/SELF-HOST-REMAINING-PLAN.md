@@ -36,11 +36,12 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   params / returns, arithmetic + comparison, `as` casts f64↔i32/i64, and
   the primitive math builtins), and maps (`Map { … }` literals with
   `.set` / `.get` / `.get_or` / `.has` / `.len` over an open-addressing
-  hash runtime, both i32 and string keys, i32 and string values). Gated by
-  307 differential cases under `wasmtime` (`self_host_wasm_emit_test.go`).
-  Remaining for wasm: the `wasi:cli/run` / `wasi:http` component shapes,
-  binary wasm encoding (it emits WAT text today), and the rest of the map
-  surface (delete / keys / values + iteration).
+  hash runtime, both i32 and string keys, i32 and string values, plus
+  `.delete` via tombstones). Gated by 316 differential cases under
+  `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm: the
+  `wasi:cli/run` / `wasi:http` component shapes, binary wasm encoding (it
+  emits WAT text today), and the rest of the map surface (keys / values +
+  iteration).
 
 ---
 
