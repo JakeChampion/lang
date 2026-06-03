@@ -245,6 +245,8 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
 		combined.Unions = append(combined.Unions, mod.prog.Unions...)
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
+		combined.Traits = append(combined.Traits, mod.prog.Traits...)
+		combined.Impls = append(combined.Impls, mod.prog.Impls...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 	}
 	return combined, nil
@@ -396,6 +398,18 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true
 		}
+	}
+	for _, td := range prog.Traits {
+		// Stamp the declaring module so the checker's trait
+		// coherence (orphan-rule) check can tell a local trait from
+		// an imported one. See docs/TRAITS.md.
+		td.SourceModule = path
+		if td.Public {
+			mod.publicStructs[td.Name] = true
+		}
+	}
+	for _, impl := range prog.Impls {
+		impl.SourceModule = path
 	}
 	for i, imp := range prog.Imports {
 		child := loaded[childPaths[i]]
@@ -651,6 +665,8 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
 		combined.Unions = append(combined.Unions, mod.prog.Unions...)
 		combined.Consts = append(combined.Consts, mod.prog.Consts...)
+		combined.Traits = append(combined.Traits, mod.prog.Traits...)
+		combined.Impls = append(combined.Impls, mod.prog.Impls...)
 		combined.Comments = append(combined.Comments, mod.prog.Comments...)
 		// TypeRefs is a parser-recorded side table the LSP uses
 		// for hover / definition on type annotations. Merging

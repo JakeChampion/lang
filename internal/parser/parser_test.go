@@ -1157,3 +1157,91 @@ func TestArenaIsNotReserved(t *testing.T) {
 		t.Fatalf("expected `var arena`, got %T", prog.Funcs[0].Body.Stmts[0])
 	}
 }
+
+// A `trait` declaration parses into Program.Traits with one
+// TraitMethod per signature; the `self: Self` first parameter is
+// recorded as ast.SelfType. See docs/TRAITS.md.
+func TestTraitDeclParses(t *testing.T) {
+	prog, err := Parse(`trait Display {
+    function to_string(self: Self): string;
+    function debug(self: Self, verbose: boolean): string;
+}`)
+	if err != nil {
+		t.Fatalf("trait decl should parse: %v", err)
+	}
+	if len(prog.Traits) != 1 {
+		t.Fatalf("expected 1 trait, got %d", len(prog.Traits))
+	}
+	td := prog.Traits[0]
+	if td.Name != "Display" || len(td.Methods) != 2 {
+		t.Fatalf("trait = %+v", td)
+	}
+	if _, ok := td.Methods[0].Params[0].Type.(ast.SelfType); !ok {
+		t.Errorf("first param type should be SelfType, got %T", td.Methods[0].Params[0].Type)
+	}
+	if _, ok := td.Methods[0].Result.(ast.StringType); !ok {
+		t.Errorf("to_string result should be string, got %s", td.Methods[0].Result)
+	}
+	if td.Methods[1].Name != "debug" || len(td.Methods[1].Params) != 2 {
+		t.Errorf("debug method = %+v", td.Methods[1])
+	}
+}
+
+// An `impl Trait for Type` desugars each method into an ordinary
+// receiver-method FuncDecl (with Self replaced by the concrete type)
+// appended to Program.Funcs, plus an ImplDecl record. See docs/TRAITS.md.
+func TestImplDeclDesugarsToReceiverMethods(t *testing.T) {
+	prog, err := Parse(`trait Display { function to_string(self: Self): string; }
+struct Point { x: i32, y: i32 }
+impl Display for Point {
+    function to_string(self: Self): string { return "p"; }
+}`)
+	if err != nil {
+		t.Fatalf("impl decl should parse: %v", err)
+	}
+	if len(prog.Impls) != 1 {
+		t.Fatalf("expected 1 impl, got %d", len(prog.Impls))
+	}
+	impl := prog.Impls[0]
+	if impl.Trait != "Display" {
+		t.Errorf("impl.Trait = %q, want Display", impl.Trait)
+	}
+	if st, ok := impl.Type.(ast.StructType); !ok || st.Name != "Point" {
+		t.Errorf("impl.Type = %s, want Point", impl.Type)
+	}
+	// The method should be a receiver-method on Point with Self
+	// substituted away.
+	var found *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "to_string" {
+			found = fn
+		}
+	}
+	if found == nil {
+		t.Fatalf("impl method not appended to Program.Funcs")
+	}
+	if found.Receiver == nil {
+		t.Fatalf("impl method should carry a synthesised receiver")
+	}
+	if st, ok := found.Receiver.Type.(ast.StructType); !ok || st.Name != "Point" {
+		t.Errorf("receiver type = %s, want Point (Self substituted)", found.Receiver.Type)
+	}
+	if _, ok := found.Receiver.Type.(ast.SelfType); ok {
+		t.Error("Self should have been substituted in the receiver")
+	}
+}
+
+// Error cases: trait method without a `self` first param, and `impl`
+// missing the `for` clause.
+func TestTraitImplParseErrors(t *testing.T) {
+	if _, err := Parse(`trait T { function f(x: i32): i32; }`); err == nil {
+		t.Error("trait method without `self` first param should be a parse error")
+	}
+	if _, err := Parse(`impl T Point { }`); err == nil {
+		t.Error("`impl T Point` without `for` should be a parse error")
+	}
+	if _, err := Parse(`trait T { function f(self: Self): void; }
+impl T for Self { function f(self: Self): void {} }`); err == nil {
+		t.Error("`impl T for Self` should be a parse error")
+	}
+}

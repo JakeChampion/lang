@@ -131,6 +131,12 @@ var keywords = map[string]bool{
 	"match": true,
 	"when":  true,
 	"defer": true,
+	// `trait` declares a named set of method signatures; `impl
+	// Trait for Type { … }` provides bodies. See docs/TRAITS.md.
+	// `Self` stays a contextual type name (handled in the parser),
+	// and `self` is an ordinary identifier — neither is reserved.
+	"trait": true,
+	"impl":  true,
 }
 
 // Keywords returns every reserved word the lexer recognises, in
