@@ -114,6 +114,9 @@ struct Ctx {
     // map_names: locals/params holding an i32-keyed map, so `.set` / `.get`
     // / `.has` / `.get_or` on them dispatch to the map runtime.
     map_names: string[],
+    // map_str_names: the subset of map_names whose values are strings, so
+    // `.get` / `.get_or` results are typed as string.
+    map_str_names: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -206,6 +209,87 @@ function collect_map_var_names(body: parser.Stmt[], acc: string[]): string[] {
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
                     acc = collect_map_var_names(m.arms[k].body, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// is_str_val_map is true when `e` denotes a map whose values are strings:
+// a tracked string-valued map local, or a `.set` chain that stores a
+// string value (so `Map { "k": "v" }.get(...)` is typed without a local).
+function is_str_val_map(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.map_str_names, id.name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "set" && c.args.len() == 2) {
+                        if (is_string_expr(c.args[1], cx)) { return true; }
+                        return is_str_val_map(fa.obj, cx);
+                    }
+                    return false;
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// set_chain_has_str: does a map-rooted `.set` chain store any string value?
+function set_chain_has_str(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "set" && c.args.len() == 2) {
+                        if (is_string_expr(c.args[1], cx)) { return true; }
+                        return set_chain_has_str(fa.obj, cx);
+                    }
+                    return false;
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// collect_str_val_map_names returns the subset of map_names whose values
+// are strings, found by scanning every `var`/assignment that builds the
+// map (init chain or `m = m.set(k, "…")`) for a string-typed set value.
+// Run after string locals are known so is_string_expr is accurate.
+function collect_str_val_map_names(body: parser.Stmt[], cx: Ctx, map_names: string[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (contains_str(map_names, v.name) && !contains_str(acc, v.name) && set_chain_has_str(v.init, cx)) {
+                    acc = acc.push(v.name);
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (contains_str(map_names, a.target) && !contains_str(acc, a.target) && set_chain_has_str(a.value, cx)) {
+                    acc = acc.push(a.target);
+                }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_str_val_map_names(f.then_body, cx, map_names, acc);
+                acc = collect_str_val_map_names(f.else_body, cx, map_names, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_str_val_map_names(w.body, cx, map_names, acc); },
+            parser.StmtFor(f) => { acc = collect_str_val_map_names(f.body, cx, map_names, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_str_val_map_names(m.arms[k].body, cx, map_names, acc);
                     k = k + 1;
                 }
             },
@@ -688,6 +772,8 @@ function scrutinee_payload(e: parser.Expr, cx: Ctx): string {
                     return lookup_pair(cx.of_names, cx.of_payloads, id.name);
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // get on a string-valued map → Option[string].
+                    if (fa.field == "get" && c.args.len() == 1 && is_str_val_map(fa.obj, cx)) { return "string"; }
                     // A receiver method returning Option[T] / Result[T,E].
                     return parse_option_payload(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
                 },
@@ -2444,6 +2530,8 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
                     }
                     // join always yields a string (array receiver).
                     if (fa.field == "join") { return true; }
+                    // get_or on a string-valued map yields a string.
+                    if (fa.field == "get_or" && c.args.len() == 2 && is_str_val_map(fa.obj, cx)) { return true; }
                     // A receiver method declared to return string.
                     return method_ret(cx, struct_type_of(fa.obj, cx), fa.field) == "string";
                 },
@@ -2657,9 +2745,12 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_i64: f.ret_type == "i64", mod_funcs: mod_funcs,
         f64_names: f64_names, f64_funcs: f64_funcs,
         ret_f64: is_float_type(f.ret_type),
-        map_names: map_names,
+        map_names: map_names, map_str_names: [],
     };
-    return collect_str_locals_stmts(f.body, cx);
+    // Discover string locals first, then (with accurate is_string_expr)
+    // the maps whose values are strings.
+    var cx2: Ctx = collect_str_locals_stmts(f.body, cx);
+    return Ctx { ...cx2, map_str_names: collect_str_val_map_names(f.body, cx2, map_names, []) };
 }
 
 // collect_opt_func_names / _payloads: free functions returning
