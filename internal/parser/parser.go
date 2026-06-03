@@ -248,9 +248,10 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Keyword, "struct") &&
 				!p.match(lexer.Keyword, "enum") &&
 				!p.match(lexer.Keyword, "type") &&
+				!p.match(lexer.Keyword, "trait") &&
 				!p.match(lexer.Keyword, "const") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, `type`, or `const`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, or `const`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -320,6 +321,41 @@ func (p *parser) parseProgram() *ast.Program {
 			if ud != nil {
 				ud.Public = isPub
 				prog.Unions = append(prog.Unions, ud)
+			}
+			continue
+		}
+		if p.match(lexer.Keyword, "trait") {
+			td, err := p.parseTraitDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if td != nil {
+				td.Public = isPub
+				prog.Traits = append(prog.Traits, td)
+			}
+			continue
+		}
+		if p.match(lexer.Keyword, "impl") {
+			id, methods, err := p.parseImplDecl()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if id != nil {
+				prog.Impls = append(prog.Impls, id)
+				// Impl methods are desugared into ordinary
+				// receiver-methods so modload + the checker's
+				// existing method machinery handle them unchanged.
+				prog.Funcs = append(prog.Funcs, methods...)
 			}
 			continue
 		}
@@ -400,6 +436,8 @@ func (p *parser) syncToTopLevel() {
 			p.match(lexer.Keyword, "enum") ||
 			p.match(lexer.Keyword, "import") ||
 			p.match(lexer.Keyword, "const") ||
+			p.match(lexer.Keyword, "trait") ||
+			p.match(lexer.Keyword, "impl") ||
 			p.match(lexer.Keyword, "pub") {
 			return
 		}
@@ -421,6 +459,147 @@ func (p *parser) syncToStmt() {
 		}
 		p.advance()
 	}
+}
+
+// parseTraitDecl parses `trait Name { <sig>; <sig>; }`, where each
+// signature is `function name(self: Self, …params): ret;` (no body).
+// The leading `trait` keyword is at the current position.
+func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "trait")
+	if err != nil {
+		return nil, err
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos}
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		mkw, err := p.expect(lexer.Keyword, "function")
+		if err != nil {
+			return nil, err
+		}
+		mname, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(lexer.Punct, "("); err != nil {
+			return nil, err
+		}
+		var params []ast.Param
+		if !p.match(lexer.Punct, ")") {
+			for {
+				pname, err := p.expect(lexer.Ident, "")
+				if err != nil {
+					return nil, err
+				}
+				if _, err := p.expect(lexer.Punct, ":"); err != nil {
+					return nil, err
+				}
+				ptype, err := p.parseType()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+			}
+		}
+		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			return nil, err
+		}
+		if len(params) == 0 || params[0].Name != "self" {
+			return nil, p.errorf(mkw.Pos,
+				"trait method %q must take `self: Self` as its first parameter", mname.Text)
+		}
+		var ret ast.Type = ast.VoidType{}
+		if _, ok := p.accept(lexer.Punct, ":"); ok {
+			t, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			ret = t
+		}
+		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+			return nil, err
+		}
+		td.Methods = append(td.Methods, ast.TraitMethod{
+			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret,
+		})
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	return td, nil
+}
+
+// parseImplDecl parses `impl Trait for Type { <function>… }`. Each
+// method is parsed with the ordinary parseFunction machinery (it has
+// no receiver clause — `self` is its first parameter), then desugared
+// into a receiver-method FuncDecl with `Self` replaced by the `for`
+// type. Returns the ImplDecl record plus the desugared methods, which
+// the caller appends to Program.Funcs.
+func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
+	kw, err := p.expect(lexer.Keyword, "impl")
+	if err != nil {
+		return nil, nil, err
+	}
+	tname, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := p.expect(lexer.Keyword, "for"); err != nil {
+		return nil, nil, err
+	}
+	typePos := p.peek().Pos
+	implType, err := p.parseType()
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := implType.(ast.SelfType); ok {
+		return nil, nil, p.errorf(typePos, "`impl … for Self` is not allowed; name a concrete type")
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, nil, err
+	}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname.Text, TraitPos: tname.Pos, Type: implType, TypePos: typePos}
+	var methods []*ast.FuncDecl
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		fn, err := p.parseFunction()
+		if err != nil {
+			return nil, nil, err
+		}
+		if fn.Receiver != nil {
+			return nil, nil, p.errorf(fn.P,
+				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)
+		}
+		if len(fn.Params) == 0 || fn.Params[0].Name != "self" {
+			return nil, nil, p.errorf(fn.P,
+				"impl method %q must take `self: Self` as its first parameter", fn.Name)
+		}
+		// Substitute Self -> the concrete impl type across the whole
+		// signature, then peel `self` off as the receiver so the
+		// checker's receiver-hoist mangles it to
+		// __method_<Type>_<name> exactly like a hand-written method.
+		for i := range fn.Params {
+			fn.Params[i].Type = ast.SubstSelf(fn.Params[i].Type, implType)
+		}
+		fn.ReturnType = ast.SubstSelf(fn.ReturnType, implType)
+		recv := fn.Params[0]
+		recv.Type = implType
+		fn.Receiver = &recv
+		fn.Params = fn.Params[1:]
+		methods = append(methods, fn)
+		id.MethodNames = append(id.MethodNames, fn.Name)
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, nil, err
+	}
+	return id, methods, nil
 }
 
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
@@ -970,6 +1149,16 @@ func (p *parser) parseType() (ast.Type, error) {
 		} else {
 			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
+	case t.Kind == lexer.Ident && t.Text == "Self" &&
+		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
+		// `Self` is the contextual trait/impl type. It's only valid
+		// inside a trait declaration or an `impl` body; the parser
+		// always maps it to ast.SelfType and the checker rejects any
+		// stray occurrence outside an impl. No `.fern` source uses
+		// `Self` as a struct name, so this is unambiguous. Falls
+		// through to the trailing-`[]` suffix loop like any base type.
+		p.advance()
+		base = ast.SelfType{}
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.

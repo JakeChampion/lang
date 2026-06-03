@@ -166,7 +166,17 @@ type EnumType struct {
 // needs to compare two parameters from different scopes.
 type ParamType struct{ Name string }
 
+// SelfType is the contextual `Self` type that appears inside a trait
+// declaration's method signatures and inside `impl Trait for Type`
+// bodies. The parser substitutes SelfType with the impl's concrete
+// `for` type when it desugars impl methods into ordinary receiver
+// methods, so SelfType never reaches the monomorph / IR / codegen
+// stages — it survives only on a trait's registered signatures (used
+// by the conformance check). See docs/TRAITS.md.
+type SelfType struct{}
+
 func (NumberType) isType() {}
+func (SelfType) isType()   {}
 func (BoolType) isType()   {}
 func (VoidType) isType()   {}
 func (StringType) isType() {}
@@ -248,6 +258,51 @@ func (e EnumType) String() string {
 	return out + "]"
 }
 func (p ParamType) String() string { return p.Name }
+func (SelfType) String() string    { return "Self" }
+
+// SubstSelf recursively replaces every SelfType in t with self. Used
+// when desugaring `impl Trait for Type` methods (the parser) and when
+// checking impl conformance against a trait's Self-typed signatures
+// (the checker). See docs/TRAITS.md.
+func SubstSelf(t Type, self Type) Type {
+	switch tt := t.(type) {
+	case SelfType:
+		return self
+	case ArrayType:
+		return ArrayType{Elem: SubstSelf(tt.Elem, self)}
+	case SliceType:
+		return SliceType{Elem: SubstSelf(tt.Elem, self)}
+	case TupleType:
+		elems := make([]Type, len(tt.Elems))
+		for i, e := range tt.Elems {
+			elems[i] = SubstSelf(e, self)
+		}
+		return TupleType{Elems: elems}
+	case StructType:
+		if len(tt.Args) == 0 {
+			return tt
+		}
+		args := make([]Type, len(tt.Args))
+		for i, a := range tt.Args {
+			args[i] = SubstSelf(a, self)
+		}
+		return StructType{Name: tt.Name, Args: args}
+	case EnumType:
+		args := make([]Type, len(tt.Args))
+		for i, a := range tt.Args {
+			args[i] = SubstSelf(a, self)
+		}
+		return EnumType{Name: tt.Name, Args: args}
+	case *FuncType:
+		params := make([]Type, len(tt.Params))
+		for i, pt := range tt.Params {
+			params[i] = SubstSelf(pt, self)
+		}
+		return &FuncType{Params: params, Result: SubstSelf(tt.Result, self)}
+	default:
+		return t
+	}
+}
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -576,6 +631,9 @@ func Equal(a, b Type) bool {
 	case ParamType:
 		y, ok := b.(ParamType)
 		return ok && x.Name == y.Name
+	case SelfType:
+		_, ok := b.(SelfType)
+		return ok
 	}
 	return false
 }
@@ -1593,9 +1651,71 @@ type UnionDecl struct {
 	SourceModule string
 }
 
+// TraitDecl is a top-level `trait Name { <sig>; … }` declaration — a
+// named set of method signatures. Each method's first parameter is
+// `self: Self` (ast.SelfType). A type "implements" the trait via a
+// matching ImplDecl; the checker validates conformance + coherence
+// (see docs/TRAITS.md). Traits carry no runtime representation: once
+// the checker has validated impls, later stages ignore them.
+type TraitDecl struct {
+	P       Position
+	Name    string
+	NamePos Position
+	Methods []TraitMethod
+	// Public marks the trait as exported — same semantics as
+	// FuncDecl.Public / StructDecl.Public.
+	Public bool
+	// SourceModule mirrors StructDecl.SourceModule — modload stamps
+	// the declaring module so the coherence (orphan-rule) check can
+	// tell a local trait from an imported one. Empty for single-file
+	// programs.
+	SourceModule string
+}
+
+// TraitMethod is one signature in a TraitDecl. Params[0] is always
+// `self: Self` (ast.SelfType{}); the remaining params + Result use
+// SelfType wherever the source wrote `Self`.
+type TraitMethod struct {
+	P      Position
+	Name   string
+	Params []Param
+	Result Type
+}
+
+// ImplDecl is a top-level `impl Trait for Type { <function>… }`. The
+// parser desugars each method into an ordinary receiver-method
+// FuncDecl (with `Self` replaced by the `for` type) and appends those
+// to Program.Funcs, so modload + the checker's existing
+// receiver-hoist + dispatch paths handle them unchanged. ImplDecl
+// itself is the record the checker uses to verify the impl satisfies
+// the trait and to enforce coherence. MethodNames lists the method
+// names provided (in source order) for the conformance diagnostics.
+type ImplDecl struct {
+	P           Position
+	Trait       string
+	TraitPos    Position
+	Type        Type
+	TypePos     Position
+	MethodNames []string
+	// SourceModule is the module that wrote the impl — used by the
+	// orphan-rule check (the impl is legal only if Trait or Type is
+	// declared in this same module). Empty for single-file programs.
+	SourceModule string
+}
+
+func (s *TraitDecl) Pos() Position { return s.P }
+func (s *ImplDecl) Pos() Position  { return s.P }
+
 type Program struct {
 	Funcs   []*FuncDecl
 	Structs []*StructDecl
+	// Traits lists top-level `trait` declarations in source order.
+	// Impls lists `impl Trait for Type` declarations in source
+	// order. Both are consumed by the checker (conformance +
+	// coherence) and ignored by every later pass — see TraitDecl /
+	// ImplDecl and docs/TRAITS.md.
+	Traits []*TraitDecl
+	Impls  []*ImplDecl
 	// Enums lists top-level `enum` declarations in source order.
 	// Variant constructors look like calls in the parse tree
 	// (`Some(x)`); the checker rewrites them to *EnumLit once

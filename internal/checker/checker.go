@@ -103,6 +103,16 @@ type Info struct {
 	// in sync with GenericFuncs / GenericStructs by the checker's
 	// registration code.
 	Generics map[string]ast.GenericDecl
+	// Traits maps a trait name to its declaration. Populated at the
+	// start of Check from prog.Traits. Used by the conformance
+	// check and (Phase 2) by generic bound resolution. See
+	// docs/TRAITS.md.
+	Traits map[string]*ast.TraitDecl
+	// Impls records which concrete types implement which trait:
+	// Impls[traitName][typeName] is true when a validated
+	// `impl Trait for Type` exists. Phase 2's bound checking asks
+	// "does i32 implement Display?" against this.
+	Impls map[string]map[string]bool
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -674,6 +684,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
 			Generics:            map[string]ast.GenericDecl{},
+			Traits:              map[string]*ast.TraitDecl{},
+			Impls:               map[string]map[string]bool{},
 		},
 		variantOf: map[string][]variantRef{},
 	}
@@ -1643,6 +1655,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `f32.to_string()` / `f64.to_string()` migrated to the
 	// lang prelude (internal/prelude/prelude.fern).
 
+	// Register trait declarations so the conformance check (after the
+	// receiver-hoist loop below) and Phase 2 bound resolution can look
+	// them up. Duplicate trait names are an error. See docs/TRAITS.md.
+	for _, td := range prog.Traits {
+		if _, dup := c.info.Traits[td.Name]; dup {
+			c.errfCode(td.P, "E006", "trait %q redeclared", td.Name)
+			continue
+		}
+		seenMethod := map[string]bool{}
+		for _, m := range td.Methods {
+			if seenMethod[m.Name] {
+				c.errfCode(m.P, "E006", "trait method %q redeclared in trait %q", m.Name, td.Name)
+				continue
+			}
+			seenMethod[m.Name] = true
+		}
+		c.info.Traits[td.Name] = td
+	}
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -1723,6 +1754,91 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 	}
 
+	// Trait conformance + coherence. By now every impl method has been
+	// hoisted into c.info.Methods under `__method_<Type>_<name>`, so an
+	// impl satisfies its trait iff every trait method is registered for
+	// the `for` type with a matching signature. We also enforce the
+	// orphan rule (the impl's module must declare the trait or the
+	// type) and reject duplicate `(Trait, Type)` impls. See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		typeName, ok := methodTypeName(impl.Type)
+		if !ok {
+			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)
+			continue
+		}
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", impl.Trait)
+			continue
+		}
+		// Orphan rule: legal only if the trait or the type is declared
+		// in the impl's own module. Single-file programs leave every
+		// SourceModule empty, so the rule is vacuous there.
+		if impl.SourceModule != "" {
+			traitLocal := td.SourceModule == impl.SourceModule
+			typeLocal := false
+			if sd, ok := c.info.Structs[typeName]; ok && sd.SourceModule == impl.SourceModule {
+				typeLocal = true
+			}
+			if ed, ok := c.info.Enums[typeName]; ok && ed.SourceModule == impl.SourceModule {
+				typeLocal = true
+			}
+			if !traitLocal && !typeLocal {
+				c.errfCode(impl.P, "E021",
+					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
+					impl.Trait, typeName)
+				continue
+			}
+		}
+		// At most one impl per (Trait, Type) across the whole program.
+		if c.info.Impls[impl.Trait] == nil {
+			c.info.Impls[impl.Trait] = map[string]bool{}
+		}
+		if c.info.Impls[impl.Trait][typeName] {
+			c.errfCode(impl.P, "E006", "duplicate impl: %s is already implemented for %s", impl.Trait, typeName)
+			continue
+		}
+		// The impl must provide exactly the trait's methods — no more.
+		traitMethods := map[string]bool{}
+		for _, m := range td.Methods {
+			traitMethods[m.Name] = true
+		}
+		for _, mn := range impl.MethodNames {
+			if !traitMethods[mn] {
+				c.errfCode(impl.P, "E021", "method %q is not a member of trait %s", mn, impl.Trait)
+			}
+		}
+		// Every trait method must be present with a matching signature.
+		conforms := true
+		for _, m := range td.Methods {
+			mangled := "__method_" + typeName + "_" + m.Name
+			sig, ok := c.info.FuncSigs[mangled]
+			if !ok {
+				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", typeName, impl.Trait, m.Name)
+				conforms = false
+				continue
+			}
+			// Expected signature: the trait method with Self -> the
+			// concrete type. m.Params[0] is `self: Self`, which lines
+			// up with the hoisted method's prepended receiver.
+			want := make([]ast.Type, len(m.Params))
+			for i, p := range m.Params {
+				want[i] = ast.SubstSelf(p.Type, impl.Type)
+			}
+			wantRet := ast.SubstSelf(m.Result, impl.Type)
+			if !sigMatches(sig, want, wantRet) {
+				c.errfCode(impl.P, "E021",
+					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
+					typeName, m.Name, impl.Trait,
+					(&ast.FuncType{Params: want, Result: wantRet}).String(), sig.String())
+				conforms = false
+			}
+		}
+		if conforms {
+			c.info.Impls[impl.Trait][typeName] = true
+		}
+	}
+
 	// Auto-main from handle: when the user defines
 	// `function handle(req: HttpRequest, plat: Platform):
 	// HttpResponse` but no `main()`, synthesise a minimal main
@@ -1787,6 +1903,54 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // shortcut keeps no-prelude semantically identical to auto-
 // prelude for stdlib internals — only USER → stdlib visibility
 // still requires an explicit import.
+// methodTypeName maps a type to the canonical name used in the
+// `__method_<Type>_<name>` mangling and the Info.Methods keys. It
+// mirrors the receiver-hoist switch so impl-conformance lookups land
+// on the same key the hoist registered. Returns false for types that
+// can't carry methods.
+func methodTypeName(t ast.Type) (string, bool) {
+	switch rt := t.(type) {
+	case ast.StructType:
+		return rt.Name, true
+	case ast.EnumType:
+		return rt.Name, true
+	case ast.StringType:
+		return "string", true
+	case ast.NumberType:
+		switch {
+		case rt.NormalWidth() == 64 && rt.IsSigned():
+			return "i64", true
+		case rt.NormalWidth() == 64 && !rt.IsSigned():
+			return "u64", true
+		case !rt.IsSigned():
+			return "u32", true
+		default:
+			return "i32", true
+		}
+	case ast.FloatType:
+		if rt.NormalWidth() == 64 {
+			return "f64", true
+		}
+		return "f32", true
+	default:
+		return "", false
+	}
+}
+
+// sigMatches reports whether the registered method signature sig has
+// exactly the parameter types want and result type wantRet.
+func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
+	if len(sig.Params) != len(want) {
+		return false
+	}
+	for i := range want {
+		if !ast.Equal(sig.Params[i], want[i]) {
+			return false
+		}
+	}
+	return ast.Equal(sig.Result, wantRet)
+}
+
 func (c *checker) methodVisibleHere(mangled string) bool {
 	methodSrc := c.info.MethodSources[mangled]
 	if methodSrc == "" {

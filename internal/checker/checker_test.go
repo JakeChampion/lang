@@ -1929,3 +1929,80 @@ func TestTupleReturnStillRejectsElementMismatch(t *testing.T) {
 		t.Errorf("expected a type error for (i32, i32) returned as (i32, string)")
 	}
 }
+
+// A struct that implements all of a trait's methods with matching
+// signatures type-checks, and the impl is recorded in Info.Impls.
+// See docs/TRAITS.md.
+func TestTraitConformanceAccepted(t *testing.T) {
+	src := `trait Display { function to_string(self: Self): string; }
+struct Point { x: i32, y: i32 }
+impl Display for Point {
+    function to_string(self: Self): string { return "p"; }
+}
+function main(): i32 { var p: Point = Point { x: 1, y: 2 }; var s: string = p.to_string(); return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !info.Impls["Display"]["Point"] {
+		t.Errorf("Info.Impls should record Display for Point, got %+v", info.Impls)
+	}
+}
+
+// Implementing a trait for a built-in numeric type is allowed when the
+// trait is local (orphan rule satisfied by the trait being local).
+func TestTraitImplForBuiltinType(t *testing.T) {
+	src := `trait Tag { function tag(self: Self): string; }
+impl Tag for i32 { function tag(self: Self): string { return "i32"; } }
+function main(): i32 { var n: i32 = 5; var s: string = n.tag(); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("impl for builtin type should typecheck: %v", err)
+	}
+}
+
+func TestTraitConformanceErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{`trait D { function to_string(self: Self): string; }
+struct P { x: i32 }
+impl D for P { }
+function main(): i32 { return 0; }`, "missing method"},
+		{`trait D { function to_string(self: Self): string; }
+struct P { x: i32 }
+impl D for P { function to_string(self: Self): i32 { return 1; } }
+function main(): i32 { return 0; }`, "wrong signature"},
+		{`trait D { function to_string(self: Self): string; }
+struct P { x: i32 }
+impl D for P {
+    function to_string(self: Self): string { return "p"; }
+    function extra(self: Self): string { return "x"; }
+}
+function main(): i32 { return 0; }`, "not a member of trait"},
+		{`struct P { x: i32 }
+impl Missing for P { function f(self: Self): void {} }
+function main(): i32 { return 0; }`, "unknown trait"},
+		{`trait D { function f(self: Self): void; }
+struct P { x: i32 }
+impl D for P { function f(self: Self): void {} }
+impl D for P { function f(self: Self): void {} }
+function main(): i32 { return 0; }`, "duplicate impl"},
+		{`trait D { function f(self: Self): void; function f(self: Self): void; }
+function main(): i32 { return 0; }`, "trait method \"f\" redeclared"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
