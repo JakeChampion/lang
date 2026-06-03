@@ -234,8 +234,9 @@ since the notes above:
 **Unified `fern` CLI** (`examples/self_host/fern.fern`). Where the
 codebase previously had a dozen single-mode `*_run.fern` shims, there is
 now one self-hosted binary that parses argv flags and dispatches —
-`fern [-check | -interp | -fmt] [-target x86-64|arm64|wasm] [-o OUT]
-<entry.fern> [stdlib-root]` — reusing the import-driven file loader.
+`fern [-check | -interp | -fmt] [-target x86-64|arm64|arm64-darwin|wasm]
+[-o OUT] <entry.fern> [stdlib-root]` — reusing the import-driven file
+loader.
 It hosts both native emitters (`asm.fern` + `asm_arm64.fern`) plus the
 checker, interpreter, printer, and the wasm emitter, selected at runtime.
 Gated by `internal/e2e/self_host_cli_test.go`.
@@ -276,6 +277,37 @@ wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `internal/wasm/component`, ported to Fern, on top of this core module),
 broader wasi runtime builtins (clock / file / env / random), and binary
 wasm encoding (today it emits WAT text, runnable directly by `wasmtime`).
+
+### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
+
+`fern -target arm64-darwin` now emits arm64-apple-darwin assembly that
+clang + ld64 / lld link into a Mach-O executable on Apple Silicon —
+closing the one native backend the self-host had that the Go compiler
+already supported. It reuses `asm_arm64.fern`'s instruction selection
+verbatim; a post-pass, `asm_arm64.darwinize`, reskins the GAS output
+into the Mach-O dialect:
+
+- PC-relative addressing `adrp X, sym` / `add X, X, :lo12:sym` →
+  `adrp X, sym@PAGE` / `add X, X, sym@PAGEOFF` (the identical ADRP/ADD
+  relocation pair, Apple syntax);
+- sections `.section .rodata` → `__TEXT,__const`, `.bss` →
+  `__DATA,__bss`; ELF-only `.type` / `.size` / `.note.GNU-stack` dropped;
+- entry `_start` → `_main` (ld64 / lld's default, invoked via LC_MAIN);
+- the number-compatible syscalls (read / write / close / openat / lseek /
+  exit / mmap) remapped to the Darwin BSD vector with `svc #0x80`.
+
+Mirrors the Go backend's `EmitWithOptions{Darwin}` branch one-for-one.
+Supported surface is the **core language** (arithmetic, control flow,
+functions, structs, enums, arrays, strings incl. heap concat, closures,
+maps, stdout/stdin I/O). The ABI-divergent syscalls — `clock_gettime` →
+`gettimeofday` (now_unix_ms), `getrandom` → chunked `getentropy`
+(random_bytes), `fstat` (different `st_size` offset; file metadata), and
+the subprocess family — have no number-only Darwin form and are left as
+their Linux encoding, so programs using them aren't yet covered. Gated by
+`internal/e2e/self_host_macho_test.go` (cross-links each program with
+clang + lld and asserts a valid arm64 Mach-O executable off Apple
+Silicon; executes + checks exit codes on the macOS arm64 CI runner) plus
+the `darwinize` self-test cases in `asm_arm64.fern`'s own `main()`.
 
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
