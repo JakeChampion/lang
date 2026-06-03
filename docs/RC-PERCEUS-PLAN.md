@@ -2377,23 +2377,36 @@ Next Phase-6 steps (open):
   - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
     rc-neutral by design, reclaiming needs the global "inc enum payloads on
     construction + rebalance every drop" change. Risky.
-  - **Match-on-fresh-enum scrutinee** (`match (mk(i)) { Val(x) => x, _ => 0 }`)
-    — OPEN (found 2026-06-03). A fresh enum scrutinee consumed by a match
-    leaks its box (probe: 80000 → 800000 B). It's the match-lowering sibling
-    of the SHIPPED value-consuming-position family (`.len()` / `[scalar]` /
-    `.scalarfield` all reclaim a fresh container that yields a scalar). The
-    safe gate is the same: reclaim only when the match RESULT and every arm
-    BINDING are non-pointer (so no pointer payload is extracted / aliased);
-    the is_unique gate then protects an aliased scrutinee. The obstacle is the
-    DEC, not the gate: a SCALAR-payload enum box (`Box{Val(i32), Empty}`) is
-    not freed by `emitStructEnumSlotDrop` (dropFnNameFor declines a
-    non-droppable enum → flat `__fern_rc_dec`, no box free). Freeing it needs
-    the exit sweep's intricate `uniformEnumBoxSize` + is_unique-gated
-    `__fern_box_free` path (emitRcDecLocalsAtExitExcept), which is inline and
-    not readily reusable. Do it by FIRST extracting that enum-box-free into a
-    shared helper (which also lets `emitStructEnumSlotDrop` reclaim scalar
-    enum reinit/reassign boxes), then wiring the gated scrutinee dec into the
-    stmt-form Match + expr-form MatchExpr (+ pair-form) lowerings.
+  - **Match-on-fresh-enum scrutinee** (`match (mk(i)) { A(x) => x, … }`) —
+    **SHIPPED ON ALL THREE BACKENDS (2026-06-03).** A fresh enum scrutinee
+    consumed by a match leaked its box every iteration; the stmt-form Match +
+    expr-form MatchExpr lowerings now reclaim it after the match
+    (`reclaimableMatchScrutinee`: an `ownedCallResultType` scrutinee with every
+    arm BINDING — and, for the expr form, the RESULT — non-pointer, so no
+    payload escapes the freed box; the dec is is_unique-gated, so an aliased
+    scrutinee at rc>=2 only dec's). The enum-box-free was extracted from the
+    exit sweep into the shared `emitEnumSlotDrop` (its `decValueOnStack` /
+    `dropStructField` closures promoted to `*builder` methods).
+    Two findings that reshaped the plan:
+      + **The doc's `Box{Val(i32), Empty}` example is PAIR-FORM** (Option[i32]
+        shape) — the callee never heap-boxes it, so `ownedCallResultType`
+        correctly excludes it and the feature leaves it to the pair-form
+        machinery. The real target is a GENUINELY heap-boxed enum (3+ variants
+        / multi-payload). The "80000 → 800000" probe was the pre-existing
+        match-expr pair-REBOX temp, a separate leak.
+      + **An inline `__fern_box_free` doesn't return the box to the freelist on
+        wasm, but the identical box_free inside a GENERATED drop FUNCTION does**
+        (verified against the byte-identical `__drop_struct_` fn, which reuses).
+        So the PER-ITERATION drop sites (match-scrutinee + loop-var reinit via
+        `emitStructEnumSlotDrop`) route through the generated `__drop_enum_<N>`
+        fn (`emitOwnedEnumDrop` → `emitEnumDropViaGenFn`; the worklist
+        regenerates the body from `info.Enums`, covering scalar enums that
+        `dropFnNameFor` declines). The once-per-call EXIT SWEEP stays inline
+        (`emitEnumSlotDrop`) — its bounded leak doesn't need the gen-fn
+        indirection, and keeping it inline preserves its golden-test codegen.
+    Coverage: `internal/e2e/rc_heap_bump_match_scrutinee_test.go` (expr + stmt
+    forms bounded across N on x86_64 / arm64 / wasm + an aliased-scrutinee
+    UAF/over-release safety case).
   - **Scalar-literal / scalar-binary arg taint** (`base.split(",")`,
     `int_to_string`'s `__alloc_u8(16)` / `__alloc_u8(16 - end)`) — OPEN, and
     the naive fix is UNSAFE (investigated + reverted 2026-06-03). `rhsTainted`
