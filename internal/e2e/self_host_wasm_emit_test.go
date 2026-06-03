@@ -404,6 +404,22 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-grow-get", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
 		{"map-grow-len", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
 		{"map-overwrite-loop", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
+
+		// String-keyed maps. A `Map { "k": v }` literal desugars to
+		// map_new(8).set(...); keys hash + compare by content (FNV-1a +
+		// __fern_streq), so distinct pointers with equal bytes match.
+		{"strmap-get-or", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"a\", 0)); return 0; }", 0, "1"},
+		{"strmap-get-or-second", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; print_int(m.get_or(\"b\", 0)); return 0; }", 0, "2"},
+		{"strmap-missing", "function main(): i32 { var m = Map { \"a\": 1 }; print_int(m.get_or(\"z\", 99)); return 0; }", 0, "99"},
+		{"strmap-has", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"hello\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"strmap-has-missing", "function main(): i32 { var m = Map { \"hello\": 1 }; if (m.has(\"world\")) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"strmap-len", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2, \"c\": 3 }; print_int(m.len()); return 0; }", 0, "3"},
+		{"strmap-update", "function main(): i32 { var m = Map { \"a\": 1 }; m = m.set(\"a\", 50); print_int(m.get_or(\"a\", 0)); print_int(m.len()); return 0; }", 0, "501"},
+		{"strmap-get-some", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"k\")) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
+		{"strmap-get-none", "function main(): i32 { var m = Map { \"k\": 42 }; match (m.get(\"x\")) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
+		{"strmap-content-equality", "function main(): i32 { var k = \"h\" + \"i\"; var m = map_new(8); m = m.set(k, 7); print_int(m.get_or(\"hi\", 0)); return 0; }", 0, "7"},
+		{"strmap-prefix-distinct", "function main(): i32 { var m = Map { \"ab\": 1, \"abc\": 2 }; print_int(m.get_or(\"ab\", 0)); print_int(m.get_or(\"abc\", 0)); return 0; }", 0, "12"},
+		{"strmap-grow", "function main(): i32 { var m = map_new(8); var i: i32 = 1; while (i <= 20) { m = m.set(\"x\".repeat(i), i); i = i + 1; } print_int(m.get_or(\"x\".repeat(5), -1)); print_int(m.len()); return 0; }", 0, "520"},
 	}
 
 	for _, tc := range cases {
