@@ -242,6 +242,22 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
   match (stat("`+rmPath+`")) { Ok(fs) => { return 3; }, Err(e) => { return 7; } }
 }`,
 		7)
+
+	// monotonic_ns — Darwin reads CNTVCT_EL0/CNTFRQ_EL0 (mach_absolute_time
+	// is exactly this on Apple Silicon) instead of clock_gettime. Two
+	// back-to-back reads must be monotonic and nonzero. If CNTVCT_EL0 were
+	// not EL0-readable the binary would SIGILL → runCase reports a skip,
+	// not a failure.
+	runCase("monotonic_ns",
+		`function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { if (a > 0) { return 7; } } return 1; }`,
+		7)
+
+	// temp_dir — builds /tmp/<prefix>-<ns> (ns from monotonic_ns, so this
+	// also exercises CNTVCT) and mkdirat()s it (Darwin #475, AT_FDCWD -2).
+	// Returns Ok(path) with a nonempty path on success.
+	runCase("temp_dir",
+		`function main(): i32 { match (temp_dir("fern-darwin-test")) { Ok(d) => { if (d.len() > 0) { return 7; } return 1; }, Err(e) => { return 2; } } }`,
+		7)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
