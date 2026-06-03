@@ -2195,8 +2195,17 @@ func emitMakeEnv(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	return body, nil
 }
 
-// emitMakeClosure is OpMakeEnv plus an 8-byte closure pair cell
-// {fn_idx, env_ptr}. Returns the pair pointer.
+// emitMakeClosure is OpMakeEnv plus a 16-byte closure pair cell
+// {fn_idx, env_ptr, drop_fn_idx, env_ptr}. Returns the pair pointer.
+//
+// The trailing two slots carry the per-closure drop-fn pointer (the
+// table index of __closure_drop_<name>, or 0 for a zero-capture
+// closure with no env to free) and a DUPLICATE of env_ptr. The
+// duplication makes {drop_fn_idx@8, env_ptr@12} a self-contained
+// callable sub-pair: a generic holder (e.g. __drop_arr_closure) can
+// reclaim the env without static closure identity by dispatching
+// call_indirect through (pair + 8) — reading fn at +0 and env at +4
+// of the sub-pair, exactly as a normal closure call does.
 func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	allocIdx, ok := ctx.funcIdx["__fern_alloc_rc1"]
 	if !ok {
@@ -2218,12 +2227,21 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	}
 	site := ctx.closureSites[ctx.closureSiteCursor]
 	ctx.closureSiteCursor++
+	// drop_fn table index: the per-closure env-drop thunk. Zero-capture
+	// closures have env_ptr==0 and no thunk, so store 0 (the generic
+	// drop guards drop_fn!=0 before dispatching).
+	dropFnTableIdx := int32(0)
+	if len(site.captures) > 0 {
+		if idx, ok := ctx.progFuncTableIdx["__closure_drop_"+op.Str]; ok {
+			dropFnTableIdx = int32(idx)
+		}
+	}
 	body, envSlot, pairSlot, err := emitClosureMakeAlloc(body, site, ctx)
 	if err != nil {
 		return nil, fmt.Errorf("OpMakeClosure: %w", err)
 	}
-	// Pair cell: 8 bytes containing {fn_table_idx, env_ptr}.
-	body = inst.InstI32Const(body, 8)
+	// Pair cell: 16 bytes {fn_table_idx, env_ptr, drop_fn_idx, env_ptr}.
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, allocIdx)
 	body = inst.InstLocalSet(body, pairSlot)
 	body = inst.InstLocalGet(body, pairSlot)
@@ -2232,6 +2250,12 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	body = inst.InstLocalGet(body, pairSlot)
 	body = inst.InstLocalGet(body, envSlot)
 	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, pairSlot)
+	body = inst.InstI32Const(body, dropFnTableIdx)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstLocalGet(body, pairSlot)
+	body = inst.InstLocalGet(body, envSlot)
+	body = memory.InstI32Store(body, 2, 12)
 	body = inst.InstLocalGet(body, pairSlot)
 	return body, nil
 }

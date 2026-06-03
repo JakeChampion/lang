@@ -2328,39 +2328,82 @@ exercises the rc==1 branch + the differential gate) stays green.
   `__drop_enum_<mangled>`. `Test{X86_64,Arm64,WASM}GenericEnumArrayReclaim`
   pin it (240064→bounded + adversarial shared-payload, 0 over-releases).
   Array-of-enum is now complete (concrete + generic).
-- **`closure[]` inner**: only `closure[]` arrays still keep the flat path —
-  `arrElemStructDropName` declines `FuncType` elements (needs a per-closure
-  array-drop dispatch). See "Next Phase-6 steps (open)" below.
+- **`closure[]` inner — SHIPPED (drop-fn-pointer representation change,
+  2026-06-03).** `arrElemStructDropName` now routes `FuncType` elements to a
+  generic `__drop_arr_closure` loop; see the closure[] bullet below for the
+  full account.
 - BOUNDED (confirmed reclaiming): array literal (64 B), struct-of-array
   (96 B), map build (256 B), nested array `i32[][]` (192 B), `string[][]`
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
-  (256 B wasm), `Option[i32[]][]` (160 B wasm), string-concat bound-var
-  (wasm 64576 B plateau / natives 0), nested concat `(a+b+c)` (wasm 64576 B
-  plateau / x86_64 0 / arm64 144 B), and (post-SSO-flip) NATIVE heap
-  strings `>15 B` — `var s = a + b` / `s = s + chunk` loops bounded + 0
-  over-releases on x86_64 + arm64 (item 5g).
+  (256 B wasm), `Option[i32[]][]` (160 B wasm), `closure[]` (wasm 64720 B
+  plateau scalar / 64832 B ptr-capture; natives 64–128 B — see below),
+  string-concat bound-var (wasm 64576 B plateau / natives 0), nested concat
+  `(a+b+c)` (wasm 64576 B plateau / x86_64 0 / arm64 144 B), and
+  (post-SSO-flip) NATIVE heap strings `>15 B` — `var s = a + b` /
+  `s = s + chunk` loops bounded + 0 over-releases on x86_64 + arm64 (item 5g).
 
 Next Phase-6 steps (open):
-  - **`closure[]` array-element drop** — BLOCKED on the closure env-drop
-    limitation, NOT a clean slice (investigated 2026-06-03). A `closure[]`
-    leaks (scalar-capture `(() => i32)[]` loop: 3264 → 320064 B). The
-    obstacle: the element `FuncType` can't name WHICH closure (distinct
-    closures share a signature but have distinct capture layouts + per-
-    closure `__closure_drop_<name>` thunks), so an array loop can only call
-    the GENERIC `__fern_closure_drop` per element — which by design frees
-    only the closure PAIR block and *leaks the env block* (see its
-    "a pair's env leaks for now" comment). So a generic `__drop_arr_closure`
-    only partially reclaims (frees pairs, envs leak — verified: wasm
-    320064 → 192352, still unbounded; natives looked bounded only because
-    they ELIDE these closures to direct calls, no heap). Fully reclaiming a
-    closure-array element needs env-block freeing, which needs either (a) the
-    per-closure thunk (needs static closure identity — unavailable for array
-    elements) or (b) the closure box carrying a drop-fn pointer (a
-    representation change). Tied to the broader "closure env / captures leak
-    for now" infra state — do this WITH that work, not standalone.
-    (Array-of-enum — concrete `E[]` and generic `Option[T][]` — and nested
-    `E[][]` already SHIPPED via the `__drop_arr_enum_` / `__drop_arr_of_`
-    recursion.)
+  - **`closure[]` array-element drop — SHIPPED ON ALL THREE BACKENDS
+    (2026-06-03), via the drop-fn-POINTER representation change (option b).**
+    The obstacle was real: the element `FuncType` can't name WHICH closure it
+    holds (distinct closures share a signature but have distinct capture
+    layouts + per-closure `__closure_drop_<name>` thunks), so an array loop
+    could only call the GENERIC `__fern_closure_drop` per element — which by
+    design frees only the closure PAIR block and leaks the env. The fix makes
+    the closure box self-describing:
+      + **Representation change.** The closure PAIR grows from
+        `{fn_ptr, env_ptr}` to `{fn_ptr, env_ptr, drop_fn, env_ptr}` —
+        2→4 slots (wasm 8→16 B, natives 16→32 B). `drop_fn` is the
+        table-index/address of the per-closure `__closure_drop_<name>` thunk
+        (0 for a zero-capture closure with no env to free). The env_ptr is
+        DUPLICATED at slot 3 so `{drop_fn@2, env_ptr@3}` is a self-contained
+        callable sub-pair: a generic holder dispatches `OpCallIndirect` on
+        `pair + 2*ptrW` to call `drop_fn(env)` WITHOUT any new IR op — it
+        reuses the existing closure-call deref (fn@+0, env@+ptrW of the
+        sub-pair). Duplicating env (one extra store in `emitMakeClosure`) was
+        chosen over reordering slots so the HOT closure-CALL path
+        (`OpCallIndirect`, load-bearing in the self-host emitters) stays
+        byte-identical. `emitMakeClosure` on all three backends + the
+        zero-capture pair were widened to the 4-slot shape; static
+        `OpConstFunc` cells stay 2 slots (their sentinel rc makes the
+        is_unique gate skip them before slot 2 is ever read).
+      + **Generic per-array drop.** `arrElemStructDropName(FuncType)` routes to
+        a single generated `__drop_arr_closure(buf)` loop (worklist-generated,
+        like `__drop_arr_enum_`). Per element, gated on `is_unique(p)` (skips
+        shared closures AND static cells) and `drop_fn != 0`, it
+        `OpCallIndirect`s through the sub-pair to free the env (the thunk
+        deep-drops rc-tracked captures, then `__fern_closure_drop(env)` frees
+        the env block), then `__fern_closure_drop(p)` frees the pair block,
+        then `__fern_arr_dec` frees the buffer. box_free reuse holds because
+        every free sits behind a call (the enum-work lesson).
+      + **Thunk for every captured MakeClosure target.** `genClosureDropThunk`
+        now also emits for SCALAR-only captures (body = empty is_unique sweep +
+        `__fern_closure_drop(env)`) so the pair's drop_fn always has a callable
+        target; the thunk-gen loop gates on `hasRcCapture || is-MakeClosure-
+        target` so an ELIDED scalar closure (bare env, no pair) still generates
+        nothing. `LiveFunctionsWithAliases` enqueues `__closure_drop_<name>`
+        from each live `OpMakeClosure` so the stored-pointer reference (not a
+        call) survives wasm DCE.
+      + **CAVEAT — the plan's old "natives elide, no heap" note was WRONG.**
+        The lowered IR is IDENTICAL on all backends (2 `OpMakeClosure`, the
+        array drop routes through `__fern_drop_arr_ptr`) — natives do NOT
+        elide an array-stored closure. They looked bounded only because
+        `__heap_bump_bytes()` measures the bump cursor, and on natives the
+        small env/pair blocks come from the segregated-freelist arena, which
+        the probe doesn't measure — so a native closure[] leak is INVISIBLE to
+        the bump probe (it stays 64–128 B regardless). wasm bumps every alloc
+        through the measured cursor, so it's the real arbiter: pre-fix
+        3264 → 320064 B (100x N, unbounded); post-fix flat 64720 B across 10x N
+        (5000 == 50000) — a freelist warmup plateau, same shape as rc string
+        concat. The earlier "320064 → 192352" half-reclaim figure was the
+        pair-only free; full env reclaim closes it.
+      + Coverage: `internal/e2e/rc_heap_bump_closure_array_test.go` — scalar-
+        and pointer-capture `(() => i32)[]` bounded across 10x N on all three
+        backends, plus an aliased-array (`var gs = fs`, rc>1) AND a
+        shared-element (`[f, f]`, the same pair twice + still-live `f`)
+        adversarial case, each pinning `__rc_underflow_count() == 0` (no
+        over-release / UAF). Self-host (heavy closure user) + the full
+        differential gate stay green.
   - **`strbuf_*` — EVALUATED: KEEP (do not retire).** The open question was
     whether the string builder is now redundant given rc string concat/slice
     reclaim. It is not. Per the design conclusion below (§ "strbuf_* becomes
