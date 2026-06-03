@@ -8522,7 +8522,15 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write(".Lrf_cpd:\n");
         s = s.write("    mov w10, #0\n");
         s = s.write("    strb w10, [x22, x21]\n");
-        s = s.write("    mov x0, #-100\n");
+        // unlinkat(AT_FDCWD, pathz, 0). AT_FDCWD is -100 on Linux, -2 on
+        // Darwin; flags 0 (no AT_REMOVEDIR) is the same. The syscall
+        // number (35 -> Darwin unlinkat 472) + errno are remapped by
+        // darwinize.
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+        }
         s = s.write("    mov x1, x22\n");
         s = s.write("    mov x2, #0\n");
         s = s.write("    mov x8, #35\n");            // unlinkat
@@ -10313,6 +10321,7 @@ function darwin_sysno(n: i32): i32 {
     if (n == 56) { return 463; }   // openat
     if (n == 62) { return 199; }   // lseek
     if (n == 79) { return 470; }   // newfstatat -> fstatat (same args)
+    if (n == 35) { return 472; }   // unlinkat (same args)
     if (n == 93) { return 1; }     // exit
     if (n == 94) { return 1; }     // exit_group -> exit
     if (n == 222) { return 197; }  // mmap
