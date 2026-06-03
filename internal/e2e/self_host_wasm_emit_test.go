@@ -231,6 +231,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"split-no-match", "function main(): i32 { var parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
 		{"split-then-join", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
 		{"split-elem-method", "function main(): i32 { var parts = \"ab,cd\".split(\",\"); write(parts[0].to_upper()); return 0; }", 0, "AB"},
+		// Structs: literal, field read, field assign, struct param/return.
+		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }", 42, ""},
+		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 2, x: 40 }; return p.x; }", 40, ""},
+		{"struct-field-assign", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 99; return p.x + p.y; }", 101, ""},
+		{"struct-string-field", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(p.name); return p.age; }", 30, "Sam"},
+		{"struct-string-field-concat", "struct Person { name: string, age: i32 } function main(): i32 { var p = Person { name: \"Sam\", age: 30 }; write(\"hi \" + p.name); return 0; }", 0, "hi Sam"},
+		{"struct-string-field-method", "struct Box { s: string } function main(): i32 { var b = Box { s: \"abc\" }; write(b.s.to_upper()); return 0; }", 0, "ABC"},
+		{"struct-param", "struct P { x: i32, y: i32 } function area(p: P): i32 { return p.x * p.y; } function main(): i32 { return area(P { x: 6, y: 7 }); }", 42, ""},
+		{"struct-return", "struct P { x: i32, y: i32 } function mk(): P { return P { x: 20, y: 22 }; } function main(): i32 { var p = mk(); return p.x + p.y; }", 42, ""},
+		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 40 }, k: 2 }; return o.inner.v + o.k; }", 42, ""},
+		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, x: 40 }; return q.x + q.y; }", 42, ""},
+		{"struct-field-in-loop", "struct Acc { total: i32 } function main(): i32 { var a = Acc { total: 0 }; var i = 1; while (i <= 5) { a.total = a.total + i; i = i + 1; } return a.total; }", 15, ""},
 	}
 
 	for _, tc := range cases {

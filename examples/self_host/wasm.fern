@@ -72,11 +72,131 @@ function (t: StrTable) offset_of(v: string): i32 {
 
 // Ctx is the read-only emission context threaded through emit_expr: the
 // interned string table (tab), the names of string-typed locals/params
-// (locals) and string-returning functions (funcs), and — for string
-// arrays — the names of `string[]`-typed locals (str_arrays) and
-// `string[]`-returning functions (str_arr_funcs). These drive the
-// string-vs-int decisions for `+`/compare and for `arr[i]` element type.
-struct Ctx { tab: StrTable, locals: string[], funcs: string[], str_arrays: string[], str_arr_funcs: string[] }
+// (locals) and string-returning functions (funcs), the `string[]`-typed
+// locals (str_arrays) and `string[]`-returning functions (str_arr_funcs),
+// and the struct world: the module's struct decls (structs), the
+// struct-valued locals (sv_names→sv_types) and struct-returning functions
+// (sf_names→sf_types). These drive the string-vs-int decisions for
+// `+`/compare, the `arr[i]` element type, and struct field offsets/types.
+struct Ctx {
+    tab: StrTable,
+    locals: string[],
+    funcs: string[],
+    str_arrays: string[],
+    str_arr_funcs: string[],
+    structs: parser.StructDecl[],
+    sv_names: string[],
+    sv_types: string[],
+    sf_names: string[],
+    sf_types: string[],
+}
+
+// struct_field_index returns the 0-based field position of `field` in the
+// struct named `tn` (the heap offset is index*4), or -1 if not found.
+function struct_field_index(structs: parser.StructDecl[], tn: string, field: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == tn) {
+            var j: i32 = 0;
+            while (j < structs[i].fields.len()) {
+                if (structs[i].fields[j].name == field) { return j; }
+                j = j + 1;
+            }
+            return 0 - 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// struct_field_count returns the number of fields in struct `tn` (0 if
+// unknown).
+function struct_field_count(structs: parser.StructDecl[], tn: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == tn) { return structs[i].fields.len(); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// struct_field_type returns the declared type of `field` in struct `tn`
+// ("" if unknown).
+function struct_field_type(structs: parser.StructDecl[], tn: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == tn) {
+            var j: i32 = 0;
+            while (j < structs[i].fields.len()) {
+                if (structs[i].fields[j].name == field) { return structs[i].fields[j].type_name; }
+                j = j + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// lookup_pair returns the value paired with `key` in two parallel arrays
+// (keys/vals), or "" if absent.
+function lookup_pair(keys: string[], vals: string[], key: string): string {
+    var i: i32 = 0;
+    while (i < keys.len()) {
+        if (keys[i] == key) { return vals[i]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// is_struct_type is true when `t` names a declared struct.
+function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// struct_type_of resolves the struct type name of an expression, or ""
+// when it isn't struct-typed: a struct-valued local/param, a struct
+// literal, a struct-returning call, or a struct-typed field of a struct.
+function struct_type_of(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprIdent(id) => { return lookup_pair(cx.sv_names, cx.sv_types, id.name); },
+        parser.ExprStructLit(sl) => { return sl.type_name; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return lookup_pair(cx.sf_names, cx.sf_types, id.name); },
+                _ => { return ""; },
+            }
+        },
+        parser.ExprFieldAccess(fa) => {
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return ""; }
+            var ft: string = struct_field_type(cx.structs, ot, fa.field);
+            if (is_struct_type(cx.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// set_field_offset computes the byte offset for an `obj.field = v`
+// desugar (`__set_field(obj, "field", v)`): the field-name string-literal
+// arg resolved against obj's struct type.
+function set_field_offset(obj: parser.Expr, name_arg: parser.Expr, cx: Ctx): i32 {
+    var fname: string = "";
+    match (name_arg) {
+        parser.ExprString(se) => { fname = se.value; },
+        _ => {},
+    }
+    var idx: i32 = struct_field_index(cx.structs, struct_type_of(obj, cx), fname);
+    if (idx < 0) { return 0; }
+    return idx * 4;
+}
 
 // WState threads the WAT body being built (out), a fresh-label counter
 // (n), the current loop's break / continue labels (brk / cont, "" when
@@ -184,7 +304,7 @@ function wasm_binop(op: string): string {
 // emit_expr lowers an expression to a folded WAT instruction tree. A
 // string value is a pointer (i32) to its `[len:i32][bytes]` block; a
 // string literal's value is the constant block offset interned in tab.
-function emit_expr(e: parser.Expr, cx: Ctx): string {
+function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
     match (e) {
         parser.ExprNumber(n) => {
             return "(i32.const " + n.text + ")";
@@ -201,19 +321,19 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") {
-                return "(i32.sub (i32.const 0) " + emit_expr(u.operand, cx) + ")";
+                return "(i32.sub (i32.const 0) " + emit_expr(u.operand, cx, depth) + ")";
             }
             if (u.op == "!") {
-                return "(i32.eqz " + emit_expr(u.operand, cx) + ")";
+                return "(i32.eqz " + emit_expr(u.operand, cx, depth) + ")";
             }
-            return emit_expr(u.operand, cx);
+            return emit_expr(u.operand, cx, depth);
         },
         parser.ExprBinary(b) => {
             // String-typed operands route `+` and the comparisons to the
             // string runtime; integer operands use the i32 ops.
             if (is_string_expr(b.left, cx) || is_string_expr(b.right, cx)) {
-                var l: string = emit_expr(b.left, cx);
-                var r: string = emit_expr(b.right, cx);
+                var l: string = emit_expr(b.left, cx, depth);
+                var r: string = emit_expr(b.right, cx, depth);
                 if (b.op == "+") {
                     return "(call $__fern_strcat " + l + " " + r + ")";
                 }
@@ -227,7 +347,7 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                     return "(" + wasm_binop(b.op) + " (call $__fern_strcmp " + l + " " + r + ") (i32.const 0))";
                 }
             }
-            return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, cx) + " " + emit_expr(b.right, cx) + ")";
+            return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, cx, depth) + " " + emit_expr(b.right, cx, depth) + ")";
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -237,7 +357,7 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                     var s: string = "(call $" + id.name;
                     var i: i32 = 0;
                     while (i < c.args.len()) {
-                        s = s + " " + emit_expr(c.args[i], cx);
+                        s = s + " " + emit_expr(c.args[i], cx, depth);
                         i = i + 1;
                     }
                     return s + ")";
@@ -248,36 +368,36 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                     // ([len][cap][elems]), so it needs no string/array
                     // discrimination.
                     if (fa.field == "len" && c.args.len() == 0) {
-                        return "(i32.load " + emit_expr(fa.obj, cx) + ")";
+                        return "(i32.load " + emit_expr(fa.obj, cx, depth) + ")";
                     }
                     // `.push(v)` is array-only (strings have no push), so it
                     // needs no type gate. Returns the (possibly grown) array.
                     if (fa.field == "push" && c.args.len() == 1) {
-                        return "(call $__fern_arr_push " + emit_expr(fa.obj, cx) + " " + emit_expr(c.args[0], cx) + ")";
+                        return "(call $__fern_arr_push " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
                     }
                     // `.join(sep)` is the array→string method (string[]
                     // receiver); no string-receiver gate.
                     if (fa.field == "join" && c.args.len() == 1) {
-                        return "(call $__fern_str_join " + emit_expr(fa.obj, cx) + " " + emit_expr(c.args[0], cx) + ")";
+                        return "(call $__fern_str_join " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
                     }
                     // `.split(sep)` is the string→string[] method.
                     if (fa.field == "split" && c.args.len() == 1 && is_string_expr(fa.obj, cx)) {
-                        return "(call $__fern_str_split " + emit_expr(fa.obj, cx) + " " + emit_expr(c.args[0], cx) + ")";
+                        return "(call $__fern_str_split " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
                     }
                     // The remaining string methods are string-only.
                     if (is_string_expr(fa.obj, cx)) {
-                        var recv: string = emit_expr(fa.obj, cx);
+                        var recv: string = emit_expr(fa.obj, cx, depth);
                         if (fa.field == "starts_with" && c.args.len() == 1) {
-                            return "(call $__fern_str_startswith " + recv + " " + emit_expr(c.args[0], cx) + ")";
+                            return "(call $__fern_str_startswith " + recv + " " + emit_expr(c.args[0], cx, depth) + ")";
                         }
                         if (fa.field == "ends_with" && c.args.len() == 1) {
-                            return "(call $__fern_str_endswith " + recv + " " + emit_expr(c.args[0], cx) + ")";
+                            return "(call $__fern_str_endswith " + recv + " " + emit_expr(c.args[0], cx, depth) + ")";
                         }
                         if (fa.field == "index_of" && c.args.len() == 1) {
-                            return "(call $__fern_str_indexof " + recv + " " + emit_expr(c.args[0], cx) + ")";
+                            return "(call $__fern_str_indexof " + recv + " " + emit_expr(c.args[0], cx, depth) + ")";
                         }
                         if (fa.field == "contains" && c.args.len() == 1) {
-                            return "(i32.ge_s (call $__fern_str_indexof " + recv + " " + emit_expr(c.args[0], cx) + ") (i32.const 0))";
+                            return "(i32.ge_s (call $__fern_str_indexof " + recv + " " + emit_expr(c.args[0], cx, depth) + ") (i32.const 0))";
                         }
                         if (fa.field == "to_upper" && c.args.len() == 0) {
                             return "(call $__fern_str_upper " + recv + ")";
@@ -286,7 +406,7 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                             return "(call $__fern_str_lower " + recv + ")";
                         }
                         if (fa.field == "repeat" && c.args.len() == 1) {
-                            return "(call $__fern_str_repeat " + recv + " " + emit_expr(c.args[0], cx) + ")";
+                            return "(call $__fern_str_repeat " + recv + " " + emit_expr(c.args[0], cx, depth) + ")";
                         }
                     }
                     return "(i32.const 0)";
@@ -296,26 +416,62 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
         },
         parser.ExprArray(a) => {
             // Array block: [len:i32 @0][cap:i32 @4][elems @8]. Built in a
-            // (block (result i32) …) so it stays a single expression: a
-            // reserved $__ap temp holds the fresh pointer while the header
-            // + elements are stored. (Nested array literals in one
-            // expression share $__ap — a flat-array slice for now.)
+            // (block (result i32) …) so it stays a single expression. A
+            // depth-indexed temp ($__lit<depth>) holds the fresh pointer
+            // while the header + elements are stored; nesting uses a
+            // distinct temp per level (children emit at depth+1).
+            var ap: string = "$__lit" + i32_to_string(depth);
             var n: i32 = a.elements.len();
             var s: string = "(block (result i32)";
-            s = s + " (local.set $__ap (call $__fern_alloc (i32.const " + i32_to_string(8 + n * 4) + ")))";
-            s = s + " (i32.store (local.get $__ap) (i32.const " + i32_to_string(n) + "))";
-            s = s + " (i32.store (i32.add (local.get $__ap) (i32.const 4)) (i32.const " + i32_to_string(n) + "))";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(8 + n * 4) + ")))";
+            s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(n) + "))";
+            s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) (i32.const " + i32_to_string(n) + "))";
             var i: i32 = 0;
             while (i < n) {
-                s = s + " (i32.store (i32.add (local.get $__ap) (i32.const " + i32_to_string(8 + i * 4) + ")) " + emit_expr(a.elements[i], cx) + ")";
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(8 + i * 4) + ")) " + emit_expr(a.elements[i], cx, depth + 1) + ")";
                 i = i + 1;
             }
-            s = s + " (local.get $__ap))";
+            s = s + " (local.get " + ap + "))";
             return s;
         },
         parser.ExprIndex(ix) => {
             // arr[i] → load the i32 element at base + 8 + i*4.
-            return "(i32.load (i32.add (i32.add " + emit_expr(ix.array, cx) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx) + " (i32.const 4))))";
+            return "(i32.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 4))))";
+        },
+        parser.ExprStructLit(sl) => {
+            // Struct block: one 4-byte slot per declared field. Built in a
+            // (block (result i32) …) with a depth-indexed temp, like array
+            // literals. With a base (`S { ...base, f: v }`), copy every
+            // field from base first, then store the listed overrides.
+            var ap: string = "$__lit" + i32_to_string(depth);
+            var nf: i32 = struct_field_count(cx.structs, sl.type_name);
+            var s: string = "(block (result i32)";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(nf * 4) + ")))";
+            if (sl.has_base) {
+                var bp: string = emit_expr(sl.base, cx, depth + 1);
+                var fi: i32 = 0;
+                while (fi < nf) {
+                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(fi * 4) + ")) (i32.load (i32.add " + bp + " (i32.const " + i32_to_string(fi * 4) + "))))";
+                    fi = fi + 1;
+                }
+            }
+            var i: i32 = 0;
+            while (i < sl.field_names.len()) {
+                var idx: i32 = struct_field_index(cx.structs, sl.type_name, sl.field_names[i]);
+                if (idx >= 0) {
+                    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(idx * 4) + ")) " + emit_expr(sl.field_values[i], cx, depth + 1) + ")";
+                }
+                i = i + 1;
+            }
+            s = s + " (local.get " + ap + "))";
+            return s;
+        },
+        parser.ExprFieldAccess(fa) => {
+            // Bare field read s.f → load at base + index*4.
+            var ot: string = struct_type_of(fa.obj, cx);
+            var idx: i32 = struct_field_index(cx.structs, ot, fa.field);
+            if (idx < 0) { return "(i32.const 0)"; }
+            return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(idx * 4) + ")))";
         },
         _ => {
             return "(i32.const 0)";
@@ -327,7 +483,8 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
 // is_reserved_local is true for the emitter's internal temp locals, so a
 // user var of the same name doesn't get a duplicate (local …) decl.
 function is_reserved_local(n: string): boolean {
-    if (n == "__ap") { return true; }
+    if (n == "__lit0" || n == "__lit1" || n == "__lit2" || n == "__lit3") { return true; }
+    if (n == "__lit4" || n == "__lit5" || n == "__lit6" || n == "__lit7") { return true; }
     if (n == "__fi0" || n == "__fi1" || n == "__fi2" || n == "__fi3") { return true; }
     if (n == "__fa0" || n == "__fa1" || n == "__fa2" || n == "__fa3") { return true; }
     return false;
@@ -807,6 +964,15 @@ function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
             t = collect_strings_expr(ix.array, t);
             return collect_strings_expr(ix.index, t);
         },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { t = collect_strings_expr(sl.base, t); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                t = collect_strings_expr(sl.field_values[i], t);
+                i = i + 1;
+            }
+            return t;
+        },
         _ => { return t; },
     }
     return t;
@@ -860,7 +1026,7 @@ function write_fixed(off: i32, len: i32): string {
 // println; `write` is verbatim).
 function emit_output(name: string, args: parser.Expr[], st: WState): WState {
     if (args.len() != 1) { return st; }
-    var ptr: string = emit_expr(args[0], st.cx);
+    var ptr: string = emit_expr(args[0], st.cx, 0);
     st = st.w("    (i32.store (i32.const 16) " + ptr + ")\n");
     st = st.w("    (i32.store (i32.const 0) (i32.add (i32.load (i32.const 16)) (i32.const 4)))\n");
     st = st.w("    (i32.store (i32.const 4) (i32.load (i32.load (i32.const 16))))\n");
@@ -885,13 +1051,13 @@ function emit_stmts(body: parser.Stmt[], st: WState): WState {
 function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     match (stmt) {
         parser.StmtVar(v) => {
-            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx) + ")\n");
+            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.cx, 0) + ")\n");
         },
         parser.StmtAssign(a) => {
-            return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.cx) + ")\n");
+            return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.cx, 0) + ")\n");
         },
         parser.StmtReturn(r) => {
-            return st.w("    (return " + emit_expr(r.value, st.cx) + ")\n");
+            return st.w("    (return " + emit_expr(r.value, st.cx, 0) + ")\n");
         },
         parser.StmtExpr(e) => {
             // write(...) / print(...) are builtins (not user funcs), so
@@ -905,12 +1071,18 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 return emit_output(id.name, c.args, st);
                             }
                             if (id.name == "print_int" && c.args.len() == 1) {
-                                return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.cx) + ")\n");
+                                return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.cx, 0) + ")\n");
                             }
                             if (id.name == "__set_index" && c.args.len() == 3) {
                                 // arr[idx] = v  (parser desugar). Store v
                                 // at arr + 8 + idx*4.
-                                return st.w("    (i32.store (i32.add (i32.add " + emit_expr(c.args[0], st.cx) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx) + " (i32.const 4))) " + emit_expr(c.args[2], st.cx) + ")\n");
+                                return st.w("    (i32.store (i32.add (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx, 0) + " (i32.const 4))) " + emit_expr(c.args[2], st.cx, 0) + ")\n");
+                            }
+                            if (id.name == "__set_field" && c.args.len() == 3) {
+                                // obj.field = v  (parser desugar). The
+                                // field name is a string literal arg; store
+                                // v at obj + index*4.
+                                return st.w("    (i32.store (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const " + i32_to_string(set_field_offset(c.args[0], c.args[1], st.cx)) + ")) " + emit_expr(c.args[2], st.cx, 0) + ")\n");
                             }
                         },
                         _ => {},
@@ -918,10 +1090,10 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 },
                 _ => {},
             }
-            return st.w("    (drop " + emit_expr(e.value, st.cx) + ")\n");
+            return st.w("    (drop " + emit_expr(e.value, st.cx, 0) + ")\n");
         },
         parser.StmtIf(f) => {
-            st = st.w("    (if " + emit_expr(f.cond, st.cx) + " (then\n");
+            st = st.w("    (if " + emit_expr(f.cond, st.cx, 0) + " (then\n");
             st = emit_stmts(f.then_body, st);
             st = st.w("    )");
             if (f.else_body.len() > 0) {
@@ -942,7 +1114,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var inner: WState = WState {
                 ...st,
                 out: st.out + "    (block " + brk + " (loop " + cont + "\n"
-                    + "    (br_if " + brk + " (i32.eqz " + emit_expr(w.cond, st.cx) + "))\n",
+                    + "    (br_if " + brk + " (i32.eqz " + emit_expr(w.cond, st.cx, 0) + "))\n",
                 n: id + 1,
                 brk: brk,
                 cont: cont,
@@ -981,7 +1153,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var outer_brk: string = st.brk;
             var outer_cont: string = st.cont;
             var head: string =
-                "    (local.set " + fa + " " + emit_expr(f.iter, st.cx) + ")\n"
+                "    (local.set " + fa + " " + emit_expr(f.iter, st.cx, 0) + ")\n"
                 + "    (local.set " + fi + " (i32.const 0))\n"
                 + "    (block " + brk + " (loop " + loop + "\n"
                 + "    (br_if " + brk + " (i32.ge_s (local.get " + fi + ") (i32.load (local.get " + fa + "))))\n"
@@ -1030,6 +1202,12 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
             // arr[i] is string-typed when arr is a string array.
             return is_string_array_expr(ix.array, cx);
         },
+        parser.ExprFieldAccess(fa) => {
+            // s.f is string-typed when f is a `string` field.
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return false; }
+            return struct_field_type(cx.structs, ot, fa.field) == "string";
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return contains_str(cx.funcs, id.name); },
@@ -1058,6 +1236,12 @@ function is_string_array_expr(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprIdent(id) => { return contains_str(cx.str_arrays, id.name); },
         parser.ExprArray(a) => {
             return a.elements.len() > 0 && is_string_expr(a.elements[0], cx);
+        },
+        parser.ExprFieldAccess(fa) => {
+            // s.f is a string[] when f is a `string[]` field.
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return false; }
+            return is_str_array_type(struct_field_type(cx.structs, ot, fa.field));
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -1119,7 +1303,11 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
+                var styp: string = v.type_name;
+                if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
+                if (is_struct_type(cx.structs, styp)) {
+                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
+                } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
                     cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
                 } else if (v.type_name == "string" || is_string_expr(v.init, cx)) {
                     cx = Ctx { ...cx, locals: cx.locals.push(v.name) };
@@ -1146,20 +1334,54 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[]): Ctx {
     var locals: string[] = [];
     var str_arrays: string[] = [];
+    var sv_names: string[] = [];
+    var sv_types: string[] = [];
     var i: i32 = 0;
     while (i < f.params.len()) {
-        if (is_str_array_type(f.params[i].type_name)) {
+        if (is_struct_type(structs, f.params[i].type_name)) {
+            sv_names = sv_names.push(f.params[i].name);
+            sv_types = sv_types.push(f.params[i].type_name);
+        } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.push(f.params[i].name);
         } else if (f.params[i].type_name == "string") {
             locals = locals.push(f.params[i].name);
         }
         i = i + 1;
     }
-    var cx: Ctx = Ctx { tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs };
+    var cx: Ctx = Ctx {
+        tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
+        structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
+    };
     return collect_str_locals_stmts(f.body, cx);
+}
+
+// collect_struct_funcs returns parallel arrays (names→struct return type)
+// for free functions that return a declared struct.
+function collect_struct_func_names(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
+            out = out.push(mod.funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_struct_func_types(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
+            out = out.push(mod.funcs[i].ret_type);
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // returns_value is true when a function's declared return type carries
@@ -1176,7 +1398,7 @@ function returns_value(ret_type: string): boolean {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[]): string {
     var head: string = "  (func $" + f.name;
     var pnames: string[] = [];
     var i: i32 = 0;
@@ -1190,10 +1412,12 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     head = head + "\n";
 
     var locals: string[] = collect_locals(f.body, []);
-    // Reserved temps (one extra i32 local each, harmless): $__ap holds a
-    // fresh array-literal pointer; $__fi<d> / $__fa<d> are the loop index
-    // and iterated-array pointer for a `for` at nesting depth d (0..3).
-    var decls: string = "    (local $__ap i32)\n";
+    // Reserved temps (one extra i32 local each, harmless): $__lit<d>
+    // holds a fresh array/struct-literal pointer at literal-nesting depth
+    // d (0..7); $__fi<d> / $__fa<d> are the loop index and iterated-array
+    // pointer for a `for` at nesting depth d (0..3).
+    var decls: string = "    (local $__lit0 i32) (local $__lit1 i32) (local $__lit2 i32) (local $__lit3 i32)\n";
+    decls = decls + "    (local $__lit4 i32) (local $__lit5 i32) (local $__lit6 i32) (local $__lit7 i32)\n";
     decls = decls + "    (local $__fi0 i32) (local $__fi1 i32) (local $__fi2 i32) (local $__fi3 i32)\n";
     decls = decls + "    (local $__fa0 i32) (local $__fa1 i32) (local $__fa2 i32) (local $__fa3 i32)\n";
     var li: i32 = 0;
@@ -1204,7 +1428,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0 };
     st = emit_stmts(f.body, st);
 
@@ -1291,6 +1515,78 @@ function module_uses_arrays(mod: parser.Module): boolean {
     return false;
 }
 
+// expr_has_struct / stmts_have_struct / module_uses_structs detect struct
+// literals (which allocate), so the bump allocator is emitted for
+// struct-using programs even without strings or arrays.
+function expr_has_struct(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprStructLit(_) => { return true; },
+        parser.ExprUnary(u) => { return expr_has_struct(u.operand); },
+        parser.ExprBinary(b) => { return expr_has_struct(b.left) || expr_has_struct(b.right); },
+        parser.ExprIndex(ix) => { return expr_has_struct(ix.array) || expr_has_struct(ix.index); },
+        parser.ExprFieldAccess(fa) => { return expr_has_struct(fa.obj); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_has_struct(a.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            if (expr_has_struct(c.callee)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_has_struct(c.args[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_have_struct(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_has_struct(v.init)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_has_struct(a.value)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_has_struct(r.value)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_has_struct(e.value)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_has_struct(f.cond)) { return true; }
+                if (stmts_have_struct(f.then_body)) { return true; }
+                if (stmts_have_struct(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_has_struct(w.cond)) { return true; }
+                if (stmts_have_struct(w.body)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_has_struct(f.iter)) { return true; }
+                if (stmts_have_struct(f.body)) { return true; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_uses_structs(mod: parser.Module): boolean {
+    if (stmts_have_struct(mod.top_stmts)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0) {
+            if (stmts_have_struct(mod.funcs[i].body)) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // stmt_calls_print_int / module_uses_print_int detect whether the
 // program calls the print_int builtin (statement position; recursing
 // if/while bodies), so the helper is emitted only when used.
@@ -1361,6 +1657,8 @@ pub function emit_module(mod: parser.Module): string {
     var has_strings: boolean = tab.values.len() > 0;
     var str_funcs: string[] = collect_str_funcs(mod);
     var str_arr_funcs: string[] = collect_str_arr_funcs(mod);
+    var sf_names: string[] = collect_struct_func_names(mod);
+    var sf_types: string[] = collect_struct_func_types(mod);
 
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
@@ -1388,7 +1686,8 @@ pub function emit_module(mod: parser.Module): string {
     // The bump heap (for string concat + array allocation) starts above
     // all static data: past the blocks and the 16-byte print_int buffer.
     var has_arrays: boolean = module_uses_arrays(mod);
-    if (has_strings || has_arrays) {
+    var has_structs: boolean = module_uses_structs(mod);
+    if (has_strings || has_arrays || has_structs) {
         out = out + heap_alloc_helpers(tab.next + 16);
     }
     if (has_strings) {
@@ -1405,7 +1704,7 @@ pub function emit_module(mod: parser.Module): string {
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
         if (f.receiver_type.len() == 0) {
-            out = out + emit_func(f, tab, str_funcs, str_arr_funcs);
+            out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types);
             if (f.name == "main") { has_main = true; }
         }
         j = j + 1;
@@ -1421,7 +1720,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types);
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";
