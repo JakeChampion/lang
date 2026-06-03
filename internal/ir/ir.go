@@ -2626,29 +2626,21 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 }
 
 // preciseDroppableType reports whether `name`'s declared type is in the
-// precise-drop scope: an owned ARRAY whose element is primitive (slice 1) or
-// rc-tracked (slice 2 — `struct[]` / `enum[]` / `T[][]` / `tuple[]`, the large
-// arrays-of-boxes). emitOwnedSlotDrop reclaims both fully — primitive via
-// `__fern_arr_dec` (pure buffer free), rc-element via the deep
-// `__drop_arr_*` loop (frees the element boxes/inner buffers + the outer
-// buffer, each is_unique-gated). string[] is excluded: emitOwnedSlotDrop's
-// array path doesn't str_dec the elements (it would leak them vs the exit
-// sweep's __fern_drop_arr_str) — a later slice. Structs / enums / tuples
-// (small boxes whose deep drops dec shared fields and churn the rc-count
-// golden tests) are also deferred.
+// precise-drop scope: any owned ARRAY. emitOwnedSlotDrop reclaims every
+// element kind fully — primitive via `__fern_arr_dec` (pure buffer free,
+// slice 1); rc-tracked (`struct[]` / `enum[]` / `T[][]` / `tuple[]`) via the
+// deep `__drop_arr_*` loop (slice 2); and `string[]` via `__fern_drop_arr_str`
+// / `__fern_drop_arr_ptr` (slice 3 — str_dec each element, then the buffer).
+// Each per-element drop is_unique-gates, so a counted alias of an element only
+// DECs. Non-array box types (structs / enums / tuples — small boxes whose deep
+// drops dec shared fields and churn the `__rc_get` golden tests) are deferred.
 func (b *builder) preciseDroppableType(name string) bool {
 	t, ok := b.localDeclType(name)
 	if !ok {
 		return false
 	}
-	at, ok := t.(ast.ArrayType)
-	if !ok {
-		return false
-	}
-	if _, isStr := at.Elem.(ast.StringType); isStr {
-		return false
-	}
-	return true
+	_, ok = t.(ast.ArrayType)
+	return ok
 }
 
 // emitPreciseDrop deep-drops the owned local `name` at its last use and
@@ -11104,6 +11096,24 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			break
+		}
+		// string[]: each element is a heap string whose buffer must be
+		// reclaimed before the outer buffer — __fern_drop_arr_str walks +
+		// __fern_str_dec's each (data, len) on the two-word ABIs (wasm +
+		// arm64-TwoWord); native single-word x86_64 routes through
+		// __fern_drop_arr_ptr (per-element __fern_rc_dec). Mirrors the exit
+		// sweep so a precise / reinit drop reclaims the strings, not just the
+		// outer buffer (the plain __fern_arr_dec below would leak them).
+		if _, isStr := ty.Elem.(ast.StringType); isStr {
+			helper := "__fern_drop_arr_str"
+			if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				helper = "__fern_drop_arr_ptr"
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
+			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			break
 		}
