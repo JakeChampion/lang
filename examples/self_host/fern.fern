@@ -5,6 +5,7 @@
 //
 //     fern <entry.fern> [stdlib-root]      emit asm to stdout (def x86-64)
 //     fern -target arm64 <entry.fern>      emit arm64 asm instead
+//     fern -target wasm <entry.fern>       emit a WASI WAT module
 //     fern -o OUT <entry.fern>             emit asm to OUT
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
 //     fern -interp <entry.fern>            evaluate; exit = program result
@@ -24,6 +25,7 @@ import "./parser";
 import "./flatten";
 import "./asm";
 import "./asm_arm64";
+import "./wasm";
 import "./checker";
 import "./interp";
 import "./printer";
@@ -117,7 +119,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-target x86-64|arm64] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-target x86-64|arm64|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -168,10 +170,10 @@ function main(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64") {
+    if (target != "x86-64" && target != "arm64" && target != "wasm") {
         eprint("fern: unknown -target: ");
         eprint(target);
-        eprint(" (want x86-64 or arm64)\n");
+        eprint(" (want x86-64, arm64, or wasm)\n");
         return 2;
     }
 
@@ -268,6 +270,10 @@ function main(): i32 {
     var out_asm: string = "";
     if (target == "arm64") {
         out_asm = asm_arm64.emit_module(full);
+    } else if (target == "wasm") {
+        // WASI core module in text format (WAT). Runnable directly by
+        // `wasmtime run`; main()'s result becomes the process exit code.
+        out_asm = wasm.emit_module(full);
     } else {
         out_asm = asm.emit_module(full);
     }

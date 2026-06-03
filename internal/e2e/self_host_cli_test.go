@@ -29,7 +29,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -191,6 +191,37 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-emitted program exited %d, want 42", c)
+		}
+	})
+
+	t.Run("emit-target-wasm", func(t *testing.T) {
+		// The driver emits a WASI WAT module under -target wasm; run it
+		// directly with wasmtime and check exit code + stdout.
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping -target wasm")
+		}
+		srcPath := filepath.Join(dir, "wasm_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		wat, code := runDriver(t, "-target", "wasm", srcPath)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		if len(wat) == 0 {
+			t.Fatal("-target wasm produced 0 bytes")
+		}
+		watPath := filepath.Join(dir, "wasm_prog.wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", watPath)
+		out, _ := cmd.Output()
+		if c := cmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("wasm-emitted program exited %d, want 42\n--- WAT ---\n%s", c, wat)
+		}
+		if string(out) != "hi from wasm\n" {
+			t.Errorf("wasm-emitted program stdout = %q, want %q", string(out), "hi from wasm\n")
 		}
 	})
 
