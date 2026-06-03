@@ -1770,13 +1770,38 @@ cancellation — bounded, but separable, so it ships last.
     gate + rc-correctness corpus + self-host VM stay green free-on.
     Still on the original plan: enum/Cons-cell reuse (a `match`-arm hook
     + tag-guarded payload release) and field-store elision.
-  - **5d — enum/Cons-cell reuse + field-store elision (NOT STARTED).**
-    Enum reuse pairs a dropped enum scrutinee in a `match` arm with a
-    same-box-size constructor in that arm (`map_inc` shape), gated on
-    `uniformEnumBoxSize`; reuses the pointer-payload release machinery
-    5c built. Field-store elision then skips the store for a provably-
-    unchanged field (`y: p.y`) and cancels its inc/dec — a strict
-    optimization on top of correct reuse.
+  - **5d-i — field-store elision. SHIPPED (all three backends).** On the
+    struct self-overwrite reuse path, a field carried over UNCHANGED
+    (`f: p.f` — `fieldCarriedFrom`) keeps its value in the reused box, so
+    its store + retain (`emitAliasInc`) + old-value release
+    (`emitFieldDropOnStack`) are ALL elided on the reuse branch (the box
+    already holds it, rc unchanged). They're emitted only on the
+    FRESH-alloc branch (gated `reused == 0` — the `OpNot` guard), where a
+    new box needs its own copy + reference. This is the dominant case of
+    Fern's record-update idiom: E048 forbids field assignment, so an update
+    is written `p = T{ changed: ..., rest: p.rest, ... }` — most fields are
+    carried, so most stores+inc/decs vanish on reuse. Sound: a carried field
+    is never released (its reference stays with the box); a swap
+    (`x: p.y, y: p.x`) changes every field so nothing is carried/elided.
+    Tests: IR `TestFieldStoreElisionFires*/Skips*` (the guard appears iff a
+    field is carried) + e2e `Test{X86_64,Arm64,WASM}FieldStoreElision`
+    (carried POINTER field survives 300 reuses untouched; aliased struct
+    still COWs; 0 over-releases). Differential + self-host green.
+  - **5d-ii — enum/Cons-cell match-arm reuse (WON'T-DO under the current
+    borrow model — see finding).** Pairs a dropped enum scrutinee in a
+    `match` arm with a same-box-size constructor in that arm (`map_inc`
+    shape). **Finding (this session):** Perceus's headline FBIP win —
+    `map(xs)` reusing cons cells in a recursive traversal — requires `xs`
+    to be an OWNED (consuming) parameter so the callee can repurpose its
+    cells. Fern's borrow model (Phase 2d) makes ALL params BORROWED (the
+    caller still holds them), so a recursive `map`'s scrutinee is never
+    `freeEligible` and reuse cannot fire there. The only shapes left are
+    OWNED-LOCAL match-and-rebuild (`c = match (c) { … }`), which largely
+    overlap the already-shipped self-overwrite reuse — so the big,
+    self-host-risky match-lowering surgery buys little. Unlocking the
+    real win needs an owned/consuming-parameter mode (a `move`/`own` param
+    annotation or escape-inferred ownership), which is a language-level
+    change tracked separately from RC-Perceus. Deferred deliberately.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 
