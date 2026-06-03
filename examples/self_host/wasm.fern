@@ -287,7 +287,11 @@ function scrutinee_payload(e: parser.Expr, cx: Ctx): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { return lookup_pair(cx.of_names, cx.of_payloads, id.name); },
+                parser.ExprIdent(id) => {
+                    // env(name) is the builtin returning Option[string].
+                    if (id.name == "env") { return "string"; }
+                    return lookup_pair(cx.of_names, cx.of_payloads, id.name);
+                },
                 parser.ExprFieldAccess(fa) => {
                     // A receiver method returning Option[T] / Result[T,E].
                     return parse_option_payload(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
@@ -509,6 +513,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     }
                     if (id.name == "Err" && c.args.len() == 1) {
                         return enum_box(1, emit_expr(c.args[0], cx, depth + 1), depth);
+                    }
+                    // env(name): Option[string] builtin → the wasi
+                    // environ runtime helper.
+                    if (id.name == "env" && c.args.len() == 1) {
+                        return "(call $__fern_env " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
                     // Direct call to a free function: `f(a, b)` →
                     // `(call $f <a> <b>)`.
@@ -853,6 +862,73 @@ function heap_alloc_helpers(heap_base: i32): string {
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
     o = o + "    (local.get $p))\n";
+    return o;
+}
+
+// env_helpers emits the wasi environ imports + $__fern_env(name): the
+// preview-1 two-call environ pattern (sizes_get then get) into bump-heap
+// scratch, a linear scan for a `NAME=` entry, and an Option[string] tag
+// box result (Some(value) / None). Value bytes are copied into a fresh
+// string block. Uses the iovec scratch (addr 0 / 4) for the two sizes —
+// safe because env() completes before any write/print reuses them.
+function env_helpers(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"environ_sizes_get\" (func $environ_sizes_get (param i32 i32) (result i32)))\n";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"environ_get\" (func $environ_get (param i32 i32) (result i32)))\n";
+    return o;
+}
+
+// env_func emits the $__fern_env body (separate from env_helpers so the
+// imports can be placed in the import section, before functions).
+function env_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_env (param $np i32) (result i32)\n";
+    o = o + "    (local $count i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $nlen i32) (local $i i32) (local $e i32) (local $j i32) (local $ok i32)\n";
+    o = o + "    (local $vstart i32) (local $vlen i32) (local $res i32) (local $tmp i32)\n";
+    o = o + "    (local.set $nlen (i32.load (local.get $np)))\n";
+    o = o + "    (drop (call $environ_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $count (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $environ_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $done (loop $cont\n";
+    o = o + "      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))\n";
+    o = o + "      (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $ok (i32.const 1))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $md (loop $mc\n";
+    o = o + "        (br_if $md (i32.ge_u (local.get $j) (local.get $nlen)))\n";
+    o = o + "        (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $j))) (i32.load8_u (i32.add (local.get $e) (local.get $j)))) (then (local.set $ok (i32.const 0)) (br $md)))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $mc)))\n";
+    o = o + "      (if (i32.and (local.get $ok) (i32.eq (i32.load8_u (i32.add (local.get $e) (local.get $nlen))) (i32.const 61))) (then\n";
+    o = o + "        (local.set $vstart (i32.add (i32.add (local.get $e) (local.get $nlen)) (i32.const 1)))\n";
+    o = o + "        (local.set $vlen (i32.const 0))\n";
+    o = o + "        (block $vd (loop $vc\n";
+    o = o + "          (br_if $vd (i32.eqz (i32.load8_u (i32.add (local.get $vstart) (local.get $vlen)))))\n";
+    o = o + "          (local.set $vlen (i32.add (local.get $vlen) (i32.const 1)))\n";
+    o = o + "          (br $vc)))\n";
+    o = o + "        (local.set $res (call $__fern_alloc (i32.add (i32.const 4) (local.get $vlen))))\n";
+    o = o + "        (i32.store (local.get $res) (local.get $vlen))\n";
+    o = o + "        (local.set $j (i32.const 0))\n";
+    o = o + "        (block $cd (loop $cc\n";
+    o = o + "          (br_if $cd (i32.ge_u (local.get $j) (local.get $vlen)))\n";
+    o = o + "          (i32.store8 (i32.add (i32.add (local.get $res) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $vstart) (local.get $j))))\n";
+    o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "          (br $cc)))\n";
+    o = o + "        (local.set $tmp (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "        (i32.store (local.get $tmp) (i32.const 0))\n";
+    o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $res))\n";
+    o = o + "        (return (local.get $tmp))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $cont)))\n";
+    o = o + "    (local.set $tmp (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $tmp) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (local.get $tmp))\n";
     return o;
 }
 
@@ -2067,6 +2143,94 @@ function module_uses_options(mod: parser.Module): boolean {
     return false;
 }
 
+// expr_calls / stmts_call / module_calls: does any expression call the
+// free builtin named `fn` (by bare ident)? Used to gate runtime helpers
+// like env().
+function expr_calls(e: parser.Expr, fn: string): boolean {
+    match (e) {
+        parser.ExprUnary(u) => { return expr_calls(u.operand, fn); },
+        parser.ExprBinary(b) => { return expr_calls(b.left, fn) || expr_calls(b.right, fn); },
+        parser.ExprIndex(ix) => { return expr_calls(ix.array, fn) || expr_calls(ix.index, fn); },
+        parser.ExprFieldAccess(fa) => { return expr_calls(fa.obj, fn); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_calls(a.elements[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (expr_calls(sl.field_values[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { if (id.name == fn) { return true; } },
+                _ => {},
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_calls(c.args[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_call(body: parser.Stmt[], fn: string): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_calls(v.init, fn)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_calls(a.value, fn)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_calls(r.value, fn)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_calls(e.value, fn)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_calls(f.cond, fn)) { return true; }
+                if (stmts_call(f.then_body, fn)) { return true; }
+                if (stmts_call(f.else_body, fn)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_calls(w.cond, fn)) { return true; }
+                if (stmts_call(w.body, fn)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_calls(f.iter, fn)) { return true; }
+                if (stmts_call(f.body, fn)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_calls(m.scrutinee, fn)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_call(m.arms[k].body, fn)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_calls(mod: parser.Module, fn: string): boolean {
+    if (stmts_call(mod.top_stmts, fn)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (stmts_call(mod.funcs[i].body, fn)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // stmt_calls_print_int / module_uses_print_int detect whether the
 // program calls the print_int builtin (statement position; recursing
 // if/while bodies), so the helper is emitted only when used.
@@ -2148,9 +2312,13 @@ pub function emit_module(mod: parser.Module): string {
     var mr_names: string[] = collect_method_names(mod);
     var mr_rets: string[] = collect_method_rets(mod);
 
+    var has_env: boolean = module_calls(mod, "env");
+
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+    // wasi environ imports must sit in the import section (before funcs).
+    if (has_env) { out = out + env_helpers(); }
     // 16 pages (1 MiB) gives the bump heap (string concat) headroom.
     out = out + "  (memory (export \"memory\") 16)\n";
     // Scratch: a "\n" byte at addr 12 (for `print`); the iovec (0,4) and
@@ -2176,7 +2344,7 @@ pub function emit_module(mod: parser.Module): string {
     var has_arrays: boolean = module_uses_arrays(mod);
     var has_structs: boolean = module_uses_structs(mod);
     var has_options: boolean = module_uses_options(mod);
-    if (has_strings || has_arrays || has_structs || has_options) {
+    if (has_strings || has_arrays || has_structs || has_options || has_env) {
         out = out + heap_alloc_helpers(tab.next + 16);
     }
     if (has_strings) {
@@ -2186,6 +2354,9 @@ pub function emit_module(mod: parser.Module): string {
     // its result array via $__fern_arr_push — so emit it for strings too.
     if (has_arrays || has_strings) {
         out = out + arr_helpers();
+    }
+    if (has_env) {
+        out = out + env_func();
     }
 
     var has_main: boolean = false;

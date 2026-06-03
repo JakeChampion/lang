@@ -294,6 +294,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"generic-struct", "struct Box[T] { val: T } function unbox[T](b: Box[T]): T { return b.val; } function main(): i32 { var b: Box[i32] = Box { val: 42 }; return unbox(b); }", 42, ""},
 		{"generic-pair-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { var p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42, ""},
 		{"generic-fn-string", "function id[T](x: T): T { return x; } function main(): i32 { write(id(\"hello\")); return 0; }", 0, "hello"},
+		// env(name): Option[string] via wasi environ (runner sets
+		// FERNTEST=hello123 and EMPTYVAR=).
+		{"env-set", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "hello123"},
+		{"env-missing", "function main(): i32 { match (env(\"NOPE_NOT_SET\")) { Some(v) => { write(v); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "none"},
+		{"env-empty", "function main(): i32 { match (env(\"EMPTYVAR\")) { Some(v) => { return v.len() + 7; }, None => { return 0; } } return 1; }", 7, ""},
+		{"env-payload-method", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { write(v.to_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "HELLO123"},
+		{"env-len", "function main(): i32 { match (env(\"FERNTEST\")) { Some(v) => { return v.len(); }, None => { return 0; } } return 1; }", 8, ""},
 	}
 
 	for _, tc := range cases {
@@ -306,7 +313,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)
 			}
-			cmd := exec.Command("wasmtime", "run", watPath)
+			// Fixed env vars so `env(name)` cases have something to read
+			// (harmless for the other cases).
+			cmd := exec.Command("wasmtime", "run", "--env", "FERNTEST=hello123", "--env", "EMPTYVAR=", watPath)
 			out, _ := cmd.Output() // captures the program's stdout
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
