@@ -143,6 +143,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"concat-empty", "function main(): i32 { var s = \"\"; write(s + \"end\"); return 0; }", 0, "end"},
 		// int + still adds (not concat) — type-directed.
 		{"int-plus-still-adds", "function main(): i32 { var a = 20; var b = 22; return a + b; }", 42, ""},
+		// String equality / comparison + .len() (type-directed).
+		{"str-eq-true", "function main(): i32 { var a = \"hi\"; if (a == \"hi\") { return 1; } return 0; }", 1, ""},
+		{"str-eq-false", "function main(): i32 { var a = \"hi\"; if (a == \"ho\") { return 1; } return 0; }", 0, ""},
+		{"str-eq-vars", "function main(): i32 { var a = \"foo\"; var b = \"f\" + \"oo\"; if (a == b) { return 42; } return 0; }", 42, ""},
+		{"str-neq", "function main(): i32 { var a = \"x\"; if (a != \"y\") { return 1; } return 0; }", 1, ""},
+		{"str-lt", "function main(): i32 { if (\"abc\" < \"abd\") { return 1; } return 0; }", 1, ""},
+		{"str-lt-prefix", "function main(): i32 { if (\"ab\" < \"abc\") { return 1; } return 0; }", 1, ""},
+		{"str-gt", "function main(): i32 { if (\"b\" > \"a\") { return 1; } return 0; }", 1, ""},
+		{"str-ge-equal", "function main(): i32 { if (\"same\" >= \"same\") { return 1; } return 0; }", 1, ""},
+		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5, ""},
+		{"str-len-empty", "function main(): i32 { var s = \"\"; return s.len(); }", 0, ""},
+		{"str-len-literal", "function main(): i32 { return \"abcd\".len(); }", 4, ""},
+		{"str-len-concat", "function main(): i32 { var s = \"ab\" + \"cde\"; return s.len(); }", 5, ""},
+		{"str-len-param", "function l(s: string): i32 { return s.len(); } function main(): i32 { return l(\"seven!!\"); }", 7, ""},
 	}
 
 	for _, tc := range cases {
