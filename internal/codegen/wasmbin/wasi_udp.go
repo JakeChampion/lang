@@ -3,7 +3,8 @@
 // telemetry / syslog to a local agent):
 //
 //	create-udp-socket(ipv4) → start-bind + finish-bind(0.0.0.0:0) →
-//	stream(Some(host:port))  [connect] → check-send → send([{data}]) →
+//	stream(Some(host:port))  [connect] → wait for a send permit
+//	(check-send / subscribe / pollable.block loop) → send([{data}]) →
 //	drop the incoming + outgoing datagram streams, then the socket.
 //
 // Connecting via stream(Some(remote)) puts the destination address in
@@ -51,6 +52,7 @@ import (
 //	17: $b             current host byte
 //	18: $dgram         60+-byte outgoing-datagram record
 //	19: $sent          datagrams accepted (low 32 bits of the u64)
+//	20: $poll          pollable handle (send-permit wait loop)
 func buildUdpSendBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	netHandle := idxs["__network_handle"]
@@ -59,6 +61,9 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	finishBind := idxs["wasi_sockets_udp_finish_bind"]
 	stream := idxs["wasi_sockets_udp_stream"]
 	checkSend := idxs["wasi_sockets_udp_check_send"]
+	subscribe := idxs["wasi_sockets_udp_outgoing_subscribe"]
+	pollBlock := idxs["wasi_io_pollable_block"]
+	pollDrop := idxs["wasi_io_pollable_drop"]
 	send := idxs["wasi_sockets_udp_send"]
 	sockDrop := idxs["wasi_sockets_udp_socket_drop"]
 	inDrop := idxs["wasi_sockets_incoming_datagram_stream_drop"]
@@ -221,16 +226,40 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// Normalize the payload into a contiguous buffer.
 	body = emitStrNormalize(body, idxs, 3, 4, 9, 10, 11)
 
-	// check-send(outStream, retptr); bail on Err. (Permit count is
-	// assumed ≥1 for a freshly-connected socket; we don't gate on it.)
-	body = inst.InstLocalGet(body, 7)
-	body = inst.InstLocalGet(body, 5)
-	body = inst.InstCall(body, checkSend)
-	body = inst.InstLocalGet(body, 5)
-	body = memory.InstI32Load8U(body, 0, 0)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturn(body, 5)
-	body = inst.InstEnd(body)
+	// Wait until the outgoing-datagram-stream permits at least one
+	// datagram. check-send returns result<u64, error-code> — the u64
+	// permit count at retptr+8. Right after connect wasmtime can report
+	// a permit of 0 until the socket is writable; sending then trips
+	// "unpermitted: argument exceeds permitted size" (wasmtime ≥45). So
+	// loop: check-send → if permit ≥1 break, else block on the stream's
+	// pollable and retry.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // break target (br 1)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // retry target (br 0)
+	{
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstCall(body, checkSend)
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = emitErrnoNegReturn(body, 5)
+		body = inst.InstEnd(body)
+		// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
+		body = inst.InstLocalGet(body, 5)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstBrIf(body, 1)
+		// permit == 0: subscribe → block → drop, then retry.
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, subscribe)
+		body = inst.InstLocalSet(body, 20)
+		body = inst.InstLocalGet(body, 20)
+		body = inst.InstCall(body, pollBlock)
+		body = inst.InstLocalGet(body, 20)
+		body = inst.InstCall(body, pollDrop)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
 
 	// Build the 1-element list<outgoing-datagram>. Each record is 60
 	// bytes; alloc 64. remote-address: none → only data (ptr@+0,
@@ -280,6 +309,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstEnd(body)
 
-	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 16, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

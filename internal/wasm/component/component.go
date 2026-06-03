@@ -1214,11 +1214,13 @@ func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSo
 //
 // Unlike TCP, the datagram path is NOT wasi:io/streams: send takes a
 // `list<outgoing-datagram>` (each `{ data: list<u8>, remote-address:
-// option<ip-socket-address> }`). It outer-aliases network / error-code /
-// ip-socket-address from sockets/network (no io/streams, no io/poll for
-// the send-only path); the caller surfaces those three and passes their
-// type indices.
-func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []byte {
+// option<ip-socket-address> }`). outgoing-datagram-stream also exposes
+// subscribe -> own<pollable>, so a sender can block until the stream
+// permits a datagram (wasmtime >=45 rejects a send that exceeds the
+// last check-send permit). It outer-aliases network / error-code /
+// ip-socket-address from sockets/network plus pollable from io/poll;
+// the caller surfaces those four and passes their type indices.
+func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT uint32) []byte {
 	var decls []byte
 	idx := uint32(0)
 	declCount := uint32(0)
@@ -1267,6 +1269,7 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []
 	// outgoing-datagram record references it (transitively), and an
 	// exported type may only reach other exported named types.
 	sockAddrT := exportType("ip-socket-address", alias(ipSockAddrT))
+	pollT := alias(pollableT)
 
 	udpSock := sub("udp-socket")
 	inStream := sub("incoming-datagram-stream")
@@ -1284,6 +1287,7 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []
 	bUdp := def(InnerTypeBorrow(udpSock))
 	bNet := def(InnerTypeBorrow(netT))
 	bOut := def(InnerTypeBorrow(outStream))
+	ownPoll := def([]byte{0x69, byte(pollT)})
 	resEmptyErr := def(InnerTypeResultErr(errT))
 	ownIn := def([]byte{0x69, byte(inStream)})
 	ownOut := def([]byte{0x69, byte(outStream)})
@@ -1298,6 +1302,7 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT uint32) []
 	method("[method]udp-socket.stream", []string{"self", "remote-address"}, []byte{byte(bUdp), byte(optAddr)}, byte(resStream))
 	method("[method]outgoing-datagram-stream.check-send", []string{"self"}, []byte{byte(bOut)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.send", []string{"self", "datagrams"}, []byte{byte(bOut), byte(listDatagram)}, byte(resU64))
+	method("[method]outgoing-datagram-stream.subscribe", []string{"self"}, []byte{byte(bOut)}, byte(ownPoll))
 
 	body := []byte{0x01, 0x42}
 	body = leb128.UlebU64(body, uint64(declCount))

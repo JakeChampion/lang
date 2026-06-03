@@ -498,6 +498,15 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_udp_outgoing_subscribe": {
+		// (self) → pollable handle. Paired with pollable.block so the
+		// sender waits until check-send permits ≥1 datagram before
+		// calling send (wasmtime ≥45 rejects an over-permit send).
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]outgoing-datagram-stream.subscribe",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_sockets_udp_send": {
 		// (self, datagrams_ptr, datagrams_len, retptr) → (). datagrams
 		// is a list<outgoing-datagram>; each 60-byte record is
@@ -1005,6 +1014,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_udp_finish_bind")
 		in.add("wasi_sockets_udp_stream")
 		in.add("wasi_sockets_udp_check_send")
+		in.add("wasi_sockets_udp_outgoing_subscribe")
+		in.add("wasi_io_pollable_block")
+		in.add("wasi_io_pollable_drop")
 		in.add("wasi_sockets_udp_send")
 		in.add("wasi_sockets_udp_socket_drop")
 		in.add("wasi_sockets_incoming_datagram_stream_drop")

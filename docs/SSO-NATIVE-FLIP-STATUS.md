@@ -1,4 +1,21 @@
-# SSO native flip — arm64 first (in progress)
+# SSO native flip — COMPLETE (arm64 + x86_64 green)
+
+**STATUS (2026-06-03): SHIPPED on both native backends.** The two-word
+string ABI + top-bit-tagged inline encoding is live on arm64 AND x86_64,
+verified across the codegen unit tests, string/SSO e2e, cross-backend
+differential parity, and the full e2e suite (EXIT=0). The §0–§9 arc below
+is kept as the implementation record.
+
+Knock-on: this **unblocks RC-Perceus item 5g** (native heap-string rc).
+Native heap strings (>15 B, so genuinely heap, not inline-SSO) now reclaim
+to a bounded high-water and are sound (0 over-releases) on both backends —
+verified for the loop var-reinit (`var s = a + b`), reassignment-overwrite
+(`s = s + chunk`), and concat-temp shapes. The "arm64 string reclaim
+deferred / slice 5g" comments still scattered in `internal/ir/ir.go`
+(e.g. emitVarReinitDropOld's StringType case, the assign-overwrite string
+branch) are now **stale** — reclamation works; clean them up as a
+follow-up (do NOT naively add a second dec where one already fires, or it
+double-frees).
 
 Companion to `docs/SSO-TWOWORD-EXEC.md`. The wasm32 two-word
 ABI flip is shipped (PR #382, in main). This doc tracks the

@@ -8,9 +8,12 @@ Status: IMPLEMENTED. Phases 0–3 + the Phase-6 reclamation work have
 shipped (RC with compile-time drop placement, the real freelist allocator,
 and per-type reclamation for arrays / structs / enums / maps / tuples /
 closures / strings, including nested/generic shapes and statement
-temporaries). The remaining open items are collected at the end of the
-Phase-6 section ("Next Phase-6 steps (open)") and in the deferred 5f / 5g
-notes; the per-phase prose below is kept as the historical record. The
+temporaries). Native heap-string rc (item 5g) is now ALSO working — the
+SSO native flip went green on both backends (2026-06-03), unblocking it.
+The remaining open items are collected at the end of the Phase-6 section
+("Next Phase-6 steps (open)") and the still-deferred 5f note (struct
+replaced-field free — needs alias analysis); the per-phase prose below is
+kept as the historical record. The
 design "Open questions" at the very bottom were all resolved during
 implementation — see the resolutions noted there.
 
@@ -548,12 +551,12 @@ volume.
 
 #### Phase 1e: widen to strings / structs / enums / closures
 
-SHIPPED. Structs, enums, closures, tuples and (wasm + x86_64) strings all
+SHIPPED, all categories. Structs, enums, closures, tuples and strings all
 grew rc tracking + inc/dec at alias/exit/overwrite sites + per-type drop
 handlers in the phases that followed (see Phase 3's "Drop handlers" record
-and the Phase-6 bullets). Native-arm64 heap strings are the one exception —
-hard-blocked on the SSO native flip (deferred item 5g below). The original
-checklist is kept for the record:
+and the Phase-6 bullets). Native heap strings — the last holdout, gated on
+the SSO native flip (item 5g) — landed once that flip went green on both
+backends (2026-06-03). The original checklist is kept for the record:
 
   - Layout migration (Phase 0-style) adding the rc slot.
   - rc=1 init at every alloc site.
@@ -1766,7 +1769,9 @@ as findings land:
 5. **5g** — heap-string rc (only after the SSO flip is green on both
    native backends).
 6. **Phase 6** — measurements, self-host-through-itself, retire
-   `strbuf_*` if reuse makes it redundant.
+   `strbuf_*` if reuse makes it redundant. (Evaluated: NOT redundant —
+   keep it; see the Phase-6 open-items resolution + § "strbuf_* becomes a
+   more specific optimisation".)
 
 **Verification constraint (this environment).** Local toolchain is
 x86_64-native + `wasmtime` (+ `wasm-tools`) only — **no `qemu-aarch64`
@@ -1863,22 +1868,27 @@ when it hits rc 0) reopens UAF risk, confirmed against the real code:
     *safely* today) that's not worth the UAF-class risk. Defer until the
     alias analysis exists.
 
-##### 5g — heap-string rc (deferred: hard-blocked on the SSO native flip)
+##### 5g — heap-string rc (UNBLOCKED + working; 2026-06-03)
 
-The highest-value remaining item by memory impact, but genuinely
-blocked, not merely deferred. Heap strings can't grow a live rc header
-until the native string representation settles, and that flip is mid-
-flight: `docs/SSO-NATIVE-FLIP-STATUS.md` shows arm64 at §1 of §1–§9
-(IR gate refactor done; inline-encoding flip, runtime helpers, IR ops,
-ABI/locals, load/store fan-out, captures/globals/fields, map runtime,
-cleanup all still to do), and the whole arc then mirrors on x86_64 —
-~6 sessions per backend. Until then a string is two-word on wasm,
-single-word LSB-tagged on x86_64, and boxed on arm64; there is no
-uniform place to put the rc header. The move-* family already excludes
-strings everywhere for exactly this reason; they join once the SSO work
-lands and `isOwnedRcLocal` / `arrElemIsRcTracked` can admit `StringType`
-uniformly. **Do not attempt 5g before the SSO native flip is green on
-both native backends.**
+Was "the highest-value remaining item by memory impact," hard-blocked on
+the SSO native flip. **The SSO native flip is now COMPLETE on both
+backends** (see `docs/SSO-NATIVE-FLIP-STATUS.md` — green on arm64 +
+x86_64, verified through the full e2e suite), so the blocker is cleared
+AND native heap-string rc has effectively landed with it: a string is now
+two-word on wasm + arm64 and (top-bit-tagged) on x86_64 with a uniform
+rc-header home, `isOwnedRcLocal` admits `StringType` uniformly, and
+**native heap strings (>15 B) reclaim to a bounded high-water and are
+sound (0 over-releases) on both backends** — verified for loop var-reinit
+(`var s = a + b`), reassignment-overwrite (`s = s + chunk`), and
+concat-temp shapes. Bound-var short strings stay inline-SSO (no heap, so
+0 bump) as before.
+
+Remaining (cleanup, not correctness): several `internal/ir/ir.go` comments
+still say "arm64 string reclaim deferred / slice 5g" (emitVarReinitDropOld's
+StringType case, the assign-overwrite string branch). These are now STALE —
+reclamation works. Refresh/remove them, but do NOT add a second dec where
+one already fires (it would double-free); confirm each path's current
+reclamation before touching it.
 
 ##### 5h — block-scoped drops for loop-body locals (DONE)
 
@@ -2064,7 +2074,9 @@ non-negotiable check.
 End-state verification: run the benchmarks, compare RSS, build
 the self-host through itself, profile hot allocations, retire
 the `strbuf_*` primitive if Perceus + drop-reuse make it
-redundant.
+redundant. (Evaluated: NOT redundant — strbuf is orthogonal to rc and
+faster for hot string-building, and the self-host emitters depend on it;
+keep it. See the Phase-6 open-items resolution.)
 
 **Measurement probe — `__heap_bump_bytes()` (SHIPPED).** A builtin
 returning the bump allocator's high-water mark in bytes (current cursor
@@ -2324,19 +2336,44 @@ exercises the rc==1 branch + the differential gate) stays green.
   (192 B), `P[][]` / `i32[][][]` (256/320 B wasm, 0 natives), `E[]`
   (256 B wasm), `Option[i32[]][]` (160 B wasm), string-concat bound-var
   (wasm 64576 B plateau / natives 0), nested concat `(a+b+c)` (wasm 64576 B
-  plateau / x86_64 0 / arm64 144 B).
+  plateau / x86_64 0 / arm64 144 B), and (post-SSO-flip) NATIVE heap
+  strings `>15 B` — `var s = a + b` / `s = s + chunk` loops bounded + 0
+  over-releases on x86_64 + arm64 (item 5g).
 
 Next Phase-6 steps (open):
-  - **`closure[]` array-element drop** — `arrElemStructDropName` declines
-    `FuncType` elements, so an array of closures flat-dec's them and leaks
-    their captured env blocks. Needs a per-closure array-drop dispatch (the
-    `__drop_arr_struct_` / `__drop_arr_enum_` analogue). The only clean,
-    safe, do-it-now reclamation item left. (Array-of-enum — concrete `E[]`
-    and generic `Option[T][]` — and nested `E[][]` already SHIPPED via the
-    `__drop_arr_enum_` / `__drop_arr_of_` recursion.)
-  - **Retire `strbuf_*`** — evaluate dropping the legacy string builder now
-    that string concat/slice + nested-concat intermediates reclaim. Cleanup,
-    not a leak.
+  - **`closure[]` array-element drop** — BLOCKED on the closure env-drop
+    limitation, NOT a clean slice (investigated 2026-06-03). A `closure[]`
+    leaks (scalar-capture `(() => i32)[]` loop: 3264 → 320064 B). The
+    obstacle: the element `FuncType` can't name WHICH closure (distinct
+    closures share a signature but have distinct capture layouts + per-
+    closure `__closure_drop_<name>` thunks), so an array loop can only call
+    the GENERIC `__fern_closure_drop` per element — which by design frees
+    only the closure PAIR block and *leaks the env block* (see its
+    "a pair's env leaks for now" comment). So a generic `__drop_arr_closure`
+    only partially reclaims (frees pairs, envs leak — verified: wasm
+    320064 → 192352, still unbounded; natives looked bounded only because
+    they ELIDE these closures to direct calls, no heap). Fully reclaiming a
+    closure-array element needs env-block freeing, which needs either (a) the
+    per-closure thunk (needs static closure identity — unavailable for array
+    elements) or (b) the closure box carrying a drop-fn pointer (a
+    representation change). Tied to the broader "closure env / captures leak
+    for now" infra state — do this WITH that work, not standalone.
+    (Array-of-enum — concrete `E[]` and generic `Option[T][]` — and nested
+    `E[][]` already SHIPPED via the `__drop_arr_enum_` / `__drop_arr_of_`
+    recursion.)
+  - **`strbuf_*` — EVALUATED: KEEP (do not retire).** The open question was
+    whether the string builder is now redundant given rc string concat/slice
+    reclaim. It is not. Per the design conclusion below (§ "strbuf_* becomes
+    a more specific optimisation"), strbuf builds bytes in a scratch buffer
+    with NO per-byte rc bookkeeping, then `strbuf_take`s the result as one
+    string — orthogonal to rc, and strictly faster for hot string-building.
+    It is also load-bearing: the self-host emitters use it heavily for their
+    O(N) output building (`asm.fern` 39×, `asm_arm64.fern` 52×; `wasm.fern`
+    notes "asm.fern's strbuf optimisation is only needed for the huge
+    output"), backed by `strbuf_append/data/len/reset/take` runtime helpers
+    on all three backends. Retiring it would push that hot path onto
+    rc-string concat and reintroduce the exact overhead strbuf exists to
+    avoid. Keep it.
   - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
     rc-neutral by design, reclaiming needs the global "inc enum payloads on
     construction + rebalance every drop" change. Risky.

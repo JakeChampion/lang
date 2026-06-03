@@ -1377,10 +1377,11 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 
 // TestWasiSocketsUdpInstanceTypeBody_Validates composes the send-only
 // wasi:sockets/udp + udp-create-socket instance types over
-// sockets/network (no io/streams / io/poll — the datagram path is its
-// own resources) and confirms wasm-tools validates the udp-socket /
-// datagram-stream resources, the outgoing-datagram record, and the
-// start-bind / stream / check-send / send / create-udp-socket methods.
+// sockets/network and io/poll (the datagram path is its own resources,
+// but outgoing-datagram-stream.subscribe returns own<pollable>) and
+// confirms wasm-tools validates the udp-socket / datagram-stream
+// resources, the outgoing-datagram record, and the start-bind / stream
+// / check-send / send / subscribe / create-udp-socket methods.
 func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
@@ -1392,11 +1393,14 @@ func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                                   // type 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")                            // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")                            // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3))             // type 5
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp@0.2.0", 5)                             // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "udp-socket")                                   // type 6
-	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpCreateSocketInstanceTypeBody(4, 2, 6)) // type 7
-	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp-create-socket@0.2.0", 7)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                        // type 5
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                 // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "pollable")                                     // type 6
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3, 6))          // type 7
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp@0.2.0", 7)                             // inst 2
+	buf = component.PutAliasSectionInstanceExportType(buf, 2, "udp-socket")                                   // type 8
+	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpCreateSocketInstanceTypeBody(4, 2, 8)) // type 9
+	buf = component.PutImportSectionOneInstance(buf, "wasi:sockets/udp-create-socket@0.2.0", 9)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "udp.wasm")
 	if err := os.WriteFile(p, buf, 0o644); err != nil {
@@ -1413,6 +1417,7 @@ func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 		"udp-socket", "incoming-datagram-stream", "outgoing-datagram-stream",
 		"udp-socket.start-bind", "udp-socket.stream",
 		"outgoing-datagram-stream.check-send", "outgoing-datagram-stream.send",
+		"outgoing-datagram-stream.subscribe",
 		"create-udp-socket",
 	} {
 		if !bytes.Contains(out, []byte(want)) {
