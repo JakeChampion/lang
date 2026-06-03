@@ -134,6 +134,12 @@ struct Ctx {
     fn_names: string[],
     lam_ctr: i32[],
     lamdefs: string[],
+    // all_locals: every var/param name in the enclosing function — used to
+    // decide which free idents in a lambda body are real captures.
+    // cap_names: this (lambda) function's captures, in box order, so an
+    // ident read resolves to an $__env load at offset 4 + i*4.
+    all_locals: string[],
+    cap_names: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -415,6 +421,152 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[]): string[] {
         i = i + 1;
     }
     return acc;
+}
+
+// collect_idents_expr / _stmts gather every referenced identifier in an
+// expression / statement list (for lambda capture analysis).
+function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { if (!contains_str(acc, id.name)) { acc = acc.push(id.name); } },
+        parser.ExprUnary(u) => { acc = collect_idents_expr(u.operand, acc); },
+        parser.ExprBinary(b) => {
+            acc = collect_idents_expr(b.left, acc);
+            acc = collect_idents_expr(b.right, acc);
+        },
+        parser.ExprCall(c) => {
+            acc = collect_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = collect_idents_expr(c.args[i], acc); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => {
+            acc = collect_idents_expr(ix.array, acc);
+            acc = collect_idents_expr(ix.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_idents_expr(sl.array, acc);
+            acc = collect_idents_expr(sl.start, acc);
+            acc = collect_idents_expr(sl.end, acc);
+        },
+        parser.ExprFieldAccess(fa) => { acc = collect_idents_expr(fa.obj, acc); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = collect_idents_expr(a.elements[i], acc); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = collect_idents_expr(t.elements[i], acc); i = i + 1; }
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = collect_idents_expr(sl.field_values[i], acc); i = i + 1; }
+        },
+        parser.ExprLambda(lm) => { acc = collect_idents_stmts(lm.body, acc); },
+        _ => {},
+    }
+    return acc;
+}
+
+function collect_idents_stmts(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { acc = collect_idents_expr(v.init, acc); },
+            parser.StmtAssign(a) => {
+                if (!contains_str(acc, a.target)) { acc = acc.push(a.target); }
+                acc = collect_idents_expr(a.value, acc);
+            },
+            parser.StmtReturn(r) => { acc = collect_idents_expr(r.value, acc); },
+            parser.StmtExpr(e) => { acc = collect_idents_expr(e.value, acc); },
+            parser.StmtIf(f) => {
+                acc = collect_idents_expr(f.cond, acc);
+                acc = collect_idents_stmts(f.then_body, acc);
+                acc = collect_idents_stmts(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => {
+                acc = collect_idents_expr(w.cond, acc);
+                acc = collect_idents_stmts(w.body, acc);
+            },
+            parser.StmtFor(f) => {
+                acc = collect_idents_expr(f.iter, acc);
+                acc = collect_idents_stmts(f.body, acc);
+            },
+            parser.StmtMatch(m) => {
+                acc = collect_idents_expr(m.scrutinee, acc);
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_idents_stmts(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// collect_bound_stmts gathers names bound inside a statement list: `var` /
+// `let`, `for` variables (incl. `(k, v)` pairs), and match arm bindings.
+function collect_bound_stmts(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (!contains_str(acc, v.name)) { acc = acc.push(v.name); } },
+            parser.StmtIf(f) => {
+                acc = collect_bound_stmts(f.then_body, acc);
+                acc = collect_bound_stmts(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_bound_stmts(w.body, acc); },
+            parser.StmtFor(f) => {
+                if (comma_index(f.var_name) >= 0) {
+                    var kn: string = before_comma(f.var_name);
+                    var vn: string = after_comma(f.var_name);
+                    if (!contains_str(acc, kn)) { acc = acc.push(kn); }
+                    if (!contains_str(acc, vn)) { acc = acc.push(vn); }
+                } else if (!contains_str(acc, f.var_name)) {
+                    acc = acc.push(f.var_name);
+                }
+                acc = collect_bound_stmts(f.body, acc);
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    match (m.arms[k].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
+                                acc = acc.push(pv.binding);
+                            }
+                        },
+                        _ => {},
+                    }
+                    acc = collect_bound_stmts(m.arms[k].body, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// lambda_captures returns the lambda's real captures (in first-seen
+// order): referenced idents that are locals/params of the enclosing
+// function (cx.all_locals) and not bound inside the lambda itself.
+function lambda_captures(lm: parser.ExprLambda, cx: Ctx): string[] {
+    var refs: string[] = collect_idents_stmts(lm.body, []);
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < lm.params.len()) { bound = bound.push(lm.params[pi].name); pi = pi + 1; }
+    bound = collect_bound_stmts(lm.body, bound);
+    var caps: string[] = [];
+    var ri: i32 = 0;
+    while (ri < refs.len()) {
+        var nm: string = refs[ri];
+        if (!contains_str(bound, nm) && !contains_str(caps, nm) && contains_str(cx.all_locals, nm)) {
+            caps = caps.push(nm);
+        }
+        ri = ri + 1;
+    }
+    return caps;
 }
 
 // tuple_kind_string builds the per-element kind tag for a tuple literal:
@@ -1175,6 +1327,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
         parser.ExprIdent(id) => {
             // None is the no-payload Option variant (tag 1).
             if (id.name == "None") { return enum_box(1, "(i32.const 0)", depth); }
+            // A captured name (inside a lambda body) loads from the closure
+            // env box at offset 4 + captureIndex*4.
+            var capi: i32 = index_of_str(cx.cap_names, id.name);
+            if (capi >= 0) {
+                return "(i32.load (i32.add (local.get $__env) (i32.const " + i32_to_string(4 + capi * 4) + ")))";
+            }
             return "(local.get $" + id.name + ")";
         },
         parser.ExprUnary(u) => {
@@ -1437,13 +1595,21 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // cell) and registered in the function table at `idx`. Calling
             // the value goes through call_indirect (see the ExprCall path).
             // Non-capturing: the $__env param is ignored.
+            var caps: string[] = lambda_captures(lm, cx);
             var idx: i32 = cx.lam_ctr[0];
             cx.lam_ctr[0] = idx + 1;
-            cx.lamdefs[0] = cx.lamdefs[0] + emit_lambda(lm, idx, cx);
+            cx.lamdefs[0] = cx.lamdefs[0] + emit_lambda(lm, idx, cx, caps);
             var ap: string = "$__lit" + i32_to_string(depth);
             var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const 4)))";
+            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + caps.len() * 4) + ")))";
             s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(idx) + "))";
+            // Capture values: evaluated in the enclosing scope, stored at
+            // box + 4 + i*4 (matching the lambda body's $__env loads).
+            var ic: i32 = 0;
+            while (ic < caps.len()) {
+                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(4 + ic * 4) + ")) " + emit_expr(parser.ExprIdent { name: caps[ic] }, cx, depth + 1) + ")";
+                ic = ic + 1;
+            }
             s = s + " (local.get " + ap + "))";
             return s;
         },
@@ -1548,6 +1714,16 @@ function contains_str(xs: string[], n: string): boolean {
         i = i + 1;
     }
     return false;
+}
+
+// index_of_str returns the position of `n` in `xs`, or -1 if absent.
+function index_of_str(xs: string[], n: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // collect_locals gathers every `var`/`let` name declared anywhere in a
@@ -3154,7 +3330,14 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[], cap_names: string[], cap_str: string[]): Ctx {
+    // Every var/param name in this function (for lambda capture analysis).
+    var all_locals: string[] = collect_locals(f.body, []);
+    var alp: i32 = 0;
+    while (alp < f.params.len()) {
+        if (!contains_str(all_locals, f.params[alp].name)) { all_locals = all_locals.push(f.params[alp].name); }
+        alp = alp + 1;
+    }
     // Closure-typed locals/params: `fn` params + vars bound to a lambda.
     var fn_names: string[] = collect_fn_var_names(f.body, []);
     var fp: i32 = 0;
@@ -3210,6 +3393,12 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         }
         i = i + 1;
     }
+    // String captures type as string locals inside the lambda body.
+    var csi: i32 = 0;
+    while (csi < cap_str.len()) {
+        if (!contains_str(locals, cap_str[csi])) { locals = locals.push(cap_str[csi]); }
+        csi = csi + 1;
+    }
     var cx: Ctx = Ctx {
         tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
         structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
@@ -3223,6 +3412,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
         tup_names: [], tup_kinds: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
+        all_locals: all_locals, cap_names: cap_names,
     };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
@@ -3335,7 +3525,7 @@ function returns_value(ret_type: string): boolean {
 // ignored by a non-capturing lambda) followed by the lambda's params.
 // It reuses emit_func via a synthesised FuncDecl, threading the shared
 // lambda cells so nested lambdas keep counting.
-function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx): string {
+function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): string {
     var ps: parser.ParamDecl[] = [];
     ps = ps.push(parser.ParamDecl { name: "__env", type_name: "i32" });
     var i: i32 = 0;
@@ -3350,7 +3540,14 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx): string {
         receiver_name: "", receiver_type: "",
         params: ps, ret_type: rt, body: lm.body,
     };
-    return emit_func(synth, cx.tab, cx.funcs, cx.str_arr_funcs, cx.structs, cx.sf_names, cx.sf_types, cx.of_names, cx.of_payloads, cx.mr_types, cx.mr_names, cx.mr_rets, cx.i64_funcs, cx.mod_funcs, cx.f64_funcs, cx.lam_ctr, cx.lamdefs);
+    // Captures that were strings in the enclosing scope stay string-typed.
+    var cap_str: string[] = [];
+    var ci: i32 = 0;
+    while (ci < caps.len()) {
+        if (contains_str(cx.locals, caps[ci])) { cap_str = cap_str.push(caps[ci]); }
+        ci = ci + 1;
+    }
+    return emit_func(synth, cx.tab, cx.funcs, cx.str_arr_funcs, cx.structs, cx.sf_names, cx.sf_types, cx.of_names, cx.of_payloads, cx.mr_types, cx.mr_names, cx.mr_rets, cx.i64_funcs, cx.mod_funcs, cx.f64_funcs, cx.lam_ctr, cx.lamdefs, caps, cap_str);
 }
 
 // emit_func emits one wasm function. Params become wasm params (locals
@@ -3358,7 +3555,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx): string {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[], i64_funcs: string[], mod_funcs: parser.FuncDecl[], f64_funcs: string[], lam_ctr: i32[], lamdefs: string[], cap_names: string[], cap_str: string[]): string {
     // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
     // receiver prepended as the first param; a free function as `$name`.
     var fname: string = f.name;
@@ -3423,7 +3620,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs, lam_ctr, lamdefs);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod_funcs, f64_funcs, lam_ctr, lamdefs, cap_names, cap_str);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
@@ -4189,7 +4386,7 @@ pub function emit_module(mod: parser.Module): string {
         var f: parser.FuncDecl = mod.funcs[j];
         // Emit free functions and receiver methods alike; emit_func
         // mangles a method's name to `$<RecvType>__<name>`.
-        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs);
+        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], []);
         if (f.receiver_type.len() == 0 && f.name == "main") { has_main = true; }
         j = j + 1;
     }
@@ -4204,7 +4401,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], []);
     }
 
     // Closure support: the accumulated lambda functions, the shared
