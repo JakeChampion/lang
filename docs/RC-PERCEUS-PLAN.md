@@ -2377,6 +2377,56 @@ Next Phase-6 steps (open):
   - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
     rc-neutral by design, reclaiming needs the global "inc enum payloads on
     construction + rebalance every drop" change. Risky.
+  - **Match-on-fresh-enum scrutinee** (`match (mk(i)) { Val(x) => x, _ => 0 }`)
+    — OPEN (found 2026-06-03). A fresh enum scrutinee consumed by a match
+    leaks its box (probe: 80000 → 800000 B). It's the match-lowering sibling
+    of the SHIPPED value-consuming-position family (`.len()` / `[scalar]` /
+    `.scalarfield` all reclaim a fresh container that yields a scalar). The
+    safe gate is the same: reclaim only when the match RESULT and every arm
+    BINDING are non-pointer (so no pointer payload is extracted / aliased);
+    the is_unique gate then protects an aliased scrutinee. The obstacle is the
+    DEC, not the gate: a SCALAR-payload enum box (`Box{Val(i32), Empty}`) is
+    not freed by `emitStructEnumSlotDrop` (dropFnNameFor declines a
+    non-droppable enum → flat `__fern_rc_dec`, no box free). Freeing it needs
+    the exit sweep's intricate `uniformEnumBoxSize` + is_unique-gated
+    `__fern_box_free` path (emitRcDecLocalsAtExitExcept), which is inline and
+    not readily reusable. Do it by FIRST extracting that enum-box-free into a
+    shared helper (which also lets `emitStructEnumSlotDrop` reclaim scalar
+    enum reinit/reassign boxes), then wiring the gated scrutinee dec into the
+    stmt-form Match + expr-form MatchExpr (+ pair-form) lowerings.
+  - **Scalar-literal / scalar-binary arg taint** (`base.split(",")`,
+    `int_to_string`'s `__alloc_u8(16)` / `__alloc_u8(16 - end)`) — OPEN, and
+    the naive fix is UNSAFE (investigated + reverted 2026-06-03). `rhsTainted`
+    has no `NumberLit` / `BoolLit` case and returns `!IsStringConcat` (==true)
+    for a scalar binary, so both fall through to the tainted default and TAINT
+    any owned result built from them: a fresh `u8[]` / `string[]` whose only
+    "borrowed" input is a literal / scalar-arithmetic arg reads as ineligible
+    and never reclaims. Untainting them (NumberLit/FloatLit/BoolLit → false,
+    scalar Binary → false) DOES bound `__alloc_u8(16)` / `(i).to_string()`,
+    BUT it OVER-RELEASES raw-pointer buffers: `random_bytes` does `buf as
+    usize` and fills the buffer through that raw pointer, whose liveness the
+    rc analysis can't see — the spurious scalar taint was ACCIDENTALLY
+    protecting such buffers (TestArm64RandomBytes returned 83 bytes, want 16).
+    `int_to_string`'s own `scratch` is likewise `as usize`-cast, so it's the
+    same pattern. A safe fix must FIRST add a `usize`-cast escape taint (a
+    local cast to a raw pointer is conservatively ineligible — its liveness
+    isn't rc-trackable), THEN untaint the scalars; that re-protects
+    random_bytes / the scratch while reclaiming the non-raw-pointer owned
+    buffers (split result, int_to_string's `buf`). Subtle — gate hard on the
+    full differential + self-host + arm64-native suite (the arbiter that
+    caught the over-release).
+
+This session (2026-06-03) ALSO SHIPPED the value-consuming-position +
+fresh-result reclamation family on top of statement-temps a/b/c: owned
+call-RESULT args (`take(mk(i))`), discarded owned call results (`mk(i);`),
+match-EXPRESSION owned results (`var s = match … { 0 => a+b, _ => b+a }`,
+rhsTainted MatchExpr case), index-of-fresh (`mk(i)[scalar]`) and field-of-
+fresh (`mk(i).scalarfield` / tuple), all sharing `freshOwnedRcTempType` /
+`ownedCallResultType` + the is_unique-gated `emitOwnedSlotDrop` + the
+non-pointer-extract gate. Plus array-of-enum (`E[]`/`Option[T][]`/`E[][]`)
+and an arm64 large-frame codegen fix (frame offsets / stack alloc past the
+12-bit imm → movz/movk + register-operand add/sub), a latent self-host
+blocker.
 
 Statement-temporary reclamation is SHIPPED (all three stages + the
 nested-concat-intermediate follow-up — see the bullets above; design note
