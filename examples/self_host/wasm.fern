@@ -208,6 +208,19 @@ function lookup_pair(keys: string[], vals: string[], key: string): string {
     return "";
 }
 
+// base_type_name strips a generic argument list from a type spelling:
+// `Box[i32]` / `Box[T]` → `Box`. Generics are erased, so the base name is
+// what matches the struct table. (A plain `[T]` array type has no base
+// ident, so this returns "" for it — harmless, arrays aren't structs.)
+function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }
+        i = i + 1;
+    }
+    return t;
+}
+
 // is_struct_type is true when `t` names a declared struct.
 function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
     var i: i32 = 0;
@@ -1553,7 +1566,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 // later `match (v)` types the Some/Ok binding.
                 var optpay: string = parse_option_payload(v.type_name);
                 if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
-                var styp: string = v.type_name;
+                var styp: string = base_type_name(v.type_name);
                 if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
                 if (optpay.len() > 0) {
                     cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
@@ -1633,11 +1646,13 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (pop.len() > 0) {
             ol_names = ol_names.push(f.params[i].name);
             ol_payloads = ol_payloads.push(pop);
-        } else if (is_struct_type(structs, f.params[i].type_name)) {
-            sv_names = sv_names.push(f.params[i].name);
-            sv_types = sv_types.push(f.params[i].type_name);
         } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.push(f.params[i].name);
+        } else if (is_struct_type(structs, base_type_name(f.params[i].type_name))) {
+            // Generic instantiation `Box[i32]` / param `Box[T]` strips to
+            // the base struct name `Box`.
+            sv_names = sv_names.push(f.params[i].name);
+            sv_types = sv_types.push(base_type_name(f.params[i].type_name));
         } else if (f.params[i].type_name == "string") {
             locals = locals.push(f.params[i].name);
         }

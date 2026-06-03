@@ -286,6 +286,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"method-vs-free", "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; return area() + k.area(); }", 125, ""},
 		{"method-chained-struct", "struct Counter { n: i32 } function (c: Counter) inc(): Counter { return Counter { n: c.n + 1 }; } function main(): i32 { var c = Counter { n: 40 }; return c.inc().inc().n; }", 42, ""},
 		{"method-option-return", "struct Reg { v: i32 } function (r: Reg) get(): Option[i32] { if (r.v > 0) { return Some(r.v); } return None; } function main(): i32 { var r = Reg { v: 42 }; match (r.get()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
+		// Generics by erasure: the parser discards the type-parameter
+		// lists, so the backend compiles one body per generic decl.
+		{"generic-id-i32", "function id[T](x: T): T { return x; } function main(): i32 { return id(42); }", 42, ""},
+		{"generic-id-mixed", "function id[T](x: T): T { return x; } function main(): i32 { var n: i32 = id(40); var s: string = id(\"hi\"); return n + s.len(); }", 42, ""},
+		{"generic-two-params", "function fst[A, B](a: A, b: B): A { return a; } function main(): i32 { return fst(42, 99); }", 42, ""},
+		{"generic-struct", "struct Box[T] { val: T } function unbox[T](b: Box[T]): T { return b.val; } function main(): i32 { var b: Box[i32] = Box { val: 42 }; return unbox(b); }", 42, ""},
+		{"generic-pair-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { var p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42, ""},
+		{"generic-fn-string", "function id[T](x: T): T { return x; } function main(): i32 { write(id(\"hello\")); return 0; }", 0, "hello"},
 	}
 
 	for _, tc := range cases {
