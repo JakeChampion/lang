@@ -1490,6 +1490,15 @@ type FuncDecl struct {
 	// sites to `__method_<Type>_<Method>(expr, args)` so codegen
 	// never has to know about methods.
 	Receiver *Param
+	// MethodRecv / MethodSimpleName are stamped by the checker's
+	// receiver-hoist (which consumes Receiver) so a later Check pass —
+	// the monomorph re-check rebuilds Info from scratch, after Receiver
+	// is already gone — can re-register the method in Info.Methods
+	// without parsing the mangled name. MethodRecv is the canonical
+	// receiver type name (e.g. "shapes__Square", "i32"); both are
+	// empty for non-methods. See docs/TRAITS.md.
+	MethodRecv       string
+	MethodSimpleName string
 	// IsLocal is true for functions declared as a statement inside
 	// another function's body. Closure conversion at codegen time
 	// hoists these to top-level entries and rewrites captured-var

@@ -1,11 +1,13 @@
 # Traits: static ad-hoc polymorphism for Fern
 
-Status: **Phases 1 + 2 landed.** This document is the design of record;
+Status: **Phases 1–3 landed.** This document is the design of record;
 it describes the whole feature and is implemented in phases (see
 [Phasing](#phasing)). Phase 1 (trait + impl declarations, conformance
-checking, coherence) and Phase 2 (bounded generics `[T: Trait]` with
-deferred static dispatch) have shipped; later phases are designed here
-so the early work doesn't paint us into a corner.
+checking, coherence), Phase 2 (bounded generics `[T: Trait]` with
+deferred static dispatch), and Phase 3 (cross-module trait coherence —
+qualified trait refs + modload name-rewriting) have shipped; later
+phases are designed here so the early work doesn't paint us into a
+corner.
 
 ### Empty impls adopt pre-existing methods
 
@@ -263,9 +265,10 @@ runtime.
   same `rewriteStructName` path so cross-module references line up. (The
   impl *methods* are already ordinary receiver methods in `prog.Funcs`,
   so their mangling is handled.)
-- Phase 1 fully supports single-file and entry-module programs;
-  cross-module trait coherence is finished in Phase 3 once the
-  name-rewriting above is proven by tests.
+- Also rewrite each `FuncDecl.Bounds` trait name and the `ImplDecl.Trait`
+  via `rewriteTraitNameAt` (own-module → `selfPrefix`, qualified
+  `mod.Trait` → the imported module's prefix). Done in Phase 3; proven by
+  multi-file e2e tests (`internal/e2e/traits_test.go`).
 
 ### 6.7 `derive` (Phase 4)
 `@derive(Display, Eq)` on a struct/enum synthesises field-wise impls. The
@@ -287,10 +290,18 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    rebuilds `Info` from scratch — re-resolves already-hoisted methods.)
    The full `assert_eq_*` collapse waits on Phase 3, because the helpers
    live in `std/test` and need cross-module trait references.
-3. **Phase 3:** cross-module trait coherence (qualified trait refs +
-   modload name-rewriting) + multi-file tests. Unblocks collapsing the
-   `std/test` `assert_eq_*` / `assert_neq_*` families onto one generic
-   helper per family.
+3. **Phase 3 (shipped):** cross-module trait coherence. Trait names are
+   mangled like struct names; `impl mod.Trait for …`, `[T: mod.Trait]`
+   bounds, and `TraitDecl.Name` are rewritten through the same
+   qualified-or-own logic so they line up in the combined program. The
+   orphan rule + bound checks work across modules, and diagnostics
+   demangle `mod__Name` back to `mod.Name`. (The checker's method
+   registration carries a stamped receiver identity — `MethodRecv` /
+   `MethodSimpleName` — so the monomorph re-check re-resolves
+   cross-module mangled methods whose names the string can't be split
+   on.) This unblocks collapsing the `std/test` `assert_eq_*` /
+   `assert_neq_*` families onto one generic helper per family — done as
+   its own focused PR since it changes `std/test`'s public surface.
 4. **Phase 4:** `@derive`. Collapse the rest of the `std/test` families.
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.

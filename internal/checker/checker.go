@@ -1727,31 +1727,32 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				continue
 			}
 			mangled := "__method_" + typeName + "_" + fn.Name
+			// Stamp the method identity so a later Check pass can
+			// re-register it (Receiver is about to be cleared).
+			simpleName := fn.Name
 			// Rewrite the FuncDecl so codegen sees a regular
 			// top-level function with the receiver as its first
 			// parameter.
 			fn.Name = mangled
+			fn.MethodRecv = typeName
+			fn.MethodSimpleName = simpleName
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.info.Methods[methodKey] = mangled
 			c.info.MethodSources[mangled] = fn.SourceModule
-		} else if strings.HasPrefix(fn.Name, "__method_") &&
-			!strings.Contains(fn.Name[len("__method_"):], "__") {
+		} else if fn.MethodRecv != "" {
 			// Already-hoisted method whose Receiver was consumed by a
 			// previous Check pass — this is what the monomorph
 			// re-check sees (Check rebuilds Info from scratch, but the
-			// FuncDecl no longer carries a Receiver). Re-register it so
-			// method dispatch resolves after monomorphisation. The
-			// `__` guard skips monomorphised clones
-			// (`__method_Foo__i32_bar`). Idempotent: only fills a
-			// missing key. See docs/TRAITS.md §4.
-			rest := fn.Name[len("__method_"):]
-			if idx := strings.IndexByte(rest, '_'); idx > 0 {
-				key := rest[:idx] + "." + rest[idx+1:]
-				if _, exists := c.info.Methods[key]; !exists {
-					c.info.Methods[key] = fn.Name
-					c.info.MethodSources[fn.Name] = fn.SourceModule
-				}
+			// FuncDecl no longer carries a Receiver). Re-register it
+			// from the stamped identity (robust against mangled type
+			// names like `shapes__Square` that the name alone can't be
+			// split on). Idempotent: only fills a missing key.
+			// See docs/TRAITS.md §4.
+			key := fn.MethodRecv + "." + fn.MethodSimpleName
+			if _, exists := c.info.Methods[key]; !exists {
+				c.info.Methods[key] = fn.Name
+				c.info.MethodSources[fn.Name] = fn.SourceModule
 			}
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
@@ -1786,7 +1787,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 		td, ok := c.info.Traits[impl.Trait]
 		if !ok {
-			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", impl.Trait)
+			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
 			continue
 		}
 		// Orphan rule: legal only if the trait or the type is declared
@@ -1804,7 +1805,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			if !traitLocal && !typeLocal {
 				c.errfCode(impl.P, "E021",
 					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
-					impl.Trait, typeName)
+					demangle(impl.Trait), demangle(typeName))
 				continue
 			}
 		}
@@ -1813,7 +1814,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			c.info.Impls[impl.Trait] = map[string]bool{}
 		}
 		if c.info.Impls[impl.Trait][typeName] {
-			c.errfCode(impl.P, "E006", "duplicate impl: %s is already implemented for %s", impl.Trait, typeName)
+			c.errfCode(impl.P, "E006", "duplicate impl: %s is already implemented for %s", demangle(impl.Trait), demangle(typeName))
 			continue
 		}
 		// The impl must provide exactly the trait's methods — no more.
@@ -1823,7 +1824,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 		for _, mn := range impl.MethodNames {
 			if !traitMethods[mn] {
-				c.errfCode(impl.P, "E021", "method %q is not a member of trait %s", mn, impl.Trait)
+				c.errfCode(impl.P, "E021", "method %q is not a member of trait %s", mn, demangle(impl.Trait))
 			}
 		}
 		// Every trait method must be present with a matching signature.
@@ -1832,7 +1833,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			mangled := "__method_" + typeName + "_" + m.Name
 			sig, ok := c.info.FuncSigs[mangled]
 			if !ok {
-				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", typeName, impl.Trait, m.Name)
+				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
 				conforms = false
 				continue
 			}
@@ -1847,7 +1848,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			if !sigMatches(sig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
 					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
-					typeName, m.Name, impl.Trait,
+					demangle(typeName), m.Name, demangle(impl.Trait),
 					(&ast.FuncType{Params: want, Result: wantRet}).String(), sig.String())
 				conforms = false
 			}
@@ -1865,7 +1866,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		for tp, traits := range fn.Bounds {
 			for _, traitName := range traits {
 				if _, ok := c.info.Traits[traitName]; !ok {
-					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", traitName, tp)
+					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", demangle(traitName), tp)
 				}
 			}
 		}
@@ -1981,6 +1982,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 		}
 	}
 	return ast.Equal(sig.Result, wantRet)
+}
+
+// demangle turns the first module-mangling `__` in a name back into a
+// `.` for user-facing diagnostics, so a cross-module trait/type/func
+// reads as `mod.Name` (how the user wrote it) rather than the internal
+// `mod__Name`. A no-op for single-file / same-module names. See
+// docs/TRAITS.md (Phase 3).
+func demangle(s string) string {
+	return strings.Replace(s, "__", ".", 1)
 }
 
 // resolveTraitMethodForParam looks up method `field` among the traits
@@ -5038,7 +5048,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if !ok || !c.info.Impls[traitName][tn] {
 							c.errfCode(n.P, "E021",
 								"type argument %s = %s does not implement trait %s required by %s",
-								tp, args[i], traitName, genericFn.Name)
+								tp, demangle(args[i].String()), demangle(traitName), demangle(genericFn.Name))
 						}
 					}
 				}

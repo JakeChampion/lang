@@ -786,6 +786,10 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	for _, cd := range m.prog.Consts {
 		ownConsts[cd.Name] = true
 	}
+	ownTraits := map[string]bool{}
+	for _, td := range m.prog.Traits {
+		ownTraits[td.Name] = true
+	}
 
 	r := &rewriter{
 		modPath:       m.path,
@@ -794,6 +798,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		ownStructs:    ownStructs,
 		ownEnums:      ownEnums,
 		ownConsts:     ownConsts,
+		ownTraits:     ownTraits,
 		imports:       m.imports,
 		flatNamespace: flatNamespace,
 		skipPaths:     skipPaths,
@@ -859,6 +864,34 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		r.rewriteType(&cd.Type)
 		r.rewriteExpr(&cd.Value)
 	}
+	// Traits / impls / type-parameter bounds. Trait names are mangled
+	// like struct names (own-module names get selfPrefix), and the
+	// trait references in impls + bounds are rewritten through the same
+	// qualified-or-own logic so a `[T: mod.Trait]` bound or an
+	// `impl mod.Trait for …` lines up with the mangled TraitDecl.Name.
+	// The impl's `for` type and the impl methods (ordinary receiver
+	// methods in prog.Funcs) are already rewritten above. See
+	// docs/TRAITS.md (Phase 3).
+	for _, td := range m.prog.Traits {
+		td.Name = selfPrefix + td.Name
+		for i := range td.Methods {
+			for j := range td.Methods[i].Params {
+				r.rewriteType(&td.Methods[i].Params[j].Type)
+			}
+			r.rewriteType(&td.Methods[i].Result)
+		}
+	}
+	for _, impl := range m.prog.Impls {
+		r.rewriteType(&impl.Type)
+		impl.Trait = r.rewriteTraitNameAt(impl.Trait, impl.TraitPos)
+	}
+	for _, fn := range m.prog.Funcs {
+		for tp, traits := range fn.Bounds {
+			for k, tn := range traits {
+				fn.Bounds[tp][k] = r.rewriteTraitNameAt(tn, fn.P)
+			}
+		}
+	}
 	return r.errs
 }
 
@@ -870,6 +903,7 @@ type rewriter struct {
 	ownStructs map[string]bool    // names of structs declared in this module (pre-mangle)
 	ownEnums   map[string]bool    // names of enums + unions declared in this module (pre-mangle)
 	ownConsts  map[string]bool    // names of consts declared in this module (pre-mangle)
+	ownTraits  map[string]bool    // names of traits declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
 	errs       []error            // visibility / unresolved-name errors collected during the walk
 	// localVars is the set of identifier names bound as local
@@ -1372,6 +1406,31 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		return name
 	}
 	if r.ownStructs[name] || r.ownEnums[name] {
+		return r.selfPrefix + name
+	}
+	return name
+}
+
+// rewriteTraitNameAt mangles a trait reference the same way
+// rewriteStructNameAt mangles a struct reference: a qualified
+// `mod.Trait` resolves through the importing module's table to the
+// imported module's prefix; a bare own-module trait gets selfPrefix.
+// An unrecognised bare name (e.g. a built-in or as-yet-unresolved
+// trait) is left untouched for the checker to diagnose. See
+// docs/TRAITS.md (Phase 3).
+func (r *rewriter) rewriteTraitNameAt(name string, pos ast.Position) string {
+	if dot := indexByte(name, '.'); dot >= 0 {
+		modName, traitName := name[:dot], name[dot+1:]
+		if mod, prefix, ok := r.importedModule(modName); ok {
+			// Traits register into the same publicStructs visibility
+			// set as struct/enum names (see the `pub trait` handling
+			// in loadRecursive), so reuse that gate.
+			r.checkPublicStruct(mod, traitName, pos)
+			return prefix + traitName
+		}
+		return name
+	}
+	if r.ownTraits[name] {
 		return r.selfPrefix + name
 	}
 	return name
