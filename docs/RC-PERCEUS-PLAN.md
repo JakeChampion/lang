@@ -2293,11 +2293,14 @@ exercises the rc==1 branch + the differential gate) stays green.
   `b.exprType` reads the bare type var `T` as non-pointer) could RETURN the
   arg, and dec'ing an arg the caller then reads is a UAF (diff-oracle seeds
   1392/1596/1836 segfaulted on the first, too-loose "non-pointer" cut).
-- **Enum reuse-path payloads** (`tryEnumReuseOverwrite`): rc-neutral by
-  design — construction doesn't inc payloads, so an `is_unique`-gated free
-  would UAF a payload shared with a live local (rc-undercounted).
-  Reclaiming needs a global enum-payload inc-on-construction + drop
-  rebalance — risky; deferred.
+- **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — SHIPPED. The
+  reuse branch now frees the OLD payload (step 3b) for uniform-droppable
+  non-string enums, gated by the `freeEligible[e]` the reuse path already
+  requires (the taint analysis guarantees no live alias). No global
+  rc-counting was needed — the normal overwrite-free was already sound, and
+  the reuse path just had to stop bypassing it. String / non-uniform-
+  droppable payloads decline reuse and free via the normal path. See the
+  "Enum reuse-path payloads — SHIPPED" entry under "Next Phase-6 steps".
 - **Array-of-string[] (`string[][]`) — SHIPPED (2026-06-02).** The
   nested-array slice handled only primitive inner arrays; `string[][]`
   kept the flat `__fern_drop_arr_ptr`, leaking each inner `string[]`
@@ -2429,22 +2432,40 @@ Next Phase-6 steps (open):
     on all three backends. Retiring it would push that hot path onto
     rc-string concat and reintroduce the exact overhead strbuf exists to
     avoid. Keep it.
-  - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — OPEN (the
-    genuine remaining replaced-value leak; the struct analog 5f is SHIPPED).
-    `e = Wrap([..])` self-overwrite reuses the box but never frees the OLD
-    payload, so it leaks unboundedly (probe: wasm 1616 → 160016 B across
-    100x N; natives bounded only via the freelist-arena insensitivity, as
-    with closure[]). rc-neutral by design: enum construction does NOT count
-    payloads (move/taint semantics), so an is_unique-gated freeing drop of
-    the old payload has no rc protection against a live uncounted alias —
-    the UAF class 5f's struct path sidesteps because StructLit construction
-    inc's its fields. The clean fix is to make enum payloads rc-counted like
-    struct fields: inc on every construction (emitEnumNew + the reuse path),
-    free on every drop (the uniform-enum payload drop already frees at the
-    exit sweep / match-scrutinee — extend to the reuse-overwrite path). Wide
-    but well-defined; stage it carefully (every construct + drop site) and
-    gate on the differential + over-release corpus, since a missed site is a
-    UAF when free is on.
+  - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — SHIPPED ON ALL
+    THREE BACKENDS. `e = Wrap([..])` self-overwrite reuses the box in place
+    but used to keep the OLD payload, leaking it every iteration (probe: wasm
+    1616 → 160016 B across 100x N; natives bounded only via the freelist-arena
+    insensitivity, as with closure[]). The fix frees the OLD payload on the
+    reuse branch (step 3b) at the uniform-droppable offsets via
+    `emitFieldDropOnStack`, mirroring `tryStructReuseOverwrite` step 4.
+      + **Why NO global rc-counting was needed (the earlier plan note was an
+        over-estimate).** The investigation found the NORMAL enum overwrite
+        (`emitStructEnumSlotDrop` → `__drop_enum_<E>`) ALREADY frees payloads
+        soundly + bounded — a non-uniform enum self-overwrite is flat across
+        N. The soundness doesn't come from rc-counting; it comes from the
+        TAINT analysis: `rhsTainted` propagates through variant-constructor
+        args, so an enum whose payload aliases a live-read-after local is
+        tainted → NOT `freeEligible` → flat dec (no free, safe leak). Only
+        fresh / non-aliased payloads make the enum `freeEligible`. The reuse
+        path already requires `freeEligible[e]` (a whole-function property),
+        so every value `e` holds there is alias-free — making the old-payload
+        free sound WITHOUT any inc. The leak was purely that the reuse path
+        BYPASSED the normal overwrite's free; step 3b restores it.
+      + **Scope.** Only UNIFORM-droppable, non-string payloads free in place
+        (covers `Wrap(i32[])` / cross-variant `Bag { Keep(i32[]), Swap(i32[]) }`
+        — the shapes the reuse golden tests assert). String payloads (need the
+        two-word `__fern_str_dec`, not `emitFieldDropOnStack`) and
+        non-uniform-droppable enums DECLINE reuse and fall to the normal
+        overwrite path, which frees soundly + bounded at the cost of a fresh
+        box alloc. Scalar-only enums (which don't reuse anyway —
+        `TestEnumReuseSkipsLiteralScalar`) have nothing to free.
+      + Coverage: `internal/e2e/rc_heap_bump_enum_reuse_test.go` — the bump
+        probe (1616→160016 ⇒ flat 80 B), cross-variant reuse value-correct,
+        and an aliased-payload + forced-reuse adversarial, each
+        `__rc_underflow_count() == 0` on x86_64 / arm64 / wasm. The reuse
+        golden tests + self-host (heavy `Value`-union user) + the full
+        differential gate stay green.
   - **Match-on-fresh-enum scrutinee** (`match (mk(i)) { A(x) => x, … }`) —
     **SHIPPED ON ALL THREE BACKENDS (2026-06-03).** A fresh enum scrutinee
     consumed by a match leaked its box every iteration; the stmt-form Match +
