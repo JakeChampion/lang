@@ -330,6 +330,33 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"writefile-roundtrip", "function main(): i32 { match (write_file(\"wt.txt\", \"roundtrip!\")) { Some(e) => { return 1; }, None => {} } match (read_file(\"wt.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 2; } } return 3; }", 0, "roundtrip!"},
 		{"writefile-ok-none", "function main(): i32 { match (write_file(\"wt2.txt\", \"x\")) { Some(e) => { return 1; }, None => { return 0; } } return 2; }", 0, ""},
 		{"writefile-built-content", "function main(): i32 { var c = \"a\" + \"b\" + \"c\"; var e = write_file(\"wt3.txt\", c); match (read_file(\"wt3.txt\")) { Ok(s) => { write(s); return 0; }, Err(x) => { return 1; } } return 2; }", 0, "abc"},
+
+		// i64 value path. Literals / arithmetic that exceed the i32 range
+		// must round-trip through 64-bit locals + the i64 formatter; bare
+		// literals in i64 sinks (var/return/arg) coerce to i64.const.
+		{"i64-literal-print", "function main(): i32 { var x: i64 = 5000000000; print_int(x); return 0; }", 0, "5000000000"},
+		{"i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 2000000000; print_int(a + b); return 0; }", 0, "5000000000"},
+		{"i64-sub", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 1000000000; print_int(a - b); return 0; }", 0, "4000000000"},
+		{"i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; print_int(a * b); return 0; }", 0, "10000000000"},
+		{"i64-div", "function main(): i32 { var a: i64 = 10000000000; print_int(a / 7); return 0; }", 0, "1428571428"},
+		{"i64-rem", "function main(): i32 { var a: i64 = 10000000000; print_int(a % 7); return 0; }", 0, "4"},
+		{"i64-negative", "function main(): i32 { var a: i64 = 0; var b: i64 = 5000000000; print_int(a - b); return 0; }", 0, "-5000000000"},
+		{"i64-div-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_int(a / z); return 0; }", 0, "0"},
+		{"i64-rem-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_int(a % z); return 0; }", 0, "9000000000"},
+		{"i64-func-return", "function big(): i64 { return 9000000000; } function main(): i32 { print_int(big()); return 0; }", 0, "9000000000"},
+		{"i64-param", "function dbl(x: i64): i64 { return x * 2; } function main(): i32 { print_int(dbl(3000000000)); return 0; }", 0, "6000000000"},
+		{"i64-param-var", "function add1(x: i64): i64 { return x + 1; } function main(): i32 { var t: i64 = 9999999999; print_int(add1(t)); return 0; }", 0, "10000000000"},
+		{"i64-reassign", "function main(): i32 { var a: i64 = 1000000000; a = a * 5; print_int(a); return 0; }", 0, "5000000000"},
+		{"i64-compare-gt", "function main(): i32 { var a: i64 = 5000000000; if (a > 4000000000) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"i64-compare-eq", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 5000000000; if (a == b) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"i64-loop-accumulate", "function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 5) { sum = sum + 1000000000; i = i + 1; } print_int(sum); return 0; }", 0, "5000000000"},
+
+		// Clock builtins are non-deterministic; assert structural facts
+		// only. monotonic_ns is non-decreasing (b - a >= 0); now_unix_ms is
+		// well past the year-2001 epoch (> 1e12 ms).
+		{"monotonic-non-decreasing", "function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b - a >= 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"now-unix-ms-recent", "function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1000000000000) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"now-ns-positive", "function main(): i32 { var t: i64 = now_ns(); if (t > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 	}
 
 	for _, tc := range cases {

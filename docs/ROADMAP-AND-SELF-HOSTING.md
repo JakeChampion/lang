@@ -268,14 +268,24 @@ language**:
   Some/Ok payloads (string/array/struct);
 - **struct-union `match`** (`type E = A | B`) dispatching on the type id;
 - **generics by erasure** (the parser drops the `[T]` lists; the backend
-  compiles one body per decl).
+  compiles one body per decl);
+- the **wasi runtime builtins**: `env` (environ_get), `random_bytes`
+  (random_get), `args` (args_get), `read_file` / `write_file`
+  (path_open + fd_read/fd_write), and the **clocks** `now_unix_ms` /
+  `monotonic_ns` / `now_ns` (clock_time_get);
+- a real **i64 value path** — i64-typed locals / params / returns, i64
+  arithmetic (`+ - * /` `%` via guarded 64-bit div/rem) and comparison,
+  literal coercion into i64 sinks, and an i64 decimal formatter — so the
+  64-bit clock timestamps (which exceed the i32 range) round-trip and
+  print correctly.
 
-Gated by 209 differential cases as of this writing. What remains for the
+Gated by 248 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
-broader wasi runtime builtins (clock / file / env / random), and binary
-wasm encoding (today it emits WAT text, runnable directly by `wasmtime`).
+and binary wasm encoding (today it emits WAT text, runnable directly by
+`wasmtime`). The core wasi builtins (clock / file / env / random) are now
+covered.
 
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
