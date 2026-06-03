@@ -1134,13 +1134,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpFEq, ir.OpFNe, ir.OpFLt, ir.OpFLe, ir.OpFGt, ir.OpFGe:
 		// `ucomi[ss|sd]` sets ZF / CF / PF per IEEE 754
-		// ordered semantics; setcc + movzx funnel the
-		// result into the canonical i32 result lane. NaN
-		// comparisons all set PF=1 — for `eq` we'd want
-		// to also check `np` (not parity) but the lang
-		// doesn't yet specify NaN semantics, so we match
-		// arm64's "ordered comparison without NaN-aware
-		// behaviour" choice.
+		// semantics: an unordered result (either operand
+		// NaN) sets ZF=CF=PF=1. setcc on ZF/CF alone would
+		// then misreport NaN comparisons (e.g. `sete` is true
+		// for NaN==NaN, `setb` true for NaN<x), so we fold in
+		// the parity flag to get IEEE-correct unordered
+		// behaviour matching interp / arm64 / wasm: eq/lt/le
+		// require "not unordered" (PF=0); ne is true when
+		// unordered (PF=1). gt/ge use seta/setae, which read
+		// CF and are already false on unordered — no fixup.
 		g.fbinPop(op.Width)
 		if op.Width == 64 {
 			g.emit("ucomisd xmm1, xmm0")
@@ -1150,12 +1152,20 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		switch op.Kind {
 		case ir.OpFEq:
 			g.emit("sete al")
+			g.emit("setnp cl")
+			g.emit("and al, cl")
 		case ir.OpFNe:
 			g.emit("setne al")
+			g.emit("setp cl")
+			g.emit("or al, cl")
 		case ir.OpFLt:
 			g.emit("setb al")
+			g.emit("setnp cl")
+			g.emit("and al, cl")
 		case ir.OpFLe:
 			g.emit("setbe al")
+			g.emit("setnp cl")
+			g.emit("and al, cl")
 		case ir.OpFGt:
 			g.emit("seta al")
 		case ir.OpFGe:

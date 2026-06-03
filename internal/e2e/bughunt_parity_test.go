@@ -109,6 +109,44 @@ func TestBugHunt_FloatBinaryToIntCast(t *testing.T) {
 	}
 }
 
+// TestBugHunt_FloatNaNComparisonParity guards IEEE-754 unordered
+// comparison behaviour. On x86-64, `ucomisd` sets ZF=CF=PF=1 for an
+// unordered (NaN) operand; the backend read ZF/CF via plain
+// sete/setb/setbe and ignored the parity flag, so NaN==NaN came out
+// true, NaN!=NaN false, and NaN<x / NaN<=x true — diverging from
+// interp / arm64 / wasm, which all treat any ordered comparison
+// against NaN as false (and != as true). It surfaced as
+// `(0.0/0.0).to_string()` printing "-0" on x86-64 (the NaN check in
+// std/float is `x != x`, which the buggy comparison defeated) while
+// every other backend printed "NaN". Each case returns 7 when the
+// NaN comparison is IEEE-correct and 1 otherwise.
+func TestBugHunt_FloatNaNComparisonParity(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		// NaN != NaN is the one comparison that must be true.
+		{"ne_true", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n != n) { return 7; } return 1; }`},
+		// NaN == NaN must be false.
+		{"eq_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n == n) { return 1; } return 7; }`},
+		// NaN < x and NaN <= NaN must be false (the bug made them true).
+		{"lt_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n < 1.0) { return 1; } return 7; }`},
+		{"le_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n <= n) { return 1; } return 7; }`},
+		// NaN > x and NaN >= x are already false on every backend.
+		{"gt_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n > 1.0) { return 1; } return 7; }`},
+		{"ge_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n >= 1.0) { return 1; } return 7; }`},
+		// f32 NaN behaves the same (ucomiss path).
+		{"f32_ne_true", `function main(): i32 { var z: f32 = 0.0; var n: f32 = z / z; if (n != n) { return 7; } return 1; }`},
+		{"f32_eq_false", `function main(): i32 { var z: f32 = 0.0; var n: f32 = z / z; if (n == n) { return 1; } return 7; }`},
+		// Ordered comparisons must still work (no regression).
+		{"ordered_lt", `function main(): i32 { var a: f64 = 1.5; var b: f64 = 2.5; if (a < b) { return 7; } return 1; }`},
+		{"ordered_eq", `function main(): i32 { var a: f64 = 2.5; if (a == a) { return 7; } return 1; }`},
+	}
+	for _, c := range cases {
+		assertBackendsAgreeWithInterp(t, c.name, c.src)
+	}
+}
+
 // TestBugHunt_FloatToIntSaturation pins the saturating float→int
 // contract across every backend: NaN → 0, +overflow → INT_MAX,
 // −overflow → INT_MIN (unsigned: < 0 / NaN → 0, overflow → the
