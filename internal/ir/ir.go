@@ -10470,6 +10470,49 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	}
 	const rcHeaderBytes = 8
 
+	// 5f-enum (replaced-payload free): the in-place reuse keeps the OLD box,
+	// so the normal overwrite-dec that would free its payload never runs —
+	// `c = Wrap([..])` in a loop leaked the prior payload every iteration.
+	// Free the OLD payload on the reuse branch before it's overwritten.
+	//
+	// Sound for the same reason the normal enum overwrite-free is: the reuse
+	// path already requires freeEligible[t], a whole-function property that
+	// (via rhsTainted propagation through variant-constructor args) is false
+	// whenever any value `c` holds has a payload aliasing a live local. So an
+	// `c` that reaches here only ever holds payloads with no live alias —
+	// freeing the old one reclaims the genuine last reference (each per-type
+	// drop is_unique-gates again, so a shared buffer would only dec).
+	//
+	// We free via emitFieldDropOnStack (the freeing drop) at the uniform
+	// droppable offsets. Enums that aren't uniform-droppable, or carry a
+	// string payload (which needs the two-word str_dec rather than
+	// emitFieldDropOnStack), DECLINE reuse and fall to the normal overwrite
+	// path — which frees the old payload soundly (and bounded — verified) at
+	// the cost of a fresh box alloc. Scalar-only enums have nothing to free.
+	var reuseDropLoads []enumDropLoad
+	if loads, uok := uniformEnumDropLoads(ed, b.ptrW); uok {
+		for _, ld := range loads {
+			if _, isStr := ld.typ.(ast.StringType); isStr {
+				return false, nil // string payload — let the normal path free it
+			}
+		}
+		reuseDropLoads = loads
+	} else {
+		// Not uniform-droppable: decline if any payload would leak (rc-tracked
+		// or string), so the normal overwrite path frees it; scalar-only
+		// enums fall through and reuse with nothing to free.
+		for _, v := range ed.Variants {
+			for _, pt := range v.Payloads {
+				if _, isStr := pt.(ast.StringType); isStr {
+					return false, nil
+				}
+				if arrElemIsRcTracked(pt) {
+					return false, nil
+				}
+			}
+		}
+	}
+
 	// Resolve the constructed variant's payload types (same precedence
 	// as emitEnumNew: checker-substituted concrete types first, else the
 	// declared payload list).
@@ -10544,6 +10587,28 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
 	b.emit(Op{Kind: OpStoreLocal, I32: boxSlot})
 
+	// 3b. REUSE branch only: free the box's OLD payload(s) before the new
+	//     ones overwrite them. On a fresh box (reused==0) those slots are
+	//     uninitialised, so this is gated on the is_unique result. The
+	//     offsets are the uniform droppable layout (every payload-carrying
+	//     variant shares it — the gate above declined otherwise), read
+	//     relative to the data pointer (base + rcHeaderBytes). Each
+	//     emitFieldDropOnStack is_unique-gates internally, so a shared
+	//     buffer only dec's; freeEligible[t] (required above) means no live
+	//     alias anyway. Mirrors tryStructReuseOverwrite step 4.
+	if len(reuseDropLoads) > 0 {
+		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, ld := range reuseDropLoads {
+			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + ld.off})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+			b.emitFieldDropOnStack(ld.typ)
+		}
+		b.emit(Op{Kind: OpEnd})
+	}
+
 	// 4. rc = 1 at [base+0] (already 1 on the reuse path; set fresh
 	//    otherwise).
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -10558,8 +10623,9 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	b.emit(Op{Kind: OpStore})
 
 	// 6. Store each payload temp at [base+hdr+offset]. The old payloads
-	//    are overwritten WITHOUT release — the baseline flat-dec leaks
-	//    them too, so this stays rc-neutral (no over-release).
+	//    were already freed on the reuse branch (step 3b) when droppable,
+	//    so this overwrite doesn't strand them; a scalar-only enum had
+	//    nothing to free and stays rc-neutral.
 	for i, tp := range temps {
 		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
