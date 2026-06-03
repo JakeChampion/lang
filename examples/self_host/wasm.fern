@@ -93,6 +93,29 @@ struct Ctx {
     of_payloads: string[],
     ol_names: string[],
     ol_payloads: string[],
+    mr_types: string[],
+    mr_names: string[],
+    mr_rets: string[],
+}
+
+// has_method / method_ret look a receiver method (receiver-type T, name n)
+// up in the registry (parallel mr_types / mr_names / mr_rets).
+function has_method(cx: Ctx, t: string, n: string): boolean {
+    var i: i32 = 0;
+    while (i < cx.mr_types.len()) {
+        if (cx.mr_types[i] == t && cx.mr_names[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function method_ret(cx: Ctx, t: string, n: string): string {
+    var i: i32 = 0;
+    while (i < cx.mr_types.len()) {
+        if (cx.mr_types[i] == t && cx.mr_names[i] == n) { return cx.mr_rets[i]; }
+        i = i + 1;
+    }
+    return "";
 }
 
 // parse_option_payload extracts the Some/Ok payload type from an
@@ -223,6 +246,12 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return lookup_pair(cx.sf_names, cx.sf_types, id.name); },
+                parser.ExprFieldAccess(fa) => {
+                    // A receiver method returning a struct.
+                    var rt: string = method_ret(cx, struct_type_of(fa.obj, cx), fa.field);
+                    if (is_struct_type(cx.structs, rt)) { return rt; }
+                    return "";
+                },
                 _ => { return ""; },
             }
         },
@@ -246,6 +275,10 @@ function scrutinee_payload(e: parser.Expr, cx: Ctx): string {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return lookup_pair(cx.of_names, cx.of_payloads, id.name); },
+                parser.ExprFieldAccess(fa) => {
+                    // A receiver method returning Option[T] / Result[T,E].
+                    return parse_option_payload(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
+                },
                 _ => { return ""; },
             }
         },
@@ -520,6 +553,18 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (fa.field == "repeat" && c.args.len() == 1) {
                             return "(call $__fern_str_repeat " + recv + " " + emit_expr(c.args[0], cx, depth) + ")";
                         }
+                    }
+                    // User receiver method: `obj.m(args)` → static dispatch
+                    // to `$<RecvType>__m`, passing the receiver first.
+                    var rt: string = struct_type_of(fa.obj, cx);
+                    if (rt.len() > 0 && has_method(cx, rt, fa.field)) {
+                        var s: string = "(call $" + rt + "__" + fa.field + " " + emit_expr(fa.obj, cx, depth);
+                        var ai: i32 = 0;
+                        while (ai < c.args.len()) {
+                            s = s + " " + emit_expr(c.args[ai], cx, depth);
+                            ai = ai + 1;
+                        }
+                        return s + ")";
                     }
                     return "(i32.const 0)";
                 },
@@ -1417,7 +1462,8 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
                     }
                     // join always yields a string (array receiver).
                     if (fa.field == "join") { return true; }
-                    return false;
+                    // A receiver method declared to return string.
+                    return method_ret(cx, struct_type_of(fa.obj, cx), fa.field) == "string";
                 },
                 _ => { return false; },
             }
@@ -1448,7 +1494,8 @@ function is_string_array_expr(e: parser.Expr, cx: Ctx): boolean {
                 parser.ExprFieldAccess(fa) => {
                     // s.split(sep) yields a string[].
                     if (fa.field == "split") { return is_string_expr(fa.obj, cx); }
-                    return false;
+                    // A receiver method declared to return string[].
+                    return is_str_array_type(method_ret(cx, struct_type_of(fa.obj, cx), fa.field));
                 },
                 _ => { return false; },
             }
@@ -1568,13 +1615,18 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[]): Ctx {
     var locals: string[] = [];
     var str_arrays: string[] = [];
     var sv_names: string[] = [];
     var sv_types: string[] = [];
     var ol_names: string[] = [];
     var ol_payloads: string[] = [];
+    // A method's receiver is a struct-typed local.
+    if (f.receiver_type.len() > 0) {
+        sv_names = sv_names.push(f.receiver_name);
+        sv_types = sv_types.push(f.receiver_type);
+    }
     var i: i32 = 0;
     while (i < f.params.len()) {
         var pop: string = parse_option_payload(f.params[i].type_name);
@@ -1595,6 +1647,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
         structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
         of_names: of_names, of_payloads: of_payloads, ol_names: ol_names, ol_payloads: ol_payloads,
+        mr_types: mr_types, mr_names: mr_names, mr_rets: mr_rets,
     };
     return collect_str_locals_stmts(f.body, cx);
 }
@@ -1608,6 +1661,38 @@ function collect_opt_func_names(mod: parser.Module): string[] {
         if (mod.funcs[i].receiver_type.len() == 0 && parse_option_payload(mod.funcs[i].ret_type).len() > 0) {
             out = out.push(mod.funcs[i].name);
         }
+        i = i + 1;
+    }
+    return out;
+}
+
+// collect_method_* build the receiver-method registry (parallel arrays:
+// receiver type, method name, return type).
+function collect_method_types(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].receiver_type); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_method_names(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].name); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_method_rets(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].ret_type); }
         i = i + 1;
     }
     return out;
@@ -1666,9 +1751,19 @@ function returns_value(ret_type: string): boolean {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[]): string {
-    var head: string = "  (func $" + f.name;
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[], structs: parser.StructDecl[], sf_names: string[], sf_types: string[], of_names: string[], of_payloads: string[], mr_types: string[], mr_names: string[], mr_rets: string[]): string {
+    // A receiver method `function (r: T) m(...)` emits as `$T__m` with the
+    // receiver prepended as the first param; a free function as `$name`.
+    var fname: string = f.name;
     var pnames: string[] = [];
+    var head: string = "  (func $";
+    if (f.receiver_type.len() > 0) {
+        fname = f.receiver_type + "__" + f.name;
+        head = head + fname + " (param $" + f.receiver_name + " i32)";
+        pnames = pnames.push(f.receiver_name);
+    } else {
+        head = head + fname;
+    }
     var i: i32 = 0;
     while (i < f.params.len()) {
         head = head + " (param $" + f.params[i].name + " i32)";
@@ -1697,7 +1792,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
@@ -1712,9 +1807,7 @@ function module_uses_divrem(mod: parser.Module): boolean {
     if (stmts_use_divrem(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0) {
-            if (stmts_use_divrem(mod.funcs[i].body)) { return true; }
-        }
+        if (stmts_use_divrem(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1784,9 +1877,7 @@ function module_uses_arrays(mod: parser.Module): boolean {
     if (stmts_have_array(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0) {
-            if (stmts_have_array(mod.funcs[i].body)) { return true; }
-        }
+        if (stmts_have_array(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1864,9 +1955,7 @@ function module_uses_structs(mod: parser.Module): boolean {
     if (stmts_have_struct(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0) {
-            if (stmts_have_struct(mod.funcs[i].body)) { return true; }
-        }
+        if (stmts_have_struct(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -1957,9 +2046,7 @@ function module_uses_options(mod: parser.Module): boolean {
     if (stmts_have_option(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0) {
-            if (stmts_have_option(mod.funcs[i].body)) { return true; }
-        }
+        if (stmts_have_option(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -2013,9 +2100,7 @@ function module_uses_print_int(mod: parser.Module): boolean {
     if (stmt_calls_print_int(mod.top_stmts)) { return true; }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0) {
-            if (stmt_calls_print_int(mod.funcs[i].body)) { return true; }
-        }
+        if (stmt_calls_print_int(mod.funcs[i].body)) { return true; }
         i = i + 1;
     }
     return false;
@@ -2033,9 +2118,7 @@ pub function emit_module(mod: parser.Module): string {
     tab = collect_strings_stmts(mod.top_stmts, tab);
     var si: i32 = 0;
     while (si < mod.funcs.len()) {
-        if (mod.funcs[si].receiver_type.len() == 0) {
-            tab = collect_strings_stmts(mod.funcs[si].body, tab);
-        }
+        tab = collect_strings_stmts(mod.funcs[si].body, tab);
         si = si + 1;
     }
 
@@ -2046,6 +2129,9 @@ pub function emit_module(mod: parser.Module): string {
     var sf_types: string[] = collect_struct_func_types(mod);
     var of_names: string[] = collect_opt_func_names(mod);
     var of_payloads: string[] = collect_opt_func_payloads(mod);
+    var mr_types: string[] = collect_method_types(mod);
+    var mr_names: string[] = collect_method_names(mod);
+    var mr_rets: string[] = collect_method_rets(mod);
 
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
@@ -2091,10 +2177,10 @@ pub function emit_module(mod: parser.Module): string {
     var j: i32 = 0;
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
-        if (f.receiver_type.len() == 0) {
-            out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads);
-            if (f.name == "main") { has_main = true; }
-        }
+        // Emit free functions and receiver methods alike; emit_func
+        // mangles a method's name to `$<RecvType>__<name>`.
+        out = out + emit_func(f, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets);
+        if (f.receiver_type.len() == 0 && f.name == "main") { has_main = true; }
         j = j + 1;
     }
 
@@ -2108,7 +2194,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets);
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";
