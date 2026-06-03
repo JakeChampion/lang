@@ -219,6 +219,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write(xs[0].to_upper()); return 0; }", 0, "ABC"},
 		{"sarr-for-var-method", "function main(): i32 { var xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_upper()); } return 0; }", 0, "ABCD"},
 		{"sarr-for-var-len", "function main(): i32 { var xs = [\"abc\", \"de\"]; var n = 0; for s in xs { n = n + s.len(); } return n; }", 5, ""},
+		// join (string[] -> string) and split (string -> string[]).
+		{"join-basic", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; write(xs.join(\",\")); return 0; }", 0, "a,b,c"},
+		{"join-empty-sep", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; write(xs.join(\"\")); return 0; }", 0, "abc"},
+		{"join-single", "function main(): i32 { var xs = [\"solo\"]; write(xs.join(\",\")); return 0; }", 0, "solo"},
+		{"join-multichar-sep", "function main(): i32 { var xs = [\"x\", \"y\", \"z\"]; write(xs.join(\" - \")); return 0; }", 0, "x - y - z"},
+		{"split-len", "function main(): i32 { var s = \"a,b,c\"; var parts = s.split(\",\"); return parts.len(); }", 3, ""},
+		{"split-content", "function main(): i32 { var s = \"x|y|z\"; var parts = s.split(\"|\"); for p in parts { write(p); } return 0; }", 0, "xyz"},
+		{"split-index", "function main(): i32 { var parts = \"foo.bar.baz\".split(\".\"); write(parts[1]); return 0; }", 0, "bar"},
+		{"split-multichar", "function main(): i32 { var parts = \"aXXbXXc\".split(\"XX\"); return parts.len(); }", 3, ""},
+		{"split-no-match", "function main(): i32 { var parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
+		{"split-then-join", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
+		{"split-elem-method", "function main(): i32 { var parts = \"ab,cd\".split(\",\"); write(parts[0].to_upper()); return 0; }", 0, "AB"},
 	}
 
 	for _, tc := range cases {
