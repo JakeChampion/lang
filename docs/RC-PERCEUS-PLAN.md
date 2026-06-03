@@ -1865,6 +1865,38 @@ cancellation — bounded, but separable, so it ships last.
     real win needs an owned/consuming-parameter mode (a `move`/`own` param
     annotation or escape-inferred ownership), which is a language-level
     change tracked separately from RC-Perceus. Deferred deliberately.
+  - **5e — general reuse token across DIFFERENT locals (struct, all-scalar).
+    SHIPPED (all three backends).** The first cut of the *general* FBIP win:
+    a dead, owned, all-i32-scalar struct local `D` is paired with a LATER
+    same-type construction `C` (a DIFFERENT local) in the same block, so `C`
+    reuses `D`'s box in place — the Perceus reuse token threaded `D`'s drop →
+    `C`'s alloc, beyond the self-overwrite `tryStructReuseOverwrite` (`D == C`).
+    `computeReuseSources` (run in `lowerFunc` beside `computeMovedLocals` /
+    `computeFreeEligible`) walks EVERY block (the body + each loop / if arm —
+    the loop body is the high-value case: a per-iteration `var a = T{…}; …;
+    var b = T{…}` reuses `a`'s box for `b` each turn) and pairs `C`'s
+    `StructLit` with a `D` that is: same all-scalar struct type, a `var`
+    declared earlier in the block, never reassigned, name-unique, `freeEligible`
+    (OWNED), and DEAD from `C` onward in the block. The StructLit lowering, when
+    `reuseSources[sl]` is set, emits `token = is_unique(D) ? base(D) : 0` (the
+    shared/null branch dec's `D` so its alias keeps the box and `__alloc_reuse`
+    falls through to a fresh alloc), zeroes `D`'s slot (consumed — so the exit
+    sweep and any non-`C` path never double-release), and `base = __alloc_reuse
+    (token, size+hdr, size+hdr)` in place of the bump alloc. `reuseConsumed[D]`
+    excludes `D` from `computePreciseDrops` (the reuse subsumes its drop). Two
+    gates make it sound, same as 5b: **freeEligible** (never a borrowed param)
+    + the **runtime is_unique** check (a shared `D` copies). All-scalar only for
+    now — a pointer-field `D` would need its old field references released
+    (`OpDropReuse`'s field drop-walk) before the storage hand-off; a later cut.
+    Tests: IR `TestGeneralReuse{FiresForDeadLocal,FiresInLoopBody,SkipsLiveSource,
+    SkipsSourceReadInConstruction,SkipsPointerFieldStruct}` + e2e
+    `Test{X86_64,Arm64,WASM}GeneralReuse` (`churn` 300-iter value/over-release,
+    `aliased` runtime-decline soundness) + a wasm heap-bump win (a reused chain
+    holds fewer live boxes than the simultaneously-live control). Full e2e
+    (differential corpus + both self-host gates) + non-e2e suites green.
+    **Next general-FBIP cuts:** pointer-field `D` (field-drop-walk on hand-off);
+    same-box-size DIFFERENT types (the plan's box-class equality, not just
+    same-name); tuple `D`; relaxing the same-block constraint.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 

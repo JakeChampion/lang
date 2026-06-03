@@ -1566,6 +1566,16 @@ type builder struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// reuseSources pairs a struct-literal construction site C (the
+	// *ast.StructLit node) with the name of a dead, owned struct local D
+	// whose box C reuses in place — the general FBIP win (Perceus reuse
+	// token threaded D's drop → C's alloc, across DIFFERENT locals, beyond
+	// the self-overwrite tryStructReuseOverwrite). reuseConsumed[D] marks
+	// such a D so computePreciseDrops doesn't ALSO drop it (the reuse
+	// already consumes D's box / dec's it on the shared path). See
+	// computeReuseSources.
+	reuseSources  map[*ast.StructLit]string
+	reuseConsumed map[string]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
@@ -2461,6 +2471,13 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	out := map[int][]string{}
 	for name, di := range declIdx {
 		if reassigned[name] || b.movedLocals[name] || !b.freeEligible[name] || !b.localNameUnique(name) {
+			continue
+		}
+		// A local whose box is handed off to a general-FBIP reuse site
+		// (computeReuseSources) is already consumed there (its box taken, or
+		// dec'd on the shared path, and its slot zeroed) — dropping it again
+		// here would double-release. The reuse site subsumes its drop.
+		if b.reuseConsumed[name] {
 			continue
 		}
 		if !b.preciseDroppableType(name) {
@@ -5122,6 +5139,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.freeEligible = b.computeFreeEligible()
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
+	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
 	b.closureTarget = map[string]string{}
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
@@ -7958,8 +7976,49 @@ func (b *builder) expr(e ast.Expr) error {
 			updBaseSlot = b.allocSlot()
 			b.emit(Op{Kind: OpStoreLocal, I32: updBaseSlot})
 		}
-		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-		b.emit(Op{Kind: OpAlloc})
+		// General FBIP reuse (computeReuseSources): if this construction C is
+		// paired with a dead, owned, same-shape struct local D, reuse D's box
+		// in place instead of bump-allocating. token = is_unique(D) ? base(D)
+		// : 0 (the shared / null branch dec's D so its alias keeps the box and
+		// __alloc_reuse falls through to a fresh alloc); D's slot is then
+		// zeroed so the exit sweep (and any path that didn't reach C) treats
+		// it as already consumed. Leaves the box BASE pointer on the stack,
+		// exactly where OpAlloc would. Only the all-scalar shape reaches here
+		// (allScalarStruct in the pairing), so D has no rc fields to release.
+		if dName, paired := b.reuseSources[n]; paired && updBaseSlot < 0 {
+			dSlot := b.locals[dName]
+			reusedSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
+			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+			tokenSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
+			b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+			b.emit(Op{Kind: OpSub})
+			b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+			b.emit(Op{Kind: OpElse})
+			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+			b.emit(Op{Kind: OpEnd})
+			// D consumed (box taken or dec'd) — zero its slot.
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpStoreLocal, I32: dSlot})
+			// base = __alloc_reuse(token, size+hdr, size+hdr).
+			b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
+			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+			b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+			b.emit(Op{Kind: OpAlloc})
+		}
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_lit_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
@@ -10614,6 +10673,174 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 		return false
 	}
 	return true
+}
+
+// allScalarStruct reports whether every field of `sd` is an i32-class
+// scalar (NumberType width ≤ 32). The general FBIP reuse (computeReuseSources)
+// first cut is restricted to these: reusing a dead local D's box for a
+// DIFFERENT construction C means D's old field values sit in the box until C
+// overwrites them, and an all-scalar D has no rc-tracked field references to
+// release — so the reuse is a pure storage hand-off with no per-field drop
+// (the pointer-field case needs OpDropReuse's field drop-walk; a later cut).
+func allScalarStruct(sd *ast.StructDecl) bool {
+	for _, f := range sd.Fields {
+		nt, ok := f.Type.(ast.NumberType)
+		if !ok || nt.NormalWidth() > 32 {
+			return false
+		}
+	}
+	return len(sd.Fields) > 0
+}
+
+// computeReuseSources is the general-FBIP pairing analysis: it matches a
+// struct-construction site C (a top-level `var c = T{…}` / `c = T{…}` whose
+// RHS is a plain StructLit) with a DEAD, OWNED struct local D of the SAME
+// type whose box C can reuse in place — the Perceus reuse token threaded from
+// D's drop to C's allocation, generalised beyond the self-overwrite
+// tryStructReuseOverwrite (where D == C). Returns the C→D map (keyed by the
+// StructLit node) and the set of consumed D names (so computePreciseDrops
+// won't ALSO drop them).
+//
+// First cut — deliberately narrow and obviously sound:
+//   - D and C are the SAME all-i32-scalar struct type (`allScalarStruct`), so
+//     the box sizes match exactly and D has no rc fields to release when its
+//     storage is handed off (C overwrites every scalar slot).
+//   - D and C are in the SAME statement list (block): the function body OR any
+//     nested block (loop body, if arm). Pairing within a loop body is the
+//     high-value case — a per-iteration `var a = T{…}; …; var b = T{…}` reuses
+//     a's box for b every iteration. A block-scoped D dies at block exit, so
+//     "dead from C within the block" is sufficient.
+//   - D is a `var`, declared before C in the list, never reassigned,
+//     name-unique (no shadowing ambiguity), and `freeEligible` (OWNED — never
+//     a borrowed param; the runtime is_unique check at the reuse site is the
+//     second gate, so a shared D copies).
+//   - D is DEAD from C onward within its block: referenced in no statement at
+//     or after C's index (so C's fields don't read D, and nothing observes D's
+//     box after C repurposes it). The reuse zeroes D's slot, so the exit sweep
+//     — and any path that DOESN'T reach C — null-guards to a no-op / drops D
+//     normally. A mispaired or shared D degrades to dec-then-fresh-alloc
+//     (never unsound, never a leak — the same invariant as __alloc_reuse).
+func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]bool) {
+	sources := map[*ast.StructLit]string{}
+	consumed := map[string]bool{}
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return sources, consumed
+	}
+
+	// Reassigned-at-any-depth set (a reassigned D's box at C is still owned,
+	// but excluding them keeps the first cut simple, matching precise-drop).
+	reassigned := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		}
+		return true
+	})
+
+	references := func(st ast.Node, name string) bool {
+		found := false
+		ast.Walk(st, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == name {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	scalarStructTypeOf := func(name string) (ast.StructType, bool) {
+		t, ok := b.localDeclType(name)
+		if !ok {
+			return ast.StructType{}, false
+		}
+		stt, ok := t.(ast.StructType)
+		if !ok {
+			return ast.StructType{}, false
+		}
+		sd, ok := b.info.Structs[stt.Name]
+		if !ok || !allScalarStruct(sd) {
+			return ast.StructType{}, false
+		}
+		return stt, true
+	}
+	// constructionAt extracts (targetName, StructLit) from a `var c = T{…}` /
+	// `c = T{…}` whose RHS is a plain (non-update) StructLit.
+	constructionAt := func(st ast.Stmt) (string, *ast.StructLit) {
+		switch s := st.(type) {
+		case *ast.Var:
+			if sl, ok := s.Init.(*ast.StructLit); ok && sl.Base == nil {
+				return s.Name, sl
+			}
+		case *ast.ExprStmt:
+			if a, ok := s.Expr.(*ast.Assign); ok {
+				if id, ok := a.Target.(*ast.Ident); ok {
+					if sl, ok := a.Value.(*ast.StructLit); ok && sl.Base == nil {
+						return id.Name, sl
+					}
+				}
+			}
+		}
+		return "", nil
+	}
+
+	// pairInList runs the pairing within one block's direct statement list.
+	pairInList := func(stmts []ast.Stmt) {
+		declIdx := map[string]int{}
+		for i, st := range stmts {
+			if v, ok := st.(*ast.Var); ok {
+				if _, dup := declIdx[v.Name]; !dup {
+					declIdx[v.Name] = i
+				}
+			}
+		}
+		deadFrom := func(name string, k int) bool {
+			for i := k; i < len(stmts); i++ {
+				if references(stmts[i], name) {
+					return false
+				}
+			}
+			return true
+		}
+		for k, st := range stmts {
+			cName, sl := constructionAt(st)
+			if sl == nil {
+				continue
+			}
+			cType, ok := scalarStructTypeOf(cName)
+			if !ok || cType.Name != sl.TypeName {
+				continue
+			}
+			for dName, di := range declIdx {
+				if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
+					continue
+				}
+				if !b.freeEligible[dName] || !b.localNameUnique(dName) {
+					continue
+				}
+				dType, ok := scalarStructTypeOf(dName)
+				if !ok || dType.Name != cType.Name {
+					continue
+				}
+				if !deadFrom(dName, k) {
+					continue
+				}
+				sources[sl] = dName
+				consumed[dName] = true
+				break
+			}
+		}
+	}
+
+	// Every block in the function — the body and each nested loop / if arm —
+	// is its own statement list with block-scoped locals.
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if blk, ok := n.(*ast.Block); ok {
+			pairInList(blk.Stmts)
+		}
+		return true
+	})
+	return sources, consumed
 }
 
 // tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where
