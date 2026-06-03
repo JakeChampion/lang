@@ -191,6 +191,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-empty-len", "function main(): i32 { var a = [0]; var b = a; return b.len(); }", 1, ""},
 		{"arr-index-computed", "function main(): i32 { var a = [5, 10, 15, 20]; return a[1 + 1]; }", 15, ""},
 		{"arr-param", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { return sum([10, 20, 12]); }", 42, ""},
+		// Array mutation: for-in iteration, index-assignment, push.
+		{"arr-for-sum", "function main(): i32 { var a = [10, 20, 30]; var s = 0; for x in a { s = s + x; } return s; }", 60, ""},
+		{"arr-for-count", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var n = 0; for x in a { n = n + 1; } return n; }", 5, ""},
+		{"arr-for-print", "function main(): i32 { var a = [1, 2, 3]; for x in a { print_int(x); write(\" \"); } return 0; }", 0, "1 2 3 "},
+		{"arr-for-break", "function main(): i32 { var a = [10, 20, 30, 40]; var s = 0; for x in a { if (x == 30) { break; } s = s + x; } return s; }", 30, ""},
+		{"arr-for-continue", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x == 3) { continue; } s = s + x; } return s; }", 12, ""},
+		{"arr-for-nested", "function main(): i32 { var a = [1, 2]; var b = [10, 20]; var s = 0; for x in a { for y in b { s = s + x * y; } } return s; }", 90, ""},
+		{"arr-index-assign", "function main(): i32 { var a = [1, 2, 3]; a[1] = 99; return a[1]; }", 99, ""},
+		{"arr-index-assign-sum", "function main(): i32 { var a = [0, 0, 0]; a[0] = 10; a[1] = 20; a[2] = 12; return a[0] + a[1] + a[2]; }", 42, ""},
+		{"arr-push-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.push(4); return a.len(); }", 4, ""},
+		{"arr-push-last", "function main(): i32 { var a: i32[] = [10, 20]; a = a.push(99); return a[2]; }", 99, ""},
+		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.push(42); return a[0]; }", 42, ""},
+		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.push(1); a = a.push(2); a = a.push(3); return a[0] + a[1] + a[2]; }", 6, ""},
+		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.push(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
 	}
 
 	for _, tc := range cases {
