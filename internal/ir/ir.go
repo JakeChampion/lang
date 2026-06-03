@@ -6134,7 +6134,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of match
 		if reclaimScrut {
-			b.emitEnumSlotDrop(ptrSlot, scrutEnum, true)
+			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
@@ -6713,7 +6713,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// Free the fresh owned scrutinee box (scalar result already in
 		// resultSlot; net-zero on the operand stack) before loading the result.
 		if reclaimScrut {
-			b.emitEnumSlotDrop(ptrSlot, scrutEnum, true)
+			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
@@ -10738,13 +10738,14 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 	}
 	// dropFnNameFor declines a SCALAR-payload enum (enumNeedsDrop false: no
 	// pointer payload to recurse into), so a flat rc_dec here would leak its
-	// box. Route through emitEnumSlotDrop, whose variant-plan tier frees the
-	// box at its exact size under an is_unique gate — reclaiming a loop-var
-	// reinit / reassign of e.g. `Box{ Val(i32), Empty }` that previously
-	// leaked one box per iteration. Callers gate on owned-ness (eligible),
-	// so pass eligible=true; the is_unique gate is the final safety net.
+	// box. Route through emitOwnedEnumDrop (generated __drop_enum_<Name> →
+	// is_unique-gated variant-plan box_free) — reclaiming a loop-var reinit /
+	// reassign of e.g. `Box{ Val(i32), Empty }` that previously leaked one box
+	// per iteration, and reusing it on wasm (the gen-fn box_free reuses where
+	// an inline one wouldn't). Callers gate on owned-ness, so pass eligible=true;
+	// the is_unique gate is the final safety net.
 	if et, ok := ty.(ast.EnumType); ok {
-		b.emitEnumSlotDrop(idx, et, true)
+		b.emitOwnedEnumDrop(idx, et, true)
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -10783,13 +10784,32 @@ func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
 	return true
 }
 
-// emitEnumSlotDrop releases the OWNED enum box in local slot `slot` per its
-// static type `et` — the shared body extracted from the exit-sweep enum
-// branch (emitRcDecLocalsAtExitExcept) so the loop-var reinit / reassign drop
-// (emitStructEnumSlotDrop) and the fresh-match-scrutinee reclamation free a
-// scalar-payload box the same way the exit sweep does, rather than flat-dec'ing
-// (and leaking) it. `eligible` is the caller's borrow-aware owned-ness gate;
-// when false (or rc-free off) it degrades to the prior flat dec.
+// emitOwnedEnumDrop reclaims an OWNED enum box for a PER-ITERATION drop site
+// (loop-var reinit, match-scrutinee): it prefers the generated
+// __drop_enum_<Name> fn (emitEnumDropViaGenFn — whose box_free reuses the freed
+// box on wasm, unlike an inline box_free in a loop / match body) and falls back
+// to the inline emitEnumSlotDrop for shapes the gen-fn route declines (generic
+// instantiations, sentinel-only / un-planned enums). The exit sweep
+// deliberately does NOT use this — it calls emitEnumSlotDrop directly, since a
+// once-per-call inline drop neither leaks unboundedly nor needs the gen-fn
+// indirection (and keeps its golden-test codegen shape).
+func (b *builder) emitOwnedEnumDrop(slot int32, et ast.EnumType, eligible bool) {
+	if eligible && b.emitEnumDropViaGenFn(slot, et) {
+		return
+	}
+	b.emitEnumSlotDrop(slot, et, eligible)
+}
+
+// emitEnumSlotDrop releases the OWNED enum box in local slot `slot` INLINE per
+// its static type `et` — the shared body extracted verbatim from the exit-sweep
+// enum branch (emitRcDecLocalsAtExitExcept), which still uses it directly. The
+// PER-ITERATION callers (loop-var reinit, match-scrutinee) go through
+// emitOwnedEnumDrop instead, which prefers the generated __drop_enum_<Name> fn
+// (the box_free inside a generated FUNCTION reuses the freed box on wasm, where
+// an inline box_free in a loop / match body does not — a per-iteration leak the
+// once-per-call exit sweep doesn't suffer). `eligible` is the caller's
+// borrow-aware owned-ness gate; when false (or rc-free off) it degrades to the
+// prior flat dec.
 //
 // Three tiers, all is_unique-gated so a shared / payloadless-sentinel value is
 // only dec'd, never freed:
@@ -10801,18 +10821,6 @@ func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
 //     uniform-payload flat-dec (if any) + flat rc_dec, exactly as before.
 // Net-zero on the operand stack, so a value sitting underneath is untouched.
 func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
-	// Prefer the GENERATED __drop_enum_<Name> fn for a concrete enum: the
-	// box_free inside a generated drop FUNCTION returns the freed box to the
-	// freelist on every backend, whereas the SAME box_free emitted INLINE in a
-	// complex body (a loop, a match) fails to reuse on wasm — a scalar-enum box
-	// leaked 80000 B inline where the gen-fn path reclaims it (verified against
-	// the byte-identical struct-drop fn, which reuses on wasm). The worklist
-	// regenerates the body from info.Enums on seeing this call (genEnumDropFn
-	// covers scalar enums too: enumVariantDropPlan frees their box at its exact
-	// size). Net-zero on the operand stack.
-	if eligible && b.emitEnumDropViaGenFn(slot, et) {
-		return
-	}
 	ed, edOk := b.info.Enums[et.Name]
 	if edOk && ast.RcFreeEnabled && eligible {
 		// Generic-enum reclamation: a heap-boxed instantiation like
