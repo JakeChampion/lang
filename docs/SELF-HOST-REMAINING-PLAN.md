@@ -32,12 +32,15 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   `now_unix_ms` / `monotonic_ns` / `now_ns` via `clock_time_get`), a
   real i64 value path (i64 locals / params / returns, i64 arithmetic +
   comparison with guarded 64-bit div/rem, and an i64 formatter for the
-  64-bit clock timestamps), and an f64 floating-point path (f64 locals /
+  64-bit clock timestamps), an f64 floating-point path (f64 locals /
   params / returns, arithmetic + comparison, `as` casts f64↔i32/i64, and
-  the primitive math builtins). Gated by 270 differential cases under
+  the primitive math builtins), and i32-keyed maps (`Map { … }` literals
+  with `.set` / `.get` / `.get_or` / `.has` / `.len` over an
+  open-addressing hash runtime). Gated by 286 differential cases under
   `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm: the
-  `wasi:cli/run` / `wasi:http` component shapes and binary wasm encoding
-  (it emits WAT text today).
+  `wasi:cli/run` / `wasi:http` component shapes, binary wasm encoding (it
+  emits WAT text today), and the rest of the map surface (string K/V +
+  iteration).
 
 ---
 

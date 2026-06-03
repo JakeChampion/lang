@@ -384,6 +384,26 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-abs", "function main(): i32 { print_int(__abs_f64(-5.0) as i32); return 0; }", 0, "5"},
 		{"f64-to-i64-cast", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_int(r); return 0; }", 0, "5000000000"},
 		{"f64-to-i64-direct-print", "function main(): i32 { print_int(9000000000.0 as i64); return 0; }", 0, "9000000000"},
+
+		// i32-keyed / i32-valued maps. `Map { k: v }` desugars to
+		// map_new_i32(8).set(...).set(...); methods dispatch to the hash
+		// runtime. `.len()` reuses the generic length read (count @ box+0).
+		{"map-get-or", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(1, 0)); return 0; }", 0, "10"},
+		{"map-get-or-second", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(2, 0)); return 0; }", 0, "20"},
+		{"map-get-or-missing", "function main(): i32 { var m = Map { 1: 10 }; print_int(m.get_or(2, 99)); return 0; }", 0, "99"},
+		{"map-has", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(5)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"map-has-missing", "function main(): i32 { var m = Map { 5: 1 }; if (m.has(6)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"map-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; print_int(m.len()); return 0; }", 0, "3"},
+		{"map-update-value", "function main(): i32 { var m = Map { 1: 10 }; m = m.set(1, 99); print_int(m.get_or(1, 0)); return 0; }", 0, "99"},
+		{"map-update-keeps-len", "function main(): i32 { var m = Map { 1: 10 }; m = m.set(1, 99); print_int(m.len()); return 0; }", 0, "1"},
+		{"map-get-some", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(7)) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
+		{"map-get-none", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(8)) { Some(v) => { print_int(v); }, None => { print_int(0); print_int(1); } } return 0; }", 0, "01"},
+		{"map-empty-then-set", "function main(): i32 { var m = map_new_i32(8); m = m.set(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
+		{"map-zero-key", "function main(): i32 { var m = map_new_i32(8); m = m.set(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
+		{"map-negative-key", "function main(): i32 { var m = Map { 1: 5 }; m = m.set(-7, 88); print_int(m.get_or(-7, 0)); return 0; }", 0, "88"},
+		{"map-grow-get", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
+		{"map-grow-len", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.set(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
+		{"map-overwrite-loop", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.set(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
 	}
 
 	for _, tc := range cases {
