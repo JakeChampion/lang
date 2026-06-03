@@ -320,6 +320,22 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
   return r.exit_code;
 }`,
 		127)
+
+	// tcp_listen/tcp_close — exercises the Darwin socket(97)/bind(104)/
+	// listen(106)/close(6) syscalls and the sockaddr_in sin_len byte
+	// without needing a client: bind an ephemeral high port (39xxx),
+	// confirm the listener fd is valid, then close it. Returns 7 iff the
+	// whole socket→bind→listen→close path succeeded. (A full client/
+	// server round-trip runs under qemu in TestSelfHostTcpServerArm64;
+	// here we just prove the Darwin syscalls don't fault.)
+	runCase("tcp_listen_close",
+		`function main(): i32 {
+  var fd: i32 = tcp_listen(39517);
+  if (fd < 0) { return 1; }
+  if (tcp_close(fd) < 0) { return 2; }
+  return 7;
+}`,
+		7)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
