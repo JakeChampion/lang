@@ -52,6 +52,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"subtraction", "function main(): i32 { return 100 - 23; }", 77},
 		{"division", "function main(): i32 { return 84 / 2; }", 42},
 		{"modulo", "function main(): i32 { return 23 % 5; }", 3},
+		{"div-rem-combined", "function main(): i32 { return 84 / 2 + 23 % 5; }", 45},
+		// Non-trapping div/rem (would trap with naked i32.div_s/rem_s).
+		{"div-by-zero", "function main(): i32 { return 5 / 0; }", 0},
+		{"mod-by-zero", "function main(): i32 { return 7 % 0; }", 7},
+		// INT_MIN / -1 == INT_MIN (no overflow trap); INT_MIN % -1 == 0.
+		// INT_MIN is spelled `0 - 2147483647 - 1` to avoid a literal that
+		// doesn't fit i32; the divisor `0 - 1` keeps it a runtime value.
+		{"int-min-div-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x / d == x) { return 42; } return 1; }", 42},
+		{"int-min-mod-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x % d == 0) { return 42; } return 1; }", 42},
 		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5},
 		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39},
 		{"no-return-exits-0", "function main(): i32 { }", 0},

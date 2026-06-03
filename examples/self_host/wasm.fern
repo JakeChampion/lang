@@ -17,11 +17,15 @@
 //   - statements: var/let, assignment, return, if/else, while,
 //     break, continue, bare expression
 //
+// Division / remainder are non-trapping, matching the native backends
+// (and internal/codegen/wasmbin/runtime.go): `/` and `%` lower to calls
+// to guarded `$__fern_idiv` / `$__fern_irem` helpers (emitted only when
+// used) that sanitise the divisor so the hardware op can't fault —
+// x / 0 = 0, x % 0 = x, INT_MIN / -1 = INT_MIN, INT_MIN % -1 = 0.
+//
 // Known gaps (tracked, follow-ups):
 //   - `&&` / `||` lower to `i32.and` / `i32.or` (no short-circuit) —
 //     correct while conditions are side-effect-free (no calls yet).
-//   - `i32.div_s` / `i32.rem_s` trap on /0 and INT_MIN/-1 whereas Fern
-//     never traps — the guarded helpers land in the div/rem slice.
 //   - function calls, match, for, strings/memory: later slices.
 
 import "core/no_prelude";
@@ -70,8 +74,12 @@ function wasm_binop(op: string): string {
     if (op == "+") { return "i32.add"; }
     if (op == "-") { return "i32.sub"; }
     if (op == "*") { return "i32.mul"; }
-    if (op == "/") { return "i32.div_s"; }
-    if (op == "%") { return "i32.rem_s"; }
+    // Non-trapping div/rem: lower to the guarded helper calls. The
+    // folded form `(call $name <left> <right>)` shares emit_expr's
+    // `(<op> <left> <right>)` shape, so no special-casing is needed
+    // there.
+    if (op == "/") { return "call $__fern_idiv"; }
+    if (op == "%") { return "call $__fern_irem"; }
     if (op == "<") { return "i32.lt_s"; }
     if (op == "<=") { return "i32.le_s"; }
     if (op == ">") { return "i32.gt_s"; }
@@ -147,6 +155,72 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
         i = i + 1;
     }
     return acc;
+}
+
+// expr_uses_divrem is true when an expression contains a `/` or `%`
+// anywhere — used to decide whether the guarded helpers need emitting.
+function expr_uses_divrem(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op == "/" || b.op == "%") { return true; }
+            if (expr_uses_divrem(b.left)) { return true; }
+            return expr_uses_divrem(b.right);
+        },
+        parser.ExprUnary(u) => {
+            return expr_uses_divrem(u.operand);
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// stmts_use_divrem recurses a statement list (and nested if/while
+// bodies) for any `/` or `%`.
+function stmts_use_divrem(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_uses_divrem(v.init)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_uses_divrem(a.value)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_uses_divrem(r.value)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_uses_divrem(e.value)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_uses_divrem(f.cond)) { return true; }
+                if (stmts_use_divrem(f.then_body)) { return true; }
+                if (stmts_use_divrem(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_uses_divrem(w.cond)) { return true; }
+                if (stmts_use_divrem(w.body)) { return true; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// divrem_helpers returns the WAT for the guarded div/rem helpers. The
+// divisor is sanitised to 1 whenever the real divisor would fault (== 0,
+// or the signed INT_MIN / -1 overflow): `a / 1 = a = INT_MIN` gives the
+// right overflow quotient and `a % 1 = 0` the right overflow remainder.
+// A final `select` substitutes the divide-by-zero answer (0 for div, the
+// dividend for rem). Mirrors internal/codegen/wasmbin/runtime.go.
+function divrem_helpers(): string {
+    var bad: string =
+        "(i32.or (i32.eqz (local.get $b))"
+        + " (i32.and (i32.eq (local.get $a) (i32.const -2147483648))"
+        + " (i32.eq (local.get $b) (i32.const -1))))";
+    var out: string = "";
+    out = out + "  (func $__fern_idiv (param $a i32) (param $b i32) (result i32)\n";
+    out = out + "    (local $safe i32)\n";
+    out = out + "    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n";
+    out = out + "    (select (i32.const 0) (i32.div_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n";
+    out = out + "  (func $__fern_irem (param $a i32) (param $b i32) (result i32)\n";
+    out = out + "    (local $safe i32)\n";
+    out = out + "    (local.set $safe (select (i32.const 1) (local.get $b) " + bad + "))\n";
+    out = out + "    (select (local.get $a) (i32.rem_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n";
+    return out;
 }
 
 // emit_stmts lowers a statement list, appending to st.out.
@@ -252,6 +326,9 @@ pub function emit_module(mod: parser.Module): string {
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     out = out + "  (memory (export \"memory\") 1)\n";
+    if (stmts_use_divrem(body)) {
+        out = out + divrem_helpers();
+    }
     out = out + "  (func $main (result i32)\n";
     var li: i32 = 0;
     while (li < locals.len()) {
