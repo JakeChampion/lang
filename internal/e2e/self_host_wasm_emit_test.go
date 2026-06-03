@@ -131,6 +131,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"string-return-local", "function pick(): string { var s = \"chosen\"; return s; } function main(): i32 { print(pick()); return 0; }", 0, "chosen\n"},
 		{"string-through-call", "function id(s: string): string { return s; } function main(): i32 { write(id(\"echo\")); return 0; }", 0, "echo"},
 		{"string-in-loop", "function main(): i32 { var s = \"x\"; var i = 0; while (i < 3) { write(s); i = i + 1; } return 0; }", 0, "xxx"},
+		// String concatenation (+): bump-allocated [len][bytes] result.
+		{"concat-literals", "function main(): i32 { write(\"foo\" + \"bar\"); return 0; }", 0, "foobar"},
+		{"concat-var-literal", "function main(): i32 { var s = \"hello, \"; write(s + \"world\"); return 0; }", 0, "hello, world"},
+		{"concat-two-vars", "function main(): i32 { var a = \"ab\"; var b = \"cd\"; write(a + b); return 0; }", 0, "abcd"},
+		{"concat-chain", "function main(): i32 { write(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", 0, "abcd"},
+		{"concat-to-local", "function main(): i32 { var s = \"x\" + \"y\"; write(s); return 0; }", 0, "xy"},
+		{"concat-then-print", "function main(): i32 { var g = \"hi, \" + \"there\"; print(g); return 0; }", 0, "hi, there\n"},
+		{"concat-param", "function greet(name: string): string { return \"hi \" + name; } function main(): i32 { write(greet(\"sam\")); return 0; }", 0, "hi sam"},
+		{"concat-in-loop", "function main(): i32 { var s = \"\"; var i = 0; while (i < 3) { s = s + \"ab\"; i = i + 1; } write(s); return 0; }", 0, "ababab"},
+		{"concat-empty", "function main(): i32 { var s = \"\"; write(s + \"end\"); return 0; }", 0, "end"},
+		// int + still adds (not concat) — type-directed.
+		{"int-plus-still-adds", "function main(): i32 { var a = 20; var b = 22; return a + b; }", 42, ""},
 	}
 
 	for _, tc := range cases {
