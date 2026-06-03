@@ -7069,13 +7069,46 @@ func (b *builder) expr(e ast.Expr) error {
 		// changes the load op + which helper picks up the stride;
 		// `__str_idx` already does (i*1 + bounds-check) so we
 		// reuse it for sub-i32 owned arrays.
-		if err := b.expr(n.Array); err != nil {
-			return err
+		// Reclaim a FRESH owned array container consumed by a SCALAR index —
+		// `mk(i)[1]` (mk returns a fresh i32[]) loaded element 1 and dropped
+		// the buffer on the floor, leaking it every iteration (160000 ->
+		// 1600000 in a loop). Stash the container, index off the reload, then
+		// dec it after the load via the is_unique-gated emitOwnedSlotDrop.
+		// Gated to a NON-POINTER element (resultCannotAliasArg-style): the
+		// loaded scalar can't alias the buffer, so freeing it is safe; a
+		// pointer element (`mk_strs()[1]`) would alias and is left alone. The
+		// is_unique gate additionally protects an aliased container (a callee
+		// returning its param, rc>=2 via the return-transfer inc — only
+		// dec'd, never freed). Idents / fields aren't fresh temps and lower
+		// in place. String / slice index paths are excluded (n.IsString /
+		// n.IsSlice).
+		idxContainerSlot := int32(-1)
+		if !n.IsString && !n.IsSlice && n.ElemType != nil && !ast.IsPointerType(n.ElemType) {
+			ct, ok := b.freshOwnedRcTempType(n.Array)
+			if !ok {
+				ct, ok = b.ownedCallResultType(n.Array)
+			}
+			if ok {
+				if _, isArr := ct.(ast.ArrayType); isArr {
+					idxContainerSlot = b.allocSlot()
+					b.locals[fmt.Sprintf("__idxbase_%d", idxContainerSlot)] = idxContainerSlot
+					b.scratchType[idxContainerSlot] = ct
+					if err := b.expr(n.Array); err != nil {
+						return err
+					}
+					b.emit(Op{Kind: OpStoreLocal, I32: idxContainerSlot})
+					b.emit(Op{Kind: OpLoadLocal, I32: idxContainerSlot})
+				}
+			}
+		}
+		if idxContainerSlot < 0 {
+			if err := b.expr(n.Array); err != nil {
+				return err
+			}
 		}
 		if err := b.expr(n.Idx); err != nil {
 			return err
 		}
-		// Resolve the element type to pick stride + load width.
 		// loadWidth is non-zero only for the 64-bit case; the
 		// wasm codegen's intPrefix / floatPrefix honour it on
 		// OpLoad / OpFLoad.
@@ -7164,6 +7197,12 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
+		}
+		// Dec the stashed fresh array container now that the scalar element
+		// is loaded (only set on the array-index path above). Net-zero on the
+		// operand stack, leaving the loaded element on top.
+		if idxContainerSlot >= 0 {
+			b.emitOwnedSlotDrop(idxContainerSlot, b.scratchType[idxContainerSlot])
 		}
 	case *ast.SliceExpr:
 		// String slicing: copy into a fresh length-prefixed
