@@ -240,6 +240,24 @@ function main(): i32 {
     return 0;
 }`},
 
+		// ---- transitive generics (generic body calls another generic) ----
+		{"transitive_generics", `import "std/i32";
+function id[T](x: T): T { return x; }
+function wrap[T](x: T): T { return id(x); }
+function twice[T](x: T): T[] { return [id(x), id(x)]; }
+function a[T](x: T): T { return wrap(x); }
+function b[T](x: T): T { return a(x); }
+function main(): i32 {
+    print(wrap(5).to_string());
+    print(wrap("hi"));
+    print(b(42).to_string());
+    print(b("deep"));
+    var xs = twice("z");
+    print(xs.len().to_string());
+    print(xs[1]);
+    return 0;
+}`},
+
 		// ---- recursive enum (binary tree) ----
 		{"recursive_enum_tree", `import "std/i32";
 enum Tree { Leaf(i32), Node(Tree, Tree) }
