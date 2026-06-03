@@ -72,10 +72,11 @@ function (t: StrTable) offset_of(v: string): i32 {
 
 // Ctx is the read-only emission context threaded through emit_expr: the
 // interned string table (tab), the names of string-typed locals/params
-// in the current function (locals), and the names of string-returning
-// functions (funcs). The latter two drive the string-vs-int decision for
-// the `+` operator (concat vs add).
-struct Ctx { tab: StrTable, locals: string[], funcs: string[] }
+// (locals) and string-returning functions (funcs), and — for string
+// arrays — the names of `string[]`-typed locals (str_arrays) and
+// `string[]`-returning functions (str_arr_funcs). These drive the
+// string-vs-int decisions for `+`/compare and for `arr[i]` element type.
+struct Ctx { tab: StrTable, locals: string[], funcs: string[], str_arrays: string[], str_arr_funcs: string[] }
 
 // WState threads the WAT body being built (out), a fresh-label counter
 // (n), the current loop's break / continue labels (brk / cont, "" when
@@ -931,6 +932,10 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
             }
             return false;
         },
+        parser.ExprIndex(ix) => {
+            // arr[i] is string-typed when arr is a string array.
+            return is_string_array_expr(ix.array, cx);
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return contains_str(cx.funcs, id.name); },
@@ -949,6 +954,32 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
     return false;
 }
 
+// is_string_array_expr decides whether an expression is a `string[]`: a
+// string-typed local/param, an array literal whose elements are strings,
+// or a call to a string[]-returning function.
+function is_string_array_expr(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return contains_str(cx.str_arrays, id.name); },
+        parser.ExprArray(a) => {
+            return a.elements.len() > 0 && is_string_expr(a.elements[0], cx);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return contains_str(cx.str_arr_funcs, id.name); },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// is_str_array_type is true for the `string[]` annotation (and its
+// prefix `[string]`, which the parser normalises to `string[]`).
+function is_str_array_type(t: string): boolean {
+    return t == "string[]";
+}
+
 // collect_str_funcs returns the names of free functions declared to
 // return `string` — call results of these are string-typed.
 function collect_str_funcs(mod: parser.Module): string[] {
@@ -956,6 +987,20 @@ function collect_str_funcs(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0 && mod.funcs[i].ret_type == "string") {
+            out = out.push(mod.funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// collect_str_arr_funcs returns the names of free functions declared to
+// return `string[]`.
+function collect_str_arr_funcs(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0 && is_str_array_type(mod.funcs[i].ret_type)) {
             out = out.push(mod.funcs[i].name);
         }
         i = i + 1;
@@ -973,7 +1018,9 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (v.type_name == "string" || is_string_expr(v.init, cx)) {
+                if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
+                    cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
+                } else if (v.type_name == "string" || is_string_expr(v.init, cx)) {
                     cx = Ctx { ...cx, locals: cx.locals.push(v.name) };
                 }
             },
@@ -985,6 +1032,10 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 cx = collect_str_locals_stmts(w.body, cx);
             },
             parser.StmtFor(f) => {
+                // A `for s in <string[]>` binds s as a string.
+                if (is_string_array_expr(f.iter, cx)) {
+                    cx = Ctx { ...cx, locals: cx.locals.push(f.var_name) };
+                }
                 cx = collect_str_locals_stmts(f.body, cx);
             },
             _ => {},
@@ -994,16 +1045,19 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     return cx;
 }
 
-function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[]): Ctx {
+function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_funcs: string[]): Ctx {
     var locals: string[] = [];
+    var str_arrays: string[] = [];
     var i: i32 = 0;
     while (i < f.params.len()) {
-        if (f.params[i].type_name == "string") {
+        if (is_str_array_type(f.params[i].type_name)) {
+            str_arrays = str_arrays.push(f.params[i].name);
+        } else if (f.params[i].type_name == "string") {
             locals = locals.push(f.params[i].name);
         }
         i = i + 1;
     }
-    var cx: Ctx = Ctx { tab: tab, locals: locals, funcs: funcs };
+    var cx: Ctx = Ctx { tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs };
     return collect_str_locals_stmts(f.body, cx);
 }
 
@@ -1021,7 +1075,7 @@ function returns_value(ret_type: string): boolean {
 // params become `(local …)` decls. An i32-returning function gets a
 // trailing `(i32.const 0)` as the fallthrough result when no `return`
 // fires.
-function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[]): string {
+function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_arr_funcs: string[]): string {
     var head: string = "  (func $" + f.name;
     var pnames: string[] = [];
     var i: i32 = 0;
@@ -1049,7 +1103,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[]): stri
         li = li + 1;
     }
 
-    var cx: Ctx = build_ctx(f, tab, str_funcs);
+    var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs);
     var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0 };
     st = emit_stmts(f.body, st);
 
@@ -1205,6 +1259,7 @@ pub function emit_module(mod: parser.Module): string {
 
     var has_strings: boolean = tab.values.len() > 0;
     var str_funcs: string[] = collect_str_funcs(mod);
+    var str_arr_funcs: string[] = collect_str_arr_funcs(mod);
 
     var out: string = "(module\n";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
@@ -1247,7 +1302,7 @@ pub function emit_module(mod: parser.Module): string {
     while (j < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[j];
         if (f.receiver_type.len() == 0) {
-            out = out + emit_func(f, tab, str_funcs);
+            out = out + emit_func(f, tab, str_funcs, str_arr_funcs);
             if (f.name == "main") { has_main = true; }
         }
         j = j + 1;
@@ -1263,7 +1318,7 @@ pub function emit_module(mod: parser.Module): string {
             ret_type: "i32",
             body: mod.top_stmts,
         };
-        out = out + emit_func(synth, tab, str_funcs);
+        out = out + emit_func(synth, tab, str_funcs, str_arr_funcs);
     }
 
     out = out + "  (func $_start (call $proc_exit (call $main)))\n";

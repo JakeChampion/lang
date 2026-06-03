@@ -205,6 +205,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.push(42); return a[0]; }", 42, ""},
 		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.push(1); a = a.push(2); a = a.push(3); return a[0] + a[1] + a[2]; }", 6, ""},
 		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.push(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
+		// String arrays (string[]): literal, index, for-in, push, and
+		// element used in string contexts (needs element typing).
+		{"sarr-for-write", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; for s in xs { write(s); } return 0; }", 0, "abc"},
+		{"sarr-index-write", "function main(): i32 { var xs = [\"foo\", \"bar\"]; write(xs[1]); return 0; }", 0, "bar"},
+		{"sarr-len", "function main(): i32 { var xs = [\"a\", \"b\", \"c\", \"d\"]; return xs.len(); }", 4, ""},
+		{"sarr-elem-len", "function main(): i32 { var xs = [\"hello\", \"hi\"]; return xs[0].len(); }", 5, ""},
+		{"sarr-elem-concat", "function main(): i32 { var xs = [\"foo\", \"bar\"]; write(xs[0] + xs[1]); return 0; }", 0, "foobar"},
+		{"sarr-for-concat", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; var acc = \"\"; for s in xs { acc = acc + s; } write(acc); return 0; }", 0, "abc"},
+		{"sarr-for-eq", "function main(): i32 { var xs = [\"x\", \"y\", \"z\"]; var n = 0; for s in xs { if (s == \"y\") { n = n + 1; } } return n; }", 1, ""},
+		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.push(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
+		{"sarr-param", "function first(xs: string[]): string { return xs[0]; } function main(): i32 { write(first([\"hello\", \"world\"])); return 0; }", 0, "hello"},
+		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write(xs[0].to_upper()); return 0; }", 0, "ABC"},
+		{"sarr-for-var-method", "function main(): i32 { var xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_upper()); } return 0; }", 0, "ABCD"},
+		{"sarr-for-var-len", "function main(): i32 { var xs = [\"abc\", \"de\"]; var n = 0; for s in xs { n = n + s.len(); } return n; }", 5, ""},
 	}
 
 	for _, tc := range cases {
