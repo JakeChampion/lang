@@ -2138,6 +2138,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //     1600 → 160000) — stashed and dec'd after the enclosing scalar-
 //     returning call via emitOwnedSlotDrop, alongside the literal-shape
 //     temps freshOwnedRcTempType already handles.
+//
 // It returns the result's static type + true.
 //
 // Safety rests on the is_unique gate inside every emitOwnedTempStackDrop
@@ -2203,6 +2204,7 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 //     a binding that would outlive (and alias) the freed box;
 //   - for the expression form, the RESULT is non-pointer too (`resultType`;
 //     pass nil for the statement form, which yields no value).
+//
 // emitEnumSlotDrop then frees the box under an is_unique gate, so an aliased
 // scrutinee (rc>1 via a return-transfer inc) is only dec'd, never freed.
 func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingTypes [][]ast.Type, resultType ast.Type) (ast.EnumType, bool) {
@@ -10819,6 +10821,7 @@ func (b *builder) emitOwnedEnumDrop(slot int32, et ast.EnumType, eligible bool) 
 //     Empty }` box the flat dec would leak);
 //   - anything statically un-sizable (generic ParamType payloads) → the
 //     uniform-payload flat-dec (if any) + flat rc_dec, exactly as before.
+//
 // Net-zero on the operand stack, so a value sitting underneath is untouched.
 func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	ed, edOk := b.info.Enums[et.Name]
