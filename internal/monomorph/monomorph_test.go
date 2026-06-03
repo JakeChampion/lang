@@ -706,3 +706,50 @@ function main(): i32 {
 		t.Errorf("array literal ElemType = %T, want ast.StructType (Box)", lit.ElemType)
 	}
 }
+
+// TestRunTransitiveInstantiation locks in transitive monomorphisation:
+// a generic function whose body calls another generic (`wrap[T]`
+// calling `id[T]`) must instantiate the callee too. Before the
+// worklist fixpoint, the cloned `wrap[i32]` body still called the
+// generic `id` (which gets removed after the pass), and the
+// post-monomorph re-check failed with "expected T, got i32".
+func TestRunTransitiveInstantiation(t *testing.T) {
+	src := `import "core/no_prelude";
+import "std/i32";
+function id[T](x: T): T { return x; }
+function wrap[T](x: T): T { return id(x); }
+function main(): i32 { return wrap(5); }`
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	// Both wrap and id must have an i32 clone, and no generic decl
+	// may survive.
+	var ids, wraps, generics int
+	for _, fn := range prog.Funcs {
+		switch {
+		case fn.Name == "id" || fn.Name == "wrap":
+			generics++
+		case strings.HasPrefix(fn.Name, "id__"):
+			ids++
+		case strings.HasPrefix(fn.Name, "wrap__"):
+			wraps++
+		}
+	}
+	if generics != 0 {
+		t.Errorf("a generic decl survived monomorph (%d)", generics)
+	}
+	if ids == 0 {
+		t.Errorf("no id__* clone — transitive instantiation didn't run")
+	}
+	if wraps == 0 {
+		t.Errorf("no wrap__* clone")
+	}
+}

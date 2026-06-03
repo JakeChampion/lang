@@ -59,11 +59,15 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	instantiations := map[instKey][]ast.Type{}
 	structInsts := map[instKey][]ast.Type{}
 
-	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
-		}
-		walkBlock(fn.Body, func(c *ast.Call) {
+	// collectCalls rewrites every generic function call in `body` to
+	// its mangled instantiation, records the instantiation, and
+	// substitutes the concrete type args into the call's argument
+	// expressions. Run on every original body below and on every
+	// cloned body in the worklist loop — the latter is what makes a
+	// generic function that calls another generic (`wrap[T]` calling
+	// `id[T]`) instantiate the callee transitively.
+	collectCalls := func(body *ast.Block) {
+		walkBlock(body, func(c *ast.Call) {
 			id, ok := c.Callee.(*ast.Ident)
 			if !ok {
 				return
@@ -80,27 +84,36 @@ func Run(prog *ast.Program, info *checker.Info) error {
 				// callee and report a clearer error).
 				return
 			}
+			if hasParamType(c.TypeArgs) {
+				// Still parametric (a generic caller before its own
+				// clone+substitution): leave it for the clone loop,
+				// which re-runs collectCalls once the args are
+				// concrete.
+				return
+			}
 			mang := mangle(id.Name, c.TypeArgs)
 			instantiations[instKey{name: id.Name, mang: mang}] = c.TypeArgs
 			id.Name = mang
 			// The checker may have stamped the callee's type
 			// parameters onto the argument expressions (e.g. an
-			// array literal passed for a `T[]` param gets ElemType=T).
-			// The caller isn't a generic clone, so nothing else
-			// substitutes those — do it here from the concrete
-			// TypeArgs, unless they're still parametric (a generic
-			// caller; the clone loop handles that case).
-			if !hasParamType(c.TypeArgs) && len(gen.TypeParams) == len(c.TypeArgs) {
-				sub := make(map[string]ast.Type, len(gen.TypeParams))
-				for i, name := range gen.TypeParams {
-					sub[name] = c.TypeArgs[i]
-				}
-				for _, arg := range c.Args {
-					substituteExpr(arg, sub)
-				}
+			// array literal passed for a `T[]` param gets ElemType=T);
+			// rewrite those from the concrete TypeArgs.
+			sub := make(map[string]ast.Type, len(gen.TypeParams))
+			for i, name := range gen.TypeParams {
+				sub[name] = c.TypeArgs[i]
+			}
+			for _, arg := range c.Args {
+				substituteExpr(arg, sub)
 			}
 			c.TypeArgs = nil
 		})
+	}
+
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		collectCalls(fn.Body)
 		// Rewrite generic StructLits in the same body — TypeArgs
 		// was stamped by the checker for every generic struct
 		// literal, including those nested inside expressions.
@@ -141,8 +154,18 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		keys = append(keys, k)
 	}
 	sortKeys(keys)
+	// Worklist: cloning a generic body can surface fresh
+	// instantiations of any generic it calls (transitive
+	// monomorphisation — `wrap[i32]`'s body calls `id[i32]`). New
+	// keys are appended and drained to a fixpoint; `done` dedupes.
+	done := make(map[instKey]bool, len(keys))
 	var cloned []*ast.FuncDecl
-	for _, k := range keys {
+	for i := 0; i < len(keys); i++ {
+		k := keys[i]
+		if done[k] {
+			continue
+		}
+		done[k] = true
 		gen := info.GenericFuncs[k.name]
 		args := instantiations[k]
 		sub := make(map[string]ast.Type, len(gen.TypeParams))
@@ -157,6 +180,20 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		c.ReturnType = substituteType(c.ReturnType, sub)
 		substituteBlock(c.Body, sub)
+		// The body's type parameters are now concrete, so any
+		// generic call it makes (`id(x)` → `id[i32]`) can be
+		// instantiated. collectCalls records the instantiation and
+		// mangles the call; append any newly-seen keys to the
+		// worklist.
+		before := len(instantiations)
+		collectCalls(c.Body)
+		if len(instantiations) != before {
+			for nk := range instantiations {
+				if !done[nk] {
+					keys = append(keys, nk)
+				}
+			}
+		}
 		// Walk the substituted body's StructLits a second time
 		// to mangle any whose TypeArgs got substituted to concrete
 		// types just now (the pre-clone walk above skips ParamType-
