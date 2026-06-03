@@ -2186,6 +2186,50 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	return t, true
 }
 
+// reclaimableMatchScrutinee reports whether a match's scrutinee `tag` is a
+// FRESH owned enum box that can be freed once the match completes, and returns
+// its enum type. A match consumes its scrutinee — the arms read payload fields
+// out of the box and then it's dead — but the box is never dec'd, so a
+// `match (mk(i)) { … }` over a per-iteration-fresh `mk(i)` leaks one box every
+// iteration (the value-consuming-position sibling of the shipped index-of-fresh
+// / `.len()`-of-fresh reclamation; docs/RC-PERCEUS-PLAN.md).
+//
+// Eligibility mirrors that family's gate exactly:
+//   - the scrutinee is a fresh owned call result (ownedCallResultType — a user
+//     function returning a heap-boxed enum; pair-form / builtin / variant-
+//     constructor callees are excluded there, so the value is always a real
+//     box this lowering stores in ptrSlot and dispatches on via OpMatchTag);
+//   - every arm BINDING is non-pointer, so no pointer payload is extracted into
+//     a binding that would outlive (and alias) the freed box;
+//   - for the expression form, the RESULT is non-pointer too (`resultType`;
+//     pass nil for the statement form, which yields no value).
+// emitEnumSlotDrop then frees the box under an is_unique gate, so an aliased
+// scrutinee (rc>1 via a return-transfer inc) is only dec'd, never freed.
+func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingTypes [][]ast.Type, resultType ast.Type) (ast.EnumType, bool) {
+	if !ast.RcFreeEnabled {
+		return ast.EnumType{}, false
+	}
+	t, ok := b.ownedCallResultType(tag)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	if resultType != nil && ast.IsPointerType(resultType) {
+		return ast.EnumType{}, false
+	}
+	for _, bts := range bindingTypes {
+		for _, bt := range bts {
+			if bt != nil && ast.IsPointerType(bt) {
+				return ast.EnumType{}, false
+			}
+		}
+	}
+	return et, true
+}
+
 // emitOwnedTempStackDrop releases a FRESH owned rc temporary whose value is
 // currently on top of the operand stack — the stage-(a) replacement for the
 // plain OpDrop a discarded ExprStmt would otherwise emit (see
@@ -2492,148 +2536,12 @@ func stmtContainsReturn(st ast.Stmt) bool {
 // emitting neither leaves the returned value at the same rc — fewer rc
 // ops, identical result. `exclude == ""` decs every owned local.
 func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
-	// decValueOnStack consumes a pointer value already on the
-	// operand stack and dec's it per its static type. An array of
-	// pointer-shaped rc-tracked elements routes through
-	// __fern_drop_arr_ptr (which recurses one level into the
-	// elements on the last reference); every other pointer-shaped
-	// value gets a flat __fern_rc_dec (nested fields/elements of
-	// those leak for now — safe under no-free, no over-release).
-	// Both helpers carry the null / low-address / sentinel guards.
-	decValueOnStack := func(t ast.Type, mayFree bool) {
-		// Two-word string value (wasm + arm64-TwoWordOverride): the
-		// caller loaded (data, len) via payloadLoadOpFor, so reclaim
-		// via the two-word __fern_str_dec. Reached from the enum
-		// payload drop (struct / tuple string fields are handled
-		// inline before reaching here).
-		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		// Single-word string value (native single-word, x86_64): caller
-		// loaded a ptr; __fern_rc_dec it (inline-tag / sentinel guards
-		// keep all sources safe). arm64 / wasm two-word ABIs take the
-		// two-word str_dec branch above.
-		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		// `mayFree` is the borrow-aware permission to return this
-		// value's buffer to the freelist. It's true only for OWNED
-		// top-level array locals (computeFreeEligible); struct fields
-		// and enum payloads always pass false (their borrow-ness
-		// isn't tracked, so they never free — conservative, safe).
-		if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) && mayFree {
-			// Transitive reclamation Stage B: an array of CONCRETE
-			// structs drops each element box deeply (via the generated
-			// __drop_arr_struct_<Elem> loop → __drop_struct_<Elem> per
-			// element) before freeing the buffer, instead of the flat
-			// per-element rc_dec that __fern_drop_arr_ptr does (which
-			// leaks the element boxes). Only the eligible (mayFree) path
-			// reaches here. Gated on RcFreeEnabled to match the genfn
-			// post-pass — with free off the genfn isn't emitted, so we
-			// must fall back to the always-present __fern_drop_arr_ptr
-			// (whose own buffer-free is internally RcFreeEnabled-gated).
-			// Array-of-array / enum / closure keep __fern_drop_arr_ptr.
-			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
-				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
-				b.emit(Op{Kind: OpDrop})
-				return
-			}
-			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		// __fern_rc_dec is a void-returning runtime helper but
-		// OpCallDirect's codegen always pushes the call's
-		// return-value register (x0/rax) onto the operand stack;
-		// drop the bogus push to keep the stack balanced.
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-		b.emit(Op{Kind: OpDrop})
-	}
-	// dropStructField drops one struct field whose pointer is already on
-	// the operand stack. Transitive reclamation Stage A: a CONCRETE
-	// struct field (statically exact type) recurses through its
-	// generated __drop_struct_ fn, so its box + nested struct children
-	// reclaim on the field's last reference; the generated fn
-	// is_unique-gates internally, so this is safe whether the child is
-	// shared or not. Every other field type (arrays, enums/unions,
-	// closures, Map) keeps the flat one-level dec.
-	dropStructField := func(t ast.Type) {
-		// Two-word string value (wasm + arm64-TwoWordOverride): caller
-		// loaded (data, len), reclaim via __fern_str_dec. Reached from
-		// the enum variant-plan payload drop (struct / tuple string
-		// fields are handled inline).
-		if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		// Single-word string value (native single-word, x86_64): caller
-		// loaded a ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-
-		// tag low-bit guard + literal sentinel keep all sources safe.
-		if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		if isMapType(t) {
-			// A Map-typed field (e.g. struct Request { headers:
-			// Map[..] }) reclaims the whole map structure on the owning
-			// value's last reference: free the value column then the
-			// buf + handle. Both helpers self-guard on the map's own
-			// rc==1, so a shared map only dec's. They return the map
-			// ptr, so the stack value chains through without a reload.
-			b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
-			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		if at, ok := t.(ast.ArrayType); ok {
-			// Any array field frees its BUFFER on the owning value's
-			// last reference (the owner is eligible/unique here, so the
-			// field is owned; each helper still is_unique-gates the
-			// array, so a shared one only dec's). Array-of-struct also
-			// deep-drops each element box (Stage B loop); array-of-rc
-			// (e.g. i32[][]) frees the outer buffer + flat-dec's inner
-			// (inner buffers are array-of-array, a later slice); plain
-			// arrays (i32[]) free the buffer via arr_dec. Previously all
-			// of these flat-dec'd, leaking the buffer.
-			if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
-				b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
-				b.emit(Op{Kind: OpDrop})
-				return
-			}
-			helper := "__fern_arr_dec"
-			if arrElemIsRcTracked(at.Elem) {
-				helper = "__fern_drop_arr_ptr"
-			} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-				// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
-				// walk + __fern_str_dec each (data, len) element, then free
-				// the buffer.
-				helper = "__fern_drop_arr_str"
-			} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				// string[] on native single-word (x86_64, !TwoWordOverride):
-				// elements are single pointers; __fern_drop_arr_ptr walks +
-				// __fern_rc_dec's each one (SSO inline-tag low-bit guard
-				// in __fern_rc_dec keeps short inline strings safe).
-				helper = "__fern_drop_arr_ptr"
-			}
-			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
-			b.emit(Op{Kind: OpDrop})
-			return
-		}
-		decValueOnStack(t, false)
-	}
+	// Local aliases so existing call sites stay unchanged; the bodies were
+	// promoted to *builder methods (decValueOnStack / dropStructField) so the
+	// shared emitEnumSlotDrop can reuse them.
+	decValueOnStack := b.decValueOnStack
+	dropStructField := b.dropStructField
+	_ = decValueOnStack
 	emitDec := func(slot int32, t ast.Type, eligible bool, name string) {
 		// `eligible` is the borrow-aware verdict for THIS local: true
 		// only when it's a proven-OWNED array (computeFreeEligible).
@@ -2917,154 +2825,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			b.emit(Op{Kind: OpDrop})
 			return
 		}
-		// Phase 3 step 3: a heap-boxed enum with pointer-shaped
-		// rc-tracked payloads drops those payloads on its LAST
-		// reference before dec'ing the box. The box layout is
-		// [rc@-8 | tag@0, payloads@payloadLayout offsets]. This
-		// slice handles the UNIFORM case — every payload-carrying
-		// variant shares an identical droppable-payload signature
-		// (same offsets, same array-vs-flat kind) — so the payload
-		// decs are emitted unconditionally inside the is_unique
-		// guard, with no tag switch. That covers unions
-		// (`type Value = VInt | VArr | ...`), whose variants each
-		// carry a single struct pointer at the same offset.
-		// Non-uniform enums (e.g. JsonValue, where JArray carries a
-		// pointer but JBool doesn't) and generic enums (Option /
-		// Result, whose ParamType payloads aren't statically
-		// droppable) fall through to the plain box dec — their
-		// payloads leak for now, which is safe under no-free and
-		// reports 0 over-releases. Per-tag dispatch + type-arg
-		// substitution are a later slice.
+		// Phase 3 enum-box reclamation: an OWNED enum frees its box to
+		// the freelist on the last reference (rc==1) after dropping its
+		// payloads. The full tiered logic — uniform branchless path,
+		// non-uniform / scalar variant-plan tag switch, and the generic
+		// fallthrough flat-dec — lives in emitEnumSlotDrop so the loop-var
+		// reinit / reassign drop (emitStructEnumSlotDrop) and the
+		// fresh-match-scrutinee reclamation can free a scalar-payload box
+		// the same way instead of leaking it.
 		if et, ok := t.(ast.EnumType); ok {
-			ed, edOk := b.info.Enums[et.Name]
-			// Phase 3 enum-box reclamation: an OWNED enum returns its
-			// box to the freelist on the last reference (rc==1) after
-			// dropping its payloads — but only when the box size is
-			// statically known (uniformEnumBoxSize) AND the droppable
-			// payloads are uniform (uniformEnumDropLoads), since the
-			// drop emits no tag switch. The is_unique gate filters out
-			// payloadless static sentinels (rc high-bit), so
-			// __fern_box_free only ever sees a real rc==1 box.
-			if edOk && ast.RcFreeEnabled && eligible {
-				// Generic-enum reclamation: a heap-boxed instantiation
-				// like Option[Item] / Result[Item, E] carries ParamType
-				// payloads in its decl, so the drop plan can't see the
-				// concrete type. Substitute the type args (et.Args) to
-				// recover them — but ONLY adopt the substituted decl when
-				// it exposes a concrete STRUCT payload. That guarantees a
-				// pointer-shaped (heap-boxed, non-pair-form) instantiation,
-				// so the variant-plan's box_free is valid; scalar
-				// instantiations (Option[i32], pair-form, no box) keep the
-				// generic decl and bail to the flat dec as before.
-				if len(et.Args) > 0 {
-					if sub := substituteEnumDecl(ed, et.Args); enumHasPointerPayload(sub) {
-						ed = sub
-					}
-				}
-				loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
-				size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
-				// The branchless uniform path can only flat-dec its
-				// payloads (it uses one static payload type, but a union's
-				// variants differ at the shared offset). When a payload is
-				// a CONCRETE struct that could be deep-dropped, skip it and
-				// take the tag-dispatch (variant-plan) path below instead,
-				// where each arm knows its exact type and recurses through
-				// __drop_struct_<T> (Stage C). Uniform stays for array /
-				// other payloads, which flat-dec under both paths anyway.
-				if loadsOk && sizeOk && !enumHasPointerPayload(ed) {
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
-					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					for _, ld := range loads {
-						b.emit(Op{Kind: OpLoadLocal, I32: slot})
-						if ld.off != 0 {
-							b.emit(Op{Kind: OpConstI32, I32: ld.off})
-							b.emit(Op{Kind: OpAdd})
-						}
-						b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
-						decValueOnStack(ld.typ, false)
-					}
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpConstI32, I32: size})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
-					b.emit(Op{Kind: OpDrop})
-					b.emit(Op{Kind: OpElse})
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-					b.emit(Op{Kind: OpDrop})
-					b.emit(Op{Kind: OpEnd})
-					return
-				}
-				// Non-uniform enum (e.g. JsonValue): a tag switch over
-				// the real box (rc==1) drops each variant's payloads and
-				// frees with that variant's exact box size. The tag is
-				// stashed in a scratch local so later arms read it from
-				// the stack, never from the (possibly freed) box.
-				if plan, ok := enumVariantDropPlan(ed, b.ptrW); ok {
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
-					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					tagSlot := b.allocSlot()
-					b.locals[fmt.Sprintf("__enum_drop_tag_%d", tagSlot)] = tagSlot
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpLoad}) // tag at [data+0]
-					b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-					for _, vd := range plan {
-						b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
-						b.emit(Op{Kind: OpConstI32, I32: int32(vd.tag)})
-						b.emit(Op{Kind: OpEq})
-						b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-						for _, ld := range vd.loads {
-							b.emit(Op{Kind: OpLoadLocal, I32: slot})
-							if ld.off != 0 {
-								b.emit(Op{Kind: OpConstI32, I32: ld.off})
-								b.emit(Op{Kind: OpAdd})
-							}
-							b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
-							// Transitive reclamation Stage C: this arm is
-							// tag-guarded (tag == vd.tag), so ld.typ is the
-							// EXACT payload type of this variant — unlike the
-							// uniform path, a type-specific recursive drop is
-							// sound here. A concrete-struct payload recurses
-							// through __drop_struct_<T> (freeing its box +
-							// nested struct fields); other payloads keep the
-							// flat one-level dec.
-							dropStructField(ld.typ)
-						}
-						b.emit(Op{Kind: OpLoadLocal, I32: slot})
-						b.emit(Op{Kind: OpConstI32, I32: vd.size})
-						b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
-						b.emit(Op{Kind: OpDrop})
-						b.emit(Op{Kind: OpEnd})
-					}
-					b.emit(Op{Kind: OpElse})
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-					b.emit(Op{Kind: OpDrop})
-					b.emit(Op{Kind: OpEnd})
-					return
-				}
-			}
-			if edOk {
-				if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
-					b.emit(Op{Kind: OpLoadLocal, I32: slot})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
-					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					for _, ld := range loads {
-						b.emit(Op{Kind: OpLoadLocal, I32: slot})
-						if ld.off != 0 {
-							b.emit(Op{Kind: OpConstI32, I32: ld.off})
-							b.emit(Op{Kind: OpAdd})
-						}
-						b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
-						decValueOnStack(ld.typ, false)
-					}
-					b.emit(Op{Kind: OpEnd})
-				}
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
+			b.emitEnumSlotDrop(slot, et, eligible)
 			return
 		}
 		// Closure reclamation: an OWNED FuncType local frees its env /
@@ -6240,6 +6010,23 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
 		}
+		// Reclaim a FRESH owned enum scrutinee box once the match completes:
+		// `mk(i)` in `match (mk(i)) { … }` is dead after dispatch but the box
+		// is never dec'd, so a per-iteration-fresh scrutinee leaks one box per
+		// iteration. Heap-form only (pair-form Option[i32] has no box). Gated
+		// (reclaimableMatchScrutinee) on all arm bindings being non-pointer so
+		// no payload escapes the freed box; the dec itself is is_unique-gated.
+		var (
+			reclaimScrut bool
+			scrutEnum    ast.EnumType
+		)
+		if !pairFormScrutinee {
+			bts := make([][]ast.Type, 0, len(n.Arms))
+			for _, arm := range n.Arms {
+				bts = append(bts, arm.BindingTypes)
+			}
+			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bts, nil)
+		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		b.breakStack = append(b.breakStack, matchEndD)
@@ -6346,6 +6133,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of match
+		if reclaimScrut {
+			b.emitEnumSlotDrop(ptrSlot, scrutEnum, true)
+		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
 	}
@@ -6840,6 +6630,15 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
+		// Reclaim a FRESH owned enum scrutinee box after the match-expr
+		// completes (value-consuming position; see reclaimableMatchScrutinee).
+		// Gated additionally on the RESULT being non-pointer (resultType): a
+		// pointer result could alias an extracted payload, so it's left alone.
+		bts := make([][]ast.Type, 0, len(n.Arms))
+		for _, arm := range n.Arms {
+			bts = append(bts, arm.BindingTypes)
+		}
+		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bts, resultType)
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
@@ -6911,6 +6710,11 @@ func (b *builder) expr(e ast.Expr) error {
 			b.closeScope()
 		}
 		b.closeScope()
+		// Free the fresh owned scrutinee box (scalar result already in
+		// resultSlot; net-zero on the operand stack) before loading the result.
+		if reclaimScrut {
+			b.emitEnumSlotDrop(ptrSlot, scrutEnum, true)
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
 		// Lower `expr?` as: stash the source pointer, branch on
@@ -10800,6 +10604,131 @@ func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
 // (a reinit/reassign RHS) is left untouched. Callers gate on
 // RcFreeEnabled + freeEligible (+ localNameUnique + !movedLocals for the
 // reinit path) before invoking, so only an OWNED value is deep-dropped.
+// decValueOnStack consumes a pointer value already on the operand stack and
+// dec's it per its static type. An array of pointer-shaped rc-tracked elements
+// routes through __fern_drop_arr_ptr (which recurses one level into the
+// elements on the last reference); every other pointer-shaped value gets a flat
+// __fern_rc_dec (nested fields/elements of those leak for now — safe under
+// no-free, no over-release). Both helpers carry the null / low-address /
+// sentinel guards. Promoted from a closure in emitRcDecLocalsAtExitExcept so
+// emitEnumSlotDrop's uniform payload-drop path can share it.
+func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
+	// Two-word string value (wasm + arm64-TwoWordOverride): the caller loaded
+	// (data, len) via payloadLoadOpFor, so reclaim via the two-word
+	// __fern_str_dec. Reached from the enum payload drop (struct / tuple string
+	// fields are handled inline before reaching here).
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	// Single-word string value (native single-word, x86_64): caller loaded a
+	// ptr; __fern_rc_dec it (inline-tag / sentinel guards keep all sources
+	// safe). arm64 / wasm two-word ABIs take the two-word str_dec branch above.
+	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	// `mayFree` is the borrow-aware permission to return this value's buffer to
+	// the freelist. It's true only for OWNED top-level array locals
+	// (computeFreeEligible); struct fields and enum payloads always pass false
+	// (their borrow-ness isn't tracked, so they never free — conservative).
+	if at, ok := t.(ast.ArrayType); ok && arrElemIsRcTracked(at.Elem) && mayFree {
+		// Transitive reclamation Stage B: an array of CONCRETE structs drops
+		// each element box deeply (via __drop_arr_struct_<Elem> →
+		// __drop_struct_<Elem> per element) before freeing the buffer, instead
+		// of the flat per-element rc_dec __fern_drop_arr_ptr does. Gated on
+		// RcFreeEnabled to match the genfn post-pass.
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
+	// codegen always pushes the call's return-value register onto the operand
+	// stack; drop the bogus push to keep the stack balanced.
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
+// dropStructField drops one struct field whose pointer is already on the
+// operand stack. Transitive reclamation Stage A: a CONCRETE struct field
+// (statically exact type) recurses through its generated __drop_struct_ fn, so
+// its box + nested struct children reclaim on the field's last reference; the
+// generated fn is_unique-gates internally, so this is safe whether the child is
+// shared or not. Every other field type (arrays, enums/unions, closures, Map)
+// keeps the flat one-level dec. Promoted from a closure in
+// emitRcDecLocalsAtExitExcept so emitEnumSlotDrop's variant-plan path shares it.
+func (b *builder) dropStructField(t ast.Type) {
+	// Two-word string value (wasm + arm64-TwoWordOverride): caller loaded
+	// (data, len), reclaim via __fern_str_dec. Reached from the enum
+	// variant-plan payload drop (struct / tuple string fields handled inline).
+	if _, isStr := t.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	// Single-word string value (native single-word, x86_64): caller loaded a
+	// ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-tag low-bit guard
+	// + literal sentinel keep all sources safe.
+	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	if isMapType(t) {
+		// A Map-typed field reclaims the whole map structure on the owning
+		// value's last reference: free the value column then the buf + handle.
+		// Both helpers self-guard on the map's own rc==1, so a shared map only
+		// dec's. They return the map ptr, so the stack value chains through.
+		b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	if at, ok := t.(ast.ArrayType); ok {
+		// Any array field frees its BUFFER on the owning value's last reference
+		// (the owner is eligible/unique here; each helper still is_unique-gates
+		// the array, so a shared one only dec's). Array-of-struct also
+		// deep-drops each element box (Stage B loop); array-of-rc frees the
+		// outer buffer + flat-dec's inner; plain arrays free the buffer.
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			return
+		}
+		helper := "__fern_arr_dec"
+		if arrElemIsRcTracked(at.Elem) {
+			helper = "__fern_drop_arr_ptr"
+		} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+			// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
+			// walk + __fern_str_dec each (data, len) element, then free buffer.
+			helper = "__fern_drop_arr_str"
+		} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			// string[] on native single-word (x86_64, !TwoWordOverride):
+			// elements are single pointers; __fern_drop_arr_ptr walks +
+			// __fern_rc_dec's each one (SSO inline-tag low-bit guard is safe).
+			helper = "__fern_drop_arr_ptr"
+		}
+		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
+		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	b.decValueOnStack(t, false)
+}
+
 func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 	if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -10807,7 +10736,195 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
+	// dropFnNameFor declines a SCALAR-payload enum (enumNeedsDrop false: no
+	// pointer payload to recurse into), so a flat rc_dec here would leak its
+	// box. Route through emitEnumSlotDrop, whose variant-plan tier frees the
+	// box at its exact size under an is_unique gate — reclaiming a loop-var
+	// reinit / reassign of e.g. `Box{ Val(i32), Empty }` that previously
+	// leaked one box per iteration. Callers gate on owned-ness (eligible),
+	// so pass eligible=true; the is_unique gate is the final safety net.
+	if et, ok := ty.(ast.EnumType); ok {
+		b.emitEnumSlotDrop(idx, et, true)
+		return
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
+// emitEnumDropViaGenFn routes an OWNED CONCRETE enum box in slot `slot`
+// through the generated `__drop_enum_<Name>` drop function (is_unique-gated
+// variant-plan: per-variant payload drop + exact-size box_free), returning
+// true if it handled the drop. It's the wasm-correct alternative to the inline
+// box-free tiers in emitEnumSlotDrop: an inline box_free in a complex function
+// body doesn't return the box to the freelist on wasm, but the identical
+// box_free inside a generated FUNCTION does (verified). The post-pass worklist
+// regenerates the body from info.Enums on encountering this call, so scalar
+// enums (which dropFnNameFor declines — enumNeedsDrop is false) reclaim too.
+//
+// Concrete enums only: a generic instantiation's drop is named/handled via
+// dropFnNameFor (mangled name + genEnumDrops registry) upstream, and a
+// sentinel/un-planned enum (enumVariantDropPlan false) falls through to the
+// inline flat dec. Net-zero on the operand stack.
+func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
+	if !ast.RcFreeEnabled || len(et.Args) > 0 {
+		return false
+	}
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return false
+	}
+	if _, ok := enumVariantDropPlan(ed, b.ptrW); !ok {
+		return false
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__drop_enum_" + et.Name, I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	return true
+}
+
+// emitEnumSlotDrop releases the OWNED enum box in local slot `slot` per its
+// static type `et` — the shared body extracted from the exit-sweep enum
+// branch (emitRcDecLocalsAtExitExcept) so the loop-var reinit / reassign drop
+// (emitStructEnumSlotDrop) and the fresh-match-scrutinee reclamation free a
+// scalar-payload box the same way the exit sweep does, rather than flat-dec'ing
+// (and leaking) it. `eligible` is the caller's borrow-aware owned-ness gate;
+// when false (or rc-free off) it degrades to the prior flat dec.
+//
+// Three tiers, all is_unique-gated so a shared / payloadless-sentinel value is
+// only dec'd, never freed:
+//   - uniform non-pointer payloads → flat-dec payloads + __fern_box_free;
+//   - non-uniform / scalar variants → tag switch, per-variant payload drop +
+//     exact-size __fern_box_free (the tier that reclaims a `Box{ Val(i32),
+//     Empty }` box the flat dec would leak);
+//   - anything statically un-sizable (generic ParamType payloads) → the
+//     uniform-payload flat-dec (if any) + flat rc_dec, exactly as before.
+// Net-zero on the operand stack, so a value sitting underneath is untouched.
+func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
+	// Prefer the GENERATED __drop_enum_<Name> fn for a concrete enum: the
+	// box_free inside a generated drop FUNCTION returns the freed box to the
+	// freelist on every backend, whereas the SAME box_free emitted INLINE in a
+	// complex body (a loop, a match) fails to reuse on wasm — a scalar-enum box
+	// leaked 80000 B inline where the gen-fn path reclaims it (verified against
+	// the byte-identical struct-drop fn, which reuses on wasm). The worklist
+	// regenerates the body from info.Enums on seeing this call (genEnumDropFn
+	// covers scalar enums too: enumVariantDropPlan frees their box at its exact
+	// size). Net-zero on the operand stack.
+	if eligible && b.emitEnumDropViaGenFn(slot, et) {
+		return
+	}
+	ed, edOk := b.info.Enums[et.Name]
+	if edOk && ast.RcFreeEnabled && eligible {
+		// Generic-enum reclamation: a heap-boxed instantiation like
+		// Option[Item] / Result[Item, E] carries ParamType payloads in its
+		// decl, so substitute the type args to recover the concrete types —
+		// but ONLY adopt the substituted decl when it exposes a pointer
+		// payload (guaranteeing a heap-boxed, non-pair-form instantiation, so
+		// the variant-plan's box_free is valid). Scalar instantiations
+		// (Option[i32], pair-form, no box) keep the generic decl and bail to
+		// the flat dec as before.
+		if len(et.Args) > 0 {
+			if sub := substituteEnumDecl(ed, et.Args); enumHasPointerPayload(sub) {
+				ed = sub
+			}
+		}
+		loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
+		size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
+		// Uniform branchless path: every payload-carrying variant shares an
+		// identical droppable-payload signature, so the payload decs run
+		// unconditionally inside the is_unique guard with no tag switch. A
+		// CONCRETE-struct payload that could be deep-dropped is excluded here
+		// (!enumHasPointerPayload) and taken by the variant-plan path below,
+		// where each arm knows its exact type.
+		if loadsOk && sizeOk && !enumHasPointerPayload(ed) {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			for _, ld := range loads {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				if ld.off != 0 {
+					b.emit(Op{Kind: OpConstI32, I32: ld.off})
+					b.emit(Op{Kind: OpAdd})
+				}
+				b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+				b.decValueOnStack(ld.typ, false)
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpConstI32, I32: size})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpElse})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			return
+		}
+		// Non-uniform / scalar enum (JsonValue, or a non-pair-form scalar enum
+		// reached via the generic fallthrough): a tag switch over the real box
+		// (rc==1) drops each variant's payloads and frees with that variant's
+		// exact box size. The tag is stashed in a scratch local so later arms
+		// read it from the stack, never from the (possibly freed) box.
+		// Concrete enums take the wasm-correct generated-fn route above before
+		// reaching here; this inline path serves generic instantiations.
+		if plan, ok := enumVariantDropPlan(ed, b.ptrW); ok {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			tagSlot := b.allocSlot()
+			b.locals[fmt.Sprintf("__enum_drop_tag_%d", tagSlot)] = tagSlot
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpLoad}) // tag at [data+0]
+			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
+			for _, vd := range plan {
+				b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+				b.emit(Op{Kind: OpConstI32, I32: int32(vd.tag)})
+				b.emit(Op{Kind: OpEq})
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				for _, ld := range vd.loads {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					if ld.off != 0 {
+						b.emit(Op{Kind: OpConstI32, I32: ld.off})
+						b.emit(Op{Kind: OpAdd})
+					}
+					b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+					// Tag-guarded, so ld.typ is this variant's EXACT payload
+					// type — a concrete-struct payload recurses through
+					// __drop_struct_<T>; other payloads keep the flat dec.
+					b.dropStructField(ld.typ)
+				}
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpConstI32, I32: vd.size})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpEnd})
+			}
+			b.emit(Op{Kind: OpElse})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpEnd})
+			return
+		}
+	}
+	if edOk {
+		if loads, ok := uniformEnumDropLoads(ed, b.ptrW); ok {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			for _, ld := range loads {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				if ld.off != 0 {
+					b.emit(Op{Kind: OpConstI32, I32: ld.off})
+					b.emit(Op{Kind: OpAdd})
+				}
+				b.emit(payloadLoadOpFor(ld.typ, b.ptrW))
+				b.decValueOnStack(ld.typ, false)
+			}
+			b.emit(Op{Kind: OpEnd})
+		}
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
