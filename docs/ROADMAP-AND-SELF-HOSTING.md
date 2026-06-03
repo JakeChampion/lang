@@ -349,15 +349,21 @@ Ported so far via the flag:
   `AT_FDCWD` constants (`O_WRONLY|O_CREAT|O_TRUNC` is 1537 on Darwin vs
   577 on Linux; `AT_FDCWD` is -2 vs -100) and errno normalisation, so
   both succeed *and* report errors correctly.
+- `stat` / `FileStat` — `newfstatat` (#79) -> Darwin `fstatat` (#470,
+  same args) + the `struct stat` field offsets (`st_mode` is a u16 at
+  offset 4 / `st_size` an i64 at offset 96 on Darwin's 64-bit-inode
+  stat, vs u32@16 / i64@48 on Linux arm64). `S_IFMT`/`S_IFREG`/`S_IFDIR`
+  are the same POSIX constants. is_file / is_dir / size all read back
+  correctly.
 
 Still on their Linux encoding (out of scope, documented gaps):
 `monotonic_ns` (needs `mach_absolute_time` + `mach_timebase_info` — the
-Go backend doesn't port it either), the `fstat`-based `stat()` /
-`FileStat` builtin (`newfstatat` #79 + `st_size`@48; depends on the
-per-OS `struct stat` layout), the other directory builtins
-(`read_dir` / `temp_dir` / `remove_dir_all`, which still use Linux
-`AT_FDCWD` / `*at` syscalls), and the subprocess family. These are
-emitted but only misbehave if a program actually calls them on Darwin.
+Go backend doesn't port it either), the directory-enumeration builtins
+(`read_dir` / `remove_dir_all` use `getdents64`, whose Darwin equivalent
+`getdirentries` has a different `dirent` layout; `temp_dir` / the
+`*at`-based removers still use Linux `AT_FDCWD` / syscall numbers), and
+the subprocess family. These are emitted but only misbehave if a program
+actually calls them on Darwin.
 
 Gated by `internal/e2e/self_host_macho_test.go` — cross-links each
 program with clang + lld and asserts a valid arm64 Mach-O executable off
