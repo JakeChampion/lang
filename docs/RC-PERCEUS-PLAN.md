@@ -2337,13 +2337,26 @@ exercises the rc==1 branch + the differential gate) stays green.
   over-releases on x86_64 + arm64 (item 5g).
 
 Next Phase-6 steps (open):
-  - **`closure[]` array-element drop** — `arrElemStructDropName` declines
-    `FuncType` elements, so an array of closures flat-dec's them and leaks
-    their captured env blocks. Needs a per-closure array-drop dispatch (the
-    `__drop_arr_struct_` / `__drop_arr_enum_` analogue). The only clean,
-    safe, do-it-now reclamation item left. (Array-of-enum — concrete `E[]`
-    and generic `Option[T][]` — and nested `E[][]` already SHIPPED via the
-    `__drop_arr_enum_` / `__drop_arr_of_` recursion.)
+  - **`closure[]` array-element drop** — BLOCKED on the closure env-drop
+    limitation, NOT a clean slice (investigated 2026-06-03). A `closure[]`
+    leaks (scalar-capture `(() => i32)[]` loop: 3264 → 320064 B). The
+    obstacle: the element `FuncType` can't name WHICH closure (distinct
+    closures share a signature but have distinct capture layouts + per-
+    closure `__closure_drop_<name>` thunks), so an array loop can only call
+    the GENERIC `__fern_closure_drop` per element — which by design frees
+    only the closure PAIR block and *leaks the env block* (see its
+    "a pair's env leaks for now" comment). So a generic `__drop_arr_closure`
+    only partially reclaims (frees pairs, envs leak — verified: wasm
+    320064 → 192352, still unbounded; natives looked bounded only because
+    they ELIDE these closures to direct calls, no heap). Fully reclaiming a
+    closure-array element needs env-block freeing, which needs either (a) the
+    per-closure thunk (needs static closure identity — unavailable for array
+    elements) or (b) the closure box carrying a drop-fn pointer (a
+    representation change). Tied to the broader "closure env / captures leak
+    for now" infra state — do this WITH that work, not standalone.
+    (Array-of-enum — concrete `E[]` and generic `Option[T][]` — and nested
+    `E[][]` already SHIPPED via the `__drop_arr_enum_` / `__drop_arr_of_`
+    recursion.)
   - **Retire `strbuf_*`** — evaluate dropping the legacy string builder now
     that string concat/slice + nested-concat intermediates reclaim. Cleanup,
     not a leak.
