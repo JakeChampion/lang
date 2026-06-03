@@ -170,6 +170,16 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"str-index-of-missing", "function main(): i32 { var s = \"abc\"; var r = s.index_of(\"z\"); if (r < 0) { return 1; } return 0; }", 1, ""},
 		{"str-contains-literal-recv", "function main(): i32 { if (\"foobar\".contains(\"oba\")) { return 42; } return 0; }", 42, ""},
 		{"str-starts-with-after-concat", "function main(): i32 { var s = \"foo\" + \"bar\"; if (s.starts_with(\"foob\")) { return 1; } return 0; }", 1, ""},
+		// Allocating string methods (return a fresh heap string).
+		{"str-to-upper", "function main(): i32 { write(\"hello\".to_upper()); return 0; }", 0, "HELLO"},
+		{"str-to-lower", "function main(): i32 { write(\"HeLLo\".to_lower()); return 0; }", 0, "hello"},
+		{"str-to-upper-mixed", "function main(): i32 { var s = \"aB3z!\"; write(s.to_upper()); return 0; }", 0, "AB3Z!"},
+		{"str-repeat", "function main(): i32 { write(\"ab\".repeat(3)); return 0; }", 0, "ababab"},
+		{"str-repeat-zero", "function main(): i32 { var s = \"x\".repeat(0); return s.len(); }", 0, ""},
+		{"str-repeat-var", "function main(): i32 { var s = \"-\"; write(s.repeat(5)); return 0; }", 0, "-----"},
+		{"str-upper-concat", "function main(): i32 { write(\"hi \".to_upper() + \"there\"); return 0; }", 0, "HI there"},
+		{"str-method-chain", "function main(): i32 { write(\"AbC\".to_lower().to_upper()); return 0; }", 0, "ABC"},
+		{"str-upper-len", "function main(): i32 { return \"abc\".to_upper().len(); }", 3, ""},
 	}
 
 	for _, tc := range cases {
