@@ -1275,3 +1275,22 @@ func TestTypeParamNoBounds(t *testing.T) {
 		t.Errorf("expected no bounds, got %v", prog.Funcs[0].Bounds)
 	}
 }
+
+// Trait references may be module-qualified in impls and in bounds
+// (`impl mod.Trait for T`, `[T: mod.Trait]`). modload rewrites the
+// qualifier to the imported module's prefix. See docs/TRAITS.md (Phase 3).
+func TestQualifiedTraitNames(t *testing.T) {
+	prog, err := Parse(`impl shapes.Area for Square { function area(self: Self): i32 { return 1; } }
+function f[T: shapes.Area + cmp.Ord](v: T): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("qualified trait names should parse: %v", err)
+	}
+	if prog.Impls[0].Trait != "shapes.Area" {
+		t.Errorf("impl trait = %q, want shapes.Area", prog.Impls[0].Trait)
+	}
+	fn := prog.Funcs[len(prog.Funcs)-1]
+	got := fn.Bounds["T"]
+	if len(got) != 2 || got[0] != "shapes.Area" || got[1] != "cmp.Ord" {
+		t.Errorf("bounds = %v, want [shapes.Area cmp.Ord]", got)
+	}
+}

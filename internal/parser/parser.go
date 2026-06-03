@@ -548,10 +548,11 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tname, err := p.expect(lexer.Ident, "")
+	tnameTok, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, nil, err
 	}
+	tname := p.maybeQualify(tnameTok.Text)
 	if _, err := p.expect(lexer.Keyword, "for"); err != nil {
 		return nil, nil, err
 	}
@@ -566,7 +567,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname.Text, TraitPos: tname.Pos, Type: implType, TypePos: typePos}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		fn, err := p.parseFunction()
@@ -602,9 +603,23 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	return id, methods, nil
 }
 
+// maybeQualify consumes an optional `.ident` suffix and returns the
+// possibly-qualified name (`mod.Trait`). modload rewrites the qualifier
+// to the imported module's mangled prefix. The leading identifier has
+// already been consumed by the caller.
+func (p *parser) maybeQualify(first string) string {
+	if p.match(lexer.Punct, ".") {
+		p.advance()
+		if rest, ok := p.accept(lexer.Ident, ""); ok {
+			return first + "." + rest.Text
+		}
+	}
+	return first
+}
+
 // parseOptBounds parses an optional trait-bound list on a type
-// parameter: `: Display + Eq`. Returns nil when no `:` follows. See
-// docs/TRAITS.md.
+// parameter: `: Display + Eq` (bounds may be qualified, `mod.Trait`).
+// Returns nil when no `:` follows. See docs/TRAITS.md.
 func (p *parser) parseOptBounds() ([]string, error) {
 	if _, ok := p.accept(lexer.Punct, ":"); !ok {
 		return nil, nil
@@ -615,7 +630,7 @@ func (p *parser) parseOptBounds() ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		bounds = append(bounds, b.Text)
+		bounds = append(bounds, p.maybeQualify(b.Text))
 		if _, ok := p.accept(lexer.Punct, "+"); ok {
 			continue
 		}
