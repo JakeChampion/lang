@@ -208,18 +208,31 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
             return emit_expr(u.operand, cx);
         },
         parser.ExprBinary(b) => {
-            // `+` on a string operand is concatenation, not addition.
-            if (b.op == "+" && (is_string_expr(b.left, cx) || is_string_expr(b.right, cx))) {
-                return "(call $__fern_strcat " + emit_expr(b.left, cx) + " " + emit_expr(b.right, cx) + ")";
+            // String-typed operands route `+` and the comparisons to the
+            // string runtime; integer operands use the i32 ops.
+            if (is_string_expr(b.left, cx) || is_string_expr(b.right, cx)) {
+                var l: string = emit_expr(b.left, cx);
+                var r: string = emit_expr(b.right, cx);
+                if (b.op == "+") {
+                    return "(call $__fern_strcat " + l + " " + r + ")";
+                }
+                if (b.op == "==") {
+                    return "(call $__fern_streq " + l + " " + r + ")";
+                }
+                if (b.op == "!=") {
+                    return "(i32.eqz (call $__fern_streq " + l + " " + r + "))";
+                }
+                if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                    return "(" + wasm_binop(b.op) + " (call $__fern_strcmp " + l + " " + r + ") (i32.const 0))";
+                }
             }
             return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, cx) + " " + emit_expr(b.right, cx) + ")";
         },
         parser.ExprCall(c) => {
-            // Direct call to a free function named by an ident:
-            // `f(a, b)` → `(call $f <a> <b>)`. Receiver methods and
-            // builtin (write/print/…) calls are later slices.
             match (c.callee) {
                 parser.ExprIdent(id) => {
+                    // Direct call to a free function: `f(a, b)` →
+                    // `(call $f <a> <b>)`.
                     var s: string = "(call $" + id.name;
                     var i: i32 = 0;
                     while (i < c.args.len()) {
@@ -227,6 +240,15 @@ function emit_expr(e: parser.Expr, cx: Ctx): string {
                         i = i + 1;
                     }
                     return s + ")";
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // Builtin method call. `s.len()` on a string loads the
+                    // block's length word. (Other receiver methods are a
+                    // later slice.)
+                    if (fa.field == "len" && c.args.len() == 0 && is_string_expr(fa.obj, cx)) {
+                        return "(i32.load " + emit_expr(fa.obj, cx) + ")";
+                    }
+                    return "(i32.const 0)";
                 },
                 _ => { return "(i32.const 0)"; },
             }
@@ -417,6 +439,38 @@ function strcat_helpers(heap_base: i32): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $cb)))\n";
     o = o + "    (local.get $p))\n";
+    // $__fern_streq(a, b): 1 if the two string blocks are byte-equal.
+    o = o + "  (func $__fern_streq (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $la i32) (local $i i32)\n";
+    o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+    o = o + "    (if (i32.ne (local.get $la) (i32.load (local.get $b))) (then (return (i32.const 0))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $la)))\n";
+    o = o + "      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))) (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i)))) (then (return (i32.const 0))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const 1))\n";
+    // $__fern_strcmp(a, b): -1 / 0 / 1 lexicographic (unsigned bytes;
+    // shorter prefix is less).
+    o = o + "  (func $__fern_strcmp (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $la i32) (local $lb i32) (local $n i32) (local $i i32) (local $ca i32) (local $cb i32)\n";
+    o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
+    o = o + "    (local.set $n (local.get $la))\n";
+    o = o + "    (if (i32.lt_u (local.get $lb) (local.get $la)) (then (local.set $n (local.get $lb))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d2 (loop $c2\n";
+    o = o + "      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $ca (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $cb (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (if (i32.lt_u (local.get $ca) (local.get $cb)) (then (return (i32.const -1))))\n";
+    o = o + "      (if (i32.gt_u (local.get $ca) (local.get $cb)) (then (return (i32.const 1))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c2)))\n";
+    o = o + "    (if (i32.lt_u (local.get $la) (local.get $lb)) (then (return (i32.const -1))))\n";
+    o = o + "    (if (i32.gt_u (local.get $la) (local.get $lb)) (then (return (i32.const 1))))\n";
+    o = o + "    (i32.const 0))\n";
     return o;
 }
 
@@ -431,12 +485,18 @@ function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
             return collect_strings_expr(b.right, t);
         },
         parser.ExprCall(c) => {
+            // Walk the callee too — a method call like `"abc".len()`
+            // hides its literal in the ExprFieldAccess receiver.
+            t = collect_strings_expr(c.callee, t);
             var i: i32 = 0;
             while (i < c.args.len()) {
                 t = collect_strings_expr(c.args[i], t);
                 i = i + 1;
             }
             return t;
+        },
+        parser.ExprFieldAccess(fa) => {
+            return collect_strings_expr(fa.obj, t);
         },
         _ => { return t; },
     }
