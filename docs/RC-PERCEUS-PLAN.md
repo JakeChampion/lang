@@ -11,9 +11,9 @@ closures / strings, including nested/generic shapes and statement
 temporaries). Native heap-string rc (item 5g) is now ALSO working — the
 SSO native flip went green on both backends (2026-06-03), unblocking it.
 The remaining open items are collected at the end of the Phase-6 section
-("Next Phase-6 steps (open)") and the still-deferred 5f note (struct
-replaced-field free — needs alias analysis); the per-phase prose below is
-kept as the historical record. The
+("Next Phase-6 steps (open)") — chiefly the ENUM reuse-path payload free
+(the struct analog 5f shipped sound; see its note). The per-phase prose
+below is kept as the historical record. The
 design "Open questions" at the very bottom were all resolved during
 implementation — see the resolutions noted there.
 
@@ -1841,32 +1841,44 @@ hook. Investigation overturned this doc's original "high risk" framing:
     reuse, array payloads, green on all four backends through both
     free-on/free-off differential gates).
 
-##### 5f — freeing-dec for replaced pointer fields (deferred: UAF risk, needs alias analysis)
+##### 5f — freeing-dec for replaced pointer fields (SHIPPED + sound; the old "deferred" framing was wrong)
 
-5c's struct-reuse path flat-`dec`s a replaced pointer field's old value
-(`ir.go:9410`, `__fern_rc_dec`, no free) — correct and leak-but-never-
-UAF. Upgrading that to a *freeing* dec (reclaim the old field's buffer
-when it hits rc 0) reopens UAF risk, confirmed against the real code:
+**SHIPPED and sound.** `tryStructReuseOverwrite` step 4 deep-drops the
+box's OLD pointer-field values (`emitFieldDropOnStack` — a FREEING drop:
+`__fern_arr_dec` frees the array buffer, `__drop_struct_`/`__drop_enum_`
+free nested boxes) before the new ones overwrite them. A self-overwrite
+`p = Box{ items: [..], n: .. }` therefore reclaims the replaced `items`
+buffer every iteration (`Test{X86_64,Arm64,WASM}ReplacedFieldReclaim` —
+flat high-water across 10x N on natives + wasm; the array-buffer leak the
+prior flat `__fern_rc_dec` left is gone).
 
-  - The reuse path runs only when the struct is `freeEligible` + `is_unique`,
-    so the box's pointer fields are genuinely owned — freeing the OLD
-    value of a field is the same operation scope-exit `emitDec` already
-    does to that field. Safe *in isolation*.
-  - The new risk is the NEW field value aliasing the old buffer
-    *uncounted*. `needsRcIncOnAlias` only eval-incs `Ident` /
-    `FieldAccess` / `Index` RHS, so a fresh producer (`ArrayLit`, …) or
-    an inc'd alias is safe, but a **`*ast.Call` / `*ast.IfExpr` field
-    RHS** (e.g. `items: g(p.items)`) gets no inc and may return a view
-    into the old field — freeing the old buffer would then UAF the new
-    value.
-  - A sound gate ("the new field value can't alias the old field
-    uncounted") *is* the deferred-alias analysis the borrow model
-    postponed; a partial `rhsTainted`-based heuristic risks UAF that the
-    no-free arena masks until free-on, and the differential corpus
-    wouldn't exhaustively exercise the exact aliasing shape. For a
-    second-order gain (reclaiming replaced-field buffers that leak
-    *safely* today) that's not worth the UAF-class risk. Defer until the
-    alias analysis exists.
+**Why the original "deferred — needs alias analysis" note was wrong.** The
+note feared a NEW field value aliasing the old buffer *uncounted* (e.g.
+`items: g(p.items)` via a `*ast.Call` that returns a view, which
+`needsRcIncOnAlias` doesn't inc) — freeing the old buffer would then UAF
+the new value. But the struct case is sound *for free*, because **StructLit
+construction inc's its fields globally** (the baseline non-reuse path does
+too). So the old buffer's rc reflects every live reference, including one
+read in the self-overwrite RHS: the freeing drop is rc-protected and only
+reclaims the genuine last reference (the field's own is_unique gate dec's a
+shared buffer instead of freeing it). Verified against exactly the shapes
+the note feared — `items: ident(p.items)` (Call returning the old field), a
+branch-returning helper, and an aliased local kept live across the
+overwrite — each value-correct with 0 over-releases on all three backends,
+including an interleaved-allocation stress that would corrupt a
+wrongly-freed buffer.
+
+**The real open analog is the ENUM reuse path** (`tryEnumReuseOverwrite`),
+which is NOT sound for a freeing drop and so still flat-leaks its replaced
+payload (`e = Wrap([..])` in a loop: 1616 → 160016 B on wasm, unbounded).
+The difference is exactly the inc: enum construction does NOT rc-count
+payloads (it uses move/taint semantics), so a mid-loop freeing drop of the
+old payload has no rc protection against a live uncounted alias — the UAF
+class the struct path avoids via the construction inc. Closing it cleanly
+means making enum payloads rc-counted like struct fields (inc on every
+construct, free on every drop — most drop sites already free for uniform
+enums), a wide but well-defined change tracked as the enum-reuse-payload
+item under "Next Phase-6 steps".
 
 ##### 5g — heap-string rc (UNBLOCKED + working; 2026-06-03)
 
@@ -2417,9 +2429,22 @@ Next Phase-6 steps (open):
     on all three backends. Retiring it would push that hot path onto
     rc-string concat and reintroduce the exact overhead strbuf exists to
     avoid. Keep it.
-  - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — DEFERRED:
-    rc-neutral by design, reclaiming needs the global "inc enum payloads on
-    construction + rebalance every drop" change. Risky.
+  - **Enum reuse-path payloads** (`tryEnumReuseOverwrite`) — OPEN (the
+    genuine remaining replaced-value leak; the struct analog 5f is SHIPPED).
+    `e = Wrap([..])` self-overwrite reuses the box but never frees the OLD
+    payload, so it leaks unboundedly (probe: wasm 1616 → 160016 B across
+    100x N; natives bounded only via the freelist-arena insensitivity, as
+    with closure[]). rc-neutral by design: enum construction does NOT count
+    payloads (move/taint semantics), so an is_unique-gated freeing drop of
+    the old payload has no rc protection against a live uncounted alias —
+    the UAF class 5f's struct path sidesteps because StructLit construction
+    inc's its fields. The clean fix is to make enum payloads rc-counted like
+    struct fields: inc on every construction (emitEnumNew + the reuse path),
+    free on every drop (the uniform-enum payload drop already frees at the
+    exit sweep / match-scrutinee — extend to the reuse-overwrite path). Wide
+    but well-defined; stage it carefully (every construct + drop site) and
+    gate on the differential + over-release corpus, since a missed site is a
+    UAF when free is on.
   - **Match-on-fresh-enum scrutinee** (`match (mk(i)) { A(x) => x, … }`) —
     **SHIPPED ON ALL THREE BACKENDS (2026-06-03).** A fresh enum scrutinee
     consumed by a match leaked its box every iteration; the stmt-form Match +

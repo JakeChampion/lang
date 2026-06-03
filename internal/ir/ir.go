@@ -10251,13 +10251,21 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 //   - Pointer fields: each new value is retained on eval (emitAliasInc
 //     for an alias-shaped RHS, same as normal StructLit construction).
 //     On the REUSE branch only, the box's OLD pointer-field values are
-//     flat-dec'd first (they're being repurposed). For a carried-over
-//     field (`name: p.name`) the eval-inc and this dec balance, so its
-//     rc is unchanged; for a replaced field the old reference is
-//     released (flat dec — leak-but-never-UAF: the buffer isn't freed
-//     here, a freeing dec is a follow-up). The dec is gated on the i32
-//     is_unique result (not the raw token pointer) so the branch
-//     condition is backend-safe truthiness.
+//     deep-dropped (emitFieldDropOnStack, a FREEING drop) before the new
+//     ones overwrite them. For a carried-over field (`name: p.name`) the
+//     eval-inc and this drop balance, so its rc is unchanged; for a
+//     REPLACED field the old reference reaches rc 0 and its buffer/box is
+//     freed (5f — no longer the leak-but-never-UAF flat dec). This is
+//     SOUND, not the deferred-alias hazard the old note feared, precisely
+//     because construction inc's the new field: any live alias of the old
+//     buffer (including one read in the self-overwrite RHS,
+//     `items: ident(p.items)`) holds a counted reference, so the freeing
+//     drop only reclaims the genuine last one (the field's own is_unique
+//     gate dec's a shared buffer instead of freeing it). The drop is gated
+//     on the i32 is_unique result (not the raw token pointer) so the branch
+//     condition is backend-safe truthiness. (Contrast tryEnumReuseOverwrite,
+//     where construction does NOT count payloads, so its old payload still
+//     flat-leaks — a separate open item.)
 //   - tokenSize == size (same type T), so __alloc_reuse's class check
 //     always matches on the reuse path and never frees.
 func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
