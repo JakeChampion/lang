@@ -1223,12 +1223,21 @@ func TestLowerNestedFunctionHoists(t *testing.T) {
 		function inner(): i32 { return n + 1; }
 		return inner();
 	}`)
-	// Two functions in the IR: the outer and the hoisted inner.
-	if len(prog.Funcs) != 2 {
-		t.Fatalf("expected 2 funcs (outer + hoisted inner), got %d:\n%s", len(prog.Funcs), prog)
+	// Two user-facing functions in the IR: the outer and the hoisted
+	// inner. A MakeClosure'd closure also gets a generated
+	// `__closure_drop_<name>` thunk (its pair carries a drop-fn
+	// pointer for generic env reclamation), so filter those out.
+	var userFuncs []*Func
+	for _, fn := range prog.Funcs {
+		if !strings.HasPrefix(fn.Name, "__closure_drop_") {
+			userFuncs = append(userFuncs, fn)
+		}
+	}
+	if len(userFuncs) != 2 {
+		t.Fatalf("expected 2 funcs (outer + hoisted inner), got %d:\n%s", len(userFuncs), prog)
 	}
 	var hoisted *Func
-	for _, fn := range prog.Funcs {
+	for _, fn := range userFuncs {
 		if strings.HasPrefix(fn.Name, "__closure_") {
 			hoisted = fn
 		}
@@ -1256,7 +1265,7 @@ func TestLowerCaptureRefIsEnvRelativeLoad(t *testing.T) {
 	}`)
 	var hoisted *Func
 	for _, fn := range prog.Funcs {
-		if strings.HasPrefix(fn.Name, "__closure_") {
+		if strings.HasPrefix(fn.Name, "__closure_") && !strings.HasPrefix(fn.Name, "__closure_drop_") {
 			hoisted = fn
 		}
 	}

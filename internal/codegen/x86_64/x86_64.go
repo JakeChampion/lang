@@ -2512,13 +2512,18 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 			return nil
 		}
 		// MakeClosure with zero captures: closure pair
-		// {fn_ptr, 0}. Still need the pair allocation
-		// because the call site may load both halves.
-		g.emit("mov edi, 16")
+		// {fn_ptr, env=0, drop_fn=0, env=0}. The 32-byte 4-slot
+		// shape matches the captured case so a generic holder
+		// (__drop_arr_closure) reads the drop-fn slot uniformly;
+		// a zero-capture closure has no env to free, so drop_fn
+		// is 0 (the generic drop guards drop_fn!=0).
+		g.emit("mov edi, 32")
 		g.emit("call __fern_alloc_rc1")
 		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 		g.emit("mov [rax], rcx")
 		g.emit("mov qword ptr [rax + 8], 0")
+		g.emit("mov qword ptr [rax + 16], 0")
+		g.emit("mov qword ptr [rax + 24], 0")
 		g.push()
 		return nil
 	}
@@ -2604,13 +2609,29 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// the saved value still sits at [rsp] when the call
 	// returns.
 	g.push() // env_ptr → operand stack
-	g.emit("mov edi, 16")
+	g.emit("mov edi, 32")
 	g.emit("call __fern_alloc_rc1")
-	// rax = pair ptr (= base + 8 header). Load fn / env, store.
+	// rax = pair ptr (= base + 8 header). Pair is 32 bytes:
+	// {fn_ptr, env_ptr, drop_fn, env_ptr}. The duplicated env_ptr
+	// at +24 makes {drop_fn@16, env@24} a callable sub-pair so a
+	// generic holder can free the env via the embedded drop-fn
+	// pointer without static closure identity.
+	// drop_fn = &__closure_drop_<name> when the IR generated the thunk
+	// (only under RcFreeEnabled — the thunk references free-gated drop
+	// helpers). Decide structurally on its presence in prog.Funcs, never
+	// by re-reading the flag in codegen, so a free-OFF build (or a flag
+	// toggled by a concurrent test) stores 0 instead of a dangling label.
 	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 	g.emit("mov [rax], rcx")
 	g.emit("mov rcx, [rsp]") // env_ptr from the operand-stack save
 	g.emit("mov [rax + 8], rcx")
+	if _, ok := g.funcs["__closure_drop_"+op.Str]; ok {
+		g.emit(fmt.Sprintf("lea rdx, [rip + __closure_drop_%s]", op.Str))
+		g.emit("mov [rax + 16], rdx")
+	} else {
+		g.emit("mov qword ptr [rax + 16], 0")
+	}
+	g.emit("mov [rax + 24], rcx")                 // duplicate env_ptr
 	g.emit(fmt.Sprintf("add rsp, %d", slotBytes)) // drop env_ptr save
 	g.push()                                      // pair ptr
 	return nil

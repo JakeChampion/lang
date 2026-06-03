@@ -5168,13 +5168,18 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 			g.push()
 			return nil
 		}
-		// MakeClosure pair {fn_ptr, 0}. Still allocate the
-		// 16-byte pair because callers may load both halves.
-		g.emit("mov w0, #16")
+		// MakeClosure pair {fn_ptr, env=0, drop_fn=0, env=0}. The
+		// 32-byte 4-slot shape matches the captured case so a generic
+		// holder (__drop_arr_closure) can read the drop-fn slot
+		// uniformly; a zero-capture closure has no env to free, so
+		// drop_fn is 0 (the generic drop guards drop_fn!=0).
+		g.emit("mov w0, #32")
 		g.emit("bl __fern_alloc_rc1")
 		g.adrpAdd("x1", op.Str)
 		g.emit("str x1, [x0]")
 		g.emit("str xzr, [x0, #8]")
+		g.emit("str xzr, [x0, #16]")
+		g.emit("str xzr, [x0, #24]")
 		g.push()
 		return nil
 	}
@@ -5273,16 +5278,34 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		g.push()
 		return nil
 	}
-	// OpMakeClosure: also allocate the 16-byte closure pair.
-	// env_ptr is in x0 (and x19); we need to keep it alive
-	// across the second alloc. x19 already preserved
-	// (callee-save in the called function); x0 will be
-	// clobbered. Reload from x19 after.
-	g.emit("mov w0, #16")
+	// OpMakeClosure: also allocate the 32-byte closure pair
+	// {fn_ptr, env_ptr, drop_fn, env_ptr}. env_ptr is in x0
+	// (and x19); we need to keep it alive across the second
+	// alloc. x19 already preserved (callee-save in the called
+	// function); x0 will be clobbered. Reload from x19 after.
+	// The duplicated env_ptr at +24 makes {drop_fn@16, env@24}
+	// a callable sub-pair so a generic holder can free the env
+	// via the embedded drop-fn pointer without static closure
+	// identity. drop_fn = &__closure_drop_<name> (the per-closure
+	// env-drop thunk, generated for every captured MakeClosure
+	// target).
+	g.emit("mov w0, #32")
 	g.emit("bl __fern_alloc_rc1")
 	g.adrpAdd("x1", op.Str)
 	g.emit("str x1, [x0]")
 	g.emit("str x19, [x0, #8]")
+	// drop_fn = &__closure_drop_<name> when the IR generated the thunk
+	// (only under RcFreeEnabled — the thunk references free-gated drop
+	// helpers). Decide structurally on its presence in prog.Funcs, never
+	// by re-reading the flag in codegen, so a free-OFF build (or a flag
+	// toggled by a concurrent test) stores 0 instead of a dangling label.
+	if _, ok := g.funcs["__closure_drop_"+op.Str]; ok {
+		g.adrpAdd("x1", "__closure_drop_"+op.Str)
+		g.emit("str x1, [x0, #16]")
+	} else {
+		g.emit("str xzr, [x0, #16]")
+	}
+	g.emit("str x19, [x0, #24]")
 	g.emit("ldp x19, x20, [sp], #16")
 	g.push()
 	return nil

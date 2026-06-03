@@ -100,6 +100,15 @@ func LiveFunctionsWithAliases(prog *Program, aliases map[string]string, keepAliv
 			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect, OpMakeClosure, OpMakeEnv, OpConstFunc:
 				enqueue(op.Str)
 			}
+			// A closure PAIR (OpMakeClosure) embeds a drop-fn pointer —
+			// the table index / address of its __closure_drop_<name>
+			// thunk — so a generic __drop_arr_closure can free the env
+			// through it. That reference is a stored pointer, not a
+			// direct call, so the reachability walk would otherwise cull
+			// the thunk and leave a dangling table slot. Keep it alive.
+			if op.Kind == OpMakeClosure && op.Str != "" {
+				enqueue("__closure_drop_" + op.Str)
+			}
 		}
 	}
 	return reached
