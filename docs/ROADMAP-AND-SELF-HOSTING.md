@@ -226,6 +226,57 @@ lexer + parser + flatten + asm from disk → gen1, and gen1 → gen2
 byte-identical. `examples/self_host/asm_file_run.fern` is the simpler
 single-file CLI shape (compile one file by path).
 
+### ✅ UPDATE (2026-06): unified `fern` CLI + a self-hosted wasm backend
+
+Two things landed on top of the native (x86-64 / arm64-linux) self-host
+since the notes above:
+
+**Unified `fern` CLI** (`examples/self_host/fern.fern`). Where the
+codebase previously had a dozen single-mode `*_run.fern` shims, there is
+now one self-hosted binary that parses argv flags and dispatches —
+`fern [-check | -interp | -fmt] [-target x86-64|arm64|wasm] [-o OUT]
+<entry.fern> [stdlib-root]` — reusing the import-driven file loader.
+It hosts both native emitters (`asm.fern` + `asm_arm64.fern`) plus the
+checker, interpreter, printer, and the wasm emitter, selected at runtime.
+Gated by `internal/e2e/self_host_cli_test.go`.
+
+**A third self-host backend: wasm** (`examples/self_host/wasm.fern`,
+driven by `wasm_run.fern` and `fern -target wasm`). It emits a WASI core
+module in the text format (WAT) — `_start` calls `proc_exit(main())`, so
+`wasmtime run prog.wat` exits with the program's result. Built up across
+~20 incremental, differential-tested slices (each its own PR, gated by
+`internal/e2e/self_host_wasm_emit_test.go`, run end-to-end under
+`wasmtime`), it now compiles the **full non-generic-monomorphised core
+language**:
+
+- integers with **non-trapping** div/rem (matching the native backends:
+  `x/0=0`, `x%0=x`, `INT_MIN/-1=INT_MIN`), comparisons, logical ops;
+- locals, `if`/`else`, `while`, `break`/`continue`, early `return`;
+- free functions, recursion, mutual recursion, and **receiver methods**
+  (`$RecvType__name`, receiver passed first; return types flow through
+  the type tracker);
+- the full **string** library (heap `[len][bytes]` blocks: concat,
+  `==`/ordering, `len`, `starts_with`/`ends_with`/`contains`/`index_of`,
+  `to_upper`/`to_lower`/`repeat`, `join`/`split`), `print`/`write`/
+  `print_int` via `fd_write`, a bump allocator;
+- **arrays** (`[len][cap][elems]`): literals, index, `.len()`, `.push()`
+  with geometric growth, index-assignment, `for…in`; i32 **and** string
+  element typing;
+- **structs** (`[type_id][fields]`): literals, field read/assign, `{
+  ...base }` update, nesting, struct-typed params/returns;
+- **Option/Result** tag boxes + `match` + the `?` operator, with typed
+  Some/Ok payloads (string/array/struct);
+- **struct-union `match`** (`type E = A | B`) dispatching on the type id;
+- **generics by erasure** (the parser drops the `[T]` lists; the backend
+  compiles one body per decl).
+
+Gated by 209 differential cases as of this writing. What remains for the
+wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
+`wasi:http` component shapes** (the Component-Model packaging in
+`internal/wasm/component`, ported to Fern, on top of this core module),
+broader wasi runtime builtins (clock / file / env / random), and binary
+wasm encoding (today it emits WAT text, runnable directly by `wasmtime`).
+
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 
 Originally the audit's main blocker. Landed in PR #390
