@@ -200,6 +200,20 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	runCase("read_file_missing",
 		`function main(): i32 { match (read_file("`+filepath.Join(dir, "no_such_file_zzz")+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 99; } } }`,
 		99)
+
+	// write_file — openat(O_WRONLY|O_CREAT|O_TRUNC)/write/close. The Darwin
+	// open flags (1537) and AT_FDCWD (-2) differ from Linux. Round-trip:
+	// write a long string, overwrite with a short one (exercises O_TRUNC —
+	// without it the file would keep trailing bytes), read back, return the
+	// length. Expect 2, not 11, iff O_TRUNC took effect.
+	wfPath := filepath.Join(dir, "wf_data.txt")
+	runCase("write_file_trunc_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+wfPath+`", "longcontent")) { Some(e) => { return 91; }, None => {} }
+  match (write_file("`+wfPath+`", "hi")) { Some(e) => { return 92; }, None => {} }
+  match (read_file("`+wfPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 93; } }
+}`,
+		2)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
