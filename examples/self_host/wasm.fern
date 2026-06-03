@@ -31,16 +31,20 @@
 import "core/no_prelude";
 import "./parser";
 
-// StrTable interns string-literal byte payloads and assigns each a fixed
-// offset in linear memory (the data section). Parallel arrays keyed by
-// the decoded string value; `next` is the running placement cursor.
-// Strings start at STR_BASE (16) — the low 16 bytes are scratch: an
-// iovec at 0 (buf@0, len@4), fd_write's nwritten slot at 8, and a "\n"
-// byte at 12 for `print`.
+// StrTable interns string-literal payloads as `[len:i32][bytes]` blocks
+// in linear memory (the data section); a string VALUE is the i32 pointer
+// to its block (the len word). Parallel arrays keyed by the decoded
+// string value; `next` is the running placement cursor.
+//
+// Memory map: the low 24 bytes are scratch — an iovec at 0 (buf@0,
+// len@4), fd_write's nwritten slot at 8, a "\n" byte at 12 (for
+// `print`), and a temp pointer slot at 16 (for value-based write/print).
+// String blocks start at STR_BASE (24); the print_int format buffer
+// sits just above all blocks (at tab.next).
 struct StrTable { values: string[], offsets: i32[], next: i32 }
 
 function new_str_table(): StrTable {
-    return StrTable { values: [], offsets: [], next: 16 };
+    return StrTable { values: [], offsets: [], next: 24 };
 }
 
 function (t: StrTable) intern(v: string): StrTable {
@@ -49,10 +53,11 @@ function (t: StrTable) intern(v: string): StrTable {
         if (t.values[i] == v) { return t; }
         i = i + 1;
     }
+    // Block = 4-byte length prefix + the bytes.
     return StrTable {
         values: t.values.push(v),
         offsets: t.offsets.push(t.next),
-        next: t.next + v.len(),
+        next: t.next + 4 + v.len(),
     };
 }
 
@@ -62,7 +67,7 @@ function (t: StrTable) offset_of(v: string): i32 {
         if (t.values[i] == v) { return t.offsets[i]; }
         i = i + 1;
     }
-    return 16;
+    return 24;
 }
 
 // WState threads the WAT body being built (out), a fresh-label counter
@@ -134,6 +139,19 @@ function wat_escape(s: string): string {
     return out;
 }
 
+// le32_escape renders a non-negative i32 as four little-endian bytes in
+// WAT `\HH` escape form — the length prefix of a string block.
+function le32_escape(n: i32): string {
+    var b0: i32 = n % 256;
+    var b1: i32 = (n / 256) % 256;
+    var b2: i32 = (n / 65536) % 256;
+    var b3: i32 = (n / 16777216) % 256;
+    return "\\" + hex_digit(b0 / 16) + hex_digit(b0 % 16)
+        + "\\" + hex_digit(b1 / 16) + hex_digit(b1 % 16)
+        + "\\" + hex_digit(b2 / 16) + hex_digit(b2 % 16)
+        + "\\" + hex_digit(b3 / 16) + hex_digit(b3 % 16);
+}
+
 // wasm_binop maps a Fern operator to its i32 wasm instruction.
 function wasm_binop(op: string): string {
     if (op == "+") { return "i32.add"; }
@@ -156,8 +174,10 @@ function wasm_binop(op: string): string {
     return "i32.add";
 }
 
-// emit_expr lowers an expression to a folded WAT instruction tree.
-function emit_expr(e: parser.Expr): string {
+// emit_expr lowers an expression to a folded WAT instruction tree. A
+// string value is a pointer (i32) to its `[len:i32][bytes]` block; a
+// string literal's value is the constant block offset interned in tab.
+function emit_expr(e: parser.Expr, tab: StrTable): string {
     match (e) {
         parser.ExprNumber(n) => {
             return "(i32.const " + n.text + ")";
@@ -166,20 +186,23 @@ function emit_expr(e: parser.Expr): string {
             if (b.value) { return "(i32.const 1)"; }
             return "(i32.const 0)";
         },
+        parser.ExprString(se) => {
+            return "(i32.const " + i32_to_string(tab.offset_of(se.value)) + ")";
+        },
         parser.ExprIdent(id) => {
             return "(local.get $" + id.name + ")";
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") {
-                return "(i32.sub (i32.const 0) " + emit_expr(u.operand) + ")";
+                return "(i32.sub (i32.const 0) " + emit_expr(u.operand, tab) + ")";
             }
             if (u.op == "!") {
-                return "(i32.eqz " + emit_expr(u.operand) + ")";
+                return "(i32.eqz " + emit_expr(u.operand, tab) + ")";
             }
-            return emit_expr(u.operand);
+            return emit_expr(u.operand, tab);
         },
         parser.ExprBinary(b) => {
-            return "(" + wasm_binop(b.op) + " " + emit_expr(b.left) + " " + emit_expr(b.right) + ")";
+            return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, tab) + " " + emit_expr(b.right, tab) + ")";
         },
         parser.ExprCall(c) => {
             // Direct call to a free function named by an ident:
@@ -190,7 +213,7 @@ function emit_expr(e: parser.Expr): string {
                     var s: string = "(call $" + id.name;
                     var i: i32 = 0;
                     while (i < c.args.len()) {
-                        s = s + " " + emit_expr(c.args[i]);
+                        s = s + " " + emit_expr(c.args[i], tab);
                         i = i + 1;
                     }
                     return s + ")";
@@ -401,10 +424,9 @@ function collect_strings_stmts(body: parser.Stmt[], t: StrTable): StrTable {
     return t;
 }
 
-// write_seq emits the WAT that writes `len` bytes at memory `off` to
-// stdout (fd 1) via fd_write, using the iovec scratch at addr 0 and the
-// nwritten slot at addr 8. The errno result is dropped.
-function write_seq(off: i32, len: i32): string {
+// write_fixed emits a fd_write of `len` bytes at the constant memory
+// address `off` (used for the "\n" byte). The errno result is dropped.
+function write_fixed(off: i32, len: i32): string {
     var o: string = "";
     o = o + "    (i32.store (i32.const 0) (i32.const " + i32_to_string(off) + "))\n";
     o = o + "    (i32.store (i32.const 4) (i32.const " + i32_to_string(len) + "))\n";
@@ -412,22 +434,21 @@ function write_seq(off: i32, len: i32): string {
     return o;
 }
 
-// emit_output emits a `write` / `print` of a single string literal.
-// `print` follows the string with the "\n" byte parked at addr 12
-// (Fern's `print` == println; `write` is verbatim). A non-literal arg
-// is unsupported in this slice and emits nothing.
+// emit_output emits a `write` / `print` of a string VALUE — any
+// expression that evaluates to a string pointer (literal, local, param,
+// call result). The pointer is parked in the temp slot at addr 16, then
+// the iovec is set from the block header: buf = ptr+4, len = load(ptr).
+// `print` follows with the "\n" byte at addr 12 (Fern's `print` ==
+// println; `write` is verbatim).
 function emit_output(name: string, args: parser.Expr[], st: WState): WState {
     if (args.len() != 1) { return st; }
-    match (args[0]) {
-        parser.ExprString(se) => {
-            var off: i32 = st.tab.offset_of(se.value);
-            st = st.w(write_seq(off, se.value.len()));
-            if (name == "print") {
-                st = st.w(write_seq(12, 1));
-            }
-            return st;
-        },
-        _ => { return st; },
+    var ptr: string = emit_expr(args[0], st.tab);
+    st = st.w("    (i32.store (i32.const 16) " + ptr + ")\n");
+    st = st.w("    (i32.store (i32.const 0) (i32.add (i32.load (i32.const 16)) (i32.const 4)))\n");
+    st = st.w("    (i32.store (i32.const 4) (i32.load (i32.load (i32.const 16))))\n");
+    st = st.w("    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n");
+    if (name == "print") {
+        st = st.w(write_fixed(12, 1));
     }
     return st;
 }
@@ -446,13 +467,13 @@ function emit_stmts(body: parser.Stmt[], st: WState): WState {
 function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     match (stmt) {
         parser.StmtVar(v) => {
-            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init) + ")\n");
+            return st.w("    (local.set $" + v.name + " " + emit_expr(v.init, st.tab) + ")\n");
         },
         parser.StmtAssign(a) => {
-            return st.w("    (local.set $" + a.target + " " + emit_expr(a.value) + ")\n");
+            return st.w("    (local.set $" + a.target + " " + emit_expr(a.value, st.tab) + ")\n");
         },
         parser.StmtReturn(r) => {
-            return st.w("    (return " + emit_expr(r.value) + ")\n");
+            return st.w("    (return " + emit_expr(r.value, st.tab) + ")\n");
         },
         parser.StmtExpr(e) => {
             // write(...) / print(...) are builtins (not user funcs), so
@@ -466,7 +487,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 return emit_output(id.name, c.args, st);
                             }
                             if (id.name == "print_int" && c.args.len() == 1) {
-                                return st.w("    (call $__fern_print_int " + emit_expr(c.args[0]) + ")\n");
+                                return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.tab) + ")\n");
                             }
                         },
                         _ => {},
@@ -474,10 +495,10 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 },
                 _ => {},
             }
-            return st.w("    (drop " + emit_expr(e.value) + ")\n");
+            return st.w("    (drop " + emit_expr(e.value, st.tab) + ")\n");
         },
         parser.StmtIf(f) => {
-            st = st.w("    (if " + emit_expr(f.cond) + " (then\n");
+            st = st.w("    (if " + emit_expr(f.cond, st.tab) + " (then\n");
             st = emit_stmts(f.then_body, st);
             st = st.w("    )");
             if (f.else_body.len() > 0) {
@@ -498,7 +519,7 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var inner: WState = WState {
                 ...st,
                 out: st.out + "    (block " + brk + " (loop " + cont + "\n"
-                    + "    (br_if " + brk + " (i32.eqz " + emit_expr(w.cond) + "))\n",
+                    + "    (br_if " + brk + " (i32.eqz " + emit_expr(w.cond, st.tab) + "))\n",
                 n: id + 1,
                 brk: brk,
                 cont: cont,
@@ -657,10 +678,12 @@ pub function emit_module(mod: parser.Module): string {
     // Scratch: a "\n" byte at addr 12 (for `print`); the iovec (0,4) and
     // nwritten (8) slots are written at runtime.
     out = out + "  (data (i32.const 12) \"\\0a\")\n";
+    // Each literal is a `[len:i32 LE][bytes]` block at its interned
+    // offset; the string value is a pointer to the block.
     var di: i32 = 0;
     while (di < tab.values.len()) {
         out = out + "  (data (i32.const " + i32_to_string(tab.offsets[di]) + ") \""
-            + wat_escape(tab.values[di]) + "\")\n";
+            + le32_escape(tab.values[di].len()) + wat_escape(tab.values[di]) + "\")\n";
         di = di + 1;
     }
     if (module_uses_divrem(mod)) {
