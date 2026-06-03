@@ -6256,28 +6256,49 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         fi = fi + 1;
     }
     s = s.write("_start:\n");
-    // Save argc + argv from initial stack BEFORE the frame push.
+    // Save argc + argv BEFORE the frame push. Linux (ELF, raw _start):
+    // the kernel lays out the SysV entry stack — argc at [sp], argv at
+    // sp+8. Darwin (Mach-O, _start->_main via dyld/LC_MAIN): the entry is
+    // a C-ABI `main(argc, argv, envp, apple)`, so argc=x0, argv=x1,
+    // envp=x2 arrive in registers, not on the stack.
     if (s.needs_args) {
-        s = s.write("    ldr x0, [sp]\n");
-        s = s.write("    adrp x1, __fern_argc\n");
-        s = s.write("    add x1, x1, :lo12:__fern_argc\n");
-        s = s.write("    str x0, [x1]\n");
-        s = s.write("    add x0, sp, #8\n");
-        s = s.write("    adrp x1, __fern_argv\n");
-        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-        s = s.write("    str x0, [x1]\n");
+        if (darwin) {
+            s = s.write("    adrp x9, __fern_argc\n");
+            s = s.write("    add x9, x9, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x9]\n");            // argc = x0
+            s = s.write("    adrp x9, __fern_argv\n");
+            s = s.write("    add x9, x9, :lo12:__fern_argv\n");
+            s = s.write("    str x1, [x9]\n");            // argv = x1
+        } else {
+            s = s.write("    ldr x0, [sp]\n");
+            s = s.write("    adrp x1, __fern_argc\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x1]\n");
+            s = s.write("    add x0, sp, #8\n");
+            s = s.write("    adrp x1, __fern_argv\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+            s = s.write("    str x0, [x1]\n");
+        }
     }
-    // Save envp for env(): envp = sp + 16 + argc*8 on the entry stack.
-    // Gated on needs_heap (the env() helper allocates, so it only links
-    // with the heap present, and any env() caller marks the heap).
+    // Save envp for env() / subprocess. Linux: envp = sp + 16 + argc*8 on
+    // the entry stack. Darwin: envp = x2 (C-ABI arg). Gated on needs_heap
+    // (env()/subprocess allocate, so they only link with the heap
+    // present, and any caller marks the heap). x2 survives the needs_args
+    // block above (which only touches x0/x1/x9).
     if (s.needs_heap) {
-        s = s.write("    ldr x0, [sp]\n");            // argc
-        s = s.write("    lsl x0, x0, #3\n");          // argc*8
-        s = s.write("    add x0, x0, #16\n");         // + 16
-        s = s.write("    add x0, sp, x0\n");          // envp base
-        s = s.write("    adrp x1, __fern_envp\n");
-        s = s.write("    add x1, x1, :lo12:__fern_envp\n");
-        s = s.write("    str x0, [x1]\n");
+        if (darwin) {
+            s = s.write("    adrp x9, __fern_envp\n");
+            s = s.write("    add x9, x9, :lo12:__fern_envp\n");
+            s = s.write("    str x2, [x9]\n");            // envp = x2
+        } else {
+            s = s.write("    ldr x0, [sp]\n");            // argc
+            s = s.write("    lsl x0, x0, #3\n");          // argc*8
+            s = s.write("    add x0, x0, #16\n");         // + 16
+            s = s.write("    add x0, sp, x0\n");          // envp base
+            s = s.write("    adrp x1, __fern_envp\n");
+            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
+            s = s.write("    str x0, [x1]\n");
+        }
     }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
@@ -6447,14 +6468,30 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     s = s.write("    mov x9, #1000\n");
     s = s.write("    udiv x10, x0, x9\n");        // sec
     s = s.write("    msub x11, x10, x9, x0\n");   // rem ms
-    s = s.write("    str x10, [sp]\n");
-    s = s.write("    ldr x12, =1000000\n");
-    s = s.write("    mul x11, x11, x12\n");
-    s = s.write("    str x11, [sp, #8]\n");
-    s = s.write("    mov x0, sp\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    mov x8, #101\n");            // nanosleep
-    s = s.write("    svc #0\n");
+    s = s.write("    str x10, [sp]\n");           // tv_sec
+    if (darwin) {
+        // Darwin has no nanosleep syscall; sleep via
+        // select(0, NULL, NULL, NULL, &timeval). timeval = {sec, usec}
+        // at sp (sec already stored); usec = rem_ms * 1000.
+        s = s.write("    mov x12, #1000\n");
+        s = s.write("    mul x11, x11, x12\n");    // usec
+        s = s.write("    str x11, [sp, #8]\n");    // tv_usec
+        s = s.write("    mov x0, #0\n");           // nfds
+        s = s.write("    mov x1, #0\n");           // readfds
+        s = s.write("    mov x2, #0\n");           // writefds
+        s = s.write("    mov x3, #0\n");           // errorfds
+        s = s.write("    mov x4, sp\n");           // timeout
+        s = s.write("    mov x16, #93\n");         // Darwin select
+        s = s.write("    svc #0x80\n");
+    } else {
+        s = s.write("    ldr x12, =1000000\n");
+        s = s.write("    mul x11, x11, x12\n");    // tv_nsec
+        s = s.write("    str x11, [sp, #8]\n");
+        s = s.write("    mov x0, sp\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    mov x8, #101\n");         // nanosleep
+        s = s.write("    svc #0\n");
+    }
     s = s.write(".Lsm_done:\n");
     s = s.write("    mov sp, x29\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
@@ -8658,6 +8695,16 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         // EOF (sysno 63) into 64 KiB scratch bufs, wait4s (sysno 260),
         // decodes WIFEXITED (status >> 8) vs signaled (128 + sig),
         // packs {shape, stdout, stderr, exit_code} on the heap.
+        //
+        // Darwin: the ABI-identical syscalls ride darwinize's number
+        // remap (close 57→6, read 63→3, write 64→4, exit 93→1, and the
+        // dup3 24→dup2 90 / execve 221→59 / wait4 260→7 entries added to
+        // darwin_sysno). Only the two ABI-divergent steps are branched
+        // here: pipe (no pipe2 — pipe() sysno 42 returns the two fds in
+        // x0/x1) and fork (no clone — fork() sysno 2 returns the pid in
+        // x0 with x1=child-flag, normalised to the Linux x0=0-in-child
+        // shape). The BSD WIFEXITED/WTERMSIG status encoding matches
+        // Linux, so the decode below is shared.
         var prLitA: StringLitOut = add_string_lit(s, "ProcessResult");
         s = prLitA.state;
         s = s.write(".globl __fern_subprocess\n");
@@ -8750,28 +8797,57 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    add x9, x22, #1\n");
         s = s.write("    mov x10, #0\n");
         s = s.write("    str x10, [x24, x9, lsl #3]\n");
-        // Create 3 pipes via pipe2(fds, 0). Each pipe writes 2 fds.
-        s = s.write("    add x0, sp, #96\n");      // in fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    add x0, sp, #104\n");     // out fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    add x0, sp, #112\n");     // err fds
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #59\n");
-        s = s.write("    svc #0\n");
-        // fork via clone(SIGCHLD=17, 0, 0, 0, 0). Returns child pid in
-        // parent, 0 in child.
-        s = s.write("    mov x0, #17\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x2, #0\n");
-        s = s.write("    mov x3, #0\n");
-        s = s.write("    mov x4, #0\n");
-        s = s.write("    mov x8, #220\n");
-        s = s.write("    svc #0\n");
+        // Create 3 pipes. Linux: pipe2(&fds, 0) writes the 2 i32 fds to
+        // the buffer. Darwin has no pipe2; pipe() (sysno 42) returns the
+        // read fd in x0 and the write fd in x1 — store them into the same
+        // [read@+0, write@+4] slots the rest of the routine reads.
+        if (darwin) {
+            s = s.write("    mov x16, #42\n");
+            s = s.write("    svc #0x80\n");
+            s = s.write("    str w0, [sp, #96]\n");    // in_r
+            s = s.write("    str w1, [sp, #100]\n");   // in_w
+            s = s.write("    mov x16, #42\n");
+            s = s.write("    svc #0x80\n");
+            s = s.write("    str w0, [sp, #104]\n");   // out_r
+            s = s.write("    str w1, [sp, #108]\n");   // out_w
+            s = s.write("    mov x16, #42\n");
+            s = s.write("    svc #0x80\n");
+            s = s.write("    str w0, [sp, #112]\n");   // err_r
+            s = s.write("    str w1, [sp, #116]\n");   // err_w
+        } else {
+            s = s.write("    add x0, sp, #96\n");      // in fds
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    mov x8, #59\n");
+            s = s.write("    svc #0\n");
+            s = s.write("    add x0, sp, #104\n");     // out fds
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    mov x8, #59\n");
+            s = s.write("    svc #0\n");
+            s = s.write("    add x0, sp, #112\n");     // err fds
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    mov x8, #59\n");
+            s = s.write("    svc #0\n");
+        }
+        // fork. Linux: clone(SIGCHLD=17, 0,0,0,0) (sysno 220) returns the
+        // child pid in the parent and 0 in the child, in x0. Darwin: fork
+        // (sysno 2) returns the pid in x0 with x1=0 in the parent and x1=1
+        // in the child; normalise to the Linux shape (x0=0 in the child)
+        // so the shared `cbnz x0, .Lsp_parent` dispatch works on both.
+        if (darwin) {
+            s = s.write("    mov x16, #2\n");
+            s = s.write("    svc #0x80\n");
+            s = s.write("    cbz x1, .Lsp_forked\n");  // x1==0 → parent, keep pid
+            s = s.write("    mov x0, #0\n");           // x1==1 → child
+            s = s.write(".Lsp_forked:\n");
+        } else {
+            s = s.write("    mov x0, #17\n");
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    mov x2, #0\n");
+            s = s.write("    mov x3, #0\n");
+            s = s.write("    mov x4, #0\n");
+            s = s.write("    mov x8, #220\n");
+            s = s.write("    svc #0\n");
+        }
         s = s.write("    cbnz x0, .Lsp_parent\n");
         // ---------- CHILD ----------
         // dup3(in_r, 0, 0); dup3(out_w, 1, 0); dup3(err_w, 2, 0).
@@ -10366,15 +10442,22 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
 //   - Syscalls. Linux issues `mov x8, #N` + `svc #0`; Darwin BSD
 //     issues `mov x16, #M` + `svc #0x80`. We remap the syscalls whose
 //     argument + result ABI is number-compatible (read / write /
-//     close / openat / lseek / exit / mmap) and flip the trap. The
-//     ABI-divergent syscalls (clock_gettime, getrandom, fstat and the
-//     subprocess family) have no number-only Darwin form and are left
-//     untouched, so programs that use now_unix_ms / random_bytes /
-//     file metadata / subprocess are not yet supported on
-//     arm64-darwin. The supported surface is the core language:
-//     arithmetic, control flow, functions, structs, enums, arrays,
-//     strings (including heap concat), closures, maps, and
-//     stdout / stdin I/O.
+//     close / openat / lseek / newfstatat / unlinkat / mkdirat /
+//     getdents64→getdirentries64 / dup3→dup2 / execve / wait4 / exit /
+//     mmap — see darwin_sysno) and flip the trap, normalising the
+//     carry-flag errno back to Linux's -errno. Syscalls with no
+//     number-compatible Darwin form are emitted directly by the code
+//     generator behind its `darwin` flag instead: clock_gettime →
+//     gettimeofday (now_unix_ms) / CNTVCT_EL0 (monotonic_ns), getrandom
+//     → getentropy (random_bytes), nanosleep → select (sleep_ms), and
+//     the subprocess pipe2 → pipe / clone → fork divergences. The
+//     supported surface is the core language (arithmetic, control flow,
+//     functions, structs, enums, arrays, strings incl. heap concat,
+//     closures, maps), stdin/stdout I/O, the filesystem builtins
+//     (read_file / write_file / stat / temp_dir / remove_file /
+//     read_dir / remove_dir_all), time + randomness, sleep, and
+//     subprocess. Networking (TCP/HTTP) is not yet wired in the
+//     self-hosted emitter on any target.
 
 function darwin_starts_with(s: string, p: string): boolean {
     if (s.len() < p.len()) { return false; }
@@ -10414,6 +10497,9 @@ function darwin_sysno(n: i32): i32 {
     if (n == 79) { return 470; }   // newfstatat -> fstatat64 (same args)
     if (n == 35) { return 472; }   // unlinkat (same args)
     if (n == 34) { return 475; }   // mkdirat (same args)
+    if (n == 24) { return 90; }    // dup3(.,.,0) -> dup2 (flags 0 == dup2)
+    if (n == 221) { return 59; }   // execve (same args)
+    if (n == 260) { return 7; }    // wait4 (same args)
     if (n == 93) { return 1; }     // exit
     if (n == 94) { return 1; }     // exit_group -> exit
     if (n == 222) { return 197; }  // mmap
@@ -10735,6 +10821,34 @@ function main(): i32 {
     if (!contains(rbd, ".Lrb_loop:")) { return 284; }       // chunked-loop marker
     var rbl: string = emit_module(parser.parse_module(lexer.tokenize(rbsrc)), false);
     if (!contains(rbl, "mov x8, #278")) { return 285; }     // Linux: getrandom
+
+    // sleep_ms — emitted unconditionally. Darwin: select (sysno 93, no
+    // nanosleep); Linux: nanosleep (101).
+    var slsrc: string = "sleep_ms(5); return 0;";
+    var sld: string = emit_module(parser.parse_module(lexer.tokenize(slsrc)), true);
+    if (!contains(sld, "mov x16, #93")) { return 286; }     // Darwin: select
+    var sll: string = emit_module(parser.parse_module(lexer.tokenize(slsrc)), false);
+    if (!contains(sll, "mov x8, #101")) { return 287; }     // Linux: nanosleep
+
+    // subprocess — Darwin branches pipe (pipe() sysno 42 + the x1
+    // write-fd store) and fork (fork() sysno 2 + the .Lsp_forked
+    // child-flag normalisation); dup3→dup2 / execve / wait4 ride
+    // darwin_sysno (90 / 59 / 7). Linux keeps pipe2 (59) / clone (220).
+    var spsrc: string = "var r: ProcessResult = subprocess(\"echo\", [\"hi\"], \"\"); return r.exit_code;";
+    var spd: string = emit_module(parser.parse_module(lexer.tokenize(spsrc)), true);
+    // pipe + fork are emitted directly by the code generator's darwin
+    // flag (like gettimeofday / getentropy above).
+    if (!contains(spd, "mov x16, #42")) { return 288; }     // Darwin: pipe
+    if (!contains(spd, ".Lsp_forked:")) { return 289; }     // Darwin: fork child-flag
+    // dup3→dup2 / execve / wait4 ride the darwinize syscall-number remap,
+    // so assert against the post-pass output.
+    var spdd: string = darwinize(spd);
+    if (!contains(spdd, "mov x16, #90")) { return 290; }    // Darwin: dup2
+    if (!contains(spdd, "mov x16, #59")) { return 291; }    // Darwin: execve
+    if (!contains(spdd, "mov x16, #7")) { return 292; }     // Darwin: wait4
+    var spl: string = emit_module(parser.parse_module(lexer.tokenize(spsrc)), false);
+    if (!contains(spl, "mov x8, #220")) { return 293; }     // Linux: clone
+    if (!contains(spl, "mov x8, #59")) { return 294; }      // Linux: pipe2
 
     return 0;
 }
