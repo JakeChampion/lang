@@ -268,6 +268,58 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// getdirentries64 requires, and AT_REMOVEDIR (0x80). Returns 42 only
 	// if every step round-trips.
 	runCase("fs_builtins_lifecycle", fsBuiltinsProgram, 42)
+
+	// sleep_ms — Darwin has no nanosleep syscall, so this lowers to
+	// select(0, NULL, NULL, NULL, &timeval) (sysno 93). A short sleep
+	// must return normally (a wrong syscall number would SIGILL → runCase
+	// reports a skip, not a failure; a clean exit 7 proves select ran).
+	runCase("sleep_ms",
+		`function main(): i32 { sleep_ms(5); return 7; }`,
+		7)
+
+	// subprocess — fork/exec on Darwin: pipe() (sysno 42, two fds in
+	// x0/x1) instead of pipe2, fork() (sysno 2, x1 child-flag) instead of
+	// clone, dup3->dup2 (90) / execve (59) / wait4 (7) via darwin_sysno.
+	// envp comes from the C-ABI _main(argc, argv, envp) entry (x2), now
+	// captured correctly. echo "hi" resolves via the /bin/<cmd> fallback;
+	// exit 0 and 3 bytes of stdout ("hi\n") prove the happy path.
+	runCase("subprocess_echo",
+		`function main(): i32 {
+  var r: ProcessResult = subprocess("echo", ["hi"], "");
+  if (r.exit_code != 0) { return 90; }
+  return r.stdout.len();
+}`,
+		3)
+
+	// subprocess exit-code decode: `sh -c "exit 7"` -> exit_code 7
+	// (WIFEXITED/WEXITSTATUS, status>>8, shared with Linux).
+	runCase("subprocess_exit_code",
+		`function main(): i32 {
+  var r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
+  return r.exit_code;
+}`,
+		7)
+
+	// subprocess stdin->stdout round-trip: feed "piped" to `cat`, capture
+	// its stdout. Exercises the parent's write(in_w)/read(out_r) pipe path
+	// (5 bytes back).
+	runCase("subprocess_stdin",
+		`function main(): i32 {
+  var r: ProcessResult = subprocess("cat", [], "piped");
+  if (r.exit_code != 0) { return 90; }
+  return r.stdout.len();
+}`,
+		5)
+
+	// subprocess spawn-failure: a command that resolves nowhere must hit
+	// the child's exit(127) after all execve attempts fail (POSIX
+	// convention), surfaced as exit_code 127.
+	runCase("subprocess_missing",
+		`function main(): i32 {
+  var r: ProcessResult = subprocess("fern-no-such-binary-zzz-7349", [], "");
+  return r.exit_code;
+}`,
+		127)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
