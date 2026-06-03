@@ -1381,6 +1381,7 @@ function match_payload_type(scrut: parser.Expr, s: EmitState): string {
                         return infer_expr_type(c.args[0], s);
                     }
                     if (id.name == "read_file" || id.name == "read_all_stdin") { return "string"; }
+                    if (id.name == "tcp_recv") { return "string"; }
                     if (id.name == "temp_dir") { return "string"; }
                     if (id.name == "read_dir") { return "array_string"; }
                     // Arbitrary free / module function returning
@@ -4356,6 +4357,55 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.write("    ldr x1, [sp], #16\n");   // args box
                 s = s.write("    ldr x0, [sp], #16\n");   // cmd box
                 s = s.write("    bl __fern_subprocess\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            // TCP primitives — the raw sockets layer std/tcp.fern's
+            // tcp_serve() builds the HTTP edge-handler loop on. All return
+            // an i32 (fd / byte count / -errno) except tcp_recv, which
+            // returns a fresh string box. mark_heap() pulls in the helper
+            // block (and the allocator) where the bodies are emitted.
+            if (name == "tcp_listen" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");   // port
+                s = s.write("    bl __fern_tcp_listen\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "tcp_accept" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");   // listener fd
+                s = s.write("    bl __fern_tcp_accept\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "tcp_recv" && c.args.len() == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");   // max
+                s = s.write("    ldr x0, [sp], #16\n");   // fd
+                s = s.write("    bl __fern_tcp_recv\n");
+                s = s.write("    str x0, [sp, #-16]!\n"); // string box
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "tcp_send" && c.args.len() == 2) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = s.write("    ldr x1, [sp], #16\n");   // data box
+                s = s.write("    ldr x0, [sp], #16\n");   // fd
+                s = s.write("    bl __fern_tcp_send\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
+            if (name == "tcp_close" && c.args.len() == 1) {
+                s = emit_expr(c.args[0], s);
+                s = s.write("    ldr x0, [sp], #16\n");   // fd
+                s = s.write("    bl __fern_tcp_close\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 s = s.mark_heap();
                 return s;
@@ -9065,6 +9115,139 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
         s = s.write(".size __fern_subprocess, .-__fern_subprocess\n");
 
+        // ---- TCP sockets ------------------------------------------------
+        // The raw primitives std/tcp.fern's tcp_serve() composes into the
+        // HTTP edge-handler loop. Linux aarch64 syscalls: socket=198,
+        // bind=200, listen=201, accept=202, read=63, write=64, close=57.
+        // Darwin remaps the numbers via darwin_sysno (97/104/106/30 +
+        // 3/4/6) and the sockaddr_in gets a leading sin_len byte; both are
+        // handled below. C-style API: callers test `if (fd < 0)`.
+
+        // __fern_tcp_listen(x0 = port) → listener fd or -errno.
+        // socket(AF_INET, SOCK_STREAM, 0); bind to 0.0.0.0:port; listen(128).
+        s = s.write(".globl __fern_tcp_listen\n");
+        s = s.write(".type __fern_tcp_listen, %function\n");
+        s = s.write("__fern_tcp_listen:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // port (callee-save)
+        s = s.write("    mov x0, #2\n");            // AF_INET
+        s = s.write("    mov x1, #1\n");            // SOCK_STREAM
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #198\n");          // socket
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Ltcpl_err\n");
+        s = s.write("    mov x20, x0\n");           // listener fd
+        // sockaddr_in (16 bytes) on the stack. Linux: sin_family is a
+        // u16 at offset 0. Darwin: sin_len (u8, =16) at 0, sin_family
+        // (u8) at 1. sin_port (htons) at 2, sin_addr (=0) at 4, sin_zero
+        // at 8 either way.
+        s = s.write("    sub sp, sp, #16\n");
+        if (darwin) {
+            s = s.write("    mov w0, #16\n");
+            s = s.write("    strb w0, [sp]\n");     // sin_len
+            s = s.write("    mov w0, #2\n");
+            s = s.write("    strb w0, [sp, #1]\n"); // sin_family
+        } else {
+            s = s.write("    mov w0, #2\n");
+            s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
+        }
+        s = s.write("    rev16 w0, w19\n");         // htons(port)
+        s = s.write("    strh w0, [sp, #2]\n");
+        s = s.write("    str wzr, [sp, #4]\n");     // sin_addr = INADDR_ANY
+        s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    mov x1, sp\n");
+        s = s.write("    mov x2, #16\n");
+        s = s.write("    mov x8, #200\n");          // bind
+        s = s.write("    svc #0\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Ltcpl_err\n");
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    mov x1, #128\n");          // backlog
+        s = s.write("    mov x8, #201\n");          // listen
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Ltcpl_err\n");
+        s = s.write("    mov x0, x20\n");           // return listener fd
+        s = s.write("    b .Ltcpl_done\n");
+        s = s.write(".Ltcpl_err:\n");               // x0 holds -errno
+        s = s.write(".Ltcpl_done:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_tcp_listen, .-__fern_tcp_listen\n");
+
+        // __fern_tcp_accept(x0 = listener fd) → conn fd or -errno.
+        // accept(fd, NULL, NULL) — peer address not needed. Leaf.
+        s = s.write(".globl __fern_tcp_accept\n");
+        s = s.write(".type __fern_tcp_accept, %function\n");
+        s = s.write("__fern_tcp_accept:\n");
+        s = s.write("    mov x1, #0\n");            // addr = NULL
+        s = s.write("    mov x2, #0\n");            // addrlen = NULL
+        s = s.write("    mov x8, #202\n");          // accept
+        s = s.write("    svc #0\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_tcp_accept, .-__fern_tcp_accept\n");
+
+        // __fern_tcp_recv(x0 = fd, x1 = max) → string box {data, len}.
+        // Allocates max bytes, read()s into them, boxes (data, len). On
+        // error / EOF the box has len 0.
+        s = s.write(".globl __fern_tcp_recv\n");
+        s = s.write(".type __fern_tcp_recv, %function\n");
+        s = s.write("__fern_tcp_recv:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // fd
+        s = s.write("    mov x20, x1\n");           // max
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x21, x0\n");           // data buf
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    mov x1, x21\n");
+        s = s.write("    mov x2, x20\n");
+        s = s.write("    mov x8, #63\n");           // read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    csel x0, x0, xzr, ge\n");  // clamp -errno/EOF → 0
+        s = s.write("    mov x22, x0\n");           // len
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x21, [x0]\n");         // data@0
+        s = s.write("    str x22, [x0, #8]\n");     // len@8
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_tcp_recv, .-__fern_tcp_recv\n");
+
+        // __fern_tcp_send(x0 = fd, x1 = string box) → bytes written / -errno.
+        // write(fd, box.data, box.len). Leaf.
+        s = s.write(".globl __fern_tcp_send\n");
+        s = s.write(".type __fern_tcp_send, %function\n");
+        s = s.write("__fern_tcp_send:\n");
+        s = s.write("    ldr x9, [x1]\n");          // data = box[0]
+        s = s.write("    ldr x2, [x1, #8]\n");      // len  = box[8]
+        s = s.write("    mov x1, x9\n");            // x1 = data ptr
+        s = s.write("    mov x8, #64\n");           // write (x0=fd intact)
+        s = s.write("    svc #0\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_tcp_send, .-__fern_tcp_send\n");
+
+        // __fern_tcp_close(x0 = fd) → 0 or -errno. close(2) wrapper. Leaf.
+        s = s.write(".globl __fern_tcp_close\n");
+        s = s.write(".type __fern_tcp_close, %function\n");
+        s = s.write("__fern_tcp_close:\n");
+        s = s.write("    mov x8, #57\n");           // close
+        s = s.write("    svc #0\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_tcp_close, .-__fern_tcp_close\n");
+
         // __fern_f64_to_string(x0 = IEEE-754 f64 bits) → string box.
         // arm64 mirror of asm.fern: fixed-precision decimal matching
         // std/float's __float_to_string (k=15) — NaN → "NaN"; sign
@@ -10455,9 +10638,12 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
 //     functions, structs, enums, arrays, strings incl. heap concat,
 //     closures, maps), stdin/stdout I/O, the filesystem builtins
 //     (read_file / write_file / stat / temp_dir / remove_file /
-//     read_dir / remove_dir_all), time + randomness, sleep, and
-//     subprocess. Networking (TCP/HTTP) is not yet wired in the
-//     self-hosted emitter on any target.
+//     read_dir / remove_dir_all), time + randomness, sleep,
+//     subprocess, and the TCP socket primitives (tcp_listen /
+//     tcp_accept / tcp_recv / tcp_send / tcp_close — socket 198→97 /
+//     bind 200→104 / listen 201→106 / accept 202→30, plus the Darwin
+//     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
+//     loop is built on. UDP (udp_send) is not yet ported.
 
 function darwin_starts_with(s: string, p: string): boolean {
     if (s.len() < p.len()) { return false; }
@@ -10500,6 +10686,10 @@ function darwin_sysno(n: i32): i32 {
     if (n == 24) { return 90; }    // dup3(.,.,0) -> dup2 (flags 0 == dup2)
     if (n == 221) { return 59; }   // execve (same args)
     if (n == 260) { return 7; }    // wait4 (same args)
+    if (n == 198) { return 97; }   // socket (same args)
+    if (n == 200) { return 104; }  // bind (sockaddr_in gets a sin_len byte)
+    if (n == 201) { return 106; }  // listen (same args)
+    if (n == 202) { return 30; }   // accept (same args)
     if (n == 93) { return 1; }     // exit
     if (n == 94) { return 1; }     // exit_group -> exit
     if (n == 222) { return 197; }  // mmap
@@ -10849,6 +11039,19 @@ function main(): i32 {
     var spl: string = emit_module(parser.parse_module(lexer.tokenize(spsrc)), false);
     if (!contains(spl, "mov x8, #220")) { return 293; }     // Linux: clone
     if (!contains(spl, "mov x8, #59")) { return 294; }      // Linux: pipe2
+
+    // TCP — socket/bind/listen/accept ride darwin_sysno (97/104/106/30);
+    // the sockaddr_in sin_len byte (strb #16) is emitted directly.
+    var tcsrc: string = "var fd: i32 = tcp_listen(8080); var c: i32 = tcp_accept(fd); var r: string = tcp_recv(c, 16); var n: i32 = tcp_send(c, \"hi\"); return tcp_close(c);";
+    var tcl: string = emit_module(parser.parse_module(lexer.tokenize(tcsrc)), false);
+    if (!contains(tcl, "mov x8, #198")) { return 295; }     // Linux: socket
+    if (!contains(tcl, "mov x8, #202")) { return 296; }     // Linux: accept
+    var tcd: string = darwinize(emit_module(parser.parse_module(lexer.tokenize(tcsrc)), true));
+    if (!contains(tcd, "mov x16, #97")) { return 297; }     // Darwin: socket
+    if (!contains(tcd, "mov x16, #104")) { return 298; }    // Darwin: bind
+    if (!contains(tcd, "mov x16, #106")) { return 299; }    // Darwin: listen
+    if (!contains(tcd, "mov x16, #30")) { return 300; }     // Darwin: accept
+    if (!contains(tcd, "strb w0, [sp, #1]")) { return 301; } // Darwin: sin_len/family
 
     return 0;
 }
