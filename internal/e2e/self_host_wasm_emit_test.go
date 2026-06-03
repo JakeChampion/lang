@@ -254,6 +254,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},
 		{"opt-nested-match", "function a(): Option[i32] { return Some(1); } function b(): Option[i32] { return Some(2); } function main(): i32 { match (a()) { Some(x) => { match (b()) { Some(y) => { return x + y + 39; }, None => { return 0; } } }, None => { return 0; } } return 1; }", 42, ""},
+		// `?` try-operator: unwrap Some/Ok, else early-return None/Err.
+		{"try-some", "function inner(): Option[i32] { return Some(41); } function f(): Option[i32] { var v = inner()?; return Some(v + 1); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
+		{"try-none-propagates", "function inner(): Option[i32] { return None; } function f(): Option[i32] { var v = inner()?; return Some(v + 100); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } return 1; }", 7, ""},
+		{"try-ok", "function inner(): Result[i32, i32] { return Ok(40); } function f(): Result[i32, i32] { var v = inner()?; return Ok(v + 2); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 42, ""},
+		{"try-err-propagates", "function inner(): Result[i32, i32] { return Err(13); } function f(): Result[i32, i32] { var v = inner()?; return Ok(v + 1); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
+		{"try-chain", "function a(): Option[i32] { return Some(10); } function b(): Option[i32] { return Some(20); } function f(): Option[i32] { var x = a()?; var y = b()?; return Some(x + y + 12); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
+		{"try-inline", "function inner(): Option[i32] { return Some(20); } function f(): Option[i32] { return Some(inner()? + inner()? + 2); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 	}
 
 	for _, tc := range cases {

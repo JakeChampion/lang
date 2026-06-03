@@ -348,6 +348,17 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (u.op == "!") {
                 return "(i32.eqz " + emit_expr(u.operand, cx, depth) + ")";
             }
+            if (u.op == "try_") {
+                // `x?` — unwrap a Some/Ok payload, or early-return the
+                // None/Err box from the enclosing function. The box is
+                // parked in $__lit<depth>; tag != 0 means None/Err.
+                var ap: string = "$__lit" + i32_to_string(depth);
+                var s: string = "(block (result i32)";
+                s = s + " (local.set " + ap + " " + emit_expr(u.operand, cx, depth + 1) + ")";
+                s = s + " (if (i32.ne (i32.load (local.get " + ap + ")) (i32.const 0)) (then (return (local.get " + ap + "))))";
+                s = s + " (i32.load (i32.add (local.get " + ap + ") (i32.const 4))))";
+                return s;
+            }
             return emit_expr(u.operand, cx, depth);
         },
         parser.ExprBinary(b) => {
