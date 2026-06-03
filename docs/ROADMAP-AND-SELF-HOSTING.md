@@ -359,14 +359,18 @@ Ported so far via the flag:
   correctly.
 - `remove_file` — `unlinkat` (#35) -> Darwin #472 (same args, flags 0)
   + `AT_FDCWD` -2 + errno normalisation.
+- `monotonic_ns` — no syscall: reads the architectural counter
+  `CNTVCT_EL0` scaled by `CNTFRQ_EL0` to ns (this is what
+  `mach_absolute_time` does on Apple Silicon). EL0-readable; the Go
+  backend never ported this, so the self-host is ahead here.
+- `temp_dir` — `mkdirat` (#34 -> Darwin #475) + `AT_FDCWD` -2; its unique
+  suffix comes from the now-ported `monotonic_ns`.
 
-Still on their Linux encoding (out of scope, documented gaps):
-`monotonic_ns` (needs `mach_absolute_time` / `CNTVCT_EL0` — the Go
-backend doesn't port it either), `temp_dir` (depends on `monotonic_ns`
-for its unique suffix, and on `mkdirat`), and the directory-enumeration
-builtins (`read_dir` / `remove_dir_all` use `getdents64`, whose Darwin
-equivalent `getdirentries` has a different `dirent` layout — the
-genuinely structural one), and the subprocess family. These are emitted
+Still on their Linux encoding (out of scope, documented gaps): the
+directory-enumeration builtins (`read_dir` / `remove_dir_all` use
+`getdents64`, whose Darwin equivalent `getdirentries` has a different
+`dirent` layout — the genuinely structural one) and the subprocess
+family. These are emitted
 but only misbehave if a program actually calls them on Darwin.
 
 Gated by `internal/e2e/self_host_macho_test.go` — cross-links each

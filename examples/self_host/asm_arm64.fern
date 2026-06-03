@@ -6401,19 +6401,39 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     s = s.write("__fern_monotonic_ns:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    s = s.write("    sub sp, sp, #16\n");        // timespec
-    s = s.write("    mov x0, #1\n");             // CLOCK_MONOTONIC
-    s = s.write("    mov x1, sp\n");             // &timespec
-    s = s.write("    mov x8, #113\n");           // clock_gettime
-    s = s.write("    svc #0\n");
-    s = s.write("    ldr x9, [sp]\n");           // tv_sec
-    s = s.write("    ldr x10, =1000000000\n");
-    s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
-    s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
-    s = s.write("    add x0, x9, x11\n");
-    s = s.write("    mov sp, x29\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
+    if (darwin) {
+        // Darwin has no clock_gettime syscall. mach_absolute_time on
+        // Apple Silicon is a read of the architectural counter
+        // CNTVCT_EL0 (EL0-readable), scaled by its frequency CNTFRQ_EL0
+        // (24 MHz on Apple Silicon) to nanoseconds. Compute
+        // ns = (count/freq)*1e9 + ((count%freq)*1e9)/freq to avoid the
+        // u64 overflow a bare count*1e9 would hit over long uptimes.
+        s = s.write("    mrs x9, cntvct_el0\n");      // count
+        s = s.write("    mrs x10, cntfrq_el0\n");     // freq (Hz)
+        s = s.write("    udiv x11, x9, x10\n");       // sec = count / freq
+        s = s.write("    msub x12, x11, x10, x9\n");  // rem = count - sec*freq
+        s = s.write("    ldr x13, =1000000000\n");
+        s = s.write("    mul x11, x11, x13\n");       // sec * 1e9
+        s = s.write("    mul x12, x12, x13\n");       // rem * 1e9
+        s = s.write("    udiv x12, x12, x10\n");      // (rem*1e9) / freq
+        s = s.write("    add x0, x11, x12\n");        // ns
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    } else {
+        s = s.write("    sub sp, sp, #16\n");        // timespec
+        s = s.write("    mov x0, #1\n");             // CLOCK_MONOTONIC
+        s = s.write("    mov x1, sp\n");             // &timespec
+        s = s.write("    mov x8, #113\n");           // clock_gettime
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    ldr x10, =1000000000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
+        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
+        s = s.write("    add x0, x9, x11\n");
+        s = s.write("    mov sp, x29\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
     // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
     // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
     s = s.write(".globl __fern_sleep_ms\n");
@@ -8023,8 +8043,14 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    add x22, x22, x12\n");      // total len
         s = s.write("    mov w9, #0\n");
         s = s.write("    strb w9, [x21, x22]\n");    // NUL
-        // mkdirat(AT_FDCWD, pathz, 0700)
-        s = s.write("    mov x0, #-100\n");
+        // mkdirat(AT_FDCWD, pathz, 0700). AT_FDCWD -100 (Linux) / -2
+        // (Darwin); mode 0700 = 448 is universal. Syscall number
+        // (34 -> Darwin mkdirat 475) + errno remapped by darwinize.
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+        }
         s = s.write("    mov x1, x21\n");
         s = s.write("    mov x2, #448\n");
         s = s.write("    mov x8, #34\n");            // mkdirat
@@ -10320,8 +10346,9 @@ function darwin_sysno(n: i32): i32 {
     if (n == 57) { return 6; }     // close
     if (n == 56) { return 463; }   // openat
     if (n == 62) { return 199; }   // lseek
-    if (n == 79) { return 470; }   // newfstatat -> fstatat (same args)
+    if (n == 79) { return 470; }   // newfstatat -> fstatat64 (same args)
     if (n == 35) { return 472; }   // unlinkat (same args)
+    if (n == 34) { return 475; }   // mkdirat (same args)
     if (n == 93) { return 1; }     // exit
     if (n == 94) { return 1; }     // exit_group -> exit
     if (n == 222) { return 197; }  // mmap
