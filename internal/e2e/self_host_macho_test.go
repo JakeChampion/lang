@@ -258,6 +258,16 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	runCase("temp_dir",
 		`function main(): i32 { match (temp_dir("fern-darwin-test")) { Ok(d) => { if (d.len() > 0) { return 7; } return 1; }, Err(e) => { return 2; } } }`,
 		7)
+
+	// read_dir + remove_dir_all — the full fs-builtins lifecycle on
+	// Darwin, reusing fsBuiltinsProgram: temp_dir, write_file, stat,
+	// read_dir, remove_dir_all, then stat must report the tree gone.
+	// read_dir/remove_dir_all map getdents64(61) -> getdirentries64(344)
+	// and diverge from Linux on AT_FDCWD (-2), O_DIRECTORY (0x100000),
+	// the 64-bit-inode dirent name offset (21, vs 19), the basep 4th arg
+	// getdirentries64 requires, and AT_REMOVEDIR (0x80). Returns 42 only
+	// if every step round-trips.
+	runCase("fs_builtins_lifecycle", fsBuiltinsProgram, 42)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
