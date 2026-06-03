@@ -276,6 +276,16 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"union-field-math", "struct Circle { r: i32 } struct Rect { w: i32, h: i32 } type Shape = Circle | Rect; function area(x: Shape): i32 { match (x) { Circle(c) => { return c.r * c.r; }, Rect(r) => { return r.w * r.h; } } return 0; } function main(): i32 { return area(Rect { w: 6, h: 7 }); }", 42, ""},
 		{"union-string-field", "struct Named { name: string } struct Anon { id: i32 } type Entity = Named | Anon; function label(e: Entity): i32 { match (e) { Named(n) => { write(n.name); return 0; }, Anon(a) => { return a.id; } } return 0; } function main(): i32 { return label(Named { name: \"hi\" }); }", 0, "hi"},
 		{"union-param-dispatch", "struct A { v: i32 } struct B { v: i32 } type AB = A | B; function pick(x: AB): i32 { match (x) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; } } return 0; } function main(): i32 { return pick(A { v: 40 }) + pick(B { v: 0 }) - 1; }", 42, ""},
+		// Receiver methods: static dispatch to $RecvType__name with the
+		// receiver passed first.
+		{"method-noarg", "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function main(): i32 { var k = Circle { r: 5 }; return k.area(); }", 25, ""},
+		{"method-with-arg", "struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }", 12, ""},
+		{"method-two-structs", "struct Circle { r: i32 } struct Square { s: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function (q: Square) area(): i32 { return q.s * q.s; } function main(): i32 { var a = Circle { r: 3 }; var b = Square { s: 6 }; return a.area() + b.area(); }", 45, ""},
+		{"method-string-return", "struct Person { name: string } function (p: Person) greeting(): string { return \"hi \" + p.name; } function main(): i32 { var p = Person { name: \"sam\" }; write(p.greeting()); return 0; }", 0, "hi sam"},
+		{"method-string-result-method", "struct Box { s: string } function (b: Box) val(): string { return b.s; } function main(): i32 { var x = Box { s: \"abc\" }; write(x.val().to_upper()); return 0; }", 0, "ABC"},
+		{"method-vs-free", "struct Circle { r: i32 } function (c: Circle) area(): i32 { return c.r * c.r; } function area(): i32 { return 100; } function main(): i32 { var k = Circle { r: 5 }; return area() + k.area(); }", 125, ""},
+		{"method-chained-struct", "struct Counter { n: i32 } function (c: Counter) inc(): Counter { return Counter { n: c.n + 1 }; } function main(): i32 { var c = Counter { n: 40 }; return c.inc().inc().n; }", 42, ""},
+		{"method-option-return", "struct Reg { v: i32 } function (r: Reg) get(): Option[i32] { if (r.v > 0) { return Some(r.v); } return None; } function main(): i32 { var r = Reg { v: 42 }; match (r.get()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 	}
 
 	for _, tc := range cases {
