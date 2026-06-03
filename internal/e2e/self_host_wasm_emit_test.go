@@ -552,6 +552,17 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"integration-struct-method", "struct Pt { x: i32, y: i32 } function (p: Pt) dist2(): i32 { return p.x * p.x + p.y * p.y; } function main(): i32 { var pts = [Pt { x: 3, y: 4 }, Pt { x: 1, y: 1 }]; var total: i32 = 0; for p in pts { total = total + p.dist2(); } write(f\"total={total}\"); return 0; }", 0, "total=27"},
 		// Struct-array indexing: pts[i].field resolves the element struct type.
 		{"struct-array-index", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }]; print_int(pts[0].x); print_int(pts[1].y); return 0; }", 0, "58"},
+
+		// Hardening pass 2: feature combinations from real programs.
+		{"nested-struct", "struct Inner { v: i32 } struct Outer { inner: Inner, name: string } function main(): i32 { var o = Outer { inner: Inner { v: 7 }, name: \"hi\" }; print_int(o.inner.v); write(o.name); return 0; }", 0, "7hi"},
+		{"struct-array-field", "struct Bag { items: i32[] } function main(): i32 { var b = Bag { items: [10, 20, 30] }; print_int(b.items.len()); print_int(b.items[1]); return 0; }", 0, "320"},
+		{"struct-string-field", "struct P { name: string, age: i32 } function main(): i32 { var p = P { name: \"sam\", age: 30 }; write(f\"{p.name} is {p.age}\"); return 0; }", 0, "sam is 30"},
+		{"fn-returns-struct", "struct V { a: i32, b: i32 } function mk(n: i32): V { return V { a: n, b: n * 2 }; } function main(): i32 { var v = mk(5); print_int(v.a + v.b); return 0; }", 0, "15"},
+		{"recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { print_int(fib(10)); return 0; }", 0, "55"},
+		{"mutual-recursion", "function ev(n: i32): boolean { if (n == 0) { return true; } return od(n - 1); } function od(n: i32): boolean { if (n == 0) { return false; } return ev(n - 1); } function main(): i32 { if (ev(10)) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
+		{"option-question-chain", "function lookup(k: i32): Option[i32] { if (k > 0) { return Some(k * 10); } return None; } function step(k: i32): Option[i32] { var v = lookup(k)?; return Some(v + 1); } function main(): i32 { match (step(5)) { Some(r) => { print_int(r); }, None => { print_int(0); } } match (step(0 - 1)) { Some(r) => { print_int(r); }, None => { print_int(99); } } return 0; }", 0, "5199"},
+		{"result-match-string", "function parse(ok: boolean): Result[i32, string] { if (ok) { return Ok(42); } return Err(\"bad input\"); } function main(): i32 { match (parse(false)) { Ok(v) => { print_int(v); }, Err(e) => { write(e); } } return 0; }", 0, "bad input"},
+		{"string-builder-loop", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 4) { s = s + f\"[{i}]\"; i = i + 1; } write(s); print_int(s.split(\"]\").len()); return 0; }", 0, "[0][1][2][3]5"},
 	}
 
 	for _, tc := range cases {
