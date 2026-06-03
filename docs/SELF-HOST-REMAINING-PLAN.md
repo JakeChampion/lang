@@ -41,11 +41,12 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   `for (k, v) in m` pair iteration — the map surface is complete), and
   slices `x[a:b]` (string + array, preserving the source element type),
   tuples `(a, b, …)` with `.N` access + per-element kind tracking, and
-  non-capturing lambdas (a `[table_idx]` closure box + `call_indirect`
-  through a function table; `fn`-typed params dispatch the same way).
-  Gated by 366 differential cases under `wasmtime`
-  (`self_host_wasm_emit_test.go`). Remaining for wasm: capturing closures
-  (env layout on top of the table machinery), the `wasi:cli/run` /
+  lambdas + capturing closures (a `[table_idx, caps…]` box + `call_indirect`
+  through a function table; free locals are captured by value into the box
+  and read via `$__env`; `fn`-typed params dispatch the same way) — the
+  core language is now complete on the wasm backend. Gated by 375
+  differential cases under `wasmtime` (`self_host_wasm_emit_test.go`).
+  Remaining for wasm is packaging, not language: the `wasi:cli/run` /
   `wasi:http` component shapes, and binary wasm encoding (it emits WAT
   text today).
 
