@@ -1578,11 +1578,52 @@ green.
 (the array element scope is complete through slice 3, and struct + tuple boxes
 shipped in slice 4; only enums remain — gated on rc-counting their payloads,
 the same direction the enum reuse / match-arm items need);
-(b) control-flow-AWARE placement — drop a local in the branch where it
-becomes dead, or before an `if` when dead in both arms (slice 1
-conservatively skips any local used inside a nested block); (c) reassigned /
-multi-declaration locals; (d) dead-alias cancellation (the counted-alias
-inits skipped above). And the orthogonal big Perceus lever — **general FBIP
+(b) control-flow-AWARE placement — **SHIPPED (slice 5).** The earlier slices
+conservatively skipped any local used inside a nested block; that bail is
+removed. `computePreciseDrops` now lets the last use sit inside a nested
+if / while / for / match and drops the local right after the whole top-level
+statement that contains it — by then the local is dead on EVERY path through
+that statement, so a single top-level drop + zero-slot is sound (an early
+`return` on a path keeps the value live to its own exit sweep; the zeroed slot
+makes the post-statement drop a no-op on paths that already returned). This
+reclaims before the often-long tail after an `if`/loop — the common
+peak-memory case (`var big = …; if (c) { use(big) } …long tail…`: big freed
+after the `if`, not at function exit, so the tail reuses its block — measured
+416 B vs 832 on wasm). Reassignment is now detected at ANY depth (a nested
+`name = …` excludes the local); freeEligible + the alias gates compose
+unchanged. Slightly less precise than a per-branch drop (a local dead in only
+one arm still waits for the join), but captures the dominant win.
+
+**Element-scope gate (the nested-use extension is PRIMITIVE-element only).**
+The straight-line slices 1-3 drop every array element kind; the slice-5
+nested-use extension is restricted to PRIMITIVE-element arrays (`i32[]` /
+`f64[]` / …), whose drop is a pure buffer free with no per-element rc to
+balance. A POINTER-element array (`string[]` / `struct[]` / `T[][]` /
+`tuple[]`) with a nested last use falls back to the exit sweep
+(`isControlFlowStmt && arrayElemIsPointer` → skip). Why: its deep drop dec's
+each element, and an element aliased OUT across an early drop relies on the
+per-element retain/release balancing on EVERY backend — and on arm64 two-word
+heap strings that balance rides the native heap-string reclamation path the
+plan still defers (item 5g). The exact shape that exposed it is the self-host
+driver's `main()`: `var av: string[] = args()` with `entry = av[1]` /
+`root = av[2]`, last-used at `av[2]` inside `if (av.len() >= 3)`. A blanket
+nested drop precise-dropped `av` after the `if`; on the arm64-native self-host
+that corrupted a still-live element alias under allocation-reuse pressure (the
+args buffer reclaimed and reused while `root` still pointed into it — surfaced
+as `__fern_drop_arr_str` was the ONLY drop slice-5 added across the whole
+self-host, confirmed via the `FERN_DROP_DEBUG` op dump; the rc-incs were
+present in the IR, so the gap is the deferred arm64 codegen path, not the
+analysis). The gate keeps the nested-use win for primitive arrays without
+crossing that unverified arm64 boundary; widening it to pointer-element arrays
+follows item 5g (native heap-string rc verified on hardware). Tests:
+`Test{X86_64,Arm64,WASM}ControlFlowDrop` — the if-branch reclaim win + the
+subtle early-return, loop-then-dead, aliased-into-a-container, and the
+`args-alias` (self-host pointer-element shape, exit-sweep-reclaimed, 0
+over-release) cases; the `TestSelfHostArm64NativeMmcMatchesCrossHost` gate
+(arm64-native self-host byte-equal to cross-host) stays green. (c) reassigned /
+multi-declaration locals;
+(d) dead-alias cancellation (the counted-alias inits skipped above). And the
+orthogonal big Perceus lever — **general FBIP
 reuse tokens** (drop-guided in-place reuse of a freed cell by an adjacent
 same-shape allocation, beyond today's pattern-matched
 `tryStructReuseOverwrite` / `tryEnumReuseOverwrite` / array push).
