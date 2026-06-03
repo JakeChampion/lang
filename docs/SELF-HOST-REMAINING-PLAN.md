@@ -27,10 +27,15 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   compiles the full non-generic core language — integers (non-trapping
   div/rem), control flow, recursion, the string library, i32/string
   arrays, structs + methods, Option/Result + `match`/`?`, struct-union
-  match, and generics-by-erasure. Gated by 209 differential cases under
+  match, generics-by-erasure, the wasi runtime builtins (`env`,
+  `random_bytes`, `args`, `read_file` / `write_file`, and the clocks
+  `now_unix_ms` / `monotonic_ns` / `now_ns` via `clock_time_get`), and a
+  real i64 value path (i64 locals / params / returns, i64 arithmetic +
+  comparison with guarded 64-bit div/rem, and an i64 formatter for the
+  64-bit clock timestamps). Gated by 248 differential cases under
   `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm: the
-  `wasi:cli/run` / `wasi:http` component shapes, broader wasi runtime
-  builtins, and binary wasm encoding (it emits WAT text today).
+  `wasi:cli/run` / `wasi:http` component shapes and binary wasm encoding
+  (it emits WAT text today).
 
 ---
 
