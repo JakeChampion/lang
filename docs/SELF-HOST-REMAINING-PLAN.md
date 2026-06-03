@@ -44,11 +44,11 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   lambdas + capturing closures (a `[table_idx, caps…]` box + `call_indirect`
   through a function table; free locals are captured by value into the box
   and read via `$__env`; `fn`-typed params dispatch the same way) — the
-  core language is now complete on the wasm backend. Gated by 375
-  differential cases under `wasmtime` (`self_host_wasm_emit_test.go`).
-  Remaining for wasm is packaging, not language: the `wasi:cli/run` /
-  `wasi:http` component shapes, and binary wasm encoding (it emits WAT
-  text today).
+  core language is now complete on the wasm backend — plus `.to_string()`
+  + f-strings (integer→string runtime). Gated by 386 differential cases
+  under `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm is
+  packaging, not language: the `wasi:cli/run` / `wasi:http` component
+  shapes, and binary wasm encoding (it emits WAT text today).
 
 ---
 
