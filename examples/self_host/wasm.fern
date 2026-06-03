@@ -201,7 +201,7 @@ function set_field_offset(obj: parser.Expr, name_arg: parser.Expr, cx: Ctx): i32
 // WState threads the WAT body being built (out), a fresh-label counter
 // (n), the current loop's break / continue labels (brk / cont, "" when
 // not inside a loop), and the emission context (cx).
-struct WState { out: string, n: i32, brk: string, cont: string, cx: Ctx, fd: i32 }
+struct WState { out: string, n: i32, brk: string, cont: string, cx: Ctx, fd: i32, md: i32 }
 
 // w appends text to the WAT body. Fern struct fields are immutable, so
 // this returns a rebuilt WState (functional update) rather than mutating
@@ -279,6 +279,26 @@ function le32_escape(n: i32): string {
         + "\\" + hex_digit(b3 / 16) + hex_digit(b3 % 16);
 }
 
+// enum_box builds an Option/Result tag box `[tag:i32 @0][payload @4]` as a
+// single (block (result i32)) expression, reusing the $__lit<depth> temp.
+function enum_box(tag: i32, payload: string, depth: i32): string {
+    var ap: string = "$__lit" + i32_to_string(depth);
+    var s: string = "(block (result i32)";
+    s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const 8)))";
+    s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(tag) + "))";
+    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) " + payload + ")";
+    s = s + " (local.get " + ap + "))";
+    return s;
+}
+
+// variant_tag maps an Option/Result variant name to its box tag (Some/Ok
+// = 0, None/Err = 1), or -1 for a name that isn't a known variant.
+function variant_tag(name: string): i32 {
+    if (name == "Some" || name == "Ok") { return 0; }
+    if (name == "None" || name == "Err") { return 1; }
+    return 0 - 1;
+}
+
 // wasm_binop maps a Fern operator to its i32 wasm instruction.
 function wasm_binop(op: string): string {
     if (op == "+") { return "i32.add"; }
@@ -317,6 +337,8 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             return "(i32.const " + i32_to_string(cx.tab.offset_of(se.value)) + ")";
         },
         parser.ExprIdent(id) => {
+            // None is the no-payload Option variant (tag 1).
+            if (id.name == "None") { return enum_box(1, "(i32.const 0)", depth); }
             return "(local.get $" + id.name + ")";
         },
         parser.ExprUnary(u) => {
@@ -352,6 +374,14 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
+                    // Option/Result constructors → tag boxes [tag@0][payload@4]:
+                    // Some/Ok = tag 0, Err = tag 1 (None is the bare-ident case).
+                    if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
+                        return enum_box(0, emit_expr(c.args[0], cx, depth + 1), depth);
+                    }
+                    if (id.name == "Err" && c.args.len() == 1) {
+                        return enum_box(1, emit_expr(c.args[0], cx, depth + 1), depth);
+                    }
                     // Direct call to a free function: `f(a, b)` →
                     // `(call $f <a> <b>)`.
                     var s: string = "(call $" + id.name;
@@ -487,6 +517,7 @@ function is_reserved_local(n: string): boolean {
     if (n == "__lit4" || n == "__lit5" || n == "__lit6" || n == "__lit7") { return true; }
     if (n == "__fi0" || n == "__fi1" || n == "__fi2" || n == "__fi3") { return true; }
     if (n == "__fa0" || n == "__fa1" || n == "__fa2" || n == "__fa3") { return true; }
+    if (n == "__m0" || n == "__m1" || n == "__m2" || n == "__m3") { return true; }
     return false;
 }
 
@@ -520,6 +551,21 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
             parser.StmtFor(f) => {
                 if (!contains_str(acc, f.var_name)) { acc = acc.push(f.var_name); }
                 acc = collect_locals(f.body, acc);
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    match (m.arms[k].pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding.len() > 0 && pv.binding != "_" && !contains_str(acc, pv.binding)) {
+                                acc = acc.push(pv.binding);
+                            }
+                        },
+                        _ => {},
+                    }
+                    acc = collect_locals(m.arms[k].body, acc);
+                    k = k + 1;
+                }
             },
             _ => {},
         }
@@ -575,6 +621,14 @@ function stmts_use_divrem(body: parser.Stmt[]): boolean {
             parser.StmtFor(f) => {
                 if (expr_uses_divrem(f.iter)) { return true; }
                 if (stmts_use_divrem(f.body)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_uses_divrem(m.scrutinee)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_use_divrem(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
             },
             _ => {},
         }
@@ -1001,6 +1055,14 @@ function collect_strings_stmts(body: parser.Stmt[], t: StrTable): StrTable {
                 t = collect_strings_expr(f.iter, t);
                 t = collect_strings_stmts(f.body, t);
             },
+            parser.StmtMatch(m) => {
+                t = collect_strings_expr(m.scrutinee, t);
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    t = collect_strings_stmts(m.arms[k].body, t);
+                    k = k + 1;
+                }
+            },
             _ => {},
         }
         i = i + 1;
@@ -1176,6 +1238,46 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 fd: d,
             };
         },
+        parser.StmtMatch(m) => {
+            // Match on an Option/Result tag box: store the scrutinee once
+            // in $__m<md>, then for each arm test the tag (load @0), bind
+            // the payload (load @4) and run the body, branching to $mend
+            // on a match. A wildcard arm runs unconditionally.
+            var md: i32 = st.md;
+            var mv: string = "$__m" + i32_to_string(md);
+            var id: i32 = st.n;
+            var mend: string = "$mend_" + i32_to_string(id);
+            // Bump label counter + match depth so nested matches / loops
+            // inside arm bodies use distinct labels + scrutinee temps.
+            st = WState { ...st, n: id + 1, md: md + 1 };
+            st = st.w("    (local.set " + mv + " " + emit_expr(m.scrutinee, st.cx, 0) + ")\n");
+            st = st.w("    (block " + mend + "\n");
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                match (m.arms[i].pattern) {
+                    parser.PatVariant(pv) => {
+                        var tag: i32 = variant_tag(pv.type_name);
+                        var nlabel: string = "$marm_" + i32_to_string(id) + "_" + i32_to_string(i);
+                        st = st.w("    (block " + nlabel + "\n");
+                        if (tag >= 0) {
+                            st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + i32_to_string(tag) + ")))\n");
+                        }
+                        if (pv.binding.len() > 0 && pv.binding != "_") {
+                            st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const 4))))\n");
+                        }
+                        st = emit_stmts(m.arms[i].body, st);
+                        st = st.w("    (br " + mend + "))\n");
+                    },
+                    parser.PatWildcard(_) => {
+                        st = emit_stmts(m.arms[i].body, st);
+                        st = st.w("    (br " + mend + ")\n");
+                    },
+                }
+                i = i + 1;
+            }
+            st = st.w("    )\n");
+            return WState { ...st, md: md };
+        },
         _ => {
             // Unsupported statement in this slice — emit nothing.
             return st;
@@ -1327,6 +1429,13 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 }
                 cx = collect_str_locals_stmts(f.body, cx);
             },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    cx = collect_str_locals_stmts(m.arms[k].body, cx);
+                    k = k + 1;
+                }
+            },
             _ => {},
         }
         i = i + 1;
@@ -1419,6 +1528,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     var decls: string = "    (local $__lit0 i32) (local $__lit1 i32) (local $__lit2 i32) (local $__lit3 i32)\n";
     decls = decls + "    (local $__lit4 i32) (local $__lit5 i32) (local $__lit6 i32) (local $__lit7 i32)\n";
     decls = decls + "    (local $__fi0 i32) (local $__fi1 i32) (local $__fi2 i32) (local $__fi3 i32)\n";
+    decls = decls + "    (local $__m0 i32) (local $__m1 i32) (local $__m2 i32) (local $__m3 i32)\n";
     decls = decls + "    (local $__fa0 i32) (local $__fa1 i32) (local $__fa2 i32) (local $__fa3 i32)\n";
     var li: i32 = 0;
     while (li < locals.len()) {
@@ -1429,7 +1539,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     }
 
     var cx: Ctx = build_ctx(f, tab, str_funcs, str_arr_funcs, structs, sf_names, sf_types);
-    var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0 };
+    var st: WState = WState { out: "", n: 0, brk: "", cont: "", cx: cx, fd: 0, md: 0 };
     st = emit_stmts(f.body, st);
 
     var tail: string = "  )\n";
@@ -1495,6 +1605,14 @@ function stmts_have_array(body: parser.Stmt[]): boolean {
             parser.StmtFor(f) => {
                 if (expr_has_array(f.iter)) { return true; }
                 if (stmts_have_array(f.body)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_has_array(m.scrutinee)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_have_array(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
             },
             _ => {},
         }
@@ -1568,6 +1686,14 @@ function stmts_have_struct(body: parser.Stmt[]): boolean {
                 if (expr_has_struct(f.iter)) { return true; }
                 if (stmts_have_struct(f.body)) { return true; }
             },
+            parser.StmtMatch(m) => {
+                if (expr_has_struct(m.scrutinee)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_have_struct(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
+            },
             _ => {},
         }
         i = i + 1;
@@ -1581,6 +1707,99 @@ function module_uses_structs(mod: parser.Module): boolean {
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].receiver_type.len() == 0) {
             if (stmts_have_struct(mod.funcs[i].body)) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// expr_has_option / module_uses_options detect Option/Result constructors
+// (Some/Ok/Err calls, the None ident), which allocate a tag box — so the
+// bump allocator is emitted for option/result-using programs.
+function expr_has_option(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == "None"; },
+        parser.ExprUnary(u) => { return expr_has_option(u.operand); },
+        parser.ExprBinary(b) => { return expr_has_option(b.left) || expr_has_option(b.right); },
+        parser.ExprIndex(ix) => { return expr_has_option(ix.array) || expr_has_option(ix.index); },
+        parser.ExprFieldAccess(fa) => { return expr_has_option(fa.obj); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_has_option(a.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (expr_has_option(sl.field_values[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (variant_tag(id.name) >= 0) { return true; }
+                },
+                _ => {},
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_has_option(c.args[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_have_option(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_has_option(v.init)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_has_option(a.value)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_has_option(r.value)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_has_option(e.value)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_has_option(f.cond)) { return true; }
+                if (stmts_have_option(f.then_body)) { return true; }
+                if (stmts_have_option(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_has_option(w.cond)) { return true; }
+                if (stmts_have_option(w.body)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_has_option(f.iter)) { return true; }
+                if (stmts_have_option(f.body)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_has_option(m.scrutinee)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_have_option(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_uses_options(mod: parser.Module): boolean {
+    if (stmts_have_option(mod.top_stmts)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() == 0) {
+            if (stmts_have_option(mod.funcs[i].body)) { return true; }
         }
         i = i + 1;
     }
@@ -1616,6 +1835,13 @@ function stmt_calls_print_int(body: parser.Stmt[]): boolean {
             },
             parser.StmtFor(f) => {
                 if (stmt_calls_print_int(f.body)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmt_calls_print_int(m.arms[k].body)) { return true; }
+                    k = k + 1;
+                }
             },
             _ => {},
         }
@@ -1687,7 +1913,8 @@ pub function emit_module(mod: parser.Module): string {
     // all static data: past the blocks and the 16-byte print_int buffer.
     var has_arrays: boolean = module_uses_arrays(mod);
     var has_structs: boolean = module_uses_structs(mod);
-    if (has_strings || has_arrays || has_structs) {
+    var has_options: boolean = module_uses_options(mod);
+    if (has_strings || has_arrays || has_structs || has_options) {
         out = out + heap_alloc_helpers(tab.next + 16);
     }
     if (has_strings) {
