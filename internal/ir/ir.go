@@ -2639,8 +2639,24 @@ func (b *builder) preciseDroppableType(name string) bool {
 	if !ok {
 		return false
 	}
-	_, ok = t.(ast.ArrayType)
-	return ok
+	switch t.(type) {
+	case ast.ArrayType, ast.StructType, ast.TupleType:
+		// Arrays (every element kind — slices 1–3) and STRUCT / Map / tuple
+		// boxes (slice 4). emitOwnedSlotDrop reclaims each fully and
+		// is_unique-gates; freeEligible (the taint set) excludes any value
+		// whose nested fields/payloads alias a live local; and the init/use
+		// alias gates exclude boxes bound from / flowing into an uncounted
+		// alias. Struct & tuple construction INC their pointer fields/elements
+		// (StructLit / TupleLit), so a precise drop is rc-protected — the same
+		// reason slice-2 rc-element arrays are sound. ENUMs are excluded: enum
+		// construction does NOT rc-count payloads (move/taint semantics), so a
+		// precise drop could free a payload aliased by a live local — and
+		// since enums are built via variant-constructor CALLS, initMayAliasLive
+		// already excludes them anyway. Non-droppable runtime handles (Reader /
+		// Writer / MapIter) aren't freeEligible, so they never reach here.
+		return true
+	}
+	return false
 }
 
 // emitPreciseDrop deep-drops the owned local `name` at its last use and

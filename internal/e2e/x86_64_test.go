@@ -3043,7 +3043,11 @@ function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var h: Holder = Holder { items: inner };
     var alias: u8[] = h.items;
-    return __rc_get(inner) - 3;
+    // Precise drops (RC-Perceus) release the now-dead struct h at its last
+    // use; reference it in the return so it stays live through the check —
+    // this measures the fully-aliased rc (inner + h.items + alias).
+    // h.items.len()-8 == 0, so the result is unchanged.
+    return __rc_get(inner) - 3 + h.items.len() - 8;
 }`},
 		{"index_load", `import "core/no_prelude";
 function main(): i32 {

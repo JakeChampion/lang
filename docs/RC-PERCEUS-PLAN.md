@@ -1515,9 +1515,25 @@ Type scope (arrays only so far):
     per-element str_dec is_unique-gates, so a string element aliased into a
     live local only DECs. The array element scope is now COMPLETE (every
     element kind).
-  - **Excluded:** non-array box types — structs / enums / tuples are small
-    boxes whose deep drops dec shared fields and churn the `__rc_get` golden
-    tests for a marginal win. A later slice.
+  - **Slice 4 — STRUCT + tuple boxes** (`preciseDroppableType` adds
+    `StructType` / `TupleType`): a dead struct/tuple local is dropped at its
+    last use via the deep `__drop_struct_` / `__drop_tuple_` fn — frees the box
+    AND its rc-tracked fields. Sound because StructLit / TupleLit construction
+    INCs its pointer fields, so the precise drop is rc-protected (a field
+    aliased into a live local only DECs — the same reason slice-2 rc-element
+    arrays are sound). Churned one rc-count golden test
+    (`RcAliasIncFieldAndIndex/field_access`, a struct whose field is aliased —
+    updated to keep the struct live through the `__rc_get` check, like slice 2's
+    `index_load`).
+  - **Excluded: ENUMs.** Enum construction does NOT rc-count its payloads
+    (move/taint semantics — see the enum reuse-payload note), so a precise drop
+    could free a payload aliased by a live local with no rc protection. They're
+    also built via variant-constructor CALLS, which `initMayAliasLive` already
+    gates, so including `EnumType` would buy nothing. A fresh-payload-only
+    refinement (precise-drop an enum whose constructor args are all fresh
+    literals) is a possible later slice; the broader fix is the same
+    consuming-param / rc-counted-payload direction the enum reuse + match-arm
+    items need.
 
 Slice 2 churned exactly one rc-count golden test (`RcAliasIncFieldAndIndex/
 index_load`, a `u8[][]` whose element is aliased): the array is now released
@@ -1558,10 +1574,10 @@ aliased-into-a-container + function-return-of-arg invariants + 0 over-release
 pinned on all three backends; self-host + the full differential gate stay
 green.
 
-**Remaining for true garbage-free (later slices):** (a) widen the type scope
-to the non-array box types — structs / enums / tuples (the array element scope
-is now complete after slice 3 `string[]`; the box types churn the rc-count
-tests for a marginal win);
+**Remaining for true garbage-free (later slices):** (a) ENUM-box precise drops
+(the array element scope is complete through slice 3, and struct + tuple boxes
+shipped in slice 4; only enums remain — gated on rc-counting their payloads,
+the same direction the enum reuse / match-arm items need);
 (b) control-flow-AWARE placement — drop a local in the branch where it
 becomes dead, or before an `if` when dead in both arms (slice 1
 conservatively skips any local used inside a nested block); (c) reassigned /
