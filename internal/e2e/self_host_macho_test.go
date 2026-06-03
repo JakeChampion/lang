@@ -214,6 +214,21 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
   match (read_file("`+wfPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 93; } }
 }`,
 		2)
+
+	// stat — newfstatat(79) -> Darwin fstatat(470); the struct stat layout
+	// differs (st_mode u16@4 / st_size@96 on Darwin vs u32@16 / @48 on
+	// Linux). stat_file: a regular file reports is_file + its size; stat_dir:
+	// a directory reports is_dir; stat_missing: a bad path hits the Err arm
+	// (needs the errno normalization too).
+	runCase("stat_file",
+		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size; } return 1; }, Err(e) => { return 99; } } }`,
+		len(rfContent))
+	runCase("stat_dir",
+		`function main(): i32 { match (stat("`+dir+`")) { Ok(fs) => { if (fs.is_dir) { return 7; } return 1; }, Err(e) => { return 99; } } }`,
+		7)
+	runCase("stat_missing",
+		`function main(): i32 { match (stat("`+filepath.Join(dir, "no_such_stat_zzz")+`")) { Ok(fs) => { return 1; }, Err(e) => { return 99; } } }`,
+		99)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
