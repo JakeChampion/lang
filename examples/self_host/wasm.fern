@@ -697,6 +697,29 @@ function trim_str(s: string): string {
     return s[a:b];
 }
 
+// A `for (k, v) in m` loop encodes its two binding names as "k,v" in the
+// for-var; comma_index / before_comma / after_comma split them.
+function comma_index(s: string): i32 {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 44) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function before_comma(s: string): string {
+    var c: i32 = comma_index(s);
+    if (c < 0) { return s; }
+    return s[0:c];
+}
+
+function after_comma(s: string): string {
+    var c: i32 = comma_index(s);
+    if (c < 0) { return ""; }
+    return s[c + 1 : s.len()];
+}
+
 // struct_field_index returns the 0-based field position of `field` in the
 // struct named `tn` (the heap offset is index*4), or -1 if not found.
 function struct_field_index(structs: parser.StructDecl[], tn: string, field: string): i32 {
@@ -1348,7 +1371,16 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
                 acc = collect_locals(w.body, acc);
             },
             parser.StmtFor(f) => {
-                if (!contains_str(acc, f.var_name)) { acc = acc.push(f.var_name); }
+                // `for (k, v) in m` encodes both names as "k,v" — declare
+                // each as its own local.
+                if (comma_index(f.var_name) >= 0) {
+                    var kn: string = before_comma(f.var_name);
+                    var vn: string = after_comma(f.var_name);
+                    if (!contains_str(acc, kn)) { acc = acc.push(kn); }
+                    if (!contains_str(acc, vn)) { acc = acc.push(vn); }
+                } else if (!contains_str(acc, f.var_name)) {
+                    acc = acc.push(f.var_name);
+                }
                 acc = collect_locals(f.body, acc);
             },
             parser.StmtMatch(m) => {
@@ -2530,6 +2562,47 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             return st.w("    (br " + st.cont + ")\n");
         },
         parser.StmtFor(f) => {
+            // `for (k, v) in m { body }` → walk the map's slots: the box is
+            // evaluated once into $__fa<d>; $__fi<d> is the slot index;
+            // each live slot (used == 1) binds k = keys[i], v = vals[i].
+            if (comma_index(f.var_name) >= 0) {
+                var d2: i32 = st.fd;
+                var fi2: string = "$__fi" + i32_to_string(d2);
+                var fa2: string = "$__fa" + i32_to_string(d2);
+                var id2: i32 = st.n;
+                var brk2: string = "$fbrk_" + i32_to_string(id2);
+                var loop2: string = "$floop_" + i32_to_string(id2);
+                var bodycont2: string = "$fcont_" + i32_to_string(id2);
+                var kn: string = before_comma(f.var_name);
+                var vn: string = after_comma(f.var_name);
+                var ob: string = st.brk;
+                var oc: string = st.cont;
+                var head2: string =
+                    "    (local.set " + fa2 + " " + emit_expr(f.iter, st.cx, 0) + ")\n"
+                    + "    (local.set " + fi2 + " (i32.const 0))\n"
+                    + "    (block " + brk2 + " (loop " + loop2 + "\n"
+                    + "    (br_if " + brk2 + " (i32.ge_s (local.get " + fi2 + ") (i32.load (i32.add (local.get " + fa2 + ") (i32.const 4)))))\n"
+                    + "    (if (i32.eq (i32.load (i32.add (i32.load (i32.add (local.get " + fa2 + ") (i32.const 16))) (i32.mul (local.get " + fi2 + ") (i32.const 4)))) (i32.const 1)) (then\n"
+                    + "    (local.set $" + kn + " (i32.load (i32.add (i32.load (i32.add (local.get " + fa2 + ") (i32.const 8))) (i32.mul (local.get " + fi2 + ") (i32.const 4)))))\n"
+                    + "    (local.set $" + vn + " (i32.load (i32.add (i32.load (i32.add (local.get " + fa2 + ") (i32.const 12))) (i32.mul (local.get " + fi2 + ") (i32.const 4)))))\n"
+                    + "    (block " + bodycont2 + "\n";
+                var inner2: WState = WState {
+                    ...st,
+                    out: st.out + head2,
+                    n: id2 + 1,
+                    brk: brk2,
+                    cont: bodycont2,
+                    fd: d2 + 1,
+                };
+                inner2 = emit_stmts(f.body, inner2);
+                return WState {
+                    ...inner2,
+                    out: inner2.out + "    )))\n    (local.set " + fi2 + " (i32.add (local.get " + fi2 + ") (i32.const 1)))\n    (br " + loop2 + ")))\n",
+                    brk: ob,
+                    cont: oc,
+                    fd: d2,
+                };
+            }
             // `for v in arr { body }` → index walk. The iterated array is
             // evaluated once into $__fa<d>; $__fi<d> is the index; v is
             // bound to arr[idx] each turn. Depth d (0..3) keeps nested
@@ -2785,8 +2858,17 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 cx = collect_str_locals_stmts(w.body, cx);
             },
             parser.StmtFor(f) => {
-                // A `for s in <string[]>` binds s as a string.
-                if (is_string_array_expr(f.iter, cx)) {
+                if (comma_index(f.var_name) >= 0) {
+                    // `for (k, v) in m` — k is a string for a string-keyed
+                    // map, v for a string-valued map.
+                    if (is_str_key_map(f.iter, cx)) {
+                        cx = Ctx { ...cx, locals: cx.locals.push(before_comma(f.var_name)) };
+                    }
+                    if (is_str_val_map(f.iter, cx)) {
+                        cx = Ctx { ...cx, locals: cx.locals.push(after_comma(f.var_name)) };
+                    }
+                } else if (is_string_array_expr(f.iter, cx)) {
+                    // A `for s in <string[]>` binds s as a string.
                     cx = Ctx { ...cx, locals: cx.locals.push(f.var_name) };
                 }
                 cx = collect_str_locals_stmts(f.body, cx);
