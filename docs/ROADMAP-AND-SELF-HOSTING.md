@@ -320,9 +320,14 @@ language**:
 - **`.to_string()` + f-strings** — `(n).to_string()` (the f-string
   desugaring) formats an i32 / i64 into a fresh `[len][bytes]` block via the
   integer→string runtime; a string receiver is the identity. f-strings work
-  end-to-end (the parser lowers them to `"…" + (expr).to_string() + …`).
+  end-to-end (the parser lowers them to `"…" + (expr).to_string() + …`);
+- **arrays of structs** — a `var pts = [Struct{…}, …]` (or a `T[]`
+  annotation) is tracked with its element struct type, so `for p in pts`
+  binds `p` as that struct and `pts[i].field` resolves (found + fixed via an
+  integration capstone — word count, a reduce taking an `fn`, and a
+  struct-method loop, all compiled and run together).
 
-Gated by 386 differential cases as of this writing. What remains for the
+Gated by 390 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

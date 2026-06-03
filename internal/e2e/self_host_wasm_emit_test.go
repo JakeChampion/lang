@@ -540,6 +540,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
 		{"fstring-string-interp", "function main(): i32 { var who: string = \"world\"; write(f\"hello {who}\"); return 0; }", 0, "hello world"},
 		{"fstring-only-interp", "function main(): i32 { var n: i32 = 9; write(f\"{n}\"); return 0; }", 0, "9"},
+
+		// Integration capstone: a word-frequency counter combining split,
+		// a string-keyed i32-valued map, get_or accumulation, len, and an
+		// f-string — exercising many features together.
+		{"integration-word-count", "function main(): i32 { var text: string = \"the cat sat on the mat the cat ran\"; var words: string[] = text.split(\" \"); var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.set(w, counts.get_or(w, 0) + 1); i = i + 1; } print_int(counts.get_or(\"the\", 0)); print_int(counts.get_or(\"cat\", 0)); print_int(counts.get_or(\"mat\", 0)); write(f\" total={counts.len()}\"); return 0; }", 0, "321 total=6"},
+		// Higher-order: a reduce over an array taking an `fn` param, with a
+		// plain lambda and a capturing closure (factor), reported via f-string.
+		{"integration-reduce-closure", "function reduce(xs: i32[], init: i32, f: fn): i32 { var acc: i32 = init; var i: i32 = 0; while (i < xs.len()) { acc = f(acc, xs[i]); i = i + 1; } return acc; } function main(): i32 { var xs = [1, 2, 3, 4, 5]; var factor: i32 = 10; var sum = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b; }); var scaled = reduce(xs, 0, function(a: i32, b: i32): i32 { return a + b * factor; }); write(f\"sum={sum} scaled={scaled}\"); return 0; }", 0, "sum=15 scaled=150"},
+		// Structs + methods + array-of-structs + for-in + f-string.
+		{"integration-struct-method", "struct Pt { x: i32, y: i32 } function (p: Pt) dist2(): i32 { return p.x * p.x + p.y * p.y; } function main(): i32 { var pts = [Pt { x: 3, y: 4 }, Pt { x: 1, y: 1 }]; var total: i32 = 0; for p in pts { total = total + p.dist2(); } write(f\"total={total}\"); return 0; }", 0, "total=27"},
+		// Struct-array indexing: pts[i].field resolves the element struct type.
+		{"struct-array-index", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }]; print_int(pts[0].x); print_int(pts[1].y); return 0; }", 0, "58"},
 	}
 
 	for _, tc := range cases {

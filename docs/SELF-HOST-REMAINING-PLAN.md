@@ -45,10 +45,12 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   through a function table; free locals are captured by value into the box
   and read via `$__env`; `fn`-typed params dispatch the same way) — the
   core language is now complete on the wasm backend — plus `.to_string()`
-  + f-strings (integer→string runtime). Gated by 386 differential cases
-  under `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm is
-  packaging, not language: the `wasi:cli/run` / `wasi:http` component
-  shapes, and binary wasm encoding (it emits WAT text today).
+  + f-strings (integer→string runtime) and arrays of structs (`for p in
+  pts` / `pts[i].field`). Gated by 390 differential cases under `wasmtime`
+  (`self_host_wasm_emit_test.go`), including integration capstones (word
+  count; a reduce over an `fn` param; a struct-method loop). Remaining for
+  wasm is packaging, not language: the `wasi:cli/run` / `wasi:http`
+  component shapes, and binary wasm encoding (it emits WAT text today).
 
 ---
 

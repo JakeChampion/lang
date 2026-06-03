@@ -140,6 +140,10 @@ struct Ctx {
     // ident read resolves to an $__env load at offset 4 + i*4.
     all_locals: string[],
     cap_names: string[],
+    // Struct-array locals (sa_names → element struct type sa_types), so
+    // `for p in pts { p.field / p.method() }` and `pts[i].field` resolve.
+    sa_names: string[],
+    sa_types: string[],
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -1111,9 +1115,89 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
             if (is_struct_type(cx.structs, ft)) { return ft; }
             return "";
         },
+        parser.ExprIndex(ix) => {
+            // pts[i] is a struct when pts is a struct-array.
+            return struct_array_elem_type(ix.array, cx);
+        },
         _ => { return ""; },
     }
     return "";
+}
+
+// struct_array_elem_type returns the element struct type of a struct-array
+// expression ("" otherwise): a tracked struct-array local, an array literal
+// of struct values, or a slice of one.
+function struct_array_elem_type(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprIdent(id) => { return lookup_pair(cx.sa_names, cx.sa_types, id.name); },
+        parser.ExprArray(a) => {
+            if (a.elements.len() > 0) { return struct_type_of(a.elements[0], cx); }
+            return "";
+        },
+        parser.ExprSlice(sl) => { return struct_array_elem_type(sl.array, cx); },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// sa_elem_decl_type returns the element struct type a `var` declares as a
+// struct-array (from its init array literal or a `T[]` annotation), "" if
+// it isn't one.
+function sa_elem_decl_type(v: parser.StmtVar, cx: Ctx): string {
+    var et: string = struct_array_elem_type(v.init, cx);
+    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, base_type_name(v.type_name))) {
+        et = base_type_name(v.type_name);
+    }
+    return et;
+}
+
+// collect_struct_array_names / _types are parallel collectors (same
+// traversal) recording struct-array `var`s and their element struct types.
+function collect_struct_array_names(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (sa_elem_decl_type(v, cx).len() > 0) { acc = acc.push(v.name); } },
+            parser.StmtIf(f) => {
+                acc = collect_struct_array_names(f.then_body, cx, acc);
+                acc = collect_struct_array_names(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_struct_array_names(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_struct_array_names(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_struct_array_names(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function collect_struct_array_types(body: parser.Stmt[], cx: Ctx, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                var et: string = sa_elem_decl_type(v, cx);
+                if (et.len() > 0) { acc = acc.push(et); }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_struct_array_types(f.then_body, cx, acc);
+                acc = collect_struct_array_types(f.else_body, cx, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_struct_array_types(w.body, cx, acc); },
+            parser.StmtFor(f) => { acc = collect_struct_array_types(f.body, cx, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_struct_array_types(m.arms[k].body, cx, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
 }
 
 // scrutinee_payload returns the Some/Ok payload type of an Option/Result-
@@ -3369,6 +3453,12 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                 } else if (is_string_array_expr(f.iter, cx)) {
                     // A `for s in <string[]>` binds s as a string.
                     cx = Ctx { ...cx, locals: cx.locals.push(f.var_name) };
+                } else {
+                    // A `for p in <Struct[]>` binds p as that struct.
+                    var set: string = struct_array_elem_type(f.iter, cx);
+                    if (set.len() > 0) {
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(f.var_name), sv_types: cx.sv_types.push(set) };
+                    }
                 }
                 cx = collect_str_locals_stmts(f.body, cx);
             },
@@ -3491,7 +3581,12 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         tup_names: [], tup_kinds: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
         all_locals: all_locals, cap_names: cap_names,
+        sa_names: [], sa_types: [],
     };
+    // Struct-array locals (computed from the base cx so struct_type_of of
+    // the array elements resolves) — needed before the string-locals pass
+    // so a `for p in pts` over a struct array types p as a struct.
+    cx = Ctx { ...cx, sa_names: collect_struct_array_names(f.body, cx, []), sa_types: collect_struct_array_types(f.body, cx, []) };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
     // string-literal set values first (is_string_expr is accurate for
