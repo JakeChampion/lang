@@ -1483,27 +1483,41 @@ family is complete — an audit of all nine `emitAliasInc` sites confirms
 every genuine last-use move is gated (see "Remaining frontier" under
 Phase 5 for what's deliberately left).
 
-**Precise drops — the garbage-free property (slice 1 SHIPPED, straight-line
+**Precise drops — the garbage-free property (slices 1+2 SHIPPED, straight-line
 subset).** This is the defining Perceus feature: free a value right after its
 LAST USE rather than at scope/function exit, so peak memory matches the live
 set. Until now drops were placed at the function-exit sweep (plus the move
 optimisations + a runtime low-address guard that let the IR skip control-flow-
 sensitive liveness). `computePreciseDrops` adds true last-use placement for
 a deliberately narrow, obviously-sound subset: an owned, `freeEligible`,
-single-declaration, non-reassigned, non-moved local that is a
-**PRIMITIVE-element array** (`i32[]` / `u8[]` / `f32[]` / `i64[]` /
-`boolean[]` — the large data buffers; `preciseDroppableType`) whose every
-reference is a top-level statement (none inside a nested if / while / for /
-match block) is dropped right after its last top-level use. `lowerFunc`
-iterates the body's top-level statements and splices the per-statement
-`emitPreciseDrop` (`__fern_arr_dec` + zero-slot) in.
+single-declaration, non-reassigned, non-moved local that is an **ARRAY**
+(`preciseDroppableType`) whose every reference is a top-level statement (none
+inside a nested if / while / for / match block) is dropped right after its
+last top-level use. `lowerFunc` iterates the body's top-level statements and
+splices the per-statement `emitPreciseDrop` (`emitOwnedSlotDrop` + zero-slot)
+in.
 
-Why primitive arrays only (slice 1): their drop is a PURE buffer free — no
-element/field decs — so it can never touch a buffer shared via an aliased
-element, which keeps the change both sound AND free of rc-count churn (a
-container drop that decs a shared field would change `__rc_get` assertions in
-the `RcAliasInc*` tests without any real bug). They're also the bulk of the
-peak-memory win.
+Type scope (arrays only so far):
+  - **Slice 1 — primitive-element arrays** (`i32[]` / `u8[]` / `f32[]` ...):
+    drop is a PURE buffer free (`__fern_arr_dec`, no element decs).
+  - **Slice 2 — rc-element arrays** (`struct[]` / `enum[]` / `T[][]` /
+    `tuple[]`): drop is the deep `__drop_arr_*` loop, so the element
+    boxes / inner buffers reclaim too — the large arrays-of-boxes get their
+    WHOLE structure freed early, not just the outer buffer. Sound via the
+    same invariant + alias gates: each per-element drop is_unique-gates (a
+    counted alias of an element only DECs), and `freeEligible` (taint)
+    excludes arrays whose elements alias a live local.
+  - **Excluded:** `string[]` (emitOwnedSlotDrop's array path doesn't str_dec
+    the elements — would leak them vs the exit sweep's `__fern_drop_arr_str`);
+    and non-array types — structs / enums / tuples are small boxes whose deep
+    drops dec shared fields and churn the `__rc_get` golden tests for a
+    marginal win. Both are later slices.
+
+Slice 2 churned exactly one rc-count golden test (`RcAliasIncFieldAndIndex/
+index_load`, a `u8[][]` whose element is aliased): the array is now released
+at its last use, so the test was updated to keep it live through the
+`__rc_get` check (it asserts the fully-aliased rc — that's preserved). No
+other rc test moved; the differential corpus stayed green.
 
 Two alias gates keep it sound against UNCOUNTED aliases (a precise drop frees,
 so a live uncounted alias would dangle — exactly the class the broader
@@ -1539,8 +1553,9 @@ pinned on all three backends; self-host + the full differential gate stay
 green.
 
 **Remaining for true garbage-free (later slices):** (a) widen the type scope
-to structs / enums / tuples / rc-element + string arrays (their deep drops
-dec nested references — needs the rc-count tests reframed for early release);
+to structs / enums / tuples + `string[]` (the box types churn the rc-count
+tests for a marginal win; `string[]` needs `emitOwnedSlotDrop` to str_dec its
+elements first);
 (b) control-flow-AWARE placement — drop a local in the branch where it
 becomes dead, or before an `if` when dead in both arms (slice 1
 conservatively skips any local used inside a nested block); (c) reassigned /

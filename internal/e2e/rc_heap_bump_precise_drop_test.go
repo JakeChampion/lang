@@ -119,6 +119,56 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// --- Slice 2: rc-element arrays (arrays of boxes / nested arrays). Their
+// precise drop is the deep __drop_arr_* loop (frees the element boxes / inner
+// buffers + the outer buffer), so a sequentially-dead rc-element array
+// reclaims its WHOLE structure early, not just the outer buffer. ---
+
+// rcArrDead4Src: 4 sequentially-dead i32[][] (array-of-arrays) — each fully
+// reclaimed before the next allocates.
+func rcArrDead4Src() string {
+	row := pdLit(64) // inner buffer, size-class
+	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
+	return `function main(): i32 {
+    var a: i32[][] = ` + mk + `; var sa: i32 = a[0][0];
+    var b: i32[][] = ` + mk + `; var sb: i32 = b[0][0];
+    var c: i32[][] = ` + mk + `; var sc: i32 = c[0][0];
+    var d: i32[][] = ` + mk + `; var sd: i32 = d[0][0];
+    return __heap_bump_bytes() + sa + sb + sc + sd;
+}`
+}
+
+func rcArrLive4Src() string {
+	row := pdLit(64)
+	mk := "[" + row + ", " + row + ", " + row + ", " + row + "]"
+	return `function main(): i32 {
+    var a: i32[][] = ` + mk + `;
+    var b: i32[][] = ` + mk + `;
+    var c: i32[][] = ` + mk + `;
+    var d: i32[][] = ` + mk + `;
+    return __heap_bump_bytes() + a[0][0] + b[0][0] + c[0][0] + d[0][0];
+}`
+}
+
+// rcArrValuesSrc: array-of-struct (P[]), distinct values, with an aliased
+// element kept live — the deep struct-array drop must only DEC the shared
+// element box, not free it.
+const rcArrValuesSrc = `struct P { x: i32, y: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var ps: P[] = [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }];
+        var keep: P = ps[0];
+        var junk: i32[] = [7, 7, 7];
+        acc = acc + ps[1].x + keep.y + junk[0];
+        i = i + 1;
+    }
+    // ps[1].x=i+2, keep.y=i+1, junk=7 -> 2i+10; i=0..199 -> 39800+2000 = 41800
+    if (acc != 41800) { return 999; }
+    return __rc_underflow_count();
+}`
+
 func TestWASMPreciseDrops(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -128,6 +178,11 @@ func TestWASMPreciseDrops(t *testing.T) {
 	if dead >= live {
 		t.Errorf("precise drops should reclaim sequentially-dead arrays: dead4 high-water %d should be < live4 %d", dead, live)
 	}
+	rcDead := runWasm(t, rcArrDead4Src())
+	rcLive := runWasm(t, rcArrLive4Src())
+	if rcDead >= rcLive {
+		t.Errorf("precise drops should reclaim sequentially-dead rc-element arrays: dead4 %d should be < live4 %d", rcDead, rcLive)
+	}
 	if pdValues := runWasm(t, pdValuesSrc); pdValues != 0 {
 		t.Errorf("value correctness / over-release: got %d", pdValues)
 	}
@@ -136,6 +191,9 @@ func TestWASMPreciseDrops(t *testing.T) {
 	}
 	if got := runWasm(t, pdArgReturnSrc); got != 0 {
 		t.Errorf("function-return-of-arg soundness: got %d", got)
+	}
+	if got := runWasm(t, rcArrValuesSrc); got != 0 {
+		t.Errorf("rc-element array value/alias soundness: got %d", got)
 	}
 }
 
@@ -149,6 +207,9 @@ func TestX86_64PreciseDrops(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, pdArgReturnSrc); code != 0 {
 		t.Errorf("function-return-of-arg soundness: code=%d", code)
 	}
+	if _, code := compileAndRunX86_64FreeOn(t, rcArrValuesSrc); code != 0 {
+		t.Errorf("rc-element array value/alias soundness: code=%d", code)
+	}
 }
 
 func TestArm64PreciseDrops(t *testing.T) {
@@ -160,5 +221,8 @@ func TestArm64PreciseDrops(t *testing.T) {
 	}
 	if _, code := compileAndRunArm64FreeOn(t, pdArgReturnSrc); code != 0 {
 		t.Errorf("function-return-of-arg soundness: code=%d", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, rcArrValuesSrc); code != 0 {
+		t.Errorf("rc-element array value/alias soundness: code=%d", code)
 	}
 }
