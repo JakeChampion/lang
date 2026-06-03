@@ -325,29 +325,46 @@ Supported surface is the **core language** (arithmetic, control flow,
 functions, structs, enums, arrays, strings incl. heap concat, closures,
 maps, stdout/stdin I/O).
 
-The **ABI-divergent** syscalls (different struct layout / chunking, not
-just a number swap) are emitted directly by the code generator via a
-`darwin` flag threaded into `asm_arm64.emit_module` — `darwinize`'s
-lexical post-pass can't restructure them. Ported so far:
+Two kinds of Darwin divergence, handled in two places:
+
+1. **Error convention** (all fallible syscalls): Darwin returns `+errno`
+   with the carry flag set; Linux returns `-errno`. `darwinize` injects
+   `b.cc <lbl>; neg x0, x0; <lbl>:` after each remapped `svc #0x80` so the
+   self-host's `x0 < 0` checks see Linux-shaped `-errno`. (`exit` skipped.)
+2. **Structural / constant differences** (struct layout, chunking, flag
+   constants) — emitted directly by the code generator via a `darwin`
+   flag threaded into `asm_arm64.emit_module`, since the lexical post-pass
+   can't restructure them.
+
+Ported so far via the flag:
 
 - `now_unix_ms` → `gettimeofday` (BSD 116; Darwin has no `clock_gettime`
   syscall), reading `struct timeval`'s `tv_usec` and dividing by 1000;
 - `random_bytes` → chunked `getentropy` (BSD 500, 256-byte cap per call,
-  no flags arg) in place of Linux `getrandom`.
+  no flags arg) in place of Linux `getrandom`;
+- `read_file` + `write_file` — number-compatible syscalls
+  (openat / lseek / read / write / close; read_file sizes via `lseek`,
+  not `fstat`, so no struct-stat dependency) plus the right open-flag /
+  `AT_FDCWD` constants (`O_WRONLY|O_CREAT|O_TRUNC` is 1537 on Darwin vs
+  577 on Linux; `AT_FDCWD` is -2 vs -100) and errno normalisation, so
+  both succeed *and* report errors correctly.
 
-Still on their Linux encoding (out of scope, documented gaps): `monotonic_ns`
-(needs `mach_absolute_time` + `mach_timebase_info` — the Go backend
-doesn't port it either), `read_file`'s `fstat` (different `st_size`
-offset), and the subprocess family. These are emitted but only misbehave
-if a program actually calls them on Darwin.
+Still on their Linux encoding (out of scope, documented gaps):
+`monotonic_ns` (needs `mach_absolute_time` + `mach_timebase_info` — the
+Go backend doesn't port it either), the `fstat`-based `stat()` /
+`FileStat` builtin (`newfstatat` #79 + `st_size`@48; depends on the
+per-OS `struct stat` layout), the other directory builtins
+(`read_dir` / `temp_dir` / `remove_dir_all`, which still use Linux
+`AT_FDCWD` / `*at` syscalls), and the subprocess family. These are
+emitted but only misbehave if a program actually calls them on Darwin.
 
 Gated by `internal/e2e/self_host_macho_test.go` — cross-links each
 program with clang + lld and asserts a valid arm64 Mach-O executable off
 Apple Silicon, and on the macOS arm64 CI runner builds the self-host CLI
 natively, runs it, and **executes** the emitted Mach-O (incl. the
-`now_unix_ms` / `random_bytes` cases) asserting exit codes — plus the
-`darwinize` + Darwin-builtin self-test cases in `asm_arm64.fern`'s
-own `main()`.
+`now_unix_ms` / `random_bytes` / `read_file` / `write_file` cases)
+asserting exit codes — plus the `darwinize` + Darwin-builtin self-test
+cases in `asm_arm64.fern`'s own `main()`.
 
 ### ~~Hard blocker — no interface / union-of-struct polymorphism~~ — RESOLVED
 

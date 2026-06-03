@@ -7696,8 +7696,15 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write(".Lrdf_copydone:\n");
         s = s.write("    mov w10, #0\n");
         s = s.write("    strb w10, [x22, x21]\n");  // NUL terminator
-        // openat(AT_FDCWD=-100, pathz, O_RDONLY=0, 0)
-        s = s.write("    mov x0, #-100\n");
+        // openat(AT_FDCWD, pathz, O_RDONLY=0, 0). AT_FDCWD is -100 on
+        // Linux, -2 on Darwin — only matters for relative paths (an
+        // absolute path ignores dirfd), but emit the right one so
+        // relative reads work too. O_RDONLY=0 is universal.
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+        }
         s = s.write("    mov x1, x22\n");
         s = s.write("    mov x2, #0\n");
         s = s.write("    mov x3, #0\n");
@@ -7798,10 +7805,22 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write(".Lwf_copydone:\n");
         s = s.write("    mov w10, #0\n");
         s = s.write("    strb w10, [x23, x22]\n");   // NUL terminator
-        // openat(AT_FDCWD=-100, pathz, O_WRONLY|O_CREAT|O_TRUNC=577, 0644=420)
-        s = s.write("    mov x0, #-100\n");
-        s = s.write("    mov x1, x23\n");
-        s = s.write("    mov x2, #577\n");
+        // openat(AT_FDCWD, pathz, O_WRONLY|O_CREAT|O_TRUNC, 0644=420).
+        // Both the dirfd and the open flags are platform constants:
+        //   AT_FDCWD              Linux -100        Darwin -2
+        //   O_WRONLY|O_CREAT|O_TRUNC  Linux 577 (1|0100|01000)
+        //                             Darwin 1537 (1|0x200|0x400)
+        // Without Darwin's O_TRUNC, overwriting a longer file would
+        // leave trailing bytes. mode 0644 = 420 is the same on both.
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+            s = s.write("    mov x1, x23\n");
+            s = s.write("    mov x2, #1537\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+            s = s.write("    mov x1, x23\n");
+            s = s.write("    mov x2, #577\n");
+        }
         s = s.write("    mov x3, #420\n");
         s = s.write("    mov x8, #56\n");
         s = s.write("    svc #0\n");
