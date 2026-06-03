@@ -109,6 +109,17 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"write-with-embedded-newline", "function main(): i32 { write(\"a\\nb\"); return 0; }", 0, "a\nb"},
 		{"print-in-function", "function greet(): i32 { print(\"hi from greet\"); return 7; } function main(): i32 { return greet(); }", 7, "hi from greet\n"},
 		{"print-dedup-same-literal", "function main(): i32 { write(\"x\"); write(\"x\"); return 0; }", 0, "xx"},
+		// print_int: integer → decimal formatted into memory.
+		{"print-int-literal", "function main(): i32 { print_int(42); return 0; }", 0, "42"},
+		{"print-int-zero", "function main(): i32 { print_int(0); return 0; }", 0, "0"},
+		{"print-int-negative", "function main(): i32 { print_int(0 - 7); return 0; }", 0, "-7"},
+		{"print-int-computed", "function main(): i32 { print_int(2 + 3 * 4); return 0; }", 0, "14"},
+		{"print-int-multidigit", "function main(): i32 { print_int(1234567); return 0; }", 0, "1234567"},
+		{"print-int-then-newline", "function main(): i32 { print_int(99); write(\"\\n\"); return 0; }", 0, "99\n"},
+		{"print-int-int-min", "function main(): i32 { print_int(0 - 2147483647 - 1); return 0; }", 0, "-2147483648"},
+		{"print-int-from-function", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { print_int(fact(8)); return 0; }", 0, "40320"},
+		{"print-int-loop", "function main(): i32 { var i = 1; while (i <= 5) { print_int(i); write(\" \"); i = i + 1; } return 0; }", 0, "1 2 3 4 5 "},
+		{"fizzbuzz-1-to-15", "function main(): i32 { var i = 1; while (i <= 15) { if (i % 15 == 0) { write(\"FizzBuzz\"); } else if (i % 3 == 0) { write(\"Fizz\"); } else if (i % 5 == 0) { write(\"Buzz\"); } else { print_int(i); } write(\"\\n\"); i = i + 1; } return 0; }", 0, "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n"},
 	}
 
 	for _, tc := range cases {
