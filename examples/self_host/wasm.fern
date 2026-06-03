@@ -1287,6 +1287,17 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // arr[i] → load the i32 element at base + 8 + i*4.
             return "(i32.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 4))))";
         },
+        parser.ExprSlice(sl) => {
+            // `x[a:b]` — a string slice reuses $__fern_substr (a fresh
+            // [len][bytes] block); an array slice copies the element range
+            // into a fresh [len][cap][elems] block via $__fern_arr_slice.
+            // Both repr element/byte copies, so i32[] and string[] share
+            // the array path.
+            if (is_string_expr(sl.array, cx)) {
+                return "(call $__fern_substr " + emit_expr(sl.array, cx, depth) + " " + emit_expr(sl.start, cx, depth) + " " + emit_expr(sl.end, cx, depth) + ")";
+            }
+            return "(call $__fern_arr_slice " + emit_expr(sl.array, cx, depth) + " " + emit_expr(sl.start, cx, depth) + " " + emit_expr(sl.end, cx, depth) + ")";
+        },
         parser.ExprStructLit(sl) => {
             // Struct block: type id at slot 0, then one 4-byte slot per
             // declared field. Built in a (block (result i32) …) with a
@@ -1872,6 +1883,22 @@ function arr_helpers(): string {
     o = o + "      (br $c)))\n";
     o = o + "    (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 4))) (local.get $v))\n";
     o = o + "    (local.get $na))\n";
+    // $__fern_arr_slice(a, start, end) → fresh array block holding
+    // a[start:end) (len = cap = end-start), copying the i32 elements.
+    o = o + "  (func $__fern_arr_slice (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
+    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
+    o = o + "    (local.set $na (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 4)))))\n";
+    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
     return o;
 }
 
@@ -2344,6 +2371,11 @@ function collect_strings_expr(e: parser.Expr, t: StrTable): StrTable {
         parser.ExprFieldAccess(fa) => {
             return collect_strings_expr(fa.obj, t);
         },
+        parser.ExprSlice(sl) => {
+            t = collect_strings_expr(sl.array, t);
+            t = collect_strings_expr(sl.start, t);
+            return collect_strings_expr(sl.end, t);
+        },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
@@ -2721,6 +2753,11 @@ function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
             // arr[i] is string-typed when arr is a string array.
             return is_string_array_expr(ix.array, cx);
         },
+        parser.ExprSlice(sl) => {
+            // Slicing a string yields a string (a string[] slice yields a
+            // string[], handled by is_string_array_expr).
+            return is_string_expr(sl.array, cx);
+        },
         parser.ExprFieldAccess(fa) => {
             // s.f is string-typed when f is a `string` field.
             var ot: string = struct_type_of(fa.obj, cx);
@@ -2758,6 +2795,10 @@ function is_string_array_expr(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprIdent(id) => { return contains_str(cx.str_arrays, id.name); },
         parser.ExprArray(a) => {
             return a.elements.len() > 0 && is_string_expr(a.elements[0], cx);
+        },
+        parser.ExprSlice(sl) => {
+            // A slice of a string[] is a string[].
+            return is_string_array_expr(sl.array, cx);
         },
         parser.ExprFieldAccess(fa) => {
             // s.f is a string[] when f is a `string[]` field.
@@ -3176,6 +3217,7 @@ function expr_has_array(e: parser.Expr): boolean {
         parser.ExprUnary(u) => { return expr_has_array(u.operand); },
         parser.ExprBinary(b) => { return expr_has_array(b.left) || expr_has_array(b.right); },
         parser.ExprIndex(ix) => { return expr_has_array(ix.array) || expr_has_array(ix.index); },
+        parser.ExprSlice(_) => { return true; },
         parser.ExprFieldAccess(fa) => { return expr_has_array(fa.obj); },
         parser.ExprCall(c) => {
             if (expr_has_array(c.callee)) { return true; }
@@ -3414,6 +3456,7 @@ function expr_calls(e: parser.Expr, fn: string): boolean {
         parser.ExprUnary(u) => { return expr_calls(u.operand, fn); },
         parser.ExprBinary(b) => { return expr_calls(b.left, fn) || expr_calls(b.right, fn); },
         parser.ExprIndex(ix) => { return expr_calls(ix.array, fn) || expr_calls(ix.index, fn); },
+        parser.ExprSlice(sl) => { return expr_calls(sl.array, fn) || expr_calls(sl.start, fn) || expr_calls(sl.end, fn); },
         parser.ExprFieldAccess(fa) => { return expr_calls(fa.obj, fn); },
         parser.ExprArray(a) => {
             var i: i32 = 0;

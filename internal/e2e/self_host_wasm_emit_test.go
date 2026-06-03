@@ -469,6 +469,21 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-forkv-break", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var n: i32 = 0; for (k, v) in m { n = n + 1; if (n == 2) { break; } } print_int(n); return 0; }", 0, "2"},
 		{"strmap-forkv-keylen", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } print_int(n); return 0; }", 0, "8"},
 		{"strval-forkv-vallen", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for (k, v) in m { n = n + k + v.len(); } print_int(n); return 0; }", 0, "8"},
+
+		// Slices `x[a:b]` (both bounds required by the parser). A string
+		// slice reuses substr; an array slice copies the element range.
+		{"str-slice-mid", "function main(): i32 { write(\"hello\"[1:4]); return 0; }", 0, "ell"},
+		{"str-slice-full", "function main(): i32 { var s = \"world\"; write(s[0:5]); return 0; }", 0, "world"},
+		{"str-slice-empty", "function main(): i32 { write(\"abc\"[1:1]); return 0; }", 0, ""},
+		{"str-slice-len", "function main(): i32 { print_int(\"abcdef\"[2:5].len()); return 0; }", 0, "3"},
+		{"str-slice-var-bounds", "function main(): i32 { var s = \"abcdef\"; var a: i32 = 1; var b: i32 = 4; write(s[a:b]); return 0; }", 0, "bcd"},
+		{"str-slice-concat", "function main(): i32 { write(\"foo\"[0:2] + \"!\"); return 0; }", 0, "fo!"},
+		{"str-slice-then-method", "function main(): i32 { write(\"HELLO\"[1:4].to_lower()); return 0; }", 0, "ell"},
+		{"arr-slice-sum", "function main(): i32 { var xs = [10, 20, 30, 40, 50]; var sub = xs[1:4]; var s: i32 = 0; var i: i32 = 0; while (i < sub.len()) { s = s + sub[i]; i = i + 1; } print_int(s); return 0; }", 0, "90"},
+		{"arr-slice-len", "function main(): i32 { var xs = [1, 2, 3, 4, 5]; print_int(xs[0:3].len()); return 0; }", 0, "3"},
+		{"arr-slice-index", "function main(): i32 { var xs = [5, 6, 7, 8]; var sub = xs[2:4]; print_int(sub[0]); print_int(sub[1]); return 0; }", 0, "78"},
+		{"arr-slice-string-elems", "function main(): i32 { var xs = [\"a\", \"b\", \"c\", \"d\"]; var sub = xs[1:3]; var i: i32 = 0; while (i < sub.len()) { write(sub[i]); i = i + 1; } return 0; }", 0, "bc"},
+		{"arr-slice-for", "function main(): i32 { var xs = [1, 2, 3, 4, 5, 6]; var s: i32 = 0; for v in xs[2:5] { s = s + v; } print_int(s); return 0; }", 0, "12"},
 	}
 
 	for _, tc := range cases {

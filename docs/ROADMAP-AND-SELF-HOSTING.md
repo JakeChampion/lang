@@ -297,9 +297,14 @@ language**:
   `for k in m.keys()` / `for v in m.values()` type correctly), and
   `for (k, v) in m` direct pair iteration (walks the live slots, binding
   k / v with the right key / value type, honouring break / continue). The
-  **map surface is now complete**.
+  **map surface is now complete**;
+- **slices** `x[a:b]` — a string slice into a fresh `[len][bytes]` block
+  (reusing `substr`), an array slice copying the element range into a fresh
+  `[len][cap][elems]` block; the result keeps the source's element type
+  (`string` / `string[]` / i32[]) so methods, concat, indexing and
+  `for v in xs[a:b]` all resolve.
 
-Gated by 334 differential cases as of this writing. What remains for the
+Gated by 346 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
