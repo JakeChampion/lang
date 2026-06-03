@@ -2407,27 +2407,38 @@ Next Phase-6 steps (open):
     Coverage: `internal/e2e/rc_heap_bump_match_scrutinee_test.go` (expr + stmt
     forms bounded across N on x86_64 / arm64 / wasm + an aliased-scrutinee
     UAF/over-release safety case).
-  - **Scalar-literal / scalar-binary arg taint** (`base.split(",")`,
-    `int_to_string`'s `__alloc_u8(16)` / `__alloc_u8(16 - end)`) — OPEN, and
-    the naive fix is UNSAFE (investigated + reverted 2026-06-03). `rhsTainted`
-    has no `NumberLit` / `BoolLit` case and returns `!IsStringConcat` (==true)
-    for a scalar binary, so both fall through to the tainted default and TAINT
-    any owned result built from them: a fresh `u8[]` / `string[]` whose only
-    "borrowed" input is a literal / scalar-arithmetic arg reads as ineligible
-    and never reclaims. Untainting them (NumberLit/FloatLit/BoolLit → false,
-    scalar Binary → false) DOES bound `__alloc_u8(16)` / `(i).to_string()`,
-    BUT it OVER-RELEASES raw-pointer buffers: `random_bytes` does `buf as
-    usize` and fills the buffer through that raw pointer, whose liveness the
-    rc analysis can't see — the spurious scalar taint was ACCIDENTALLY
-    protecting such buffers (TestArm64RandomBytes returned 83 bytes, want 16).
-    `int_to_string`'s own `scratch` is likewise `as usize`-cast, so it's the
-    same pattern. A safe fix must FIRST add a `usize`-cast escape taint (a
-    local cast to a raw pointer is conservatively ineligible — its liveness
-    isn't rc-trackable), THEN untaint the scalars; that re-protects
-    random_bytes / the scratch while reclaiming the non-raw-pointer owned
-    buffers (split result, int_to_string's `buf`). Subtle — gate hard on the
-    full differential + self-host + arm64-native suite (the arbiter that
-    caught the over-release).
+  - **Scalar-literal arg taint — LITERAL HALF SHIPPED; BINARY HALF WON'T-DO
+    (2026-06-03).** `rhsTainted` tainted every `NumberLit`/`FloatLit`/`BoolLit`
+    (no case → tainted default) and every non-concat `Binary`
+    (`!IsStringConcat`), so a fresh owned buffer whose only "borrowed" input is
+    a literal / scalar-arithmetic size arg read as ineligible and wasn't
+    reclaimed at its last reference.
+      + **Literal half — SHIPPED.** `NumberLit`/`FloatLit`/`BoolLit` → untainted
+        (they alias nothing), so a literal-sized scratch temp reclaims
+        (`__alloc_u8(8)`; int_to_string_radix's 33-byte `digits` via
+        `(n).to_hex()`). Two guards make it safe: (1) a **`usize`-cast escape
+        taint** — a pointer-shaped local cast to a raw integer (`buf as usize`)
+        is escape-tainted in `computeFreeEligible` (its liveness isn't
+        rc-trackable), keeping int_to_string's `scratch` protected; (2)
+        **`random_bytes`'s result is tainted explicitly** — the two-word
+        backends alloc it as raw n bytes with NO rc header (`__fern_alloc`, not
+        `__fern_alloc_rc1`), so str_dec'ing it over-released
+        (TestArm64RandomBytes 83 vs 16); the literal arg used to protect it by
+        accident. Tests: `rc_heap_bump_literal_alloc_test.go`.
+      + **Reframing:** these buffers were already **bounded** on main (the
+        segregated freelist caps them), so this is a steady-state high-water
+        REDUCTION (to_hex 160→96 B x86, 144→80 B arm), not the unbounded-leak
+        fix the original note implied.
+      + **Binary half — WON'T-DO (over-releases).** Untainting non-concat
+        `Binary` (so `__alloc_u8(out_len)`, `out_len` from `k + 1`, reclaims)
+        made int_to_string_radix's RESULT buffer eligible and the exit sweep
+        over-released it — `to_rgb_hex` returned the wrong hex (caught by the
+        arm64 stdlib-bundle tests + `TestToRgbHexNoOverRelease`). The
+        escape/move analysis can't prove those binary-sized buffers safe
+        (string_from_bytes copies, but the freelist reuse still corrupted), and
+        most are `as usize`-threaded or moved into the return anyway — marginal
+        benefit, real risk. Left tainted; revisit only with a precise move /
+        last-use analysis, not a blanket untaint.
 
 This session (2026-06-03) ALSO SHIPPED the value-consuming-position +
 fresh-result reclamation family on top of statement-temps a/b/c: owned
