@@ -307,6 +307,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"random-zero", "function main(): i32 { var b = random_bytes(0); return b.len(); }", 0, ""},
 		{"random-range", "function main(): i32 { var b = random_bytes(100); for x in b { if (x < 0) { return 1; } if (x > 255) { return 2; } } return 42; }", 42, ""},
 		{"random-index", "function main(): i32 { var b = random_bytes(4); var x = b[0]; if (x >= 0 && x <= 255) { return 7; } return 1; }", 7, ""},
+		// args(): string[] — the wasi argv (runner appends ALPHA BETA; argv[0]
+		// is the module name).
+		{"args-count", "function main(): i32 { return args().len(); }", 3, ""},
+		{"args-index", "function main(): i32 { var a = args(); write(a[1]); write(a[2]); return 0; }", 0, "ALPHABETA"},
+		{"args-for", "function main(): i32 { var a = args(); var n = 0; for s in a { n = n + s.len(); } if (n > 0) { write(a[1]); return 0; } return 1; }", 0, "ALPHA"},
+		{"args-method", "function main(): i32 { var a = args(); write(a[1].to_lower()); return 0; }", 0, "alpha"},
 	}
 
 	for _, tc := range cases {
@@ -321,7 +327,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 			}
 			// Fixed env vars so `env(name)` cases have something to read
 			// (harmless for the other cases).
-			cmd := exec.Command("wasmtime", "run", "--env", "FERNTEST=hello123", "--env", "EMPTYVAR=", watPath)
+			// Fixed env vars + trailing argv ("ALPHA" "BETA") so env()/
+			// args() cases have something to read (harmless otherwise).
+			cmd := exec.Command("wasmtime", "run", "--env", "FERNTEST=hello123", "--env", "EMPTYVAR=", watPath, "ALPHA", "BETA")
 			out, _ := cmd.Output() // captures the program's stdout
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s: wasm exited %d, want %d\n--- WAT ---\n%s", tc.name, code, tc.exit, wat)
