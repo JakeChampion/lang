@@ -15,6 +15,23 @@ tuple type annotations; the import-driven file-loading driver; the
 self-hosted type checker; and real `std/io`, `std/hex`, `std/base64`,
 `std/math`.
 
+**Update (2026-06):** beyond the native (x86-64 / arm64-linux) work
+tracked below, two larger pieces have since landed — see the matching
+section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
+
+- a **unified self-hosted `fern` CLI** (`examples/self_host/fern.fern`)
+  with `-target` / `-check` / `-interp` / `-fmt` / `-o`, replacing the
+  one-mode `*_run.fern` shims (gated by `self_host_cli_test.go`); and
+- a **self-hosted wasm backend** (`examples/self_host/wasm.fern`,
+  `fern -target wasm`) that emits a runnable WASI core module (WAT) and
+  compiles the full non-generic core language — integers (non-trapping
+  div/rem), control flow, recursion, the string library, i32/string
+  arrays, structs + methods, Option/Result + `match`/`?`, struct-union
+  match, and generics-by-erasure. Gated by 209 differential cases under
+  `wasmtime` (`self_host_wasm_emit_test.go`). Remaining for wasm: the
+  `wasi:cli/run` / `wasi:http` component shapes, broader wasi runtime
+  builtins, and binary wasm encoding (it emits WAT text today).
+
 ---
 
 ## Item 1 — ASCII i32 char methods → `std/sort` ✅
