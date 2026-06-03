@@ -1507,11 +1507,17 @@ Type scope (arrays only so far):
     same invariant + alias gates: each per-element drop is_unique-gates (a
     counted alias of an element only DECs), and `freeEligible` (taint)
     excludes arrays whose elements alias a live local.
-  - **Excluded:** `string[]` (emitOwnedSlotDrop's array path doesn't str_dec
-    the elements — would leak them vs the exit sweep's `__fern_drop_arr_str`);
-    and non-array types — structs / enums / tuples are small boxes whose deep
-    drops dec shared fields and churn the `__rc_get` golden tests for a
-    marginal win. Both are later slices.
+  - **Slice 3 — `string[]`**: drop is `__fern_drop_arr_str` (two-word wasm /
+    arm64-TwoWord) / `__fern_drop_arr_ptr` (native single-word x86_64) — each
+    element string is str_dec'd, then the buffer freed, so the whole structure
+    (buffer + heap strings) reclaims early. `emitOwnedSlotDrop` gained the
+    string-element branch (which also fixes loop-reinit `string[]` drops). The
+    per-element str_dec is_unique-gates, so a string element aliased into a
+    live local only DECs. The array element scope is now COMPLETE (every
+    element kind).
+  - **Excluded:** non-array box types — structs / enums / tuples are small
+    boxes whose deep drops dec shared fields and churn the `__rc_get` golden
+    tests for a marginal win. A later slice.
 
 Slice 2 churned exactly one rc-count golden test (`RcAliasIncFieldAndIndex/
 index_load`, a `u8[][]` whose element is aliased): the array is now released
@@ -1553,9 +1559,9 @@ pinned on all three backends; self-host + the full differential gate stay
 green.
 
 **Remaining for true garbage-free (later slices):** (a) widen the type scope
-to structs / enums / tuples + `string[]` (the box types churn the rc-count
-tests for a marginal win; `string[]` needs `emitOwnedSlotDrop` to str_dec its
-elements first);
+to the non-array box types — structs / enums / tuples (the array element scope
+is now complete after slice 3 `string[]`; the box types churn the rc-count
+tests for a marginal win);
 (b) control-flow-AWARE placement — drop a local in the branch where it
 becomes dead, or before an `if` when dead in both arms (slice 1
 conservatively skips any local used inside a nested block); (c) reassigned /
