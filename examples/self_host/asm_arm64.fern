@@ -8223,9 +8223,20 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         // arm64 Linux O_DIRECTORY=040000=16384 (arch-specific override
         // of the asm-generic value); on x86-64 it's 65536. Using
         // 65536 here would mean O_RDONLY|O_DIRECT — EINVAL on /tmp.
-        s = s.write("    mov x0, #-100\n");
+        // Darwin: AT_FDCWD=-2 and O_DIRECTORY=0x100000=1048576; the
+        // openat syscall number (56 -> 463) + errno are remapped by
+        // darwinize.
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+        }
         s = s.write("    mov x1, x20\n");
-        s = s.write("    mov x2, #16384\n");
+        if (darwin) {
+            s = s.write("    ldr x2, =1048576\n");   // O_DIRECTORY (Darwin)
+        } else {
+            s = s.write("    mov x2, #16384\n");
+        }
         s = s.write("    mov x3, #0\n");
         s = s.write("    mov x8, #56\n");            // openat
         s = s.write("    svc #0\n");
@@ -8235,13 +8246,24 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ldr x0, =1048576\n");       // 1 MiB buffer
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");            // buf base
+        // Darwin getdirentries64 takes a 4th arg basep (off_t* updated
+        // with the directory position); allocate an 8-byte heap scratch
+        // and keep it in callee-saved x24 (free until pass 2's name ptr).
+        if (darwin) {
+            s = s.write("    mov x0, #8\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    mov x24, x0\n");        // basep scratch
+        }
         s = s.write("    mov x22, #0\n");            // total
         s = s.write(".Lrd_g:\n");
         s = s.write("    mov x0, x20\n");
         s = s.write("    add x1, x21, x22\n");
         s = s.write("    ldr x2, =1048576\n");
         s = s.write("    sub x2, x2, x22\n");
-        s = s.write("    mov x8, #61\n");            // getdents64
+        if (darwin) {
+            s = s.write("    mov x3, x24\n");        // basep (getdirentries64)
+        }
+        s = s.write("    mov x8, #61\n");            // getdents64 (-> getdirentries64 on Darwin)
         s = s.write("    svc #0\n");
         s = s.write("    cmp x0, #0\n");
         s = s.write("    b.le .Lrd_gd\n");
@@ -8258,7 +8280,13 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    cmp x19, x22\n");
         s = s.write("    b.ge .Lrd_c1d\n");
         s = s.write("    add x10, x21, x19\n");      // entry base
-        s = s.write("    add x10, x10, #19\n");      // name ptr
+        // dirent d_name offset: Linux getdents64 = 19, Darwin
+        // getdirentries64 64-bit-inode dirent = 21.
+        if (darwin) {
+            s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
+        } else {
+            s = s.write("    add x10, x10, #19\n");   // name ptr
+        }
         s = s.write("    ldrb w11, [x10]\n");
         s = s.write("    cmp w11, #46\n");           // '.'
         s = s.write("    b.ne .Lrd_c1n\n");
@@ -8290,7 +8318,11 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    cmp x19, x22\n");
         s = s.write("    b.ge .Lrd_p2d\n");
         s = s.write("    add x10, x21, x19\n");
-        s = s.write("    add x10, x10, #19\n");      // name ptr
+        if (darwin) {
+            s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
+        } else {
+            s = s.write("    add x10, x10, #19\n");   // name ptr
+        }
         s = s.write("    ldrb w11, [x10]\n");
         s = s.write("    cmp w11, #46\n");
         s = s.write("    b.ne .Lrd_p2t\n");
@@ -8376,9 +8408,17 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY). arm64
         // O_DIRECTORY=040000=16384 (NOT the x86 65536, which is
         // O_DIRECT on arm64 — see the same note in __fern_read_dir).
-        s = s.write("    mov x0, #-100\n");
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");
+        } else {
+            s = s.write("    mov x0, #-100\n");
+        }
         s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #16384\n");
+        if (darwin) {
+            s = s.write("    ldr x2, =1048576\n");   // O_DIRECTORY (Darwin)
+        } else {
+            s = s.write("    mov x2, #16384\n");
+        }
         s = s.write("    mov x3, #0\n");
         s = s.write("    mov x8, #56\n");
         s = s.write("    svc #0\n");
@@ -8388,7 +8428,11 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    b.eq .Lrda_none\n");
         s = s.write("    cmn x0, #20\n");            // x0 == -20 (ENOTDIR)?
         s = s.write("    b.ne .Lrda_some\n");
-        s = s.write("    mov x0, #-100\n");          // unlinkat(file)
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");        // unlinkat(file)
+        } else {
+            s = s.write("    mov x0, #-100\n");      // unlinkat(file)
+        }
         s = s.write("    mov x1, x19\n");
         s = s.write("    mov x2, #0\n");
         s = s.write("    mov x8, #35\n");            // unlinkat
@@ -8399,13 +8443,23 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ldr x0, =65536\n");         // 64 KiB getdents buffer
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x21, x0\n");            // buf
+        // Darwin getdirentries64 basep scratch (see __fern_read_dir);
+        // x24 is free until the iteration loop's name ptr.
+        if (darwin) {
+            s = s.write("    mov x0, #8\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    mov x24, x0\n");        // basep scratch
+        }
         s = s.write("    mov x22, #0\n");            // total
         s = s.write(".Lrda_g:\n");
         s = s.write("    mov x0, x20\n");
         s = s.write("    add x1, x21, x22\n");
         s = s.write("    ldr x2, =65536\n");
         s = s.write("    sub x2, x2, x22\n");
-        s = s.write("    mov x8, #61\n");            // getdents64
+        if (darwin) {
+            s = s.write("    mov x3, x24\n");        // basep (getdirentries64)
+        }
+        s = s.write("    mov x8, #61\n");            // getdents64 (-> getdirentries64 on Darwin)
         s = s.write("    svc #0\n");
         s = s.write("    cmp x0, #0\n");
         s = s.write("    b.le .Lrda_gd\n");
@@ -8417,7 +8471,11 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    cmp x23, x22\n");
         s = s.write("    b.ge .Lrda_itd\n");
         s = s.write("    add x10, x21, x23\n");
-        s = s.write("    add x10, x10, #19\n");      // name ptr
+        if (darwin) {
+            s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
+        } else {
+            s = s.write("    add x10, x10, #19\n");   // name ptr
+        }
         s = s.write("    ldrb w11, [x10]\n");
         s = s.write("    cmp w11, #46\n");
         s = s.write("    b.ne .Lrda_ch\n");
@@ -8493,9 +8551,15 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    mov x0, x20\n");            // close(fd)
         s = s.write("    mov x8, #57\n");
         s = s.write("    svc #0\n");
-        s = s.write("    mov x0, #-100\n");          // rmdir via unlinkat
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #512\n");           // AT_REMOVEDIR
+        if (darwin) {
+            s = s.write("    mov x0, #-2\n");        // rmdir via unlinkat
+            s = s.write("    mov x1, x19\n");
+            s = s.write("    mov x2, #128\n");       // AT_REMOVEDIR (Darwin)
+        } else {
+            s = s.write("    mov x0, #-100\n");      // rmdir via unlinkat
+            s = s.write("    mov x1, x19\n");
+            s = s.write("    mov x2, #512\n");       // AT_REMOVEDIR
+        }
         s = s.write("    mov x8, #35\n");
         s = s.write("    svc #0\n");
         s = s.write(".Lrda_none:\n");
@@ -10345,6 +10409,7 @@ function darwin_sysno(n: i32): i32 {
     if (n == 64) { return 4; }     // write
     if (n == 57) { return 6; }     // close
     if (n == 56) { return 463; }   // openat
+    if (n == 61) { return 344; }   // getdents64 -> getdirentries64
     if (n == 62) { return 199; }   // lseek
     if (n == 79) { return 470; }   // newfstatat -> fstatat64 (same args)
     if (n == 35) { return 472; }   // unlinkat (same args)
