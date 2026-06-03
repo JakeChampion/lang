@@ -269,6 +269,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"payload-local-scrut", "function f(): Option[string] { return Some(\"abc\"); } function main(): i32 { var o: Option[string] = f(); match (o) { Some(s) => { write(s.to_upper()); return 0; }, None => { return 0; } } return 1; }", 0, "ABC"},
 		{"payload-struct", "struct P { x: i32, y: i32 } function f(): Option[P] { return Some(P { x: 40, y: 2 }); } function main(): i32 { match (f()) { Some(p) => { return p.x + p.y; }, None => { return 0; } } return 1; }", 42, ""},
 		{"payload-try-string", "function f(): Option[string] { return Some(\"hello\"); } function g(): Option[i32] { var s = f()?; return Some(s.len()); } function main(): i32 { match (g()) { Some(n) => { return n; }, None => { return 0; } } return 1; }", 5, ""},
+		// Struct-union match (`type E = A | B`): dispatch on the struct's
+		// type id @0; the variant binding is the value itself.
+		{"union-first", "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { var x: Shape = Circle { r: 5 }; match (x) { Circle(c) => { return c.r; }, Square(q) => { return q.s; } } return 0; }", 5, ""},
+		{"union-second", "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function main(): i32 { var x: Shape = Square { s: 7 }; match (x) { Circle(c) => { return c.r; }, Square(q) => { return q.s; } } return 0; }", 7, ""},
+		{"union-field-math", "struct Circle { r: i32 } struct Rect { w: i32, h: i32 } type Shape = Circle | Rect; function area(x: Shape): i32 { match (x) { Circle(c) => { return c.r * c.r; }, Rect(r) => { return r.w * r.h; } } return 0; } function main(): i32 { return area(Rect { w: 6, h: 7 }); }", 42, ""},
+		{"union-string-field", "struct Named { name: string } struct Anon { id: i32 } type Entity = Named | Anon; function label(e: Entity): i32 { match (e) { Named(n) => { write(n.name); return 0; }, Anon(a) => { return a.id; } } return 0; } function main(): i32 { return label(Named { name: \"hi\" }); }", 0, "hi"},
+		{"union-param-dispatch", "struct A { v: i32 } struct B { v: i32 } type AB = A | B; function pick(x: AB): i32 { match (x) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; } } return 0; } function main(): i32 { return pick(A { v: 40 }) + pick(B { v: 0 }) - 1; }", 42, ""},
 	}
 
 	for _, tc := range cases {
