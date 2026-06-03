@@ -10511,6 +10511,20 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 //   - wide / float scalars (i64 / f64 / f32 — would need width-correct
 //     temp slots; the temps here are i32/pointer-width),
 //   - bool and anything else not in the two categories above.
+//
+// fieldCarriedFrom reports whether the struct-literal field value `val` is
+// exactly `<targetName>.<fieldName>` — the field is carried over unchanged
+// from the struct being self-overwritten. Drives field-store elision in
+// tryStructReuseOverwrite (the reuse branch keeps the box's existing value).
+func (b *builder) fieldCarriedFrom(val ast.Expr, targetName, fieldName string) bool {
+	fa, ok := val.(*ast.FieldAccess)
+	if !ok {
+		return false
+	}
+	id, ok := fa.Target.(*ast.Ident)
+	return ok && id.Name == targetName && fa.Field == fieldName
+}
+
 func structReuseEligible(sd *ast.StructDecl) bool {
 	for _, f := range sd.Fields {
 		if nt, ok := f.Type.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
@@ -10592,25 +10606,38 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	//    box is reused below. Pointer fields are retained here exactly
 	//    as normal StructLit construction does (Phase 1d-viii).
 	type fieldTemp struct {
-		name string
-		slot int32
-		ptr  bool
+		name    string
+		slot    int32
+		ptr     bool
+		carried bool // value is exactly `p.<name>` — unchanged, kept on reuse
 	}
 	temps := make([]fieldTemp, 0, len(sl.Fields))
 	hasPtr := false
+	hasCarried := false
 	for _, f := range sl.Fields {
 		isPtr := arrElemIsRcTracked(fieldType(sd.Fields, f.Name))
+		// Field-store elision (Perceus reuse specialization): a field whose
+		// value is literally `p.<sameName>` is carried over UNCHANGED. On the
+		// reuse branch the same box already holds it, so its retain + store +
+		// old-value release are all redundant and elided — the box keeps its
+		// existing reference (rc unchanged). This is the dominant case of
+		// Fern's record-update idiom: E048 forbids field assignment, so an
+		// update is written `p = T{ changed: ..., rest: p.rest, ... }`. The
+		// retain + store are still emitted on the FRESH-alloc path below
+		// (a new box needs its own copy + reference).
+		carried := b.fieldCarriedFrom(f.Value, t.Name, f.Name)
 		if err := b.expr(f.Value); err != nil {
 			return true, err
 		}
-		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
+		if isPtr && !carried && needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__reuse_fld_%d", ts)] = ts
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
-		temps = append(temps, fieldTemp{f.Name, ts, isPtr})
+		temps = append(temps, fieldTemp{f.Name, ts, isPtr, carried})
 		hasPtr = hasPtr || isPtr
+		hasCarried = hasCarried || carried
 	}
 
 	// 2. reused = is_unique(old) (an i32 0/1, captured so both the token
@@ -10664,7 +10691,10 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 		for _, tp := range temps {
-			if !tp.ptr {
+			if !tp.ptr || tp.carried {
+				// A carried-over field keeps its old value (no replacement),
+				// so it must NOT be released — and its step-1 retain was
+				// elided to match.
 				continue
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -10682,13 +10712,45 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpStore})
 
-	// 6. Store the field temps at [base + hdr + off].
+	// 6. Store the CHANGED field temps at [base + hdr + off]. Carried-over
+	//    fields are skipped here — on the reuse branch the box already holds
+	//    them; on the fresh-alloc branch they're stored in step 6b.
 	for _, tp := range temps {
+		if tp.carried {
+			continue
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
 		b.emit(Op{Kind: OpAdd})
 		b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
 		b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
+	}
+
+	// 6b. FRESH-alloc branch only (reused==0): a fresh box has no field
+	//     values, so the carried-over fields must be stored + (pointer
+	//     fields) retained here — exactly what the reuse branch elides.
+	if hasCarried {
+		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+		b.emit(Op{Kind: OpNot}) // reused == 0 → fresh
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, tp := range temps {
+			if !tp.carried {
+				continue
+			}
+			if tp.ptr {
+				// Retain the carried pointer for the fresh box's own
+				// reference (the reuse branch keeps the box's existing one).
+				b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
+			b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
+		}
+		b.emit(Op{Kind: OpEnd})
 	}
 
 	// 7. p = data (= base + hdr); leave the tee for expression position.
