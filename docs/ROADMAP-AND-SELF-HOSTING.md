@@ -278,9 +278,14 @@ language**:
   arithmetic (`+ - * /` `%` via guarded 64-bit div/rem) and comparison,
   literal coercion into i64 sinks, and an i64 decimal formatter — so the
   64-bit clock timestamps (which exceed the i32 range) round-trip and
-  print correctly.
+  print correctly;
+- an **f64 floating-point path** mirroring the i64 one — f64 locals /
+  params / returns, arithmetic + comparison, the `as` casts (f64↔i32/i64,
+  with `i32.trunc_f64_s` / `f64.convert_*` and integer narrowing masks),
+  and the primitive math builtins (`__sqrt_f64` / `__floor_f64` /
+  `__ceil_f64` / `__trunc_f64` / `__round_f64` / `__abs_f64`).
 
-Gated by 248 differential cases as of this writing. What remains for the
+Gated by 270 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path: the **`wasi:cli/run` /
 `wasi:http` component shapes** (the Component-Model packaging in
 `internal/wasm/component`, ported to Fern, on top of this core module),
