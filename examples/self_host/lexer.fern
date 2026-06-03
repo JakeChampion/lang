@@ -91,7 +91,8 @@ function is_keyword(name: string): boolean {
         || name == "as" || name == "switch" || name == "case" || name == "default"
         || name == "struct" || name == "import" || name == "pub" || name == "const"
         || name == "enum" || name == "type" || name == "match" || name == "when"
-        || name == "defer" || name == "arena";
+        || name == "defer" || name == "arena"
+        || name == "trait" || name == "impl";
 }
 
 function is_valid_numeric_suffix(s: string): boolean {

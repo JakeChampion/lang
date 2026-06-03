@@ -1822,6 +1822,93 @@ pub function module_with_builtins(mod: Module): Module {
     };
 }
 
+// ImplResult carries the parser plus the desugared receiver-method
+// FuncDecls produced from an `impl Trait for Type { … }` block.
+pub struct ImplResult { par: Par, funcs: FuncDecl[] }
+
+// parse_impl_decl consumes `impl Trait for Type { <function>… }`.
+// Each method is desugared into an ordinary receiver-method
+// FuncDecl — its first `self: Self` parameter becomes the receiver
+// with `Self` rewritten to the concrete `for` type — so the rest
+// of the self-host pipeline (which already dispatches methods by
+// receiver type) handles trait impls with no further changes.
+// The trait name is parsed and discarded: the self-host resolves
+// `obj.method()` by the receiver's concrete type, not via the
+// trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
+function parse_impl_decl(p: Par): ImplResult {
+    var out: FuncDecl[] = [];
+    p = p.advance(); // `impl`
+    // Trait name (possibly `mod.Trait`) — discarded.
+    var tnr: TypeNameResult = parse_type_name(p);
+    p = tnr.par;
+    if (p.peek_keyword() == "for") { p = p.advance(); }
+    var ity: TypeNameResult = parse_type_name(p);
+    p = ity.par;
+    var impl_type: string = ity.name;
+    if (p.peek_punct() == "{") { p = p.advance(); }
+    while (!p.at_end()) {
+        if (p.peek_punct() == "}") { break; }
+        var kw: string = p.peek_keyword();
+        if (kw == "pub") { p = p.advance(); kw = p.peek_keyword(); }
+        if (kw != "function") {
+            // Defensive: don't stall on an unexpected token.
+            p = p.advance();
+            continue;
+        }
+        var fr: FuncResult = parse_func_decl(p);
+        p = fr.par;
+        var m: FuncDecl = fr.func;
+        // Peel the first param (`self`) into the receiver and rewrite
+        // `Self` -> impl_type across the remaining params + return.
+        var rname: string = "self";
+        var newparams: ParamDecl[] = [];
+        var i: i32 = 0;
+        while (i < m.params.len()) {
+            if (i == 0) {
+                rname = m.params[i].name;
+            } else {
+                var pt: string = m.params[i].type_name;
+                if (pt == "Self") { pt = impl_type; }
+                newparams = newparams.push(ParamDecl { name: m.params[i].name, type_name: pt });
+            }
+            i = i + 1;
+        }
+        var rt: string = m.ret_type;
+        if (rt == "Self") { rt = impl_type; }
+        out = out.push(FuncDecl {
+            name: m.name,
+            receiver_name: rname,
+            receiver_type: impl_type,
+            params: newparams,
+            ret_type: rt,
+            body: m.body
+        });
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return ImplResult { par: p, funcs: out };
+}
+
+// skip_trait_decl consumes a `trait Name { <sig>; … }` block whole.
+// The self-host doesn't validate conformance (dispatch is by
+// receiver type), so trait declarations carry no semantic weight
+// here — they're parsed and discarded.
+function skip_trait_decl(p: Par): Par {
+    p = p.advance(); // `trait`
+    if (p.peek_ident().len() > 0) { p = p.advance(); } // name
+    if (p.peek_punct() == "{") {
+        p = p.advance();
+        var depth: i32 = 1;
+        while (!p.at_end()) {
+            if (depth <= 0) { break; }
+            var pk: string = p.peek_punct();
+            if (pk == "{") { depth = depth + 1; }
+            if (pk == "}") { depth = depth - 1; }
+            p = p.advance();
+        }
+    }
+    return p;
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0 };
     var funcs: FuncDecl[] = [];
@@ -1879,6 +1966,20 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var ir: ImportResult = parse_import(p);
             p = ir.par;
             imports = imports.push(ir.imp);
+            continue;
+        }
+        if (kw == "trait") {
+            p = skip_trait_decl(p);
+            continue;
+        }
+        if (kw == "impl") {
+            var imr: ImplResult = parse_impl_decl(p);
+            p = imr.par;
+            var mi: i32 = 0;
+            while (mi < imr.funcs.len()) {
+                funcs = funcs.push(imr.funcs[mi]);
+                mi = mi + 1;
+            }
             continue;
         }
         var stmtR: StmtResult = parse_stmt(p);
