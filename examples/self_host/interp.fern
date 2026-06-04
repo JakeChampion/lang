@@ -1095,6 +1095,16 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
                 match (arm.pattern) {
                     parser.PatWildcard(_) => { matched = true; },
                     parser.PatVariant(pv) => {
+                        // `match (b) { true => …, false => … }` over a bool.
+                        if (pv.type_name == "true" || pv.type_name == "false") {
+                            match (sv) {
+                                VBool(bv) => {
+                                    if (pv.type_name == "true" && bv.v) { matched = true; }
+                                    if (pv.type_name == "false" && !bv.v) { matched = true; }
+                                },
+                                _ => { }
+                            }
+                        }
                         match (sv) {
                             VStruct(vs) => {
                                 if (vs.type_name == pv.type_name) {
