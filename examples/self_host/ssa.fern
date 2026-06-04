@@ -578,9 +578,21 @@ pub function build_func(fd: parser.FuncDecl): BResult {
 // runs every program with and without -opt and asserts identical output).
 
 pub function optimize(f: SFunc): SFunc {
-    f = copy_propagate(f);
-    f = const_fold(f);
-    f = dead_code_elim(f);
+    // Run the pass pipeline to a fixpoint: branch_simplify can fold a
+    // constant `brif` to a `br` and prune the dead arm, which turns the
+    // merge phi trivial (→ a copy) and exposes fresh constants — so we
+    // loop copy-prop / const-fold / branch-simplify / DCE until the
+    // instruction count stops shrinking.
+    var prev: i32 = 0 - 1;
+    var rounds: i32 = 0;
+    while (count_insts(f) != prev && rounds < 1000) {
+        prev = count_insts(f);
+        f = copy_propagate(f);
+        f = const_fold(f);
+        f = branch_simplify(f);
+        f = dead_code_elim(f);
+        rounds = rounds + 1;
+    }
     return f;
 }
 
@@ -713,6 +725,133 @@ function const_fold(f: SFunc): SFunc {
                 k = k + 1;
             }
             nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            bi = bi + 1;
+        }
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    }
+    return f;
+}
+
+// term_targets reports whether a terminator branches to block id `to`.
+function term_targets(t: STerm, to: i32): boolean {
+    if (t.kind == "br") { return t.target == to; }
+    if (t.kind == "brif") { return t.t == to || t.f == to; }
+    return false;
+}
+
+// reachable_ids returns the block ids reachable from the entry by
+// following terminators (a CFG walk; ret has no successors).
+function reachable_ids(f: SFunc): i32[] {
+    var seen: i32[] = [f.blocks[f.entry].id];
+    var work: i32[] = [f.blocks[f.entry].id];
+    var guard: i32 = 0;
+    while (work.len() > 0 && guard < 1000000) {
+        guard = guard + 1;
+        var id: i32 = work[work.len() - 1];
+        var nw: i32[] = [];
+        var w: i32 = 0;
+        while (w < work.len() - 1) { nw = nw.push(work[w]); w = w + 1; }
+        work = nw;
+        var bi: i32 = block_index(f, id);
+        if (bi >= 0) {
+            var t: STerm = f.blocks[bi].term;
+            if (t.kind == "br") { if (index_of_i32(seen, t.target) < 0) { seen = seen.push(t.target); work = work.push(t.target); } }
+            else if (t.kind == "brif") {
+                if (index_of_i32(seen, t.t) < 0) { seen = seen.push(t.t); work = work.push(t.t); }
+                if (index_of_i32(seen, t.f) < 0) { seen = seen.push(t.f); work = work.push(t.f); }
+            }
+        }
+    }
+    return seen;
+}
+
+// branch_simplify folds a `brif` on a constant condition into an
+// unconditional `br`, then prunes blocks no longer reachable from the
+// entry. Removing a predecessor edge drops the matching operand from each
+// successor phi (operands stay parallel to preds); a phi left with a
+// single operand becomes a `copy` (which copy-propagation then removes).
+function branch_simplify(f: SFunc): SFunc {
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+
+        // 1. Fold constant `brif` → `br`.
+        var cset: i32[] = zeros(f.nvals);
+        var cval: i32[] = zeros(f.nvals);
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                    cset = env_set_at(cset, ins.result, 1);
+                    cval = env_set_at(cval, ins.result, ins.imm);
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        var folded_blocks: SBlock[] = [];
+        bi = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var t: STerm = blk.term;
+            if (t.kind == "brif" && cset[t.cond] == 1) {
+                var taken: i32 = t.f;
+                if (cval[t.cond] != 0) { taken = t.t; }
+                t = t_br(taken);
+                changed = true;
+            }
+            folded_blocks = folded_blocks.push(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
+            bi = bi + 1;
+        }
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: folded_blocks, entry: f.entry };
+
+        // 2. Drop unreachable blocks and fix up survivor preds + phis.
+        var reach: i32[] = reachable_ids(f);
+        var nblocks: SBlock[] = [];
+        bi = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            if (index_of_i32(reach, blk.id) < 0) { changed = true; bi = bi + 1; continue; }
+            // Which pred edges still exist (reachable source that still
+            // targets this block)? Keep those indices, drop the rest.
+            var keep: i32[] = [];
+            var pi: i32 = 0;
+            while (pi < blk.preds.len()) {
+                var p: i32 = blk.preds[pi];
+                var psrc: i32 = block_index(f, p);
+                var alive: boolean = index_of_i32(reach, p) >= 0 && psrc >= 0 && term_targets(f.blocks[psrc].term, blk.id);
+                if (alive) { keep = keep.push(pi); }
+                pi = pi + 1;
+            }
+            if (keep.len() != blk.preds.len()) { changed = true; }
+            var npreds: i32[] = [];
+            var ki: i32 = 0;
+            while (ki < keep.len()) { npreds = npreds.push(blk.preds[keep[ki]]); ki = ki + 1; }
+            // Prune phi operands to the surviving preds.
+            var ninsts: SInst[] = [];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                if (ins.kind == "phi") {
+                    var nargs: i32[] = [];
+                    var ai: i32 = 0;
+                    while (ai < keep.len()) { nargs = nargs.push(ins.args[keep[ai]]); ai = ai + 1; }
+                    if (nargs.len() == 1) {
+                        ins = SInst { kind: "copy", result: ins.result, args: nargs, imm: 0, str: "" };
+                        changed = true;
+                    } else {
+                        ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: ins.imm, str: ins.str };
+                    }
+                }
+                ninsts = ninsts.push(ins);
+                k = k + 1;
+            }
+            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds });
             bi = bi + 1;
         }
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
