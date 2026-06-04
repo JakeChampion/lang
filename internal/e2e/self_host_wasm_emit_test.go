@@ -747,6 +747,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},
 		{"hex-literal", "function main(): i32 { print_int(0xFF); print_int(0x10); return 0; }", 0, "25516"},
 		{"escape-sequences", "function main(): i32 { write(\"a\\tb\\nc\"); return 0; }", 0, "a\tb\nc"},
+		// \xNN hex byte escapes (string + f-string), via string_from_bytes.
+		{"hex-escape", "function main(): i32 { write(\"\\x48\\x69\\x21\"); return 0; }", 0, "Hi!"},
+		{"hex-escape-fstring", "function main(): i32 { var n: i32 = 7; write(f\"\\x41{n}\\x5a\"); return 0; }", 0, "A7Z"},
 		{"deep-nesting", "function main(): i32 { print_int(((1 + 2) * (3 + 4)) - ((5 - 1) / 2)); return 0; }", 0, "19"},
 		{"neg-float-compare", "function main(): i32 { var a: f64 = 0.0 - 2.5; if (a < 0.0) { print_int(1); } if (a > (0.0 - 3.0)) { print_int(2); } return 0; }", 0, "12"},
 		{"while-complex-cond", "function main(): i32 { var i: i32 = 0; var j: i32 = 10; while (i < j && j > 0) { i = i + 1; j = j - 1; } print_int(i); return 0; }", 0, "5"},
