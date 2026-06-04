@@ -1836,9 +1836,17 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (is_all_digits(fa.field)) {
                 return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(digits_to_i32(fa.field) * 4) + ")))";
             }
+            var ot: string = struct_type_of(fa.obj, cx);
+            // Enum constant `Color.Green`: the receiver isn't a struct
+            // value, but the field names a (zero-field variant) struct —
+            // emit a variant box `[type_id]`, like `Green {}`, so the
+            // existing struct-union `match` dispatch works.
+            if (ot.len() == 0 && is_struct_type(cx.structs, fa.field)) {
+                var vp: string = "$__lit" + i32_to_string(depth);
+                return "(block (result i32) (local.set " + vp + " (call $__fern_alloc (i32.const " + i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
+            }
             // Bare field read s.f → load at base + 4 + index*4 (slot 0 is
             // the type id).
-            var ot: string = struct_type_of(fa.obj, cx);
             var idx: i32 = struct_field_index(cx.structs, ot, fa.field);
             if (idx < 0) { return "(i32.const 0)"; }
             return "(i32.load (i32.add " + emit_expr(fa.obj, cx, depth) + " (i32.const " + i32_to_string(struct_field_off(idx)) + ")))";
@@ -4682,6 +4690,9 @@ pub function emit_module(mod: parser.Module): string {
     if (has_i64) { heap_extra = 24; }
     var has_arrays: boolean = module_uses_arrays(mod);
     var has_structs: boolean = module_uses_structs(mod);
+    // Enum-constant access (`Color.Green`) builds a variant box but isn't a
+    // struct literal, so gate the heap on any struct/enum declaration too.
+    if (mod.structs.len() > 0) { has_structs = true; }
     var has_options: boolean = module_uses_options(mod);
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
