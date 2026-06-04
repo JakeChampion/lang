@@ -10751,7 +10751,7 @@ func tupleReuseEligible(elems []ast.Type) bool {
 func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	sources := map[ast.Expr]string{}
 	consumed := map[string]bool{}
-	if !ast.RcFreeEnabled || b.fn.Body == nil {
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled || b.fn.Body == nil {
 		return sources, consumed
 	}
 
@@ -11236,7 +11236,7 @@ func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []i
 //   - tokenSize == size (same type T), so __alloc_reuse's class check
 //     always matches on the reuse path and never frees.
 func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
-	if !ast.RcFreeEnabled {
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled {
 		return false, nil
 	}
 	sl, ok := n.Value.(*ast.StructLit)
@@ -11447,7 +11447,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 // the caller's value, the same UAF guard the array-free overwrite path
 // uses.
 func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
-	if !ast.RcFreeEnabled {
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled {
 		return false, nil
 	}
 	call, ok := n.Value.(*ast.Call)

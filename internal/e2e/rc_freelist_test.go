@@ -135,6 +135,54 @@ func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
 	})
 }
 
+// Reuse differential gate (RC-Perceus test contract): with free ON, the
+// constructor-reuse / general FBIP layer (RcReuseEnabled) must produce
+// byte-identical OUTPUT whether reuse fires or every reuse site falls back to a
+// fresh alloc + the normal drop. This isolates a reuse bug from a plain free
+// bug — reuse-on == reuse-off the same way free-on == free-off. Same corpus,
+// same helpers; only RcReuseEnabled flips (free stays on for both runs).
+func TestX86_64ReuseMatchesNoReuse(t *testing.T) {
+	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
+		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		prev := ast.RcReuseEnabled
+		ast.RcReuseEnabled = false
+		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		ast.RcReuseEnabled = prev
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("reuse-on diverged from reuse-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
+func TestArm64ReuseMatchesNoReuse(t *testing.T) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
+		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		prev := ast.RcReuseEnabled
+		ast.RcReuseEnabled = false
+		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		ast.RcReuseEnabled = prev
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("reuse-on diverged from reuse-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
+func TestWASMReuseMatchesNoReuse(t *testing.T) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		prevFree := ast.RcFreeEnabled
+		ast.RcFreeEnabled = true
+		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
+		prevReuse := ast.RcReuseEnabled
+		ast.RcReuseEnabled = false
+		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
+		ast.RcReuseEnabled = prevReuse
+		ast.RcFreeEnabled = prevFree
+		if outOff != outOn || exitOff != exitOn {
+			t.Errorf("reuse-on diverged from reuse-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+		}
+	})
+}
+
 // --- end flip-readiness gate --------------------------------------
 
 // freelistReuseSrc is the shared body for the flag-on freelist

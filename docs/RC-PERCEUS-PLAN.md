@@ -2028,9 +2028,14 @@ cancellation — bounded, but separable, so it ships last.
     reuse wrote the right block), folded with `__rc_underflow_count()`.
   - The `Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree` differential
     gate already asserts free-on == free-off byte-identical; reuse is a
-    third axis — add a `reuse-off` baseline (a package var
-    `ast.RcReuseEnabled`, default on once 5b lands, that the gate flips)
-    so reuse-on == reuse-off is pinned the same way.
+    third axis. **DONE:** `ast.RcReuseEnabled` (default on) gates all three
+    reuse entry points (`computeReuseSources`, `tryStructReuseOverwrite`,
+    `tryEnumReuseOverwrite`); flipping it off only disables the optimisation
+    (every site falls back to a fresh alloc + the normal drop), and the
+    `Test{X86_64,Arm64,WASM}ReuseMatchesNoReuse` gate runs the whole
+    `testdata/cases` corpus asserting reuse-on == reuse-off byte-identical
+    output + exit. IR `TestGeneralReuseDisabledByFlag` pins zero
+    `__alloc_reuse` with the flag off.
   - **`RcFreeDebug` extension:** `OpDropReuse` must poison-and-quarantine
     exactly like the free path when reuse does *not* fire (token
     returned but the paired alloc took a different class), so the UAF
