@@ -1157,11 +1157,11 @@ func TestRunnerFloatArrayStrictSortExample(t *testing.T) {
 
 // `examples/tests/map_eq_and_predicates_test.fern` exercises
 // batch-21 additions:
-//   - `assert_eq_map_i32_i32` / `_string_string` — full
-//     map deep equality (length + key-with-matching-value
-//     in one direction; pigeonhole gives the reverse). Map
-//     iteration order isn't observable so walks
-//     `actual.keys()` rather than `iter`.
+//   - `assert_eq_map` — full map deep equality (length +
+//     key-with-matching-value in one direction; pigeonhole
+//     gives the reverse), generic over K/V. Map iteration
+//     order isn't observable so walks `actual.keys()`
+//     rather than `iter`.
 //   - `assert_all_i32` / `_string` — ∀ predicate; vacuous
 //     pass on empty array. Failure names index + value.
 //   - `assert_any_i32` / `_string` — ∃ predicate; vacuous

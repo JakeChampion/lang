@@ -320,8 +320,13 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    `@derive(Ord)` for enums (variant-tag order, then lexicographic
    payloads) and `impl Ord for string` shipped, and the `sorted_*` /
    `set_eq` / `subset` / `unique` array families are now collapsed too
-   (over `[T: Ord + Display]` / `[T: Eq + Display]`). The **map**
-   families (two type params → multi-param monomorph) remain a follow-up.
+   (over `[T: Ord + Display]` / `[T: Eq + Display]`). The **map** families
+   (`assert_map_len` / `assert_map_has` / `assert_map_lacks` /
+   `assert_eq_map`) are now collapsed as well, over
+   `[K: Eq + Display, V: Eq + Display]` — this needed the self-host
+   monomorphiser to grow MULTI-parameter support (infer K and V from a
+   single `Map[K, V]` argument, mangle the clone with both concrete types
+   joined `f__i32__string`); see §7a.
 5. **Phase 5:** **opaque types — shipped.** `pub opaque struct Name { … }`
    exports the type name + its methods but keeps fields private outside
    the declaring module: cross-module field reads and struct-literal
@@ -386,6 +391,24 @@ regressing the self-host gates. It needs traits in two slices:
   (`internal/e2e/self_host_traits_test.go`): primitive, struct,
   multi-type, and mixed-primitive-and-struct instantiations.
 
+- **Self-host slice 3 (shipped): MULTI-parameter monomorphisation.**
+  The `Map[K, V]` assertion collapse needs a bounded generic over *two*
+  type parameters, with both inferred from a single argument. The
+  monomorphiser was generalised from one type variable to N: `infer_inst`
+  builds the per-parameter bindings via `bind_unify` (which matches a
+  parameter-type pattern against the argument's inferred type — a bare
+  variable `T ⊢ i32`, an array element `T[]` vs `i32[] ⊢ T=i32`, and a
+  same-base composite `Map[K, V]` vs `Map[i32, string] ⊢ K=i32,V=string`)
+  and returns the concrete types joined `__` in declaration order;
+  `subst_ty` substitutes every variable (including inside composites like
+  `Map[K, V]` → `Map[i32, string]`, so the emitter's static map-tag
+  dispatch sees concrete key/value types); `clone_bg` splits the joined
+  key back into per-parameter pieces and mangles `f__i32__string`. The
+  single-parameter path is the N=1 special case, unchanged in behaviour.
+  Tested via the new `trait-bounded-generic-two-params` case plus the
+  full `map_eq_and_predicates` / `batch8` suites through the self-host
+  gate.
+
 ## 7b. The `std/test` collapse (landed)
 
 The scalar `assert_eq_<T>` / `assert_neq_<T>` / `assert_{lt,le,gt,ge}_<T>`
@@ -408,6 +431,16 @@ self-host monomorphiser, landing it took:
   to all integer tags (`is_int_tag`) + `f32`, so `i64`/`u32`/`u64`
   receivers dispatch statically instead of crashing on the struct
   shape-pointer path.
+
+The **array** families (`assert_eq_*_array`, `assert_at_*`,
+`assert_array_contains/not_contains_*`, `assert_sorted_*`, `set_eq` /
+`subset` / `unique`) then collapsed over `[T: Eq + Display]` /
+`[T: Ord + Display]`, and the **map** families (`assert_map_len`,
+`assert_map_has`, `assert_map_lacks`, `assert_eq_map`) over
+`[K: Eq + Display, V: Eq + Display]` once the self-host monomorphiser
+grew multi-parameter support (slice 3 above). The map helpers render
+values via `Display`, so a string-valued failure now prints unquoted —
+the `batch8` wrong-value check was updated to match.
 
 ## 8. Testing
 

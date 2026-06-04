@@ -2213,35 +2213,144 @@ function tparam_arg_index(fd: FuncDecl): i32 {
     return 0 - 1;
 }
 
-// infer_inst infers the concrete type that instantiates `fd`'s type
-// variable from a call's arguments: it tries every argument whose
-// parameter type is the type variable and returns the first one whose
-// type it can infer (so `assert_eq(x.to_upper(), "Y")` still resolves
-// via the literal second argument when the first is opaque).
+// tp_index returns the position of `name` in `tparams`, or -1.
+function tp_index(name: string, tparams: string[]): i32 {
+    var i: i32 = 0;
+    while (i < tparams.len()) {
+        if (tparams[i] == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// type_ends_arr reports whether a type string ends with the `[]`
+// array suffix.
+function type_ends_arr(s: string): boolean {
+    if (s.len() < 2) { return false; }
+    return s[s.len() - 2 : s.len()] == "[]";
+}
+
+// first_bracket returns the index of the first `[` in `s`, or -1.
+function first_bracket(s: string): i32 {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i : i + 1] == "[") { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// split_top_commas splits a generic-arg inner string (e.g. `K, V` or
+// `string, Map[a, b]`) on top-level `, `, tracking `[]`/`()` depth so a
+// comma nested inside `Map[...]` or a tuple doesn't split early.
+function split_top_commas(s: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: string = s[i : i + 1];
+        if (c == "[" || c == "(") { depth = depth + 1; }
+        if (c == "]" || c == ")") { depth = depth - 1; }
+        if (depth == 0 && c == "," && i + 1 < s.len() && s[i + 1 : i + 2] == " ") {
+            out = out.push(s[start : i]);
+            i = i + 2;
+            start = i;
+            continue;
+        }
+        i = i + 1;
+    }
+    out = out.push(s[start : s.len()]);
+    return out;
+}
+
+// split_dunder splits a joined instantiation key like `i32__string`
+// into its per-type-parameter concrete pieces. Concrete type names
+// never contain `__`, so a literal scan is unambiguous.
+function split_dunder(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i + 1 < s.len()) {
+        if (s[i : i + 2] == "__") {
+            out = out.push(s[start : i]);
+            i = i + 2;
+            start = i;
+            continue;
+        }
+        i = i + 1;
+    }
+    out = out.push(s[start : s.len()]);
+    return out;
+}
+
+// bind_unify matches a parameter-type pattern against the argument's
+// inferred concrete type, recording a binding for each type variable it
+// pins down. Handles a bare variable (`T` ⊢ i32), an array element
+// (`T[]` vs `i32[]` ⊢ T=i32), and a same-base composite of equal arity
+// (`Map[K, V]` vs `Map[i32, string]` ⊢ K=i32, V=string). First binding
+// for a variable wins (so a later opaque argument can't clobber it).
+function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv): MEnv {
+    if (tp_index(pattern, tparams) >= 0) {
+        if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
+            return binds.ebind(pattern, concrete);
+        }
+        return binds;
+    }
+    if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
+        return bind_unify(pattern[0 : pattern.len() - 2], concrete[0 : concrete.len() - 2], tparams, binds);
+    }
+    var pb: i32 = first_bracket(pattern);
+    var cb: i32 = first_bracket(concrete);
+    if (pb > 0 && cb > 0 && pattern[pattern.len() - 1 : pattern.len()] == "]" && concrete[concrete.len() - 1 : concrete.len()] == "]") {
+        if (pattern[0 : pb] == concrete[0 : cb]) {
+            var pparts: string[] = split_top_commas(pattern[pb + 1 : pattern.len() - 1]);
+            var cparts: string[] = split_top_commas(concrete[cb + 1 : concrete.len() - 1]);
+            if (pparts.len() == cparts.len()) {
+                var b: MEnv = binds;
+                var j: i32 = 0;
+                while (j < pparts.len()) {
+                    b = bind_unify(pparts[j], cparts[j], tparams, b);
+                    j = j + 1;
+                }
+                return b;
+            }
+        }
+    }
+    return binds;
+}
+
+// infer_inst infers the concrete instantiation of `fd`'s type
+// parameters from a call's arguments and returns them joined by `__` in
+// declaration order (e.g. `i32`, or `i32__string` for `Map[K, V]`).
+// Every argument contributes its bindings via bind_unify (so
+// `assert_eq(x.to_upper(), "Y")` still resolves via the literal second
+// argument when the first is opaque, and `Map[K, V]` recovers both K
+// and V from a single map argument). Returns "" if any type parameter
+// is left unbound — the call then stays generic.
 function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): string {
     if (fd.type_params.len() == 0) { return ""; }
-    var tp: string = fd.type_params[0];
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
     while (i < fd.params.len()) {
         if (i < args.len()) {
-            var pt: string = fd.params[i].type_name;
-            if (pt == tp) {
-                var ct: string = mono_infer(args[i], env, funcs);
-                if (ct.len() > 0) { return ct; }
-            }
-            // A `T[]` parameter: the concrete type is the element type
-            // of the array argument (`i32[]` -> `i32`).
-            if (pt == tp + "[]") {
-                var at: string = mono_infer(args[i], env, funcs);
-                if (at.len() > 2) {
-                    var el: string = at[0:at.len() - 2];
-                    if (el.len() > 0) { return el; }
-                }
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) {
+                binds = bind_unify(fd.params[i].type_name, ct, fd.type_params, binds);
             }
         }
         i = i + 1;
     }
-    return "";
+    var key: string = "";
+    var j: i32 = 0;
+    while (j < fd.type_params.len()) {
+        var b: string = binds.elook(fd.type_params[j]);
+        if (b.len() == 0) { return ""; }
+        if (j > 0) { key = key + "__"; }
+        key = key + b;
+        j = j + 1;
+    }
+    return key;
 }
 
 // func_ret_of returns the return type of a plain function by name.
@@ -2504,32 +2613,51 @@ function env_from_params(params: ParamDecl[]): MEnv {
     return e;
 }
 
-// subst_ty replaces the type variable `tp` with the concrete type `ct`,
-// including the `T[]` array form.
-function subst_ty(name: string, tp: string, ct: string): string {
-    if (name == tp) { return ct; }
-    if (name == tp + "[]") { return ct + "[]"; }
+// subst_ty replaces every type variable in `tparams` with its concrete
+// type from `cts` (same index), handling a bare variable (`T` → i32),
+// the array form (`T[]` → i32[]), and a composite of any base
+// (`Map[K, V]` → Map[i32, string]) by recursing into each top-level
+// argument. Everything else passes through unchanged.
+function subst_ty(name: string, tparams: string[], cts: string[]): string {
+    var k: i32 = tp_index(name, tparams);
+    if (k >= 0) { return cts[k]; }
+    if (type_ends_arr(name)) {
+        return subst_ty(name[0 : name.len() - 2], tparams, cts) + "[]";
+    }
+    var lb: i32 = first_bracket(name);
+    if (lb > 0 && name[name.len() - 1 : name.len()] == "]") {
+        var inner: string = name[lb + 1 : name.len() - 1];
+        var parts: string[] = split_top_commas(inner);
+        var ninner: string = "";
+        var j: i32 = 0;
+        while (j < parts.len()) {
+            if (j > 0) { ninner = ninner + ", "; }
+            ninner = ninner + subst_ty(parts[j], tparams, cts);
+            j = j + 1;
+        }
+        return name[0 : lb] + "[" + ninner + "]";
+    }
     return name;
 }
 
 // subst_stmts rewrites `var x: T` annotations to the concrete type in a
 // cloned body (the only type annotations a body carries). Exprs hold no
 // open type annotations, so they're passed through.
-function subst_stmts(stmts: Stmt[], tp: string, ct: string): Stmt[] {
+function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tp, ct), init: v.init }); },
-            StmtIf(f) => { out = out.push(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tp, ct), else_body: subst_stmts(f.else_body, tp, ct) }); },
-            StmtWhile(w) => { out = out.push(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tp, ct) }); },
-            StmtFor(fr) => { out = out.push(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tp, ct) }); },
+            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init }); },
+            StmtIf(f) => { out = out.push(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
+            StmtWhile(w) => { out = out.push(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
+            StmtFor(fr) => { out = out.push(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tp, ct) });
+                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts) });
                     j = j + 1;
                 }
                 out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms });
@@ -2541,26 +2669,28 @@ function subst_stmts(stmts: Stmt[], tp: string, ct: string): Stmt[] {
     return out;
 }
 
-// clone_bg builds the `f__<ct>` clone of bounded-generic func `fd`,
-// substituting its type variable with `ct` in params + return + body
-// annotations.
-function clone_bg(fd: FuncDecl, ct: string): FuncDecl {
-    var tp: string = fd.type_params[0];
+// clone_bg builds the `f__<key>` clone of bounded-generic func `fd`,
+// substituting each type variable with its concrete type (the `__`-
+// joined `key`, split back into per-parameter pieces) across params +
+// return + body annotations.
+function clone_bg(fd: FuncDecl, key: string): FuncDecl {
+    var tparams: string[] = fd.type_params;
+    var cts: string[] = split_dunder(key);
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tp, ct) });
+        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts) });
         i = i + 1;
     }
     var notp: string[] = [];
     return FuncDecl {
-        name: fd.name + "__" + ct,
+        name: fd.name + "__" + key,
         receiver_name: "",
         receiver_type: "",
         type_params: notp,
         params: nparams,
-        ret_type: subst_ty(fd.ret_type, tp, ct),
-        body: subst_stmts(fd.body, tp, ct)
+        ret_type: subst_ty(fd.ret_type, tparams, cts),
+        body: subst_stmts(fd.body, tparams, cts)
     };
 }
 

@@ -385,6 +385,49 @@ function main(): i32 {
 	}
 }
 
+// The collapsed generic `Map[K, V]` assertions (assert_map_len /
+// assert_map_has / assert_map_lacks / assert_eq_map) work over any
+// K/V whose types implement Eq + Display. Exercises both an i32-keyed
+// and a string-keyed map from the SAME generic helpers — the multi-
+// parameter monomorphiser clones one concrete helper per K/V pair. See
+// docs/TRAITS.md §7a.
+func TestInterpGenericMapAsserts(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/map";
+import "std/test";
+function main(): i32 {
+    var a: Map[i32, i32] = map_new(4);
+    a.set(1, 10); a.set(2, 20);
+    var s: Map[string, string] = map_new(4);
+    s.set("k", "v");
+    var r: test.TestRunner = test.test_new("map");
+    r = r.it("len i32",       test.assert_map_len(a, 2));
+    r = r.it("has i32",       test.assert_map_has(a, 1, 10));
+    r = r.it("lacks i32",     test.assert_map_lacks(a, 9));
+    r = r.it("len string",    test.assert_map_len(s, 1));
+    r = r.it("has string",    test.assert_map_has(s, "k", "v"));
+    r = r.it("eq i32",        test.assert_eq_map(a, a));
+    r = r.it("eq string",     test.assert_eq_map(s, s));
+    return r.finish();
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0 (all asserts pass)\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if got := out.String(); !strings.Contains(got, "# pass 7") || strings.Contains(got, "not ok") {
+		t.Errorf("expected 7 passing map asserts; got:\n%s\nstderr: %s", got, errb.String())
+	}
+}
+
 // @derive(Ord) on an enum: a variant declared earlier sorts before a
 // later one; within a variant, payloads compare lexicographically. Also
 // exercises `impl Ord for string` (via a string payload). See
