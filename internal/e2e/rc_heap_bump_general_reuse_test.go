@@ -118,11 +118,55 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// genReuseCrossTypeChurnSrc: cross-type box-class reuse. Each iteration's dead
+// Point (2×i32, class 16) is reused for a Pair (2×i32, class 16) — a DIFFERENT
+// struct type of the same class. Value-correct only if every reuse wrote the
+// right block at C's (Pair's) offsets.
+const genReuseCrossTypeChurnSrc = `struct Point { x: i32, y: i32 }
+struct Pair { a: i32, b: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 300) {
+        var p: Point = Point { x: i, y: i + 1 };
+        var s: i32 = p.x + p.y;          // p's last use
+        var q: Pair = Pair { a: s, b: i };   // reuses p's box (same class)
+        acc = acc + q.a + q.b;
+        i = i + 1;
+    }
+    // s = 2i+1, q.a=2i+1, q.b=i -> q.a+q.b = 3i+1; sum i=0..299 = 3*44850 + 300 = 134850
+    if (acc != 134850) { return 999; }
+    return __rc_underflow_count();
+}`
+
+// genReuseCrossTypePtrSrc: cross-type WITH pointer fields. Dead Holder
+// (id, items) reused for Bag (tag, data) — same class. D's old array released
+// at D's offset, C's array stored at C's offset. 200-iter, 0 over-release.
+const genReuseCrossTypePtrSrc = `struct Holder { id: i32, items: i32[] }
+struct Bag { tag: i32, data: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: Holder = Holder { id: i, items: [i, i + 1] };
+        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        var b: Bag = Bag { tag: s, data: [i + 2, i + 3] };   // reuses a's box
+        acc = acc + b.tag + b.data[0] + b.data[1];
+        i = i + 1;
+    }
+    // s = i + i + (i+1) = 3i+1; b.tag=3i+1, b.data sum = 2i+5; total 5i+6
+    // sum i=0..199 = 5*19900 + 6*200 = 100700
+    if (acc != 100700) { return 999; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
 	{"ptr_churn", genReusePtrChurnSrc},
 	{"ptr_aliased", genReusePtrAliasedSrc},
+	{"crosstype_churn", genReuseCrossTypeChurnSrc},
+	{"crosstype_ptr", genReuseCrossTypePtrSrc},
 }
 
 func TestX86_64GeneralReuse(t *testing.T) {

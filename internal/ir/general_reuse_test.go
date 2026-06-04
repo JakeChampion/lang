@@ -96,8 +96,58 @@ function main(): i32 {
 	}
 }
 
-// Skips: a STRING field (two-word on wasm / boxed on arm64) is excluded by
-// structReuseEligible — same gate as the self-overwrite 5c path.
+// Fires for DIFFERENT struct types of the SAME box class: a dead Point is
+// reused for a Pair (both 2×i32 = same 16-byte class). Cross-type box-class
+// reuse.
+func TestGeneralReuseFiresCrossTypeSameClass(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+struct Pair { a: i32, b: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    var s: i32 = p.x + p.y;
+    var q: Pair = Pair { a: s, b: 9 };
+    return q.a + q.b;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("cross-type same-class reuse should fire (dead Point -> Pair), got %d", got)
+	}
+}
+
+// Skips: DIFFERENT struct types of DIFFERENT box classes (Point is 16-byte,
+// Triple is 32-byte) — no reuse.
+func TestGeneralReuseSkipsCrossTypeDifferentClass(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+struct Triple { a: i32, b: i32, c: i32, d: i32, e: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    var s: i32 = p.x + p.y;
+    var q: Triple = Triple { a: s, b: 1, c: 2, d: 3, e: 4 };
+    return q.a;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("cross-type DIFFERENT-class should not reuse, got %d", got)
+	}
+}
+
+// Fires for cross-type with a POINTER field: dead Holder (id, items) reused
+// for Bag (tag, data) — both i32 + array, same class. D's old array is
+// released at D's offset; C's array stored at C's offset.
+func TestGeneralReuseFiresCrossTypePointerField(t *testing.T) {
+	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
+struct Bag { tag: i32, data: i32[] }
+function main(): i32 {
+    var a: Holder = Holder { id: 1, items: [1, 2] };
+    var s: i32 = a.id + a.items[0];
+    var b: Bag = Bag { tag: s, data: [3, 4] };
+    return b.tag + b.data[0];
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("cross-type pointer-field reuse should fire (dead Holder -> Bag), got %d", got)
+	}
+}
 func TestGeneralReuseSkipsStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function main(): i32 {
