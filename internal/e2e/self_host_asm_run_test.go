@@ -957,6 +957,51 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"bc",
 			"",
 		},
+		// 64-bit-element arrays (i64[] / f64[]): the native backend already
+		// uses 8-byte element slots, so values above 2^31 round-trip.
+		// Previously untested; these lock it in (mirror the wasm i64arr-*).
+		{
+			"arr-i64-literal-index-large",
+			"function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }",
+			42,
+			"",
+			"",
+		},
+		{
+			"arr-i64-for-sum",
+			"function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }",
+			98,
+			"",
+			"",
+		},
+		{
+			"arr-i64-set-index-large",
+			"function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }",
+			7,
+			"",
+			"",
+		},
+		{
+			"arr-i64-push-grow",
+			"function main(): i32 { var xs: i64[] = [10]; xs = xs.push(20); xs = xs.push(5000000000); if (xs[2] == 5000000000) { return (xs[0] + xs[1]) as i32; } return 0; }",
+			30,
+			"",
+			"",
+		},
+		{
+			"arr-i64-slice",
+			"function main(): i32 { var xs: i64[] = [10, 20, 30, 40]; var ys = xs[1:3]; return (ys[0] + ys[1]) as i32; }",
+			50,
+			"",
+			"",
+		},
+		{
+			"arr-f64-for-sum",
+			"function main(): i32 { var xs: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for v in xs { s = s + v; } return s as i32; }",
+			7,
+			"",
+			"",
+		},
 		{
 			"i32-abs-positive",
 			"function main(): i32 { var n: i32 = 7; return n.abs(); }",
