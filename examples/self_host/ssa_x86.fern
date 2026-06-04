@@ -54,6 +54,19 @@ function argreg32(i: i32): string {
     if (i == 4) { return "%r8d"; }
     return "%r9d";
 }
+// argreg64 is the 64-bit view of the argument registers, for pointer args.
+function argreg64(i: i32): string {
+    if (i == 0) { return "%rdi"; }
+    if (i == 1) { return "%rsi"; }
+    if (i == 2) { return "%rdx"; }
+    if (i == 3) { return "%rcx"; }
+    if (i == 4) { return "%r8"; }
+    return "%r9";
+}
+function argreg_w(i: i32, width: i32): string {
+    if (width == 64) { return argreg64(i); }
+    return argreg32(i);
+}
 
 // regname maps an allocatable register index to its x86-64 32-bit name. We
 // use the caller-saved %r10d / %r11d — never used as computation scratch
@@ -170,7 +183,8 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
     if (ins.kind == "call") {
         var i: i32 = 0;
         while (i < ins.args.len() && i < 6) {
-            out = out + "    movl " + regn(reg_of, ins.args[i], 32) + ", " + argreg32(i) + "\n";
+            var aw: i32 = widths[ins.args[i]];
+            out = out + "    " + w_mov(aw) + " " + regn(reg_of, ins.args[i], aw) + ", " + argreg_w(i, aw) + "\n";
             i = i + 1;
         }
         out = out + "    call __fn_" + ins.str + "\n";
@@ -247,10 +261,12 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { out = out + "    subq $" + i32_to_string(frame) + ", %rsp\n"; }
-    // Spill incoming arguments (i32) to their locations.
+    // Spill incoming arguments to their locations, at each param's width
+    // (a pointer / array param is 64-bit).
     var p: i32 = 0;
     while (p < f.nparams) {
-        out = out + "    movl " + argreg32(p) + ", " + regn(reg_of, p, 32) + "\n";
+        var pw: i32 = widths[p];
+        out = out + "    " + w_mov(pw) + " " + argreg_w(p, pw) + ", " + regn(reg_of, p, pw) + "\n";
         p = p + 1;
     }
     // Emit each block: label, instructions, terminator.
