@@ -4,15 +4,16 @@
 // module via the leb128 + wat_encode primitives. Pipeline:
 //   tokenize (wat_lex) -> parse (wat_parse) -> ENCODE (this) -> .wasm
 //
-// This first slice handles the module shape emit_module produces for
-// integer / arithmetic programs: the two WASI imports, memory, an active
-// data segment, the `$heap` global, and the `$__fern_alloc` / `$main` /
-// `$_start` functions. Section order follows the binary spec
-// (type, import, func, memory, global, export, code, data); functions are
-// indexed imports-first; a distinct functype is emitted per function (no
-// dedup — valid, just slightly larger). Folded instructions encode
-// post-order (operands then operator), with per-instruction immediate
-// handling.
+// Coverage: integer / control-flow / i32+i64 / struct / string / map /
+// closure programs — i.e. everything emit_module produces except f64
+// constants. Sections are emitted in binary id order (type, import, func,
+// table, memory, global, export, elem, code, data). The type section
+// holds the named `(type $c …)` declarations first (referenced by
+// call_indirect), then one functype per function (imports first; no
+// dedup — valid, just slightly larger), so a function's type index is
+// offset by the named-type count. Folded instructions encode post-order
+// (operands then operator) with per-instruction immediate handling, and a
+// control-frame stack resolves br / br_if label depths.
 //
 // Depends on leb128.fern, wat_lex.fern (WatTok) and wat_parse.fern (SExpr)
 // but is otherwise import-free, so the encoder driver imports all of them
@@ -132,11 +133,13 @@ function collect_func_names(mod: SExpr): string[] {
 }
 
 // func_param_types / func_result_types read a func node's signature.
-// A `(param …)` is either named-single (`(param $n i32)`) or a run of
-// bare types (`(param i32 i32 …)`, the import form); both are handled.
+// They scan from items[1] (skipping a leading `$name` atom if present, so
+// they also work on the unnamed `(func …)` inside a `(type $c (func …))`
+// declaration). A `(param …)` is either named-single (`(param $n i32)`) or
+// a run of bare types (`(param i32 i32 …)`, the import / type-decl form).
 function func_param_types(fnode: SExpr): string[] {
     var out: string[] = [];
-    var i: i32 = 2;
+    var i: i32 = 1;
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "param") {
@@ -155,7 +158,7 @@ function func_param_types(fnode: SExpr): string[] {
 
 function func_result_types(fnode: SExpr): string[] {
     var out: string[] = [];
-    var i: i32 = 2;
+    var i: i32 = 1;
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "result") {
@@ -329,7 +332,7 @@ function mem_store_opcode(op: string): i32 {
 
 // enc_instr encodes one folded instruction node post-order. `labels` is
 // the enclosing control-frame stack (for br / br_if depth resolution).
-function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[]): i32[] {
+function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[], tnames: string[]): i32[] {
     var out: i32[] = [];
     var op: string = node.items[0].text;
     if (op == "i32.const") {
@@ -345,12 +348,12 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.set") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.push(33);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.tee") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.push(34);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
@@ -359,35 +362,51 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "global.set") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.push(36);
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "return") {
-        if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels)); }
+        if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames)); }
         out = out.push(15);
         return out;
     }
     if (op == "drop") {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         out = out.push(26);
         return out;
     }
     if (op == "call") {
         var k: i32 = 2;
         while (k < node.items.len()) {
-            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels));
+            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
             k = k + 1;
         }
         out = out.push(16);
         return leb_u32(out, index_of_str(fnames, node.items[1].text));
+    }
+    if (op == "call_indirect") {
+        // (call_indirect (type $c) <args…> <funcptr>) — the type ref is
+        // items[1]; the last operand is the table index (function pointer
+        // on the stack top), the rest are call args. Args are pushed first,
+        // then the table index, then 0x11 typeidx tableidx(0).
+        var lasti: i32 = node.items.len() - 1;
+        var k: i32 = 2;
+        while (k < lasti) {
+            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels, tnames));
+            k = k + 1;
+        }
+        out = wcat(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
+        out = out.push(17);    // 0x11
+        out = leb_u32(out, index_of_str(tnames, node.items[1].items[1].text));
+        return leb_u32(out, 0);    // table index 0
     }
     if (op == "br") {
         out = out.push(12);
         return leb_u32(out, label_depth(labels, node.items[1].text));
     }
     if (op == "br_if") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.push(13);
         return leb_u32(out, label_depth(labels, node.items[1].text));
     }
@@ -404,7 +423,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.push(bt);
         var inner: string[] = labels_push(labels, label);
         while (bi < node.items.len()) {
-            out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner));
+            out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner, tnames));
             bi = bi + 1;
         }
         out = out.push(11);        // end
@@ -418,14 +437,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             ci = 2;
         }
         // condition (stack operand) first
-        out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels, tnames));
         out = out.push(4);         // if
         out = out.push(ibt);
         var iinner: string[] = labels_push(labels, "");
         var thenN: SExpr = node.items[ci + 1];
         var tk: i32 = 1;
         while (tk < thenN.items.len()) {
-            out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner));
+            out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner, tnames));
             tk = tk + 1;
         }
         if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
@@ -433,7 +452,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             var elseN: SExpr = node.items[ci + 2];
             var ek: i32 = 1;
             while (ek < elseN.items.len()) {
-                out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner));
+                out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner, tnames));
                 ek = ek + 1;
             }
         }
@@ -442,7 +461,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     var ml: i32 = mem_load_opcode(op);
     if (ml != 0) {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         out = out.push(ml);
         out = leb_u32(out, memarg_align(op));
         out = leb_u32(out, 0);     // offset
@@ -450,8 +469,8 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     var ms: i32 = mem_store_opcode(op);
     if (ms != 0) {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.push(ms);
         out = leb_u32(out, memarg_align(op));
         out = leb_u32(out, 0);
@@ -459,18 +478,18 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     if (op == "select") {
         // (select a b cond) — three stack operands, then 0x1b.
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
-        out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
         out = out.push(27);    // 0x1b
         return out;
     }
     var ao: i32 = arith_opcode(op);
     if (ao != 0) {
         // unary (eqz) takes one operand; the rest take two.
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         if (op != "i32.eqz" && node.items.len() > 2) {
-            out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+            out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         }
         out = out.push(ao);
         return out;
@@ -551,9 +570,27 @@ function emit_binary(mod: SExpr): i32[] {
         i = i + 1;
     }
 
-    // --- type section: one functype per function, import funcs first. ---
+    // Named `(type $c (func …))` declarations (for call_indirect, used by
+    // closures). They occupy the first type-section indices, in source
+    // order; `tnames` maps each name to its index.
+    var tnames: string[] = [];
+    var namedTypeBody: i32[] = [];
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "type") {
+            var tn: SExpr = mod.items[i];
+            tnames = tnames.push(tn.items[1].text);
+            var tf: SExpr = tn.items[2];   // the inner (func …)
+            namedTypeBody = wcat(namedTypeBody, enc_functype(func_param_types(tf), func_result_types(tf)));
+        }
+        i = i + 1;
+    }
+    var ntypes: i32 = tnames.len();
+
+    // --- type section: named types first, then one functype per function
+    // (imports, then defined). A function's type index is offset by ntypes.
     var nfuncs: i32 = importNodes.len() + definedNodes.len();
-    var typeBody: i32[] = [];
+    var typeBody: i32[] = namedTypeBody;
     i = 0;
     while (i < importNodes.len()) {
         var fn: SExpr = func_node(importNodes[i]);
@@ -574,15 +611,15 @@ function emit_binary(mod: SExpr): i32[] {
         impBody = wname(impBody, imp.items[1].text);
         impBody = wname(impBody, imp.items[2].text);
         impBody = impBody.push(0);             // import kind: func
-        impBody = leb_u32(impBody, i);         // type index = func index
+        impBody = leb_u32(impBody, ntypes + i); // type index (after named types)
         i = i + 1;
     }
 
-    // --- function section: defined funcs' type indices (= their func idx). ---
+    // --- function section: defined funcs' type indices. ---
     var funcBody: i32[] = [];
     i = 0;
     while (i < definedNodes.len()) {
-        funcBody = leb_u32(funcBody, importNodes.len() + i);
+        funcBody = leb_u32(funcBody, ntypes + importNodes.len() + i);
         i = i + 1;
     }
 
@@ -612,7 +649,7 @@ function emit_binary(mod: SExpr): i32[] {
             // (global $name (mut i32) (i32.const N))
             globBody = globBody.push(valtype_byte("i32"));
             globBody = globBody.push(1);       // mutable
-            globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, []));
+            globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, [], []));
             globBody = globBody.push(11);      // end
             globCount = globCount + 1;
         }
@@ -658,7 +695,7 @@ function emit_binary(mod: SExpr): i32[] {
         var instrs: SExpr[] = body_instrs(fnode);
         var k: i32 = 0;
         while (k < instrs.len()) {
-            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, []));
+            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
             k = k + 1;
         }
         fbody = fbody.push(11);                // end
@@ -675,7 +712,7 @@ function emit_binary(mod: SExpr): i32[] {
         if (node_head(mod.items[i]) == "data") {
             var dn: SExpr = mod.items[i];
             dataBody = dataBody.push(0);       // active, memory 0
-            dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [])); // offset (i32.const N)
+            dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [], [])); // offset (i32.const N)
             dataBody = dataBody.push(11);      // end
             var bytes: i32[] = data_bytes(dn.items[2].text);
             dataBody = leb_u32(dataBody, bytes.len());
@@ -685,14 +722,54 @@ function emit_binary(mod: SExpr): i32[] {
         i = i + 1;
     }
 
-    // --- assemble the module. ---
+    // --- table section: `(table N funcref)` → funcref limits {min N}. ---
+    var tableBody: i32[] = [];
+    var tableCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "table") {
+            var tbn: SExpr = mod.items[i];
+            tableBody = tableBody.push(112);   // 0x70 funcref
+            tableBody = tableBody.push(0);     // limits: no max
+            tableBody = leb_u32(tableBody, parse_dec(tbn.items[1].text));
+            tableCount = tableCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- elem section: `(elem (i32.const N) $f …)` → active segment on
+    // table 0 with an offset expr + a vec of function indices. ---
+    var elemBody: i32[] = [];
+    var elemCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "elem") {
+            var en: SExpr = mod.items[i];
+            elemBody = elemBody.push(0);       // flags: active, table 0
+            elemBody = wcat(elemBody, enc_instr(en.items[1], [], fnames, gnames, [], []));
+            elemBody = elemBody.push(11);      // end
+            var fb: i32[] = [];
+            var ei: i32 = 2;
+            while (ei < en.items.len()) {
+                fb = leb_u32(fb, index_of_str(fnames, en.items[ei].text));
+                ei = ei + 1;
+            }
+            elemBody = wcat(elemBody, wvec(en.items.len() - 2, fb));
+            elemCount = elemCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- assemble the module (sections in binary id order). ---
     var out: i32[] = wmagic();
-    out = wcat(out, wsection(1, wvec(nfuncs, typeBody)));
+    out = wcat(out, wsection(1, wvec(ntypes + nfuncs, typeBody)));
     out = wcat(out, wsection(2, wvec(importNodes.len(), impBody)));
     out = wcat(out, wsection(3, wvec(definedNodes.len(), funcBody)));
+    if (tableCount > 0) { out = wcat(out, wsection(4, wvec(tableCount, tableBody))); }
     if (memCount > 0) { out = wcat(out, wsection(5, wvec(memCount, memBody))); }
     if (globCount > 0) { out = wcat(out, wsection(6, wvec(globCount, globBody))); }
     if (expCount > 0) { out = wcat(out, wsection(7, wvec(expCount, expBody))); }
+    if (elemCount > 0) { out = wcat(out, wsection(9, wvec(elemCount, elemBody))); }
     out = wcat(out, wsection(10, wvec(definedNodes.len(), codeBody)));
     if (dataCount > 0) { out = wcat(out, wsection(11, wvec(dataCount, dataBody))); }
     return out;
