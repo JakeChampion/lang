@@ -262,6 +262,44 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 _ => { return s.fail(); }
             }
         },
+        parser.ExprArray(arr) => {
+            // Heap-allocate an n-element i32 array, store each element, and
+            // yield the handle (a pointer). store_elem is a side-effecting
+            // op; the array's value is the alloc handle.
+            var n: i32 = arr.elements.len();
+            s = s.fresh();
+            var handle: i32 = s.cur_id();
+            var noargs: i32[] = [];
+            s = s.emit(SInst { kind: "alloc", result: handle, args: noargs, imm: n, str: "" });
+            var i: i32 = 0;
+            while (i < n) {
+                s = s.fresh();
+                var idxv: i32 = s.cur_id();
+                var na: i32[] = [];
+                s = s.emit(SInst { kind: "const_int", result: idxv, args: na, imm: i, str: "" });
+                s = build_expr(arr.elements[i], s);
+                if (!s.ok) { return s; }
+                var elv: i32 = s.cur_id();
+                s = s.fresh();
+                var sa: i32[] = [handle, idxv, elv];
+                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 0, str: "" });
+                i = i + 1;
+            }
+            s = s.fresh();
+            var ha: i32[] = [handle];
+            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ha, imm: 0, str: "" });
+        },
+        parser.ExprIndex(ix) => {
+            s = build_expr(ix.array, s);
+            if (!s.ok) { return s; }
+            var ptr: i32 = s.cur_id();
+            s = build_expr(ix.index, s);
+            if (!s.ok) { return s; }
+            var idx: i32 = s.cur_id();
+            s = s.fresh();
+            var la: i32[] = [ptr, idx];
+            return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
+        },
         _ => { return s.fail(); }
     }
 }
@@ -1222,6 +1260,25 @@ function merge_blocks(f: SFunc): SFunc {
 // count_blocks returns the number of blocks (tests assert block merging).
 pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 
+// uses_memory reports whether a function contains any heap op (alloc /
+// load_elem / store_elem). The backends don't lower these yet, so the emit
+// path (ssa_emit_run, the CLI's -ssa) skips functions that use memory and
+// falls back to the AST emitter; the interpreter handles them directly.
+pub function uses_memory(f: SFunc): boolean {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var kind: string = blk.insts[k].kind;
+            if (kind == "alloc" || kind == "load_elem" || kind == "store_elem") { return true; }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return false;
+}
+
 // ---- register allocation ------------------------------------------------
 // regalloc assigns each SSA value either a physical register index
 // (0..nregs-1) or -1 (spilled — the backend keeps it in its [sp,#8*v] /
@@ -1393,7 +1450,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
                 k = k + 1;
             }
@@ -1472,10 +1529,25 @@ function eval_binary(op: string, l: i32, r: i32): i32 {
     return 0;
 }
 
+// vmem_set writes v at element index `at` in the heap model, growing it
+// with zeros as needed.
+function vmem_set(mem: i32[], at: i32, v: i32): i32[] {
+    while (mem.len() <= at) { mem = mem.push(0); }
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < mem.len()) {
+        if (i == at) { out = out.push(v); } else { out = out.push(mem[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function eval_func(f: SFunc, args: i32[]): i32 {
     var tab: i32[] = [];
     var i: i32 = 0;
     while (i < f.nvals) { tab = tab.push(0); i = i + 1; }
+    // Heap model: an element-indexed i32 store; alloc bumps its length.
+    var mem: i32[] = [];
 
     var cur_id: i32 = f.blocks[f.entry].id;
     var prev_id: i32 = 0 - 1;
@@ -1505,6 +1577,20 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var x: i32 = tab[inst.args[0]];
                 if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
                 else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
+            } else if (inst.kind == "alloc") {
+                // Bump-allocate inst.imm elements; the handle is the base.
+                var base: i32 = mem.len();
+                var a: i32 = 0;
+                while (a < inst.imm) { mem = mem.push(0); a = a + 1; }
+                tab = vtab_set(tab, inst.result, base);
+            } else if (inst.kind == "load_elem") {
+                var p: i32 = tab[inst.args[0]];
+                var ix: i32 = tab[inst.args[1]];
+                tab = vtab_set(tab, inst.result, mem[p + ix]);
+            } else if (inst.kind == "store_elem") {
+                var p2: i32 = tab[inst.args[0]];
+                var ix2: i32 = tab[inst.args[1]];
+                mem = vmem_set(mem, p2 + ix2, tab[inst.args[2]]);
             }
             k = k + 1;
         }

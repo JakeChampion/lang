@@ -99,6 +99,15 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"alg-add-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = (s + 0) + i; i = i + 1; } return s; }", 10},
 		{"alg-mul-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i * 0); i = i + 1; } return s; }", 0},
 		{"alg-or-shift-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = (s | 0) + (i << 0); i = i + 1; } return s; }", 10},
+		// Heap arrays (read-only): literal construction + index load, via the
+		// interpreter's heap model. (The backends don't lower these yet, so
+		// -opt must still preserve semantics.)
+		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[1]; }", 20},
+		{"arr-sum-ends", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
+		{"arr-computed-index", "function main(): i32 { var a = [3, 7, 11, 15]; var i = 2; return a[i]; }", 11},
+		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
+		{"arr-expr-elements", "function main(): i32 { var x = 4; var a = [x, x * 2, x + 100]; return a[1] + a[2]; }", 112},
+		{"arr-two", "function main(): i32 { var a = [1, 2]; var b = [100, 200]; return a[1] + b[0]; }", 102},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}

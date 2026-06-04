@@ -30,7 +30,9 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
-        if (r.ok) { funcs = funcs.push(ssa.optimize(r.func)); }
+        // The backends don't lower heap ops yet — skip memory-using
+        // functions (the interpreter round-trip exercises those).
+        if (r.ok && !ssa.uses_memory(r.func)) { funcs = funcs.push(ssa.optimize(r.func)); }
         i = i + 1;
     }
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
