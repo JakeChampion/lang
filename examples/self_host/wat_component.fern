@@ -35,3 +35,50 @@ function component_wrap(core: i32[]): i32[] {
     var o: i32[] = component_preamble();
     return wcat(o, wsection(1, core));
 }
+
+// component_full wraps a core module that exports `_lang_run` (the
+// component entry: `() -> i32`, 0 = ok) into a complete `wasi:cli/run@0.2.0`
+// component. Beyond the embedded core (section 1) the framing is constant
+// for this fixed shape, so the six trailing sections are emitted verbatim
+// (decoded from the reference component):
+//   2  core-instance   — instantiate module 0, no args
+//   6  alias           — core-instance 0 export "_lang_run" as a core func
+//   7  component type  — `(result)` and `(func (result 0))`
+//   8  canon           — lift core func 0 to the component func, type 1
+//   5  instance        — an instance exporting "run" = func 0
+//  11  export          — that instance as "wasi:cli/run@0.2.0"
+function component_full(core: i32[]): i32[] {
+    var o: i32[] = component_preamble();
+    o = wcat(o, wsection(1, core));
+
+    // 2 core-instance: vec(1)[ instantiate(0x00) module 0, 0 args ]
+    o = wcat(o, wsection(2, [1, 0, 0, 0]));
+
+    // 6 alias: vec(1)[ core(0) func(0) core-export(1) instance 0, name ]
+    var al: i32[] = [1, 0, 0, 1, 0];
+    al = wname(al, "_lang_run");
+    o = wcat(o, wsection(6, al));
+
+    // 7 component type: the two types `run` lifts to.
+    o = wcat(o, wsection(7, [2, 106, 0, 0, 64, 0, 0, 0]));
+
+    // 8 canon: vec(1)[ lift core func 0, no opts, type 1 ]
+    o = wcat(o, wsection(8, [1, 0, 0, 0, 0, 1]));
+
+    // 5 instance: vec(1)[ inline exports: "run" = func 0 ]
+    var inst: i32[] = [1, 1, 1, 0];
+    inst = wname(inst, "run");
+    inst = inst.push(1);
+    inst = inst.push(0);
+    o = wcat(o, wsection(5, inst));
+
+    // 11 export: vec(1)[ name "wasi:cli/run@0.2.0" = instance 0 ]
+    var ex: i32[] = [1, 0];
+    ex = wname(ex, "wasi:cli/run@0.2.0");
+    ex = ex.push(5);
+    ex = ex.push(0);
+    ex = ex.push(0);
+    o = wcat(o, wsection(11, ex));
+
+    return o;
+}
