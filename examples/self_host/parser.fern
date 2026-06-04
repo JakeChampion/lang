@@ -1623,6 +1623,7 @@ function parse_type_name(p: Par): TypeNameResult {
         if (p.peek_punct() == "(") {
             var tbuf: string = "";
             var td: i32 = 0;
+            var is_fn: boolean = false;
             while (!p.at_end()) {
                 var tpk: string = p.peek_punct();
                 if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); continue; }
@@ -1631,11 +1632,21 @@ function parse_type_name(p: Par): TypeNameResult {
                 if (tpk == "[") { tbuf = tbuf + "["; p = p.advance(); continue; }
                 if (tpk == "]") { tbuf = tbuf + "]"; p = p.advance(); continue; }
                 if (tpk == ".") { tbuf = tbuf + "."; p = p.advance(); continue; }
+                // A `=>` *inside* the parens means the parens wrap a whole
+                // function type (`(() => i32)`), not a tuple — coarse it to
+                // "fn" (a closure box). (The `(T,…) => R` form, with `=>`
+                // *after* the parens, is handled below.)
+                if (tpk == "=>") { is_fn = true; p = p.advance(); continue; }
                 var tseg: string = p.peek_ident();
                 if (tseg.len() == 0) { tseg = p.peek_keyword(); }
                 if (tseg.len() == 0) { p = p.advance(); continue; }
                 tbuf = tbuf + tseg;
                 p = p.advance();
+            }
+            // Parenthesized function type `(… => …)` → coarse "fn", plus any
+            // trailing `[]` (an array of closures).
+            if (is_fn) {
+                return consume_array_suffix(p, "fn");
             }
             // Function type `(T1, …) => R`. After the balanced param
             // parens, a `=>` introduces the return type. Consume it

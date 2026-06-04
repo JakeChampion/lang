@@ -438,7 +438,33 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
 // free functions whose return type is `fn` (a closure) so a binding
 // `var f = make_adder(5)` is recognised as a closure-valued local too;
 // `fnmeths` does the same for receiver methods (`var f = obj.make()`).
-function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[], fnmeths: string[]): string[] {
+// collect_fn_arr_names lists locals declared with the `fn[]` type (an
+// array of closures), so an element read binds a closure.
+function collect_fn_arr_names(body: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name == "fn[]" && !contains_str(acc, v.name)) { acc = acc.push(v.name); }
+            },
+            parser.StmtIf(f) => {
+                acc = collect_fn_arr_names(f.then_body, acc);
+                acc = collect_fn_arr_names(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_fn_arr_names(w.body, acc); },
+            parser.StmtFor(f) => { acc = collect_fn_arr_names(f.body, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { acc = collect_fn_arr_names(m.arms[k].body, acc); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[], fnmeths: string[], fnarrs: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -464,19 +490,43 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                             _ => {},
                         }
                     },
+                    parser.ExprIndex(ix) => {
+                        // `var c = fns[i]` where fns is an `fn[]` array.
+                        match (ix.array) {
+                            parser.ExprIdent(aid) => {
+                                if (contains_str(fnarrs, aid.name) && !contains_str(acc, v.name)) {
+                                    acc = acc.push(v.name);
+                                }
+                            },
+                            _ => {},
+                        }
+                    },
                     _ => {},
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_fn_var_names(f.then_body, acc, fnrets, fnmeths);
-                acc = collect_fn_var_names(f.else_body, acc, fnrets, fnmeths);
+                acc = collect_fn_var_names(f.then_body, acc, fnrets, fnmeths, fnarrs);
+                acc = collect_fn_var_names(f.else_body, acc, fnrets, fnmeths, fnarrs);
             },
-            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc, fnrets, fnmeths); },
-            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc, fnrets, fnmeths); },
+            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc, fnrets, fnmeths, fnarrs); },
+            parser.StmtFor(f) => {
+                // `for f in fns` over an `fn[]` array binds a closure.
+                if (comma_index(f.var_name) < 0) {
+                    match (f.iter) {
+                        parser.ExprIdent(iid) => {
+                            if (contains_str(fnarrs, iid.name) && !contains_str(acc, f.var_name)) {
+                                acc = acc.push(f.var_name);
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+                acc = collect_fn_var_names(f.body, acc, fnrets, fnmeths, fnarrs);
+            },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
-                    acc = collect_fn_var_names(m.arms[k].body, acc, fnrets, fnmeths);
+                    acc = collect_fn_var_names(m.arms[k].body, acc, fnrets, fnmeths, fnarrs);
                     k = k + 1;
                 }
             },
@@ -4149,8 +4199,17 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         all_locals = all_locals.push(f.receiver_name);
     }
     // Closure-typed locals/params: `fn` params + vars bound to a lambda
-    // or to a call of a function that returns a closure.
-    var fn_names: string[] = collect_fn_var_names(f.body, [], fn_returning_func_names(mod_funcs), fn_returning_method_names(mod_funcs));
+    // or to a call of a function that returns a closure. `fn[]` arrays of
+    // closures let `var c = fns[i]` / `for f in fns` bind a closure too.
+    var fn_arrs: string[] = collect_fn_arr_names(f.body, []);
+    var fpa: i32 = 0;
+    while (fpa < f.params.len()) {
+        if (f.params[fpa].type_name == "fn[]" && !contains_str(fn_arrs, f.params[fpa].name)) {
+            fn_arrs = fn_arrs.push(f.params[fpa].name);
+        }
+        fpa = fpa + 1;
+    }
+    var fn_names: string[] = collect_fn_var_names(f.body, [], fn_returning_func_names(mod_funcs), fn_returning_method_names(mod_funcs), fn_arrs);
     var fp: i32 = 0;
     while (fp < f.params.len()) {
         if (f.params[fp].type_name == "fn" && !contains_str(fn_names, f.params[fp].name)) {

@@ -695,11 +695,16 @@ after `parse_type_name`'s paren branch, so the `var`'s binding local was
 never declared ("unknown local $ps"). `parse_type_name` now consumes the
 trailing `[]` (`consume_array_suffix`), which fixes **array-of-tuples**
 end-to-end (Go already handled it; now the self-host does too — index,
-`.0`/`.1`, and `for p in ps`). Closure arrays still don't fully work —
-the paren reader mangles the inner `=>` of `(() => i32)`, a separate
-deeper gap — and the bare `fn` type remains intentionally opaque (not
-callable; doesn't accept a concrete lambda on return). The fix is in the
-fixpoint bundle and the self-compile still converges byte-identically.
+`.0`/`.1`, and `for p in ps`). A follow-up then made **closure arrays**
+work fully too: the paren reader treats a `=>` *inside* the parens as a
+function type (coarsed to `fn`, so `(() => i32)[]` → `fn[]`), and
+`wasm.fern` tracks `fn[]` locals/params (`collect_fn_arr_names`) so a
+closure read from an element — `var c = fns[i]` or `for f in fns` — is
+itself callable through `call_indirect`. `var c = fns[0]; c()`,
+`for f in fns { f() }`, and `((i32) => i32)[]` with args all run and match
+the Go compiler. (The bare `fn` type stays intentionally opaque — not
+callable; doesn't accept a concrete lambda on return.) Both fixes are in
+the fixpoint bundle and the self-compile still converges byte-identically.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
