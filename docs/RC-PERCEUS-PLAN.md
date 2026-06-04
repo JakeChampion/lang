@@ -1910,9 +1910,27 @@ cancellation — bounded, but separable, so it ships last.
     freed each turn, 0 over-release), `ptr_aliased` (runtime is_unique decline
     — `keep` retains `D`'s box + array, `b` fresh-allocs)}. Full e2e
     (differential corpus + both self-host gates) + non-e2e suites green.
-    **Next general-FBIP cuts:** same-box-size DIFFERENT types (the plan's
-    box-class equality, not just same-name); tuple / enum `D`; relaxing the
-    same-block constraint.
+  - **5e-iii — cross-TYPE reuse by box-class equality. SHIPPED (all three
+    backends).** Drops the same-struct-name requirement: `D` and `C` may be
+    DIFFERENT struct types when their allocations (`data + rc header`) fall in
+    the SAME freelist class — `(alloc+15)&-16`, within the exact-fit ≤ 2048
+    range — mirroring `__alloc_reuse`'s runtime class check. (Same-name pairs
+    still match at any size, reusing `D`'s box as itself.) The lowering threads
+    `D`'s OWN layout: `tokenSize = D_alloc` (so a runtime class mismatch frees
+    `D`'s block to ITS class — never the wrong list), and the old-pointer-field
+    release walks `D`'s offsets / field types (`reuseSrcSd` / `reuseSrcOffs`),
+    while `C`'s stores use `C`'s layout. The two layouts are independent raw
+    bytes in a block ≥ both sizes: `D`'s pointer fields are released (D's
+    offsets), `C` fully initialises its own fields (C's offsets, every field of
+    a non-update StructLit) — no overlap hazard since the release precedes the
+    stores. Tests: IR `TestGeneralReuse{FiresCrossTypeSameClass,
+    SkipsCrossTypeDifferentClass,FiresCrossTypePointerField}` + e2e
+    `…GeneralReuse` {`crosstype_churn` (300-iter Point→Pair, value-correct at
+    C's offsets), `crosstype_ptr` (200-iter Holder→Bag with array fields, D's
+    old array freed at D's offset, 0 over-release)}. Full e2e (differential
+    corpus + both self-host gates) + non-e2e suites green.
+    **Next general-FBIP cuts:** tuple / enum `D`; relaxing the same-block
+    constraint (cross-block dominance).
 
 ##### Test + safety contract (same bar as Phases 1–3)
 

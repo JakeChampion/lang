@@ -7989,8 +7989,18 @@ func (b *builder) expr(e ast.Expr) error {
 		// released before C's stores overwrite them (D is dead at C, so every
 		// field is replaced — no carried field to keep).
 		reuseSrcUniqSlot := int32(-1)
+		// D's own layout (offsets + field types). D may be a DIFFERENT struct
+		// type than C (cross-type box-class reuse): tokenSize is D's alloc
+		// size, and D's OLD pointer fields are released at D's offsets — only
+		// C's stores below use C's layout.
+		var reuseSrcSd *ast.StructDecl
+		var reuseSrcOffs map[string]int32
 		if dName, paired := b.reuseSources[n]; paired && updBaseSlot < 0 {
 			dSlot := b.locals[dName]
+			dStt, _ := b.localDeclType(dName)
+			reuseSrcSd = b.info.Structs[dStt.(ast.StructType).Name]
+			var dSize int32
+			reuseSrcOffs, dSize = structFieldLayout(reuseSrcSd.Fields, b.ptrW)
 			reusedSlot := b.allocSlot()
 			reuseSrcUniqSlot = reusedSlot
 			b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
@@ -8015,9 +8025,11 @@ func (b *builder) expr(e ast.Expr) error {
 			// D consumed (box taken or dec'd) — zero its slot.
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpStoreLocal, I32: dSlot})
-			// base = __alloc_reuse(token, size+hdr, size+hdr).
+			// base = __alloc_reuse(token, D_alloc, C_alloc). tokenSize is D's
+			// real allocation size so a class mismatch frees D's block to its
+			// OWN class; for same-class C the runtime check matches and reuses.
 			b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
-			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+			b.emit(Op{Kind: OpConstI32, I32: dSize + rcHeaderBytes})
 			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 			b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
 		} else {
@@ -8037,10 +8049,11 @@ func (b *builder) expr(e ast.Expr) error {
 		// reference (deep freeing drop, emitFieldDropOnStack) before the field
 		// stores below overwrite them. Gated on the is_unique result: on the
 		// decline branch (reused==0) the box is fresh/uninitialised so there's
-		// nothing to release. Scalar fields need no drop.
+		// nothing to release. Scalar fields need no drop. Uses D's OWN layout
+		// (reuseSrcSd / reuseSrcOffs) — D may be a different struct type than C.
 		if reuseSrcUniqSlot >= 0 {
 			hasPtrField := false
-			for _, sf := range sd.Fields {
+			for _, sf := range reuseSrcSd.Fields {
 				if arrElemIsRcTracked(sf.Type) {
 					hasPtrField = true
 					break
@@ -8049,12 +8062,12 @@ func (b *builder) expr(e ast.Expr) error {
 			if hasPtrField {
 				b.emit(Op{Kind: OpLoadLocal, I32: reuseSrcUniqSlot})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-				for _, sf := range sd.Fields {
+				for _, sf := range reuseSrcSd.Fields {
 					if !arrElemIsRcTracked(sf.Type) {
 						continue
 					}
 					b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-					b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[sf.Name]})
+					b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + reuseSrcOffs[sf.Name]})
 					b.emit(Op{Kind: OpAdd})
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 					b.emitFieldDropOnStack(sf.Type)
@@ -10826,6 +10839,23 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 			}
 			return true
 		}
+		// boxClass returns the (sz+15)&-16 freelist class of a struct's
+		// allocation (data + rc header) and whether it sits within the
+		// exact-fit range (≤ 2048) used for cross-TYPE pairing. Mirrors the
+		// runtime's class arithmetic (__fern_alloc / __alloc_reuse).
+		const rcHeaderBytes = 8
+		boxClass := func(stt ast.StructType) (int32, bool) {
+			sd, ok := b.info.Structs[stt.Name]
+			if !ok {
+				return 0, false
+			}
+			_, size := structFieldLayout(sd.Fields, b.ptrW)
+			alloc := size + rcHeaderBytes
+			if alloc > 2048 {
+				return 0, false
+			}
+			return (alloc + 15) &^ 15, true
+		}
 		for k, st := range stmts {
 			cName, sl := constructionAt(st)
 			if sl == nil {
@@ -10843,8 +10873,21 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 					continue
 				}
 				dType, ok := reuseStructTypeOf(dName)
-				if !ok || dType.Name != cType.Name {
+				if !ok {
 					continue
+				}
+				// Same struct type pairs at any size (D's box is reused as
+				// itself). DIFFERENT types pair only when their alloc sizes fall
+				// in the SAME freelist class (and within the exact-fit range) —
+				// C's box fits D's reused block, and __alloc_reuse's runtime
+				// class check matches. D's old fields are still released and C's
+				// stored using each one's OWN layout (see the StructLit hook).
+				if dType.Name != cType.Name {
+					dClass, dok := boxClass(dType)
+					cClass, cok := boxClass(cType)
+					if !dok || !cok || dClass != cClass {
+						continue
+					}
 				}
 				if !deadFrom(dName, k) {
 					continue
