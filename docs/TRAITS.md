@@ -321,8 +321,7 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    payloads) and `impl Ord for string` shipped, and the `sorted_*` /
    `set_eq` / `subset` / `unique` array families are now collapsed too
    (over `[T: Ord + Display]` / `[T: Eq + Display]`). The **map**
-   families (two type params → multi-param monomorph) and generic-enum
-   derive (needs parametric impls) remain follow-ups.
+   families (two type params → multi-param monomorph) remain a follow-up.
 5. **Phase 5:** **opaque types — shipped.** `pub opaque struct Name { … }`
    exports the type name + its methods but keeps fields private outside
    the declaring module: cross-module field reads and struct-literal
@@ -331,6 +330,31 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    constructors/accessors; this is the ADT discipline that pairs with
    trait impls. `dyn Trait` objects remain a follow-up if a
    heterogeneous-collection use case appears.
+6. **Phase 6 (shipped): parametric impls + generic `@derive`.**
+   `impl[T: Bound] Trait for Box[T]` — one blanket impl that covers every
+   instantiation of a generic type. The parser parses a leading
+   `[T: Bound]` after `impl` (shared `parseTypeParamList` helper, reused
+   by generic functions / methods); each desugared method inherits the
+   impl's type params + bounds, so the receiver-hoist registers it as a
+   generic method that monomorphises per instantiation. The checker
+   resolves the `for` type's own `T` references to `ParamType`
+   (`resolveTypeNames` now walks `prog.Impls`) so the conformance
+   signature comparison lines up with the (generic) hoisted receiver.
+   `monomorph.Run` drops parametric impls before the re-check — their
+   generic `for` type has been monomorphised away, so a re-check would
+   raise a spurious orphan/missing-type error against a type that no
+   longer exists; the plain (concrete) impls survive and re-validate. On
+   top of this, `synthesizeDerives` emits a *parametric* impl for a
+   generic struct/enum (`@derive(Display) struct Box[T]` →
+   `impl[T: Display] Display for Box[T]`), binding every type parameter
+   by the derived trait so the field/variant-wise body dispatches through
+   the bound. Generic-enum derive (previously rejected outright) and
+   multi-parameter generic structs both work. Verified on all four
+   backends (interp / arm64 / x86-64 / wasm); a payload-less variant of a
+   generic enum (`Nil`) still needs a type annotation at a bare
+   `.method()` call site since `T` is otherwise unconstrained.
+   Self-host parity (the self-host parser/monomorphiser learning
+   `impl[T]`) is a follow-up — the Go compiler is the reference.
 
 ## 7a. Self-hosting the trait feature
 

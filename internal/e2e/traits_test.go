@@ -463,3 +463,172 @@ function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0;
 		t.Errorf("construction of opaque type should be rejected: exit=%d out=%q", code, out)
 	}
 }
+
+// Parametric impl: `impl[T: Bound] Trait for Box[T]` makes a single
+// blanket impl cover every instantiation. The method bodies dispatch
+// on the bound (`self.v.to_string()` where `self.v: T`), and the
+// generic methods monomorphise per instantiation. The same `Box`
+// implements Display for i32 and string payloads from one impl block.
+// See docs/TRAITS.md.
+func TestInterpParametricImpl(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+
+struct Box[T] { v: T }
+
+impl[T: cmp.Display] cmp.Display for Box[T] {
+    function to_string(self: Self): string {
+        return "Box(" + self.v.to_string() + ")";
+    }
+}
+
+impl[T: cmp.Eq] cmp.Eq for Box[T] {
+    function eq(self: Self, other: Self): boolean {
+        return self.v.eq(other.v);
+    }
+}
+
+function main(): i32 {
+    var a = Box { v: 42 };
+    var s = Box { v: "hi" };
+    print(a.to_string());
+    print(s.to_string());
+    if (a.eq(Box { v: 42 })) { print("a-eq"); }
+    if (!a.eq(Box { v: 7 })) { print("a-neq"); }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"Box(42)", "Box(hi)", "a-eq", "a-neq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s\nstderr: %s", want, got, errb.String())
+		}
+	}
+}
+
+// A parametric impl that violates the bound is rejected: `Box[NoDisp]`
+// where `NoDisp` has no Display impl can't satisfy `[T: Display]`. The
+// diagnostic names the offending method as `Box.to_string`.
+func TestInterpParametricImplBoundRejected(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+struct NoDisp {}
+struct Box[T] { v: T }
+impl[T: cmp.Display] cmp.Display for Box[T] {
+    function to_string(self: Self): string { return self.v.to_string(); }
+}
+function main(): i32 {
+    var b = Box { v: NoDisp {} };
+    print(b.to_string());
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	code, out := runFernInterp(t, src)
+	if code == 0 || !strings.Contains(out, "does not implement trait") || !strings.Contains(out, "Box.to_string") {
+		t.Errorf("bound violation should be rejected with Box.to_string: exit=%d out=%q", code, out)
+	}
+}
+
+// @derive on a GENERIC struct / enum synthesises a parametric impl
+// (`impl[T: Trait] Trait for Box[T]`): the field/variant-wise body
+// dispatches through the per-param bound and monomorphises per
+// instantiation. Covers Eq, Display, Ord on a generic enum plus a
+// two-parameter generic struct. See docs/TRAITS.md.
+func TestInterpDeriveGenericTypes(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+
+@derive(cmp.Display, cmp.Eq, cmp.Ord)
+enum Tree[T] { Leaf(T), Pair(T, T), Empty }
+
+@derive(cmp.Display, cmp.Eq)
+struct Twin[A, B] { a: A, b: B }
+
+function sign(n: i32): string { if (n < 0) { return "lt"; } if (n > 0) { return "gt"; } return "eq"; }
+
+function main(): i32 {
+    var t = Leaf(42);
+    print(t.to_string());
+    print(Pair(1, 2).to_string());
+    if (t.eq(Leaf(42))) { print("leaf-eq"); }
+    if (!t.eq(Pair(1, 2))) { print("t-neq"); }
+    print(sign(Leaf(1).cmp(Pair(0, 0)))); // lt (Leaf variant before Pair)
+
+    var p = Twin { a: 7, b: "x" };
+    print(p.to_string());
+    if (p.eq(Twin { a: 7, b: "x" })) { print("twin-eq"); }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"Leaf(42)", "Pair(1, 2)", "leaf-eq", "t-neq", "lt", "Twin { a: 7, b: x }", "twin-eq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s\nstderr: %s", want, got, errb.String())
+		}
+	}
+}
+
+// Parametric impls + generic derive must hold on a compiled backend,
+// not just the interpreter — the generic methods monomorphise and the
+// native codegen handles the per-instantiation clones. Exercises arm64
+// (the default target) end-to-end.
+func TestArm64ParametricImplAndDerive(t *testing.T) {
+	src := `import "core/cmp";
+
+struct Box[T] { v: T }
+impl[T: cmp.Display] cmp.Display for Box[T] {
+    function to_string(self: Self): string { return "Box(" + self.v.to_string() + ")"; }
+}
+
+@derive(cmp.Display, cmp.Eq)
+enum Opt[T] { Has(T), Nil }
+
+function main(): i32 {
+    var a = Box { v: 5 };
+    var s = Box { v: "hi" };
+    print(a.to_string());
+    print(s.to_string());
+    print(Has(9).to_string());
+    var n: Opt[i32] = Nil;
+    print(n.to_string());
+    if (Has(9).eq(Has(9))) { print("has-eq"); }
+    return 0;
+}
+`
+	out, code := compileAndRunArm64(t, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"Box(5)", "Box(hi)", "Has(9)", "Nil", "has-eq"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}

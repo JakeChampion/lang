@@ -1730,6 +1730,13 @@ type ImplDecl struct {
 	Type        Type
 	TypePos     Position
 	MethodNames []string
+	// TypeParams names the impl's own type parameters for a parametric
+	// impl (`impl[T: Bound] Trait for Box[T]`). Empty for a plain
+	// `impl Trait for ConcreteType`. The checker resolves occurrences
+	// of these names inside Type to ParamType so the conformance
+	// signature comparison lines up with the (generic) hoisted
+	// methods. See docs/TRAITS.md.
+	TypeParams []string
 	// SourceModule is the module that wrote the impl — used by the
 	// orphan-rule check (the impl is legal only if Trait or Type is
 	// declared in this same module). Empty for single-file programs.
