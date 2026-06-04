@@ -108,6 +108,14 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
 		{"arr-expr-elements", "function main(): i32 { var x = 4; var a = [x, x * 2, x + 100]; return a[1] + a[2]; }", 112},
 		{"arr-two", "function main(): i32 { var a = [1, 2]; var b = [100, 200]; return a[1] + b[0]; }", 102},
+		// .len() reads the array's length prefix.
+		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3},
+		{"arr-index-plus-len", "function main(): i32 { var a = [10, 20, 30]; return a[2] + a.len(); }", 33},
+		{"arr-len-loop", "function main(): i32 { var a = [4, 8, 12, 16]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 40},
+		// Regression: two identical `i + 1` subexpressions (the a[i] index and
+		// the loop increment) collapse under CSE — the loop-header phi's
+		// back-edge operand must be rewritten to the survivor (cross-block).
+		{"cse-dup-increment", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i + 1); i = i + 1; } return s; }", 15},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
