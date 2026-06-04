@@ -1945,10 +1945,52 @@ reuse the argument. Sliced for risk:
     (`OwnFuncs` empty ⇒ every branch is a no-op). Still missing for the recursive
     `map`: owned MATCH-BINDINGS (a pointer payload of an owned scrutinee is itself
     owned) — pairs with Slice C.
-  - **Slice C — match-arm cons-cell reuse.** With the owned scrutinee now
-    `freeEligible`, wire the 5d-ii hook (pair the dropped scrutinee box with a
-    same-box-shape constructor in the arm) onto the reuse machinery from
-    slices 5e-*. The headline win: zero-allocation recursive `map`/`filter`.
+  - **Slice C1 — consuming match (owned bindings + box reclaim). SHIPPED (all
+    three backends) — THE HEADLINE PERCEUS WIN.** A recursive traversal over an
+    `own` parameter (`map`/`filter`/`length`) now reclaims the structure's cells
+    as it goes — zero-leak FBIP, Koka/Lean parity for the canonical shape:
+    ```fern
+    function map_inc(own xs: List): List {
+        match (xs) {
+            Cons(h, t) => { return Cons(h + 1, map_inc(t)); },  // t owned; xs's cell freed
+            Nil => { return Nil; },
+        }
+    }
+    ```
+    Two coordinated parts:
+      + **Checker** — a pointer-typed binding of an OWNED scrutinee is itself
+        owned for the arm's scope (`checkOwnedParams`' Match case adds it to the
+        `owned` set), so `map_inc(t)` passes the E051 guard and `t` is affine-
+        tracked. `isOwnedExpr` also now accepts a call to a function with only
+        scalar params + a pointer result (it must construct fresh — `build(5)`),
+        so a freshly-built list flows into an `own` param.
+      + **IR** — a consuming match (`ownParamEnumScrutinee`: the scrutinee is a
+        bare `own` param, uniform-droppable enum) MOVES the pointer payloads into
+        the bindings (the existing no-inc load) and, after extraction in each
+        matched arm (before the body / `return` — post-match code is dead for a
+        traversal), frees the box SHALLOW (`emitConsumingMatchBoxFree`: box
+        buffer only, NO per-payload deep-drop, is_unique-gated). The scrutinee is
+        marked moved (`computeMovedLocals`) so the exit sweep doesn't also
+        deep-drop it. The freed cell is recycled by the freelist into the arm's
+        constructor — so it's already near-zero-ALLOC (the bump high-water is
+        FLAT across N), with Slice C2 (explicit cons-cell reuse) the only thing
+        left for true zero-alloc. Gated on `own` (`OwnFuncs`) throughout, so
+        non-`own` matches are byte-identical. (A subtle bug found + fixed mid-
+        implementation: the first box-free passed `data-8`/`size+8` and dropped
+        no result — `__fern_box_free(data, size)` already does base = data-8 /
+        size+8 and RETURNS data; the double-subtract corrupted the freelist →
+        native crash, caught immediately by the value test.)
+        Tests: e2e `Test{X86_64,Arm64,WASM}OwnConsumingMatch` (200-iter
+        build→map→sum, value-correct + `__rc_underflow_count()==0` + a wasm
+        heap-bump bound, FLAT across N=2000/20000) + the `own_consuming_match`
+        corpus fixture (free-on==free-off AND reuse-on==reuse-off byte-identical,
+        interp oracle). Full e2e (differential corpus + both self-host gates) +
+        non-e2e green.
+  - **Slice C2 — explicit cons-cell reuse (NEXT, optional).** Pair the consumed
+    scrutinee box with the arm's same-box-class constructor and thread the reuse
+    token (slices 5e-*) so the cell is reused IN PLACE — skipping the
+    free→freelist→alloc round trip C1 already recycles through. True zero-alloc;
+    a peephole on top of the now-working C1.
   - **Slice D (optional, separate) — TRMC** (tail-recursion-modulo-cons /
     constructor contexts), Koka's transform turning non-tail constructor
     recursion into in-place tail loops. Orthogonal and larger.

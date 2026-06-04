@@ -3002,26 +3002,42 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			}
 		}
 		if len(ownParam) > 0 {
+			// A consuming match (`match (own_param) { … }`) consumes the
+			// scrutinee — its box is shallow-freed at the match — so the exit
+			// sweep must not ALSO deep-drop it. Mark the own-param scrutinee
+			// moved (its last use is the match).
+			markScrutinee := func(tag ast.Expr) {
+				if id, ok := tag.(*ast.Ident); ok && ownParam[id.Name] &&
+					identIdx[id] == maxIdx[id.Name] {
+					moved[id.Name] = true
+				}
+			}
 			ast.Walk(b.fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.Call)
-				if !ok || call.Method != nil {
-					return true
-				}
-				id, ok := call.Callee.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				flags, isOwn := b.info.OwnFuncs[id.Name]
-				if !isOwn {
-					return true
-				}
-				for i := 0; i < len(call.Args) && i < len(flags); i++ {
-					if !flags[i] {
-						continue
+				switch x := n.(type) {
+				case *ast.Match:
+					markScrutinee(x.Tag)
+				case *ast.MatchExpr:
+					markScrutinee(x.Tag)
+				case *ast.Call:
+					if x.Method != nil {
+						return true
 					}
-					if arg, ok := call.Args[i].(*ast.Ident); ok &&
-						ownParam[arg.Name] && identIdx[arg] == maxIdx[arg.Name] {
-						moved[arg.Name] = true
+					id, ok := x.Callee.(*ast.Ident)
+					if !ok {
+						return true
+					}
+					flags, isOwn := b.info.OwnFuncs[id.Name]
+					if !isOwn {
+						return true
+					}
+					for i := 0; i < len(x.Args) && i < len(flags); i++ {
+						if !flags[i] {
+							continue
+						}
+						if arg, ok := x.Args[i].(*ast.Ident); ok &&
+							ownParam[arg.Name] && identIdx[arg] == maxIdx[arg.Name] {
+							moved[arg.Name] = true
+						}
 					}
 				}
 				return true
@@ -6789,7 +6805,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			reclaimScrut bool
 			scrutEnum    ast.EnumType
 		)
+		// Consuming match: the scrutinee is an OWN (consuming) parameter. The
+		// arms move its pointer payloads into bindings (reclaimed downstream),
+		// so after the match the box is freed SHALLOW (buffer only, no payload
+		// deep-drop) — the FBIP traversal. The scrutinee is marked moved
+		// (computeMovedLocals) so the exit sweep doesn't ALSO deep-drop it.
+		var consumeEnum ast.EnumType
+		consumeScrut := false
 		if !pairFormScrutinee {
+			consumeEnum, consumeScrut = b.ownParamEnumScrutinee(n.Tag)
+		}
+		if !pairFormScrutinee && !consumeScrut {
 			bts := make([][]ast.Type, 0, len(n.Arms))
 			for _, arm := range n.Arms {
 				bts = append(bts, arm.BindingTypes)
@@ -6875,6 +6901,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 					b.emit(payloadLoadOpFor(bt, b.ptrW))
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			// Consuming match: the bindings are now copied into their own slots,
+			// so the scrutinee box is dead (its pointer payloads were MOVED into
+			// the bindings, reclaimed downstream). Free the box SHALLOW here —
+			// after extraction, before the arm body runs (which uses the binding
+			// slots, not the box) and before any `return`. Doing it here (not
+			// after the whole match) is what makes it reach: the arms of a
+			// consuming traversal `return`, so post-match code is dead. The
+			// scrutinee is marked moved (computeMovedLocals) so the exit sweep
+			// doesn't deep-drop it too. Guarded arms free only on the matched
+			// path; a guard-false fall-through leaves the box for the next arm.
+			if consumeScrut && !pairFormScrutinee && arm.Guard == nil {
+				b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
 			}
 			// Optional guard: with bindings now in locals, run
 			// the guard expression. On false, branch out of the
@@ -12278,6 +12317,76 @@ func (b *builder) emitOwnedEnumDrop(slot int32, et ast.EnumType, eligible bool) 
 		return
 	}
 	b.emitEnumSlotDrop(slot, et, eligible)
+}
+
+// emitConsumingMatchBoxFree frees an OWNED enum scrutinee's box after a
+// CONSUMING match (`match (own_param) { Cons(h, t) => … }`) WITHOUT deep-dropping
+// its payloads — the pointer payloads were moved into the arm bindings and are
+// reclaimed downstream (the recursive `map(t)` owns + frees the tail), so
+// dropping them here would double-free. is_unique-gated: a payloadless sentinel
+// (Nil) or a shared box (shouldn't occur for a uniquely-owned `own` param) is
+// only dec'd, never freed. Uniform-droppable enums only (a statically sizable
+// box); others keep their box (a safe leak). This is the heart of Fern's
+// consuming match — the Perceus FBIP traversal.
+func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	size, ok := uniformEnumBoxSize(ed, b.ptrW)
+	if !ok {
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// Unique: free the box BUFFER only — NO per-payload deep-drop (they were
+	// moved into the bindings). __fern_box_free(data, size) internally frees
+	// base = data-8 (size+8) and returns the data ptr (dropped); `size` is the
+	// uniform data size, exactly as the normal enum box-free uses.
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpElse})
+	// Shared / sentinel: just dec (an alias keeps it; a sentinel dec no-ops).
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+}
+
+// ownParamEnumScrutinee reports the enum type when `tag` is a bare reference to
+// an OWN (consuming) parameter of the current function whose static type is an
+// enum — the scrutinee of a consuming match. Gated on the program using `own`
+// (b.info.OwnFuncs), so non-`own` code never triggers the consuming path.
+func (b *builder) ownParamEnumScrutinee(tag ast.Expr) (ast.EnumType, bool) {
+	if !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 {
+		return ast.EnumType{}, false
+	}
+	id, ok := tag.(*ast.Ident)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	flags := b.info.OwnFuncs[b.fn.Name]
+	isOwn := false
+	for i, p := range b.fn.Params {
+		if p.Name == id.Name && i < len(flags) && flags[i] {
+			isOwn = true
+			break
+		}
+	}
+	if !isOwn {
+		return ast.EnumType{}, false
+	}
+	et, ok := b.exprStaticType(tag).(ast.EnumType)
+	if !ok {
+		return ast.EnumType{}, false
+	}
+	return et, true
 }
 
 // emitEnumSlotDrop releases the OWNED enum box in local slot `slot` INLINE per
