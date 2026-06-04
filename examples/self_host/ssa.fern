@@ -1264,6 +1264,42 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 // load_elem / store_elem). The backends don't lower these yet, so the emit
 // path (ssa_emit_run, the CLI's -ssa) skips functions that use memory and
 // falls back to the AST emitter; the interpreter handles them directly.
+// compute_widths returns the bit-width (32 or 64) of every SSA value: 64
+// for pointers (anything that flows from an `alloc`, threaded through copy
+// and phi to a fixpoint), 32 for plain i32 / bool. The backends use this to
+// pick movl/movq (x86) or w/x registers (arm64) per value. load_elem yields
+// an i32 element (32); everything but alloc/copy/phi is 32.
+pub function compute_widths(f: SFunc): i32[] {
+    var w: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { w = w.push(32); i = i + 1; }
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                var make64: boolean = false;
+                if (ins.kind == "alloc") { make64 = true; }
+                else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
+                else if (ins.kind == "phi") {
+                    var a: i32 = 0;
+                    while (a < ins.args.len()) { if (w[ins.args[a]] == 64) { make64 = true; } a = a + 1; }
+                }
+                if (make64 && w[ins.result] != 64) { w = env_set_at(w, ins.result, 64); changed = true; }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+    }
+    return w;
+}
+
 pub function uses_memory(f: SFunc): boolean {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {

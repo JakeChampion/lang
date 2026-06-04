@@ -119,6 +119,30 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-ssa-array", func(t *testing.T) {
+		// An array program is now in the SSA subset on x86-64: -ssa compiles
+		// it through the heap-aware backend (not a fallback). Run it.
+		srcPath := filepath.Join(dir, "ssa_arr.fern")
+		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		ssaAsm, code := runDriver(t, "-ssa", srcPath)
+		if code != 0 {
+			t.Fatalf("-ssa emit exited %d, want 0", code)
+		}
+		astAsm, _ := runDriver(t, srcPath)
+		if string(ssaAsm) == string(astAsm) {
+			t.Error("-ssa fell back to AST for an array program (expected the SSA heap backend)")
+		}
+		progBin := buildBin(t, gcc, dir, "ssa_arr", string(ssaAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 75 {
+			t.Errorf("-ssa array program exited %d, want 75", c)
+		}
+	})
+
 	t.Run("ssa-fallback", func(t *testing.T) {
 		// A program outside the SSA subset (uses strings) must fall back to
 		// the AST emitter: -ssa output is byte-identical to the default.
