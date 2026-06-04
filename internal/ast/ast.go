@@ -1576,6 +1576,12 @@ type StructDecl struct {
 	// Same semantics as FuncDecl.Public — private structs can't be
 	// referenced from other modules.
 	Public bool
+	// Opaque marks a `pub opaque struct` — the type name is exported
+	// but its fields are private outside the declaring module: other
+	// modules can hold/pass values and call methods, but cannot read
+	// fields or construct via a struct literal. The checker enforces
+	// this against the access site's SourceModule. See docs/TRAITS.md.
+	Opaque bool
 	// Derives lists the trait names from an `@derive(Trait, …)`
 	// attribute on the struct. The checker synthesises an `impl`
 	// per derived trait (field-wise) before conformance runs. See

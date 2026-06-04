@@ -318,11 +318,24 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    generics over `[T: Eq + Display]` — the self-host monomorphiser
    learned `T[]` parameters + array-literal element inference. The
    **map** families (two type params), the Ord-needing `sorted_*`
+<<<<<<< HEAD
    families, `@derive(Ord)` is now supported for enums (variant-tag order,
    then lexicographic payloads) and `impl Ord for string` was added.
    Generic-enum derive and the Map collapse remain follow-ups.
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.
+=======
+   families, `@derive(Ord)`-for-enums and generic-enum derive remain
+   follow-ups.
+5. **Phase 5:** **opaque types — shipped.** `pub opaque struct Name { … }`
+   exports the type name + its methods but keeps fields private outside
+   the declaring module: cross-module field reads and struct-literal
+   construction are rejected (the checker compares the struct's
+   SourceModule against the access site's). The module provides
+   constructors/accessors; this is the ADT discipline that pairs with
+   trait impls. `dyn Trait` objects remain a follow-up if a
+   heterogeneous-collection use case appears.
+>>>>>>> 7a0f060 (traits: opaque types (pub opaque struct))
 
 ## 7a. Self-hosting the trait feature
 

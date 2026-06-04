@@ -265,9 +265,10 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Keyword, "enum") &&
 				!p.match(lexer.Keyword, "type") &&
 				!p.match(lexer.Keyword, "trait") &&
-				!p.match(lexer.Keyword, "const") {
+				!p.match(lexer.Keyword, "const") &&
+				!p.match(lexer.Ident, "opaque") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, or `const`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, or `opaque`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -275,6 +276,16 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			isPub = true
+		}
+		// `opaque` is a contextual modifier on a struct decl
+		// (`pub opaque struct …`): the type is exported but its fields
+		// are private outside the module. Recognised only when directly
+		// followed by `struct`, so `opaque` stays usable as an ident.
+		isOpaque := false
+		if p.match(lexer.Ident, "opaque") && p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "struct" {
+			p.advance() // opaque
+			isOpaque = true
 		}
 		if p.match(lexer.Keyword, "struct") {
 			sd, err := p.parseStructDecl()
@@ -289,7 +300,16 @@ func (p *parser) parseProgram() *ast.Program {
 			if sd != nil {
 				sd.Public = isPub
 				sd.Derives = derives
+				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
+			}
+			continue
+		}
+		if isOpaque {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos, "`opaque` must be followed by `struct`"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
 			}
 			continue
 		}

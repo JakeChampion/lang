@@ -1336,3 +1336,23 @@ enum Color { Red, Green, Blue }`)
 		t.Errorf("enum Derives = %v", prog.Enums[0].Derives)
 	}
 }
+
+// `pub opaque struct` sets StructDecl.Opaque; `opaque` stays usable as
+// an ordinary identifier elsewhere. See docs/TRAITS.md.
+func TestOpaqueStructParses(t *testing.T) {
+	prog, err := Parse(`pub opaque struct Email { addr: string }`)
+	if err != nil {
+		t.Fatalf("opaque struct should parse: %v", err)
+	}
+	if !prog.Structs[0].Opaque || !prog.Structs[0].Public {
+		t.Errorf("expected public opaque struct, got %+v", prog.Structs[0])
+	}
+	// `opaque` not followed by `struct` is an ordinary identifier.
+	p2, err := Parse(`function f(): i32 { var opaque: i32 = 5; return opaque; }`)
+	if err != nil {
+		t.Fatalf("`opaque` should be a valid identifier: %v", err)
+	}
+	if v, ok := p2.Funcs[0].Body.Stmts[0].(*ast.Var); !ok || v.Name != "opaque" {
+		t.Fatalf("expected `var opaque`, got %T", p2.Funcs[0].Body.Stmts[0])
+	}
+}

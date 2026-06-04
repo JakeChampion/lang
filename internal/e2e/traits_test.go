@@ -420,3 +420,46 @@ function main(): i32 {
 		t.Errorf("enum Ord output = %q, want lt/lt/gt/eq/lt", got)
 	}
 }
+
+// Opaque types: a `pub opaque struct` exports its name + methods but
+// keeps fields private outside the declaring module — field reads and
+// struct-literal construction from another module are rejected; a
+// factory function + methods work. See docs/TRAITS.md.
+func TestOpaqueTypeEncapsulation(t *testing.T) {
+	dir := t.TempDir()
+	lib := `pub opaque struct Email { addr: string }
+pub function make(a: string): Email { return Email { addr: a }; }
+pub function (e: Email) domain(): string { return e.addr; }
+`
+	if err := os.WriteFile(filepath.Join(dir, "email.fern"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// Legal: construct via factory, call method.
+	okMain := write("ok_main.fern", `import "./email";
+function main(): i32 { var e: email.Email = email.make("a@b.com"); print(e.domain()); return 0; }
+`)
+	if code, out := runFernInterp(t, okMain); code != 0 || !strings.Contains(out, "a@b.com") {
+		t.Errorf("legal opaque use failed: exit=%d out=%q", code, out)
+	}
+	// Illegal: field read from another module.
+	badField := write("bad_field.fern", `import "./email";
+function main(): i32 { var e: email.Email = email.make("x"); print(e.addr); return 0; }
+`)
+	if code, out := runFernInterp(t, badField); code == 0 || !strings.Contains(out, "opaque type email.Email") {
+		t.Errorf("field read of opaque type should be rejected: exit=%d out=%q", code, out)
+	}
+	// Illegal: construction from another module.
+	badCtor := write("bad_ctor.fern", `import "./email";
+function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0; }
+`)
+	if code, out := runFernInterp(t, badCtor); code == 0 || !strings.Contains(out, "construct opaque type") {
+		t.Errorf("construction of opaque type should be rejected: exit=%d out=%q", code, out)
+	}
+}
