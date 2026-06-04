@@ -459,7 +459,19 @@ fixpoint byte-identical. Capturing a struct *receiver* field directly
 inside such a lambda (`return function(x) { return x + a.base; }`) remains a
 separate, deeper capture-typing gap, tracked for a later pass.
 
-Gated by 471 differential cases as of this writing. What remains for the
+A thirteenth pass found a **parser** gap (not a backend one): a
+nested-array *type annotation* — `var grid: i32[][] = …` — dropped the
+`var` binding. `parse_type_name` consumed only the first `[…]` group, so
+the second `[]` was left on the cursor and the surrounding declaration
+misaligned. (The nested-array literal + iteration already worked when
+written unannotated, e.g. `var grid = [[1,2],[3,4]]`.) Fixed by consuming
+trailing `[]` array suffixes after the first bracket group, so `i32[][]`,
+`T[][][]`, `Map[K, V][]`, etc. parse to a complete type name. This is a
+parser edit (shared by every backend), so the fixpoint gate is the guard;
+the self-host source uses no nested-array types, so it stays
+byte-identical.
+
+Gated by 473 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
