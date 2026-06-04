@@ -15,11 +15,14 @@
 //   - a block (SBlock) is a list of instructions ending in a terminator;
 //   - a function (SFunc) is a list of blocks with an entry index.
 //
-// SCOPE (slice 2): straight-line bodies PLUS `if` / `else` — control flow
-// now lowers to multiple blocks joined by a merge block whose phi nodes
-// reconcile values that differ between the arms. `while` (loop phi /
-// back-edge) lands in the next slice; build_func returns ok=false for any
-// construct outside this subset so callers can fall back to the AST path.
+// SCOPE: the i32 subset — params, var / `=` locals, i32 / bool literals,
+// the binary + unary operators, calls, `return`, `if` / `else` (CFG with
+// merge phis), `while` (loop-header phi + back edge), and `break` /
+// `continue` (extra edges into the loop exit / header). build_func returns
+// ok=false for any construct outside this subset (floats, strings, structs,
+// arrays, …) so callers can fall back to the AST path. The companion
+// pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
+// block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
 
 import "core/no_prelude";
 import "./parser";
@@ -72,6 +75,26 @@ function t_none(): STerm { return STerm { kind: "", cond: 0, target: 0, t: 0, f:
 // `cur` is the block currently being built; finished blocks accumulate in
 // `blocks`. `next_blk` is the block-id allocator.
 
+// LoopCtx is the innermost-loop context threaded through BState so `break`
+// and `continue` know where to jump and so the loop's header/exit can
+// gather the extra edges. `n0` is the loop's pre-existing variable count
+// (snapshots capture var_vals[0..n0)). brk_*/cont_* accumulate one record
+// per break / continue: an id in brk_ids and that point's n0 variable
+// values flattened into brk_flat (record r, variable v at index r*n0 + v).
+pub struct LoopCtx {
+    active: boolean,
+    hdr: i32,
+    exit: i32,
+    n0: i32,
+    brk_ids: i32[],
+    brk_flat: i32[],
+    cont_ids: i32[],
+    cont_flat: i32[]
+}
+function lc_none(): LoopCtx {
+    return LoopCtx { active: false, hdr: 0, exit: 0, n0: 0, brk_ids: [], brk_flat: [], cont_ids: [], cont_flat: [] };
+}
+
 pub struct BState {
     name: string,
     nparams: i32,
@@ -81,40 +104,44 @@ pub struct BState {
     cur: SBlock,
     var_names: string[],
     var_vals: i32[],
-    ok: boolean
+    ok: boolean,
+    lc: LoopCtx
 }
 
-function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean): BState {
-    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok };
+function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean, lc: LoopCtx): BState {
+    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok, lc: lc };
+}
+function (s: BState) with_lc(lc: LoopCtx): BState {
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, lc);
 }
 
 // fresh allocates a new value id (read it back with cur_id()).
 function (s: BState) fresh(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
 }
 function (s: BState) cur_id(): i32 { return s.nvals - 1; }
 
 // emit appends an instruction to the current block.
 function (s: BState) emit(inst: SInst): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.push(inst), term: s.cur.term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc);
 }
 
 // set_term sets the current block's terminator (does not close it).
 function (s: BState) set_term(term: STerm): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts, term: term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc);
 }
 
 // close_cur pushes the current block into the finished list.
 function (s: BState) close_cur(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc);
 }
 
 // open_block makes a fresh empty block (with the given preds) current.
 function (s: BState) open_block(id: i32, preds: i32[]): BState {
     var nb: SBlock = SBlock { id: id, insts: [], term: t_none(), preds: preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc);
 }
 
 function (s: BState) terminated(): boolean { return s.cur.term.kind != ""; }
@@ -129,11 +156,11 @@ function (s: BState) set_var(name: string, val: i32): BState {
                 if (j == i) { nv = nv.push(val); } else { nv = nv.push(s.var_vals[j]); }
                 j = j + 1;
             }
-            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok);
+            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc);
         }
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok, s.lc);
 }
 function (s: BState) get_var(name: string): i32 {
     var i: i32 = 0;
@@ -146,13 +173,33 @@ function (s: BState) get_var(name: string): i32 {
 // set_env replaces the whole variable environment (used to restore a
 // snapshot or install a branch's outgoing env at a merge).
 function (s: BState) set_env(vn: string[], vv: i32[]): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok, s.lc);
 }
 function (s: BState) bump_blk(n: i32): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
 }
 function (s: BState) fail(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false, s.lc);
+}
+
+// record_break / record_continue snapshot the current block id and the
+// loop's n0 pre-existing variable values into the loop context, so the
+// loop's exit (break) / header (continue) can later gather these edges.
+function (s: BState) record_break(): BState {
+    var lc: LoopCtx = s.lc;
+    var nflat: i32[] = lc.brk_flat;
+    var v: i32 = 0;
+    while (v < lc.n0) { nflat = nflat.push(s.var_vals[v]); v = v + 1; }
+    return s.with_lc(LoopCtx { active: lc.active, hdr: lc.hdr, exit: lc.exit, n0: lc.n0,
+        brk_ids: lc.brk_ids.push(s.cur.id), brk_flat: nflat, cont_ids: lc.cont_ids, cont_flat: lc.cont_flat });
+}
+function (s: BState) record_continue(): BState {
+    var lc: LoopCtx = s.lc;
+    var nflat: i32[] = lc.cont_flat;
+    var v: i32 = 0;
+    while (v < lc.n0) { nflat = nflat.push(s.var_vals[v]); v = v + 1; }
+    return s.with_lc(LoopCtx { active: lc.active, hdr: lc.hdr, exit: lc.exit, n0: lc.n0,
+        brk_ids: lc.brk_ids, brk_flat: lc.brk_flat, cont_ids: lc.cont_ids.push(s.cur.id), cont_flat: nflat });
 }
 
 // ---- expression lowering ----------------------------------------------
@@ -249,6 +296,16 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
         },
         parser.StmtWhile(w) => {
             return build_while(w, s);
+        },
+        parser.StmtBreak(b) => {
+            if (!s.lc.active || b.tag != 0) { return s.fail(); }
+            s = s.record_break();
+            return s.set_term(t_br(s.lc.exit));
+        },
+        parser.StmtContinue(c) => {
+            if (!s.lc.active || c.tag != 0) { return s.fail(); }
+            s = s.record_continue();
+            return s.set_term(t_br(s.lc.hdr));
         },
         _ => { return s.fail(); }
     }
@@ -430,7 +487,14 @@ function merge_names(a: string[], b: string[]): string[] {
 // pred) and adds body_exit_id to the header's pred list. The header was
 // closed with a single (pre-edge) operand per phi; this supplies the
 // second.
-function patch_loop_header(s: BState, header_id: i32, phi_results: i32[], back_vals: i32[], body_exit_id: i32): BState {
+// append_header_latches completes the loop header once all latch edges
+// (the normal back edge plus every `continue`) are known: for each header
+// phi it appends one operand per latch — that latch's value for the phi's
+// variable, read out of the flattened snapshot — and appends the latch
+// block ids to the header's preds, keeping operands parallel to preds.
+// phi_vars[pj] is the variable index of phi_results[pj]; latch_flat holds
+// record l, variable v at index l*n0 + v.
+function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_results: i32[], latch_ids: i32[], latch_flat: i32[], n0: i32): BState {
     var nb: SBlock[] = [];
     var i: i32 = 0;
     while (i < s.blocks.len()) {
@@ -443,18 +507,28 @@ function patch_loop_header(s: BState, header_id: i32, phi_results: i32[], back_v
                 if (ins.kind == "phi") {
                     var pj: i32 = index_of_i32(phi_results, ins.result);
                     if (pj >= 0) {
-                        ins = SInst { kind: "phi", result: ins.result, args: ins.args.push(back_vals[pj]), imm: 0, str: "" };
+                        var vi: i32 = phi_vars[pj];
+                        var nargs: i32[] = ins.args;
+                        var li: i32 = 0;
+                        while (li < latch_ids.len()) {
+                            nargs = nargs.push(latch_flat[li * n0 + vi]);
+                            li = li + 1;
+                        }
+                        ins = SInst { kind: "phi", result: ins.result, args: nargs, imm: 0, str: "" };
                     }
                 }
                 ninsts = ninsts.push(ins);
                 k = k + 1;
             }
-            blk = SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds.push(body_exit_id) };
+            var npreds: i32[] = blk.preds;
+            var lp: i32 = 0;
+            while (lp < latch_ids.len()) { npreds = npreds.push(latch_ids[lp]); lp = lp + 1; }
+            blk = SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: npreds };
         }
         nb = nb.push(blk);
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
 }
 
 // build_while lowers `while (cond) { body }` to a loop:
@@ -507,33 +581,68 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
     s = s.set_term(t_brif(cond_val, body_id, exit_id));
     s = s.close_cur();
 
-    // body
+    // body — install the loop context so break/continue inside know where
+    // to jump and accumulate their edge snapshots.
+    var outer_lc: LoopCtx = s.lc;
+    s = s.with_lc(LoopCtx { active: true, hdr: header_id, exit: exit_id, n0: n0,
+        brk_ids: [], brk_flat: [], cont_ids: [], cont_flat: [] });
     var bpreds: i32[] = [header_id];
     s = s.open_block(body_id, bpreds);
     s = s.set_env(pre_names, header_vals);
     s = build_stmts(w.body, s);
     if (!s.ok) { return s; }
-    // A body that never falls through to the back edge (always returns) is
-    // outside the subset.
-    if (s.terminated()) { return s.fail(); }
+    var body_reaches: boolean = !s.terminated();
     var body_exit_id: i32 = s.cur.id;
     var body_vals: i32[] = s.var_vals;
-    s = s.set_term(t_br(header_id));
+    // Harvest the break / continue edges collected during the body, then
+    // restore the enclosing loop's context.
+    var cont_ids: i32[] = s.lc.cont_ids;
+    var cont_flat: i32[] = s.lc.cont_flat;
+    var brk_ids: i32[] = s.lc.brk_ids;
+    var brk_flat: i32[] = s.lc.brk_flat;
+    if (body_reaches) { s = s.set_term(t_br(header_id)); }
     s = s.close_cur();
+    s = s.with_lc(outer_lc);
 
-    // Patch the header phis with the back-edge values.
-    var back_vals: i32[] = [];
-    var pk: i32 = 0;
-    while (pk < phi_vars.len()) {
-        back_vals = back_vals.push(body_vals[phi_vars[pk]]);
-        pk = pk + 1;
+    // Latch edges into the header = every `continue`, plus the normal back
+    // edge when the body falls through.
+    var latch_ids: i32[] = cont_ids;
+    var latch_flat: i32[] = cont_flat;
+    if (body_reaches) {
+        latch_ids = latch_ids.push(body_exit_id);
+        var bv: i32 = 0;
+        while (bv < n0) { latch_flat = latch_flat.push(body_vals[bv]); bv = bv + 1; }
     }
-    s = patch_loop_header(s, header_id, phi_results, back_vals, body_exit_id);
+    s = append_header_latches(s, header_id, phi_vars, phi_results, latch_ids, latch_flat, n0);
 
-    // exit: continue with the header phi values.
+    // exit: reached from the header (guard false) plus every `break`. A
+    // variable whose break values differ from the header value needs a phi.
     var epreds: i32[] = [header_id];
+    var bp: i32 = 0;
+    while (bp < brk_ids.len()) { epreds = epreds.push(brk_ids[bp]); bp = bp + 1; }
     s = s.open_block(exit_id, epreds);
-    s = s.set_env(pre_names, header_vals);
+    var exit_vals: i32[] = header_vals;
+    if (brk_ids.len() > 0) {
+        var ev: i32 = 0;
+        while (ev < n0) {
+            var differ: boolean = false;
+            var bb: i32 = 0;
+            while (bb < brk_ids.len()) {
+                if (brk_flat[bb * n0 + ev] != header_vals[ev]) { differ = true; }
+                bb = bb + 1;
+            }
+            if (differ) {
+                s = s.fresh();
+                var pa2: i32[] = [header_vals[ev]];
+                var bb2: i32 = 0;
+                while (bb2 < brk_ids.len()) { pa2 = pa2.push(brk_flat[bb2 * n0 + ev]); bb2 = bb2 + 1; }
+                s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa2, imm: 0, str: "" });
+                exit_vals = env_set_at(exit_vals, ev, s.cur_id());
+            }
+            ev = ev + 1;
+        }
+    }
+    s = s.set_env(pre_names, exit_vals);
     return s;
 }
 
@@ -556,7 +665,7 @@ pub function build_func(fd: parser.FuncDecl): BResult {
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
     var f0: SFunc = SFunc { name: fd.name, nparams: nparams, nvals: nparams, blocks: [], entry: 0 };
-    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true);
+    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none());
 
     s = build_stmts(fd.body, s);
     if (!s.ok) { return BResult { func: f0, ok: false }; }
