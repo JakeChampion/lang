@@ -88,6 +88,14 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"break-continue", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i > 6) { break; } s = s + i; } return s; }", 18},
 		{"short-circuit-and", "function main(): i32 { var a: i32 = 5; if (a > 1 && a < 10) { return 7; } return 0; }", 7},
 		{"nested-loops", "function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 3) { var j: i32 = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		// Division / remainder / shifts (the shr_s opcode was off by one
+		// before this slice) + struct field load/store via i32.load/store.
+		{"div-rem", "function main(): i32 { var n: i32 = 17; return n / 5 + n % 5; }", 5},
+		{"shift-right", "function main(): i32 { return 100 >> 2; }", 25},
+		{"shift-left", "function main(): i32 { return 5 << 3; }", 40},
+		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
+		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n = c.n + 37; return c.n; }", 42},
+		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 	}
 
 	for _, tc := range cases {

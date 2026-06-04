@@ -203,24 +203,36 @@ function local_decl_types(fnode: SExpr): string[] {
 
 // ---- instruction encoding ------------------------------------------------
 
-// arith_opcode maps a binary/unary arithmetic op to its wasm byte (0 if
-// not one of them).
+// arith_opcode maps a binary/unary i32 arithmetic / comparison op to its
+// wasm byte (0 if not one of them). Binary ops take two stack operands,
+// the unary `i32.eqz` one.
 function arith_opcode(op: string): i32 {
-    if (op == "i32.add") { return 106; }
+    if (op == "i32.add") { return 106; }   // 0x6a
     if (op == "i32.sub") { return 107; }
     if (op == "i32.mul") { return 108; }
+    if (op == "i32.div_s") { return 109; }
+    if (op == "i32.div_u") { return 110; }
+    if (op == "i32.rem_s") { return 111; }
+    if (op == "i32.rem_u") { return 112; }
     if (op == "i32.and") { return 113; }
     if (op == "i32.or") { return 114; }
     if (op == "i32.xor") { return 115; }
-    if (op == "i32.shl") { return 116; }
-    if (op == "i32.shr_s") { return 118; }
-    if (op == "i32.eq") { return 70; }
+    if (op == "i32.shl") { return 116; }   // 0x74
+    if (op == "i32.shr_s") { return 117; } // 0x75
+    if (op == "i32.shr_u") { return 118; } // 0x76
+    if (op == "i32.rotl") { return 119; }
+    if (op == "i32.rotr") { return 120; }
+    if (op == "i32.eq") { return 70; }     // 0x46
     if (op == "i32.ne") { return 71; }
     if (op == "i32.lt_s") { return 72; }
+    if (op == "i32.lt_u") { return 73; }
     if (op == "i32.gt_s") { return 74; }
+    if (op == "i32.gt_u") { return 75; }
     if (op == "i32.le_s") { return 76; }
+    if (op == "i32.le_u") { return 77; }
     if (op == "i32.ge_s") { return 78; }
-    if (op == "i32.eqz") { return 69; }
+    if (op == "i32.ge_u") { return 79; }   // 0x4f
+    if (op == "i32.eqz") { return 69; }    // 0x45
     return 0;
 }
 
@@ -404,6 +416,14 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.push(ms);
         out = leb_u32(out, memarg_align(op));
         out = leb_u32(out, 0);
+        return out;
+    }
+    if (op == "select") {
+        // (select a b cond) — three stack operands, then 0x1b.
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels));
+        out = out.push(27);    // 0x1b
         return out;
     }
     var ao: i32 = arith_opcode(op);
