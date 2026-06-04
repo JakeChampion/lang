@@ -1908,6 +1908,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// checkpoint — the LSP can cancel a long type-check
 	// mid-flight when a new edit invalidates the in-progress
 	// result (docs/IDE-COMPILATION-RESEARCH.md Rec §1).
+	// Record per-function `own` parameter flags for the call-site ownership
+	// guard (E051), before any body is checked.
+	c.ownFuncs = map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		hasOwn := false
+		flags := make([]bool, len(fn.Params))
+		for i, p := range fn.Params {
+			flags[i] = p.Own
+			hasOwn = hasOwn || p.Own
+		}
+		if hasOwn {
+			c.ownFuncs[fn.Name] = flags
+		}
+	}
+
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -2668,6 +2683,13 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+
+	// ownFuncs maps a function name to its per-parameter `own` flags (only
+	// recorded for functions that have at least one owned parameter). Built
+	// before body checking so the call-site ownership guard (checkOwnedParams /
+	// E051) can require that arguments passed to an `own` parameter are owned
+	// values the caller can transfer.
+	ownFuncs map[string][]bool
 
 	// elemHint carries the expected element type for an array literal
 	// being checked at a coercion site (var init / return / argument).
@@ -3730,8 +3752,61 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			owned[p.Name] = true
 		}
 	}
-	if len(owned) == 0 || fn.Body == nil {
+	// Run when the current function has owned params (the affine move-check) OR
+	// when the program declares ANY owned-param function (the call-site guard
+	// must check every caller, even borrowed-only ones).
+	if (len(owned) == 0 && len(c.ownFuncs) == 0) || fn.Body == nil {
 		return
+	}
+
+	// isOwnedExpr reports whether `e` is a value the caller owns and can
+	// TRANSFER into an `own` parameter: a fresh construction (struct / tuple /
+	// array / map literal, string concat, variant-constructor call) or another
+	// `own` parameter of the current function. A borrowed value — a borrowed
+	// param, a field / index read, a plain local, a non-fresh call result —
+	// cannot be transferred (the caller, or someone, still owns it), so passing
+	// it to an `own` parameter is E051. Conservative: anything not provably
+	// owned is rejected.
+	var isOwnedExpr func(e ast.Expr) bool
+	isOwnedExpr = func(e ast.Expr) bool {
+		switch x := e.(type) {
+		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit:
+			return true
+		case *ast.Binary:
+			return x.IsStringConcat
+		case *ast.Ident:
+			return owned[x.Name]
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+					return true // variant-constructor call → fresh enum value
+				}
+			}
+			return false
+		}
+		return false
+	}
+	// guardCallArgs enforces the call-site ownership requirement: every argument
+	// passed to an `own` parameter of a (plain, same-module) callee must be an
+	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
+	// callees are conservatively skipped here — a later slice widens the guard.
+	guardCallArgs := func(x *ast.Call) {
+		if x.Method != nil {
+			return
+		}
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return
+		}
+		flags, isOwn := c.ownFuncs[id.Name]
+		if !isOwn {
+			return
+		}
+		for i := 0; i < len(x.Args) && i < len(flags); i++ {
+			if flags[i] && !isOwnedExpr(x.Args[i]) {
+				c.errfCode(x.Args[i].Pos(), "E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one")
+			}
+		}
 	}
 
 	// moved records, per consumed owned-param name, the position of the consume
@@ -3760,6 +3835,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					borrow[id] = true
 				}
 			case *ast.Call:
+				guardCallArgs(x)
 				// The callee position is a borrow (function ref / closure call).
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
