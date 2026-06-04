@@ -1379,6 +1379,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 if (ins.kind == "alloc") { make64 = true; }
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
+                else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
                 else if (ins.kind == "phi") {
                     var a: i32 = 0;

@@ -191,22 +191,29 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "alloc") {
-        // Bump-allocate imm i32 elements (4 bytes each) off the heap pointer.
+        // Bump-allocate imm 8-byte word slots off the heap pointer. Every
+        // element occupies a word so a pointer element (struct field) fits;
+        // i32 elements just use the low 4 bytes.
         out = out + "    movq __fern_ssa_hp(%rip), %rax\n";
-        out = out + "    addq $" + i32_to_string(ins.imm * 4) + ", __fern_ssa_hp(%rip)\n";
+        out = out + "    addq $" + i32_to_string(ins.imm * 8) + ", __fern_ssa_hp(%rip)\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "load_elem") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (64)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (32, zero-extends rcx)
-        out = out + "    movl (%rax,%rcx,4), %eax\n";
+        if (ins.imm == 64) { out = out + "    movq (%rax,%rcx,8), %rax\n"; }
+        else { out = out + "    movl (%rax,%rcx,8), %eax\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "store_elem") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (64)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (32)
-        out = out + "    movl " + regn(reg_of, ins.args[2], 32) + ", %edx\n";   // value
-        return out + "    movl %edx, (%rax,%rcx,4)\n";
+        if (ins.imm == 64) {
+            out = out + "    movq " + regn(reg_of, ins.args[2], 64) + ", %rdx\n";   // pointer value
+            return out + "    movq %rdx, (%rax,%rcx,8)\n";
+        }
+        out = out + "    movl " + regn(reg_of, ins.args[2], 32) + ", %edx\n";   // i32 value
+        return out + "    movl %edx, (%rax,%rcx,8)\n";
     }
     return out;
 }
