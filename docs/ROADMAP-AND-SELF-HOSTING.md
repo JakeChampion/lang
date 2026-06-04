@@ -537,10 +537,20 @@ it surfaced — and the prior two PRs fixed — three struct-array
 element-typing gaps the recursive `SExpr { items: SExpr[] }` tree leans on:
 indexed struct-array *fields*, then struct-array *params*. Unit-tested
 end-to-end (`TestSelfHostWatParse`, parsing `(module (func $f))` and
-asserting the nested tree). Remaining: the section/opcode encoder (module
-scaffold first: magic/version, the six sections, the WASI imports, memory,
-the `$heap` global, `__fern_alloc`, then opcode coverage to full parity),
-then the `wasi:cli/run` component wrapper.
+asserting the nested tree).
+
+Slice 4a landed: `examples/self_host/wat_encode.fern` — the byte-emission
+primitives the module-walker builds on, over an `i32[]` byte buffer atop
+`leb128.fern`: `wmagic` (the `"\0asm"` + version preamble), `wname` (a
+length-prefixed name), `wsection` (id + LEB byte-length + body), `wvec`
+(LEB count + elements), `valtype_byte`, and `wcat`. Unit-tested
+(`TestSelfHostWatEncode`). Remaining: the module-walker + opcode encoder
+(classify the `(module …)` children into the type/import/func/memory/
+global/export/code/data sections, resolve `$name` → func/local/global
+indices, and emit folded instructions post-order — scaffold + the integer
+opcode subset first, for a runnable `.wasm` diffed against the WAT path,
+then opcode coverage to full parity), then the `wasi:cli/run` component
+wrapper.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
