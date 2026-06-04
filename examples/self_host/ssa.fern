@@ -285,8 +285,11 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
         },
         parser.ExprBinary(b) => {
-            // `string + string` is concatenation, not i32 add.
-            var is_concat: boolean = b.op == "+" && (type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string");
+            // String operands change `+` (concat) and `==`/`!=` (content
+            // comparison, not pointer comparison).
+            var str_operand: boolean = type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string";
+            var is_concat: boolean = b.op == "+" && str_operand;
+            var is_streq: boolean = (b.op == "==" || b.op == "!=") && str_operand;
             s = build_expr(b.left, s);
             if (!s.ok) { return s; }
             var lv: i32 = s.cur_id();
@@ -297,6 +300,16 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var a2: i32[] = [lv, rv];
             if (is_concat) {
                 return s.emit(SInst { kind: "concat", result: s.cur_id(), args: a2, imm: 0, str: "" });
+            }
+            if (is_streq) {
+                s = s.emit(SInst { kind: "streq", result: s.cur_id(), args: a2, imm: 0, str: "" });
+                if (b.op == "!=") {
+                    var eqv: i32 = s.cur_id();
+                    s = s.fresh();
+                    var na: i32[] = [eqv];
+                    s = s.emit(SInst { kind: "unary", result: s.cur_id(), args: na, imm: 0, str: "!" });
+                }
+                return s;
             }
             return s.emit(SInst { kind: "binary", result: s.cur_id(), args: a2, imm: 0, str: b.op });
         },
@@ -1737,7 +1750,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "print" || ins.kind == "concat") { calls = calls.push(pos); }
+            if (ins.kind == "call" || ins.kind == "print" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.push(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -2007,6 +2020,17 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var cb: i32 = 0;
                 while (cb < lb) { mem = vmem_set(mem, cbase + 1 + la + cb, mem[pb + 1 + cb]); cb = cb + 1; }
                 tab = vtab_set(tab, inst.result, cbase);
+            } else if (inst.kind == "streq") {
+                // 1 if the two strings have equal length and bytes, else 0.
+                var sa: i32 = tab[inst.args[0]];
+                var sb: i32 = tab[inst.args[1]];
+                var eq: i32 = 1;
+                if (mem[sa] != mem[sb]) { eq = 0; }
+                else {
+                    var qi: i32 = 0;
+                    while (qi < mem[sa]) { if (mem[sa + 1 + qi] != mem[sb + 1 + qi]) { eq = 0; } qi = qi + 1; }
+                }
+                tab = vtab_set(tab, inst.result, eq);
             }
             k = k + 1;
         }
