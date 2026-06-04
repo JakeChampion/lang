@@ -122,6 +122,13 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"str-index-2", "function main(): i32 { var s = \"hi\"; return s[1]; }", 105},
 		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + s[i]; i = i + 1; } return t; }", 195},
 		{"str-empty", "function main(): i32 { var s = \"\"; return s.len(); }", 0},
+		// Structs: heap-allocated, fields at declaration-order word offsets.
+		{"struct-field", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 7, y: 9 }; return p.x; }", 7},
+		{"struct-sum", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 7, y: 9 }; return p.x + p.y; }", 16},
+		{"struct-field-order", "struct R { a: i32, b: i32, c: i32 } function main(): i32 { var r = R { c: 30, a: 10, b: 20 }; return r.b; }", 20},
+		// Pointer fields (string / array) — 64-bit word slots.
+		{"struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var n = Named { id: 5, label: \"hello\" }; return n.label.len(); }", 5},
+		{"struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 1, data: [10, 20, 30] }; return b.data[1] + b.tag; }", 21},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}

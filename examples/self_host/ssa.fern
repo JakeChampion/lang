@@ -105,43 +105,60 @@ pub struct BState {
     var_names: string[],
     var_vals: i32[],
     ok: boolean,
-    lc: LoopCtx
+    lc: LoopCtx,
+    structs: parser.StructDecl[],
+    vt_names: string[],
+    vt_types: string[]
 }
 
-function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean, lc: LoopCtx): BState {
-    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok, lc: lc };
+function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean, lc: LoopCtx, structs: parser.StructDecl[], vtn: string[], vtt: string[]): BState {
+    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok, lc: lc, structs: structs, vt_names: vtn, vt_types: vtt };
 }
 function (s: BState) with_lc(lc: LoopCtx): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, lc, s.structs, s.vt_names, s.vt_types);
+}
+// set_var_type records (append-only) a variable's struct type for later
+// field-offset resolution; a variable's type is fixed, so this map is not
+// part of the snapshot/restore env that build_if / build_while manage.
+function (s: BState) set_var_type(name: string, ty: string): BState {
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names.push(name), s.vt_types.push(ty));
+}
+function (s: BState) get_var_type(name: string): string {
+    var i: i32 = s.vt_names.len() - 1;   // last wins
+    while (i >= 0) {
+        if (s.vt_names[i] == name) { return s.vt_types[i]; }
+        i = i - 1;
+    }
+    return "";
 }
 
 // fresh allocates a new value id (read it back with cur_id()).
 function (s: BState) fresh(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 function (s: BState) cur_id(): i32 { return s.nvals - 1; }
 
 // emit appends an instruction to the current block.
 function (s: BState) emit(inst: SInst): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.push(inst), term: s.cur.term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // set_term sets the current block's terminator (does not close it).
 function (s: BState) set_term(term: STerm): BState {
     var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts, term: term, preds: s.cur.preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // close_cur pushes the current block into the finished list.
 function (s: BState) close_cur(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // open_block makes a fresh empty block (with the given preds) current.
 function (s: BState) open_block(id: i32, preds: i32[]): BState {
     var nb: SBlock = SBlock { id: id, insts: [], term: t_none(), preds: preds };
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 function (s: BState) terminated(): boolean { return s.cur.term.kind != ""; }
@@ -156,11 +173,11 @@ function (s: BState) set_var(name: string, val: i32): BState {
                 if (j == i) { nv = nv.push(val); } else { nv = nv.push(s.var_vals[j]); }
                 j = j + 1;
             }
-            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc);
+            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
         }
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 function (s: BState) get_var(name: string): i32 {
     var i: i32 = 0;
@@ -173,13 +190,13 @@ function (s: BState) get_var(name: string): i32 {
 // set_env replaces the whole variable environment (used to restore a
 // snapshot or install a branch's outgoing env at a merge).
 function (s: BState) set_env(vn: string[], vv: i32[]): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 function (s: BState) bump_blk(n: i32): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 function (s: BState) fail(): BState {
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // record_break / record_continue snapshot the current block id and the
@@ -209,6 +226,32 @@ function (s: BState) kconst(v: i32): BState {
     s = s.fresh();
     var na: i32[] = [];
     return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: na, imm: v, str: "" });
+}
+
+// type_of_expr returns the struct type name of an expression (for field-
+// offset resolution), or "" when it isn't a known struct: a variable's
+// recorded type, a struct literal's own type, or the declared type of a
+// field reached through nested access. Anything else (calls, arrays, …) is
+// "" — field access on it bails.
+function type_of_expr(e: parser.Expr, s: BState): string {
+    match (e) {
+        parser.ExprIdent(id) => { return s.get_var_type(id.name); },
+        parser.ExprStructLit(sl) => { return sl.type_name; },
+        parser.ExprFieldAccess(fa) => {
+            var st: string = type_of_expr(fa.obj, s);
+            if (st.len() == 0) { return ""; }
+            var si: i32 = find_struct_index(s.structs, st);
+            if (si < 0) { return ""; }
+            var sd: parser.StructDecl = s.structs[si];
+            var f: i32 = 0;
+            while (f < sd.fields.len()) {
+                if (sd.fields[f].name == fa.field) { return sd.fields[f].type_name; }
+                f = f + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
 }
 
 function build_expr(e: parser.Expr, s: BState): BState {
@@ -280,6 +323,54 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 },
                 _ => { return s.fail(); }
             }
+        },
+        parser.ExprStructLit(sl) => {
+            // Heap-allocate one word per field; store each field at its
+            // declaration-order offset, at the field's width (a pointer
+            // field — array / string / nested struct — is 64-bit).
+            if (sl.has_base) { return s.fail(); }   // `...base` spread not supported yet
+            var si: i32 = find_struct_index(s.structs, sl.type_name);
+            if (si < 0) { return s.fail(); }
+            var sd: parser.StructDecl = s.structs[si];
+            var nf: i32 = sd.fields.len();
+            s = s.fresh();
+            var shandle: i32 = s.cur_id();
+            var sna: i32[] = [];
+            s = s.emit(SInst { kind: "alloc", result: shandle, args: sna, imm: nf, str: "" });
+            var f: i32 = 0;
+            while (f < nf) {
+                var fname: string = sd.fields[f].name;
+                var lj: i32 = index_of_str(sl.field_names, fname);
+                if (lj < 0) { return s.fail(); }   // field missing from the literal
+                s = s.kconst(f);
+                var fidx: i32 = s.cur_id();
+                s = build_expr(sl.field_values[lj], s);
+                if (!s.ok) { return s; }
+                var fv: i32 = s.cur_id();
+                var fw: i32 = struct_field_width(s.structs, sl.type_name, fname);
+                s = s.fresh();
+                var fsa: i32[] = [shandle, fidx, fv];
+                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: fsa, imm: fw, str: "" });
+                f = f + 1;
+            }
+            s = s.fresh();
+            var sha: i32[] = [shandle];
+            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: sha, imm: 0, str: "" });
+        },
+        parser.ExprFieldAccess(fa) => {
+            var sty: string = type_of_expr(fa.obj, s);
+            if (sty.len() == 0) { return s.fail(); }
+            var off: i32 = struct_field_index(s.structs, sty, fa.field);
+            if (off < 0) { return s.fail(); }
+            var fw2: i32 = struct_field_width(s.structs, sty, fa.field);
+            s = build_expr(fa.obj, s);
+            if (!s.ok) { return s; }
+            var optr: i32 = s.cur_id();
+            s = s.kconst(off);
+            var oidx: i32 = s.cur_id();
+            s = s.fresh();
+            var ola: i32[] = [optr, oidx];
+            return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: ola, imm: fw2, str: "" });
         },
         parser.ExprString(strlit) => {
             // A string is a byte sequence; lower it to the same length-
@@ -376,9 +467,15 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
     if (s.terminated()) { return s; }
     match (st) {
         parser.StmtVar(v) => {
+            var ity: string = type_of_expr(v.init, s);
             s = build_expr(v.init, s);
             if (!s.ok) { return s; }
-            return s.set_var(v.name, s.cur_id());
+            s = s.set_var(v.name, s.cur_id());
+            // Record the variable's struct type (from the init's type or the
+            // declaration) so later field access can resolve offsets.
+            if (is_struct_type(ity, s.structs)) { return s.set_var_type(v.name, ity); }
+            if (is_struct_type(v.type_name, s.structs)) { return s.set_var_type(v.name, v.type_name); }
+            return s;
         },
         parser.StmtAssign(a) => {
             s = build_expr(a.value, s);
@@ -630,7 +727,7 @@ function append_header_latches(s: BState, header_id: i32, phi_vars: i32[], phi_r
         nb = nb.push(blk);
         i = i + 1;
     }
-    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc);
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok, s.lc, s.structs, s.vt_names, s.vt_types);
 }
 
 // build_while lowers `while (cond) { body }` to a loop:
@@ -759,15 +856,68 @@ pub function is_ptr_type(tn: string): boolean {
     return tn[tn.len() - 1] == 93;          // ']' — array types
 }
 
-pub function build_func(fd: parser.FuncDecl): BResult {
+// is_struct_type reports whether `name` names a declared struct.
+pub function is_struct_type(name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function find_struct_index(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+// struct_field_index returns the declaration-order index (word offset) of
+// `field` in struct `sname`, or -1.
+function struct_field_index(structs: parser.StructDecl[], sname: string, field: string): i32 {
+    var si: i32 = find_struct_index(structs, sname);
+    if (si < 0) { return 0 - 1; }
+    var sd: parser.StructDecl = structs[si];
+    var f: i32 = 0;
+    while (f < sd.fields.len()) {
+        if (sd.fields[f].name == field) { return f; }
+        f = f + 1;
+    }
+    return 0 - 1;
+}
+// struct_field_width returns the access width (32 / 64) of a struct field;
+// pointer-typed fields (array / string / nested struct) are 64-bit.
+function struct_field_width(structs: parser.StructDecl[], sname: string, field: string): i32 {
+    var si: i32 = find_struct_index(structs, sname);
+    if (si < 0) { return 32; }
+    var sd: parser.StructDecl = structs[si];
+    var f: i32 = 0;
+    while (f < sd.fields.len()) {
+        if (sd.fields[f].name == field) {
+            var tn: string = sd.fields[f].type_name;
+            if (is_ptr_type(tn) || is_struct_type(tn, structs)) { return 64; }
+            return 32;
+        }
+        f = f + 1;
+    }
+    return 32;
+}
+
+pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BResult {
+    var f0: SFunc = SFunc { name: fd.name, nparams: 0, nvals: 0, blocks: [], entry: 0 };
+    // Defer passing / returning structs (needs cross-function pointer-width
+    // marking): bail if the signature mentions a struct type.
+    if (is_struct_type(fd.ret_type, structs)) { return BResult { func: f0, ok: false }; }
     // Params occupy value ids 0..nparams-1, defined by "param" insts in
-    // the entry block (block id 0). A pointer-typed (array) param is marked
-    // with str="ptr" so compute_widths gives it 64-bit width.
+    // the entry block (block id 0). A pointer-typed (array/string) param is
+    // marked str="ptr" so compute_widths gives it 64-bit width.
     var pnames: string[] = [];
     var pvals: i32[] = [];
     var insts0: SInst[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
+        if (is_struct_type(fd.params[i].type_name, structs)) { return BResult { func: f0, ok: false }; }
         var noargs: i32[] = [];
         var pmark: string = "";
         if (is_ptr_type(fd.params[i].type_name)) { pmark = "ptr"; }
@@ -778,8 +928,7 @@ pub function build_func(fd: parser.FuncDecl): BResult {
     }
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
-    var f0: SFunc = SFunc { name: fd.name, nparams: nparams, nvals: nparams, blocks: [], entry: 0 };
-    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none());
+    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
 
     s = build_stmts(fd.body, s);
     if (!s.ok) { return BResult { func: f0, ok: false }; }
