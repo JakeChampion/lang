@@ -30,10 +30,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
-        // The x86-64 backend lowers heap ops; arm64 doesn't yet, so skip
-        // memory-using functions only for the arm64 target.
-        var skip_mem: boolean = target == "arm64" && r.ok && ssa.uses_memory(r.func);
-        if (r.ok && !skip_mem) { funcs = funcs.push(ssa.optimize(r.func)); }
+        if (r.ok) { funcs = funcs.push(ssa.optimize(r.func)); }
         i = i + 1;
     }
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }

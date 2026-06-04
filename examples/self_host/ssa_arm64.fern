@@ -52,19 +52,43 @@ function regname(k: i32): string {
     if (k == 2) { return "w14"; }
     return "w15";
 }
+// regname64 is the 64-bit (x-register) view, used for pointer-width
+// (alloc-derived) values.
+function regname64(k: i32): string {
+    if (k == 0) { return "x12"; }
+    if (k == 1) { return "x13"; }
+    if (k == 2) { return "x14"; }
+    return "x15";
+}
 // NREGS is the size of that allocatable set.
 function nregs(): i32 { return 4; }
 
-// load_op moves SSA value v into scratch register `sc` (reg→reg move when
-// v is allocated, else a load from its stack slot).
-function load_op(reg_of: i32[], v: i32, sc: string, out: string): string {
-    if (reg_of[v] >= 0) { return out + "    mov " + sc + ", " + regname(reg_of[v]) + "\n"; }
-    return out + "    ldr " + sc + ", " + slot(v) + "\n";
+// areg names a scratch register at a given width: class "a" → w9/x9,
+// "c" → w10/x10, "d" → w11/x11.
+function areg(cls: string, width: i32): string {
+    if (cls == "a") { if (width == 64) { return "x9"; } return "w9"; }
+    if (cls == "c") { if (width == 64) { return "x10"; } return "w10"; }
+    if (width == 64) { return "x11"; }
+    return "w11";
 }
-// store_res moves scratch register `sc` into SSA value v's location.
-function store_res(reg_of: i32[], v: i32, sc: string, out: string): string {
-    if (reg_of[v] >= 0) { return out + "    mov " + regname(reg_of[v]) + ", " + sc + "\n"; }
-    return out + "    str " + sc + ", " + slot(v) + "\n";
+// regn returns where SSA value v lives at the given width — its register
+// name (width-correct) if allocated, else its 8-byte stack slot.
+function regn(reg_of: i32[], v: i32, width: i32): string {
+    if (reg_of[v] >= 0) { if (width == 64) { return regname64(reg_of[v]); } return regname(reg_of[v]); }
+    return slot(v);
+}
+// load_op moves SSA value v into scratch class `cls` (reg→reg move when v
+// is allocated, else a load from its stack slot), at the value's width.
+function load_op(reg_of: i32[], widths: i32[], v: i32, cls: string, out: string): string {
+    var w: i32 = widths[v];
+    if (reg_of[v] >= 0) { return out + "    mov " + areg(cls, w) + ", " + regn(reg_of, v, w) + "\n"; }
+    return out + "    ldr " + areg(cls, w) + ", " + slot(v) + "\n";
+}
+// store_res moves scratch class `cls` into SSA value v's location.
+function store_res(reg_of: i32[], widths: i32[], v: i32, cls: string, out: string): string {
+    var w: i32 = widths[v];
+    if (reg_of[v] >= 0) { return out + "    mov " + regn(reg_of, v, w) + ", " + areg(cls, w) + "\n"; }
+    return out + "    str " + areg(cls, w) + ", " + slot(v) + "\n";
 }
 
 function block_index(f: ssa.SFunc, id: i32): i32 {
@@ -122,40 +146,72 @@ function emit_binary(op: string, out: string): string {
     return out;
 }
 
-function emit_inst(ins: ssa.SInst, reg_of: i32[], out: string): string {
+// store_reg32 stores a named 32-bit source register into i32 value v's
+// location (used for incoming params and call results).
+function store_reg32(reg_of: i32[], v: i32, src: string, out: string): string {
+    if (reg_of[v] >= 0) { return out + "    mov " + regname(reg_of[v]) + ", " + src + "\n"; }
+    return out + "    str " + src + ", " + slot(v) + "\n";
+}
+
+function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): string {
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         out = emit_const(ins.imm, "w9", out);
-        return store_res(reg_of, ins.result, "w9", out);
+        return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "copy") {
-        out = load_op(reg_of, ins.args[0], "w9", out);
-        return store_res(reg_of, ins.result, "w9", out);
+        out = load_op(reg_of, widths, ins.args[0], "a", out);
+        return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "binary") {
-        out = load_op(reg_of, ins.args[0], "w9", out);
-        out = load_op(reg_of, ins.args[1], "w10", out);
+        out = load_op(reg_of, widths, ins.args[0], "a", out);
+        out = load_op(reg_of, widths, ins.args[1], "c", out);
         out = emit_binary(ins.str, out);
-        return store_res(reg_of, ins.result, "w9", out);
+        return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "unary") {
-        out = load_op(reg_of, ins.args[0], "w9", out);
+        out = load_op(reg_of, widths, ins.args[0], "a", out);
         if (ins.str == "-") { out = out + "    neg w9, w9\n"; }
         else { out = out + "    cmp w9, #0\n    cset w9, eq\n"; }
-        return store_res(reg_of, ins.result, "w9", out);
+        return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "call") {
         var i: i32 = 0;
         while (i < ins.args.len() && i < 8) {
-            out = load_op(reg_of, ins.args[i], argreg(i), out);
+            if (reg_of[ins.args[i]] >= 0) {
+                out = out + "    mov " + argreg(i) + ", " + regname(reg_of[ins.args[i]]) + "\n";
+            } else {
+                out = out + "    ldr " + argreg(i) + ", " + slot(ins.args[i]) + "\n";
+            }
             i = i + 1;
         }
         out = out + "    bl __fn_" + ins.str + "\n";
-        return store_res(reg_of, ins.result, "w0", out);
+        return store_reg32(reg_of, ins.result, "w0", out);
+    }
+    if (ins.kind == "alloc") {
+        // Bump-allocate imm i32 elements (4 bytes each); result = old hp.
+        out = out + "    adrp x10, __fern_ssa_hp\n";
+        out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
+        out = out + "    ldr x9, [x10]\n";
+        out = out + "    add x11, x9, #" + i32_to_string(ins.imm * 4) + "\n";
+        out = out + "    str x11, [x10]\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
+    if (ins.kind == "load_elem") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
+        out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
+        out = out + "    ldr w9, [x9, w10, sxtw #2]\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
+    if (ins.kind == "store_elem") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
+        out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
+        out = load_op(reg_of, widths, ins.args[2], "d", out);   // value (w11)
+        return out + "    str w11, [x9, w10, sxtw #2]\n";
     }
     return out;
 }
 
-function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, tgt: i32, out: string): string {
+function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], widths: i32[], pred: i32, tgt: i32, out: string): string {
     var ti: i32 = block_index(f, tgt);
     if (ti < 0) { return out; }
     var tb: ssa.SBlock = f.blocks[ti];
@@ -164,8 +220,8 @@ function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, tgt: i32, out: s
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
         if (ins.kind == "phi") {
-            out = load_op(reg_of, ins.args[sl], "w9", out);
-            out = store_res(reg_of, ins.result, "w9", out);
+            out = load_op(reg_of, widths, ins.args[sl], "a", out);
+            out = store_res(reg_of, widths, ins.result, "a", out);
         }
         k = k + 1;
     }
@@ -176,20 +232,24 @@ function blk_label(name: string, id: i32): string {
     return ".L_" + name + "_" + i32_to_string(id);
 }
 
-function emit_term(f: ssa.SFunc, reg_of: i32[], blk: ssa.SBlock, out: string): string {
+function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
     if (t.kind == "ret") {
-        out = load_op(reg_of, t.value, "w0", out);
+        var w: i32 = widths[t.value];
+        var dst: string = "w0";
+        if (w == 64) { dst = "x0"; }
+        if (reg_of[t.value] >= 0) { out = out + "    mov " + dst + ", " + regn(reg_of, t.value, w) + "\n"; }
+        else { out = out + "    ldr " + dst + ", " + slot(t.value) + "\n"; }
         out = out + "    mov sp, x29\n";
         out = out + "    ldp x29, x30, [sp], #16\n";
         return out + "    ret\n";
     }
     if (t.kind == "br") {
-        out = emit_phi_moves(f, reg_of, blk.id, t.target, out);
+        out = emit_phi_moves(f, reg_of, widths, blk.id, t.target, out);
         return out + "    b " + blk_label(f.name, t.target) + "\n";
     }
     if (t.kind == "brif") {
-        out = load_op(reg_of, t.cond, "w9", out);
+        out = load_op(reg_of, widths, t.cond, "a", out);
         out = out + "    cbnz w9, " + blk_label(f.name, t.t) + "\n";
         return out + "    b " + blk_label(f.name, t.f) + "\n";
     }
@@ -197,6 +257,7 @@ function emit_term(f: ssa.SFunc, reg_of: i32[], blk: ssa.SBlock, out: string): s
 }
 
 pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
+    var widths: i32[] = ssa.compute_widths(f);
     var out: string = "__fn_" + f.name + ":\n";
     out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
     var frame: i32 = f.nvals * 8;
@@ -204,7 +265,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     if (frame > 0) { out = out + "    sub sp, sp, #" + i32_to_string(frame) + "\n"; }
     var p: i32 = 0;
     while (p < f.nparams) {
-        out = store_res(reg_of, p, argreg(p), out);
+        out = store_reg32(reg_of, p, argreg(p), out);
         p = p + 1;
     }
     var bi: i32 = 0;
@@ -215,18 +276,22 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                out = emit_inst(ins, reg_of, out);
+                out = emit_inst(ins, reg_of, widths, out);
             }
             k = k + 1;
         }
-        out = emit_term(f, reg_of, blk, out);
+        out = emit_term(f, reg_of, widths, blk, out);
         bi = bi + 1;
     }
     return out;
 }
 
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
-    var out: string = "    .globl _start\n    .text\n";
+    var out: string = "    .globl _start\n";
+    // Heap: a 16 MiB zero-initialised arena and an 8-byte bump pointer.
+    out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
+    out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
+    out = out + "    .text\n";
     var i: i32 = 0;
     while (i < funcs.len()) {
         var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
@@ -235,6 +300,11 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         i = i + 1;
     }
     out = out + "_start:\n";
+    out = out + "    adrp x9, __fern_ssa_heap\n";
+    out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";
+    out = out + "    adrp x10, __fern_ssa_hp\n";
+    out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
+    out = out + "    str x9, [x10]\n";
     out = out + "    bl __fn_main\n";
     out = out + "    mov x8, #93\n";
     out = out + "    svc #0\n";
