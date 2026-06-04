@@ -188,6 +188,38 @@ function main(): i32 {
 	}
 }
 
+// Fires for ENUM sources: a dead, owned enum local (uniform-droppable, here a
+// single-payload Wrap(i32[])) is reused for a later same-enum construction.
+func TestGeneralReuseFiresForEnum(t *testing.T) {
+	ip := lowerForTest(t, `enum Wrapper { Wrap(i32[]) }
+function main(): i32 {
+    var a: Wrapper = Wrap([1, 2]);
+    var s: i32 = match (a) { Wrap(xs) => xs[0] };
+    var b: Wrapper = Wrap([s, 3]);
+    return match (b) { Wrap(xs) => xs[0] };
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("enum reuse should fire (dead a -> b), got %d", got)
+	}
+}
+
+// Skips: an enum D never pairs with a struct C, even at the same box class.
+func TestGeneralReuseSkipsEnumToStructKindMismatch(t *testing.T) {
+	ip := lowerForTest(t, `enum Wrapper { Wrap(i32[]) }
+struct Holder { items: i32[] }
+function main(): i32 {
+    var a: Wrapper = Wrap([1, 2]);
+    var s: i32 = match (a) { Wrap(xs) => xs[0] };
+    var b: Holder = Holder { items: [s, 3] };
+    return b.items[0];
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("enum D must not pair with struct C (kind mismatch), got %d", got)
+	}
+}
+
 func TestGeneralReuseSkipsStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function main(): i32 {

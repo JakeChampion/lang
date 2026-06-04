@@ -196,6 +196,46 @@ const genReuseTuplePtrSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// genReuseEnumChurnSrc: enum-source reuse with a uniform-droppable
+// Wrap(i32[]). Each iteration's dead `a` is reused for `b`; a's old array is
+// freed at the uniform payload offset on the reuse branch each turn (no leak),
+// b's fresh array retained. Value-correct only if every reuse wrote the right
+// block.
+const genReuseEnumChurnSrc = `enum Wrapper { Wrap(i32[]) }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: Wrapper = Wrap([i, i + 1]);
+        var s: i32 = match (a) { Wrap(xs) => xs[0] + xs[1] };   // a's last use
+        var b: Wrapper = Wrap([s, i]);                          // reuses a's box
+        acc = acc + match (b) { Wrap(xs) => xs[0] + xs[1] };
+        i = i + 1;
+    }
+    // s = i + (i+1) = 2i+1; b = [2i+1, i] -> sum 3i+1; total i=0..199 = 3*19900 + 200 = 59900
+    if (acc != 59900) { return 999; }
+    return __rc_underflow_count();
+}`
+
+// genReuseEnumCrossVariantSrc: a uniform two-variant enum, D and C may differ
+// in variant (Keep vs Swap, same box class). Exercises the variant-independent
+// old-payload free.
+const genReuseEnumCrossVariantSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: Bag = Keep([i, i + 1]);
+        var s: i32 = match (a) { Keep(xs) => xs[0], Swap(xs) => xs[1] };   // a dead
+        var b: Bag = Swap([s, i + 2]);                                     // reuses a's box
+        acc = acc + match (b) { Keep(xs) => xs[0], Swap(xs) => xs[1] };
+        i = i + 1;
+    }
+    // s = i (Keep.xs[0]); b = Swap([i, i+2]) -> match picks xs[1] = i+2; total i=0..199 = sum(i+2) = 19900 + 400 = 20300
+    if (acc != 20300) { return 999; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
@@ -205,6 +245,8 @@ var genReuseCases = []struct{ name, src string }{
 	{"crosstype_ptr", genReuseCrossTypePtrSrc},
 	{"tuple_churn", genReuseTupleChurnSrc},
 	{"tuple_ptr", genReuseTuplePtrSrc},
+	{"enum_churn", genReuseEnumChurnSrc},
+	{"enum_cross_variant", genReuseEnumCrossVariantSrc},
 }
 
 func TestX86_64GeneralReuse(t *testing.T) {
