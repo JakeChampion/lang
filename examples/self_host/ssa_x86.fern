@@ -55,6 +55,32 @@ function argreg32(i: i32): string {
     return "%r9d";
 }
 
+// regname maps an allocatable register index to its x86-64 32-bit name. We
+// use the caller-saved %r10d / %r11d — never used as computation scratch
+// (%eax/%ecx), as argument registers, or clobbered by idiv (%edx). Since
+// regalloc force-spills any value live across a call, these need no
+// save/restore.
+function regname(k: i32): string {
+    if (k == 0) { return "%r10d"; }
+    return "%r11d";
+}
+function nregs(): i32 { return 2; }
+
+// loc returns where SSA value v lives — its register name if allocated,
+// else its stack slot.
+function loc(reg_of: i32[], v: i32): string {
+    if (reg_of[v] >= 0) { return regname(reg_of[v]); }
+    return slot(v);
+}
+// load_op moves SSA value v into scratch register `sc`.
+function load_op(reg_of: i32[], v: i32, sc: string, out: string): string {
+    return out + "    movl " + loc(reg_of, v) + ", " + sc + "\n";
+}
+// store_res moves scratch register `sc` into SSA value v's location.
+function store_res(reg_of: i32[], v: i32, sc: string, out: string): string {
+    return out + "    movl " + sc + ", " + loc(reg_of, v) + "\n";
+}
+
 function block_index(f: ssa.SFunc, id: i32): i32 {
     var i: i32 = 0;
     while (i < f.blocks.len()) {
@@ -104,41 +130,41 @@ function emit_binary(op: string, out: string): string {
 
 // emit_inst lowers a single value-defining instruction. param and phi are
 // handled elsewhere (prologue / edge copies) and skipped here.
-function emit_inst(ins: ssa.SInst, out: string): string {
+function emit_inst(ins: ssa.SInst, reg_of: i32[], out: string): string {
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
-        return out + "    movl $" + i32_to_string(ins.imm) + ", " + slot(ins.result) + "\n";
+        return out + "    movl $" + i32_to_string(ins.imm) + ", " + loc(reg_of, ins.result) + "\n";
     }
     if (ins.kind == "copy") {
-        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
-        return out + "    movl %eax, " + slot(ins.result) + "\n";
+        out = load_op(reg_of, ins.args[0], "%eax", out);
+        return store_res(reg_of, ins.result, "%eax", out);
     }
     if (ins.kind == "binary") {
-        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
-        out = out + "    movl " + slot(ins.args[1]) + ", %ecx\n";
+        out = load_op(reg_of, ins.args[0], "%eax", out);
+        out = load_op(reg_of, ins.args[1], "%ecx", out);
         out = emit_binary(ins.str, out);
-        return out + "    movl %eax, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "%eax", out);
     }
     if (ins.kind == "unary") {
-        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
+        out = load_op(reg_of, ins.args[0], "%eax", out);
         if (ins.str == "-") { out = out + "    negl %eax\n"; }
         else { out = out + "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"; }
-        return out + "    movl %eax, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "%eax", out);
     }
     if (ins.kind == "call") {
         var i: i32 = 0;
         while (i < ins.args.len() && i < 6) {
-            out = out + "    movl " + slot(ins.args[i]) + ", " + argreg32(i) + "\n";
+            out = load_op(reg_of, ins.args[i], argreg32(i), out);
             i = i + 1;
         }
         out = out + "    call __fn_" + ins.str + "\n";
-        return out + "    movl %eax, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "%eax", out);
     }
     return out;
 }
 
 // emit_phi_moves copies the phi operands flowing along the edge pred → tgt
 // into the phi result slots (out-of-SSA on this edge).
-function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string {
+function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, tgt: i32, out: string): string {
     var ti: i32 = block_index(f, tgt);
     if (ti < 0) { return out; }
     var tb: ssa.SBlock = f.blocks[ti];
@@ -147,8 +173,8 @@ function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string 
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
         if (ins.kind == "phi") {
-            out = out + "    movl " + slot(ins.args[sl]) + ", %eax\n";
-            out = out + "    movl %eax, " + slot(ins.result) + "\n";
+            out = load_op(reg_of, ins.args[sl], "%eax", out);
+            out = store_res(reg_of, ins.result, "%eax", out);
         }
         k = k + 1;
     }
@@ -159,18 +185,18 @@ function blk_label(name: string, id: i32): string {
     return ".L_" + name + "_" + i32_to_string(id);
 }
 
-function emit_term(f: ssa.SFunc, name: string, blk: ssa.SBlock, out: string): string {
+function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
     if (t.kind == "ret") {
-        out = out + "    movl " + slot(t.value) + ", %eax\n";
+        out = load_op(reg_of, t.value, "%eax", out);
         return out + "    leave\n    ret\n";
     }
     if (t.kind == "br") {
-        out = emit_phi_moves(f, blk.id, t.target, out);
+        out = emit_phi_moves(f, reg_of, blk.id, t.target, out);
         return out + "    jmp " + blk_label(name, t.target) + "\n";
     }
     if (t.kind == "brif") {
-        out = out + "    movl " + slot(t.cond) + ", %eax\n";
+        out = load_op(reg_of, t.cond, "%eax", out);
         out = out + "    testl %eax, %eax\n";
         out = out + "    jne " + blk_label(name, t.t) + "\n";
         return out + "    jmp " + blk_label(name, t.f) + "\n";
@@ -179,16 +205,16 @@ function emit_term(f: ssa.SFunc, name: string, blk: ssa.SBlock, out: string): st
 }
 
 // emit_func lowers one SSA function to its `__fn_<name>` body.
-pub function emit_func(f: ssa.SFunc): string {
+pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var out: string = "__fn_" + f.name + ":\n";
     out = out + "    pushq %rbp\n    movq %rsp, %rbp\n";
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { out = out + "    subq $" + i32_to_string(frame) + ", %rsp\n"; }
-    // Spill incoming arguments to their slots.
+    // Spill incoming arguments to their locations.
     var p: i32 = 0;
     while (p < f.nparams) {
-        out = out + "    movl " + argreg32(p) + ", " + slot(p) + "\n";
+        out = store_res(reg_of, p, argreg32(p), out);
         p = p + 1;
     }
     // Emit each block: label, instructions, terminator.
@@ -200,25 +226,26 @@ pub function emit_func(f: ssa.SFunc): string {
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                out = emit_inst(ins, out);
+                out = emit_inst(ins, reg_of, out);
             }
             k = k + 1;
         }
-        out = emit_term(f, f.name, blk, out);
+        out = emit_term(f, f.name, reg_of, blk, out);
         bi = bi + 1;
     }
     return out;
 }
 
 // emit_program frames the whole module: each function body, then `_start`
-// dispatching into main(). The use_regalloc flag is accepted for parity
-// with the arm64 backend; the x86-64 register allocator is a later slice,
-// so this backend currently always spills.
+// dispatching into main(). With use_regalloc the linear-scan allocator runs
+// per function (caller-saved %r10d/%r11d); otherwise everything spills.
 pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n    .text\n";
     var i: i32 = 0;
     while (i < funcs.len()) {
-        out = out + emit_func(funcs[i]);
+        var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
+        if (use_regalloc) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
+        out = out + emit_func(funcs[i], reg_of);
         i = i + 1;
     }
     out = out + "_start:\n";
