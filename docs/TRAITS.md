@@ -507,14 +507,20 @@ regressing the self-host gates. It needs traits in two slices:
   (hand-written or `@derive(Display)`) was wrongly formatted as an
   integer. Gated on `struct_type_of(recv)` having a `to_string` method,
   so **struct `to_string` + `@derive(Display)`** (incl. nested structs)
-  now dispatch correctly on wasm. Still open for wasm trait/enum parity
-  (each a pre-existing gap, broader than traits): **primitive-receiver
-  user methods** (`self.x.eq(other.x)` on an i32 field has no `i32.eq`
-  dispatch, so `@derive(Eq/Ord)` on structs falls back); **user-enum
-  variant construction** (`Circle(3)` emits an undefined `$Circle` call —
-  only `Option`/`Result` are special-cased — and the numeric variant-tag
-  scheme has no canonical name→tag map); and on top of those, enum
-  methods + enum `@derive`. Tracked as the wasm self-host slice.
+  dispatch correctly on wasm. Then **user-defined enums** landed: the
+  variant-tag scheme is `struct_id` (a struct's index in the table,
+  stored at offset 0, read by `match`), so a positional variant call
+  `Circle(3)` now builds `[struct_id@0, payload@4]` like a struct literal
+  (only `Option`/`Result` were special-cased before, leaving an undefined
+  `$Circle` call); a bare unit variant (`Nil`) builds its `[struct_id@0]`
+  tag box; `match` binds an enum variant's payload at offset 4 (a
+  `__ev`-bearing struct) vs the whole value for a `type E = A | B`
+  struct-union; and an enum-typed var records the ENUM name (not the
+  variant from its initializer) so enum methods dispatch. With those,
+  **user enums + enum methods + enum `@derive(Display)`** work on wasm.
+  Still open: **primitive-receiver user methods** (`self.x.eq(other.x)`
+  on an i32 field has no `i32.eq` dispatch), so `@derive(Eq/Ord)` on
+  structs/enums still falls back — the last wasm trait gap.
 
 ## 7b. The `std/test` collapse (landed)
 
