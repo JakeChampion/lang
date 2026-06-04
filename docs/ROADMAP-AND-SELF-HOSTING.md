@@ -508,6 +508,31 @@ core module), and binary wasm encoding
 `wasmtime`).
 The core wasi builtins (clock / file / env / random) are now covered.
 
+A sixteenth pass found one remaining **language** gap (so the "what
+remains is packaging, not language" claim above is not yet absolute):
+**`i64[]` arrays whose elements exceed 32 bits**. The self-host array
+representation uses a fixed **4-byte element slot** across *every*
+backend and the interpreter (`[len:i32][cap:i32][elems: 4 bytes each]`),
+so an `i64[]` element is stored / loaded as an i32. Small i64 values
+(< 2³¹) happen to round-trip — `var xs: i64[] = [10, 20, 30]` sums
+correctly — but a literal that doesn't fit in i32 is emitted as an
+out-of-range `(i32.const 5000000000)` (the wasm module fails to load),
+and a large value read back is truncated (the self-host interpreter
+returns garbage too). The Go compiler stores `i64[]` elements in 8-byte
+slots (`i64.store` / `i64.load`), so this is a genuine parity gap.
+
+It is deliberately **not** patched into the wasm backend alone: element
+width is baked into the literal emit, index read, `__set_index`, the
+`for` loop, `__fern_arr_push` / `__fern_arr_slice`, and the alloc size —
+in `wasm.fern`, `interp.fern`, `asm.fern`, and `asm_arm64.fern` alike —
+and the element-i64-ness has to flow from a declaration type (`var xs:
+i64[]`) down into an otherwise-untyped literal. Fixing it in wasm only
+would make the wasm backend disagree with the others (and the fixpoint
+gate guards the native path, not wasm element width), so this is tracked
+as a single cross-cutting **8-byte-slot for 64-bit element types** change
+spanning all four backends, to be done as its own series rather than a
+one-backend hack. (`f64[]` shares the same slot, so it rides along.)
+
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
 
 `fern -target arm64-darwin` now emits arm64-apple-darwin assembly that
