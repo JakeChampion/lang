@@ -120,6 +120,14 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"closure-capture", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
 		{"closure-capture-array", "function main(): i32 { var xs = [10, 20, 30]; var get = function(i: i32): i32 { return xs[i]; }; return get(0) + get(2); }", 40},
 		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply(function(x: i32): i32 { return x * 7; }, 6); }", 42},
+		// f64: f64.const (8-byte IEEE-754 immediate via f64_bits), the f64
+		// arithmetic / comparison ops, the math intrinsics, and the
+		// int<->float conversions.
+		{"f64-mul", "function main(): i32 { var x: f64 = 3.5; return (x * 2.0) as i32; }", 7},
+		{"f64-sub", "function main(): i32 { var a: f64 = 10.5; var b: f64 = 3.5; return (a - b) as i32; }", 7},
+		{"f64-compare", "function main(): i32 { var a: f64 = 2.5; if (a > 2.0 && a < 3.0) { return 42; } return 0; }", 42},
+		{"f64-sqrt", "function main(): i32 { var a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
+		{"f64-int-convert", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
 	}
 
 	for _, tc := range cases {
