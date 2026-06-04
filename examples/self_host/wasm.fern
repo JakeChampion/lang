@@ -4240,6 +4240,23 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // the array elements resolves) — needed before the string-locals pass
     // so a `for p in pts` over a struct array types p as a struct.
     cx = Ctx { ...cx, sa_names: collect_struct_array_names(f.body, cx, []), sa_types: collect_struct_array_types(f.body, cx, []) };
+    // Struct-array params (e.g. `ts: Tk[]`) are struct-array locals too, so
+    // `ts[i].field` / `for x in ts` resolve the element struct type.
+    var san: string[] = cx.sa_names;
+    var sat: string[] = cx.sa_types;
+    var sap: i32 = 0;
+    while (sap < f.params.len()) {
+        var pt: string = f.params[sap].type_name;
+        if (pt.len() > 2 && pt[pt.len() - 2:pt.len()] == "[]") {
+            var pe: string = pt[0:pt.len() - 2];
+            if (is_struct_type(structs, pe) && !contains_str(san, f.params[sap].name)) {
+                san = san.push(f.params[sap].name);
+                sat = sat.push(pe);
+            }
+        }
+        sap = sap + 1;
+    }
+    cx = Ctx { ...cx, sa_names: san, sa_types: sat };
     // String-valued maps are needed during collect_str_locals_stmts (so a
     // `for v in m.values()` binds v as string). Seed them from
     // string-literal set values first (is_string_expr is accurate for

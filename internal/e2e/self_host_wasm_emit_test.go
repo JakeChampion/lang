@@ -643,6 +643,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Also covers a recursive struct (a node holding a child array).
 		{"struct-array-struct-field", "struct Pt { x: i32, y: i32 } struct Bag { items: Pt[] } function main(): i32 { var b = Bag { items: [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }] }; print_int(b.items[0].x); print_int(b.items[1].y); return 0; }", 0, "58"},
 		{"struct-array-field-recursive", "struct SExpr { kind: i32, items: SExpr[] } function main(): i32 { var leaf = SExpr { kind: 2, items: [] }; var lst = SExpr { kind: 0, items: [leaf, leaf] }; return lst.items.len() + lst.items[0].kind; }", 4, ""},
+		// A struct-array *param* (`ts: Tk[]`) is a struct-array local too, so
+		// `ts[i].field` and `for t in ts { … t.field … }` resolve the element
+		// struct type (it previously read a bogus (i32.const 0)).
+		{"struct-array-param-index", "struct Tk { kind: i32, text: string } function first(ts: Tk[]): i32 { return ts[0].kind; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(first(ts)); return 0; }", 0, "5"},
+		{"struct-array-param-for", "struct Tk { kind: i32, text: string } function sumk(ts: Tk[]): i32 { var s = 0; for t in ts { s = s + t.kind; } return s; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(sumk(ts)); return 0; }", 0, "14"},
 		{"struct-string-field", "struct P { name: string, age: i32 } function main(): i32 { var p = P { name: \"sam\", age: 30 }; write(f\"{p.name} is {p.age}\"); return 0; }", 0, "sam is 30"},
 		{"fn-returns-struct", "struct V { a: i32, b: i32 } function mk(n: i32): V { return V { a: n, b: n * 2 }; } function main(): i32 { var v = mk(5); print_int(v.a + v.b); return 0; }", 0, "15"},
 		{"recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { print_int(fib(10)); return 0; }", 0, "55"},
