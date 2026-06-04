@@ -366,9 +366,9 @@ function build_expr(e: parser.Expr, s: BState): BState {
             }
         },
         parser.ExprStructLit(sl) => {
-            // Heap-allocate one word per field; store each field at its
-            // declaration-order offset, at the field's width (a pointer
-            // field — array / string / nested struct — is 64-bit).
+            // Heap-allocate a tag word + one word per field: element 0 holds
+            // the variant tag (the struct's type id, for `match`), fields
+            // follow at offset f+1, each at its width.
             if (sl.has_base) { return s.fail(); }   // `...base` spread not supported yet
             var si: i32 = find_struct_index(s.structs, sl.type_name);
             if (si < 0) { return s.fail(); }
@@ -377,13 +377,21 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var shandle: i32 = s.cur_id();
             var sna: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: shandle, args: sna, imm: nf, str: "" });
+            s = s.emit(SInst { kind: "alloc", result: shandle, args: sna, imm: nf + 1, str: "" });
+            // tag at offset 0
+            s = s.kconst(0);
+            var tagidx: i32 = s.cur_id();
+            s = s.kconst(si);
+            var tagval: i32 = s.cur_id();
+            s = s.fresh();
+            var tsa: i32[] = [shandle, tagidx, tagval];
+            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: tsa, imm: 32, str: "" });
             var f: i32 = 0;
             while (f < nf) {
                 var fname: string = sd.fields[f].name;
                 var lj: i32 = index_of_str(sl.field_names, fname);
                 if (lj < 0) { return s.fail(); }   // field missing from the literal
-                s = s.kconst(f);
+                s = s.kconst(f + 1);
                 var fidx: i32 = s.cur_id();
                 s = build_expr(sl.field_values[lj], s);
                 if (!s.ok) { return s; }
@@ -407,7 +415,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = build_expr(fa.obj, s);
             if (!s.ok) { return s; }
             var optr: i32 = s.cur_id();
-            s = s.kconst(off);
+            s = s.kconst(off + 1);   // field f is at offset f+1 (offset 0 is the tag)
             var oidx: i32 = s.cur_id();
             s = s.fresh();
             var ola: i32[] = [optr, oidx];
@@ -537,6 +545,9 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
         parser.StmtWhile(w) => {
             return build_while(w, s);
         },
+        parser.StmtMatch(m) => {
+            return build_match(m, s);
+        },
         parser.StmtBreak(b) => {
             if (!s.lc.active || b.tag != 0) { return s.fail(); }
             s = s.record_break();
@@ -567,6 +578,62 @@ function build_stmts(body: parser.Stmt[], s: BState): BState {
 // The merge block carries a phi for every pre-existing variable whose value
 // differs between the arms that reach it. A branch that ends in `return`
 // does not reach the merge and contributes no phi operand.
+// synth_match_chain desugars match arms into a nested if/else-if chain of
+// AST nodes: each variant arm becomes `if ($tag == <variant tag>) { <bind>
+// <body> } else <rest>`, with a trailing wildcard arm as the final else.
+// $scrut / $tag are synthetic vars bound by build_match.
+function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]): parser.Stmt[] {
+    var chain: parser.Stmt[] = [];
+    var i: i32 = arms.len() - 1;
+    while (i >= 0) {
+        var arm: parser.MatchArm = arms[i];
+        match (arm.pattern) {
+            parser.PatWildcard(_) => { chain = arm.body; },
+            parser.PatVariant(pv) => {
+                var tag: i32 = find_struct_index(structs, pv.type_name);
+                var cond: parser.Expr = parser.ExprBinary { op: "==", left: parser.ExprIdent { name: "$tag" }, right: parser.ExprNumber { text: int_str(tag), suffix: "", is_float: false } };
+                var then_body: parser.Stmt[] = [];
+                if (pv.binding.len() > 0 && pv.binding != "_") {
+                    then_body = then_body.push(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: parser.ExprIdent { name: "$scrut" } });
+                }
+                var bi: i32 = 0;
+                while (bi < arm.body.len()) { then_body = then_body.push(arm.body[bi]); bi = bi + 1; }
+                var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
+                chain = [theif];
+            }
+        }
+        i = i - 1;
+    }
+    return chain;
+}
+
+// build_match lowers `match (e) { Variant(b) => …, _ => … }` by reading the
+// scrutinee's tag (struct word 0) and dispatching through a synthesized
+// if/else-if chain — so it reuses build_if's merge/phi machinery entirely.
+// A variant pattern naming an unknown struct bails to the AST emitter.
+function build_match(m: parser.StmtMatch, s: BState): BState {
+    var ci: i32 = 0;
+    while (ci < m.arms.len()) {
+        match (m.arms[ci].pattern) {
+            parser.PatVariant(pv) => { if (find_struct_index(s.structs, pv.type_name) < 0) { return s.fail(); } },
+            parser.PatWildcard(_) => {}
+        }
+        ci = ci + 1;
+    }
+    s = build_expr(m.scrutinee, s);
+    if (!s.ok) { return s; }
+    var scrutv: i32 = s.cur_id();
+    s = s.set_var("$scrut", scrutv);
+    s = s.kconst(0);
+    var z: i32 = s.cur_id();
+    s = s.fresh();
+    var la: i32[] = [scrutv, z];
+    s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 32, str: "" });
+    s = s.set_var("$tag", s.cur_id());
+    var chain: parser.Stmt[] = synth_match_chain(m.arms, s.structs);
+    return build_stmts(chain, s);
+}
+
 function build_if(f: parser.StmtIf, s: BState): BState {
     s = build_expr(f.cond, s);
     if (!s.ok) { return s; }
