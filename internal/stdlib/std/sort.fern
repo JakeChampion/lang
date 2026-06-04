@@ -291,3 +291,57 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
     }
     return out;
 }
+
+// --- In-place (`own`) sorts ------------------------------------------------
+//
+// The `sort_*_asc`/`_desc` functions above are non-mutating: they copy the
+// input into a fresh buffer and sort that, so a borrowed array survives the
+// call unchanged. That copy is pure overhead when the caller is finished with
+// the input and just wants it sorted.
+//
+// `sort_i32_inplace_asc`/`_desc` take the array `own` (consuming): the caller
+// transfers ownership, so the sort permutes the input buffer directly and hands
+// the *same* allocation back — no copy, zero allocation. Because the parameter
+// is `own`, the checker's affine + ownership-guard rules (E050/E051) require the
+// argument to be an owned value (a fresh literal or another `own` binding), and
+// the caller cannot use the array afterwards — exactly the contract that makes
+// the in-place mutation sound.
+//
+// This dogfoods the `own` consuming-parameter feature in the stdlib: real code
+// whose ownership transfer (the returned array IS the input box) is pinned by
+// the differential e2e gates.
+
+// `sort_i32_inplace_asc(own arr)` — ascending insertion-sort performed directly
+// on the (owned) input buffer; returns that same buffer, now sorted.
+pub function sort_i32_inplace_asc(own arr: i32[]): i32[] {
+    var n: i32 = arr.len();
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = arr[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+        k = k + 1;
+    }
+    return arr;
+}
+
+// `sort_i32_inplace_desc(own arr)` — as above, descending.
+pub function sort_i32_inplace_desc(own arr: i32[]): i32[] {
+    var n: i32 = arr.len();
+    var k: i32 = 1;
+    while (k < n) {
+        var key: i32 = arr[k];
+        var j: i32 = k - 1;
+        while (j >= 0 && arr[j] < key) {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+        k = k + 1;
+    }
+    return arr;
+}
