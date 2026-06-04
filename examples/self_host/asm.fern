@@ -57,6 +57,20 @@ function i32_to_string(n: i32): string {
     return out;
 }
 
+// base_type_name strips a generic argument list from a type spelling:
+// `Box[i32]` / `Box[T]` → `Box`. Generics are erased, so the base name
+// is what a struct value's runtime shape string carries and what the
+// method-dispatch shape compare must match. A non-generic name is
+// returned unchanged. (`91` is `[`.)
+function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }
+        i = i + 1;
+    }
+    return t;
+}
+
 // sanitize_label rewrites `.` to `__` so qualified-name
 // function labels (e.g. `parser.parse_module`) emit a label
 // like `__fn_parser__parse_module:` rather than the
@@ -4323,14 +4337,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
                         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
-                            var arm_lit: StringLitOut = add_string_lit(s, fd_m.receiver_type);
+                            var arm_lit: StringLitOut = add_string_lit(s, base_type_name(fd_m.receiver_type));
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
                             s = next_l.state;
                             s = s.write("    leaq .S" + i32_to_string(arm_lit.idx) + "(%rip), %rdx\n");
                             s = s.write("    cmpq %rdx, %rcx\n");
                             s = s.write("    jne " + next_l.name + "\n");
-                            s = s.write("    call __fn_" + sanitize_label(fd_m.receiver_type + "." + fd_m.name) + "\n");
+                            s = s.write("    call __fn_" + sanitize_label(base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
                             // Caller cleans up args + receiver.
                             s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
                             s = s.write("    pushq %rax\n");
@@ -6438,7 +6452,10 @@ function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     // earlier slices' call emitters.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) {
-        label_name = fd.receiver_type + "." + fd.name;
+        // Generic receiver types (`Box[T]`) strip to the base struct
+        // name `Box` so the method symbol matches the dispatch shape
+        // compare (which uses the value's base-name shape string).
+        label_name = base_type_name(fd.receiver_type) + "." + fd.name;
     }
     s = s.write("__fn_" + sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");

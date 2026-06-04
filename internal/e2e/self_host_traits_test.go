@@ -99,6 +99,22 @@ var traitsCases = []struct {
 			"impl Show for B { function show(self: Self): i32 { return self.y; } } " +
 			"function combine[P: Show, Q: Show](p: P, q: Q): i32 { return p.show() + q.show(); } " +
 			"function main(): i32 { var a: A = A { x: 30 }; var b: B = B { y: 12 }; return combine(a, b); }", 42},
+	// Parametric impl `impl[T: Bound] Trait for Box[T]` on a generic
+	// struct. The impl's `for` type `Box[T]` strips to the base name
+	// `Box` for the method symbol + dispatch shape compare, so a
+	// `Box[Inner]` value dispatches `box.val()` to the impl method,
+	// whose body calls `self.v.val()` on the struct-typed field (which
+	// carries its own runtime shape, so the inner dispatch resolves
+	// dynamically). Struct-typed type parameters need no
+	// monomorphisation; primitive/string `T` is a follow-up (same
+	// boundary bounded generics had). See docs/TRAITS.md §7a.
+	{"trait-parametric-impl-struct-elem",
+		"trait Valued { function val(self: Self): i32; } " +
+			"struct Inner { n: i32 } " +
+			"impl Valued for Inner { function val(self: Self): i32 { return self.n; } } " +
+			"struct Box[T] { v: T } " +
+			"impl[T: Valued] Valued for Box[T] { function val(self: Self): i32 { return self.v.val() + 1; } } " +
+			"function main(): i32 { var b: Box[Inner] = Box { v: Inner { n: 41 } }; return b.val(); }", 42},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

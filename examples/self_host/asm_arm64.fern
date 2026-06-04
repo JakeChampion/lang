@@ -34,6 +34,20 @@ import "./parser";
 
 // =================== TEXT HELPERS ====================
 
+// base_type_name strips a generic argument list from a type spelling:
+// `Box[i32]` / `Box[T]` → `Box`. Generics are erased, so the base name
+// is the value's runtime shape string and what the method-dispatch
+// shape compare must match. Non-generic names pass through. (`91` is
+// `[`.) Same shape as the x86-64 backend.
+function base_type_name(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }
+        i = i + 1;
+    }
+    return t;
+}
+
 // sanitize_label rewrites `.` to `__` so qualified-name
 // function labels (e.g. `parser.parse_module`) survive GNU
 // as's label parsing. Same shape as the x86-64 backend.
@@ -4092,7 +4106,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
                         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
-                            var arm_lit: StringLitOut = add_string_lit(s, fd_m.receiver_type);
+                            var arm_lit: StringLitOut = add_string_lit(s, base_type_name(fd_m.receiver_type));
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
                             s = next_l.state;
@@ -4100,7 +4114,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write("    add x2, x2, :lo12:.S" + i32_to_string(arm_lit.idx) + "\n");
                             s = s.write("    cmp x1, x2\n");
                             s = s.write("    b.ne " + next_l.name + "\n");
-                            s = s.write("    bl __fn_" + sanitize_label(fd_m.receiver_type + "." + fd_m.name) + "\n");
+                            s = s.write("    bl __fn_" + sanitize_label(base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
                             s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                             s = s.write("    str x0, [sp, #-16]!\n");
                             s = s.write("    b .Lmethod_end_" + i32_to_string(m_end_lbl) + "\n");
@@ -6040,7 +6054,9 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
 function emit_function(fd: parser.FuncDecl, s: EmitState): EmitState {
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) {
-        label_name = fd.receiver_type + "." + fd.name;
+        // Generic receiver types (`Box[T]`) strip to the base struct
+        // name so the symbol matches the dispatch shape compare.
+        label_name = base_type_name(fd.receiver_type) + "." + fd.name;
     }
     s = s.write("__fn_" + sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");

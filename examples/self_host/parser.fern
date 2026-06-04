@@ -2991,6 +2991,39 @@ pub struct ImplResult { par: Par, funcs: FuncDecl[] }
 function parse_impl_decl(p: Par): ImplResult {
     var out: FuncDecl[] = [];
     p = p.advance(); // `impl`
+    // Parametric impl: `impl[T: Bound] Trait for Box[T] { … }`. Collect
+    // the impl's type-parameter names (bounded ones drive
+    // monomorphisation; unbounded are erased) so each desugared method
+    // carries them — the `for` type (`Box[T]`) keeps `T`, and the
+    // emitter strips the generic args to the base struct name `Box`.
+    // See docs/TRAITS.md.
+    var impl_tps: string[] = [];
+    if (p.peek_punct() == "[") {
+        p = p.advance();
+        while (!p.at_end()) {
+            if (p.peek_punct() == "]") { break; }
+            var tpn: string = p.peek_ident();
+            if (tpn.len() == 0) { p = p.advance(); continue; }
+            p = p.advance();
+            var bounded: boolean = false;
+            if (p.peek_punct() == ":") {
+                bounded = true;
+                p = p.advance();
+                var go2: boolean = true;
+                while (go2 && !p.at_end()) {
+                    if (p.peek_ident().len() > 0) { p = p.advance(); }
+                    if (p.peek_punct() == ".") {
+                        p = p.advance();
+                        if (p.peek_ident().len() > 0) { p = p.advance(); }
+                    }
+                    if (p.peek_punct() == "+") { p = p.advance(); } else { go2 = false; }
+                }
+            }
+            if (bounded) { impl_tps = impl_tps.push(tpn); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
+        }
+        if (p.peek_punct() == "]") { p = p.advance(); }
+    }
     // Trait name (possibly `mod.Trait`) — discarded.
     var tnr: TypeNameResult = parse_type_name(p);
     p = tnr.par;
@@ -3028,11 +3061,20 @@ function parse_impl_decl(p: Par): ImplResult {
         }
         var rt: string = m.ret_type;
         if (rt == "Self") { rt = impl_type; }
+        // A parametric impl makes every method generic over the impl's
+        // type params (so the monomorphiser — once it grows generic-
+        // receiver-method support — can clone per instantiation; until
+        // then a method whose generic field is a heap value dispatches
+        // dynamically and works as-is). Merge the impl's params with any
+        // the method declared itself.
+        var mtps: string[] = m.type_params;
+        var ti: i32 = 0;
+        while (ti < impl_tps.len()) { mtps = mtps.push(impl_tps[ti]); ti = ti + 1; }
         out = out.push(FuncDecl {
             name: m.name,
             receiver_name: rname,
             receiver_type: impl_type,
-            type_params: m.type_params,
+            type_params: mtps,
             params: newparams,
             ret_type: rt,
             body: m.body
