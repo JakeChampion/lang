@@ -79,9 +79,10 @@ function main(): i32 {
 	}
 }
 
-// Skips: pointer-field struct (not all-scalar) is out of the first cut's
-// scope — the general path requires allScalarStruct.
-func TestGeneralReuseSkipsPointerFieldStruct(t *testing.T) {
+// Fires for a single-word rc-tracked POINTER field (array): a is dead after
+// `s`, so b reuses a's box; a's old items reference is released on the reuse
+// branch before b's fresh items overwrites it.
+func TestGeneralReuseFiresForPointerField(t *testing.T) {
 	ip := lowerForTest(t, `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
     var a: Holder = Holder { id: 1, items: [1, 2] };
@@ -90,10 +91,38 @@ function main(): i32 {
     return b.id;
 }`)
 	f := funcByName(ip, "main")
-	// a is dead after `s`, but Holder has a pointer field -> excluded from the
-	// general all-scalar reuse (the only __alloc_reuse, if any, would be a
-	// self-overwrite, which this shape has none of).
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("pointer-field struct should reuse a dead local's box, got %d", got)
+	}
+}
+
+// Skips: a STRING field (two-word on wasm / boxed on arm64) is excluded by
+// structReuseEligible — same gate as the self-overwrite 5c path.
+func TestGeneralReuseSkipsStringField(t *testing.T) {
+	ip := lowerForTest(t, `struct Named { id: i32, name: string }
+function main(): i32 {
+    var a: Named = Named { id: 1, name: "x" };
+    var s: i32 = a.id;
+    var b: Named = Named { id: s, name: "y" };
+    return b.id;
+}`)
+	f := funcByName(ip, "main")
 	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("pointer-field struct is out of the all-scalar first cut, got %d", got)
+		t.Errorf("string-field struct is excluded (two-word), got %d", got)
+	}
+}
+
+// Skips: a WIDE scalar field (i64) is excluded by structReuseEligible.
+func TestGeneralReuseSkipsWideScalarField(t *testing.T) {
+	ip := lowerForTest(t, `struct Wide { id: i32, big: i64 }
+function main(): i32 {
+    var a: Wide = Wide { id: 1, big: 2 };
+    var s: i32 = a.id;
+    var b: Wide = Wide { id: s, big: 3 };
+    return b.id;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("wide-scalar-field struct is excluded, got %d", got)
 	}
 }

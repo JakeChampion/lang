@@ -81,9 +81,48 @@ function main(): i32 {
 }`
 }
 
+// genReusePtrChurnSrc: pointer-field general reuse. Each iteration builds a
+// dead Holder `a` with an array, then reuses a's box for `b` with a FRESH
+// array — a's old array is deep-freeing-dropped on the reuse branch before b's
+// store overwrites it (no leak), b's array is retained. Value + 0 over-release.
+const genReusePtrChurnSrc = `struct Holder { id: i32, items: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: Holder = Holder { id: i, items: [i, i + 1] };
+        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+        acc = acc + b.id + b.items[0] + b.items[1];
+        i = i + 1;
+    }
+    // s = i + i + (i+1) = 3i+1; b.id=3i+1, b.items sum = (i+2)+(i+3)=2i+5; total 5i+6
+    // sum i=0..199 = 5*19900 + 6*200 = 100700
+    if (acc != 100700) { return 999; }
+    return __rc_underflow_count();
+}`
+
+// genReusePtrAliasedSrc: `a` is aliased into a live `keep` (rc>1), so the
+// runtime is_unique check DECLINES reuse — b fresh-allocs and keep keeps a's
+// box + array intact. Mirrors the self-overwrite `aliased` contract.
+const genReusePtrAliasedSrc = `struct Holder { id: i32, items: i32[] }
+function main(): i32 {
+    var a: Holder = Holder { id: 1, items: [7, 8] };
+    var keep: Holder = a;             // alias -> rc 2, reuse declines
+    var s: i32 = a.id;
+    var b: Holder = Holder { id: s + 1, items: [3, 4] };
+    if (keep.id != 1) { return 1; }
+    if (keep.items[0] != 7) { return 2; }
+    if (b.id != 2) { return 3; }
+    if (b.items[1] != 4) { return 4; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
+	{"ptr_churn", genReusePtrChurnSrc},
+	{"ptr_aliased", genReusePtrAliasedSrc},
 }
 
 func TestX86_64GeneralReuse(t *testing.T) {

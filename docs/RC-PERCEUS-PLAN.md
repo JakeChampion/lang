@@ -1885,18 +1885,34 @@ cancellation — bounded, but separable, so it ships last.
     (token, size+hdr, size+hdr)` in place of the bump alloc. `reuseConsumed[D]`
     excludes `D` from `computePreciseDrops` (the reuse subsumes its drop). Two
     gates make it sound, same as 5b: **freeEligible** (never a borrowed param)
-    + the **runtime is_unique** check (a shared `D` copies). All-scalar only for
-    now — a pointer-field `D` would need its old field references released
-    (`OpDropReuse`'s field drop-walk) before the storage hand-off; a later cut.
+    + the **runtime is_unique** check (a shared `D` copies). All-scalar in the
+    first cut; the pointer-field widening is slice 5e-ii below.
     Tests: IR `TestGeneralReuse{FiresForDeadLocal,FiresInLoopBody,SkipsLiveSource,
-    SkipsSourceReadInConstruction,SkipsPointerFieldStruct}` + e2e
-    `Test{X86_64,Arm64,WASM}GeneralReuse` (`churn` 300-iter value/over-release,
-    `aliased` runtime-decline soundness) + a wasm heap-bump win (a reused chain
-    holds fewer live boxes than the simultaneously-live control). Full e2e
+    SkipsSourceReadInConstruction}` + e2e `Test{X86_64,Arm64,WASM}GeneralReuse`
+    (`churn` 300-iter value/over-release, `aliased` runtime-decline soundness)
+    + a wasm heap-bump win (a reused chain holds fewer live boxes than the
+    simultaneously-live control). Full e2e (differential corpus + both
+    self-host gates) + non-e2e suites green.
+  - **5e-ii — general reuse, single-word POINTER-field structs. SHIPPED (all
+    three backends).** Widens 5e from all-scalar `D` to `structReuseEligible`
+    `D` (fields may be array / struct / Map / enum / closure / tuple — strings
+    and wide/float scalars still excluded, same gate as the self-overwrite 5c
+    path). Because `D` is DEAD at `C`, `C` never carries a field from `D`, so
+    EVERY one of `D`'s old pointer-field references is released (deep freeing
+    drop, `emitFieldDropOnStack`) on the reuse branch — gated on the is_unique
+    result, before `C`'s stores overwrite them — and each of `C`'s new pointer
+    fields is retained on eval as normal StructLit construction. On the decline
+    branch the box is fresh, so nothing is released and the alias keeps `D`'s
+    box + fields. Simpler than the self-overwrite 5c/5f case (no carried-field
+    elision — `D` dead means all fields replaced). Tests: IR
+    `TestGeneralReuse{FiresForPointerField,SkipsStringField,SkipsWideScalarField}`
+    + e2e `…GeneralReuse` {`ptr_churn` (200-iter array-field reuse, old array
+    freed each turn, 0 over-release), `ptr_aliased` (runtime is_unique decline
+    — `keep` retains `D`'s box + array, `b` fresh-allocs)}. Full e2e
     (differential corpus + both self-host gates) + non-e2e suites green.
-    **Next general-FBIP cuts:** pointer-field `D` (field-drop-walk on hand-off);
-    same-box-size DIFFERENT types (the plan's box-class equality, not just
-    same-name); tuple `D`; relaxing the same-block constraint.
+    **Next general-FBIP cuts:** same-box-size DIFFERENT types (the plan's
+    box-class equality, not just same-name); tuple / enum `D`; relaxing the
+    same-block constraint.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 
