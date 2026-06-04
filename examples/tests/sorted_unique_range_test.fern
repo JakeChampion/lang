@@ -4,11 +4,11 @@ import "std/test";
 // the batch-19 additions to std/test:
 //   * `test.assert_in_range_f64(v, lo, hi)` — inclusive float
 //     range. NaN always fails.
-//   * `test.assert_sorted_asc_i32(arr)` /
-//     `test.assert_sorted_asc_string(arr)` — monotonically
+//   * `test.assert_sorted_asc(arr)` /
+//     `test.assert_sorted_asc(arr)` — monotonically
 //     non-decreasing order. Empty / single-element arrays
 //     are vacuously sorted.
-//   * `test.assert_unique_i32(arr)` / `test.assert_unique_string(arr)`
+//   * `test.assert_unique(arr)` / `test.assert_unique(arr)`
 //     — every element appears at most once.
 
 function test_in_range_f64_pass(): Option[string] {
@@ -58,25 +58,25 @@ function test_in_range_f64_nan_fails(): Option[string] {
 }
 
 function test_sorted_i32_pass(): Option[string] {
-    return test.assert_sorted_asc_i32([1, 2, 3, 5, 8]);
+    return test.assert_sorted_asc([1, 2, 3, 5, 8]);
 }
 
 function test_sorted_i32_empty(): Option[string] {
     var empty: i32[] = [];
-    return test.assert_sorted_asc_i32(empty);
+    return test.assert_sorted_asc(empty);
 }
 
 function test_sorted_i32_single(): Option[string] {
-    return test.assert_sorted_asc_i32([42]);
+    return test.assert_sorted_asc([42]);
 }
 
 function test_sorted_i32_equal_runs(): Option[string] {
     // Non-decreasing — equal adjacent pairs are OK.
-    return test.assert_sorted_asc_i32([1, 1, 2, 2, 3]);
+    return test.assert_sorted_asc([1, 1, 2, 2, 3]);
 }
 
 function test_sorted_i32_inversion(): Option[string] {
-    match (test.assert_sorted_asc_i32([1, 3, 2, 4])) {
+    match (test.assert_sorted_asc([1, 3, 2, 4])) {
         None => { return test.fail("inversion missed"); },
         Some(msg) => {
             // The diagnostic should embed the index so the
@@ -90,28 +90,28 @@ function test_sorted_i32_inversion(): Option[string] {
 }
 
 function test_sorted_string_pass(): Option[string] {
-    return test.assert_sorted_asc_string(["alpha", "beta", "gamma"]);
+    return test.assert_sorted_asc(["alpha", "beta", "gamma"]);
 }
 
 function test_sorted_string_inversion(): Option[string] {
-    match (test.assert_sorted_asc_string(["b", "a"])) {
+    match (test.assert_sorted_asc(["b", "a"])) {
         None => { return test.fail("inversion missed"); },
         Some(_) => { return None; }
     }
 }
 
 function test_unique_i32_pass(): Option[string] {
-    return test.assert_unique_i32([1, 2, 3, 5, 8]);
+    return test.assert_unique([1, 2, 3, 5, 8]);
 }
 
 function test_unique_i32_unsorted_input(): Option[string] {
     // Uniqueness is order-independent — the helper sorts
     // internally, so a scrambled input still works.
-    return test.assert_unique_i32([7, 2, 9, 4]);
+    return test.assert_unique([7, 2, 9, 4]);
 }
 
 function test_unique_i32_duplicate_fails(): Option[string] {
-    match (test.assert_unique_i32([1, 2, 3, 2, 5])) {
+    match (test.assert_unique([1, 2, 3, 2, 5])) {
         None => { return test.fail("duplicate 2 should fail"); },
         Some(msg) => {
             if (!msg.contains("2")) {
@@ -123,11 +123,11 @@ function test_unique_i32_duplicate_fails(): Option[string] {
 }
 
 function test_unique_string_pass(): Option[string] {
-    return test.assert_unique_string(["alpha", "beta", "gamma"]);
+    return test.assert_unique(["alpha", "beta", "gamma"]);
 }
 
 function test_unique_string_duplicate_fails(): Option[string] {
-    match (test.assert_unique_string(["alpha", "beta", "alpha"])) {
+    match (test.assert_unique(["alpha", "beta", "alpha"])) {
         None => { return test.fail("duplicate alpha should fail"); },
         Some(msg) => {
             if (!msg.contains("alpha")) {
@@ -140,7 +140,7 @@ function test_unique_string_duplicate_fails(): Option[string] {
 
 function test_unique_empty_is_vacuous(): Option[string] {
     var empty: i32[] = [];
-    return test.assert_unique_i32(empty);
+    return test.assert_unique(empty);
 }
 
 function main(): i32 {

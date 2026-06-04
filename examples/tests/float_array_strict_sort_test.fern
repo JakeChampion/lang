@@ -5,9 +5,9 @@ import "std/test";
 //   * `test.assert_eq_f64_array_near(actual, expected, eps)` /
 //     `assert_eq_f32_array_near` — element-wise float-array
 //     compare with tolerance.
-//   * `assert_sorted_desc_i32` / `_string` — descending
+//   * `assert_sorted_desc` / `_string` — descending
 //     order verification (pair with sort_*_desc output).
-//   * `assert_strictly_sorted_asc_i32` / `_string` — strict
+//   * `assert_strictly_sorted_asc` / `_string` — strict
 //     monotonic (sorted AND unique in one helper).
 
 function test_f64_array_pass(): Option[string] {
@@ -75,15 +75,15 @@ function test_f32_array_pass(): Option[string] {
 }
 
 function test_sorted_desc_i32_pass(): Option[string] {
-    return test.assert_sorted_desc_i32([9, 5, 3, 1]);
+    return test.assert_sorted_desc([9, 5, 3, 1]);
 }
 
 function test_sorted_desc_i32_equal_runs_ok(): Option[string] {
-    return test.assert_sorted_desc_i32([5, 5, 3, 3, 1]);
+    return test.assert_sorted_desc([5, 5, 3, 3, 1]);
 }
 
 function test_sorted_desc_i32_fails_on_inversion(): Option[string] {
-    match (test.assert_sorted_desc_i32([9, 3, 5, 1])) {
+    match (test.assert_sorted_desc([9, 3, 5, 1])) {
         None => { return test.fail("inversion missed"); },
         Some(msg) => {
             if (!msg.contains("index 2")) {
@@ -95,17 +95,17 @@ function test_sorted_desc_i32_fails_on_inversion(): Option[string] {
 }
 
 function test_sorted_desc_string_pass(): Option[string] {
-    return test.assert_sorted_desc_string(["gamma", "beta", "alpha"]);
+    return test.assert_sorted_desc(["gamma", "beta", "alpha"]);
 }
 
 function test_strict_asc_i32_pass(): Option[string] {
-    return test.assert_strictly_sorted_asc_i32([1, 2, 3, 5, 8]);
+    return test.assert_strictly_sorted_asc([1, 2, 3, 5, 8]);
 }
 
 function test_strict_asc_i32_fails_on_dupe(): Option[string] {
     // Non-strict assert_sorted_asc would accept [1, 2, 2, 3]
     // — the strict variant must reject it.
-    match (test.assert_strictly_sorted_asc_i32([1, 2, 2, 3])) {
+    match (test.assert_strictly_sorted_asc([1, 2, 2, 3])) {
         None => { return test.fail("strict sort should reject equal pair"); },
         Some(msg) => {
             if (!msg.contains("not strict")) {
@@ -118,15 +118,15 @@ function test_strict_asc_i32_fails_on_dupe(): Option[string] {
 
 function test_strict_asc_i32_empty_vacuous(): Option[string] {
     var empty: i32[] = [];
-    return test.assert_strictly_sorted_asc_i32(empty);
+    return test.assert_strictly_sorted_asc(empty);
 }
 
 function test_strict_asc_string_pass(): Option[string] {
-    return test.assert_strictly_sorted_asc_string(["alpha", "beta", "gamma"]);
+    return test.assert_strictly_sorted_asc(["alpha", "beta", "gamma"]);
 }
 
 function test_strict_asc_string_fails_on_dupe(): Option[string] {
-    match (test.assert_strictly_sorted_asc_string(["alpha", "alpha", "beta"])) {
+    match (test.assert_strictly_sorted_asc(["alpha", "alpha", "beta"])) {
         None => { return test.fail("strict string sort should reject equal pair"); },
         Some(_) => { return None; }
     }
