@@ -215,6 +215,13 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    movl " + regn(reg_of, ins.args[2], 32) + ", %edx\n";   // i32 value
         return out + "    movl %edx, (%rax,%rcx,8)\n";
     }
+    if (ins.kind == "print") {
+        // print(handle): the string is a length-prefixed array of i32-per-
+        // byte words; __fern_ssa_print writes each byte to stdout.
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle (64-bit) → %rax
+        out = out + "    movq %rax, %rdi\n";
+        return out + "    call __fern_ssa_print\n";
+    }
     return out;
 }
 
@@ -313,6 +320,23 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         out = out + emit_func(funcs[i], reg_of);
         i = i + 1;
     }
+    // __fern_ssa_print(%rdi = string handle): write each byte to stdout.
+    // The string is [len, b0, b1, …] as 8-byte words; each byte's low octet
+    // sits at its word's address (little-endian), so write 1 byte per word.
+    out = out + "__fern_ssa_print:\n";
+    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n";
+    out = out + "    movq %rdi, %rbx\n";          // handle
+    out = out + "    movl (%rbx), %r12d\n";        // len = word[0]
+    out = out + "    xorl %r13d, %r13d\n";         // i = 0
+    out = out + ".Lfsp_loop:\n";
+    out = out + "    cmpl %r12d, %r13d\n    jge .Lfsp_done\n";
+    out = out + "    leal 1(%r13d), %eax\n";       // i+1
+    out = out + "    movl %eax, %eax\n";           // zero-extend to rax
+    out = out + "    leaq (%rbx,%rax,8), %rsi\n";   // &word[i+1] = byte address
+    out = out + "    movq $1, %rax\n    movq $1, %rdi\n    movq $1, %rdx\n    syscall\n";
+    out = out + "    incl %r13d\n    jmp .Lfsp_loop\n";
+    out = out + ".Lfsp_done:\n";
+    out = out + "    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
     out = out + "_start:\n";
     out = out + "    leaq __fern_ssa_heap(%rip), %rax\n";
     out = out + "    movq %rax, __fern_ssa_hp(%rip)\n";
