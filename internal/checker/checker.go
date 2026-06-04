@@ -3788,6 +3788,23 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
 				}
+				// A user function with ONLY scalar (non-pointer) parameters and
+				// a pointer result must construct that result fresh — it has no
+				// borrowed pointer argument to return — so the result is owned.
+				// Conservative: a function with a pointer parameter could return
+				// it (`id(x) -> x`), so its result isn't provably owned here.
+				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
+					anyPtrParam := false
+					for _, pt := range sig.Params {
+						if pt != nil && ast.IsPointerType(pt) {
+							anyPtrParam = true
+							break
+						}
+					}
+					if !anyPtrParam {
+						return true
+					}
+				}
 			}
 			return false
 		}
@@ -3963,11 +3980,32 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			recordExprUses(x.Cond, moved)
 			loopBody(x.Body, x.Step, moved)
 		case *ast.Match:
+			// Matching an OWNED scrutinee consumes it (the box is decomposed)
+			// and MOVES its pointer-typed payloads into the arm bindings — so a
+			// pointer binding of an owned scrutinee is itself owned for that
+			// arm's scope (the recursive `map(xs) -> Cons(.., map(t))` shape: `t`
+			// is owned and may be transferred onward). Scalar bindings are copied
+			// (not owned). Capture ownership BEFORE recordExprUses consumes the
+			// scrutinee.
+			scrutOwned := isOwnedExpr(x.Tag)
 			recordExprUses(x.Tag, moved) // a bare-ident scrutinee is consumed here
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
+				var added []string
+				if scrutOwned {
+					for i, bname := range arm.Bindings {
+						if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil &&
+							ast.IsPointerType(arm.BindingTypes[i]) && !owned[bname] {
+							owned[bname] = true
+							added = append(added, bname)
+						}
+					}
+				}
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
+				}
+				for _, bname := range added {
+					delete(owned, bname)
 				}
 				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
 			}

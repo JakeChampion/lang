@@ -1,0 +1,29 @@
+// Consuming match on an `own` parameter — Perceus FBIP recursive traversal.
+// map_inc consumes its owned list, freeing each input cell as it builds the
+// output (recycled by the freelist). The differential gates run this free-off
+// vs free-on AND reuse-off vs reuse-on; byte-identical proves the consume
+// (payload move + shallow box free) is balanced — no double free, no leak
+// affecting the result, no use-after-free.
+enum List { Cons(i32, List), Nil }
+
+function map_inc(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, map_inc(t)); },
+        Nil => { return Nil; },
+    }
+}
+
+function sum(l: List): i32 {
+    match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
+}
+
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+
+function main(): i32 {
+    // build [4,3,2,1], map +1 -> [5,4,3,2], sum = 14
+    if (sum(map_inc(build(4))) != 14) { return 99; }
+    return 0;
+}
