@@ -508,6 +508,19 @@ core module), and binary wasm encoding
 `wasmtime`).
 The core wasi builtins (clock / file / env / random) are now covered.
 
+**Binary-encoder track (started).** Slice 1 landed: `examples/self_host/
+leb128.fern` — pure, import-free unsigned/signed LEB128 byte encoders
+(`leb_u32` / `leb_i32` / `leb_i64`) over an `i32[]` byte buffer, the
+variable-length integer encoding every wasm count / size / index /
+`*.const` operand uses. Unit-tested end-to-end through the self-host wasm
+pipeline against the canonical vectors (`TestSelfHostLEB128`, which
+concatenates the module with a self-test driver — the module is kept
+import-free precisely so it can be both imported by the future encoder
+and concatenated for the test). Remaining slices: section framing +
+module scaffold (magic/version, the six sections, the WASI imports,
+memory, the `$heap` global, `__fern_alloc`), then opcode coverage to WAT
+parity, then the component wrapper.
+
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
 **`i64[]` arrays whose elements exceed 32 bits** on the *compiled*

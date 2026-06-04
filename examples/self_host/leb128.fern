@@ -1,0 +1,84 @@
+// examples/self_host/leb128.fern — LEB128 byte encoders for the
+// self-hosted *binary* wasm emitter (the first slice of the binary
+// backend; the WAT-text emitter lives in wasm.fern).
+//
+// LEB128 is the variable-length integer encoding the wasm binary format
+// uses for every count, size, index, and `*.const` operand: 7 payload
+// bits per byte, the high bit (0x80) marking "more bytes follow".
+// Unsigned values (counts / sizes / indices) use `leb_u32`; signed
+// operands (`i32.const` / `i64.const`) use `leb_i32` / `leb_i64`.
+//
+// Design notes:
+//   * A byte buffer is an `i32[]` of values in 0..255; each function
+//     appends to it and returns the (possibly grown) buffer, matching the
+//     `buf = leb_u32(buf, v)` idiom.
+//   * This module is intentionally **import-free** so (a) the binary
+//     encoder can `import "./leb128"` and (b) the unit test can
+//     concatenate this file with a driver `main()` and feed the whole
+//     thing to the single-module wasm_run driver.
+//   * Fern's `>>` is an arithmetic (sign-preserving) shift. `leb_u32`
+//     therefore masks off the sign-extended top bits after each shift so
+//     it is correct for the full unsigned 32-bit range (not just small
+//     non-negative values); `leb_i32` / `leb_i64` rely on the arithmetic
+//     shift, which is exactly what signed LEB128 needs.
+
+// MASK25 = (1 << 25) - 1 keeps bits 0..24, clearing the 7 bits a `>> 7`
+// may have sign-extended — turning the arithmetic shift into a logical
+// one for the unsigned encoder.
+function leb128_mask25(): i32 {
+    return 33554431;
+}
+
+// leb_u32 appends the unsigned LEB128 encoding of `value` (interpreted as
+// a 32-bit unsigned integer) to `buf`.
+function leb_u32(buf: i32[], value: i32): i32[] {
+    var v: i32 = value;
+    var more: boolean = true;
+    while (more) {
+        var b: i32 = v & 127;
+        v = (v >> 7) & leb128_mask25();
+        if (v == 0) {
+            more = false;
+        } else {
+            b = b | 128;
+        }
+        buf = buf.push(b);
+    }
+    return buf;
+}
+
+// leb_i32 appends the signed LEB128 encoding of `value` to `buf`.
+function leb_i32(buf: i32[], value: i32): i32[] {
+    var v: i32 = value;
+    var more: boolean = true;
+    while (more) {
+        var b: i32 = v & 127;
+        v = v >> 7;
+        var sign: i32 = b & 64;
+        if ((v == 0 && sign == 0) || (v == (0 - 1) && sign != 0)) {
+            more = false;
+        } else {
+            b = b | 128;
+        }
+        buf = buf.push(b);
+    }
+    return buf;
+}
+
+// leb_i64 appends the signed LEB128 encoding of a 64-bit `value` to `buf`.
+function leb_i64(buf: i32[], value: i64): i32[] {
+    var v: i64 = value;
+    var more: boolean = true;
+    while (more) {
+        var b: i32 = (v & 127) as i32;
+        v = v >> 7;
+        var sign: i32 = b & 64;
+        if ((v == 0 && sign == 0) || (v == (0 - 1) && sign != 0)) {
+            more = false;
+        } else {
+            b = b | 128;
+        }
+        buf = buf.push(b);
+    }
+    return buf;
+}
