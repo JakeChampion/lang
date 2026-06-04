@@ -69,6 +69,12 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"no-early-return", "function main(): i32 { var x = 2; if (x > 3) { return 100; } return x; }", 2},
 		{"nested-if", "function main(): i32 { var x = 5; if (x > 0) { if (x > 3) { x = 100; } else { x = 50; } } return x; }", 100},
 		{"two-var-phi", "function main(): i32 { var a = 1; var b = 2; if (false) { a = 10; b = 20; } else { a = 30; } return a + b; }", 32},
+		// Constant conditions: branch_simplify folds brif→br and prunes the
+		// dead arm; results must be unchanged with and without -opt.
+		{"const-cond-true", "function main(): i32 { var x = 0; if (true) { x = 10; } else { x = 20; } return x + 1; }", 11},
+		{"const-cond-false", "function main(): i32 { var x = 0; if (false) { x = 10; } else { x = 20; } return x + 1; }", 21},
+		{"const-cond-no-else", "function main(): i32 { var x = 5; if (false) { x = 99; } return x; }", 5},
+		{"const-cond-nested", "function main(): i32 { var x = 1; if (true) { if (false) { x = 2; } else { x = 3; } } return x; }", 3},
 		// While loops: loop-header phi + back-edge.
 		{"while-count", "function main(): i32 { var i = 0; while (i < 3) { i = i + 1; } return i; }", 3},
 		{"while-sum", "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }", 15},
@@ -121,6 +127,9 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 			{"fold-chain", "function main(): i32 { var a = 2; var b = a + 3; var c = b * 10; return c; }", 1},
 			// Dead `var b = 99 * 99` removed; `a` folds to a const.
 			{"dce-unused", "function main(): i32 { var a = 1 + 2; var b = 99 * 99; return a; }", 1},
+			// Constant `if` collapses entirely: dead arm pruned, phi→copy
+			// propagated, x+1 folded — down to a single const_int.
+			{"branch-fold", "function main(): i32 { var x = 0; if (true) { x = 10; } else { x = 20; } return x + 1; }", 1},
 		}
 		for _, sc := range shrink {
 			t.Run(sc.name, func(t *testing.T) {
