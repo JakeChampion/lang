@@ -4021,6 +4021,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				for _, bname := range added {
 					delete(owned, bname)
+					// The binding is arm-local: it does not exist outside this arm,
+					// so its consumed-state must NOT escape into the parent `moved`.
+					// Otherwise a sibling match that reuses the same binding name
+					// (`match (a) { Err(e) => ... }` then `match (b) { Err(e) => ...
+					// }`) would see a phantom use-after-move on the second `e`. Drop
+					// it before the join so only genuine own-param moves propagate.
+					delete(armMoved, bname)
 				}
 				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
 			}

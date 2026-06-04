@@ -198,6 +198,25 @@ function f(own xs: i32[]): i32 { return xs[0]; }
 function main(): i32 { return f([1, 2]); }`)
 }
 
+func TestOwnedSiblingMatchBindingNameReuseOK(t *testing.T) {
+	// Two sibling matches on OWNED scrutinees whose arm bindings share a name.
+	// The first arm consumes its binding; that must NOT make the second match's
+	// same-named binding look already-moved. Regression: the arm-local binding's
+	// consumed-state leaked through the non-diverging join into the parent set,
+	// so the second `e` was flagged E050. An `own` func is present so the
+	// analysis is active (mirrors a program that imports std/sort, whose `own`
+	// in-place sorts now activate the guard for every function). Arms must NOT
+	// diverge (no `return`) so the buggy join path is exercised.
+	wantOK(t, "sibling-match-binding-name-reuse", ownConsumer+`
+function mkBox(): Box { return Wrap([1, 2]); }
+function f(): i32 {
+    var a: i32 = 0;
+    match (mkBox()) { Wrap(e) => { a = consumeBox(Wrap(e)); } }
+    match (mkBox()) { Wrap(e) => { a = a + consumeBox(Wrap(e)); } }
+    return a;
+}`)
+}
+
 // --- E052: `own` not yet supported on methods ----------------------------
 
 func TestOwnRejectedOnMethodReceiver(t *testing.T) {
