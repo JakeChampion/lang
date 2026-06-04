@@ -544,13 +544,26 @@ primitives the module-walker builds on, over an `i32[]` byte buffer atop
 `leb128.fern`: `wmagic` (the `"\0asm"` + version preamble), `wname` (a
 length-prefixed name), `wsection` (id + LEB byte-length + body), `wvec`
 (LEB count + elements), `valtype_byte`, and `wcat`. Unit-tested
-(`TestSelfHostWatEncode`). Remaining: the module-walker + opcode encoder
-(classify the `(module …)` children into the type/import/func/memory/
-global/export/code/data sections, resolve `$name` → func/local/global
-indices, and emit folded instructions post-order — scaffold + the integer
-opcode subset first, for a runnable `.wasm` diffed against the WAT path,
-then opcode coverage to full parity), then the `wasi:cli/run` component
-wrapper.
+(`TestSelfHostWatEncode`).
+
+Slice 4b landed — **the self-host now emits runnable binary wasm**, not
+just WAT text. `examples/self_host/wat_emit_bin.fern` walks the parsed
+`(module …)` tree and emits a binary module: it classifies children into
+the type / import / func / memory / global / export / code / data sections
+(binary order), builds func / local / global symbol tables to resolve
+`$name` references, and encodes folded instructions post-order (operands
+then operator) with per-instruction immediate handling. This first slice
+covers the shape `emit_module` produces for integer / arithmetic programs
+(the two WASI imports, memory, an active data segment, the `$heap` global,
+`$__fern_alloc` / `$main` / `$_start`, and the i32 const / arithmetic /
+bitwise / compare / local / global / call / return opcodes). End-to-end
+differential test (`TestSelfHostWasmBinary`): a program → WAT (existing
+emitter) → tokenize → parse → `emit_binary` → `.wasm`, asserting `wasmtime
+run prog.wasm` matches the WAT path's exit (and `wasm-tools validate`
+passes). Verified on `return 42`, arithmetic, locals, subtraction, and
+bitwise. Remaining: grow opcode coverage to full WAT parity (control flow,
+strings / memory load-store, structs, closures, maps), then wrap the core
+module in the `wasi:cli/run` / `wasi:http` component shapes.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
