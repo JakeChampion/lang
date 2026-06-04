@@ -87,6 +87,18 @@ var traitsCases = []struct {
 			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
 			"function all_eq[T: Eq](a: T[], b: T[]): i32 { var i: i32 = 0; while (i < len(a)) { if (!a[i].eq(b[i])) { return 0; } i = i + 1; } return 1; } " +
 			"function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = [1, 2, 3]; return all_eq(x, y); }", 1},
+	// TWO independent type parameters → the monomorphiser infers each
+	// from its own argument and mangles the clone with both concrete
+	// types joined (`combine__A__B`). This is the multi-parameter path
+	// the std/test `Map[K, V]` assertion collapse relies on. See
+	// docs/TRAITS.md §7a.
+	{"trait-bounded-generic-two-params",
+		"trait Show { function show(self: Self): i32; } " +
+			"struct A { x: i32 } struct B { y: i32 } " +
+			"impl Show for A { function show(self: Self): i32 { return self.x; } } " +
+			"impl Show for B { function show(self: Self): i32 { return self.y; } } " +
+			"function combine[P: Show, Q: Show](p: P, q: Q): i32 { return p.show() + q.show(); } " +
+			"function main(): i32 { var a: A = A { x: 30 }; var b: B = B { y: 12 }; return combine(a, b); }", 42},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

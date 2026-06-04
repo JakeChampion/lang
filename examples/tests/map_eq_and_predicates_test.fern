@@ -3,8 +3,8 @@ import "core/map";
 import "std/test";
 // examples/tests/map_eq_and_predicates_test.fern — batch 21
 // additions to std/test:
-//   * `assert_eq_map_i32_i32` / `_string_string` — full map
-//     deep equality (length + all-keys-with-matching-values).
+//   * `assert_eq_map` — full map deep equality (length +
+//     all-keys-with-matching-values), generic over K/V.
 //   * `assert_all_i32` / `_string` — every element satisfies
 //     a `(T) => boolean` predicate. Vacuously holds on []
 //     (∀ over ∅).
@@ -17,7 +17,7 @@ function test_map_i32_eq_pass(): Option[string] {
     a.set(1, 10); a.set(2, 20); a.set(3, 30);
     var b: Map[i32, i32] = map_new(4);
     b.set(3, 30); b.set(2, 20); b.set(1, 10); // insertion order differs
-    return test.assert_eq_map_i32_i32(a, b);
+    return test.assert_eq_map(a, b);
 }
 
 function test_map_i32_eq_length_mismatch(): Option[string] {
@@ -25,7 +25,7 @@ function test_map_i32_eq_length_mismatch(): Option[string] {
     a.set(1, 10);
     var b: Map[i32, i32] = map_new(4);
     b.set(1, 10); b.set(2, 20);
-    match (test.assert_eq_map_i32_i32(a, b)) {
+    match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected length-mismatch"); },
         Some(msg) => {
             if (!msg.contains("length differs")) {
@@ -41,7 +41,7 @@ function test_map_i32_eq_value_mismatch(): Option[string] {
     a.set(1, 10); a.set(2, 20);
     var b: Map[i32, i32] = map_new(4);
     b.set(1, 10); b.set(2, 99);
-    match (test.assert_eq_map_i32_i32(a, b)) {
+    match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected value-mismatch"); },
         Some(msg) => {
             if (!msg.contains("at key 2")) {
@@ -58,7 +58,7 @@ function test_map_i32_eq_disjoint_keys_same_len(): Option[string] {
     a.set(1, 10);
     var b: Map[i32, i32] = map_new(4);
     b.set(2, 10);
-    match (test.assert_eq_map_i32_i32(a, b)) {
+    match (test.assert_eq_map(a, b)) {
         None => { return test.fail("disjoint same-length should fail"); },
         Some(msg) => {
             if (!msg.contains("missing from expected")) {
@@ -72,7 +72,7 @@ function test_map_i32_eq_disjoint_keys_same_len(): Option[string] {
 function test_map_i32_eq_both_empty(): Option[string] {
     var a: Map[i32, i32] = map_new(4);
     var b: Map[i32, i32] = map_new(4);
-    return test.assert_eq_map_i32_i32(a, b);
+    return test.assert_eq_map(a, b);
 }
 
 function test_map_string_eq_pass(): Option[string] {
@@ -80,7 +80,7 @@ function test_map_string_eq_pass(): Option[string] {
     a.set("k1", "v1"); a.set("k2", "v2");
     var b: Map[string, string] = map_new(4);
     b.set("k2", "v2"); b.set("k1", "v1");
-    return test.assert_eq_map_string_string(a, b);
+    return test.assert_eq_map(a, b);
 }
 
 function test_map_string_eq_value_mismatch(): Option[string] {
@@ -88,7 +88,7 @@ function test_map_string_eq_value_mismatch(): Option[string] {
     a.set("k", "alpha");
     var b: Map[string, string] = map_new(4);
     b.set("k", "beta");
-    match (test.assert_eq_map_string_string(a, b)) {
+    match (test.assert_eq_map(a, b)) {
         None => { return test.fail("expected value-mismatch"); },
         Some(_) => { return None; }
     }

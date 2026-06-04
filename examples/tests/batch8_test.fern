@@ -29,37 +29,39 @@ function test_map_len_string_string(): Option[string] {
     var m: Map[string, string] = map_new(8);
     m.set("a", "alpha");
     m.set("b", "beta");
-    return test.assert_map_len_string_string(m, 2);
+    return test.assert_map_len(m, 2);
 }
 
 function test_map_has_string_string(): Option[string] {
     var m: Map[string, string] = map_new(4);
     m.set("ok", "yes");
-    return test.assert_map_has_string_string(m, "ok", "yes");
+    return test.assert_map_has(m, "ok", "yes");
 }
 
 function test_map_lacks_string_string(): Option[string] {
     var m: Map[string, string] = map_new(4);
     m.set("ok", "yes");
-    return test.assert_map_lacks_string_string(m, "missing");
+    return test.assert_map_lacks(m, "missing");
 }
 
 function test_map_has_i32_i32(): Option[string] {
     var m: Map[i32, i32] = map_new(4);
     m.set(1, 100);
     m.set(2, 200);
-    return test.assert_map_has_i32_i32(m, 1, 100);
+    return test.assert_map_has(m, 1, 100);
 }
 
 function test_map_has_wrong_value_reports(): Option[string] {
     var m: Map[string, string] = map_new(4);
     m.set("k", "actual");
-    match (test.assert_map_has_string_string(m, "k", "expected")) {
+    match (test.assert_map_has(m, "k", "expected")) {
         Some(msg) => {
-            if (!msg.contains("\"actual\"")) {
+            // Values render via Display (unquoted) now that the helper
+            // is generic over K/V.
+            if (!msg.contains("actual")) {
                 return test.fail("missing actual value in msg: " + msg);
             }
-            if (!msg.contains("\"expected\"")) {
+            if (!msg.contains("expected")) {
                 return test.fail("missing expected value in msg: " + msg);
             }
             return None;

@@ -2457,32 +2457,29 @@ pub function assert_env_eq(name: string, expected: string): Option[string] {
 // match X", "is the map size N" shape — these helpers fold
 // the per-receiver-method check + the assertion into one call.
 //
-// Two width pairs cover the migration's needs: (i32, i32) and
-// (string, string). Other K/V combinations should write the
-// receiver-method dispatch inline.
+// One generic helper per shape, over
+// `[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display]`: works for any
+// K/V whose types implement Eq + Display (i32, string, …). The
+// monomorphiser clones a concrete map helper per instantiation on every
+// backend — including the self-hosted compiler, whose monomorphiser
+// infers both K and V from a single `Map[K, V]` argument. Values render
+// via Display, so a string-valued failure prints unquoted.
 
-// `assert_map_len_i32_i32(m, n)` — map length matches.
-pub function assert_map_len_i32_i32(m: Map[i32, i32], n: i32): Option[string] {
+// `assert_map_len(m, n)` — map length matches.
+pub function assert_map_len[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], n: i32): Option[string] {
     var got: i32 = m.len();
     if (got == n) { return None; }
     return Some("assert_map_len: expected " + n.to_string() +
                 " entries, got " + got.to_string());
 }
 
-pub function assert_map_len_string_string(m: Map[string, string], n: i32): Option[string] {
-    var got: i32 = m.len();
-    if (got == n) { return None; }
-    return Some("assert_map_len: expected " + n.to_string() +
-                " entries, got " + got.to_string());
-}
-
-// `assert_map_has_i32_i32(m, k, v)` — key `k` is present with
-// value `v`. Failure message distinguishes "key missing" from
-// "key present with wrong value".
-pub function assert_map_has_i32_i32(m: Map[i32, i32], k: i32, v: i32): Option[string] {
+// `assert_map_has(m, k, v)` — key `k` is present with value `v`.
+// Failure message distinguishes "key missing" from "key present
+// with wrong value".
+pub function assert_map_has[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], k: K, v: V): Option[string] {
     match (m.get(k)) {
         Some(got) => {
-            if (got == v) { return None; }
+            if (got.eq(v)) { return None; }
             return Some("assert_map_has: key " + k.to_string() +
                         " -> " + got.to_string() + ", expected " + v.to_string());
         },
@@ -2493,98 +2490,53 @@ pub function assert_map_has_i32_i32(m: Map[i32, i32], k: i32, v: i32): Option[st
     return None;
 }
 
-pub function assert_map_has_string_string(m: Map[string, string], k: string, v: string): Option[string] {
-    match (m.get(k)) {
-        Some(got) => {
-            if (got == v) { return None; }
-            return Some("assert_map_has: key \"" + k +
-                        "\" -> \"" + got + "\", expected \"" + v + "\"");
-        },
-        None => {
-            return Some("assert_map_has: key \"" + k + "\" missing");
-        }
-    }
-    return None;
-}
-
-// `assert_map_lacks_*(m, k)` — key `k` is NOT present. Used
+// `assert_map_lacks(m, k)` — key `k` is NOT present. Used
 // after a delete or in negative-result tests.
-pub function assert_map_lacks_i32_i32(m: Map[i32, i32], k: i32): Option[string] {
+pub function assert_map_lacks[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], k: K): Option[string] {
     if (m.has(k)) {
         return Some("assert_map_lacks: key " + k.to_string() + " unexpectedly present");
     }
     return None;
 }
 
-pub function assert_map_lacks_string_string(m: Map[string, string], k: string): Option[string] {
-    if (m.has(k)) {
-        return Some("assert_map_lacks: key \"" + k + "\" unexpectedly present");
-    }
-    return None;
-}
-
-// `assert_eq_map_i32_i32(actual, expected)` — full map deep
-// equality. Same length AND every key in `actual` is present
-// in `expected` with the same value (by pigeonhole this
-// implies the reverse direction too, so we only walk one
-// side). Map iteration order isn't observable, so the helper
-// walks `actual.keys()` rather than `iter` — order-
-// independent by construction. Use this when the test wants
-// to pin the WHOLE map state; reach for the existing
-// `_has` / `_lacks` / `_len` family when only individual
-// entries matter.
-pub function assert_eq_map_i32_i32(actual: Map[i32, i32], expected: Map[i32, i32]): Option[string] {
+// `assert_eq_map(actual, expected)` — full map deep equality. Same
+// length AND every key in `actual` is present in `expected` with an
+// equal value (by pigeonhole this implies the reverse direction too, so
+// we only walk one side). Map iteration order isn't observable, so the
+// helper walks `actual.keys()` rather than `iter` — order-independent by
+// construction. Values are compared with `.eq` and the per-key lookup
+// goes through `expected.get(k)` / `actual.get(k)` so the body never
+// needs a V-typed default literal. Use this when the test wants to pin
+// the WHOLE map state; reach for `_has` / `_lacks` / `_len` when only
+// individual entries matter.
+pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](actual: Map[K, V], expected: Map[K, V]): Option[string] {
     var an: i32 = actual.len();
     var en: i32 = expected.len();
     if (an != en) {
-        return Some("assert_eq_map_i32_i32: length differs - expected " +
+        return Some("assert_eq_map: length differs - expected " +
                     en.to_string() + ", got " + an.to_string());
     }
-    var ks: i32[] = actual.keys();
+    var ks: K[] = actual.keys();
     var i: i32 = 0;
     while (i < ks.len()) {
-        var k: i32 = ks[i];
-        if (!expected.has(k)) {
-            return Some("assert_eq_map_i32_i32: key " +
-                        k.to_string() + " missing from expected");
-        }
-        // get_or default is unreachable here — we just
-        // checked `has(k)` on both sides (actual.keys()
-        // returned k; expected.has(k) is true).
-        var av: i32 = actual.get_or(k, 0);
-        var ev: i32 = expected.get_or(k, 0);
-        if (av != ev) {
-            return Some("assert_eq_map_i32_i32: at key " +
-                        k.to_string() + " expected " + ev.to_string() +
-                        ", got " + av.to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
-
-// `assert_eq_map_string_string(actual, expected)` — same
-// pattern, string-keyed.
-pub function assert_eq_map_string_string(actual: Map[string, string], expected: Map[string, string]): Option[string] {
-    var an: i32 = actual.len();
-    var en: i32 = expected.len();
-    if (an != en) {
-        return Some("assert_eq_map_string_string: length differs - expected " +
-                    en.to_string() + ", got " + an.to_string());
-    }
-    var ks: string[] = actual.keys();
-    var i: i32 = 0;
-    while (i < ks.len()) {
-        var k: string = ks[i];
-        if (!expected.has(k)) {
-            return Some("assert_eq_map_string_string: key \"" +
-                        k + "\" missing from expected");
-        }
-        var av: string = actual.get_or(k, "");
-        var ev: string = expected.get_or(k, "");
-        if (av != ev) {
-            return Some("assert_eq_map_string_string: at key \"" +
-                        k + "\" expected \"" + ev + "\", got \"" + av + "\"");
+        var k: K = ks[i];
+        match (expected.get(k)) {
+            None => {
+                return Some("assert_eq_map: key " + k.to_string() +
+                            " missing from expected");
+            },
+            Some(ev) => {
+                match (actual.get(k)) {
+                    Some(av) => {
+                        if (!av.eq(ev)) {
+                            return Some("assert_eq_map: at key " + k.to_string() +
+                                        " expected " + ev.to_string() +
+                                        ", got " + av.to_string());
+                        }
+                    },
+                    None => {}
+                }
+            }
         }
         i = i + 1;
     }
