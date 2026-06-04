@@ -528,17 +528,16 @@ interpreter's unary evaluator errored on every `as` cast, so any test that
 narrowed an i64 with `… as i32` returned garbage. See the seventeenth
 pass.)
 
-It is deliberately **not** patched into the wasm backend alone: element
-width is baked into the literal emit, index read, `__set_index`, the
-`for` loop, `__fern_arr_push` / `__fern_arr_slice`, and the alloc size —
-in `wasm.fern`, `asm.fern`, and `asm_arm64.fern` alike —
-and the element-i64-ness has to flow from a declaration type (`var xs:
-i64[]`) down into an otherwise-untyped literal. Fixing it in wasm only
-would make the wasm backend disagree with the others (and the fixpoint
-gate guards the native path, not wasm element width), so this is tracked
-as a single cross-cutting **8-byte-slot for 64-bit element types** change
-spanning the three compiled backends, to be done as its own series rather
-than a one-backend hack. (`f64[]` shares the same slot, so it rides along.)
+Element width is baked into the literal emit, index read, `__set_index`,
+the `for` loop, `__fern_arr_push` / `__fern_arr_slice`, and the alloc
+size, so it's a **per-backend series** (`wasm.fern`, then `asm.fern`,
+then `asm_arm64.fern`) — each backend's array repr is internally
+consistent and independently testable (the wasm differential suite vs the
+Go oracle; the fixpoint for the native pair). The element-i64/f64-ness
+has to flow from a declaration type (`var xs: i64[]` / an `i64[]`-return /
+an `i64[]` param) down into an otherwise-untyped literal. (`f64[]` shares
+the same 8-byte slot, so it rides along.) **The wasm backend is done —
+see the eighteenth pass; `asm` / `asm_arm64` remain.**
 
 A seventeenth pass fixed the **interpreter `as` cast** bug surfaced while
 investigating the above: `interp.fern`'s unary evaluator only handled `-`
@@ -553,6 +552,25 @@ the interp's i32 / f64 value model. Guarded by four new cases in
 `cast-i32-to-f64`, `cast-in-i64-array-sum`), cross-checked against the Go
 interpreter. Interpreter-only change; the native compiler fixpoint does
 not compile `interp.fern`, so it is unaffected.
+
+An eighteenth pass landed the first leg of the 8-byte-slot series: the
+**wasm backend now stores `i64[]` / `f64[]` elements in 8-byte slots**
+with `i64`/`f64` load/store. A new `array_elem_kind` classifier (backed by
+`i64_arr_names` / `f64_arr_names` Ctx sets, seeded from `i64[]`/`f64[]`
+params + var decls + wide-array-returning calls/slices) drives the stride
+(`elem_slot_size`) and op (`elem_load_op` / `elem_store_op`) at every
+element site: the literal emit (`emit_array_literal_kind`, taking the
+declared kind so a bare-integer `i64[]` literal stores wide), the index
+read (added `ExprIndex` cases to `emit_i64` / `emit_f64`, with
+`is_i64_expr` / `is_f64_expr` routing wide reads there), `__set_index`,
+the `for` loop (with `collect_wide_loop_vars` typing the loop var so the
+8-byte load lands in an i64/f64 local), `.push()` (new `$__fern_arr_push_i64`
+/ `$__fern_arr_push_f64`), and slice (new `$__fern_arr_slice8`, a raw
+8-byte move). Values above 2³¹ now round-trip. Guarded by 8 new
+differential cases (`i64arr-*`, `f64arr-for-sum`, plus an `i32arr` mix to
+pin no-regression), all cross-checked against the Go compiler; the full
+self-host suite (incl. fixpoint) stays green. `asm` / `asm_arm64` are the
+remaining legs.
 
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
 
