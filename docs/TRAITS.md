@@ -409,6 +409,31 @@ regressing the self-host gates. It needs traits in two slices:
   full `map_eq_and_predicates` / `batch8` suites through the self-host
   gate.
 
+- **Self-host slice 4 (shipped): parametric impls over struct-typed
+  type parameters.** `impl[T: Bound] Trait for Box[T]` now parses in the
+  self-host: `parse_impl_decl` consumes the leading `[T: Bound]` list
+  and stamps the impl's type params onto each desugared receiver method;
+  the `for` type keeps its `Box[T]` spelling. The x86-64 + arm64
+  emitters gained `base_type_name` (mirroring the wasm backend's
+  helper), applied at the method-symbol-formation and
+  dispatch-shape-compare sites so a `Box[T]` receiver strips to the base
+  struct name `Box` — which is what a `Box{…}` value's runtime shape
+  string carries. This makes a parametric impl dispatch end-to-end when
+  the type parameter is **struct-typed**: a `Box[Inner]` value's
+  `box.m()` finds the impl method, whose body calls `self.v.m()` on the
+  struct-typed field, which carries its own shape pointer and dispatches
+  dynamically. **Primitive / string `T`** (e.g. `Box[i32]`,
+  `Box[string]`) still needs monomorphisation — the self-host's dynamic
+  dispatch can't read a shape off an unboxed primitive or a
+  length-prefixed string, exactly the boundary the bounded-generic
+  monomorphiser (slice 2) handles for plain generic functions. Extending
+  the monomorphiser to clone generic *receiver* methods per
+  instantiation is the next sub-slice. Tested via
+  `trait-parametric-impl-struct-elem` on both backends; the self-host
+  fixpoint + stdtest gates confirm the compiler still builds itself.
+  (`@derive` is a Go-checker feature with no self-host equivalent yet,
+  so generic-`@derive` parity waits on a self-host derive pass.)
+
 ## 7b. The `std/test` collapse (landed)
 
 The scalar `assert_eq_<T>` / `assert_neq_<T>` / `assert_{lt,le,gt,ge}_<T>`
