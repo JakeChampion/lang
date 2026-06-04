@@ -648,10 +648,21 @@ cases. **The self-hosted binary encoder now covers the full core-module
 shape `emit_module` produces** (36 differential cases, exit + stdout
 matching the WAT path).
 
+Slice 4j made `$__fern_alloc` **grow linear memory** instead of trapping
+once the bump pointer passes the initial 16 pages — `memory.grow` by
+`ceil((heap − capacity) / 64KiB)` pages — and taught the encoder
+`memory.size` (`0x3f 0x00`) / `memory.grow` (`0x40 0x00`). This was a real
+wasm-backend robustness gap (any program allocating > 1 MB trapped), and
+it also lifts the assembler's own ceiling: rebuilt with the growing
+allocator, the assembler no longer OOMs on large WATs, so the dropped
+string[]+map word-count integration (~34 KB WAT) now assembles, and a
+program allocating > 1 MB round-trips. `TestSelfHostWasmBinary` adds a
+memory-grow case and the word-count capstone (38 differential cases).
+
 Remaining is packaging, not coverage: wrap the core module in the
-`wasi:cli/run` / `wasi:http` component shapes, and (for round-tripping the
-compiler's own large modules) emit a bigger `(memory …)` so the assembler
-doesn't OOM.
+`wasi:cli/run` / `wasi:http` component shapes (the Component-Model binary
+format — the self-host emits a WASI-preview1 command today, so this also
+involves the preview1→preview2 adapter composition the Go backend uses).
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):

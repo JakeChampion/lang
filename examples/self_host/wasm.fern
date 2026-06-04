@@ -2570,6 +2570,11 @@ function heap_alloc_helpers(heap_base: i32): string {
     o = o + "    (local $p i32)\n";
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
+    // Grow linear memory when the bump pointer passes the current capacity
+    // (memory.size pages * 64KiB). Without this the bump allocator traps
+    // once a program allocates past the initial pages.
+    o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
+    o = o + "      (then (drop (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))))))\n";
     o = o + "    (local.get $p))\n";
     return o;
 }

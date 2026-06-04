@@ -128,6 +128,14 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"f64-compare", "function main(): i32 { var a: f64 = 2.5; if (a > 2.0 && a < 3.0) { return 42; } return 0; }", 42},
 		{"f64-sqrt", "function main(): i32 { var a: f64 = 9.0; return (__sqrt_f64(a)) as i32; }", 3},
 		{"f64-int-convert", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; return (x + 0.5) as i32; }", 7},
+		// memory.grow: a program allocating past the initial 16 pages (1 MB)
+		// now grows linear memory instead of trapping (and the encoder emits
+		// memory.size / memory.grow).
+		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.push(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
+		// Integration capstone: string[] + a string-keyed count map + a
+		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
+		// (it OOM'd before memory.grow).
+		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.set(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
 	}
 
 	for _, tc := range cases {
