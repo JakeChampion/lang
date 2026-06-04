@@ -145,7 +145,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     var ni: i32 = 0;
     while (ni < funcs.len()) {
         known = known.push(funcs[ni].name);
-        if (ssa.is_ptr_type(funcs[ni].ret_type)) { ptr_ret = ptr_ret.push(funcs[ni].name); }
+        if (ssa.is_ptr_type(funcs[ni].ret_type) || ssa.is_struct_type(funcs[ni].ret_type, structs)) { ptr_ret = ptr_ret.push(funcs[ni].name); }
         ni = ni + 1;
     }
     var sfuncs: ssa.SFunc[] = [];

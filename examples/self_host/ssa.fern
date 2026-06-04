@@ -917,21 +917,19 @@ function struct_field_width(structs: parser.StructDecl[], sname: string, field: 
 
 pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BResult {
     var f0: SFunc = SFunc { name: fd.name, nparams: 0, nvals: 0, blocks: [], entry: 0 };
-    // Defer passing / returning structs (needs cross-function pointer-width
-    // marking): bail if the signature mentions a struct type.
-    if (is_struct_type(fd.ret_type, structs)) { return BResult { func: f0, ok: false }; }
     // Params occupy value ids 0..nparams-1, defined by "param" insts in
-    // the entry block (block id 0). A pointer-typed (array/string) param is
-    // marked str="ptr" so compute_widths gives it 64-bit width.
+    // the entry block (block id 0). A pointer-shaped param — array / string
+    // OR a struct — is marked str="ptr" so compute_widths gives it 64-bit
+    // width; struct params also get their type recorded (below) so field
+    // access on them resolves.
     var pnames: string[] = [];
     var pvals: i32[] = [];
     var insts0: SInst[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        if (is_struct_type(fd.params[i].type_name, structs)) { return BResult { func: f0, ok: false }; }
         var noargs: i32[] = [];
         var pmark: string = "";
-        if (is_ptr_type(fd.params[i].type_name)) { pmark = "ptr"; }
+        if (is_ptr_type(fd.params[i].type_name) || is_struct_type(fd.params[i].type_name, structs)) { pmark = "ptr"; }
         insts0 = insts0.push(SInst { kind: "param", result: i, args: noargs, imm: i, str: pmark });
         pnames = pnames.push(fd.params[i].name);
         pvals = pvals.push(i);
@@ -940,6 +938,12 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
     var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
+    // Record struct-typed params' types for field-access offset resolution.
+    var pj: i32 = 0;
+    while (pj < fd.params.len()) {
+        if (is_struct_type(fd.params[pj].type_name, structs)) { s = s.set_var_type(fd.params[pj].name, fd.params[pj].type_name); }
+        pj = pj + 1;
+    }
 
     s = build_stmts(fd.body, s);
     if (!s.ok) { return BResult { func: f0, ok: false }; }
