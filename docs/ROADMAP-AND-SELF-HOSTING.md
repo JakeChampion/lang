@@ -383,12 +383,18 @@ compares, hex / escape literals) confirmed those plus compound assignment
 all work — and found that **compound assignment to an array element**
 (`arr[i] += y`) silently dropped the old value (the parser desugar built
 `__set_index(arr, i, y)` instead of `… arr[i] <op> y`); fixed in the
-parser, so it matches the struct-field form. (One known gap remains —
-C-style `enum` value / `match` semantics; the parser flattens an `enum`
-into variant structs and discards the enum name, so `Color.Green` can't
-resolve. That needs parser-AST work and is tracked as its own slice.)
+parser, so it matches the struct-field form.
 
-Gated by 446 differential cases as of this writing. What remains for the
+**C-style enums** then closed the last known language gap. The parser
+already flattens an `enum` into one zero-field struct per variant, and the
+struct-union `match` machinery (with bindingless arms) already worked — the
+only missing piece was the enum-constant value. `Color.Green` (a field
+access whose receiver isn't a struct value but whose field names a variant
+struct) now emits a variant box `[type_id]` exactly like `Green {}`, so
+`match (c) { Red => … }` dispatches correctly. The heap allocator is gated
+on any struct/enum declaration so the variant box can be built.
+
+Gated by 449 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

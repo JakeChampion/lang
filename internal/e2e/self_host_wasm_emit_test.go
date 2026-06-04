@@ -628,6 +628,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"deep-nesting", "function main(): i32 { print_int(((1 + 2) * (3 + 4)) - ((5 - 1) / 2)); return 0; }", 0, "19"},
 		{"neg-float-compare", "function main(): i32 { var a: f64 = 0.0 - 2.5; if (a < 0.0) { print_int(1); } if (a > (0.0 - 3.0)) { print_int(2); } return 0; }", 0, "12"},
 		{"while-complex-cond", "function main(): i32 { var i: i32 = 0; var j: i32 = 10; while (i < j && j > 0) { i = i + 1; j = j - 1; } print_int(i); return 0; }", 0, "5"},
+
+		// Enums (C-style unit variants): `Color.Green` builds a variant box
+		// reusing the struct-union machinery; `match` dispatches by variant.
+		{"enum-match", "enum Color { Red, Green, Blue } function main(): i32 { var c = Color.Blue; match (c) { Red => { print_int(10); }, Green => { print_int(20); }, Blue => { print_int(30); } } return 0; }", 0, "30"},
+		{"enum-inline-match", "enum Color { Red, Green, Blue } function main(): i32 { match (Color.Red) { Red => { print_int(10); }, Green => { print_int(20); }, Blue => { print_int(30); } } return 0; }", 0, "10"},
+		{"enum-fn-arg", "enum Dir { N, S, E, W } function rank(d: Dir): i32 { match (d) { N => { return 1; }, S => { return 2; }, E => { return 3; }, W => { return 4; } } return 0; } function main(): i32 { print_int(rank(Dir.E)); print_int(rank(Dir.W)); return 0; }", 0, "34"},
 	}
 
 	for _, tc := range cases {
