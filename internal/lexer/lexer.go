@@ -194,6 +194,19 @@ func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
+// hexVal returns the numeric value of a hex digit (0 for non-digits).
+func hexVal(r rune) int {
+	switch {
+	case r >= '0' && r <= '9':
+		return int(r - '0')
+	case r >= 'a' && r <= 'f':
+		return int(r-'a') + 10
+	case r >= 'A' && r <= 'F':
+		return int(r-'A') + 10
+	}
+	return 0
+}
+
 // Tokenize turns src into a slice of tokens terminated by an EOF
 // token, plus the `//` line comments encountered along the way (in
 // source order). Comments are returned separately rather than as a
@@ -454,6 +467,13 @@ func (l *lexer) next() (Token, error) {
 					b.WriteByte('"')
 				case '\\':
 					b.WriteByte('\\')
+				case 'x':
+					if l.i+1 >= len(l.src) || !isHexDigit(rune(l.src[l.i])) || !isHexDigit(rune(l.src[l.i+1])) {
+						return Token{}, &Error{Pos: start, Msg: "\\x escape needs two hex digits"}
+					}
+					b.WriteByte(byte(hexVal(rune(l.src[l.i]))<<4 | hexVal(rune(l.src[l.i+1]))))
+					l.advance()
+					l.advance()
 				default:
 					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
 				}
@@ -554,6 +574,13 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 				lit.WriteByte('"')
 			case '\\':
 				lit.WriteByte('\\')
+			case 'x':
+				if l.i+1 >= len(l.src) || !isHexDigit(rune(l.src[l.i])) || !isHexDigit(rune(l.src[l.i+1])) {
+					return nil, &Error{Pos: start, Msg: "\\x escape needs two hex digits"}
+				}
+				lit.WriteByte(byte(hexVal(rune(l.src[l.i]))<<4 | hexVal(rune(l.src[l.i+1]))))
+				l.advance()
+				l.advance()
 			default:
 				return nil, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
 			}

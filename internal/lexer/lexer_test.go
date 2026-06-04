@@ -113,6 +113,33 @@ func TestStringLiteralEscapes(t *testing.T) {
 // are UTF-8 byte arrays here, so the token text must equal the
 // original source bytes. Surfaced as a format → parse → format
 // non-idempotency on a real example file.
+// \xNN hex byte escapes (string + f-string literal portions), and the
+// two-hex-digit requirement.
+func TestStringLiteralHexEscape(t *testing.T) {
+	toks, _, err := Tokenize(`"\x48\x69\x21"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Text != "Hi!" {
+		t.Errorf("string \\x: got %q, want %q", toks[0].Text, "Hi!")
+	}
+	// f-string literal portion.
+	fts, _, err := Tokenize(`f"\x41={x}"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fts[0].Kind != FString || len(fts[0].FParts) == 0 || fts[0].FParts[0].Lit != "A=" {
+		t.Errorf("f-string \\x: got %v, want first FPart Lit %q", fts[0].FParts, "A=")
+	}
+	// Needs two hex digits.
+	if _, _, err := Tokenize(`"\xZ1"`); err == nil {
+		t.Error("expected error on \\x with non-hex digit")
+	}
+	if _, _, err := Tokenize(`"\x4"`); err == nil {
+		t.Error("expected error on \\x with one hex digit")
+	}
+}
+
 func TestStringLiteralUTF8(t *testing.T) {
 	for _, s := range []string{"∃ over empty", "héllo wörld", "日本語", "emoji 🎉 ok"} {
 		toks, _, err := Tokenize(`"` + s + `"`)

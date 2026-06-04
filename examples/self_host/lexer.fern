@@ -72,6 +72,14 @@ function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 function is_hex_digit(b: i32): boolean {
     return (b >= 48 && b <= 57) || (b >= 97 && b <= 102) || (b >= 65 && b <= 70);
 }
+
+// hex_val returns the numeric value of a hex-digit byte (0 otherwise).
+function hex_val(b: i32): i32 {
+    if (b >= 48 && b <= 57) { return b - 48; }
+    if (b >= 97 && b <= 102) { return b - 97 + 10; }
+    if (b >= 65 && b <= 70) { return b - 65 + 10; }
+    return 0;
+}
 function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13; }
 function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 102; }   // 'i' 'u' 'f'
 
@@ -392,6 +400,15 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
             else if (esc == 48) { out = out + "\0"; }
             else if (esc == 34) { out = out + "\""; }
             else if (esc == 92) { out = out + "\\"; }
+            else if (esc == 120) {
+                // \xNN — two hex digits → one byte.
+                if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
+                    return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
+                }
+                out = out + string_from_bytes([hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1])]);
+                l = l.advance();
+                l = l.advance();
+            }
             else {
                 return NumResult { lex: l, tok: error_tok("unknown escape in string literal", start_line, start_col) };
             }
@@ -453,6 +470,16 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             else if (esc == 48) { lit = lit + "\0"; have_lit = true; }
             else if (esc == 34) { lit = lit + "\""; have_lit = true; }
             else if (esc == 92) { lit = lit + "\\"; have_lit = true; }
+            else if (esc == 120) {
+                // \xNN — two hex digits → one byte.
+                if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
+                    return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
+                }
+                lit = lit + string_from_bytes([hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1])]);
+                have_lit = true;
+                l = l.advance();
+                l = l.advance();
+            }
             else {
                 return NumResult { lex: l, tok: error_tok("unknown escape in f-string", start_line, start_col) };
             }
