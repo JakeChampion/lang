@@ -80,6 +80,14 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"locals", "function main(): i32 { var x: i32 = 5; return x + 37; }", 42},
 		{"subtraction", "function main(): i32 { var a: i32 = 100; var b: i32 = 58; return a - b; }", 42},
 		{"bitwise", "function main(): i32 { return (10 & 6) + (10 | 1); }", 13},
+		// Control flow — block / loop / if / br / br_if, with the label
+		// stack resolving `$brk`/`$cont`/if-frame depths.
+		{"while-sum", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", 10},
+		{"if-then", "function main(): i32 { var x: i32 = 5; if (x > 3) { return 1; } return 0; }", 1},
+		{"return-in-if-in-loop", "function main(): i32 { var i: i32 = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 99; }", 3},
+		{"break-continue", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i > 6) { break; } s = s + i; } return s; }", 18},
+		{"short-circuit-and", "function main(): i32 { var a: i32 = 5; if (a > 1 && a < 10) { return 7; } return 0; }", 7},
+		{"nested-loops", "function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 3) { var j: i32 = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
 	}
 
 	for _, tc := range cases {

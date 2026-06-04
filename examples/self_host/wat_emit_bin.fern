@@ -52,6 +52,21 @@ function parse_dec(s: string): i32 {
     return v;
 }
 
+// parse_dec_i64 parses a (possibly negative) decimal integer as i64.
+function parse_dec_i64(s: string): i64 {
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    var v: i64 = 0;
+    while (i < s.len()) {
+        v = v * 10 + ((s[i] - 48) as i64);
+        i = i + 1;
+    }
+    var z: i64 = 0;
+    if (neg) { return z - v; }
+    return v;
+}
+
 // hexval maps an ASCII hex digit to its value.
 function hexval(c: i32): i32 {
     if (c >= 48 && c <= 57) { return c - 48; }
@@ -209,25 +224,82 @@ function arith_opcode(op: string): i32 {
     return 0;
 }
 
-// enc_instr encodes one folded instruction node post-order.
-function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[]): i32[] {
+// labels_push returns a FRESH frame stack = `labels` + `x`. A copy is
+// required because `arr.push` mutates in place when the backing array has
+// spare capacity — pushing onto the caller's stack directly would corrupt
+// the enclosing frame's stack for its later siblings (turning a deeper
+// `br` depth into a wrong one).
+function labels_push(labels: string[], x: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < labels.len()) { out = out.push(labels[i]); i = i + 1; }
+    out = out.push(x);
+    return out;
+}
+
+// label_depth resolves a WAT `$label` to the relative depth wasm `br` /
+// `br_if` use: 0 = innermost enclosing frame. `labels` is the frame stack
+// (block / loop / if), innermost last; the most recent match wins.
+function label_depth(labels: string[], name: string): i32 {
+    var i: i32 = labels.len() - 1;
+    while (i >= 0) {
+        if (labels[i] == name) { return labels.len() - 1 - i; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// memarg_align gives the natural alignment (log2 of access size) for a
+// memory op; the self-host emits bare loads/stores, so natural alignment +
+// offset 0.
+function memarg_align(op: string): i32 {
+    if (op == "i32.load8_u" || op == "i32.load8_s" || op == "i32.store8") { return 0; }
+    if (op == "i32.load16_u" || op == "i32.load16_s" || op == "i32.store16") { return 1; }
+    if (op == "i64.load" || op == "f64.load" || op == "i64.store" || op == "f64.store") { return 3; }
+    return 2;
+}
+
+// mem_load_opcode / mem_store_opcode: the byte for a memory op (0 if not).
+function mem_load_opcode(op: string): i32 {
+    if (op == "i32.load") { return 40; }
+    if (op == "i64.load") { return 41; }
+    if (op == "f64.load") { return 43; }
+    if (op == "i32.load8_u") { return 45; }
+    if (op == "i32.load8_s") { return 44; }
+    return 0;
+}
+function mem_store_opcode(op: string): i32 {
+    if (op == "i32.store") { return 54; }
+    if (op == "i64.store") { return 55; }
+    if (op == "f64.store") { return 57; }
+    if (op == "i32.store8") { return 58; }
+    return 0;
+}
+
+// enc_instr encodes one folded instruction node post-order. `labels` is
+// the enclosing control-frame stack (for br / br_if depth resolution).
+function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[], labels: string[]): i32[] {
     var out: i32[] = [];
     var op: string = node.items[0].text;
     if (op == "i32.const") {
         out = out.push(65);
         return leb_i32(out, parse_dec(node.items[1].text));
     }
+    if (op == "i64.const") {
+        out = out.push(66);
+        return leb_i64(out, parse_dec_i64(node.items[1].text));
+    }
     if (op == "local.get") {
         out = out.push(32);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.set") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
         out = out.push(33);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
     if (op == "local.tee") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
         out = out.push(34);
         return leb_u32(out, index_of_str(lnames, node.items[1].text));
     }
@@ -236,35 +308,110 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "global.set") {
-        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
         out = out.push(36);
         return leb_u32(out, index_of_str(gnames, node.items[1].text));
     }
     if (op == "return") {
-        if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames)); }
+        if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels)); }
         out = out.push(15);
         return out;
     }
     if (op == "drop") {
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
         out = out.push(26);
         return out;
     }
     if (op == "call") {
         var k: i32 = 2;
         while (k < node.items.len()) {
-            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames));
+            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames, labels));
             k = k + 1;
         }
         out = out.push(16);
         return leb_u32(out, index_of_str(fnames, node.items[1].text));
     }
+    if (op == "br") {
+        out = out.push(12);
+        return leb_u32(out, label_depth(labels, node.items[1].text));
+    }
+    if (op == "br_if") {
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = out.push(13);
+        return leb_u32(out, label_depth(labels, node.items[1].text));
+    }
+    if (op == "block" || op == "loop") {
+        var bi: i32 = 1;
+        var label: string = "";
+        if (node.items[1].kind == 2 && node.items[1].text[0] == 36) { label = node.items[1].text; bi = 2; }
+        var bt: i32 = 64;
+        if (bi < node.items.len() && node_head(node.items[bi]) == "result") {
+            bt = valtype_byte(node.items[bi].items[1].text);
+            bi = bi + 1;
+        }
+        if (op == "block") { out = out.push(2); } else { out = out.push(3); }
+        out = out.push(bt);
+        var inner: string[] = labels_push(labels, label);
+        while (bi < node.items.len()) {
+            out = wcat(out, enc_instr(node.items[bi], lnames, fnames, gnames, inner));
+            bi = bi + 1;
+        }
+        out = out.push(11);        // end
+        return out;
+    }
+    if (op == "if") {
+        var ci: i32 = 1;
+        var ibt: i32 = 64;
+        if (node_head(node.items[1]) == "result") {
+            ibt = valtype_byte(node.items[1].items[1].text);
+            ci = 2;
+        }
+        // condition (stack operand) first
+        out = wcat(out, enc_instr(node.items[ci], lnames, fnames, gnames, labels));
+        out = out.push(4);         // if
+        out = out.push(ibt);
+        var iinner: string[] = labels_push(labels, "");
+        var thenN: SExpr = node.items[ci + 1];
+        var tk: i32 = 1;
+        while (tk < thenN.items.len()) {
+            out = wcat(out, enc_instr(thenN.items[tk], lnames, fnames, gnames, iinner));
+            tk = tk + 1;
+        }
+        if (node.items.len() > ci + 2 && node_head(node.items[ci + 2]) == "else") {
+            out = out.push(5);     // else
+            var elseN: SExpr = node.items[ci + 2];
+            var ek: i32 = 1;
+            while (ek < elseN.items.len()) {
+                out = wcat(out, enc_instr(elseN.items[ek], lnames, fnames, gnames, iinner));
+                ek = ek + 1;
+            }
+        }
+        out = out.push(11);        // end
+        return out;
+    }
+    var ml: i32 = mem_load_opcode(op);
+    if (ml != 0) {
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = out.push(ml);
+        out = leb_u32(out, memarg_align(op));
+        out = leb_u32(out, 0);     // offset
+        return out;
+    }
+    var ms: i32 = mem_store_opcode(op);
+    if (ms != 0) {
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
+        out = out.push(ms);
+        out = leb_u32(out, memarg_align(op));
+        out = leb_u32(out, 0);
+        return out;
+    }
     var ao: i32 = arith_opcode(op);
     if (ao != 0) {
         // unary (eqz) takes one operand; the rest take two.
-        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames));
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels));
         if (op != "i32.eqz" && node.items.len() > 2) {
-            out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+            out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels));
         }
         out = out.push(ao);
         return out;
@@ -406,7 +553,7 @@ function emit_binary(mod: SExpr): i32[] {
             // (global $name (mut i32) (i32.const N))
             globBody = globBody.push(valtype_byte("i32"));
             globBody = globBody.push(1);       // mutable
-            globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames));
+            globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames, []));
             globBody = globBody.push(11);      // end
             globCount = globCount + 1;
         }
@@ -452,7 +599,7 @@ function emit_binary(mod: SExpr): i32[] {
         var instrs: SExpr[] = body_instrs(fnode);
         var k: i32 = 0;
         while (k < instrs.len()) {
-            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames));
+            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, []));
             k = k + 1;
         }
         fbody = fbody.push(11);                // end
@@ -469,7 +616,7 @@ function emit_binary(mod: SExpr): i32[] {
         if (node_head(mod.items[i]) == "data") {
             var dn: SExpr = mod.items[i];
             dataBody = dataBody.push(0);       // active, memory 0
-            dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames)); // offset (i32.const N)
+            dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames, [])); // offset (i32.const N)
             dataBody = dataBody.push(11);      // end
             var bytes: i32[] = data_bytes(dn.items[2].text);
             dataBody = leb_u32(dataBody, bytes.len());
