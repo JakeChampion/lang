@@ -30,6 +30,9 @@ import "./wasm";
 import "./checker";
 import "./interp";
 import "./printer";
+import "./ssa";
+import "./ssa_x86";
+import "./ssa_arm64";
 
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
@@ -124,6 +127,34 @@ function usage(): i32 {
     return 2;
 }
 
+// SsaResult carries the SSA backend's output and whether it applied.
+struct SsaResult { asm: string, ok: boolean }
+
+// try_ssa attempts to compile the whole program through the SSA pipeline
+// (build_func → optimise → emit). It applies only when EVERY function is in
+// the SSA subset (build_func ok) and a `main` exists; otherwise it returns
+// ok=false so the caller falls back to the AST emitter. The SSA backends
+// cover x86-64 and arm64; other targets always fall back. Register
+// allocation is always on for this path.
+function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
+    if (target != "x86-64" && target != "arm64") { return SsaResult { asm: "", ok: false }; }
+    var sfuncs: ssa.SFunc[] = [];
+    var has_main: boolean = false;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var r: ssa.BResult = ssa.build_func(funcs[i]);
+        if (!r.ok) { return SsaResult { asm: "", ok: false }; }
+        if (funcs[i].name == "main") { has_main = true; }
+        sfuncs = sfuncs.push(ssa.optimize(r.func));
+        i = i + 1;
+    }
+    if (!has_main) { return SsaResult { asm: "", ok: false }; }
+    var asm: string = "";
+    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
+    else { asm = ssa_x86.emit_program(sfuncs, true); }
+    return SsaResult { asm: asm, ok: true };
+}
+
 function main(): i32 {
     var av: string[] = args();
 
@@ -134,6 +165,7 @@ function main(): i32 {
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
+    var use_ssa: boolean = false;
     var have_entry: boolean = false;
 
     var i: i32 = 1;
@@ -145,6 +177,8 @@ function main(): i32 {
             mode_interp = true;
         } else if (a == "-fmt") {
             mode_fmt = true;
+        } else if (a == "-ssa") {
+            use_ssa = true;
         } else if (a == "-target") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -267,6 +301,31 @@ function main(): i32 {
             _ => { return 254; },
         }
         return 254;
+    }
+
+    // Opt-in SSA backend: when -ssa is given, try the AST → SSA → optimise
+    // → regalloc → emit pipeline for the whole program. It applies only if
+    // every function is in the SSA subset (else we fall through to the AST
+    // emitter below), so it never changes the output of programs it can't
+    // yet handle.
+    if (use_ssa) {
+        var sr: SsaResult = try_ssa(merged.funcs, target);
+        if (sr.ok) {
+            if (out_path.len() > 0) {
+                match (write_file(out_path, sr.asm)) {
+                    Some(e) => {
+                        eprint("fern: cannot write output: ");
+                        eprint(out_path);
+                        eprint("\n");
+                        return 1;
+                    },
+                    None => {},
+                }
+            } else {
+                write(sr.asm);
+            }
+            return 0;
+        }
     }
 
     var full: parser.Module = parser.module_with_builtins(merged);
