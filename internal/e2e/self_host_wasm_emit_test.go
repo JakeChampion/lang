@@ -120,6 +120,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Local (nested) functions — desugar to a closure-valued local.
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, ""},
 		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, ""},
+		// defer — action runs at function exit (LIFO, conditional, value
+		// captured before cleanup).
+		{"defer-fires", "function inc(a: i32[]): i32 { defer a[0] = 9; return 1; } function main(): i32 { var arr = [0]; inc(arr); return arr[0]; }", 9, ""},
+		{"defer-lifo", "function f(a: i32[]): i32 { defer a[0] = 1; defer a[0] = 2; return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 1, ""},
+		{"defer-conditional-off", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 0); return arr[0]; }", 0, ""},
+		{"defer-loop-survives", "function f(a: i32[]): i32 { defer a[0] = a[0] + 50; var i = 0; while (i < 3) { a[0] = a[0] + 1; i = i + 1; } return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 53, ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
 		{"call-in-condition", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { if (dbl(5) == 10) { return 42; } return 1; }", 42, ""},
 		// Strings + linear memory: write (verbatim) and print (+\n) of
