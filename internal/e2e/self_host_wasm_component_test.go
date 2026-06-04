@@ -306,3 +306,154 @@ function main(): i32 {
     return 2;
 }
 `
+
+// TestSelfHostWasmComponentEndToEnd compiles a program to a wasi:cli/run
+// component entirely through the self-host: source -> emit_module_run
+// (preview2 core WAT) -> emit_binary (core) -> component_full (component).
+// It then runs the component and checks the run() result convention
+// (main()==0 -> ok -> exit 0; main()!=0 -> err -> exit 1). No-I/O programs
+// only — the preview2 core is import-free.
+func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host component end-to-end e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping self-host component end-to-end e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	// A preview1 driver (to compile the component assembler) and a preview2
+	// driver (to emit the run-core WAT for a program).
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run_p2.fern"), []byte(p2Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run_p2.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	p2Bin := buildSelfHostBin(t, gcc, dir, "wasm_run_p2.fern", "wasm_run_p2")
+
+	// Component assembler: read a core WAT, emit_binary, component_full.
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentCompileDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		source string
+		ok     bool // run() ok (main()==0) → exit 0
+	}{
+		{"return0", "function main(): i32 { return 0; }", true},
+		{"return42", "function main(): i32 { return 42; }", false},
+		{"compute-zero", "function main(): i32 { var x: i32 = 5; var y: i32 = 5; return x - y; }", true},
+		{"compute-nonzero", "function main(): i32 { var n: i32 = 3; return n * 7; }", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// source -> preview2 core WAT
+			coreWat := runCapture(t, gcc, runner, p2Bin, []byte(tc.source))
+			if len(coreWat) == 0 {
+				t.Fatal("preview2 core WAT empty")
+			}
+			if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
+				t.Fatalf("write core.wat: %v", err)
+			}
+			// core WAT -> component bytes
+			out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+			if err != nil {
+				t.Fatalf("run component assembler: %v", err)
+			}
+			var comp []byte
+			for _, tok := range strings.Fields(string(out)) {
+				n, err := strconv.Atoi(tok)
+				if err != nil {
+					t.Fatalf("bad byte %q: %v", tok, err)
+				}
+				comp = append(comp, byte(n))
+			}
+			compPath := filepath.Join(dir, tc.name+".component.wasm")
+			if err := os.WriteFile(compPath, comp, 0o644); err != nil {
+				t.Fatalf("write component: %v", err)
+			}
+			// must validate as a component exporting wasi:cli/run
+			if vout, err := exec.Command(wasmtools, "validate", compPath).CombinedOutput(); err != nil {
+				t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
+			}
+			pout, err := exec.Command(wasmtools, "print", compPath).Output()
+			if err != nil {
+				t.Fatalf("wasm-tools print: %v", err)
+			}
+			if !strings.Contains(string(pout), "wasi:cli/run") {
+				t.Errorf("expected a wasi:cli/run export, got:\n%s", pout)
+			}
+			// run it: ok → exit 0, err → exit 1
+			runErr := exec.Command(wasmtime, "run", compPath).Run()
+			if tc.ok && runErr != nil {
+				t.Errorf("expected run() ok (exit 0), got %v", runErr)
+			}
+			if !tc.ok && runErr == nil {
+				t.Errorf("expected run() err (exit 1), got success")
+			}
+		})
+	}
+}
+
+const p1Driver = `import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+function main(): i32 { write(wasm.emit_module(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+`
+
+const p2Driver = `import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./wasm";
+function main(): i32 { write(wasm.emit_module_run(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+`
+
+// componentCompileDriver reads a (preview2 run) core WAT, assembles it to a
+// binary core module, and wraps it into a wasi:cli/run component.
+const componentCompileDriver = `
+function main(): i32 {
+    match (read_file("core.wat")) {
+        Ok(wat) => {
+            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var comp: i32[] = component_full(core);
+            var i: i32 = 0;
+            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
