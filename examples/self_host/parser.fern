@@ -1672,7 +1672,23 @@ function parse_type_name(p: Par): TypeNameResult {
         p = p.advance();
     }
     if (p.peek_punct() == "]") { p = p.advance(); }
-    return TypeNameResult { par: p, name: base + "[" + inner + "]" };
+    var nm: string = base + "[" + inner + "]";
+    // Trailing array suffixes for nested array types: `i32[][]`,
+    // `T[][][]`, `Map[K, V][]`, etc. After a complete type a `[` is only
+    // ever an (empty) array suffix in this grammar, so consume each
+    // `[]` pair and append it. Without this the second `[]` is left on
+    // the cursor and the surrounding decl misaligns (the `var` binding
+    // gets dropped). The base case `T[]` already returned above.
+    while (p.peek_punct() == "[") {
+        p = p.advance();  // consume `[`
+        if (p.peek_punct() == "]") {
+            p = p.advance();  // consume `]`
+            nm = nm + "[]";
+        } else {
+            break;
+        }
+    }
+    return TypeNameResult { par: p, name: nm };
 }
 
 function parse_param(p: Par): ParamResult {

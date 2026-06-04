@@ -611,6 +611,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"union-match-method", "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function (c: Circle) area(): i32 { return c.r * c.r * 3; } function (sq: Square) area(): i32 { return sq.s * sq.s; } function describe(sh: Shape): i32 { match (sh) { Circle(c) => { return c.area(); }, Square(s) => { return s.area(); } } return 0; } function main(): i32 { print_int(describe(Circle { r: 2 })); print_int(describe(Square { s: 5 })); return 0; }", 0, "1225"},
 		{"closure-captures-array", "function main(): i32 { var xs = [10, 20, 30]; var get = function(i: i32): i32 { return xs[i]; }; print_int(get(0) + get(2)); return 0; }", 0, "40"},
 		{"array-2d", "function main(): i32 { var grid = [[1, 2], [3, 4]]; print_int(grid[0][1]); print_int(grid[1][0]); return 0; }", 0, "23"},
+		// Nested-array *type annotations* `i32[][]` must parse (the second
+		// `[]` was left on the cursor, dropping the `var` binding) — the
+		// literal + iteration already worked unannotated (regression:
+		// nested-array parser fix).
+		{"nested-array-annotated", "function main(): i32 { var grid: i32[][] = [[1, 2], [3, 4], [5, 6]]; var sum = 0; for row in grid { for v in row { sum = sum + v; } } return sum; }", 21, ""},
+		{"nested-array-triple-annotated", "function main(): i32 { var cube: i32[][][] = [[[1]], [[2, 3]]]; var sum = 0; for plane in cube { for row in plane { for v in row { sum = sum + v; } } } return sum; }", 6, ""},
 		{"nested-option", "function f(b: boolean): Option[Option[i32]] { if (b) { return Some(Some(5)); } return Some(None); } function main(): i32 { match (f(true)) { Some(inner) => { match (inner) { Some(v) => { print_int(v); }, None => { print_int(0); } } }, None => { print_int(9); } } return 0; }", 0, "5"},
 		{"recursion-string", "function rep(s: string, n: i32): string { if (n <= 0) { return \"\"; } return s + rep(s, n - 1); } function main(): i32 { write(rep(\"ab\", 3)); return 0; }", 0, "ababab"},
 		{"split-join-roundtrip", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); print_int(parts.len()); return 0; }", 0, "a-b-c3"},
