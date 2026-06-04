@@ -1,0 +1,21 @@
+// General FBIP reuse token — TUPLE sources (Phase 5e-iv): a dead, owned tuple
+// local with a pointer element is reused for a later same-class tuple
+// construction each iteration. D's old array freed at C, C's retained.
+// Differentially pinned reuse-off == reuse-on, free-off == free-on.
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: (i32, i32[]) = (i, [i, i + 1]);
+        var s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
+        var b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
+        acc = acc + b.0 + b.1[0] + b.1[1];
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    if (churn(200) != 100700) { return 99; }
+    return 0;
+}
