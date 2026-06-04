@@ -1,0 +1,493 @@
+// examples/self_host/wat_emit_bin.fern — the module-walker + opcode
+// encoder: the back end of the self-hosted *binary* wasm emitter. Walks
+// the parsed WAT SExpr tree (from wat_parse.fern) and emits a wasm binary
+// module via the leb128 + wat_encode primitives. Pipeline:
+//   tokenize (wat_lex) -> parse (wat_parse) -> ENCODE (this) -> .wasm
+//
+// This first slice handles the module shape emit_module produces for
+// integer / arithmetic programs: the two WASI imports, memory, an active
+// data segment, the `$heap` global, and the `$__fern_alloc` / `$main` /
+// `$_start` functions. Section order follows the binary spec
+// (type, import, func, memory, global, export, code, data); functions are
+// indexed imports-first; a distinct functype is emitted per function (no
+// dedup — valid, just slightly larger). Folded instructions encode
+// post-order (operands then operator), with per-instruction immediate
+// handling.
+//
+// Depends on leb128.fern, wat_lex.fern (WatTok) and wat_parse.fern (SExpr)
+// but is otherwise import-free, so the encoder driver imports all of them
+// and the unit test concatenates the sources + a driver.
+
+// ---- small helpers -------------------------------------------------------
+
+// index_of_str returns the index of `n` in `xs`, or -1. (A local copy so
+// this module stays usable on its own / concatenated.)
+function index_of_str(xs: string[], n: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// node_head returns the head-atom text of a list node ("" if not a list
+// or the head isn't an atom).
+function node_head(n: SExpr): string {
+    if (n.kind == 0 && n.items.len() > 0 && n.items[0].kind == 2) { return n.items[0].text; }
+    return "";
+}
+
+// parse_dec parses a (possibly negative) decimal integer.
+function parse_dec(s: string): i32 {
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    var v: i32 = 0;
+    while (i < s.len()) {
+        v = v * 10 + (s[i] - 48);
+        i = i + 1;
+    }
+    if (neg) { return 0 - v; }
+    return v;
+}
+
+// hexval maps an ASCII hex digit to its value.
+function hexval(c: i32): i32 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 97 + 10; }
+    if (c >= 65 && c <= 70) { return c - 65 + 10; }
+    return 0;
+}
+
+// data_bytes resolves a WAT data string's escapes (`\NN` hex, `\\`, `\"`,
+// `\n`, `\t`) to raw bytes.
+function data_bytes(s: string): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        if (c == 92 && i + 1 < s.len()) {
+            var n: i32 = s[i + 1];
+            if (n == 110) { out = out.push(10); i = i + 2; }
+            else if (n == 116) { out = out.push(9); i = i + 2; }
+            else if (n == 92) { out = out.push(92); i = i + 2; }
+            else if (n == 34) { out = out.push(34); i = i + 2; }
+            else if (i + 2 < s.len()) {
+                out = out.push(hexval(n) * 16 + hexval(s[i + 2]));
+                i = i + 3;
+            } else { out = out.push(c); i = i + 1; }
+        } else {
+            out = out.push(c);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// ---- function inventory --------------------------------------------------
+
+// func_node returns the actual `(func …)` node for a module child: the
+// child itself for a defined func, or the inner func of an import.
+function func_node(child: SExpr): SExpr {
+    if (node_head(child) == "import") { return child.items[child.items.len() - 1]; }
+    return child;
+}
+
+// func_name returns a func node's `$name`.
+function func_name(fnode: SExpr): string {
+    return fnode.items[1].text;
+}
+
+// collect_func_names lists every function name in index order: import
+// funcs first (in source order), then defined funcs.
+function collect_func_names(mod: SExpr): string[] {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "import") { names = names.push(func_name(func_node(mod.items[i]))); }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "func") { names = names.push(func_name(mod.items[i])); }
+        i = i + 1;
+    }
+    return names;
+}
+
+// func_param_types / func_result_types read a func node's signature.
+// A `(param …)` is either named-single (`(param $n i32)`) or a run of
+// bare types (`(param i32 i32 …)`, the import form); both are handled.
+function func_param_types(fnode: SExpr): string[] {
+    var out: string[] = [];
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var c: SExpr = fnode.items[i];
+        if (node_head(c) == "param") {
+            if (c.items.len() >= 2 && c.items[1].text[0] == 36) {
+                // `(param $name type)` — named single.
+                out = out.push(c.items[2].text);
+            } else {
+                var j: i32 = 1;
+                while (j < c.items.len()) { out = out.push(c.items[j].text); j = j + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function func_result_types(fnode: SExpr): string[] {
+    var out: string[] = [];
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var c: SExpr = fnode.items[i];
+        if (node_head(c) == "result") {
+            var j: i32 = 1;
+            while (j < c.items.len()) { out = out.push(c.items[j].text); j = j + 1; }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// local_names lists a defined func's local index space: params first
+// (named), then `(local $name type)` decls.
+function local_names(fnode: SExpr): string[] {
+    var out: string[] = [];
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var c: SExpr = fnode.items[i];
+        if (node_head(c) == "param") {
+            if (c.items.len() >= 2 && c.items[1].text[0] == 36) { out = out.push(c.items[1].text); }
+        }
+        i = i + 1;
+    }
+    i = 2;
+    while (i < fnode.items.len()) {
+        var c2: SExpr = fnode.items[i];
+        if (node_head(c2) == "local") { out = out.push(c2.items[1].text); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// local_decl_types lists the types of the `(local …)` decls (for the code
+// section's locals vec).
+function local_decl_types(fnode: SExpr): string[] {
+    var out: string[] = [];
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var c: SExpr = fnode.items[i];
+        if (node_head(c) == "local") { out = out.push(c.items[2].text); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- instruction encoding ------------------------------------------------
+
+// arith_opcode maps a binary/unary arithmetic op to its wasm byte (0 if
+// not one of them).
+function arith_opcode(op: string): i32 {
+    if (op == "i32.add") { return 106; }
+    if (op == "i32.sub") { return 107; }
+    if (op == "i32.mul") { return 108; }
+    if (op == "i32.and") { return 113; }
+    if (op == "i32.or") { return 114; }
+    if (op == "i32.xor") { return 115; }
+    if (op == "i32.shl") { return 116; }
+    if (op == "i32.shr_s") { return 118; }
+    if (op == "i32.eq") { return 70; }
+    if (op == "i32.ne") { return 71; }
+    if (op == "i32.lt_s") { return 72; }
+    if (op == "i32.gt_s") { return 74; }
+    if (op == "i32.le_s") { return 76; }
+    if (op == "i32.ge_s") { return 78; }
+    if (op == "i32.eqz") { return 69; }
+    return 0;
+}
+
+// enc_instr encodes one folded instruction node post-order.
+function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: string[]): i32[] {
+    var out: i32[] = [];
+    var op: string = node.items[0].text;
+    if (op == "i32.const") {
+        out = out.push(65);
+        return leb_i32(out, parse_dec(node.items[1].text));
+    }
+    if (op == "local.get") {
+        out = out.push(32);
+        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+    }
+    if (op == "local.set") {
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = out.push(33);
+        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+    }
+    if (op == "local.tee") {
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = out.push(34);
+        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+    }
+    if (op == "global.get") {
+        out = out.push(35);
+        return leb_u32(out, index_of_str(gnames, node.items[1].text));
+    }
+    if (op == "global.set") {
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        out = out.push(36);
+        return leb_u32(out, index_of_str(gnames, node.items[1].text));
+    }
+    if (op == "return") {
+        if (node.items.len() > 1) { out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames)); }
+        out = out.push(15);
+        return out;
+    }
+    if (op == "drop") {
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames));
+        out = out.push(26);
+        return out;
+    }
+    if (op == "call") {
+        var k: i32 = 2;
+        while (k < node.items.len()) {
+            out = wcat(out, enc_instr(node.items[k], lnames, fnames, gnames));
+            k = k + 1;
+        }
+        out = out.push(16);
+        return leb_u32(out, index_of_str(fnames, node.items[1].text));
+    }
+    var ao: i32 = arith_opcode(op);
+    if (ao != 0) {
+        // unary (eqz) takes one operand; the rest take two.
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames));
+        if (op != "i32.eqz" && node.items.len() > 2) {
+            out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames));
+        }
+        out = out.push(ao);
+        return out;
+    }
+    return out;
+}
+
+// ---- section builders ----------------------------------------------------
+
+// enc_locals_vec compresses a func's `(local …)` types into runs of
+// (count, valtype), the code section's locals encoding.
+function enc_locals_vec(types: string[]): i32[] {
+    // count distinct runs
+    var runs: i32 = 0;
+    var i: i32 = 0;
+    while (i < types.len()) {
+        if (i == 0 || types[i] != types[i - 1]) { runs = runs + 1; }
+        i = i + 1;
+    }
+    var body: i32[] = [];
+    i = 0;
+    while (i < types.len()) {
+        var n: i32 = 1;
+        while (i + n < types.len() && types[i + n] == types[i]) { n = n + 1; }
+        body = leb_u32(body, n);
+        body = body.push(valtype_byte(types[i]));
+        i = i + n;
+    }
+    return wvec(runs, body);
+}
+
+// enc_functype emits `0x60 vec(params) vec(results)`.
+function enc_functype(params: string[], results: string[]): i32[] {
+    var o: i32[] = [];
+    o = o.push(96);
+    var pb: i32[] = [];
+    var i: i32 = 0;
+    while (i < params.len()) { pb = pb.push(valtype_byte(params[i])); i = i + 1; }
+    o = wcat(o, wvec(params.len(), pb));
+    var rb: i32[] = [];
+    i = 0;
+    while (i < results.len()) { rb = rb.push(valtype_byte(results[i])); i = i + 1; }
+    o = wcat(o, wvec(results.len(), rb));
+    return o;
+}
+
+// body_instrs returns a defined func's body instruction nodes (skipping
+// the param/result/local declarations).
+function body_instrs(fnode: SExpr): SExpr[] {
+    var out: SExpr[] = [];
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var c: SExpr = fnode.items[i];
+        var h: string = node_head(c);
+        if (h != "param" && h != "result" && h != "local") { out = out.push(c); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// emit_binary walks the `(module …)` tree and returns the wasm binary.
+function emit_binary(mod: SExpr): i32[] {
+    var fnames: string[] = collect_func_names(mod);
+    var gnames: string[] = [];
+    var gi: i32 = 0;
+    while (gi < mod.items.len()) {
+        if (node_head(mod.items[gi]) == "global") { gnames = gnames.push(mod.items[gi].items[1].text); }
+        gi = gi + 1;
+    }
+
+    // Func nodes in index order: imports first, then defined.
+    var importNodes: SExpr[] = [];
+    var definedNodes: SExpr[] = [];
+    var i: i32 = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "import") { importNodes = importNodes.push(mod.items[i]); }
+        if (node_head(mod.items[i]) == "func") { definedNodes = definedNodes.push(mod.items[i]); }
+        i = i + 1;
+    }
+
+    // --- type section: one functype per function, import funcs first. ---
+    var nfuncs: i32 = importNodes.len() + definedNodes.len();
+    var typeBody: i32[] = [];
+    i = 0;
+    while (i < importNodes.len()) {
+        var fn: SExpr = func_node(importNodes[i]);
+        typeBody = wcat(typeBody, enc_functype(func_param_types(fn), func_result_types(fn)));
+        i = i + 1;
+    }
+    i = 0;
+    while (i < definedNodes.len()) {
+        typeBody = wcat(typeBody, enc_functype(func_param_types(definedNodes[i]), func_result_types(definedNodes[i])));
+        i = i + 1;
+    }
+
+    // --- import section. ---
+    var impBody: i32[] = [];
+    i = 0;
+    while (i < importNodes.len()) {
+        var imp: SExpr = importNodes[i];
+        impBody = wname(impBody, imp.items[1].text);
+        impBody = wname(impBody, imp.items[2].text);
+        impBody = impBody.push(0);             // import kind: func
+        impBody = leb_u32(impBody, i);         // type index = func index
+        i = i + 1;
+    }
+
+    // --- function section: defined funcs' type indices (= their func idx). ---
+    var funcBody: i32[] = [];
+    i = 0;
+    while (i < definedNodes.len()) {
+        funcBody = leb_u32(funcBody, importNodes.len() + i);
+        i = i + 1;
+    }
+
+    // --- memory section: limits {min}. ---
+    var memBody: i32[] = [];
+    var memCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "memory") {
+            var mn: SExpr = mod.items[i];
+            // min is the last atom child (after an optional (export …)).
+            var minv: i32 = parse_dec(mn.items[mn.items.len() - 1].text);
+            memBody = memBody.push(0);
+            memBody = leb_u32(memBody, minv);
+            memCount = memCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- global section. ---
+    var globBody: i32[] = [];
+    var globCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "global") {
+            var gn: SExpr = mod.items[i];
+            // (global $name (mut i32) (i32.const N))
+            globBody = globBody.push(valtype_byte("i32"));
+            globBody = globBody.push(1);       // mutable
+            globBody = wcat(globBody, enc_instr(gn.items[gn.items.len() - 1], [], fnames, gnames));
+            globBody = globBody.push(11);      // end
+            globCount = globCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- export section: any inline memory export + the (export …) decls. ---
+    var expBody: i32[] = [];
+    var expCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "memory") {
+            // (memory (export "memory") N) — inline export of mem 0.
+            var mm: SExpr = mod.items[i];
+            var j: i32 = 1;
+            while (j < mm.items.len()) {
+                if (node_head(mm.items[j]) == "export") {
+                    expBody = wname(expBody, mm.items[j].items[1].text);
+                    expBody = expBody.push(2); // mem
+                    expBody = leb_u32(expBody, 0);
+                    expCount = expCount + 1;
+                }
+                j = j + 1;
+            }
+        }
+        if (node_head(mod.items[i]) == "export") {
+            var ex: SExpr = mod.items[i];
+            expBody = wname(expBody, ex.items[1].text);
+            expBody = expBody.push(0);         // func
+            expBody = leb_u32(expBody, index_of_str(fnames, ex.items[2].items[1].text));
+            expCount = expCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- code section. ---
+    var codeBody: i32[] = [];
+    i = 0;
+    while (i < definedNodes.len()) {
+        var fnode: SExpr = definedNodes[i];
+        var lnames: string[] = local_names(fnode);
+        var fbody: i32[] = enc_locals_vec(local_decl_types(fnode));
+        var instrs: SExpr[] = body_instrs(fnode);
+        var k: i32 = 0;
+        while (k < instrs.len()) {
+            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames));
+            k = k + 1;
+        }
+        fbody = fbody.push(11);                // end
+        codeBody = leb_u32(codeBody, fbody.len());
+        codeBody = wcat(codeBody, fbody);
+        i = i + 1;
+    }
+
+    // --- data section. ---
+    var dataBody: i32[] = [];
+    var dataCount: i32 = 0;
+    i = 0;
+    while (i < mod.items.len()) {
+        if (node_head(mod.items[i]) == "data") {
+            var dn: SExpr = mod.items[i];
+            dataBody = dataBody.push(0);       // active, memory 0
+            dataBody = wcat(dataBody, enc_instr(dn.items[1], [], fnames, gnames)); // offset (i32.const N)
+            dataBody = dataBody.push(11);      // end
+            var bytes: i32[] = data_bytes(dn.items[2].text);
+            dataBody = leb_u32(dataBody, bytes.len());
+            dataBody = wcat(dataBody, bytes);
+            dataCount = dataCount + 1;
+        }
+        i = i + 1;
+    }
+
+    // --- assemble the module. ---
+    var out: i32[] = wmagic();
+    out = wcat(out, wsection(1, wvec(nfuncs, typeBody)));
+    out = wcat(out, wsection(2, wvec(importNodes.len(), impBody)));
+    out = wcat(out, wsection(3, wvec(definedNodes.len(), funcBody)));
+    if (memCount > 0) { out = wcat(out, wsection(5, wvec(memCount, memBody))); }
+    if (globCount > 0) { out = wcat(out, wsection(6, wvec(globCount, globBody))); }
+    if (expCount > 0) { out = wcat(out, wsection(7, wvec(expCount, expBody))); }
+    out = wcat(out, wsection(10, wvec(definedNodes.len(), codeBody)));
+    if (dataCount > 0) { out = wcat(out, wsection(11, wvec(dataCount, dataBody))); }
+    return out;
+}
