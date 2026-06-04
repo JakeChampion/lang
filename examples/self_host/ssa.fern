@@ -580,16 +580,21 @@ pub function build_func(fd: parser.FuncDecl): BResult {
 pub function optimize(f: SFunc): SFunc {
     // Run the pass pipeline to a fixpoint: branch_simplify can fold a
     // constant `brif` to a `br` and prune the dead arm, which turns the
-    // merge phi trivial (→ a copy) and exposes fresh constants — so we
-    // loop copy-prop / const-fold / branch-simplify / DCE until the
-    // instruction count stops shrinking.
+    // merge phi trivial (→ a copy) and exposes fresh constants;
+    // merge_blocks then threads the empty br-only blocks that leaves
+    // behind into their successors. We loop until the IR size (instruction
+    // count + block count) stops shrinking — block merging registers as
+    // progress even when it doesn't change the instruction total.
     var prev: i32 = 0 - 1;
     var rounds: i32 = 0;
-    while (count_insts(f) != prev && rounds < 1000) {
-        prev = count_insts(f);
+    while (rounds < 1000) {
+        var size: i32 = count_insts(f) + f.blocks.len();
+        if (size == prev) { return f; }
+        prev = size;
         f = copy_propagate(f);
         f = const_fold(f);
         f = branch_simplify(f);
+        f = merge_blocks(f);
         f = dead_code_elim(f);
         rounds = rounds + 1;
     }
@@ -858,6 +863,77 @@ function branch_simplify(f: SFunc): SFunc {
     }
     return f;
 }
+
+// merge_blocks threads straight-line block pairs together: when a block B
+// ends in `br T` and T's only predecessor is B, T's instructions and
+// terminator are appended to B and T is deleted. This collapses the empty
+// br-only blocks that branch_simplify leaves behind (and any other linear
+// chain) into a single block. Because T has exactly one predecessor it
+// carries no real phis (branch_simplify already turned any single-operand
+// phi into a copy), so no phi rewiring is needed on the merge itself;
+// blocks that branched to T have that pred relabelled to B.
+function merge_blocks(f: SFunc): SFunc {
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+        // Find a mergeable pair B → T (B ends in `br T`, T != B, and T's
+        // sole predecessor is B).
+        var found: i32 = 0 - 1;
+        var tid: i32 = 0 - 1;
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var b: SBlock = f.blocks[bi];
+            if (b.term.kind == "br" && b.term.target != b.id) {
+                var ti: i32 = block_index(f, b.term.target);
+                if (ti >= 0) {
+                    var tt: SBlock = f.blocks[ti];
+                    if (tt.preds.len() == 1 && tt.preds[0] == b.id) {
+                        found = bi;
+                        tid = b.term.target;
+                        bi = f.blocks.len();   // break
+                    }
+                }
+            }
+            bi = bi + 1;
+        }
+        if (found < 0) { return f; }
+
+        var bb: SBlock = f.blocks[found];
+        var tti: i32 = block_index(f, tid);
+        var tb: SBlock = f.blocks[tti];
+        // Append T's instructions to B; B inherits T's terminator.
+        var merged_insts: SInst[] = bb.insts;
+        var ii: i32 = 0;
+        while (ii < tb.insts.len()) { merged_insts = merged_insts.push(tb.insts[ii]); ii = ii + 1; }
+        var merged: SBlock = SBlock { id: bb.id, insts: merged_insts, term: tb.term, preds: bb.preds };
+
+        // Rebuild: replace B with the merged block, drop T, and relabel any
+        // pred reference to T (T's successors) over to B.
+        var nblocks: SBlock[] = [];
+        var k: i32 = 0;
+        while (k < f.blocks.len()) {
+            var blk: SBlock = f.blocks[k];
+            if (blk.id == tid) { k = k + 1; continue; }   // drop T
+            if (blk.id == bb.id) { blk = merged; }
+            var np: i32[] = [];
+            var p: i32 = 0;
+            while (p < blk.preds.len()) {
+                if (blk.preds[p] == tid) { np = np.push(bb.id); } else { np = np.push(blk.preds[p]); }
+                p = p + 1;
+            }
+            nblocks = nblocks.push(SBlock { id: blk.id, insts: blk.insts, term: blk.term, preds: np });
+            k = k + 1;
+        }
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+        changed = true;
+    }
+    return f;
+}
+
+// count_blocks returns the number of blocks (tests assert block merging).
+pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 
 // dead_code_elim drops pure instructions (const / binary / unary / phi)
 // whose result is never used, iterating to a fixpoint. Params and calls
