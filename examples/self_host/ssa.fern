@@ -1,0 +1,380 @@
+// examples/self_host/ssa.fern — a static-single-assignment IR for the
+// self-hosted compiler, plus an AST → SSA builder and an SSA interpreter
+// that validates the builder end-to-end. This is the foundation of the
+// self-hosted optimiser: the Go compiler lowers AST → SSA (internal/ssa)
+// and runs ~29 passes before codegen; this file ports the IR + builder so
+// the self-hosted backends can eventually emit from SSA (and gain the same
+// optimisation passes) instead of straight from the AST.
+//
+// Representation (mirrors internal/ssa/ssa.go, but pointer-free — values
+// and blocks are referenced by integer id / array index, matching the
+// self-host's value-semantics style):
+//   - an SSA Value is an i32 id; an instruction (SInst) DEFINES the value
+//     whose id is its `result`, and references operands by their ids in
+//     `args`;
+//   - a block (SBlock) is a list of instructions ending in a terminator;
+//   - a function (SFunc) is a list of blocks with an entry index.
+//
+// SCOPE (slice 1): straight-line function bodies — params, `var` / `=`
+// locals, i32/bool literals, the binary + unary operators, and calls,
+// terminated by `return`. Control flow (if / while → multiple blocks +
+// phi) lands in the next slice; build_func returns ok=false for any
+// construct outside this subset so callers can fall back to the AST path.
+
+import "core/no_prelude";
+import "./parser";
+
+// digits_to_i32 parses a decimal literal's text (non-negative; unary minus
+// is a separate ExprUnary). Mirrors the private helper in the emitters.
+function digits_to_i32(s: string): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return acc; }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    return acc;
+}
+
+// ---- IR ----------------------------------------------------------------
+
+// SInst kinds (string-tagged to stay simple and printable):
+//   "const_int"  imm = value                      result = i32 const
+//   "const_bool" imm = 0/1                         result = bool const
+//   "binary"     str = op ("+","-","==",…) args=[l,r]
+//   "unary"      str = op ("-","!")        args=[x]
+//   "call"       str = callee name         args=[…]
+//   "param"      imm = param index                 result = the param value
+pub struct SInst { kind: string, result: i32, args: i32[], imm: i32, str: string }
+
+// STerm kinds: "ret" (value = returned value id), "br" (target), "brif"
+// (cond, t, f). Slice 1 only emits "ret".
+pub struct STerm { kind: string, cond: i32, target: i32, t: i32, f: i32, value: i32 }
+
+pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
+
+// SFunc: params holds the value ids of the parameters (in order); nvals is
+// the next fresh value id; blocks[entry] is the entry block.
+pub struct SFunc { name: string, params: i32[], nvals: i32, blocks: SBlock[], entry: i32 }
+
+function t_ret(value: i32): STerm { return STerm { kind: "ret", cond: 0, target: 0, t: 0, f: 0, value: value }; }
+function t_none(): STerm { return STerm { kind: "", cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
+
+// ---- builder state -----------------------------------------------------
+// BState threads the in-progress function plus the variable→value
+// environment (parallel name/value arrays — the self-host has maps, but
+// parallel arrays keep this dependency-free and the var counts are small).
+
+pub struct BState {
+    func: SFunc,
+    blk: SBlock,        // the block currently being built
+    var_names: string[],
+    var_vals: i32[],
+    ok: boolean         // cleared when an out-of-subset construct is hit
+}
+
+// fresh allocates a new value id.
+function (s: BState) fresh(): BState {
+    return BState {
+        func: SFunc { name: s.func.name, params: s.func.params, nvals: s.func.nvals + 1, blocks: s.func.blocks, entry: s.func.entry },
+        blk: s.blk, var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
+    };
+}
+function (s: BState) cur_id(): i32 { return s.func.nvals - 1; }
+
+// emit appends an instruction to the current block and returns its result.
+function (s: BState) emit(inst: SInst): BState {
+    var ni: SInst[] = s.blk.insts.push(inst);
+    return BState {
+        func: s.func,
+        blk: SBlock { id: s.blk.id, insts: ni, term: s.blk.term, preds: s.blk.preds },
+        var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
+    };
+}
+
+function (s: BState) set_var(name: string, val: i32): BState {
+    var i: i32 = 0;
+    while (i < s.var_names.len()) {
+        if (s.var_names[i] == name) {
+            var nv: i32[] = [];
+            var j: i32 = 0;
+            while (j < s.var_vals.len()) {
+                if (j == i) { nv = nv.push(val); } else { nv = nv.push(s.var_vals[j]); }
+                j = j + 1;
+            }
+            return BState { func: s.func, blk: s.blk, var_names: s.var_names, var_vals: nv, ok: s.ok };
+        }
+        i = i + 1;
+    }
+    return BState {
+        func: s.func, blk: s.blk,
+        var_names: s.var_names.push(name), var_vals: s.var_vals.push(val), ok: s.ok
+    };
+}
+function (s: BState) get_var(name: string): i32 {
+    var i: i32 = 0;
+    while (i < s.var_names.len()) {
+        if (s.var_names[i] == name) { return s.var_vals[i]; }
+        i = i + 1;
+    }
+    return 0 - 1;   // unknown
+}
+function (s: BState) fail(): BState {
+    return BState { func: s.func, blk: s.blk, var_names: s.var_names, var_vals: s.var_vals, ok: false };
+}
+
+// ---- expression lowering ----------------------------------------------
+// build_expr lowers `e` into instructions on the current block and records
+// the defining value id in s (read back with s.cur_id()). On an out-of-
+// subset construct it sets ok=false.
+
+function build_expr(e: parser.Expr, s: BState): BState {
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (n.is_float) { return s.fail(); }
+            s = s.fresh();
+            var args0: i32[] = [];
+            return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: args0, imm: digits_to_i32(n.text), str: "" });
+        },
+        parser.ExprBool(b) => {
+            s = s.fresh();
+            var iv: i32 = 0;
+            if (b.value) { iv = 1; }
+            var args0: i32[] = [];
+            return s.emit(SInst { kind: "const_bool", result: s.cur_id(), args: args0, imm: iv, str: "" });
+        },
+        parser.ExprIdent(id) => {
+            var v: i32 = s.get_var(id.name);
+            if (v < 0) { return s.fail(); }
+            // Reading a variable is just an alias to its current value:
+            // emit a no-op "copy" so cur_id() is well-defined.
+            s = s.fresh();
+            var a1: i32[] = [v];
+            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
+        },
+        parser.ExprBinary(b) => {
+            s = build_expr(b.left, s);
+            if (!s.ok) { return s; }
+            var lv: i32 = s.cur_id();
+            s = build_expr(b.right, s);
+            if (!s.ok) { return s; }
+            var rv: i32 = s.cur_id();
+            s = s.fresh();
+            var a2: i32[] = [lv, rv];
+            return s.emit(SInst { kind: "binary", result: s.cur_id(), args: a2, imm: 0, str: b.op });
+        },
+        parser.ExprUnary(u) => {
+            s = build_expr(u.operand, s);
+            if (!s.ok) { return s; }
+            var xv: i32 = s.cur_id();
+            s = s.fresh();
+            var a1: i32[] = [xv];
+            return s.emit(SInst { kind: "unary", result: s.cur_id(), args: a1, imm: 0, str: u.op });
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var argvals: i32[] = [];
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        s = build_expr(c.args[i], s);
+                        if (!s.ok) { return s; }
+                        argvals = argvals.push(s.cur_id());
+                        i = i + 1;
+                    }
+                    s = s.fresh();
+                    return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: cid.name });
+                },
+                _ => { return s.fail(); }
+            }
+        },
+        _ => { return s.fail(); }
+    }
+}
+
+// ---- statement lowering ------------------------------------------------
+
+function build_stmt(st: parser.Stmt, s: BState): BState {
+    match (st) {
+        parser.StmtVar(v) => {
+            s = build_expr(v.init, s);
+            if (!s.ok) { return s; }
+            return s.set_var(v.name, s.cur_id());
+        },
+        parser.StmtAssign(a) => {
+            s = build_expr(a.value, s);
+            if (!s.ok) { return s; }
+            return s.set_var(a.target, s.cur_id());
+        },
+        parser.StmtExpr(x) => {
+            return build_expr(x.value, s);
+        },
+        parser.StmtReturn(r) => {
+            s = build_expr(r.value, s);
+            if (!s.ok) { return s; }
+            var rv: i32 = s.cur_id();
+            return BState {
+                func: s.func,
+                blk: SBlock { id: s.blk.id, insts: s.blk.insts, term: t_ret(rv), preds: s.blk.preds },
+                var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
+            };
+        },
+        _ => { return s.fail(); }
+    }
+}
+
+// build_func lowers a FuncDecl to an SFunc. ok=false (in the returned
+// SFunc via a sentinel empty name? no — use BResult) when the body falls
+// outside the slice-1 subset.
+pub struct BResult { func: SFunc, ok: boolean }
+
+pub function build_func(fd: parser.FuncDecl): BResult {
+    // Params occupy value ids 0..nparams-1, defined by "param" insts in
+    // the entry block.
+    var pnames: string[] = [];
+    var pvals: i32[] = [];
+    var params: i32[] = [];
+    var insts0: SInst[] = [];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        var noargs: i32[] = [];
+        insts0 = insts0.push(SInst { kind: "param", result: i, args: noargs, imm: i, str: "" });
+        params = params.push(i);
+        pnames = pnames.push(fd.params[i].name);
+        pvals = pvals.push(i);
+        i = i + 1;
+    }
+    var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
+    var f0: SFunc = SFunc { name: fd.name, params: params, nvals: fd.params.len(), blocks: [], entry: 0 };
+    var s: BState = BState { func: f0, blk: entryblk, var_names: pnames, var_vals: pvals, ok: true };
+
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        s = build_stmt(fd.body[si], s);
+        if (!s.ok) { return BResult { func: f0, ok: false }; }
+        si = si + 1;
+    }
+    // The block must end in a terminator (a return). If the body fell off
+    // without one, bail (slice 1 requires an explicit trailing return).
+    if (s.blk.term.kind != "ret") { return BResult { func: f0, ok: false }; }
+    var blks: SBlock[] = [s.blk];
+    var fout: SFunc = SFunc { name: s.func.name, params: s.func.params, nvals: s.func.nvals, blocks: blks, entry: 0 };
+    return BResult { func: fout, ok: true };
+}
+
+// ---- interpreter -------------------------------------------------------
+// eval_func runs an SFunc with i32 args, returning the value `return`ed.
+// It maintains a value table (id → i32) sized to nvals, fills params from
+// args, executes the entry block's instructions in order, and reads the
+// terminator. (Slice 1 is single-block; multi-block dispatch arrives with
+// control flow.) `calls` maps a callee name → its SFunc for inlined eval.
+
+function vtab_set(tab: i32[], id: i32, v: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < tab.len()) {
+        if (i == id) { out = out.push(v); } else { out = out.push(tab[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function eval_binary(op: string, l: i32, r: i32): i32 {
+    if (op == "+") { return l + r; }
+    if (op == "-") { return l - r; }
+    if (op == "*") { return l * r; }
+    if (op == "/") { return l / r; }
+    if (op == "%") { return l % r; }
+    if (op == "==") { if (l == r) { return 1; } return 0; }
+    if (op == "!=") { if (l != r) { return 1; } return 0; }
+    if (op == "<") { if (l < r) { return 1; } return 0; }
+    if (op == "<=") { if (l <= r) { return 1; } return 0; }
+    if (op == ">") { if (l > r) { return 1; } return 0; }
+    if (op == ">=") { if (l >= r) { return 1; } return 0; }
+    if (op == "&&") { if (l != 0 && r != 0) { return 1; } return 0; }
+    if (op == "||") { if (l != 0 || r != 0) { return 1; } return 0; }
+    if (op == "&") { return l & r; }
+    if (op == "|") { return l | r; }
+    if (op == "^") { return l ^ r; }
+    if (op == "<<") { return l << r; }
+    if (op == ">>") { return l >> r; }
+    return 0;
+}
+
+pub function eval_func(f: SFunc, args: i32[]): i32 {
+    // value table sized to nvals, zero-initialised.
+    var tab: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { tab = tab.push(0); i = i + 1; }
+    var blk: SBlock = f.blocks[f.entry];
+    var k: i32 = 0;
+    while (k < blk.insts.len()) {
+        var inst: SInst = blk.insts[k];
+        if (inst.kind == "param") {
+            var pv: i32 = 0;
+            if (inst.imm < args.len()) { pv = args[inst.imm]; }
+            tab = vtab_set(tab, inst.result, pv);
+        } else if (inst.kind == "const_int" || inst.kind == "const_bool") {
+            tab = vtab_set(tab, inst.result, inst.imm);
+        } else if (inst.kind == "copy") {
+            tab = vtab_set(tab, inst.result, tab[inst.args[0]]);
+        } else if (inst.kind == "binary") {
+            tab = vtab_set(tab, inst.result, eval_binary(inst.str, tab[inst.args[0]], tab[inst.args[1]]));
+        } else if (inst.kind == "unary") {
+            var x: i32 = tab[inst.args[0]];
+            if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
+            else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
+        }
+        // "call" is not evaluated in slice 1's standalone interp (no
+        // cross-function table); the builder still lowers it correctly.
+        k = k + 1;
+    }
+    if (blk.term.kind == "ret") { return tab[blk.term.value]; }
+    return 0;
+}
+
+// ---- text printer (for golden tests / debugging) -----------------------
+
+function int_str(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    var x: i32 = n;
+    if (x < 0) { neg = true; x = 0 - x; }
+    var digits: string = "0123456789";
+    var s: string = "";
+    while (x > 0) { s = digits[x % 10 : x % 10 + 1] + s; x = x / 10; }
+    if (neg) { return "-" + s; }
+    return s;
+}
+
+pub function print_func(f: SFunc): string {
+    var out: string = "func " + f.name + " {\n";
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        out = out + "  b" + int_str(blk.id) + ":\n";
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            out = out + "    v" + int_str(ins.result) + " = " + ins.kind;
+            if (ins.kind == "const_int" || ins.kind == "const_bool" || ins.kind == "param") {
+                out = out + " " + int_str(ins.imm);
+            }
+            if (ins.kind == "binary" || ins.kind == "unary" || ins.kind == "call") {
+                out = out + " " + ins.str;
+            }
+            var ai: i32 = 0;
+            while (ai < ins.args.len()) {
+                out = out + " v" + int_str(ins.args[ai]);
+                ai = ai + 1;
+            }
+            out = out + "\n";
+            k = k + 1;
+        }
+        if (blk.term.kind == "ret") { out = out + "    ret v" + int_str(blk.term.value) + "\n"; }
+        bi = bi + 1;
+    }
+    return out + "}\n";
+}
