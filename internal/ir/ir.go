@@ -5420,12 +5420,17 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	// through b.stmt unchanged. precise[i] is empty when RcFreeEnabled is
 	// off, so this is identical to b.stmt(fn.Body) on the no-free path.
 	precise := b.computePreciseDrops()
-	for i, st := range fn.Body.Stmts {
-		if err := b.stmt(st); err != nil {
-			return nil, err
-		}
-		for _, name := range precise[i] {
-			b.emitPreciseDrop(name)
+	if b.tryEmitTrmc() {
+		// TRMC took over the whole body (a single `match`); skip normal
+		// statement lowering. Scratch-type recording below still runs.
+	} else {
+		for i, st := range fn.Body.Stmts {
+			if err := b.stmt(st); err != nil {
+				return nil, err
+			}
+			for _, name := range precise[i] {
+				b.emitPreciseDrop(name)
+			}
 		}
 	}
 	// Record the type of every synthetic slot the lowering pass

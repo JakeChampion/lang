@@ -1,0 +1,32 @@
+// Tail-recursion-modulo-cons: inc_all is the `map` shape (recursive call in
+// the LAST payload of Cons), rewritten by the TRMC pass into an O(1)-stack
+// hole-passing loop. Differentially pinned: free-on == free-off and
+// reuse-on == reuse-off byte-identical, plus the interp oracle.
+enum List { Cons(i32, List), Nil }
+
+function inc_all(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+
+function build(n: i32): List {
+    var acc: List = Nil;
+    var i: i32 = 0;
+    while (i < n) { acc = Cons(i, acc); i = i + 1; }
+    return acc;
+}
+
+function sum(l: List): i32 {
+    var a: i32 = 0;
+    var c: List = l;
+    var g: boolean = true;
+    while (g) { match (c) { Cons(h, t) => { a = a + h; c = t; }, Nil => { g = false; } } }
+    return a;
+}
+
+function main(): i32 {
+    // build [0..9], inc each -> [1..10]; sum(1..10)=55. Use as exit code.
+    return sum(inc_all(build(10)));
+}
