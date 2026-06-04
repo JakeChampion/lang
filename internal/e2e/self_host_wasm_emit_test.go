@@ -695,6 +695,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"string-compare", "function main(): i32 { if (\"apple\" < \"banana\") { print_int(1); } if (\"zebra\" > \"ant\") { print_int(2); } return 0; }", 0, "12"},
 		{"fstring-method-interp", "function main(): i32 { var s: string = \"hello\"; write(f\"upper={s.to_upper()}\"); return 0; }", 0, "upper=HELLO"},
 		{"array-of-tuples", "function main(): i32 { var ps = [(1, 2), (3, 4)]; var t = ps[1]; print_int(t.0 + t.1); return 0; }", 0, "7"},
+		// A `(T, U)[]` *annotation* must parse: the parenthesized tuple type
+		// followed by `[]` previously left the `[]` on the cursor, so the
+		// `var`'s local was never declared ("unknown local"). Now the
+		// trailing `[]` is consumed.
+		{"tuple-array-annotated", "function main(): i32 { var ps: (i32, i32)[] = [(1, 2), (3, 4)]; var t = ps[1]; return t.0 + t.1; }", 7, ""},
+		{"tuple-array-for", "function main(): i32 { var ps: (i32, i32)[] = [(10, 20), (30, 40)]; var s: i32 = 0; for p in ps { s = s + p.0; } return s; }", 40, ""},
 		{"method-chain-struct", "struct Acc { total: i32 } function (a: Acc) add(n: i32): Acc { return Acc { total: a.total + n }; } function main(): i32 { var r = Acc { total: 0 }.add(5).add(10).add(20); print_int(r.total); return 0; }", 0, "35"},
 		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
 

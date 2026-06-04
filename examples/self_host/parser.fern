@@ -1583,6 +1583,22 @@ pub struct ParamResult { par: Par, param: ParamDecl }
 // the parser saw nothing useful.
 pub struct TypeNameResult { par: Par, name: string }
 
+// consume_array_suffix swallows trailing `[]` suffix(es) after a type and
+// appends them to `name`. Needed for the parenthesized type forms — a
+// tuple `(i32, i32)[]` or function `(() => i32)[]` array — whose `[]`
+// would otherwise be left on the cursor, breaking the surrounding `var`
+// decl (the binding's local then never gets declared).
+function consume_array_suffix(p: Par, name: string): TypeNameResult {
+    while (p.peek_punct() == "[") {
+        p = p.advance();
+        if (p.peek_punct() == "]") {
+            p = p.advance();
+            name = name + "[]";
+        }
+    }
+    return TypeNameResult { par: p, name: name };
+}
+
 function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
@@ -1632,14 +1648,17 @@ function parse_type_name(p: Par): TypeNameResult {
                 p = p.advance();  // consume `=>`
                 var rr: TypeNameResult = parse_type_name(p);
                 p = rr.par;
-                return TypeNameResult { par: p, name: "fn" };
+                // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
+                // array of closures.
+                return consume_array_suffix(p, "fn");
             }
             // Tuple type — return the reconstructed precise spelling
             // (e.g. "(string, TestRunner)") so tuple-destructure
             // bindings can recover each element's type. ret_tag_of
             // still maps the whole "(…)" to "unknown", so this is a
-            // strict superset of the old coarse "tuple" placeholder.
-            return TypeNameResult { par: p, name: tbuf };
+            // strict superset of the old coarse "tuple" placeholder. A
+            // trailing `[]` makes it an array of tuples.
+            return consume_array_suffix(p, tbuf);
         }
         // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
         // Without consuming it the surrounding decl loop spins on the
