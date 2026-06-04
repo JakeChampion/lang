@@ -162,9 +162,35 @@ function func_param_is_i64(cx: Ctx, fn: string, idx: i32): boolean {
     return false;
 }
 
-// func_param_is_f64 is the f64 analogue of func_param_is_i64.
-function func_param_is_f64(cx: Ctx, fn: string, idx: i32): boolean {
+// is_zero_arg_func is true when `name` is a free, zero-parameter function
+// (e.g. a `const` desugar) — a bare reference to it lowers to a call.
+function is_zero_arg_func(cx: Ctx, name: string): boolean {
+    return zero_arg_func_ret(cx, name).len() > 0;
+}
+
+// zero_arg_func_ret returns the declared return type of a free, zero-arg
+// function `name` ("__void__" when it returns nothing, "" when there is no
+// such function) — drives const-reference typing.
+function zero_arg_func_ret(cx: Ctx, name: string): string {
     var i: i32 = 0;
+    while (i < cx.mod_funcs.len()) {
+        if (cx.mod_funcs[i].receiver_type.len() == 0 && cx.mod_funcs[i].name == name && cx.mod_funcs[i].params.len() == 0) {
+            if (cx.mod_funcs[i].ret_type.len() == 0) { return "__void__"; }
+            return cx.mod_funcs[i].ret_type;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// is_const_ref is true for a bare ident naming a zero-arg free function
+// (a `const`) that isn't shadowed by a local of the same name.
+function is_const_ref(cx: Ctx, name: string): boolean {
+    return !contains_str(cx.all_locals, name) && is_zero_arg_func(cx, name);
+}
+
+// func_param_is_f64 is the f64 analogue of func_param_is_i64.
+function func_param_is_f64(cx: Ctx, fn: string, idx: i32): boolean {    var i: i32 = 0;
     while (i < cx.mod_funcs.len()) {
         if (cx.mod_funcs[i].receiver_type.len() == 0 && cx.mod_funcs[i].name == fn) {
             if (idx < cx.mod_funcs[i].params.len()) {
@@ -653,7 +679,8 @@ function is_clock_builtin(name: string): boolean {
 function is_i64_expr(e: parser.Expr, cx: Ctx): boolean {
     match (e) {
         parser.ExprIdent(id) => {
-            return contains_str(cx.i64_names, id.name);
+            if (contains_str(cx.i64_names, id.name)) { return true; }
+            return is_const_ref(cx, id.name) && zero_arg_func_ret(cx, id.name) == "i64";
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") { return is_i64_expr(u.operand, cx); }
@@ -714,6 +741,9 @@ function emit_i64(e: parser.Expr, cx: Ctx, depth: i32): string {
         parser.ExprIdent(id) => {
             if (contains_str(cx.i64_names, id.name)) {
                 return "(local.get $" + id.name + ")";
+            }
+            if (is_const_ref(cx, id.name) && zero_arg_func_ret(cx, id.name) == "i64") {
+                return "(call $" + id.name + ")";
             }
         },
         parser.ExprUnary(u) => {
@@ -809,7 +839,8 @@ function is_f64_expr(e: parser.Expr, cx: Ctx): boolean {
             return n.is_float;
         },
         parser.ExprIdent(id) => {
-            return contains_str(cx.f64_names, id.name);
+            if (contains_str(cx.f64_names, id.name)) { return true; }
+            return is_const_ref(cx, id.name) && is_float_type(zero_arg_func_ret(cx, id.name));
         },
         parser.ExprUnary(u) => {
             if (u.op == "-") { return is_f64_expr(u.operand, cx); }
@@ -868,6 +899,9 @@ function emit_f64(e: parser.Expr, cx: Ctx, depth: i32): string {
         parser.ExprIdent(id) => {
             if (contains_str(cx.f64_names, id.name)) {
                 return "(local.get $" + id.name + ")";
+            }
+            if (is_const_ref(cx, id.name) && is_float_type(zero_arg_func_ret(cx, id.name))) {
+                return "(call $" + id.name + ")";
             }
         },
         parser.ExprUnary(u) => {
@@ -1416,6 +1450,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             var capi: i32 = index_of_str(cx.cap_names, id.name);
             if (capi >= 0) {
                 return "(i32.load (i32.add (local.get $__env) (i32.const " + i32_to_string(4 + capi * 4) + ")))";
+            }
+            // A bare reference to a zero-arg free function — a `const`
+            // desugar — lowers to a call (unless shadowed by a local).
+            if (is_const_ref(cx, id.name)) {
+                return "(call $" + id.name + ")";
             }
             return "(local.get $" + id.name + ")";
         },
@@ -3296,7 +3335,10 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
 function is_string_expr(e: parser.Expr, cx: Ctx): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
-        parser.ExprIdent(id) => { return contains_str(cx.locals, id.name); },
+        parser.ExprIdent(id) => {
+            if (contains_str(cx.locals, id.name)) { return true; }
+            return is_const_ref(cx, id.name) && zero_arg_func_ret(cx, id.name) == "string";
+        },
         parser.ExprBinary(b) => {
             if (b.op == "+") {
                 return is_string_expr(b.left, cx) || is_string_expr(b.right, cx);

@@ -346,7 +346,17 @@ destructuring** wasn't lowered (the comma-encoded binding fell through to a
 single bogus local). The StmtVar path now splits the two names and binds
 them from the tuple's slots (`a = t.0`, `b = t.1`).
 
-Gated by 409 differential cases as of this writing. What remains for the
+A fourth pass (continue / push-loops, nested-struct methods, wildcard
+`match`, string ordering, f-string method interpolants, arrays of tuples,
+struct method-chaining, early return from a loop) ran first-try and turned
+up one more gap: **`const` declarations**. The parser desugars a `const` to
+a zero-arg function and a bare reference is meant to lower to a call, but
+the backend emitted a (non-existent) `local.get`. A bare ident naming a
+zero-arg free function (not shadowed by a local) now lowers to `(call $C)`,
+and the const's declared return type drives string / i64 / f64 typing so it
+concats / formats / does wide arithmetic correctly.
+
+Gated by 423 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
