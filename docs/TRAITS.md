@@ -443,10 +443,33 @@ regressing the self-host gates. It needs traits in two slices:
   field types under instantiation. Generic-struct monomorphisation is a
   large departure from that erasure model; it is the real prerequisite
   for primitive/string-`T` parametric impls (and would also be the
-  vehicle for generic `@derive`, which has no self-host equivalent at
-  all). Deferred until a use case justifies the architectural cost — the
-  struct-typed-`T` slice above is the natural milestone within the
-  erasure model.
+  vehicle for generic `@derive`). Deferred until a use case justifies
+  the architectural cost — the struct-typed-`T` slice above is the
+  natural milestone within the erasure model.
+
+- **Self-host slice 5 (shipped): `dyn Trait` + `@derive` on structs.**
+  Two more of the Go-side trait features ported toward retiring the Go
+  compiler. **`dyn Trait`**: a `dyn` lexer keyword + a `parse_type_name`
+  case (coarse `"dyn <trait>"` spelling); dispatch is free — the
+  self-host already shape-dispatches `d.m()` on any heap value. The one
+  real fix was a pre-existing bug: the generic `"array"` tag lost its
+  element type, so a `for x in xs { x.m() }` loop var defaulted to
+  `i32` and mis-dispatched to the primitive path; it now binds
+  `"unknown"` → runtime-shape dispatch (fixes struct arrays too).
+  **`@derive`**: an `@` punctuator in the lexer + a `@derive(Trait, …)`
+  attribute parsed in `parse_module`; `synth_struct_{display,eq,ord}`
+  build the same field-wise receiver methods the Go `synth*` functions
+  emit (byte-identical Display, so the differential oracle agrees).
+  Structs only — enums desugar to struct-unions here, so enum `@derive`
+  needs variant-wise synthesis over the variant structs (follow-up), and
+  generic-struct `@derive` waits on generic-struct monomorphisation
+  (slice-4 boundary). Both work for the cases the erasure model supports
+  (struct/enum concrete types; primitive/string fields use their
+  intrinsic / explicitly-impl'd methods). Tested via
+  `trait-dyn-object-heterogeneous`, `trait-struct-array-loop-method`,
+  `trait-derive-struct-{eq,ord,display-nested}` on x86-64 + arm64, plus
+  `examples/tests/derive_test.fern` through the import-resolving stdtest
+  gate (real `core/cmp`).
 
 ## 7b. The `std/test` collapse (landed)
 

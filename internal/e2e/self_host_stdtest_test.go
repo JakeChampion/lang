@@ -240,6 +240,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"assert_at_wider", langSrcAbs(t, "examples/tests/assert_at_wider_test.fern"), ""},
 		{"array_at_and_f32_range", langSrcAbs(t, "examples/tests/array_at_and_f32_range_test.fern"), ""},
 		{"map_eq_and_predicates", langSrcAbs(t, "examples/tests/map_eq_and_predicates_test.fern"), ""},
+		{"derive", langSrcAbs(t, "examples/tests/derive_test.fern"), ""},
 		{"json_field_eq", langSrcAbs(t, "examples/tests/json_field_eq_test.fern"), ""},
 		{"header_map_migrated", langSrcAbs(t, "examples/tests/header_map_migrated_test.fern"), ""},
 		{"http_request_headers_migrated", langSrcAbs(t, "examples/tests/http_request_headers_migrated_test.fern"), ""},

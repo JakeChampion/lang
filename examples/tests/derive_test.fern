@@ -1,0 +1,89 @@
+import "core/no_prelude";
+import "core/cmp";
+import "std/test";
+// examples/tests/derive_test.fern — `@derive(Eq, Display, Ord)` on
+// structs, over the real `core/cmp` traits. Doubles as the self-host
+// regression gate (compiled through the import-resolving driver, so it
+// exercises core/cmp's primitive impls — unlike the self-contained
+// trait-test cases). The derived methods must agree with the Go
+// checker's synthesis byte-for-byte (the runner is differential against
+// the interpreter oracle). See docs/TRAITS.md.
+
+@derive(cmp.Eq, cmp.Display, cmp.Ord)
+struct Point { x: i32, y: i32 }
+
+@derive(cmp.Eq, cmp.Display)
+struct Inner { n: i32 }
+
+@derive(cmp.Eq, cmp.Display)
+struct Outer { a: Inner, tag: string }
+
+function test_eq_reflexive(): Option[string] {
+    var a: Point = Point { x: 3, y: 7 };
+    var b: Point = Point { x: 3, y: 7 };
+    if (a.eq(b)) { return None; }
+    return test.fail("equal points should be eq");
+}
+
+function test_eq_distinguishes(): Option[string] {
+    var a: Point = Point { x: 3, y: 7 };
+    var c: Point = Point { x: 3, y: 9 };
+    if (!a.eq(c)) { return None; }
+    return test.fail("differing points should not be eq");
+}
+
+function test_display(): Option[string] {
+    var a: Point = Point { x: 3, y: 7 };
+    return test.assert_eq(a.to_string(), "Point { x: 3, y: 7 }");
+}
+
+function test_display_nested(): Option[string] {
+    var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    return test.assert_eq(p.to_string(), "Outer { a: Inner { n: 5 }, tag: hi }");
+}
+
+function test_eq_nested(): Option[string] {
+    var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    var q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    if (p.eq(q)) { return None; }
+    return test.fail("nested equal structs should be eq");
+}
+
+function sign(n: i32): string {
+    if (n < 0) { return "lt"; }
+    if (n > 0) { return "gt"; }
+    return "eq";
+}
+
+function test_ord_first_field(): Option[string] {
+    // First field decides when it differs.
+    var a: Point = Point { x: 1, y: 9 };
+    var b: Point = Point { x: 2, y: 0 };
+    return test.assert_eq(sign(a.cmp(b)), "lt");
+}
+
+function test_ord_second_field(): Option[string] {
+    // Equal first field falls through to the second.
+    var a: Point = Point { x: 3, y: 7 };
+    var c: Point = Point { x: 3, y: 9 };
+    return test.assert_eq(sign(a.cmp(c)), "lt");
+}
+
+function test_ord_equal(): Option[string] {
+    var a: Point = Point { x: 3, y: 7 };
+    var b: Point = Point { x: 3, y: 7 };
+    return test.assert_eq(sign(a.cmp(b)), "eq");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("derive");
+    r = r.it("eq reflexive",        test_eq_reflexive());
+    r = r.it("eq distinguishes",    test_eq_distinguishes());
+    r = r.it("display",             test_display());
+    r = r.it("display nested",      test_display_nested());
+    r = r.it("eq nested",           test_eq_nested());
+    r = r.it("ord first field",     test_ord_first_field());
+    r = r.it("ord second field",    test_ord_second_field());
+    r = r.it("ord equal",           test_ord_equal());
+    return r.finish();
+}

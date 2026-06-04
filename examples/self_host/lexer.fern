@@ -125,13 +125,14 @@ function match_multipunct(src: string, i: i32, n: i32): string {
 
 // is_single_punct mirrors the Go lexer's bare-punctuation set:
 // `+`, `-`, `*`, `/`, `%`, parens / braces / brackets, `,`, `;`,
-// `:`, `=`, `<`, `>`, `!`, `&`, `|`, `^`, `?`, `.`.
+// `:`, `=`, `<`, `>`, `!`, `&`, `|`, `^`, `?`, `.`, `@`.
 function is_single_punct(b: i32): boolean {
     return b == 43 || b == 45 || b == 42 || b == 47 || b == 37
         || b == 40 || b == 41 || b == 123 || b == 125
         || b == 91 || b == 93 || b == 44 || b == 59 || b == 58
         || b == 61 || b == 60 || b == 62 || b == 33
-        || b == 38 || b == 124 || b == 94 || b == 63 || b == 46;
+        || b == 38 || b == 124 || b == 94 || b == 63 || b == 46
+        || b == 64;
 }
 
 // Lexer state, passed as a struct through the helpers below.
@@ -899,9 +900,12 @@ function test_string_errors(): i32 {
     return 0;
 }
 
-// test_unknown_char — an unexpected byte surfaces a TokError.
+// test_unknown_char — an unexpected byte surfaces a TokError. `@` is a
+// valid punctuator now (it introduces the `@derive` attribute, matching
+// the Go lexer), so the unknown-char case uses `$`.
 function test_unknown_char(): i32 {
-    if (!has_error(tokenize("@"))) { return 1900; }
+    if (!has_error(tokenize("$"))) { return 1900; }
+    if (has_error(tokenize("@"))) { return 1901; }
     return 0;
 }
 
