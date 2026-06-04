@@ -115,6 +115,27 @@ var traitsCases = []struct {
 			"struct Box[T] { v: T } " +
 			"impl[T: Valued] Valued for Box[T] { function val(self: Self): i32 { return self.v.val() + 1; } } " +
 			"function main(): i32 { var b: Box[Inner] = Box { v: Inner { n: 41 } }; return b.val(); }", 42},
+	// `dyn Trait` runtime trait object: a heterogeneous `dyn Shape[]`
+	// holding two different concrete struct types dispatches each
+	// element's method by runtime shape — which the self-host already
+	// does for any heap value, so `dyn` only needed the type parse (the
+	// `for`-loop element-type fix routes the loop var through shape
+	// dispatch rather than the i32 primitive path). A `dyn Shape`
+	// parameter dispatches the same way. See docs/DYN-TRAITS.md.
+	{"trait-dyn-object-heterogeneous",
+		"trait Shape { function area(self: Self): i32; } " +
+			"struct Circle { r: i32 } struct Rect { w: i32, h: i32 } " +
+			"impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } " +
+			"impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } " +
+			"function sum(xs: dyn Shape[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } " +
+			"function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }", 19},
+	// A plain struct-array loop var calling a method — the pre-existing
+	// bug the `dyn` work surfaced (the loop var defaulted to i32, so the
+	// method dispatched to the primitive path). Guards the for-loop
+	// element-type fix directly.
+	{"trait-struct-array-loop-method",
+		"struct P { v: i32 } function (p: P) get(): i32 { return p.v; } " +
+			"function main(): i32 { var ps: P[] = [P { v: 3 }, P { v: 4 }]; var t: i32 = 0; for x in ps { t = t + x.get(); } return t; }", 7},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

@@ -1586,6 +1586,17 @@ pub struct TypeNameResult { par: Par, name: string }
 function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
+    // `dyn Trait` runtime trait-object type. The self-host erases it to
+    // a coarse `"dyn <trait>"` spelling and dispatches method calls by
+    // the value's runtime shape (a struct/enum value carries its own
+    // shape pointer), so no special dispatch path is needed — only the
+    // type parse. Recurse so `dyn Shape[]` / `dyn mod.Shape` reuse the
+    // generic-arg + trailing-`[]` handling. See docs/DYN-TRAITS.md.
+    if (base == "dyn") {
+        p = p.advance(); // consume `dyn`
+        var dinner: TypeNameResult = parse_type_name(p);
+        return TypeNameResult { par: dinner.par, name: "dyn " + dinner.name };
+    }
     if (base.len() == 0) {
         // Tuple type `(T1, T2, …)`. The self-host stores types
         // coarsely, so consume the balanced parens and return a
