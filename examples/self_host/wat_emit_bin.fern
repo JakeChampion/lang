@@ -233,6 +233,45 @@ function arith_opcode(op: string): i32 {
     if (op == "i32.ge_s") { return 78; }
     if (op == "i32.ge_u") { return 79; }   // 0x4f
     if (op == "i32.eqz") { return 69; }    // 0x45
+    // i64 arithmetic / comparison (binary; i64.eqz is unary).
+    if (op == "i64.add") { return 124; }   // 0x7c
+    if (op == "i64.sub") { return 125; }
+    if (op == "i64.mul") { return 126; }
+    if (op == "i64.div_s") { return 127; }
+    if (op == "i64.div_u") { return 128; }
+    if (op == "i64.rem_s") { return 129; }
+    if (op == "i64.rem_u") { return 130; }
+    if (op == "i64.and") { return 131; }
+    if (op == "i64.or") { return 132; }
+    if (op == "i64.xor") { return 133; }
+    if (op == "i64.shl") { return 134; }
+    if (op == "i64.shr_s") { return 135; }
+    if (op == "i64.shr_u") { return 136; }
+    if (op == "i64.rotl") { return 137; }
+    if (op == "i64.rotr") { return 138; }
+    if (op == "i64.eqz") { return 80; }    // 0x50
+    if (op == "i64.eq") { return 81; }
+    if (op == "i64.ne") { return 82; }
+    if (op == "i64.lt_s") { return 83; }
+    if (op == "i64.lt_u") { return 84; }
+    if (op == "i64.gt_s") { return 85; }
+    if (op == "i64.gt_u") { return 86; }
+    if (op == "i64.le_s") { return 87; }
+    if (op == "i64.le_u") { return 88; }
+    if (op == "i64.ge_s") { return 89; }
+    if (op == "i64.ge_u") { return 90; }   // 0x5a
+    // Numeric conversions (all unary — one stack operand).
+    if (op == "i32.wrap_i64") { return 167; }       // 0xa7
+    if (op == "i64.extend_i32_s") { return 172; }   // 0xac
+    if (op == "i64.extend_i32_u") { return 173; }   // 0xad
+    if (op == "i32.trunc_f64_s") { return 170; }    // 0xaa
+    if (op == "i32.trunc_f64_u") { return 171; }    // 0xab
+    if (op == "i64.trunc_f64_s") { return 176; }    // 0xb0
+    if (op == "i64.trunc_f64_u") { return 177; }    // 0xb1
+    if (op == "f64.convert_i32_s") { return 183; }  // 0xb7
+    if (op == "f64.convert_i32_u") { return 184; }  // 0xb8
+    if (op == "f64.convert_i64_s") { return 185; }  // 0xb9
+    if (op == "f64.convert_i64_u") { return 186; }  // 0xba
     return 0;
 }
 

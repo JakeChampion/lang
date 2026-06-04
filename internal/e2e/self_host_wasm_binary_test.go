@@ -96,6 +96,18 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
 		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n = c.n + 37; return c.n; }", 42},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
+		// i64 arithmetic / comparison / conversion (values above 2^31
+		// round-trip through the 8-byte ops + i32.wrap_i64 on the `as i32`).
+		{"i64-div", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},
+		{"i64-sub", "function main(): i32 { var a: i64 = 100; var b: i64 = 58; var c: i64 = a - b; return c as i32; }", 42},
+		{"i64-mul-cmp", "function main(): i32 { var a: i64 = 1000000; var b: i64 = 1000000; var p: i64 = a * b; if (p > 999999999999) { return 1; } return 0; }", 1},
+		// Strings: the string runtime (memory layout, byte loads, concat,
+		// comparison) now encodes — these were unlocked by the i32 unsigned
+		// compares / select added in slice 4d.
+		{"str-len", "function main(): i32 { var s: string = \"hello\"; return s.len(); }", 5},
+		{"str-index", "function main(): i32 { var s: string = \"abcdef\"; return s[3]; }", 100},
+		{"str-concat-len", "function main(): i32 { var a: string = \"foo\"; var b: string = a + \"barbaz\"; return b.len(); }", 9},
+		{"str-compare", "function main(): i32 { if (\"apple\" < \"banana\") { return 7; } return 0; }", 7},
 	}
 
 	for _, tc := range cases {
