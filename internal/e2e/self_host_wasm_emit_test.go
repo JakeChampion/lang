@@ -641,6 +641,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// `@derive(Display)` on an enum: `Variant(payload)` / `Variant`.
 		{"enum-derive-display-payload", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var h: Opt = Has(7); write(h.to_string()); return 0; }", 0, "Has(7)"},
 		{"enum-derive-display-unit", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; write(n.to_string()); return 0; }", 0, "Nil"},
+		// Primitive-receiver user methods: `self.x.eq(other.x)` on an i32
+		// field/payload dispatches to `impl Eq for i32` ($i32__eq) — the
+		// receiver isn't a struct, so without this it fell back to 0.
+		// Enables `@derive(Eq/Ord)` on structs (and var-typed enums) on
+		// wasm. See docs/TRAITS.md.
+		{"derive-eq-struct", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) struct P { x: i32, y: i32 } function main(): i32 { var a: P = P { x: 1, y: 2 }; var b: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; var r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3, ""},
+		{"derive-ord-struct", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) struct P { x: i32, y: i32 } function main(): i32 { var a: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; if (a.cmp(c) < 0) { if (c.cmp(a) > 0) { if (a.cmp(a) == 0) { return 42; } } } return 0; }", 42, ""},
+		{"derive-eq-enum", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { var a: Opt = Has(5); var a2: Opt = Has(5); var b: Opt = Has(6); var n: Opt = Nil; var n2: Opt = Nil; var r: i32 = 0; if (a.eq(a2)) { r = r + 1; } if (!a.eq(b)) { r = r + 2; } if (!a.eq(n)) { r = r + 4; } if (n.eq(n2)) { r = r + 8; } return r; }", 15, ""},
 		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
 		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
 		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
