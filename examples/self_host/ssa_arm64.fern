@@ -1,0 +1,215 @@
+// examples/self_host/ssa_arm64.fern — an SSA → AArch64 (arm64 Linux ELF,
+// GNU as) code generator: the arm64 sibling of ssa_x86.fern, and parity
+// for the project's DEFAULT target. Lowers the optimised SSA from ssa.fern
+// to machine code, the second backend in the AST → SSA → optimise → emit
+// pipeline.
+//
+// Same strategy as the x86 backend (slice 8): no register allocation —
+// every SSA value lives in an 8-byte stack slot at [sp, #8*v]; instructions
+// load operands into w9/w10, compute, and store the result back. SSA is
+// taken out of phi form by copies on the predecessor edges. Framing mirrors
+// asm_arm64.fern: `__fn_<name>` bodies and `_start` dispatching into main()
+// (exit syscall 93).
+
+import "core/no_prelude";
+import "./ssa";
+
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// slot returns the AArch64 memory operand for SSA value v's stack slot.
+function slot(v: i32): string {
+    return "[sp, #" + i32_to_string(8 * v) + "]";
+}
+
+// argreg maps a parameter index to its AAPCS64 32-bit argument register.
+function argreg(i: i32): string { return "w" + i32_to_string(i); }
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
+    var i: i32 = 0;
+    while (i < blk.preds.len()) {
+        if (blk.preds[i] == prev) { return i; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// emit_const materialises a 32-bit immediate into `reg` (movz low half,
+// movk high half — handles any i32, including negatives).
+function emit_const(imm: i32, reg: string, out: string): string {
+    var lo: i32 = imm & 65535;
+    var hi: i32 = (imm >> 16) & 65535;
+    out = out + "    movz " + reg + ", #" + i32_to_string(lo) + "\n";
+    out = out + "    movk " + reg + ", #" + i32_to_string(hi) + ", lsl #16\n";
+    return out;
+}
+
+// emit_binary emits a binary op assuming w9 = lhs and w10 = rhs, leaving
+// the result in w9.
+function emit_binary(op: string, out: string): string {
+    if (op == "+") { return out + "    add w9, w9, w10\n"; }
+    if (op == "-") { return out + "    sub w9, w9, w10\n"; }
+    if (op == "*") { return out + "    mul w9, w9, w10\n"; }
+    if (op == "/") { return out + "    sdiv w9, w9, w10\n"; }
+    if (op == "%") { return out + "    sdiv w11, w9, w10\n    msub w9, w11, w10, w9\n"; }
+    if (op == "&") { return out + "    and w9, w9, w10\n"; }
+    if (op == "|") { return out + "    orr w9, w9, w10\n"; }
+    if (op == "^") { return out + "    eor w9, w9, w10\n"; }
+    if (op == "<<") { return out + "    lsl w9, w9, w10\n"; }
+    if (op == ">>") { return out + "    asr w9, w9, w10\n"; }
+    if (op == "==") { return out + "    cmp w9, w10\n    cset w9, eq\n"; }
+    if (op == "!=") { return out + "    cmp w9, w10\n    cset w9, ne\n"; }
+    if (op == "<") { return out + "    cmp w9, w10\n    cset w9, lt\n"; }
+    if (op == "<=") { return out + "    cmp w9, w10\n    cset w9, le\n"; }
+    if (op == ">") { return out + "    cmp w9, w10\n    cset w9, gt\n"; }
+    if (op == ">=") { return out + "    cmp w9, w10\n    cset w9, ge\n"; }
+    if (op == "&&") {
+        return out + "    cmp w9, #0\n    cset w9, ne\n    cmp w10, #0\n    cset w10, ne\n    and w9, w9, w10\n";
+    }
+    if (op == "||") {
+        return out + "    cmp w9, #0\n    cset w9, ne\n    cmp w10, #0\n    cset w10, ne\n    orr w9, w9, w10\n";
+    }
+    return out;
+}
+
+function emit_inst(ins: ssa.SInst, out: string): string {
+    if (ins.kind == "const_int" || ins.kind == "const_bool") {
+        out = emit_const(ins.imm, "w9", out);
+        return out + "    str w9, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "copy") {
+        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
+        return out + "    str w9, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "binary") {
+        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
+        out = out + "    ldr w10, " + slot(ins.args[1]) + "\n";
+        out = emit_binary(ins.str, out);
+        return out + "    str w9, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "unary") {
+        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
+        if (ins.str == "-") { out = out + "    neg w9, w9\n"; }
+        else { out = out + "    cmp w9, #0\n    cset w9, eq\n"; }
+        return out + "    str w9, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "call") {
+        var i: i32 = 0;
+        while (i < ins.args.len() && i < 8) {
+            out = out + "    ldr " + argreg(i) + ", " + slot(ins.args[i]) + "\n";
+            i = i + 1;
+        }
+        out = out + "    bl __fn_" + ins.str + "\n";
+        return out + "    str w0, " + slot(ins.result) + "\n";
+    }
+    return out;
+}
+
+function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string {
+    var ti: i32 = block_index(f, tgt);
+    if (ti < 0) { return out; }
+    var tb: ssa.SBlock = f.blocks[ti];
+    var sl: i32 = pred_slot(tb, pred);
+    var k: i32 = 0;
+    while (k < tb.insts.len()) {
+        var ins: ssa.SInst = tb.insts[k];
+        if (ins.kind == "phi") {
+            out = out + "    ldr w9, " + slot(ins.args[sl]) + "\n";
+            out = out + "    str w9, " + slot(ins.result) + "\n";
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+function blk_label(name: string, id: i32): string {
+    return ".L_" + name + "_" + i32_to_string(id);
+}
+
+function emit_term(f: ssa.SFunc, blk: ssa.SBlock, out: string): string {
+    var t: ssa.STerm = blk.term;
+    if (t.kind == "ret") {
+        out = out + "    ldr w0, " + slot(t.value) + "\n";
+        out = out + "    mov sp, x29\n";
+        out = out + "    ldp x29, x30, [sp], #16\n";
+        return out + "    ret\n";
+    }
+    if (t.kind == "br") {
+        out = emit_phi_moves(f, blk.id, t.target, out);
+        return out + "    b " + blk_label(f.name, t.target) + "\n";
+    }
+    if (t.kind == "brif") {
+        out = out + "    ldr w9, " + slot(t.cond) + "\n";
+        out = out + "    cbnz w9, " + blk_label(f.name, t.t) + "\n";
+        return out + "    b " + blk_label(f.name, t.f) + "\n";
+    }
+    return out;
+}
+
+pub function emit_func(f: ssa.SFunc): string {
+    var out: string = "__fn_" + f.name + ":\n";
+    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+    var frame: i32 = f.nvals * 8;
+    if (frame % 16 != 0) { frame = frame + 8; }
+    if (frame > 0) { out = out + "    sub sp, sp, #" + i32_to_string(frame) + "\n"; }
+    var p: i32 = 0;
+    while (p < f.nparams) {
+        out = out + "    str " + argreg(p) + ", " + slot(p) + "\n";
+        p = p + 1;
+    }
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[bi];
+        out = out + blk_label(f.name, blk.id) + ":\n";
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: ssa.SInst = blk.insts[k];
+            if (ins.kind != "param" && ins.kind != "phi") {
+                out = emit_inst(ins, out);
+            }
+            k = k + 1;
+        }
+        out = emit_term(f, blk, out);
+        bi = bi + 1;
+    }
+    return out;
+}
+
+pub function emit_program(funcs: ssa.SFunc[]): string {
+    var out: string = "    .globl _start\n    .text\n";
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        out = out + emit_func(funcs[i]);
+        i = i + 1;
+    }
+    out = out + "_start:\n";
+    out = out + "    bl __fn_main\n";
+    out = out + "    mov x8, #93\n";
+    out = out + "    svc #0\n";
+    return out;
+}
