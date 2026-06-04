@@ -544,6 +544,21 @@ var RcReuseEnabled = true
 // blocks the step-5 flip (see RC-PERCEUS-PLAN.md).
 var RcFreeDebug = false
 
+// TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive
+// call sits in the LAST payload position of a constructor in tail position
+// (the canonical `map(xs) -> Cons(g(h), map(t))` shape) is normally
+// NOT tail-recursive — the constructor wraps the recursive result — so it
+// grows the stack O(n) and overflows on long lists. TRMC rewrites such a
+// function into a "hole-passing" loop: each node is allocated with its
+// recursive field left as a hole, the previous hole is filled with the new
+// node, and the hole advances to the new node's field — O(1) stack, single
+// pass, no reversal. Like RcReuseEnabled it is a SEPARATE axis from the
+// behaviour it optimises: turning it off only disables the rewrite (the
+// function lowers as ordinary recursion), so it can never change observable
+// output — the Test{X86_64,Arm64,WASM}Trmc*MatchesNoTrmc gates assert exactly
+// that byte-identical invariant. Default on.
+var TrmcEnabled = true
+
 // RcPoison is the rc-word marker a quarantined (freed) block carries
 // in RcFreeDebug mode: a large positive value that can't be a real
 // refcount and isn't the high-bit static sentinel.
