@@ -2681,6 +2681,33 @@ function print_int_helper(buf: i32): string {
     return o;
 }
 
+// stdout_shim_helpers emits the component-io $fd_write shim: a $fd_write
+// function (same signature as the preview1 import) that writes to stdout
+// through the preview2 stream interface. The stdout handle from get-stdout
+// is fetched once (cached in $__stdout_handle, -1 = unfetched); each write
+// reads the iovec (ptr@iovs, len@iovs+4), allocates a 16-byte return area
+// for blocking-write-and-flush's result, and reports nwritten = len. So
+// every existing `(call $fd_write (i32.const 1) (i32.const 0) (i32.const 1)
+// (i32.const 8))` site (the iovec at addr 0) works unchanged.
+function stdout_shim_helpers(): string {
+    var o: string = "";
+    o = o + "  (global $__stdout_handle (mut i32) (i32.const -1))\n";
+    o = o + "  (func $fd_write (param $fd i32) (param $iovs i32) (param $iovn i32) (param $nw i32) (result i32)\n";
+    o = o + "    (local $ptr i32) (local $len i32) (local $ret i32)\n";
+    o = o + "    (if (i32.eq (global.get $__stdout_handle) (i32.const -1))\n";
+    o = o + "      (then (global.set $__stdout_handle (call $get_stdout))))\n";
+    o = o + "    (local.set $ptr (i32.load (local.get $iovs)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $iovs) (i32.const 4))))\n";
+    // The result return-area must be aligned to the result type's
+    // alignment (the stream-error variant holds an own<error> handle); the
+    // bump pointer isn't, so over-allocate and round up to 8.
+    o = o + "    (local.set $ret (i32.and (i32.add (call $__fern_alloc (i32.const 24)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (call $bwf (global.get $__stdout_handle) (local.get $ptr) (local.get $len) (local.get $ret))\n";
+    o = o + "    (i32.store (local.get $nw) (local.get $len))\n";
+    o = o + "    (i32.const 0))\n";
+    return o;
+}
+
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
@@ -5435,7 +5462,7 @@ function module_uses_tostring(mod: parser.Module): boolean {
 // emit_module emits the default WASI-preview1 *command* core module
 // (`_start` → `proc_exit(main())`, exit code = main()'s value).
 pub function emit_module(mod: parser.Module): string {
-    return emit_module_mode(mod, false);
+    return emit_module_mode(mod, false, false);
 }
 
 // emit_module_run emits the Component-Model *run* core module: no preview1
@@ -5445,10 +5472,20 @@ pub function emit_module(mod: parser.Module): string {
 // functions the component can't satisfy — that needs the preview2 I/O
 // codegen).
 pub function emit_module_run(mod: parser.Module): string {
-    return emit_module_mode(mod, true);
+    return emit_module_mode(mod, true, false);
 }
 
-function emit_module_mode(mod: parser.Module, component: boolean): string {
+// emit_module_run_io emits the Component-Model *run* core for programs that
+// write to stdout: like emit_module_run, but importing the preview2 stdout
+// interfaces (wasi:cli/stdout/get-stdout + wasi:io/streams/
+// [method]output-stream.blocking-write-and-flush) and defining a $fd_write
+// *shim* over them, so the existing fd_write call sites work unchanged.
+// component_full_io wraps the result into a wasi:cli/run component.
+pub function emit_module_run_io(mod: parser.Module): string {
+    return emit_module_mode(mod, true, true);
+}
+
+function emit_module_mode(mod: parser.Module, component: boolean, io: boolean): string {
     // Intern every string literal in the module into the data section.
     var tab: StrTable = new_str_table();
     tab = collect_strings_stmts(mod.top_stmts, tab);
@@ -5487,6 +5524,13 @@ function emit_module_mode(mod: parser.Module, component: boolean): string {
     if (!component) {
         out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
         out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+    }
+    // Preview2 stdout imports (component-io mode): get-stdout returns an
+    // output-stream handle; blocking-write-and-flush writes a (ptr,len)
+    // list<u8>, its result going to the 4th (return-area) arg.
+    if (component && io) {
+        out = out + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
+        out = out + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
     }
     // wasi imports must sit in the import section (before funcs).
     if (has_env) { out = out + env_helpers(); }
@@ -5537,8 +5581,13 @@ function emit_module_mode(mod: parser.Module, component: boolean): string {
     var has_options: boolean = module_uses_options(mod);
     var has_maps: boolean = module_calls(mod, "map_new_i32") || module_calls(mod, "map_new");
     var has_tostring: boolean = module_uses_tostring(mod);
-    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_args || has_readfile || has_writefile || has_maps || has_tostring) {
+    if (has_strings || has_arrays || has_structs || has_options || has_env || has_random || has_args || has_readfile || has_writefile || has_maps || has_tostring || (component && io)) {
         out = out + heap_alloc_helpers(tab.next + 16 + heap_extra);
+    }
+    // component-io: the $fd_write shim over the preview2 stdout stream, so
+    // every fd_write call site (print / write / print_int) works unchanged.
+    if (component && io) {
+        out = out + stdout_shim_helpers();
     }
     // The string runtime is needed for string literals AND for the string
     // values that env() / args() produce; the map runtime's key-equality
