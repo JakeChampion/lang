@@ -475,6 +475,15 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = leb_u32(out, index_of_str(tnames, node.items[1].items[1].text));
         return leb_u32(out, 0);    // table index 0
     }
+    if (op == "memory.size") {
+        out = out.push(63);    // 0x3f
+        return out.push(0);    // reserved memory index
+    }
+    if (op == "memory.grow") {
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = out.push(64);    // 0x40
+        return out.push(0);    // reserved memory index
+    }
     if (op == "br") {
         out = out.push(12);
         return leb_u32(out, label_depth(labels, node.items[1].text));
