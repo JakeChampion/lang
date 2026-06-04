@@ -87,6 +87,12 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// must still evaluate correctly once de-duplicated.
 		{"cse-dup-loop", "function main(): i32 { var i = 4; var t = 0; while (i > 0) { t = (i * i) + (i * i); i = i - 1; } return t; }", 2},
 		{"cse-commutative-loop", "function main(): i32 { var i = 3; var t = 0; while (i > 0) { t = t + ((i + 1) + (1 + i)); i = i - 1; } return t; }", 18},
+		// break / continue: extra edges into the loop exit / header.
+		{"break-early", "function main(): i32 { var i = 0; while (i < 100) { if (i == 5) { break; } i = i + 1; } return i; }", 5},
+		{"continue-skip", "function main(): i32 { var i = 0; var s = 0; while (i < 10) { i = i + 1; if (i == 5) { continue; } s = s + i; } return s; }", 50},
+		{"break-with-value", "function main(): i32 { var i = 0; var found = 0; while (i < 20) { if (i * i > 30) { found = i; break; } i = i + 1; } return found; }", 6},
+		{"continue-and-break", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { i = i + 1; if (i == 3) { continue; } if (i == 7) { break; } s = s + i; } return s; }", 18},
+		{"nested-break-inner", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } t = t + 1; j = j + 1; } i = i + 1; } return t; }", 6},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
