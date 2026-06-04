@@ -356,7 +356,14 @@ zero-arg free function (not shadowed by a local) now lowers to `(call $C)`,
 and the const's declared return type drives string / i64 / f64 typing so it
 concats / formats / does wide arithmetic correctly.
 
-Gated by 423 differential cases as of this writing. What remains for the
+A fifth pass (else-if chains, 3-variant unions, struct mutation through a
+function, `pts[i].field = …` assignment, string-method combos) ran
+first-try and found one gap: **string char-access `s[i]`** used the array
+indexing formula (4-byte element at offset 8) instead of a byte load (the
+string block is `[len][bytes@4]`, 1 byte each). `ExprIndex` now byte-loads
+when the receiver is a string.
+
+Gated by 430 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
