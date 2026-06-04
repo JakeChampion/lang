@@ -557,6 +557,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Captures are by value (snapshot at creation): add always sees
 		// total == 0, so this sums 1+2+3.
 		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "6"},
+		// Capturing a *struct* into a lambda must keep its struct type so a
+		// `cap.field` read resolves the field offset (it previously emitted
+		// a bogus `(i32.const 0)` because the capture wasn't sv-typed in the
+		// lambda; the method-receiver sub-case also needs the receiver in
+		// the capture set). Regression: struct-capture pass.
+		{"closure-capture-struct-local", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 30, y: 12 }; var f = function(): i32 { return p.x + p.y; }; return f(); }", 42, ""},
+		{"closure-capture-struct-two-fields", "struct Cfg { mult: i32, add: i32 } function main(): i32 { var c = Cfg { mult: 3, add: 1 }; var f = function(x: i32): i32 { return x * c.mult + c.add; }; return f(10); }", 31, ""},
+		{"closure-capture-struct-returned", "struct Box { v: i32 } function wrap(b: Box): (i32) => i32 { return function(x: i32): i32 { return x + b.v; }; } function main(): i32 { var b = Box { v: 40 }; var f = wrap(b); return f(2); }", 42, ""},
+		{"closure-capture-struct-receiver", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { return function(x: i32): i32 { return x + a.base; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
 
 		// Returned closures — a `var f = g(...)` bound to a call of a
 		// function whose return type is `fn` must go through call_indirect,

@@ -471,7 +471,22 @@ parser edit (shared by every backend), so the fixpoint gate is the guard;
 the self-host source uses no nested-array types, so it stays
 byte-identical.
 
-Gated by 473 differential cases as of this writing. What remains for the
+A fourteenth pass closed the **struct-capture-in-lambda** gap flagged in
+the twelfth: a lambda that captures a struct value and reads one of its
+fields — `var f = function() { return p.x; }` over a struct local `p`, or
+the method-receiver form `return function(x) { return x + a.base; }` —
+emitted a bogus `(i32.const 0)` for the field read. The capture pointer
+loaded fine from the env box, but the captured name wasn't struct-typed
+inside the lambda, so `struct_type_of` returned "" and the field offset
+couldn't be resolved. Two fixes: (1) `build_ctx` now adds the method
+receiver to `all_locals` so it can be captured, and (2) `emit_lambda`
+computes each capture's struct type from the enclosing scope and threads
+it (`cap_sv_names` / `cap_sv_types`) into the lambda's `build_ctx`, which
+registers them in `sv_names` / `sv_types`. Covers struct locals,
+struct params, returned closures, and method receivers. wasm-only;
+fixpoint byte-identical.
+
+Gated by 477 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
