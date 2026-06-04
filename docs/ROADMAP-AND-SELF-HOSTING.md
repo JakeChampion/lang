@@ -681,6 +681,16 @@ shifted from preview1 (`_start` / `fd_write` / `proc_exit`) to the
 preview2 `run` / `wasi:cli` shape (a sizeable wasm.fern change on the
 order of the core encoder itself).
 
+The core encoder was also **validated at scale**: beyond the per-feature
+cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
+programs through the binary path (deep recursion — `fib`; a struct-array
+"linked list" walked by index; a string `split` + iteration; a
+string-keyed count map), each binary module matching the WAT path. (One
+limitation surfaced is *not* an encoder bug: `fn[]` — arrays of closures —
+emit invalid WAT in the self-host front end and error in the Go
+interpreter too, so they're a pre-existing language gap, not an encoding
+one.) 41 differential cases in total.
+
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
 **`i64[]` arrays whose elements exceed 32 bits** on the *compiled*
