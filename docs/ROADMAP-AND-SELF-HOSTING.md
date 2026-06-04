@@ -685,11 +685,15 @@ The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
 programs through the binary path (deep recursion — `fib`; a struct-array
 "linked list" walked by index; a string `split` + iteration; a
-string-keyed count map), each binary module matching the WAT path. (One
-limitation surfaced is *not* an encoder bug: `fn[]` — arrays of closures —
-emit invalid WAT in the self-host front end and error in the Go
-interpreter too, so they're a pre-existing language gap, not an encoding
-one.) 41 differential cases in total.
+string-keyed count map), each binary module matching the WAT path. (A
+limitation surfaced here is *not* an encoder bug: the **bare `fn` type** is
+intentionally opaque — not callable, and it doesn't accept a concrete
+lambda on return — on every backend; and a **precise function-typed
+array** (`(() => i32)[]`) works in the Go compiler but hits a separate
+*self-host front-end* gap — `wasm.fern` mishandles the `(() => i32)[]`
+binding so `var fns: (() => i32)[]` emits no local for `fns` — which is a
+front-end / type-annotation gap, not an encoding one.) 41 differential
+cases in total.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
