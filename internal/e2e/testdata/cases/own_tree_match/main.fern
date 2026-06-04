@@ -1,0 +1,27 @@
+// Consuming match over a recursive TREE (two pointer payloads per node) — the
+// FBIP win generalised beyond Cons lists. inc consumes its owned tree, freeing
+// each node cell as it rebuilds. Differentially pinned: free-on == free-off and
+// reuse-on == reuse-off byte-identical (no double free / leak / use-after-free).
+enum Tree { Node(Tree, Tree, i32), Leaf }
+
+function inc(own t: Tree): Tree {
+    match (t) {
+        Node(l, r, v) => { return Node(inc(l), inc(r), v + 1); },
+        Leaf => { return Leaf; },
+    }
+}
+
+function total(t: Tree): i32 {
+    match (t) { Node(l, r, v) => { return total(l) + total(r) + v; }, Leaf => { return 0; } }
+}
+
+function build(d: i32): Tree {
+    if (d == 0) { return Leaf; }
+    return Node(build(d - 1), build(d - 1), d);
+}
+
+function main(): i32 {
+    // depth-3 full tree, +1 per node: values 3 + 2*2 + 4*1 = 11, +7 nodes = 18
+    if (total(inc(build(3))) != 18) { return 99; }
+    return 0;
+}
