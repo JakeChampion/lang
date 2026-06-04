@@ -2219,12 +2219,28 @@ sound (0 over-releases) on both backends** — verified for loop var-reinit
 concat-temp shapes. Bound-var short strings stay inline-SSO (no heap, so
 0 bump) as before.
 
-Remaining (cleanup, not correctness): several `internal/ir/ir.go` comments
-still say "arm64 string reclaim deferred / slice 5g" (emitVarReinitDropOld's
-StringType case, the assign-overwrite string branch). These are now STALE —
-reclamation works. Refresh/remove them, but do NOT add a second dec where
-one already fires (it would double-free); confirm each path's current
-reclamation before touching it.
+**Loop-reinit + owned-temp arm64 string reclaim — NOW WIRED (slice 5g
+follow-up, this session).** The earlier "these comments are stale,
+reclamation works" note was itself wrong for two paths: `emitOwnedSlotDrop`
+(behind `emitVarReinitDropOld`, the loop-body `var s = …` reinit) and
+`emitOwnedTempStackDrop` (fresh owned-string call-arg / statement temps)
+genuinely STILL safe-leaked arm64 two-word heap strings — they only handled
+wasm (`ptrW==4`) and x86_64 single-word, falling through for the arm64
+two-word case. The EXIT SWEEP already reclaimed arm64 two-word strings
+soundly (`UseTwoWordStrings(b.ptrW)` → `__fern_str_dec`), so wiring the same
+branch into those two paths closes the loop-reinit / owned-temp leak —
+mirroring shipped-sound code, gated identically (`freeEligible` /
+`localNameUnique` / `!movedLocals`; `__fern_str_dec` is_unique-gates again).
+Verified: `Test{X86_64,Arm64,WASM}LongStringReinitBounded` (a >15 B heap
+string rebuilt into a loop-body `var s` each iteration — arm64 bump now holds
+a bounded 96 B at N=50 and N=50000, vs the pre-fix divergence; value-correct,
+0 over-release), the existing `TestArm64LoopVarReclaim/string`, and the full
+arm64 e2e + self-host gates. (The arm64 two-word string TEMP-stack path in
+`emitOwnedTempStackDrop` likewise now str_dec's instead of dropping both
+words.) The ONLY arm64 string reclaim still deliberately safe-leaking is the
+control-flow-nested precise drop of a `string[]` element (the args-alias
+guard at `isControlFlowStmt && arrayElemIsPointer`), which is a soundness
+boundary, not a wiring gap.
 
 ##### 5h — block-scoped drops for loop-body locals (DONE)
 

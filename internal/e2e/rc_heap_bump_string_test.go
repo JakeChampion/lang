@@ -54,6 +54,82 @@ const stringConcatUnderflowSrc = `function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// longStringReinitBumpSrc builds a HEAP string (>15 B, so no SSO on any
+// backend) into a loop-body `var s` each iteration. This pins the slice-5g
+// follow-up: arm64 two-word heap strings now reclaim on loop-var REINIT
+// (emitOwnedSlotDrop's str_dec, mirroring the exit sweep) — previously arm64
+// safe-leaked here, so N=5000 vs N=50000 would diverge. All three backends
+// must now report the SAME bump high-water.
+func longStringReinitBumpSrc(n string) string {
+	return `function tag(i: i32): string {
+    if (i % 2 == 0) { return "even"; }
+    return "odd";
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    while (i < ` + n + `) {
+        var s: string = "a-fairly-long-heap-string-prefix-" + tag(i);
+        i = i + 1;
+    }
+    return __heap_bump_bytes() - before;
+}`
+}
+
+// Value-correct + no over-release for the long-heap-string reinit loop.
+const longStringReinitUnderflowSrc = `function tag(i: i32): string {
+    if (i % 2 == 0) { return "even"; }
+    return "odd";
+}
+function main(): i32 {
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) {
+        var s: string = "a-fairly-long-heap-string-prefix-" + tag(i);
+        acc = acc + s.len();
+        i = i + 1;
+    }
+    // 33-char prefix + "even"(4)/"odd"(3): even i -> 37, odd i -> 36.
+    // i=0..199: 100 even (37) + 100 odd (36) = 3700 + 3600 = 7300.
+    if (acc != 7300) { return 999; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64LongStringReinitBounded(t *testing.T) {
+	// x86_64's small heap allocations come from the segregated freelist arena,
+	// which __heap_bump_bytes() does NOT measure (same caveat as closure[]), so
+	// the bump probe is unreliable here — assert only value + no over-release.
+	// The bump-bound win is pinned on arm64 (where my fix landed) and wasm.
+	if _, code := compileAndRunX86_64FreeOn(t, longStringReinitUnderflowSrc); code != 0 {
+		t.Errorf("long-string reinit reclaim: code=%d", code)
+	}
+}
+
+func TestArm64LongStringReinitBounded(t *testing.T) {
+	small := mustRunArm64FreeOn(t, longStringReinitBumpSrc("5000"))
+	large := mustRunArm64FreeOn(t, longStringReinitBumpSrc("50000"))
+	if small != large {
+		t.Errorf("arm64 long-string reinit bump should be bounded (slice 5g follow-up): N=5000 -> %d, N=50000 -> %d", small, large)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, longStringReinitUnderflowSrc); code != 0 {
+		t.Errorf("arm64 long-string reinit reclaim: code=%d", code)
+	}
+}
+
+func TestWASMLongStringReinitBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	small := runWasm(t, longStringReinitBumpSrc("5000"))
+	large := runWasm(t, longStringReinitBumpSrc("50000"))
+	if small != large {
+		t.Errorf("long-string reinit bump should be bounded: N=5000 -> %d, N=50000 -> %d", small, large)
+	}
+	if got := runWasm(t, longStringReinitUnderflowSrc); got != 0 {
+		t.Errorf("long-string reinit reclaim: got %d", got)
+	}
+}
+
 func TestX86_64StringConcatBounded(t *testing.T) {
 	small := mustRunX86_64FreeOn(t, stringConcatBumpSrc("5000"))
 	large := mustRunX86_64FreeOn(t, stringConcatBumpSrc("50000"))
