@@ -13,6 +13,16 @@ import "./parser";
 import "./ssa";
 
 function main(): i32 {
+    var av: string[] = args();
+    var want_opt: boolean = false;
+    var want_count: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-opt") { want_opt = true; }
+        else if (av[ai] == "-count") { want_count = true; }
+        ai = ai + 1;
+    }
+
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var i: i32 = 0;
@@ -20,8 +30,11 @@ function main(): i32 {
         if (mod.funcs[i].name == "main") {
             var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
             if (!r.ok) { return 200; }
+            var fn: ssa.SFunc = r.func;
+            if (want_opt) { fn = ssa.optimize(fn); }
+            if (want_count) { return ssa.count_insts(fn); }
             var noargs: i32[] = [];
-            return ssa.eval_func(r.func, noargs);
+            return ssa.eval_func(fn, noargs);
         }
         i = i + 1;
     }
