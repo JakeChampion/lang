@@ -1,0 +1,30 @@
+// General FBIP reuse token (Phase 5e): a dead, owned pointer-field struct
+// local `a` is reused IN PLACE for a later same-type construction `b` (a
+// DIFFERENT local) each loop iteration. The differential gates run this
+// free-off vs free-on AND reuse-off vs reuse-on; the result must be
+// byte-identical, proving the general reuse is observationally transparent
+// (no over-release, no use-after-free) — `a`'s old array is freed at `b`'s
+// construction and `b`'s fresh array retained.
+struct Holder { id: i32, items: i32[] }
+
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: Holder = Holder { id: i, items: [i, i + 1] };
+        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+        acc = acc + b.id + b.items[0] + b.items[1];
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    // s = i + i + (i+1) = 3i+1; b.id=3i+1, b.items sum = 2i+5; per = 5i+6
+    // sum i=0..199 = 5*19900 + 6*200 = 100700. Returns 0 only if every reuse
+    // wrote the right block (a corrupting over-release / UAF changes the sum,
+    // which the free-on==free-off + reuse-on==reuse-off gates then catch).
+    if (churn(200) != 100700) { return 99; }
+    return 0;
+}

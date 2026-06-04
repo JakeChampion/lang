@@ -1,0 +1,28 @@
+// General FBIP reuse token — CROSS-BLOCK dominance in a loop (Phase 5e-vii): a
+// loop-body local `a` is reused by a construction NESTED in an `if` inside the
+// loop, firing only on even iterations. Odd iterations leave `a` for the
+// next-iteration reinit drop (the not-taken path), with a pointer field freed
+// each way — the adversarial alternating double-free / leak check. Both paths
+// must be byte-identical free-off == free-on and reuse-off == reuse-on.
+struct Holder { id: i32, items: i32[] }
+
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: Holder = Holder { id: i, items: [i, i + 1] };
+        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use in the loop body
+        if (i % 2 == 0) {
+            var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+            acc = acc + b.id + b.items[0] + b.items[1];
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    // even i in [0,198]: per = 5i+6; i=2j (j=0..99): 10j+6; sum = 49500 + 600 = 50100
+    if (churn(200) != 50100) { return 99; }
+    return 0;
+}
