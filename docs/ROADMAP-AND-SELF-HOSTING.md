@@ -527,10 +527,20 @@ already-tested WAT** — tokenize → parse the S-exprs into module structure
 → encode with `leb128.fern` — so it rides on the proven text emitter and
 only does the mechanical text→bytes mapping. Unit-tested end-to-end
 (`TestSelfHostWatLex`, same concatenate-with-driver shape as the LEB128
-test). Remaining slices: an S-expr parser + section/opcode encoder
-(module scaffold first: magic/version, the six sections, the WASI
-imports, memory, the `$heap` global, `__fern_alloc`, then opcode coverage
-to full parity), then the `wasi:cli/run` component wrapper.
+test).
+
+Slice 3 landed: `examples/self_host/wat_parse.fern` — a recursive-descent
+S-expr parser turning the token stream into a tree of `SExpr` nodes
+(`kind` list/atom/string + `items` children). Parsing one node returns it
+plus the index just past it (`ParseOne`) so siblings scan cleanly. Building
+it surfaced — and the prior two PRs fixed — three struct-array
+element-typing gaps the recursive `SExpr { items: SExpr[] }` tree leans on:
+indexed struct-array *fields*, then struct-array *params*. Unit-tested
+end-to-end (`TestSelfHostWatParse`, parsing `(module (func $f))` and
+asserting the nested tree). Remaining: the section/opcode encoder (module
+scaffold first: magic/version, the six sections, the WASI imports, memory,
+the `$heap` global, `__fern_alloc`, then opcode coverage to full parity),
+then the `wasi:cli/run` component wrapper.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
