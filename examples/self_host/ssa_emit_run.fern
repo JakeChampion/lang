@@ -31,7 +31,7 @@ function main(): i32 {
     var ptr_ret: string[] = [];
     var pi: i32 = 0;
     while (pi < mod.funcs.len()) {
-        if (ssa.is_ptr_type(mod.funcs[pi].ret_type)) { ptr_ret = ptr_ret.push(mod.funcs[pi].name); }
+        if (ssa.is_ptr_type(mod.funcs[pi].ret_type) || ssa.is_struct_type(mod.funcs[pi].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(mod.funcs[pi].name); }
         pi = pi + 1;
     }
     var funcs: ssa.SFunc[] = [];
