@@ -1898,6 +1898,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
 	}
 
+	// Validate `dyn Trait` type usage (trait exists + object-safe) now
+	// that Traits + Impls are populated. The sole reporter of these
+	// type-level errors — the per-call dispatch path assumes validity.
+	// See docs/DYN-TRAITS.md.
+	c.validateDynTraitTypes(prog)
+
 	// Second pass: check bodies. Per-function cancellation
 	// checkpoint — the LSP can cancel a long type-check
 	// mid-flight when a new edit invalidates the in-progress
@@ -1977,6 +1983,226 @@ func methodTypeName(t ast.Type) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// setElemHintFor stamps c.elemHint with the element type of `dst` when
+// `e` is directly an array literal and `dst` is an array type — the
+// only shape the ArrayLit case consumes the hint for. Keeping the guard
+// tight means the hint never leaks into an array literal nested inside
+// some other expression at the same site. See docs/DYN-TRAITS.md.
+func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
+	c.elemHint = nil
+	if _, ok := e.(*ast.ArrayLit); !ok {
+		return
+	}
+	if at, ok := dst.(ast.ArrayType); ok {
+		c.elemHint = at.Elem
+	}
+}
+
+// forEachDynTrait invokes fn for every `dyn Trait` nested anywhere in
+// t (directly, or inside an array / slice / tuple / func / generic
+// argument). Drives the dyn-type validation pass.
+func forEachDynTrait(t ast.Type, fn func(string)) {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		fn(x.Trait)
+	case ast.ArrayType:
+		forEachDynTrait(x.Elem, fn)
+	case ast.SliceType:
+		forEachDynTrait(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachDynTrait(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachDynTrait(p, fn)
+		}
+		forEachDynTrait(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachDynTrait(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachDynTrait(a, fn)
+		}
+	}
+}
+
+// validateDynTraitTypes is the sole reporter of `dyn Trait` type-level
+// errors: a trait named in a `dyn` type must exist and be object-safe.
+// It walks every function signature (params + return) and local var
+// annotation. Running once over type positions catches a `dyn Bogus`
+// or `dyn Eq` even when no method is ever called on the value; the
+// per-call dispatch path then assumes validity. One report per trait
+// keeps the output tidy. See docs/DYN-TRAITS.md §3.
+func (c *checker) validateDynTraitTypes(prog *ast.Program) {
+	reported := map[string]bool{}
+	visit := func(t ast.Type, pos ast.Position) {
+		forEachDynTrait(t, func(trait string) {
+			if reported[trait] {
+				return
+			}
+			if _, ok := c.info.Traits[trait]; !ok {
+				reported[trait] = true
+				c.errfCode(pos, "E021", "unknown trait %q in `dyn` type", demangle(trait))
+				return
+			}
+			if safe, reason := c.objectSafe(trait); !safe {
+				reported[trait] = true
+				c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
+					demangle(trait), reason, demangle(trait))
+			}
+		})
+	}
+	for _, fn := range prog.Funcs {
+		for _, p := range fn.Params {
+			visit(p.Type, fn.P)
+		}
+		visit(fn.ReturnType, fn.P)
+		c.walkVarTypes(fn.Body, visit)
+	}
+}
+
+// walkVarTypes invokes visit on every local `var` declaration's
+// annotated type within a block (recursing into nested blocks).
+func (c *checker) walkVarTypes(b *ast.Block, visit func(ast.Type, ast.Position)) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		switch x := st.(type) {
+		case *ast.Var:
+			visit(x.Type, x.P)
+		case *ast.Block:
+			c.walkVarTypes(x, visit)
+		case *ast.If:
+			c.walkVarTypes(asBlock(x.Then), visit)
+			c.walkVarTypes(asBlock(x.Else), visit)
+		case *ast.While:
+			c.walkVarTypes(asBlock(x.Body), visit)
+		case *ast.For:
+			c.walkVarTypes(asBlock(x.Body), visit)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				c.walkVarTypes(arm.Body, visit)
+			}
+		case *ast.Switch:
+			for _, k := range x.Cases {
+				c.walkVarTypes(k.Body, visit)
+			}
+			c.walkVarTypes(x.Default, visit)
+		}
+	}
+}
+
+// mentionsSelf reports whether `Self` appears anywhere in a type —
+// directly or nested inside an array / slice / tuple / func / generic
+// argument. Drives the object-safety check.
+func mentionsSelf(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.SelfType:
+		return true
+	case ast.ArrayType:
+		return mentionsSelf(x.Elem)
+	case ast.SliceType:
+		return mentionsSelf(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if mentionsSelf(e) {
+				return true
+			}
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if mentionsSelf(p) {
+				return true
+			}
+		}
+		return mentionsSelf(x.Result)
+	case ast.StructType:
+		for _, a := range x.Args {
+			if mentionsSelf(a) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if mentionsSelf(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// objectSafe reports whether a trait's methods can be dispatched
+// through a `dyn Trait` object. After the receiver `self: Self`, no
+// method may mention Self in another parameter or in its result — the
+// concrete type is erased behind the object, so the compiler can
+// neither supply nor name a second value of it. Returns the offending
+// reason for the diagnostic. See docs/DYN-TRAITS.md §3.
+func (c *checker) objectSafe(traitName string) (bool, string) {
+	td, ok := c.info.Traits[traitName]
+	if !ok {
+		return false, ""
+	}
+	for _, m := range td.Methods {
+		for i := 1; i < len(m.Params); i++ { // params[0] is self: Self
+			if mentionsSelf(m.Params[i].Type) {
+				return false, fmt.Sprintf("method %q takes Self as a non-receiver parameter", m.Name)
+			}
+		}
+		if mentionsSelf(m.Result) {
+			return false, fmt.Sprintf("method %q returns Self", m.Name)
+		}
+	}
+	return true, ""
+}
+
+// checkDynMethodCall type-checks a method call on a `dyn Trait`
+// receiver against the trait's signature and marks the call for runtime
+// dispatch (Call.DynTrait), leaving the callee a FieldAccess. Returns
+// the call's result type (nil on a hard error). See docs/DYN-TRAITS.md.
+func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.DynTraitType, s *scope) ast.Type {
+	td, ok := c.info.Traits[dt.Trait]
+	if !ok {
+		// Unknown / non-object-safe traits are reported once by
+		// validateDynTraitTypes over type positions; bail silently
+		// here so the same error isn't repeated per call site.
+		return nil
+	}
+	if safe, _ := c.objectSafe(dt.Trait); !safe {
+		return nil
+	}
+	var tm *ast.TraitMethod
+	for i := range td.Methods {
+		if td.Methods[i].Name == fa.Field {
+			tm = &td.Methods[i]
+			break
+		}
+	}
+	if tm == nil {
+		c.errfCode(fa.FieldPos, "E021", "no method %q on `dyn %s`", fa.Field, demangle(dt.Trait))
+		return nil
+	}
+	wantParams := tm.Params[1:] // drop the `self` receiver
+	if len(n.Args) != len(wantParams) {
+		c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+		return ast.SubstSelf(tm.Result, dt)
+	}
+	for i, arg := range n.Args {
+		at := c.checkExpr(arg, s)
+		want := ast.SubstSelf(wantParams[i].Type, dt)
+		if at != nil && !c.assignable(want, at) {
+			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+		}
+	}
+	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt}
+	n.DynTrait = dt.Trait
+	return ast.SubstSelf(tm.Result, dt)
 }
 
 // sigMatches reports whether the registered method signature sig has
@@ -2442,6 +2668,15 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+
+	// elemHint carries the expected element type for an array literal
+	// being checked at a coercion site (var init / return / argument).
+	// It is set ONLY immediately around a checkExpr call whose argument
+	// is directly an `*ast.ArrayLit`, and the ArrayLit case consumes it
+	// at once — so it never leaks into unrelated literals. Today it is
+	// used to let `[Circle{}, Rect{}]` coerce its (differently-typed)
+	// elements to a `dyn Trait[]` destination. See docs/DYN-TRAITS.md.
+	elemHint ast.Type
 
 	// requireMapImport is set when the program was loaded through
 	// modload (LoadedStdlibPaths != nil) but `core/map` isn't in the
@@ -3163,9 +3398,25 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	return c.checkExpr(wrapped, s)
 }
 
-func assignable(dst, src ast.Type) bool {
+func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
+	}
+	// Trait-object coercion (boxing): a concrete value whose type
+	// implements `Trait` coerces to `dyn Trait`. This is the single
+	// gate for every `dyn` boxing site (var init, assignment, argument,
+	// array element, return) since they all route through assignable.
+	// `dyn Trait` is not assignable back to a concrete type (no
+	// downcast) and two different `dyn` types do not inter-assign. See
+	// docs/DYN-TRAITS.md §5.
+	if dt, ok := dst.(ast.DynTraitType); ok {
+		if _, isDyn := src.(ast.DynTraitType); isDyn {
+			return false // distinct dyn types: only Equal (handled above) assigns
+		}
+		if tn, ok := methodTypeName(src); ok {
+			return c.info.Impls[dt.Trait][tn]
+		}
+		return false
 	}
 	// Pointer-shaped values ↔ usize. The prelude's raw-pointer
 	// helpers (__load_ptr / __store_ptr / __alloc) declare their
@@ -3216,7 +3467,7 @@ func assignable(dst, src ast.Type) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
-				if !assignable(de.Args[i], se.Args[i]) {
+				if !c.assignable(de.Args[i], se.Args[i]) {
 					allOk = false
 					break
 				}
@@ -3247,7 +3498,7 @@ func assignable(dst, src ast.Type) bool {
 	// like `Option[Option[i64]] = Some(Some(1))` also work.
 	if dok && sok && d.Name == s.Name && len(d.Args) == len(s.Args) && len(d.Args) > 0 {
 		for i := range d.Args {
-			if !assignable(d.Args[i], s.Args[i]) {
+			if !c.assignable(d.Args[i], s.Args[i]) {
 				return false
 			}
 		}
@@ -3266,7 +3517,7 @@ func assignable(dst, src ast.Type) bool {
 	if dt, dok := dst.(ast.TupleType); dok {
 		if st, sok := src.(ast.TupleType); sok && len(dt.Elems) == len(st.Elems) {
 			for i := range dt.Elems {
-				if !assignable(dt.Elems[i], st.Elems[i]) {
+				if !c.assignable(dt.Elems[i], st.Elems[i]) {
 					return false
 				}
 			}
@@ -3907,7 +4158,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 			return
 		}
+		c.setElemHintFor(n.Value, want)
 		got := c.checkExpr(n.Value, s)
+		c.elemHint = nil
 		c.settleNumeric(n.Value, want)
 		// Refresh `got` from the post-settle AST — the
 		// `Var` path does the same via `postSettleType`,
@@ -3921,7 +4174,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// Result[i32, i32] needs f's TypeArgs to be fully
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
-		if got != nil && !assignable(want, got) {
+		if got != nil && !c.assignable(want, got) {
 			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
 		}
 	case *ast.Defer:
@@ -3934,7 +4187,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if _, dup := s.names[n.Name]; dup {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
+		c.setElemHintFor(n.Init, n.Type)
 		got := c.checkExpr(n.Init, s)
+		c.elemHint = nil
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
 			got = postSettleType(n.Init, got)
@@ -3967,7 +4222,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			n.Type = got
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
-			if !assignable(n.Type, got) {
+			if !c.assignable(n.Type, got) {
 				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s", got, n.Type)
 			}
 		}
@@ -4232,7 +4487,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 		if litT != nil {
 			c.settleNumeric(arm.Literal, tagT)
 			litT = postSettleType(arm.Literal, litT)
-			if !assignable(litT, tagT) {
+			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
@@ -4263,10 +4518,10 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			result = armT
 			return
 		}
-		if assignable(armT, result) {
+		if c.assignable(armT, result) {
 			return
 		}
-		if assignable(result, armT) {
+		if c.assignable(result, armT) {
 			result = armT
 			return
 		}
@@ -4297,7 +4552,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		if litT != nil {
 			c.settleNumeric(arm.Literal, tagT)
 			litT = postSettleType(arm.Literal, litT)
-			if !assignable(litT, tagT) {
+			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
 		}
@@ -4816,7 +5071,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.refineCallTypeArgsFromDest(n.Inner, n.Target)
 		inner = c.maybeWrapForUnion(n.Target, &n.Inner, inner, s)
 		n.InnerType = inner
-		if assignable(n.Target, inner) {
+		if c.assignable(n.Target, inner) {
 			return n.Target
 		}
 		c.errfCode(n.P, "E033", "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
@@ -4942,6 +5197,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
 		return nil
 	case *ast.ArrayLit:
+		// Consume any element-type hint set by a coercion site
+		// (var init / return / argument). For a `dyn Trait[]`
+		// destination the elements need only each implement the
+		// trait — they may be different concrete types — so we check
+		// coercibility per element rather than mutual equality.
+		hint := c.elemHint
+		c.elemHint = nil
+		if dt, ok := hint.(ast.DynTraitType); ok {
+			for _, el := range n.Elems {
+				t := c.checkExpr(el, s)
+				if t != nil && !c.assignable(dt, t) {
+					c.errfCode(el.Pos(), "E034",
+						"array element of type %s does not implement %s, so it cannot be a `dyn %s`",
+						t, demangle(dt.Trait), demangle(dt.Trait))
+				}
+			}
+			n.ElemType = dt
+			return ast.ArrayType{Elem: dt}
+		}
 		if len(n.Elems) == 0 {
 			// Polymorphic-empty marker, resolved by the
 			// surrounding context (Var annotation, function
@@ -5185,12 +5459,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				for i, arg := range n.Args {
 					at := c.checkExpr(arg, s)
 					want := ast.SubstSelf(wantParams[i].Type, tt)
-					if at != nil && !assignable(want, at) {
+					if at != nil && !c.assignable(want, at) {
 						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 					}
 				}
 				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt}
 				return ast.SubstSelf(tm.Result, tt)
+			}
+			// Trait object: `d.m(...)` where `d: dyn Trait`. Resolve the
+			// method against the TRAIT's signature (not a concrete
+			// method table) and mark the call as dynamic — the callee
+			// stays a FieldAccess, monomorph leaves it alone, and the
+			// interpreter dispatches by the receiver value's runtime
+			// concrete type. See docs/DYN-TRAITS.md §4.1.
+			if dt, ok := tt.(ast.DynTraitType); ok {
+				return c.checkDynMethodCall(n, fa, dt, s)
 			}
 			var typeName string
 			switch t := tt.(type) {
@@ -5390,7 +5673,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		for i := range n.Args {
+			if i < len(ft.Params) {
+				c.setElemHintFor(n.Args[i], ft.Params[i])
+			}
 			at := c.checkExpr(n.Args[i], s)
+			c.elemHint = nil
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
 				// If the expected param is a bare type parameter that an
@@ -5447,7 +5734,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if !c.unifyType(expected, at, sub) {
 						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 					}
-				} else if !assignable(expected, at) {
+				} else if !c.assignable(expected, at) {
 					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
 				}
 			}
@@ -5718,7 +6005,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = postSettleType(n.Value, rt)
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
-		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !assignable(lt, rt) {
+		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
 			c.errfCode(n.P, "E003", "cannot assign %s to %s", rt, lt)
 		}
 		// Fields are immutable after construction: a struct value

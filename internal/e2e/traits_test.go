@@ -507,6 +507,73 @@ function main(): i32 { var e: email.Email = email.Email { addr: "x" }; return 0;
 	}
 }
 
+// `dyn Trait` (runtime trait objects): a heterogeneous `dyn Shape[]`
+// holding two different concrete types dispatches each element's method
+// by runtime type on the interpreter. Compiled backends reject `dyn`
+// with a clean unsupported-feature message (interpreter-only in slice
+// 1). See docs/DYN-TRAITS.md.
+func TestInterpDynTraitDispatch(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+    function name(self: Self): string;
+}
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle {
+    function area(self: Self): i32 { return self.r * self.r * 3; }
+    function name(self: Self): string { return "circle"; }
+}
+impl Shape for Rect {
+    function area(self: Self): i32 { return self.w * self.h; }
+    function name(self: Self): string { return "rect"; }
+}
+function describe(s: dyn Shape): string {
+    return s.name() + "=" + s.area().to_string();
+}
+function main(): i32 {
+    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    var total: i32 = 0;
+    for s in shapes {
+        print(describe(s));
+        total = total + s.area();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	// Interpreter: heterogeneous dynamic dispatch works.
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"circle=12", "rect=12", "circle=3", "total=27"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
+		}
+	}
+	// Compiled backend: clean unsupported-feature diagnostic, no crash.
+	gen := exec.Command(bin, "-target", "x86-64", "-o", filepath.Join(dir, "out"), src)
+	var gerr bytes.Buffer
+	gen.Stderr = &gerr
+	if err := gen.Run(); err == nil {
+		t.Errorf("compiling dyn Trait to x86-64 should fail with a clean error, but it succeeded")
+	}
+	if !strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
+		t.Errorf("compiled-backend diagnostic missing; got: %s", gerr.String())
+	}
+}
+
 // Parametric impl: `impl[T: Bound] Trait for Box[T]` makes a single
 // blanket impl cover every instantiation. The method bodies dispatch
 // on the bound (`self.v.to_string()` where `self.v: T`), and the
