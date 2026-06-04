@@ -7983,11 +7983,16 @@ func (b *builder) expr(e ast.Expr) error {
 		// __alloc_reuse falls through to a fresh alloc); D's slot is then
 		// zeroed so the exit sweep (and any path that didn't reach C) treats
 		// it as already consumed. Leaves the box BASE pointer on the stack,
-		// exactly where OpAlloc would. Only the all-scalar shape reaches here
-		// (allScalarStruct in the pairing), so D has no rc fields to release.
+		// exactly where OpAlloc would. reuseSrcUniqSlot carries the is_unique
+		// result out to the old-field-drop block below: on the reuse branch
+		// the box still holds D's OLD pointer-field references, which must be
+		// released before C's stores overwrite them (D is dead at C, so every
+		// field is replaced — no carried field to keep).
+		reuseSrcUniqSlot := int32(-1)
 		if dName, paired := b.reuseSources[n]; paired && updBaseSlot < 0 {
 			dSlot := b.locals[dName]
 			reusedSlot := b.allocSlot()
+			reuseSrcUniqSlot = reusedSlot
 			b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
 			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
@@ -8026,6 +8031,37 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		b.emit(Op{Kind: OpStore})
+		// General FBIP reuse, pointer fields: on the REUSE branch the reused
+		// box still holds D's OLD pointer-field values. D is dead at C (C never
+		// reads it), so every pointer field is REPLACED — release each old
+		// reference (deep freeing drop, emitFieldDropOnStack) before the field
+		// stores below overwrite them. Gated on the is_unique result: on the
+		// decline branch (reused==0) the box is fresh/uninitialised so there's
+		// nothing to release. Scalar fields need no drop.
+		if reuseSrcUniqSlot >= 0 {
+			hasPtrField := false
+			for _, sf := range sd.Fields {
+				if arrElemIsRcTracked(sf.Type) {
+					hasPtrField = true
+					break
+				}
+			}
+			if hasPtrField {
+				b.emit(Op{Kind: OpLoadLocal, I32: reuseSrcUniqSlot})
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				for _, sf := range sd.Fields {
+					if !arrElemIsRcTracked(sf.Type) {
+						continue
+					}
+					b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+					b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[sf.Name]})
+					b.emit(Op{Kind: OpAdd})
+					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+					b.emitFieldDropOnStack(sf.Type)
+				}
+				b.emit(Op{Kind: OpEnd})
+			}
+		}
 		overridden := map[string]bool{}
 		for _, f := range n.Fields {
 			overridden[f.Name] = true
@@ -10675,23 +10711,6 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 	return true
 }
 
-// allScalarStruct reports whether every field of `sd` is an i32-class
-// scalar (NumberType width ≤ 32). The general FBIP reuse (computeReuseSources)
-// first cut is restricted to these: reusing a dead local D's box for a
-// DIFFERENT construction C means D's old field values sit in the box until C
-// overwrites them, and an all-scalar D has no rc-tracked field references to
-// release — so the reuse is a pure storage hand-off with no per-field drop
-// (the pointer-field case needs OpDropReuse's field drop-walk; a later cut).
-func allScalarStruct(sd *ast.StructDecl) bool {
-	for _, f := range sd.Fields {
-		nt, ok := f.Type.(ast.NumberType)
-		if !ok || nt.NormalWidth() > 32 {
-			return false
-		}
-	}
-	return len(sd.Fields) > 0
-}
-
 // computeReuseSources is the general-FBIP pairing analysis: it matches a
 // struct-construction site C (a top-level `var c = T{…}` / `c = T{…}` whose
 // RHS is a plain StructLit) with a DEAD, OWNED struct local D of the SAME
@@ -10702,9 +10721,14 @@ func allScalarStruct(sd *ast.StructDecl) bool {
 // won't ALSO drop them).
 //
 // First cut — deliberately narrow and obviously sound:
-//   - D and C are the SAME all-i32-scalar struct type (`allScalarStruct`), so
-//     the box sizes match exactly and D has no rc fields to release when its
-//     storage is handed off (C overwrites every scalar slot).
+//   - D and C are the SAME `structReuseEligible` struct type, so the box sizes
+//     match exactly. Fields may be i32-class scalars OR single-word rc-tracked
+//     pointers (array / struct / Map / enum / closure / tuple — strings and
+//     wide/float scalars are still excluded, same gate as the self-overwrite
+//     5c path). D is DEAD at C, so C never carries a field from D: every one
+//     of D's old pointer-field references is RELEASED (deep freeing drop) on
+//     the reuse branch before C's stores overwrite them, and each of C's new
+//     pointer fields is retained on eval as normal StructLit construction.
 //   - D and C are in the SAME statement list (block): the function body OR any
 //     nested block (loop body, if arm). Pairing within a loop body is the
 //     high-value case — a per-iteration `var a = T{…}; …; var b = T{…}` reuses
@@ -10749,7 +10773,7 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 		})
 		return found
 	}
-	scalarStructTypeOf := func(name string) (ast.StructType, bool) {
+	reuseStructTypeOf := func(name string) (ast.StructType, bool) {
 		t, ok := b.localDeclType(name)
 		if !ok {
 			return ast.StructType{}, false
@@ -10759,7 +10783,7 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 			return ast.StructType{}, false
 		}
 		sd, ok := b.info.Structs[stt.Name]
-		if !ok || !allScalarStruct(sd) {
+		if !ok || !structReuseEligible(sd) {
 			return ast.StructType{}, false
 		}
 		return stt, true
@@ -10807,7 +10831,7 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 			if sl == nil {
 				continue
 			}
-			cType, ok := scalarStructTypeOf(cName)
+			cType, ok := reuseStructTypeOf(cName)
 			if !ok || cType.Name != sl.TypeName {
 				continue
 			}
@@ -10818,7 +10842,7 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 				if !b.freeEligible[dName] || !b.localNameUnique(dName) {
 					continue
 				}
-				dType, ok := scalarStructTypeOf(dName)
+				dType, ok := reuseStructTypeOf(dName)
 				if !ok || dType.Name != cType.Name {
 					continue
 				}
