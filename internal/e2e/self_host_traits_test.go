@@ -188,6 +188,16 @@ var traitsCases = []struct {
 			"function main(): i32 { var r: i32 = 0; " +
 			"if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } " +
 			"if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15},
+	// `@derive(Ord)` on an enum: a variant declared earlier sorts before
+	// a later one; within a variant the payload decides. Inline
+	// `impl Ord for i32` for the payload cmp. r=15.
+	{"trait-derive-enum-ord",
+		"trait Ord { function cmp(self: Self, other: Self): i32; } " +
+			"impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } " +
+			"@derive(Ord) enum Lvl { Low(i32), High } " +
+			"function main(): i32 { var r: i32 = 0; " +
+			"if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } " +
+			"if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

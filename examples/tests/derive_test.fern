@@ -18,7 +18,7 @@ struct Inner { n: i32 }
 @derive(cmp.Eq, cmp.Display)
 struct Outer { a: Inner, tag: string }
 
-@derive(cmp.Eq, cmp.Display)
+@derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
 
 function test_eq_reflexive(): Option[string] {
@@ -108,6 +108,18 @@ function test_enum_eq_diff_payload(): Option[string] {
     return test.fail("same variant, differing payload should not be eq");
 }
 
+function test_enum_ord_within_variant(): Option[string] {
+    // Same variant → payload decides.
+    return test.assert_eq(sign(Circle(1).cmp(Circle(2))), "lt");
+}
+
+function test_enum_ord_across_variants(): Option[string] {
+    // Earlier-declared variant sorts first, regardless of payload.
+    var lt: Option[string] = test.assert_eq(sign(Circle(9).cmp(Square(0))), "lt");
+    match (lt) { Some(_) => { return lt; }, None => {} }
+    return test.assert_eq(sign(Empty.cmp(Circle(0))), "gt");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("derive");
     r = r.it("eq reflexive",        test_eq_reflexive());
@@ -123,5 +135,7 @@ function main(): i32 {
     r = r.it("enum eq same variant", test_enum_eq_same_variant());
     r = r.it("enum eq diff variant", test_enum_eq_diff_variant());
     r = r.it("enum eq diff payload", test_enum_eq_diff_payload());
+    r = r.it("enum ord within variant",  test_enum_ord_within_variant());
+    r = r.it("enum ord across variants", test_enum_ord_across_variants());
     return r.finish();
 }
