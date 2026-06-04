@@ -140,6 +140,11 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"if-expr-as-arg", "function id(n: i32): i32 { return n; } function main(): i32 { return id(if (true) { 5 } else { 6 }); }", 5, ""},
 		{"direct-iife", "function main(): i32 { return (function(): i32 { return 3; })(); }", 3, ""},
 		{"iife-with-args", "function main(): i32 { return (function(a: i32, b: i32): i32 { return a + b; })(4, 5); }", 9, ""},
+		// Local (nested) functions — desugar to a closure-valued local.
+		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, ""},
+		{"local-fn-args", "function main(): i32 { function add(a: i32, b: i32): i32 { return a + b; } return add(4, 5); }", 9, ""},
+		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, ""},
+		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, ""},
 		{"hello-arm64", "print(\"Hello, ARM64!\"); return 0;", 0, "Hello, ARM64!\n"},
 		{"print-twice", "print(\"line A\"); print(\"line B\"); return 0;", 0, "line A\nline B\n"},
 		{"print-then-return", "print(\"out\"); return 7;", 7, "out\n"},
