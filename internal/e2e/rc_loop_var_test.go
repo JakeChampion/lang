@@ -71,11 +71,12 @@ function main(): i32 {
 
 // String loop-body var: a runtime `"v-" + suffix(i)` concat allocates a
 // fresh heap string each iteration (the call defeats const-folding into a
-// static literal). s.len() - 2 - suffix(i).len() == 0 each iteration. On
-// x86_64 / wasm the prior buffer is reclaimed (the str_dec path); on
-// arm64 the string dec is deliberately deferred (slice 5g), so the buffer
-// leaks-safe there — the read-back + underflow are still correct, which
-// is why this case is also run on arm64.
+// static literal). s.len() - 2 - suffix(i).len() == 0 each iteration. The
+// prior buffer is reclaimed each iteration on ALL THREE backends (the
+// str_dec / rc_dec path in emitOwnedSlotDrop — arm64 two-word heap strings
+// now reclaim too, slice 5g done; the bounded-growth win is pinned by
+// TestArm64LongStringReinitBounded), with the read-back + underflow staying
+// correct.
 const loopVarStringReuseSrc = `function suffix(n: i32): string {
     if (n % 2 == 0) { return "even"; }
     return "odd";

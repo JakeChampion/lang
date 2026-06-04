@@ -2328,20 +2328,18 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingTypes [][]ast.T
 func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 	switch ty := t.(type) {
 	case ast.StringType:
-		// Mirrors the exit-sweep / reinit string branch exactly: wasm
-		// two-word __fern_str_dec, native single-word x86_64 __fern_rc_dec,
-		// arm64 (two-word, slice 5g deferred) keeps the safe-leak plain drop.
-		// Each dec returns the data ptr, dropped after; the guards
-		// (inline-SSO / literal sentinel / rc>1) keep every source safe.
-		if b.ptrW == 4 {
+		// Mirrors the exit-sweep / reinit string branch exactly (slice 5g is
+		// done): two-word ABIs (wasm + arm64) free via __fern_str_dec, which
+		// consumes the (data, len) pair on the stack and returns the data ptr
+		// (dropped after); native single-word x86_64 via __fern_rc_dec. The
+		// guards (inline-SSO / literal sentinel / rc>1) keep every source safe,
+		// and this drop only fires for a provably-fresh owned temp.
+		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
-		} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		} else if b.ptrW == 8 {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
-		} else {
-			// arm64 two-word: still two stack words; drop both.
-			b.emit(Op{Kind: OpDrop, Width: WidthString})
 		}
 	case ast.ArrayType:
 		// An array-of-(struct / tuple / primitive-array) routes to the deep
@@ -11820,13 +11818,20 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// before). Net-zero on the operand stack.
 		b.emitStructEnumSlotDrop(idx, ty)
 	case ast.StringType:
-		// x86_64 / wasm only; arm64 string reclaim is deferred (slice 5g),
-		// so its codegen stays byte-identical (safe-leak) there.
-		if b.ptrW == 4 {
+		// Mirrors the exit sweep's string-local reclaim exactly (slice 5g is
+		// done: native heap-string rc reclaims on arm64 too). Two-word ABIs
+		// (wasm + arm64) free via __fern_str_dec — OpLoadLocal fans the slot
+		// into (data, len), the helper consumes the logical string and returns
+		// the data ptr (dropped after); native single-word x86_64 via
+		// __fern_rc_dec. The caller (emitVarReinitDropOld) already gated
+		// freeEligible / localNameUnique / !movedLocals, so the value is owned
+		// and alias-free, and __fern_str_dec is_unique-gates again (a shared
+		// buffer only dec's; an inline-SSO / literal sentinel is a no-op).
+		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
-		} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+		} else if b.ptrW == 8 {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
