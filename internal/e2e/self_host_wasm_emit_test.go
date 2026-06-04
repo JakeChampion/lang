@@ -637,6 +637,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Hardening pass 2: feature combinations from real programs.
 		{"nested-struct", "struct Inner { v: i32 } struct Outer { inner: Inner, name: string } function main(): i32 { var o = Outer { inner: Inner { v: 7 }, name: \"hi\" }; print_int(o.inner.v); write(o.name); return 0; }", 0, "7hi"},
 		{"struct-array-field", "struct Bag { items: i32[] } function main(): i32 { var b = Bag { items: [10, 20, 30] }; print_int(b.items.len()); print_int(b.items[1]); return 0; }", 0, "320"},
+		// A struct field whose type is a *struct* array: indexing it and
+		// reading the element's field (`bag.items[i].x`) must resolve the
+		// element struct type (it previously emitted a bogus (i32.const 0)).
+		// Also covers a recursive struct (a node holding a child array).
+		{"struct-array-struct-field", "struct Pt { x: i32, y: i32 } struct Bag { items: Pt[] } function main(): i32 { var b = Bag { items: [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }] }; print_int(b.items[0].x); print_int(b.items[1].y); return 0; }", 0, "58"},
+		{"struct-array-field-recursive", "struct SExpr { kind: i32, items: SExpr[] } function main(): i32 { var leaf = SExpr { kind: 2, items: [] }; var lst = SExpr { kind: 0, items: [leaf, leaf] }; return lst.items.len() + lst.items[0].kind; }", 4, ""},
 		{"struct-string-field", "struct P { name: string, age: i32 } function main(): i32 { var p = P { name: \"sam\", age: 30 }; write(f\"{p.name} is {p.age}\"); return 0; }", 0, "sam is 30"},
 		{"fn-returns-struct", "struct V { a: i32, b: i32 } function mk(n: i32): V { return V { a: n, b: n * 2 }; } function main(): i32 { var v = mk(5); print_int(v.a + v.b); return 0; }", 0, "15"},
 		{"recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { print_int(fib(10)); return 0; }", 0, "55"},

@@ -1406,6 +1406,20 @@ function struct_array_elem_type(e: parser.Expr, cx: Ctx): string {
             return "";
         },
         parser.ExprSlice(sl) => { return struct_array_elem_type(sl.array, cx); },
+        parser.ExprFieldAccess(fa) => {
+            // A struct field whose declared type is a struct array, e.g.
+            // `bag.items` where `items: Pt[]` — so `bag.items[i].field`
+            // resolves. (Without this the element read falls back to a
+            // bogus `(i32.const 0)`.)
+            var ot: string = struct_type_of(fa.obj, cx);
+            if (ot.len() == 0) { return ""; }
+            var ft: string = struct_field_type(cx.structs, ot, fa.field);
+            if (ft.len() > 2 && ft[ft.len() - 2:ft.len()] == "[]") {
+                var elem: string = ft[0:ft.len() - 2];
+                if (is_struct_type(cx.structs, elem)) { return elem; }
+            }
+            return "";
+        },
         _ => { return ""; },
     }
     return "";
