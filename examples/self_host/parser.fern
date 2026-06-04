@@ -463,7 +463,30 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             base = e_call(base, args);
         } else if (pk == "[") {
             p = p.advance();
+            // Generic instantiation `f[i32](…)` / `Box[T] { … }`: the
+            // bracket holds type arguments, not a value index. Detect it by
+            // probing parse_expr — if it makes no progress (a type keyword
+            // like `i32` isn't a value expression), skip to the matching
+            // `]` and erase the type args, leaving `base` unchanged.
+            var idxStart: i32 = p.pos;
             var idx = parse_expr(p);
+            if (idx.par.pos == idxStart) {
+                while (!p.at_end() && p.peek_punct() != "]") { p = p.advance(); }
+                if (p.peek_punct() == "]") { p = p.advance(); }
+                // `Name[T] { … }` — a generic struct construction: the
+                // erased base is the struct name; parse the literal body.
+                if (p.peek_punct() == "{") {
+                    match (base) {
+                        ExprIdent(bid) => {
+                            var glit: ExprResult = parse_struct_lit_body(p, bid.name);
+                            p = glit.par;
+                            base = glit.expr;
+                        },
+                        _ => {},
+                    }
+                }
+                continue;
+            }
             p = idx.par;
             if (p.peek_punct() == ":") {
                 p = p.advance();
@@ -874,6 +897,12 @@ function parse_block(p: Par): BlockResult {
     p = p.advance();
     while (p.peek_punct() != "}" && !p.at_end()) {
         var r: StmtResult = parse_stmt(p);
+        // Guarantee progress: a malformed statement that doesn't consume a
+        // token would otherwise spin forever — skip it instead.
+        if (r.par.pos == p.pos) {
+            p = p.advance();
+            continue;
+        }
         p = r.par;
         body = body.push(r.stmt);
     }

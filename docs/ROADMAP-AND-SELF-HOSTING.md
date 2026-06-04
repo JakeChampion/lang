@@ -363,7 +363,22 @@ indexing formula (4-byte element at offset 8) instead of a byte load (the
 string block is `[len][bytes@4]`, 1 byte each). `ExprIndex` now byte-loads
 when the receiver is a string.
 
-Gated by 430 differential cases as of this writing. What remains for the
+A sixth pass (a char-processing vowel counter, string reverse via slices)
+ran first-try but turned up **three** real gaps at once: (1) **bitwise
+operators** `& | ^ << >>` silently lowered to `i32.add` (missing from
+`wasm_binop`) — now mapped to `i32.and` / `or` / `xor` / `shl` / `shr_s`
+(and the i64 variants), with `is_int_binop` propagating i64-ness through
+them; (2) **generic type arguments at call / construction sites**
+(`f[i32](x)`, `Box[i32] { … }`) **hung the parser** — `parse_postfix` now
+erases a `[type-args]` bracket (detected by a non-advancing `parse_expr`)
+and, for a trailing `{`, parses the struct literal, and `parse_block` got
+the same forward-progress guard `parse_module` has; (3) **methods with a
+generic receiver** (`(b: Box[T]) m()`) mangled to `$Box[T]__m` (brackets in
+the name) while call sites dispatched to `$Box__m` — the receiver type is
+now `base_type_name`-normalised at mangling, registry, and the receiver
+local.
+
+Gated by 438 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

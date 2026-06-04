@@ -603,6 +603,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-mutate-via-fn", "struct Counter { n: i32 } function bump(c: Counter): i32 { c.n = c.n + 1; return 0; } function main(): i32 { var c = Counter { n: 5 }; bump(c); bump(c); print_int(c.n); return 0; }", 0, "7"},
 		{"array-elem-field-set", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts[0].x = 99; print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
 		{"string-methods-combo", "function main(): i32 { var s: string = \"hello world\"; if (s.starts_with(\"hello\")) { print_int(1); } if (s.contains(\"o w\")) { print_int(2); } print_int(s.index_of(\"world\")); return 0; }", 0, "126"},
+
+		// Hardening pass 6: bitwise operators (i32 + i64).
+		{"bitwise-i32", "function main(): i32 { print_int(12 & 10); print_int(12 | 10); print_int(12 ^ 10); print_int(5 << 2); print_int(40 >> 2); return 0; }", 0, "81462010"},
+		{"bitwise-i64", "function main(): i32 { var a: i64 = 12; var b: i64 = 10; print_int((a & b) as i32); print_int((a << 2) as i32); return 0; }", 0, "848"},
+		// Generics with explicit type args: call site, construction, and a
+		// generic receiver type (`Box[T]` / `Box[i32]` strip to `Box`).
+		{"generic-call-typearg", "function identity[T](x: T): T { return x; } function main(): i32 { print_int(identity[i32](7)); return 0; }", 0, "7"},
+		{"generic-struct-construct", "struct Box[T] { val: T } function main(): i32 { var b = Box[i32] { val: 42 }; print_int(b.val); return 0; }", 0, "42"},
+		{"generic-receiver-method", "struct Box[T] { val: T } function (b: Box[i32]) get(): i32 { return b.val; } function main(): i32 { var b = Box[i32] { val: 42 }; print_int(b.get()); return 0; }", 0, "42"},
+		{"generic-method-T-receiver", "struct Box[T] { val: T } function (b: Box[T]) doubled(): i32 { return b.val * 2; } function main(): i32 { var b = Box { val: 21 }; print_int(b.doubled()); return 0; }", 0, "42"},
+		// Char-processing programs (now that s[i] byte access works).
+		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel(s[i])) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
+		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + s[i:i + 1]; i = i - 1; } write(out); return 0; }", 0, "edcba"},
 	}
 
 	for _, tc := range cases {
