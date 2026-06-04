@@ -136,7 +136,7 @@ struct SsaResult { asm: string, ok: boolean }
 // ok=false so the caller falls back to the AST emitter. The SSA backends
 // cover x86-64 and arm64; other targets always fall back. Register
 // allocation is always on for this path.
-function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
+function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
     if (target != "x86-64" && target != "arm64") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
@@ -152,7 +152,7 @@ function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
     var has_main: boolean = false;
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: ssa.BResult = ssa.build_func(funcs[i]);
+        var r: ssa.BResult = ssa.build_func(funcs[i], structs);
         if (!r.ok) { return SsaResult { asm: "", ok: false }; }
         // A call to a builtin (print, write, …) or any unknown name can't be
         // lowered — fall back to the AST emitter for the whole program.
@@ -322,7 +322,7 @@ function main(): i32 {
     // emitter below), so it never changes the output of programs it can't
     // yet handle.
     if (use_ssa) {
-        var sr: SsaResult = try_ssa(merged.funcs, target);
+        var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
             if (out_path.len() > 0) {
                 match (write_file(out_path, sr.asm)) {

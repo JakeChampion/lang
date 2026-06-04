@@ -30,7 +30,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {
-            var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
+            var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs);
             if (!r.ok) { return 200; }
             var fn: ssa.SFunc = r.func;
             if (want_opt) { fn = ssa.optimize(fn); }

@@ -37,7 +37,7 @@ function main(): i32 {
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
+        var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs);
         if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
     }
