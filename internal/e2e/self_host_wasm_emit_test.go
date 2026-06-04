@@ -634,6 +634,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"enum-match", "enum Color { Red, Green, Blue } function main(): i32 { var c = Color.Blue; match (c) { Red => { print_int(10); }, Green => { print_int(20); }, Blue => { print_int(30); } } return 0; }", 0, "30"},
 		{"enum-inline-match", "enum Color { Red, Green, Blue } function main(): i32 { match (Color.Red) { Red => { print_int(10); }, Green => { print_int(20); }, Blue => { print_int(30); } } return 0; }", 0, "10"},
 		{"enum-fn-arg", "enum Dir { N, S, E, W } function rank(d: Dir): i32 { match (d) { N => { return 1; }, S => { return 2; }, E => { return 3; }, W => { return 4; } } return 0; } function main(): i32 { print_int(rank(Dir.E)); print_int(rank(Dir.W)); return 0; }", 0, "34"},
+
+		// Hardening pass 8: void calls, short-circuit &&/||, nested closures.
+		{"void-function", "function greet(name: string) { write(\"hi \"); write(name); } function main(): i32 { greet(\"sam\"); return 0; }", 0, "hi sam"},
+		{"void-method", "struct L { } function (l: L) log(n: i32) { print_int(n); } function main(): i32 { var l = L {}; l.log(5); l.log(6); return 0; }", 0, "56"},
+		{"short-circuit-and-or", "function side(): boolean { print_int(9); return true; } function main(): i32 { if (false && side()) { print_int(1); } if (true || side()) { print_int(2); } return 0; }", 0, "2"},
+		{"short-circuit-guard", "function main(): i32 { var xs = [10, 20]; var i: i32 = 5; if (i < xs.len() && xs[i] > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"nested-closure", "function main(): i32 { var add = function(a: i32): i32 { var inner = function(b: i32): i32 { return a + b; }; return inner(10); }; print_int(add(5)); return 0; }", 0, "15"},
+		{"negative-literal", "function main(): i32 { var x: i32 = -5; print_int(x); print_int(-3 + 10); return 0; }", 0, "-57"},
 	}
 
 	for _, tc := range cases {
