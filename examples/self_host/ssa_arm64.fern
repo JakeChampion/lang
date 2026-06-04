@@ -41,6 +41,12 @@ function slot(v: i32): string {
 
 // argreg maps a parameter index to its AAPCS64 32-bit argument register.
 function argreg(i: i32): string { return "w" + i32_to_string(i); }
+// argreg64 is the 64-bit (x-register) view, for pointer args/params.
+function argreg64(i: i32): string { return "x" + i32_to_string(i); }
+function argreg_w(i: i32, width: i32): string {
+    if (width == 64) { return argreg64(i); }
+    return argreg(i);
+}
 
 // regname maps an allocatable register index to its AArch64 32-bit name.
 // We use the caller-saved temporaries w12..w15 (w9/w10/w11 are reserved as
@@ -147,9 +153,9 @@ function emit_binary(op: string, out: string): string {
 }
 
 // store_reg32 stores a named 32-bit source register into i32 value v's
-// location (used for incoming params and call results).
-function store_reg32(reg_of: i32[], v: i32, src: string, out: string): string {
-    if (reg_of[v] >= 0) { return out + "    mov " + regname(reg_of[v]) + ", " + src + "\n"; }
+// location (used for incoming params and call results), at the given width.
+function store_reg(reg_of: i32[], v: i32, src: string, width: i32, out: string): string {
+    if (reg_of[v] >= 0) { return out + "    mov " + regn(reg_of, v, width) + ", " + src + "\n"; }
     return out + "    str " + src + ", " + slot(v) + "\n";
 }
 
@@ -177,15 +183,16 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
     if (ins.kind == "call") {
         var i: i32 = 0;
         while (i < ins.args.len() && i < 8) {
+            var aw: i32 = widths[ins.args[i]];
             if (reg_of[ins.args[i]] >= 0) {
-                out = out + "    mov " + argreg(i) + ", " + regname(reg_of[ins.args[i]]) + "\n";
+                out = out + "    mov " + argreg_w(i, aw) + ", " + regn(reg_of, ins.args[i], aw) + "\n";
             } else {
-                out = out + "    ldr " + argreg(i) + ", " + slot(ins.args[i]) + "\n";
+                out = out + "    ldr " + argreg_w(i, aw) + ", " + slot(ins.args[i]) + "\n";
             }
             i = i + 1;
         }
         out = out + "    bl __fn_" + ins.str + "\n";
-        return store_reg32(reg_of, ins.result, "w0", out);
+        return store_reg(reg_of, ins.result, "w0", widths[ins.result], out);
     }
     if (ins.kind == "alloc") {
         // Bump-allocate imm i32 elements (4 bytes each); result = old hp.
@@ -265,7 +272,8 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     if (frame > 0) { out = out + "    sub sp, sp, #" + i32_to_string(frame) + "\n"; }
     var p: i32 = 0;
     while (p < f.nparams) {
-        out = store_reg32(reg_of, p, argreg(p), out);
+        var pw: i32 = widths[p];
+        out = store_reg(reg_of, p, argreg_w(p, pw), pw, out);
         p = p + 1;
     }
     var bi: i32 = 0;
