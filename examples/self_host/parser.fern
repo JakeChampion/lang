@@ -1284,10 +1284,18 @@ function parse_stmt(p: Par): StmtResult {
                 return StmtResult { par: p, stmt: s_assign(id.name, rhs2) };
             },
             ExprIndex(ix) => {
+                // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
+                // `arr[idx] += y` reads the element back: rhs becomes
+                // `arr[idx] <op> y`.
+                var irhs: Expr = rhs;
+                if (is_compound) {
+                    var iop: string = assign_op[0:assign_op.len() - 1];
+                    irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
+                }
                 var sargs: Expr[] = [];
                 sargs = sargs.push(ix.array);
                 sargs = sargs.push(ix.index);
-                sargs = sargs.push(rhs);
+                sargs = sargs.push(irhs);
                 return StmtResult { par: p, stmt: s_expr(e_call(e_ident("__set_index"), sargs)) };
             },
             ExprFieldAccess(fa) => {

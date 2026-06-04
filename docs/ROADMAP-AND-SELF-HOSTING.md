@@ -378,7 +378,17 @@ the name) while call sites dispatched to `$Box__m` — the receiver type is
 now `base_type_name`-normalised at mangling, registry, and the receiver
 local.
 
-Gated by 438 differential cases as of this writing. What remains for the
+A seventh pass (deep nesting, complex `while` conditions, negative-float
+compares, hex / escape literals) confirmed those plus compound assignment
+all work — and found that **compound assignment to an array element**
+(`arr[i] += y`) silently dropped the old value (the parser desugar built
+`__set_index(arr, i, y)` instead of `… arr[i] <op> y`); fixed in the
+parser, so it matches the struct-field form. (One known gap remains —
+C-style `enum` value / `match` semantics; the parser flattens an `enum`
+into variant structs and discards the enum name, so `Color.Green` can't
+resolve. That needs parser-AST work and is tracked as its own slice.)
+
+Gated by 446 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
