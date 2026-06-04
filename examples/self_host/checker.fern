@@ -865,6 +865,8 @@ pub struct CheckResult { scope: Scope, ty: Type }
 
 function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
     match (st) {
+        // StmtDefer is lowered away before emit; check its action.
+        parser.StmtDefer(d) => { return check_stmt(d.action, s); },
         parser.StmtVar(v) => {
             var t: Type = check_expr(v.init, s);
             // If the source carries a `: Type` annotation,

@@ -515,6 +515,7 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
 
 function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
+        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
         parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
         parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
         parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
@@ -583,6 +584,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 // inner-scope names from the free-var candidate set.
 function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
+        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
         parser.StmtVar(v) => { return acc.push(v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
@@ -1046,6 +1048,9 @@ function patch_loop_sentinels(ops: Op[], start: i32, exit_target: i32, continue_
 
 function compile_stmt(st: parser.Stmt, ops: Op[], lt: LocalsTable): CompileResult {
     match (st) {
+        // StmtDefer is lowered away by lower_defers before compilation; the
+        // arm is here for exhaustiveness (compiles the action).
+        parser.StmtDefer(d) => { return compile_stmt(d.action, ops, lt); },
         parser.StmtVar(v) => {
             var ir: CompileResult = compile_expr(v.init, ops, lt);
             ops = ir.ops; lt = ir.lt;

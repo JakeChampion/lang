@@ -131,6 +131,13 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, "", ""},
 		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, "", ""},
 		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, "", ""},
+		// defer — action runs at function exit (LIFO, conditional, value
+		// captured before cleanup).
+		{"defer-fires", "function inc(a: i32[]): i32 { defer a[0] = 9; return 1; } function main(): i32 { var arr = [0]; inc(arr); return arr[0]; }", 9, "", ""},
+		{"defer-retval-before-cleanup", "function f(): i32 { var x = 5; defer x = 99; return x; } function main(): i32 { return f(); }", 5, "", ""},
+		{"defer-lifo", "function f(a: i32[]): i32 { defer a[0] = 1; defer a[0] = 2; return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 1, "", ""},
+		{"defer-conditional-off", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 0); return arr[0]; }", 0, "", ""},
+		{"defer-loop-survives", "function f(a: i32[]): i32 { defer a[0] = a[0] + 50; var i = 0; while (i < 3) { a[0] = a[0] + 1; i = i + 1; } return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 53, "", ""},
 		{"hello-world", "print(\"Hello, world!\"); return 0;", 0, "Hello, world!\n", ""},
 		{"print-twice", "print(\"line 1\"); print(\"line 2\"); return 0;", 0, "line 1\nline 2\n", ""},
 		{"print-then-return", "print(\"out\"); return 42;", 42, "out\n", ""},

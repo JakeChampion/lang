@@ -189,6 +189,9 @@ function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
 
 function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
+        // StmtDefer is eliminated by lower_defers before emit; the arm is
+        // here for exhaustiveness and recurses defensively.
+        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
         parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
         parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
         parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
@@ -247,6 +250,7 @@ function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
 
 function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
+        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
         parser.StmtVar(v) => { return acc.push(v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
@@ -5605,6 +5609,10 @@ function emit_map_kv_for(s: EmitState, f: parser.StmtFor, kv_comma: i32): EmitSt
 
 function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
     match (stmt) {
+        // StmtDefer is lowered away (parser.lower_defers) before emit; this
+        // arm only satisfies exhaustiveness — a survivor (e.g. a defer in a
+        // lambda body, which lower_defers doesn't descend into) is flagged.
+        parser.StmtDefer(_) => { return s.write("    // unsupported: StmtDefer survived lowering\n"); },
         parser.StmtReturn(r) => {
             s = emit_expr(r.value, s);
             if (s.in_function) {

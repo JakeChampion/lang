@@ -975,6 +975,9 @@ pub struct StepResult { env: Env, ret: Value }
 
 function eval_stmt(st: parser.Stmt, env: Env): StepResult {
     match (st) {
+        // StmtDefer is lowered away by lower_defers_module before eval; the
+        // arm is here for exhaustiveness (recurses into the action).
+        parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
         parser.StmtVar(v) => {
             var val: Value = eval_expr(v.init, env);
             var env2: Env = env.bind(v.name, val);

@@ -212,6 +212,7 @@ function print_match(m: parser.StmtMatch, depth: i32): string {
 function print_stmt(st: parser.Stmt, depth: i32): string {
     var pad: string = indent_str(depth);
     match (st) {
+        parser.StmtDefer(d) => { return pad + "defer " + print_stmt(d.action, 0); },
         parser.StmtVar(v) => {
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }

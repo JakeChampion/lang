@@ -146,9 +146,16 @@ pub struct StmtBreak { tag: i32 }
 pub struct StmtContinue { tag: i32 }
 pub struct StmtUnknown { kind: string }
 
+// StmtDefer holds an action statement to run when the enclosing function
+// exits (LIFO, every return path + falloff). It exists only between the
+// parser and the lower_defers pass (module_with_builtins) — that pass
+// eliminates every StmtDefer before any backend emits, so the emitters
+// never lower one at runtime (their arms are there for exhaustiveness).
+pub struct StmtDefer { action: Stmt }
+
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
               | StmtAssign | StmtMatch | StmtFor
-              | StmtBreak | StmtContinue | StmtUnknown;
+              | StmtBreak | StmtContinue | StmtUnknown | StmtDefer;
 
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
@@ -263,6 +270,7 @@ function p_variant(type_name: string, binding: string): Pattern {
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
+function s_defer(action: Stmt): Stmt { return StmtDefer { action: action }; }
 
 // Parser state. `toks` is the lexer's output; `pos` is the
 // current cursor into it. We mutate via value-semantics (return
@@ -1249,6 +1257,14 @@ function stmts_mention(stmts: Stmt[], name: string): boolean {
 
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
+    if (kw == "defer") {
+        // `defer ACTION;` — the deferred action is an ordinary statement
+        // (assignment, call, …). Parse it (which consumes the trailing
+        // `;`) and wrap it; lower_defers schedules it at function exit.
+        p = p.advance();  // consume `defer`
+        var da: StmtResult = parse_stmt(p);
+        return StmtResult { par: da.par, stmt: s_defer(da.stmt) };
+    }
     if (kw == "function") {
         // Local (nested) function declaration: desugar to a closure-valued
         // local `var name = function(params): ret { body };`. Calls resolve
@@ -2585,8 +2601,203 @@ pub function monomorphize_module(mod: Module): Module {
     };
 }
 
+// ---- defer lowering -------------------------------------------------
+// `defer ACTION;` runs ACTION when the enclosing function exits — at every
+// return path and at falloff, in LIFO order, and only if the defer
+// statement was actually reached (a per-defer flag). The return value is
+// captured before the deferred actions run. lower_defers_module eliminates
+// every StmtDefer (rewriting to flag-sets + per-exit cleanup) so the
+// backends never emit one. Mirrors the Go IR's ast.Defer + IsActive local.
+
+// dl_itoa renders a non-negative i32 as decimal (flag indices). parser.fern
+// has no i32_to_string, so build digits via 1-char string slices.
+function dl_itoa(n: i32): string {
+    if (n == 0) { return "0"; }
+    var digits: string = "0123456789";
+    var s: string = "";
+    var x: i32 = n;
+    while (x > 0) {
+        var d: i32 = x % 10;
+        s = digits[d:d + 1] + s;
+        x = x / 10;
+    }
+    return s;
+}
+
+struct DeferAcc { stmts: Stmt[], actions: Stmt[] }
+
+// dl_collect_stmt(s) rebuild the body with each `defer ACTION` replaced by
+// `__dfa<i> = 1`, accumulating the actions (index = position in the list).
+// Recurses through nested blocks so a conditional defer gets its flag set
+// only when its branch runs.
+function dl_collect_stmts(stmts: Stmt[], actions: Stmt[]): DeferAcc {
+    var out: Stmt[] = [];
+    var acc: Stmt[] = actions;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var r: DeferAcc = dl_collect_stmt(stmts[i], acc);
+        var j: i32 = 0;
+        while (j < r.stmts.len()) { out = out.push(r.stmts[j]); j = j + 1; }
+        acc = r.actions;
+        i = i + 1;
+    }
+    return DeferAcc { stmts: out, actions: acc };
+}
+
+function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
+    match (st) {
+        StmtDefer(d) => {
+            var setflag: Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_number("1", "", false));
+            var one: Stmt[] = [setflag];
+            return DeferAcc { stmts: one, actions: actions.push(d.action) };
+        },
+        StmtIf(f) => {
+            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions);
+            var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions);
+            var one: Stmt[] = [s_if(f.cond, tr.stmts, er.stmts)];
+            return DeferAcc { stmts: one, actions: er.actions };
+        },
+        StmtWhile(w) => {
+            var br: DeferAcc = dl_collect_stmts(w.body, actions);
+            var one: Stmt[] = [s_while(w.cond, br.stmts)];
+            return DeferAcc { stmts: one, actions: br.actions };
+        },
+        StmtFor(fr) => {
+            var br: DeferAcc = dl_collect_stmts(fr.body, actions);
+            var one: Stmt[] = [s_for(fr.var_name, fr.iter, br.stmts)];
+            return DeferAcc { stmts: one, actions: br.actions };
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var acc: Stmt[] = actions;
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc);
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts });
+                acc = ar.actions;
+                i = i + 1;
+            }
+            var one: Stmt[] = [s_match(m.scrutinee, arms)];
+            return DeferAcc { stmts: one, actions: acc };
+        },
+        _ => {
+            var one: Stmt[] = [st];
+            return DeferAcc { stmts: one, actions: actions };
+        }
+    }
+}
+
+// dl_cleanup builds the LIFO cleanup: for i = n-1 .. 0, `if (__dfa<i>) { action_i }`.
+function dl_cleanup(actions: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = actions.len() - 1;
+    while (i >= 0) {
+        var body1: Stmt[] = [actions[i]];
+        var noelse: Stmt[] = [];
+        out = out.push(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        i = i - 1;
+    }
+    return out;
+}
+
+// dl_expand_returns replaces each `return E` with
+// `__defret = E; <cleanup>; return __defret;` (the value is captured before
+// the deferred actions run). A bare/void return just runs cleanup first.
+function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup);
+        var j: i32 = 0;
+        while (j < ex.len()) { out = out.push(ex[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
+    match (st) {
+        StmtReturn(r) => {
+            var isvoid: boolean = false;
+            match (r.value) {
+                ExprUnknown(_) => { isvoid = true; },
+                _ => {}
+            }
+            var out: Stmt[] = [];
+            if (!isvoid) { out = out.push(s_assign("__defret", r.value)); }
+            var i: i32 = 0;
+            while (i < cleanup.len()) { out = out.push(cleanup[i]); i = i + 1; }
+            if (isvoid) { out = out.push(s_return(r.value)); }
+            else { out = out.push(s_return(e_ident("__defret"))); }
+            return out;
+        },
+        StmtIf(f) => {
+            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup), dl_expand_returns(f.else_body, cleanup))];
+            return one;
+        },
+        StmtWhile(w) => {
+            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup))];
+            return one;
+        },
+        StmtFor(fr) => {
+            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup))];
+            return one;
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup) });
+                i = i + 1;
+            }
+            var one: Stmt[] = [s_match(m.scrutinee, arms)];
+            return one;
+        },
+        _ => {
+            var one: Stmt[] = [st];
+            return one;
+        }
+    }
+}
+
+function lower_defers_func(fn: FuncDecl): FuncDecl {
+    var empty: Stmt[] = [];
+    var cr: DeferAcc = dl_collect_stmts(fn.body, empty);
+    if (cr.actions.len() == 0) { return fn; }
+    var cleanup: Stmt[] = dl_cleanup(cr.actions);
+    var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup);
+    var body: Stmt[] = [];
+    // Shared return temp + per-defer flags, all i32, initialised to 0.
+    body = body.push(s_var("__defret", "", e_number("0", "", false)));
+    var i: i32 = 0;
+    while (i < cr.actions.len()) {
+        body = body.push(s_var("__dfa" + dl_itoa(i), "", e_number("0", "", false)));
+        i = i + 1;
+    }
+    var k: i32 = 0;
+    while (k < expanded.len()) { body = body.push(expanded[k]); k = k + 1; }
+    // Falloff cleanup (a function that returns on every path leaves this
+    // unreachable; a void function that falls off runs it).
+    var c: i32 = 0;
+    while (c < cleanup.len()) { body = body.push(cleanup[c]); c = c + 1; }
+    return FuncDecl {
+        name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
+        type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body
+    };
+}
+
+pub function lower_defers_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        funcs = funcs.push(lower_defers_func(mod.funcs[i]));
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts };
+}
+
 pub function module_with_builtins(mod: Module): Module {
-    var mono: Module = monomorphize_module(mod);
+    var mono: Module = monomorphize_module(lower_defers_module(mod));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
