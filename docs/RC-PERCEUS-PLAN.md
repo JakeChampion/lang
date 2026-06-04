@@ -1864,7 +1864,54 @@ cancellation — bounded, but separable, so it ships last.
     self-host-risky match-lowering surgery buys little. Unlocking the
     real win needs an owned/consuming-parameter mode (a `move`/`own` param
     annotation or escape-inferred ownership), which is a language-level
-    change tracked separately from RC-Perceus. Deferred deliberately.
+    change tracked separately from RC-Perceus. Deferred deliberately —
+    **now being unlocked**, see the `own`-parameter slices below.
+
+##### Owned / consuming parameters (`own`) — the gate to recursive-traversal FBIP
+
+The single feature standing between Fern's local Perceus optimisations
+(reuse token, self-overwrite reuse, field-store elision — all SHIPPED) and
+Perceus's *headline* win (a recursive `map`/`filter`/tree-update reusing the
+structure's cells in place, as in Koka and Lean 4) is an **owned parameter
+mode**. All Fern params are borrowed (Phase 2d), so a `match`-scrutinee
+parameter is never `freeEligible` and the cons-cell reuse (5d-ii) can't fire.
+`own` lets the caller transfer ownership so the callee can consume / reclaim /
+reuse the argument. Sliced for risk:
+
+  - **Slice A — `own` syntax + affine use-after-move checker. SHIPPED (no
+    codegen).** `own` is a CONTEXTUAL keyword before a param name
+    (`function map_inc(own xs: List)`); `ast.Param.Own` carries it (struct
+    fields / borrowed params stay false; a param literally named `own` is
+    unaffected — disambiguated by the token after it). The checker's
+    `checkOwnedParams` (run from `checkFunction` after `checkBlock`) enforces
+    the affine discipline: an owned param is **consumed at most once on every
+    path**; a use after consume is **E050**. Consume = a WHOLE-VALUE use of the
+    bare param (matched, returned, passed as a call arg, bound to a var, stored
+    into a literal); borrow = a PROJECTION (`x.field` / `x[i]` / method receiver
+    `x.m()`, recognised post-rewrite via `Call.Method`). The walk is
+    flow-sensitive and divergence-aware (a `return`/`break`/`continue` branch's
+    consume doesn't constrain the fall-through; a consume inside a loop body is
+    flagged since a later iteration would use-after-move). The consume/borrow
+    classification is deliberately FORWARD-COMPATIBLE: `f(x)` counts as a
+    consume now, so code that would become a use-after-move once Slice B lowers
+    `own` args as moves is rejected up front. No runtime change — owned params
+    still lower as borrowed; this only establishes the invariant the transfer +
+    reuse slices rely on. Tests: `internal/checker/owned_params_test.go` (11
+    cases — consume-after-call / match / loop / non-diverging-branch FIRE;
+    borrow* / diverging-branches / borrow-only / method-receiver are OK; the
+    contextual-keyword disambiguation both ways) + the `E050` explanation file.
+  - **Slice B — ownership transfer (NEXT).** Un-taint `own` params in
+    `computeFreeEligible` (callee reclaims them); move-on-call at the caller
+    (the `moveSites` mechanism, a third site beside move-on-return /
+    move-on-alias). The drop obligation moves caller → callee. This is the
+    rc-correctness-sensitive slice (it changes WHO frees).
+  - **Slice C — match-arm cons-cell reuse.** With the owned scrutinee now
+    `freeEligible`, wire the 5d-ii hook (pair the dropped scrutinee box with a
+    same-box-shape constructor in the arm) onto the reuse machinery from
+    slices 5e-*. The headline win: zero-allocation recursive `map`/`filter`.
+  - **Slice D (optional, separate) — TRMC** (tail-recursion-modulo-cons /
+    constructor contexts), Koka's transform turning non-tail constructor
+    recursion into in-place tail loops. Orthogonal and larger.
   - **5e — general reuse token across DIFFERENT locals (struct, all-scalar).
     SHIPPED (all three backends).** The first cut of the *general* FBIP win:
     a dead, owned, all-i32-scalar struct local `D` is paired with a LATER

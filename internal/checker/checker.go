@@ -3706,6 +3706,209 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		root.names[p.Name] = p.Type
 	}
 	c.checkBlock(fn.Body, root)
+	c.checkOwnedParams(fn)
+}
+
+// checkOwnedParams is the affine use-after-move analysis for `own` (owned /
+// consuming) parameters — the static foundation of Fern's ownership transfer.
+// An owned param may be CONSUMED at most once on every execution path; using it
+// after it's been consumed is E050. "Consume" = a whole-value use of the bare
+// parameter (matched, returned, passed as a call argument, bound to a var,
+// stored into a literal); "borrow" = a projection (`x.field`, `x[i]`, a method
+// receiver `x.m()`, a closure call `x(...)`), which reads through the value
+// without ending its life and may repeat. The classification is deliberately
+// forward-compatible with the later ownership-transfer slice: a plain `f(x)`
+// counts as a consume NOW, so code that would become a use-after-move once
+// `own` args are lowered as moves is rejected up front.
+//
+// No codegen changes here — owned params still lower as borrowed; this only
+// establishes the invariant the transfer + reuse slices rely on.
+func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
+	owned := map[string]bool{}
+	for _, p := range fn.Params {
+		if p.Own {
+			owned[p.Name] = true
+		}
+	}
+	if len(owned) == 0 || fn.Body == nil {
+		return
+	}
+
+	// moved records, per consumed owned-param name, the position of the consume
+	// (a snapshot threaded through the flow-sensitive walk; a name's presence
+	// means "already consumed on this path").
+	type movedSet = map[string]ast.Position
+
+	// recordExprUses classifies every owned-param occurrence in `e` and reports
+	// E050 on a use after move; a fresh consume records into `moved`. Borrows
+	// are the projection-target / call-callee idents; every other owned-ident
+	// occurrence is a consume. Occurrences are visited in source (left-to-right
+	// pre-order) order so `f(x) + x.len` flags the second use.
+	recordExprUses := func(e ast.Expr, moved movedSet) {
+		if e == nil {
+			return
+		}
+		borrow := map[*ast.Ident]bool{}
+		ast.Walk(e, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FieldAccess:
+				if id, ok := x.Target.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Index:
+				if id, ok := x.Array.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Call:
+				// The callee position is a borrow (function ref / closure call).
+				if id, ok := x.Callee.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				// A method call (`xs.len()`) is rewritten by the checker to a
+				// plain Call with the receiver as Args[0] and Method set; that
+				// receiver is BORROWED, not consumed. (A pipe `x |> f()` also
+				// puts the LHS in Args[0] but Method is nil — there it IS a real
+				// argument, so it stays a consume.)
+				if x.Method != nil && len(x.Args) > 0 {
+					if id, ok := x.Args[0].(*ast.Ident); ok {
+						borrow[id] = true
+					}
+				}
+			}
+			return true
+		})
+		ast.Walk(e, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || !owned[id.Name] {
+				return true
+			}
+			if at, isMoved := moved[id.Name]; isMoved {
+				c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+				return true
+			}
+			if !borrow[id] {
+				moved[id.Name] = id.Pos() // a whole-value use consumes it
+			}
+			return true
+		})
+	}
+
+	// joinInto merges a branch's post-state into `dst` IFF the branch does not
+	// diverge (a diverging branch — return / break / continue — never reaches
+	// the join, so its consumes don't constrain the fall-through path).
+	joinInto := func(dst, branch movedSet, diverges bool) {
+		if diverges {
+			return
+		}
+		for k, v := range branch {
+			if _, ok := dst[k]; !ok {
+				dst[k] = v
+			}
+		}
+	}
+	cloneMoved := func(m movedSet) movedSet {
+		n := make(movedSet, len(m))
+		for k, v := range m {
+			n[k] = v
+		}
+		return n
+	}
+
+	var walkStmt func(st ast.Stmt, moved movedSet)
+	var walkStmts func(stmts []ast.Stmt, moved movedSet)
+
+	// loopBody walks a loop body/step on a copy and flags any owned param it
+	// consumes that was still live at loop entry — a later iteration would use
+	// it after move. The loop may run zero times, so the fall-through state is
+	// unchanged (`moved` is left as-is).
+	loopBody := func(body ast.Stmt, step ast.Stmt, moved movedSet) {
+		inner := cloneMoved(moved)
+		if body != nil {
+			walkStmt(body, inner)
+		}
+		if step != nil {
+			walkStmt(step, inner)
+		}
+		for name, at := range inner {
+			if _, wasLive := moved[name]; !wasLive {
+				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
+			}
+		}
+	}
+
+	walkStmt = func(st ast.Stmt, moved movedSet) {
+		switch x := st.(type) {
+		case *ast.Block:
+			walkStmts(x.Stmts, moved)
+		case *ast.Var:
+			recordExprUses(x.Init, moved)
+		case *ast.ExprStmt:
+			// `x = e` is an Assign EXPRESSION wrapped in an ExprStmt. Reassigning
+			// the bare owned param rebinds it to a fresh value, so its consumed
+			// state resets (the new value's ownership is the transfer slice's
+			// concern; here the reassign just clears the move) — distinct from a
+			// plain read, which recordExprUses would treat as a consume.
+			if asn, ok := x.Expr.(*ast.Assign); ok {
+				recordExprUses(asn.Value, moved)
+				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
+					delete(moved, id.Name)
+				} else {
+					recordExprUses(asn.Target, moved)
+				}
+				return
+			}
+			recordExprUses(x.Expr, moved)
+		case *ast.Return:
+			recordExprUses(x.Value, moved)
+		case *ast.If:
+			recordExprUses(x.Cond, moved)
+			thenMoved := cloneMoved(moved)
+			walkStmt(x.Then, thenMoved)
+			elseMoved := cloneMoved(moved)
+			if x.Else != nil {
+				walkStmt(x.Else, elseMoved)
+			}
+			joinInto(moved, thenMoved, stmtDiverges(x.Then))
+			joinInto(moved, elseMoved, x.Else != nil && stmtDiverges(x.Else))
+		case *ast.While:
+			recordExprUses(x.Cond, moved)
+			loopBody(x.Body, nil, moved)
+		case *ast.For:
+			if x.Init != nil {
+				walkStmt(x.Init, moved)
+			}
+			recordExprUses(x.Cond, moved)
+			loopBody(x.Body, x.Step, moved)
+		case *ast.Match:
+			recordExprUses(x.Tag, moved) // a bare-ident scrutinee is consumed here
+			for _, arm := range x.Arms {
+				armMoved := cloneMoved(moved)
+				if arm.Body != nil {
+					walkStmts(arm.Body.Stmts, armMoved)
+				}
+				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
+			}
+		default:
+			// Any other statement that carries expressions (IfLet, LetElse,
+			// Defer, …) — conservatively scan it for owned-ident uses so a
+			// consume there is still caught (over-counts as consume, never
+			// misses a use-after-move).
+			ast.Walk(st, func(n ast.Node) bool {
+				if e, ok := n.(ast.Expr); ok {
+					recordExprUses(e, moved)
+					return false
+				}
+				return true
+			})
+		}
+	}
+	walkStmts = func(stmts []ast.Stmt, moved movedSet) {
+		for _, st := range stmts {
+			walkStmt(st, moved)
+		}
+	}
+
+	walkStmts(fn.Body.Stmts, movedSet{})
 }
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
