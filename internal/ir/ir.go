@@ -5555,8 +5555,23 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// baseSlot (storing `base`) — same accounting as the
 	// StructLit migration in Phase 1e-struct-i.
 	const rcHeaderBytes = 8
-	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-	b.emit(Op{Kind: OpAlloc})
+	// General FBIP reuse (computeReuseSources): a dead, owned enum local D of
+	// the same type/box-class is reused in place for this variant construction.
+	// Same machinery as the StructLit / TupleLit hooks — emitReuseToken leaves
+	// the box BASE on the stack (or a fresh OpAlloc), and emitReuseOldFieldDrops
+	// frees D's OLD payload (D's uniform drop loads, variant-independent offsets)
+	// on the reuse branch before the tag + payload stores below overwrite them.
+	reuseSrcUniqSlot := int32(-1)
+	var reuseSrcOffs []int32
+	var reuseSrcTypes []ast.Type
+	if dName, paired := b.reuseSources[callNode]; paired && callNode != nil {
+		var dSize int32
+		reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
+		reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
+	} else {
+		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+		b.emit(Op{Kind: OpAlloc})
+	}
 	baseSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__enum_%d", baseSlot)] = baseSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
@@ -5564,6 +5579,9 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpStore})
+	if reuseSrcUniqSlot >= 0 {
+		b.emitReuseOldFieldDrops(reuseSrcUniqSlot, baseSlot, reuseSrcOffs, reuseSrcTypes)
+	}
 	// Store tag at offset 0 of data (= base + rcHeaderBytes).
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
@@ -10762,12 +10780,13 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return found
 	}
 	const rcHeaderBytes = 8
-	// reuseClassOf returns a local's box "kind" (struct vs tuple), its struct
-	// name (empty for tuples), and its freelist class — (alloc+15)&-16 of
+	// reuseClassOf returns a local's box "kind" (struct / tuple / enum), its
+	// type name (empty for tuples), and its freelist class — (alloc+15)&-16 of
 	// data+rc-header, within the exact-fit ≤ 2048 range — for any general-FBIP
-	// reuse-eligible struct OR tuple local. ok=false for anything else
-	// (non-box type, a string/wide-scalar field/element, or > 2048).
-	reuseClassOf := func(name string) (kind string, structName string, class int32, ok bool) {
+	// reuse-eligible struct / tuple / enum local. ok=false for anything else
+	// (non-box type, a string/wide-scalar field/element, a non-uniform enum, or
+	// > 2048).
+	reuseClassOf := func(name string) (kind string, typeName string, class int32, ok bool) {
 		t, ok2 := b.localDeclType(name)
 		if !ok2 {
 			return "", "", 0, false
@@ -10794,12 +10813,30 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				return "", "", 0, false
 			}
 			return "tuple", "", (alloc + 15) &^ 15, true
+		case ast.EnumType:
+			ed, ok3 := b.info.Enums[tt.Name]
+			if !ok3 {
+				return "", "", 0, false
+			}
+			if len(tt.Args) > 0 {
+				ed = substituteEnumDecl(ed, tt.Args)
+			}
+			_, size, eok := b.enumReuseLoads(ed)
+			if !eok {
+				return "", "", 0, false
+			}
+			alloc := size + rcHeaderBytes
+			if alloc > 2048 {
+				return "", "", 0, false
+			}
+			return "enum", tt.Name, (alloc + 15) &^ 15, true
 		}
 		return "", "", 0, false
 	}
 	// constructionAt extracts (targetName, constructionNode) from a
-	// `var c = T{…}` / `c = (…)` (or the assign forms) whose RHS is a plain
-	// (non-update) StructLit or a TupleLit. The node keys reuseSources.
+	// `var c = T{…}` / `c = (…)` / `c = Variant(…)` (or the assign forms) whose
+	// RHS is a plain (non-update) StructLit, a TupleLit, or a payload-carrying
+	// enum variant constructor call. The node keys reuseSources.
 	constructionAt := func(st ast.Stmt) (string, ast.Expr) {
 		rhsConstruction := func(e ast.Expr) ast.Expr {
 			switch v := e.(type) {
@@ -10809,6 +10846,17 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				}
 			case *ast.TupleLit:
 				return v
+			case *ast.Call:
+				// A payload-carrying enum variant constructor (`Wrap(x)`).
+				// Payloadless variants lower to a shared sentinel (no box to
+				// reuse), and a shadowing local rules out a constructor ref.
+				if callee, ok := v.Callee.(*ast.Ident); ok {
+					if _, isLocal := b.locals[callee.Name]; !isLocal {
+						if _, _, pc, isVar := b.lookupVariant(callee.Name); isVar && pc > 0 {
+							return v
+						}
+					}
+				}
 			}
 			return nil
 		}
@@ -10853,18 +10901,25 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				continue
 			}
 			// A StructLit construction targets a struct C of the matching named
-			// type; a TupleLit targets a tuple C. Skip if C's local isn't a
-			// reuse-eligible box of the right kind.
-			cKind, cStructName, cClass, ok := reuseClassOf(cName)
+			// type; a TupleLit targets a tuple C; an enum variant call targets an
+			// enum C. Skip if C's local isn't a reuse-eligible box of that kind.
+			cKind, cTypeName, cClass, ok := reuseClassOf(cName)
 			if !ok {
 				continue
 			}
-			if sl, isStruct := cNode.(*ast.StructLit); isStruct {
-				if cKind != "struct" || cStructName != sl.TypeName {
+			switch cn := cNode.(type) {
+			case *ast.StructLit:
+				if cKind != "struct" || cTypeName != cn.TypeName {
 					continue
 				}
-			} else if cKind != "tuple" {
-				continue
+			case *ast.TupleLit:
+				if cKind != "tuple" {
+					continue
+				}
+			case *ast.Call:
+				if cKind != "enum" {
+					continue
+				}
 			}
 			for dName, di := range declIdx {
 				if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
@@ -10873,18 +10928,23 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				if !b.freeEligible[dName] || !b.localNameUnique(dName) {
 					continue
 				}
-				dKind, dStructName, dClass, ok := reuseClassOf(dName)
+				dKind, dTypeName, dClass, ok := reuseClassOf(dName)
 				if !ok || dKind != cKind {
 					continue
 				}
-				// Same NAMED struct pairs at any size (D's box is reused as
+				// Same NAMED struct/enum pairs at any size (D's box is reused as
 				// itself). Otherwise (a different struct type, or a tuple) pair
 				// only when D and C fall in the SAME freelist class — C's box
 				// fits D's reused block and __alloc_reuse's runtime class check
 				// matches. D's old fields are released and C's stored using each
-				// one's OWN layout (see the StructLit / TupleLit hooks).
-				sameNamedStruct := cKind == "struct" && dStructName == cStructName
-				if !sameNamedStruct && dClass != cClass {
+				// one's OWN layout (see the hooks). Enums require the same type
+				// (their old-payload free walks D's uniform drop loads; pairing a
+				// different enum of equal class is left to a later cut).
+				sameNamed := (cKind == "struct" || cKind == "enum") && dTypeName == cTypeName
+				if cKind == "enum" && !sameNamed {
+					continue
+				}
+				if !sameNamed && dClass != cClass {
 					continue
 				}
 				if !deadFrom(dName, k) {
@@ -10929,8 +10989,60 @@ func (b *builder) reuseSourceLayout(dName string) (offsets []int32, types []ast.
 	case ast.TupleType:
 		offs, sz := tupleElemLayout(dt.Elems, b.ptrW)
 		return offs, dt.Elems, sz
+	case ast.EnumType:
+		ed := b.info.Enums[dt.Name]
+		if len(dt.Args) > 0 {
+			ed = substituteEnumDecl(ed, dt.Args)
+		}
+		loads, sz, _ := b.enumReuseLoads(ed)
+		offsets = make([]int32, len(loads))
+		types = make([]ast.Type, len(loads))
+		for i, ld := range loads {
+			offsets[i] = ld.off
+			types[i] = ld.typ
+		}
+		return offsets, types, sz
 	}
 	return nil, nil, 0
+}
+
+// enumReuseLoads is the general-FBIP eligibility + old-payload-free layout for
+// an enum reuse source D, mirroring tryEnumReuseOverwrite's gate exactly: the
+// enum must have a uniform box size, and either be uniform-droppable with NO
+// string payload (the rc-pointer loads to free on the reuse branch) or be
+// scalar-only (nothing to free). ok=false otherwise — that enum declines reuse.
+// The returned loads carry the variant-INDEPENDENT payload offsets (so the
+// old-payload free needs no runtime tag guard), and freeEligible[D] guarantees
+// those payloads alias nothing live (the same soundness basis the self-overwrite
+// enum reuse relies on).
+func (b *builder) enumReuseLoads(ed *ast.EnumDecl) (loads []enumDropLoad, size int32, ok bool) {
+	if ed == nil {
+		return nil, 0, false
+	}
+	sz, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
+	if !sizeOk {
+		return nil, 0, false
+	}
+	if lds, uok := uniformEnumDropLoads(ed, b.ptrW); uok {
+		for _, ld := range lds {
+			if _, isStr := ld.typ.(ast.StringType); isStr {
+				return nil, 0, false // string payload — needs two-word str_dec
+			}
+		}
+		return lds, sz, true
+	}
+	// Not uniform-droppable: only scalar-only enums are safe (nothing to free).
+	for _, v := range ed.Variants {
+		for _, pt := range v.Payloads {
+			if _, isStr := pt.(ast.StringType); isStr {
+				return nil, 0, false
+			}
+			if arrElemIsRcTracked(pt) {
+				return nil, 0, false
+			}
+		}
+	}
+	return nil, sz, true
 }
 
 // emitReuseToken lowers the general-FBIP reuse allocation for a construction C

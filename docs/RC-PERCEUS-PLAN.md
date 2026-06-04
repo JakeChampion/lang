@@ -1948,8 +1948,33 @@ cancellation — bounded, but separable, so it ships last.
     element offsets), `tuple_ptr` (200-iter (i32,i32[]) — D's old array freed
     each turn, 0 over-release)}. Full e2e (differential corpus + both self-host
     gates) + non-e2e suites green.
-    **Next general-FBIP cuts:** enum `D`; relaxing the same-block constraint
-    (cross-block dominance).
+  - **5e-v — ENUM sources. SHIPPED (all three backends).** Completes the
+    reuse-source box kinds (struct / tuple / enum): a dead, owned enum local `D`
+    is reused for a later payload-carrying variant construction `C` of the same
+    enum type. Hooked in `emitEnumNew` with the SAME factored helpers
+    (`emitReuseToken` + `emitReuseOldFieldDrops`); `reuseSourceLayout` /
+    `reuseClassOf` gained an `EnumType` case backed by `enumReuseLoads`, which
+    mirrors `tryEnumReuseOverwrite`'s gate exactly — a uniform box size and
+    EITHER uniform-droppable with no string payload (the rc-pointer loads to
+    free) OR scalar-only (nothing to free). The old-payload free walks `D`'s
+    **uniform drop loads** (`uniformEnumDropLoads`), whose offsets are
+    variant-INDEPENDENT, so no runtime tag guard is needed; soundness rides the
+    same basis as the self-overwrite enum path — `freeEligible[D]` (via
+    `rhsTainted` through variant-constructor args) guarantees `D`'s payloads
+    alias nothing live, so freeing the old one reclaims the genuine last
+    reference (and each drop is_unique-gates again). A sentinel `D` (payloadless
+    variant at runtime) reads non-unique → declines → fresh alloc. Restricted to
+    the SAME enum type for now (cross-enum same-class is a later micro-cut) and
+    to the same KIND (an enum `D` never pairs with a struct/tuple `C`). Tests: IR
+    `TestGeneralReuse{FiresForEnum,SkipsEnumToStructKindMismatch}` + e2e
+    `…GeneralReuse` {`enum_churn` (200-iter `Wrap(i32[])`, old array freed at the
+    uniform offset each turn, 0 over-release), `enum_cross_variant` (uniform
+    two-variant `Bag{Keep,Swap}`, D and C differ in variant — exercises the
+    variant-independent free)}. Full e2e (differential corpus + both self-host
+    gates) + non-e2e suites green.
+    **Next general-FBIP cut:** relaxing the same-block constraint (cross-block
+    dominance) — the most regression-prone (the args-alias hazard), so it wants
+    extra care.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 
