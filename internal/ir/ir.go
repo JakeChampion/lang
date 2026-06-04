@@ -10877,8 +10877,83 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return "", nil
 	}
 
-	// pairInList runs the pairing within one block's direct statement list.
-	pairInList := func(stmts []ast.Stmt) {
+	// attemptPair tries to pair construction C (cName / cNode) with a dead,
+	// owned source D drawn from `declIdx` (name → declaration index in some
+	// statement list), where D must be declared before `k` and dead from `k`
+	// onward per `deadFrom`. Used by BOTH the same-block pass (declIdx/k/deadFrom
+	// scoped to C's own block) and the cross-block pass (scoped to the function
+	// body, with k the top-level statement that ENCLOSES a nested C). Records the
+	// pairing in `sources`/`consumed` and returns true on success.
+	attemptPair := func(cName string, cNode ast.Expr, declIdx map[string]int, k int, deadFrom func(string, int) bool) bool {
+		cKind, cTypeName, cClass, ok := reuseClassOf(cName)
+		if !ok {
+			return false
+		}
+		switch cn := cNode.(type) {
+		case *ast.StructLit:
+			if cKind != "struct" || cTypeName != cn.TypeName {
+				return false
+			}
+		case *ast.TupleLit:
+			if cKind != "tuple" {
+				return false
+			}
+		case *ast.Call:
+			if cKind != "enum" {
+				return false
+			}
+		}
+		// Choose deterministically (smallest decl index, tie-broken by name):
+		// Go map iteration is per-process randomised, so picking the "first"
+		// eligible D would make codegen non-reproducible — fatal for the
+		// byte-equal self-host gate when two D's qualify for one C.
+		bestD, bestDi := "", -1
+		for dName, di := range declIdx {
+			if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
+				continue
+			}
+			if !b.freeEligible[dName] || !b.localNameUnique(dName) {
+				continue
+			}
+			dKind, dTypeName, dClass, ok := reuseClassOf(dName)
+			if !ok || dKind != cKind {
+				continue
+			}
+			// Same NAMED struct/enum pairs at any size (D's box is reused as
+			// itself). Otherwise (a different struct type, or a tuple) pair
+			// only when D and C fall in the SAME freelist class — C's box
+			// fits D's reused block and __alloc_reuse's runtime class check
+			// matches. D's old fields are released and C's stored using each
+			// one's OWN layout (see the hooks). Enums require the same type
+			// (their old-payload free walks D's uniform drop loads; pairing a
+			// different enum of equal class is left to a later cut).
+			sameNamed := (cKind == "struct" || cKind == "enum") && dTypeName == cTypeName
+			if cKind == "enum" && !sameNamed {
+				continue
+			}
+			if !sameNamed && dClass != cClass {
+				continue
+			}
+			if !deadFrom(dName, k) {
+				continue
+			}
+			if bestD == "" || di < bestDi || (di == bestDi && dName < bestD) {
+				bestD, bestDi = dName, di
+			}
+		}
+		if bestD != "" {
+			sources[cNode] = bestD
+			consumed[bestD] = true
+			return true
+		}
+		return false
+	}
+
+	// declIndices / deadFromIn build the per-statement-list machinery shared by
+	// both passes: declIdx maps a top-level `var` name to its index, and
+	// deadFrom reports whether a name is referenced in NO statement at index
+	// >= k of that list.
+	declIndices := func(stmts []ast.Stmt) map[string]int {
 		declIdx := map[string]int{}
 		for i, st := range stmts {
 			if v, ok := st.(*ast.Var); ok {
@@ -10887,7 +10962,10 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 				}
 			}
 		}
-		deadFrom := func(name string, k int) bool {
+		return declIdx
+	}
+	deadFromIn := func(stmts []ast.Stmt) func(string, int) bool {
+		return func(name string, k int) bool {
 			for i := k; i < len(stmts); i++ {
 				if references(stmts[i], name) {
 					return false
@@ -10895,76 +10973,56 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			}
 			return true
 		}
-		for k, st := range stmts {
-			cName, cNode := constructionAt(st)
-			if cNode == nil {
-				continue
-			}
-			// A StructLit construction targets a struct C of the matching named
-			// type; a TupleLit targets a tuple C; an enum variant call targets an
-			// enum C. Skip if C's local isn't a reuse-eligible box of that kind.
-			cKind, cTypeName, cClass, ok := reuseClassOf(cName)
-			if !ok {
-				continue
-			}
-			switch cn := cNode.(type) {
-			case *ast.StructLit:
-				if cKind != "struct" || cTypeName != cn.TypeName {
-					continue
-				}
-			case *ast.TupleLit:
-				if cKind != "tuple" {
-					continue
-				}
-			case *ast.Call:
-				if cKind != "enum" {
-					continue
-				}
-			}
-			for dName, di := range declIdx {
-				if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
-					continue
-				}
-				if !b.freeEligible[dName] || !b.localNameUnique(dName) {
-					continue
-				}
-				dKind, dTypeName, dClass, ok := reuseClassOf(dName)
-				if !ok || dKind != cKind {
-					continue
-				}
-				// Same NAMED struct/enum pairs at any size (D's box is reused as
-				// itself). Otherwise (a different struct type, or a tuple) pair
-				// only when D and C fall in the SAME freelist class — C's box
-				// fits D's reused block and __alloc_reuse's runtime class check
-				// matches. D's old fields are released and C's stored using each
-				// one's OWN layout (see the hooks). Enums require the same type
-				// (their old-payload free walks D's uniform drop loads; pairing a
-				// different enum of equal class is left to a later cut).
-				sameNamed := (cKind == "struct" || cKind == "enum") && dTypeName == cTypeName
-				if cKind == "enum" && !sameNamed {
-					continue
-				}
-				if !sameNamed && dClass != cClass {
-					continue
-				}
-				if !deadFrom(dName, k) {
-					continue
-				}
-				sources[cNode] = dName
-				consumed[dName] = true
-				break
-			}
-		}
 	}
 
-	// Every block in the function — the body and each nested loop / if arm —
-	// is its own statement list with block-scoped locals.
+	// SAME-BLOCK pass: every block in the function — the body and each nested
+	// loop / if arm — is its own statement list with block-scoped locals. A
+	// construction C pairs with a D declared earlier in (and dead from C onward
+	// within) the SAME list. This is the high-value case (loop-body churn).
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		if blk, ok := n.(*ast.Block); ok {
-			pairInList(blk.Stmts)
+			declIdx := declIndices(blk.Stmts)
+			deadFrom := deadFromIn(blk.Stmts)
+			for k, st := range blk.Stmts {
+				if cName, cNode := constructionAt(st); cNode != nil {
+					attemptPair(cName, cNode, declIdx, k, deadFrom)
+				}
+			}
 		}
 		return true
 	})
+
+	// CROSS-BLOCK pass: a top-level body local D dominates and outlives a
+	// construction C NESTED inside a later top-level statement. D pairs with C
+	// when D is dead from that enclosing top-level statement onward across the
+	// WHOLE body (deadFrom over body.Stmts rejects any use after k on any path —
+	// a sibling branch, the rest of C's block, or a post-merge use — so reusing
+	// D's box on the C-path and zeroing its slot can never strand a live read;
+	// the non-C path leaves D's slot intact for the exit sweep). The args-alias
+	// hazard is excluded by freeEligible[D] (a D whose field/element aliases a
+	// live local is tainted out) — and arrays are never reuse sources. Only C's
+	// not already paired same-block are considered; D is a top-level body var
+	// (unconditional, so it dominates any nested C after its declaration).
+	bodyStmts := b.fn.Body.Stmts
+	bodyDeclIdx := declIndices(bodyStmts)
+	bodyDeadFrom := deadFromIn(bodyStmts)
+	for k, st := range bodyStmts {
+		ast.Walk(st, func(n ast.Node) bool {
+			inner, ok := n.(ast.Stmt)
+			if !ok || ast.Node(inner) == ast.Node(st) {
+				return true // skip the enclosing top-level statement itself
+			}
+			cName, cNode := constructionAt(inner)
+			if cNode == nil {
+				return true
+			}
+			if _, done := sources[cNode]; done {
+				return true // already paired (same-block, a closer D)
+			}
+			attemptPair(cName, cNode, bodyDeclIdx, k, bodyDeadFrom)
+			return true
+		})
+	}
 	return sources, consumed
 }
 

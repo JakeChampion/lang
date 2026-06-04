@@ -1972,9 +1972,35 @@ cancellation — bounded, but separable, so it ships last.
     two-variant `Bag{Keep,Swap}`, D and C differ in variant — exercises the
     variant-independent free)}. Full e2e (differential corpus + both self-host
     gates) + non-e2e suites green.
-    **Next general-FBIP cut:** relaxing the same-block constraint (cross-block
-    dominance) — the most regression-prone (the args-alias hazard), so it wants
-    extra care.
+  - **5e-vi — cross-BLOCK reuse (dominance). SHIPPED (all three backends).**
+    Relaxes the same-block constraint: a function-top-level local `D` is reused
+    by a construction `C` NESTED inside a later top-level statement (an if /
+    loop / block arm). `D` pairs with `C` when `D` is dead from that enclosing
+    top-level statement onward across the WHOLE body — `deadFrom` over
+    `body.Stmts` conservatively rejects ANY use after `k` on any path (a sibling
+    branch, the rest of `C`'s block, or a post-merge use), so reusing `D`'s box
+    on the `C`-path and zeroing its slot can never strand a live read; the
+    not-taken path leaves `D`'s slot intact for the exit sweep (so neither path
+    double-frees). The args-alias hazard the plan flagged is excluded
+    STRUCTURALLY: reuse requires `freeEligible[D]` (a `D` whose field/element
+    aliases a live local is tainted out), and arrays — the `string[]` args
+    shape — are never reuse sources. The pairing was factored into a shared
+    `attemptPair` used by both the (existing) same-block pass and the new
+    cross-block pass; `D` selection is now **deterministic** (smallest decl
+    index, tie-broken by name) — a latent non-determinism fix, since Go map
+    iteration is per-process randomised and would otherwise make codegen
+    non-reproducible when two `D`s qualify (fatal for the byte-equal self-host
+    gate). Restricted to a function-top-level `D` (a loop-body `D` with a
+    deeper-nested `C` is a further cut). Tests: IR
+    `TestGeneralReuse{FiresCrossBlock,SkipsCrossBlockUsedAfter,
+    SkipsCrossBlockSiblingUse}` + e2e `…GeneralReuse` {`crossblock_scalar` and
+    `crossblock_ptr` — each calls a helper with the branch BOTH taken (reuse
+    fires, old payload freed at `C`) and not-taken (`D` exit-swept), value-correct
+    with 0 over-release, the adversarial double-free check}. Full e2e
+    (differential corpus + both self-host gates) + non-e2e suites green.
+    With this the general FBIP reuse token covers all heap box kinds (struct /
+    tuple / enum), scalar + single-word pointer fields, cross-type box-class
+    equality, and cross-block dominance.
 
 ##### Test + safety contract (same bar as Phases 1–3)
 

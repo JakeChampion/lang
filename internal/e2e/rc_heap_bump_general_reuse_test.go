@@ -236,7 +236,54 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// genReuseCrossBlockScalarSrc: cross-block reuse — a function-top-level D is
+// reused by a construction NESTED in an if-body. Exercises BOTH paths: go_=true
+// reuses D's box for b; go_=false leaves D for the exit sweep. Neither may
+// double-free. `go_` is a param so the branch isn't const-folded.
+const genReuseCrossBlockScalarSrc = `struct Point { x: i32, y: i32 }
+function run(go_: boolean): i32 {
+    var a: Point = Point { x: 10, y: 20 };
+    var s: i32 = a.x + a.y;          // a's last use, before the if
+    var acc: i32 = 0;
+    if (go_) {
+        var b: Point = Point { x: s + 1, y: 5 };   // reuses a's box on this path
+        acc = b.x + b.y;
+    }
+    return acc;
+}
+function main(): i32 {
+    var t: i32 = run(true);    // s=30; b={31,5} -> 36
+    var f: i32 = run(false);   // a exit-swept, acc=0
+    if (t != 36) { return 1; }
+    if (f != 0) { return 2; }
+    return __rc_underflow_count();
+}`
+
+// genReuseCrossBlockPtrSrc: the pointer-field cross-block case — the reuse-path
+// frees D's old array at C, the not-taken path frees D in the exit sweep. The
+// adversarial double-free check for cross-block.
+const genReuseCrossBlockPtrSrc = `struct Holder { id: i32, items: i32[] }
+function runp(go_: boolean): i32 {
+    var a: Holder = Holder { id: 1, items: [7, 8] };
+    var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+    var acc: i32 = 0;
+    if (go_) {
+        var b: Holder = Holder { id: s, items: [3, 4] };   // reuses a's box; a's [7,8] freed here
+        acc = b.id + b.items[0] + b.items[1];
+    }
+    return acc;
+}
+function main(): i32 {
+    var t: i32 = runp(true);   // s=16; b={16,[3,4]} -> 23
+    var f: i32 = runp(false);  // a (with [7,8]) exit-swept
+    if (t != 23) { return 1; }
+    if (f != 0) { return 2; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
+	{"crossblock_scalar", genReuseCrossBlockScalarSrc},
+	{"crossblock_ptr", genReuseCrossBlockPtrSrc},
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
 	{"ptr_churn", genReusePtrChurnSrc},
