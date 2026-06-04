@@ -685,15 +685,21 @@ The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
 programs through the binary path (deep recursion — `fib`; a struct-array
 "linked list" walked by index; a string `split` + iteration; a
-string-keyed count map), each binary module matching the WAT path. (A
-limitation surfaced here is *not* an encoder bug: the **bare `fn` type** is
-intentionally opaque — not callable, and it doesn't accept a concrete
-lambda on return — on every backend; and a **precise function-typed
-array** (`(() => i32)[]`) works in the Go compiler but hits a separate
-*self-host front-end* gap — `wasm.fern` mishandles the `(() => i32)[]`
-binding so `var fns: (() => i32)[]` emits no local for `fns` — which is a
-front-end / type-annotation gap, not an encoding one.) 41 differential
-cases in total.
+string-keyed count map), each binary module matching the WAT path. 41
+differential cases in total.
+
+The at-scale probe also turned up a self-host **parser** gap (and fixed
+it): a parenthesized type followed by `[]` — a tuple array `(i32, i32)[]`
+or a closure array `(() => i32)[]` — left the trailing `[]` on the cursor
+after `parse_type_name`'s paren branch, so the `var`'s binding local was
+never declared ("unknown local $ps"). `parse_type_name` now consumes the
+trailing `[]` (`consume_array_suffix`), which fixes **array-of-tuples**
+end-to-end (Go already handled it; now the self-host does too — index,
+`.0`/`.1`, and `for p in ps`). Closure arrays still don't fully work —
+the paren reader mangles the inner `=>` of `(() => i32)`, a separate
+deeper gap — and the bare `fn` type remains intentionally opaque (not
+callable; doesn't accept a concrete lambda on return). The fix is in the
+fixpoint bundle and the self-compile still converges byte-identically.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
