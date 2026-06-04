@@ -1826,7 +1826,15 @@ function collect_locals(body: parser.Stmt[], acc: string[]): string[] {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
+                // `var (a, b) = …` destructure: declare both names.
+                if (comma_index(v.name) >= 0) {
+                    var an: string = before_comma(v.name);
+                    var bn: string = after_comma(v.name);
+                    if (!contains_str(acc, an)) { acc = acc.push(an); }
+                    if (!contains_str(acc, bn)) { acc = acc.push(bn); }
+                } else if (!contains_str(acc, v.name)) {
+                    acc = acc.push(v.name);
+                }
             },
             parser.StmtIf(f) => {
                 acc = collect_locals(f.then_body, acc);
@@ -3019,6 +3027,16 @@ function emit_stmts(body: parser.Stmt[], st: WState): WState {
 function emit_stmt(stmt: parser.Stmt, st: WState): WState {
     match (stmt) {
         parser.StmtVar(v) => {
+            // `var (a, b) = <tuple>` destructure: park the tuple pointer in
+            // $__lit0 (the init is emitted at depth 1 so it won't clash),
+            // then bind a = tuple.0, b = tuple.1.
+            if (comma_index(v.name) >= 0) {
+                var an: string = before_comma(v.name);
+                var bn: string = after_comma(v.name);
+                st = st.w("    (local.set $__lit0 " + emit_expr(v.init, st.cx, 1) + ")\n");
+                st = st.w("    (local.set $" + an + " (i32.load (local.get $__lit0)))\n");
+                return st.w("    (local.set $" + bn + " (i32.load (i32.add (local.get $__lit0) (i32.const 4))))\n");
+            }
             // An i64- / f64-typed binding coerces its initialiser to that
             // type so a bare literal (`var t: i64 = 0;` / `var x: f64 =
             // 1;`) becomes the right const.

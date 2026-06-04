@@ -563,6 +563,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"option-question-chain", "function lookup(k: i32): Option[i32] { if (k > 0) { return Some(k * 10); } return None; } function step(k: i32): Option[i32] { var v = lookup(k)?; return Some(v + 1); } function main(): i32 { match (step(5)) { Some(r) => { print_int(r); }, None => { print_int(0); } } match (step(0 - 1)) { Some(r) => { print_int(r); }, None => { print_int(99); } } return 0; }", 0, "5199"},
 		{"result-match-string", "function parse(ok: boolean): Result[i32, string] { if (ok) { return Ok(42); } return Err(\"bad input\"); } function main(): i32 { match (parse(false)) { Ok(v) => { print_int(v); }, Err(e) => { write(e); } } return 0; }", 0, "bad input"},
 		{"string-builder-loop", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 4) { s = s + f\"[{i}]\"; i = i + 1; } write(s); print_int(s.split(\"]\").len()); return 0; }", 0, "[0][1][2][3]5"},
+
+		// Hardening pass 3: more real-program shapes.
+		{"struct-update-spread", "struct C { r: i32, g: i32, b: i32 } function main(): i32 { var base = C { r: 1, g: 2, b: 3 }; var c2 = C { ...base, g: 99 }; print_int(c2.r); print_int(c2.g); print_int(c2.b); return 0; }", 0, "1993"},
+		{"union-match-method", "struct Circle { r: i32 } struct Square { s: i32 } type Shape = Circle | Square; function (c: Circle) area(): i32 { return c.r * c.r * 3; } function (sq: Square) area(): i32 { return sq.s * sq.s; } function describe(sh: Shape): i32 { match (sh) { Circle(c) => { return c.area(); }, Square(s) => { return s.area(); } } return 0; } function main(): i32 { print_int(describe(Circle { r: 2 })); print_int(describe(Square { s: 5 })); return 0; }", 0, "1225"},
+		{"closure-captures-array", "function main(): i32 { var xs = [10, 20, 30]; var get = function(i: i32): i32 { return xs[i]; }; print_int(get(0) + get(2)); return 0; }", 0, "40"},
+		{"array-2d", "function main(): i32 { var grid = [[1, 2], [3, 4]]; print_int(grid[0][1]); print_int(grid[1][0]); return 0; }", 0, "23"},
+		{"nested-option", "function f(b: boolean): Option[Option[i32]] { if (b) { return Some(Some(5)); } return Some(None); } function main(): i32 { match (f(true)) { Some(inner) => { match (inner) { Some(v) => { print_int(v); }, None => { print_int(0); } } }, None => { print_int(9); } } return 0; }", 0, "5"},
+		{"recursion-string", "function rep(s: string, n: i32): string { if (n <= 0) { return \"\"; } return s + rep(s, n - 1); } function main(): i32 { write(rep(\"ab\", 3)); return 0; }", 0, "ababab"},
+		{"split-join-roundtrip", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); print_int(parts.len()); return 0; }", 0, "a-b-c3"},
+		{"nested-loop-break", "function main(): i32 { var c: i32 = 0; var i: i32 = 0; while (i < 5) { var j: i32 = 0; while (j < 5) { if (j == 3) { break; } c = c + 1; j = j + 1; } i = i + 1; } print_int(c); return 0; }", 0, "15"},
+		{"tuple-destructure-call", "function mm(): (i32, i32) { return (3, 7); } function main(): i32 { var (a, b) = mm(); print_int(a); print_int(b); return 0; }", 0, "37"},
+		{"tuple-destructure-literal", "function main(): i32 { var (x, y) = (11, 22); print_int(x + y); return 0; }", 0, "33"},
 	}
 
 	for _, tc := range cases {

@@ -46,13 +46,15 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   and read via `$__env`; `fn`-typed params dispatch the same way) — the
   core language is now complete on the wasm backend — plus `.to_string()`
   + f-strings (integer→string runtime) and arrays of structs (`for p in
-  pts` / `pts[i].field`). Gated by 399 differential cases under `wasmtime`
-  (`self_host_wasm_emit_test.go`), including integration capstones (word
-  count; reduce over an `fn` param; struct-method loop; nested structs;
-  `?`-chains; `Result` match; string-builder). A second hardening pass also
-  fixed a parser hang on a reserved keyword misused as an identifier
-  (`parse_module` now guarantees forward progress). Remaining for wasm is
-  packaging, not language: the `wasi:cli/run` / `wasi:http` component
+  pts` / `pts[i].field`, struct spread-update, struct-union match + method,
+  2-D arrays, `var (a, b) = …` tuple destructuring). Gated by 409
+  differential cases under `wasmtime` (`self_host_wasm_emit_test.go`),
+  including integration capstones (word count; reduce over an `fn` param;
+  struct-method loop; nested structs; `?`-chains; `Result` match;
+  string-builder). Hardening passes also fixed a parser hang on a reserved
+  keyword misused as an identifier (`parse_module` now guarantees forward
+  progress) and added `var (a, b)` destructure lowering. Remaining for wasm
+  is packaging, not language: the `wasi:cli/run` / `wasi:http` component
   shapes, and binary wasm encoding (it emits WAT text today).
 
 ---

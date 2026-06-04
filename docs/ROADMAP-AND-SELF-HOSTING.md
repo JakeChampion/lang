@@ -338,7 +338,15 @@ so the compiler terminates instead of hanging; valid programs (incl. the
 self-host compiler's own source — the fixpoint stays byte-identical) are
 unaffected.
 
-Gated by 399 differential cases as of this writing. What remains for the
+A third pass (struct spread-update, struct-union `match` + a method on the
+bound variant, a closure capturing an array, 2-D arrays, `Option[Option]`,
+string recursion, split/join round-trip, nested loops with `break`) mostly
+ran first-try and turned up one real gap: **`var (a, b) = …` tuple
+destructuring** wasn't lowered (the comma-encoded binding fell through to a
+single bogus local). The StmtVar path now splits the two names and binds
+them from the tuple's slots (`a = t.0`, `b = t.1`).
+
+Gated by 409 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
