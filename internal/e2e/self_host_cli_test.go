@@ -29,7 +29,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -95,6 +95,44 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 7 {
 			t.Errorf("file-emitted program exited %d, want 7", c)
+		}
+	})
+
+	t.Run("emit-ssa", func(t *testing.T) {
+		// -ssa routes an in-subset program through AST → SSA → optimise →
+		// regalloc → emit. Assemble + run; exit code is the program's value.
+		srcPath := filepath.Join(dir, "ssa_prog.fern")
+		src := "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } " +
+			"function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + fib(i); i = i + 1; } return s; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		asm, code := runDriver(t, "-ssa", srcPath)
+		if code != 0 {
+			t.Fatalf("-ssa emit exited %d, want 0", code)
+		}
+		progBin := buildBin(t, gcc, dir, "ssa_prog", string(asm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 88 {
+			t.Errorf("-ssa emitted program exited %d, want 88 (sum of fib(0..9))", c)
+		}
+	})
+
+	t.Run("ssa-fallback", func(t *testing.T) {
+		// A program outside the SSA subset (uses strings) must fall back to
+		// the AST emitter: -ssa output is byte-identical to the default.
+		srcPath := filepath.Join(dir, "fallback.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi\\n\"); return 5; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		withSSA, code1 := runDriver(t, "-ssa", srcPath)
+		astOnly, code2 := runDriver(t, srcPath)
+		if code1 != 0 || code2 != 0 {
+			t.Fatalf("emit exited %d / %d, want 0", code1, code2)
+		}
+		if string(withSSA) != string(astOnly) {
+			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from AST)")
 		}
 	})
 
