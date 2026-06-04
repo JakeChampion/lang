@@ -973,6 +973,36 @@ function has_method(cx: Ctx, t: string, n: string): boolean {
     return false;
 }
 
+// expr_is_void_call is true when `e` calls a user free function or method
+// declared with no return type — such a call leaves nothing on the stack,
+// so it must NOT be wrapped in `(drop …)`. Builtins (which return values)
+// aren't in mod_funcs / the method registry, so they read as non-void.
+function expr_is_void_call(e: parser.Expr, cx: Ctx): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var i: i32 = 0;
+                    while (i < cx.mod_funcs.len()) {
+                        if (cx.mod_funcs[i].receiver_type.len() == 0 && cx.mod_funcs[i].name == id.name) {
+                            return !returns_value(cx.mod_funcs[i].ret_type);
+                        }
+                        i = i + 1;
+                    }
+                    return false;
+                },
+                parser.ExprFieldAccess(fa) => {
+                    var rt: string = struct_type_of(fa.obj, cx);
+                    return has_method(cx, rt, fa.field) && !returns_value(method_ret(cx, rt, fa.field));
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
 function method_ret(cx: Ctx, t: string, n: string): string {
     var i: i32 = 0;
     while (i < cx.mr_types.len()) {
@@ -1549,6 +1579,15 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (is_f64_expr(b.left, cx) || is_f64_expr(b.right, cx)) {
                 return "(" + wasm_binop_f64(b.op) + " " + emit_f64(b.left, cx, depth) + " " + emit_f64(b.right, cx, depth) + ")";
             }
+            // Logical && / || short-circuit: the right operand is only
+            // evaluated when needed, so side effects / guard patterns (e.g.
+            // `p != 0 && load(p)`) behave correctly.
+            if (b.op == "&&") {
+                return "(if (result i32) " + emit_expr(b.left, cx, depth) + " (then " + emit_expr(b.right, cx, depth) + ") (else (i32.const 0)))";
+            }
+            if (b.op == "||") {
+                return "(if (result i32) " + emit_expr(b.left, cx, depth) + " (then (i32.const 1)) (else " + emit_expr(b.right, cx, depth) + "))";
+            }
             return "(" + wasm_binop(b.op) + " " + emit_expr(b.left, cx, depth) + " " + emit_expr(b.right, cx, depth) + ")";
         },
         parser.ExprCall(c) => {
@@ -1748,7 +1787,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             var caps: string[] = lambda_captures(lm, cx);
             var idx: i32 = cx.lam_ctr[0];
             cx.lam_ctr[0] = idx + 1;
-            cx.lamdefs[0] = cx.lamdefs[0] + emit_lambda(lm, idx, cx, caps);
+            // Emit the body FIRST (it may append nested lambdas to the
+            // shared cell), THEN append this lambda's text — reading
+            // cx.lamdefs[0] only after, so nested defs aren't clobbered.
+            var lamtext: string = emit_lambda(lm, idx, cx, caps);
+            cx.lamdefs[0] = cx.lamdefs[0] + lamtext;
             var ap: string = "$__lit" + i32_to_string(depth);
             var s: string = "(block (result i32)";
             s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + caps.len() * 4) + ")))";
@@ -3172,6 +3215,12 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                     }
                 },
                 _ => {},
+            }
+            // A call to a void function / method leaves nothing on the
+            // stack — emit it bare; everything else is value-producing and
+            // gets dropped.
+            if (expr_is_void_call(e.value, st.cx)) {
+                return st.w("    " + emit_expr(e.value, st.cx, 0) + "\n");
             }
             return st.w("    (drop " + emit_expr(e.value, st.cx, 0) + ")\n");
         },

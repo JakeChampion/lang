@@ -51,7 +51,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   string char-access `s[i]`, bitwise operators `& | ^ << >>`, and generics
   with explicit type args (`f[i32](x)`, `Box[i32] { … }`, `(b: Box[T]) m()`),
   compound assignment incl. `arr[i] += y`, and C-style `enum` values +
-  `match`). Gated by 449 differential cases under `wasmtime`
+  `match`). Gated by 455 differential cases under `wasmtime`
   (`self_host_wasm_emit_test.go`), including integration capstones (word
   count; reduce over an `fn` param; struct-method loop; nested structs;
   `?`-chains; `Result` match; string-builder). Hardening passes also fixed
@@ -60,9 +60,10 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   b)` destructure lowering, `const` references (bare ident → call, typed by
   the const's return type), string char-access `s[i]` (byte load), bitwise
   operators, generic type-argument erasure + generic-receiver method
-  mangling, `arr[i] += y` compound assignment, and C-style `enum`
-  constants (`Color.Green` → a variant box, reusing struct-union `match`).
-  With enums closed, the full core language is supported. Remaining for
+  mangling, `arr[i] += y` compound assignment, C-style `enum`
+  constants (`Color.Green` → a variant box, reusing struct-union `match`),
+  void-function statement calls, short-circuit `&&` / `||`, and nested
+  closures. The full core language is supported. Remaining for
   wasm is packaging, not language: the `wasi:cli/run` / `wasi:http`
   component shapes, and binary wasm encoding (it emits WAT text today).
 

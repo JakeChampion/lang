@@ -394,7 +394,19 @@ struct) now emits a variant box `[type_id]` exactly like `Green {}`, so
 `match (c) { Red => … }` dispatches correctly. The heap allocator is gated
 on any struct/enum declaration so the variant box can be built.
 
-Gated by 449 differential cases as of this writing. What remains for the
+An eighth pass (a recursive linked list, negative literals) confirmed
+those work and caught **three** more bugs — including two correctness ones:
+(1) a statement-position call to a **void** function/method wrapped the
+result in `(drop …)` of nothing (validation failure) — now emitted bare
+when the callee is a registered user function/method with no return type;
+(2) **`&&` / `||` weren't short-circuiting** (they lowered to eager
+`i32.and` / `i32.or`, so a guard like `i < len && xs[i] > …` still
+evaluated the OOB index) — now lowered to an `(if (result i32) …)` so the
+right operand runs only when needed; (3) **nested lambdas** lost the inner
+body because the shared lamdefs cell was read before the recursive
+`emit_lambda` appended to it — fixed by emitting into a temp first.
+
+Gated by 455 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
