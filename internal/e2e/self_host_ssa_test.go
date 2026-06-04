@@ -83,6 +83,10 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"while-invariant-read", "function main(): i32 { var n = 7; var i = 0; var s = 0; while (i < n) { s = s + n; i = i + 1; } return s; }", 49},
 		{"if-in-loop", "function main(): i32 { var i = 0; var c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }", 5},
 		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		// CSE: duplicated subexpressions over non-constant (loop-phi) values
+		// must still evaluate correctly once de-duplicated.
+		{"cse-dup-loop", "function main(): i32 { var i = 4; var t = 0; while (i > 0) { t = (i * i) + (i * i); i = i - 1; } return t; }", 2},
+		{"cse-commutative-loop", "function main(): i32 { var i = 3; var t = 0; while (i > 0) { t = t + ((i + 1) + (1 + i)); i = i - 1; } return t; }", 18},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
@@ -166,6 +170,22 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		optB := run(t, loop, "-opt", "-blocks")
 		if optB != rawB || optB < 2 {
 			t.Errorf("loop blocks: raw=%d opt=%d — control flow should be preserved (>=2, unchanged)", rawB, optB)
+		}
+	})
+
+	// cse collapses duplicate pure subexpressions within a block. The two
+	// `i * i` in the loop body (i is a non-constant loop phi, so they don't
+	// const-fold) become a single multiply — pinning the exact post-opt
+	// instruction count guards that CSE fired.
+	t.Run("cse", func(t *testing.T) {
+		const dup = "function main(): i32 { var i = 4; var t = 0; while (i > 0) { t = (i * i) + (i * i); i = i - 1; } return t; }"
+		raw := run(t, dup, "-count")
+		opt := run(t, dup, "-opt", "-count")
+		if opt >= raw {
+			t.Errorf("cse: optimiser did not shrink IR (raw=%d opt=%d)", raw, opt)
+		}
+		if opt != 10 {
+			t.Errorf("cse: optimised inst count = %d, want 10 (the duplicate i*i collapsed to one)", opt)
 		}
 	})
 }
