@@ -57,6 +57,14 @@ var interpProgs = []struct {
 	{"if", "function main(): i32 { if (5 > 3) { return 1; } return 0; }", 1},
 	{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(19, 23); }", 42},
 	{"float", "function main(): i32 { var f: f64 = 3.5; var g: f64 = 2.5; if (f + g > 5.0) { return 7; } return 0; }", 7},
+	// `as` numeric casts — the interp's unary evaluator previously errored
+	// on every `as_<Type>` op ("unknown unary op"); now an integer-target
+	// cast is identity on an int / truncates a float, and a float-target
+	// cast widens an int / is identity on a float.
+	{"cast-i64-to-i32", "function main(): i32 { var v: i64 = 9; return v as i32; }", 9},
+	{"cast-f64-to-i32", "function main(): i32 { var f: f64 = 3.9; return f as i32; }", 3},
+	{"cast-i32-to-f64", "function main(): i32 { var n: i32 = 5; var f: f64 = n as f64; return (f + 0.5) as i32; }", 5},
+	{"cast-in-i64-array-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
