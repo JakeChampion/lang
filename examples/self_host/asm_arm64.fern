@@ -1655,6 +1655,31 @@ function is_unit_variant(name: string, s: EmitState): boolean {
     return false;
 }
 
+// is_struct_decl_name — see the x86-64 backend. True for a declared
+// struct / enum-variant struct; false for an enum TYPE name (only its
+// variants are registered), distinguishing a shape-dispatched receiver
+// from an enum-method receiver.
+function is_struct_decl_name(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) { return true; }
+        di = di + 1;
+    }
+    return false;
+}
+
+// is_enum_recv — see the x86-64 backend. An enum receiver type: neither
+// a struct/variant decl nor a primitive (primitive impls carry
+// receiver_type "i32"/"string"/… which must be excluded from the
+// enum-method fallback).
+function is_enum_recv(name: string, s: EmitState): boolean {
+    if (is_struct_decl_name(name, s)) { return false; }
+    if (is_int_tag(name)) { return false; }
+    if (name == "string" || name == "bool" || name == "boolean") { return false; }
+    if (name == "f64" || name == "f32" || name == "float") { return false; }
+    return true;
+}
+
 // generic_value_tag — see asm.fern. Extracts the value-type tag from a
 // `Map[K, V]` / `MapIter[K, V]` type name; `start` is past the `[`.
 function generic_value_tag(name: string, start: i32): string {
@@ -4105,7 +4130,11 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     var fdi: i32 = 0;
                     while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
-                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
+                        // Struct / enum-variant receiver types only — an
+                        // enum-type receiver method is handled in the
+                        // fallback below. See the x86-64 backend.
+                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                                && is_struct_decl_name(base_type_name(fd_m.receiver_type), s)) {
                             var arm_lit: StringLitOut = add_string_lit(s, base_type_name(fd_m.receiver_type));
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
@@ -4121,6 +4150,26 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write(next_l.name + ":\n");
                         }
                         fdi = fdi + 1;
+                    }
+                    // Enum-receiver fallback: the variant value matched no
+                    // struct arm; call the enum method (its `match (self)`
+                    // dispatches on the variant). First such method wins.
+                    var enum_recv: string = "";
+                    var efi: i32 = 0;
+                    while (efi < s.funcs.len()) {
+                        var efd: parser.FuncDecl = s.funcs[efi];
+                        if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                                && is_enum_recv(base_type_name(efd.receiver_type), s)) {
+                            enum_recv = base_type_name(efd.receiver_type);
+                        }
+                        efi = efi + 1;
+                    }
+                    if (enum_recv.len() > 0) {
+                        s = s.write("    bl __fn_" + sanitize_label(enum_recv + "." + fa.field) + "\n");
+                        s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
+                        s = s.write("    str x0, [sp, #-16]!\n");
+                        s = s.write(".Lmethod_end_" + i32_to_string(m_end_lbl) + ":\n");
+                        return s;
                     }
                     s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n");
                     s = s.write("    mov x0, #-1\n");

@@ -1982,15 +1982,15 @@ function parse_type_alias(p: Par): TypeAliasResult {
 // first payload of a multi-payload variant is bound; extras are
 // consumed. The enum's own name isn't recorded — variant names are
 // global, as with the existing union machinery.
-pub struct EnumResult { par: Par, variants: StructDecl[] }
+pub struct EnumResult { par: Par, name: string, variants: StructDecl[] }
 
 function parse_enum_decl(p: Par): EnumResult {
     p = p.advance();  // consume `enum`
     var out: StructDecl[] = [];
     var name: string = p.peek_ident();
-    if (name.len() == 0) { return EnumResult { par: p, variants: out }; }
+    if (name.len() == 0) { return EnumResult { par: p, name: "", variants: out }; }
     p = p.advance();
-    if (p.peek_punct() != "{") { return EnumResult { par: p, variants: out }; }
+    if (p.peek_punct() != "{") { return EnumResult { par: p, name: name, variants: out }; }
     p = p.advance();
     while (p.peek_punct() != "}" && !p.at_end()) {
         var vname: string = p.peek_ident();
@@ -2014,7 +2014,7 @@ function parse_enum_decl(p: Par): EnumResult {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return EnumResult { par: p, variants: out };
+    return EnumResult { par: p, name: name, variants: out };
 }
 
 // parse_import consumes `import "path";` starting from the
@@ -3112,6 +3112,71 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts };
 }
 
+// synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
+// `Variant` — the same shape the Go synthEnumDisplay emits. Self-host
+// enum variants carry at most one payload (`__ev`), so a payload
+// variant renders its single field.
+function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        if (v.fields.len() > 0) {
+            var e: Expr = e_string(v.name + "(");
+            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
+            e = e_binary("+", e, e_string(")"));
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)] });
+        } else {
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))] });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body };
+}
+
+// synth_enum_eq: match self, then match other — same variant compares
+// the payload (`__s0.eq(__o0)`), any other variant is unequal. Mirrors
+// the Go synthEnumEq.
+function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        var inner: MatchArm[] = [];
+        if (v.fields.len() > 0) {
+            var eqx: Expr = dv_call1(e_ident("__s0"), "eq", e_ident("__o0"));
+            inner = inner.push(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)] });
+            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))] });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)] });
+        } else {
+            inner = inner.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))] });
+            inner = inner.push(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))] });
+            arms = arms.push(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)] });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
+    var notp: string[] = [];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body };
+}
+
+// synth_enum_derives appends the derivable enum methods. Display + Eq
+// are supported; Ord-for-enums (variant-tag ordering) is a follow-up.
+function synth_enum_derives(ename: string, variants: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
+    var di: i32 = 0;
+    while (di < derives.len()) {
+        var kind: string = derive_simple_name(derives[di]);
+        if (kind == "Display") { funcs = funcs.push(synth_enum_display(ename, variants)); }
+        if (kind == "Eq") { funcs = funcs.push(synth_enum_eq(ename, variants)); }
+        di = di + 1;
+    }
+    return funcs;
+}
+
 // synth_derives appends the synthesised methods for each derivable trait
 // (`Eq` / `Display` / `Ord`) named in `derives` for struct `sd` onto
 // `funcs`. Non-derivable / unknown trait names are ignored (the Go
@@ -3313,8 +3378,6 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 continue;
             }
             if (dk == "enum") {
-                // Parse the enum normally; field-wise enum derive is a
-                // follow-up (enums desugar to struct-unions here).
                 var denr: EnumResult = parse_enum_decl(p);
                 p = denr.par;
                 var dei: i32 = 0;
@@ -3322,6 +3385,9 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     structs = structs.push(denr.variants[dei]);
                     dei = dei + 1;
                 }
+                // Synthesise variant-wise Display / Eq methods on the
+                // enum type; they dispatch via the enum-method fallback.
+                funcs = synth_enum_derives(denr.name, denr.variants, dr.derives, funcs);
                 continue;
             }
             continue;

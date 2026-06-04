@@ -164,6 +164,30 @@ var traitsCases = []struct {
 			"@derive(Display) struct Outer { a: Inner, tag: string } " +
 			"function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; return p.to_string().len(); }",
 		len("Outer { a: Inner { n: 5 }, tag: hi }")},
+	// Enum RECEIVER method — the dispatch fix. A method registered on
+	// the enum type is found for a variant value (whose runtime shape is
+	// the variant) via the enum-method fallback; its `match (self)`
+	// dispatches on the variant. Circle(3)→27, Square(4)→16, sum 43.
+	{"trait-enum-method",
+		"enum Shape { Circle(i32), Square(i32) } " +
+			"function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } " +
+			"function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43},
+	// `@derive(Display)` on an enum: variant-wise `Variant(payload)` /
+	// `Variant`. `Has(7)`→"Has(7)" (6), `Nil`→"Nil" (3); 6+3=9.
+	{"trait-derive-enum-display",
+		"@derive(Display) enum Opt { Has(i32), Nil } " +
+			"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_string().len() + n.to_string().len(); }",
+		len("Has(7)") + len("Nil")},
+	// `@derive(Eq)` on an enum: same variant compares payloads, any
+	// other variant is unequal. Inline `impl Eq for i32` for the payload
+	// (the trait-test harness doesn't load core/cmp). r=15.
+	{"trait-derive-enum-eq",
+		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
+			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
+			"@derive(Eq) enum Opt { Has(i32), Nil } " +
+			"function main(): i32 { var r: i32 = 0; " +
+			"if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } " +
+			"if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

@@ -471,6 +471,29 @@ regressing the self-host gates. It needs traits in two slices:
   `examples/tests/derive_test.fern` through the import-resolving stdtest
   gate (real `core/cmp`).
 
+- **Self-host slice 6 (shipped): enum methods + enum `@derive`.** Enum
+  receiver methods (`function (s: Shape) area()`) didn't work in the
+  self-host: a value's runtime shape is the VARIANT (`Circle`), but the
+  method is registered on the enum type (`__method_Shape_area`), so the
+  shape-compare never matched and the call trapped. Fixed with an
+  **enum-method fallback** in both native emitters: shape-compare arms
+  are emitted only for struct/variant receiver types (`is_struct_decl_name`);
+  a method whose receiver type is an enum (`is_enum_recv` — not a struct
+  decl and not a primitive, the latter exclusion essential since
+  `impl Eq for i32` carries receiver_type `"i32"`) is the fallback call,
+  taken when no variant shape matched — its internal `match (self)` then
+  dispatches on the variant. On top of that, `@derive(Eq, Display)` on
+  enums synthesises variant-wise methods (`synth_enum_{display,eq}`,
+  matching the Go `synthEnum*`): Display renders `Variant(payload)` /
+  `Variant`, Eq matches both values and compares the payload. The parser
+  now threads the enum NAME through `EnumResult` (previously discarded)
+  so the synthesised methods name their receiver type. Self-host enum
+  variants carry a single payload (`__ev`), so multi-payload variants
+  render/compare their first field; **enum `Ord`** (variant-tag ordering)
+  is the remaining derivable, a follow-up. Tested via `trait-enum-method`,
+  `trait-derive-enum-{display,eq}` on x86-64 + arm64, plus the enum
+  section of `examples/tests/derive_test.fern` through the stdtest gate.
+
 ## 7b. The `std/test` collapse (landed)
 
 The scalar `assert_eq_<T>` / `assert_neq_<T>` / `assert_{lt,le,gt,ge}_<T>`

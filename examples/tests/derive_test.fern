@@ -18,6 +18,9 @@ struct Inner { n: i32 }
 @derive(cmp.Eq, cmp.Display)
 struct Outer { a: Inner, tag: string }
 
+@derive(cmp.Eq, cmp.Display)
+enum Shape { Circle(i32), Square(i32), Empty }
+
 function test_eq_reflexive(): Option[string] {
     var a: Point = Point { x: 3, y: 7 };
     var b: Point = Point { x: 3, y: 7 };
@@ -75,6 +78,36 @@ function test_ord_equal(): Option[string] {
     return test.assert_eq(sign(a.cmp(b)), "eq");
 }
 
+function test_enum_display_payload(): Option[string] {
+    var c: Shape = Circle(5);
+    return test.assert_eq(c.to_string(), "Circle(5)");
+}
+
+function test_enum_display_unit(): Option[string] {
+    var e: Shape = Empty;
+    return test.assert_eq(e.to_string(), "Empty");
+}
+
+function test_enum_eq_same_variant(): Option[string] {
+    var a: Shape = Circle(5);
+    if (a.eq(Circle(5))) { return None; }
+    return test.fail("same variant + payload should be eq");
+}
+
+function test_enum_eq_diff_variant(): Option[string] {
+    var a: Shape = Circle(5);
+    var b: Shape = Square(5);
+    if (!a.eq(b)) { return None; }
+    return test.fail("different variants should not be eq");
+}
+
+function test_enum_eq_diff_payload(): Option[string] {
+    var a: Shape = Circle(5);
+    var c: Shape = Circle(6);
+    if (!a.eq(c)) { return None; }
+    return test.fail("same variant, differing payload should not be eq");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("derive");
     r = r.it("eq reflexive",        test_eq_reflexive());
@@ -85,5 +118,10 @@ function main(): i32 {
     r = r.it("ord first field",     test_ord_first_field());
     r = r.it("ord second field",    test_ord_second_field());
     r = r.it("ord equal",           test_ord_equal());
+    r = r.it("enum display payload", test_enum_display_payload());
+    r = r.it("enum display unit",    test_enum_display_unit());
+    r = r.it("enum eq same variant", test_enum_eq_same_variant());
+    r = r.it("enum eq diff variant", test_enum_eq_diff_variant());
+    r = r.it("enum eq diff payload", test_enum_eq_diff_payload());
     return r.finish();
 }

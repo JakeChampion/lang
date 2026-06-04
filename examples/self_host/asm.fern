@@ -1068,6 +1068,35 @@ function is_unit_variant(name: string, s: EmitState): boolean {
     return false;
 }
 
+// is_struct_decl_name reports whether `name` is a declared struct (or
+// an enum-variant struct — variants are registered as structs). An enum
+// TYPE name (`Shape`) is NOT a struct decl (only its variants are), so
+// this distinguishes a struct/variant receiver (dispatched by runtime
+// shape) from an enum receiver (dispatched via the enum method's
+// internal `match`). See the method-dispatch fallback below.
+function is_struct_decl_name(name: string, s: EmitState): boolean {
+    var di: i32 = 0;
+    while (di < s.struct_decls.len()) {
+        if (s.struct_decls[di].name == name) { return true; }
+        di = di + 1;
+    }
+    return false;
+}
+
+// is_enum_recv reports whether a method's receiver type names an enum:
+// not a declared struct/variant, and not a primitive (primitive impls
+// like `impl Eq for i32` carry receiver_type "i32"/"string"/… which are
+// also non-struct, so they must be excluded or the enum-method fallback
+// would wrongly pick them). An enum is what's left: a bare type name
+// that's neither.
+function is_enum_recv(name: string, s: EmitState): boolean {
+    if (is_struct_decl_name(name, s)) { return false; }
+    if (is_int_tag(name)) { return false; }
+    if (name == "string" || name == "bool" || name == "boolean") { return false; }
+    if (name == "f64" || name == "f32" || name == "float") { return false; }
+    return true;
+}
+
 // generic_value_tag extracts the value-type tag from a `Map[K, V]` /
 // `MapIter[K, V]` type name, e.g. "Map[string, string[]]" →
 // "array_string". `start` is the index past the opening `[`. Splits at
@@ -4336,7 +4365,14 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                     var fdi: i32 = 0;
                     while (fdi < s.funcs.len()) {
                         var fd_m: parser.FuncDecl = s.funcs[fdi];
-                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0) {
+                        // Only emit shape-compare arms for STRUCT (incl.
+                        // enum-variant) receiver types — a value's runtime
+                        // shape is always one of these. A method whose
+                        // receiver_type is an ENUM name is handled in the
+                        // fallback below (the variant value's shape won't
+                        // match any struct arm).
+                        if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                                && is_struct_decl_name(base_type_name(fd_m.receiver_type), s)) {
                             var arm_lit: StringLitOut = add_string_lit(s, base_type_name(fd_m.receiver_type));
                             s = arm_lit.state;
                             var next_l: LabelOut = fresh_label(s);
@@ -4352,6 +4388,29 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             s = s.write(next_l.name + ":\n");
                         }
                         fdi = fdi + 1;
+                    }
+                    // Enum-receiver fallback: a method registered on an
+                    // enum TYPE (receiver_type not a struct decl). The
+                    // receiver here is a variant value whose shape matched
+                    // no struct arm; call the enum method, whose internal
+                    // `match (self)` dispatches on the variant. First such
+                    // method wins (method names are effectively unique).
+                    var enum_recv: string = "";
+                    var efi: i32 = 0;
+                    while (efi < s.funcs.len()) {
+                        var efd: parser.FuncDecl = s.funcs[efi];
+                        if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                                && is_enum_recv(base_type_name(efd.receiver_type), s)) {
+                            enum_recv = base_type_name(efd.receiver_type);
+                        }
+                        efi = efi + 1;
+                    }
+                    if (enum_recv.len() > 0) {
+                        s = s.write("    call __fn_" + sanitize_label(enum_recv + "." + fa.field) + "\n");
+                        s = s.write("    addq $" + i32_to_string((c.args.len() + 1) * 8) + ", %rsp\n");
+                        s = s.write("    pushq %rax\n");
+                        s = s.write(".Lmethod_end_" + i32_to_string(m_end_lbl) + ":\n");
+                        return s;
                     }
                     // Fallthrough: no matching method. Clean up
                     // args + receiver, push sentinel -1.
