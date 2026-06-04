@@ -1324,3 +1324,15 @@ struct Point { x: i32, y: i32 }`)
 		t.Error("@frobnicate should be rejected")
 	}
 }
+
+// @derive applies to enums too.
+func TestDeriveEnumParses(t *testing.T) {
+	prog, err := Parse(`@derive(cmp.Eq, cmp.Display)
+enum Color { Red, Green, Blue }`)
+	if err != nil {
+		t.Fatalf("@derive enum should parse: %v", err)
+	}
+	if len(prog.Enums) != 1 || len(prog.Enums[0].Derives) != 2 {
+		t.Errorf("enum Derives = %v", prog.Enums[0].Derives)
+	}
+}

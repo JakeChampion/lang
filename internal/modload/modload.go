@@ -852,6 +852,9 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 				r.rewriteType(&ed.Variants[i].Payloads[j])
 			}
 		}
+		for i, dn := range ed.Derives {
+			ed.Derives[i] = r.rewriteTraitNameAt(dn, ed.P)
+		}
 	}
 	for _, ud := range m.prog.Unions {
 		// Mangling lines up with the synthesised EnumDecl the

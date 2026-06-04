@@ -303,3 +303,51 @@ function main(): i32 {
 		}
 	}
 }
+
+// @derive(Eq, Display) on an ENUM synthesises variant-wise match-based
+// methods: Eq compares the same variant's payloads field-wise (any
+// other variant is unequal); Display renders `Variant(payload, …)`.
+// See docs/TRAITS.md (Phase 4, enums).
+func TestInterpDeriveEnumTraits(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+
+@derive(cmp.Eq, cmp.Display)
+enum Shape {
+    Circle(i32),
+    Rect(i32, i32),
+    Dot,
+}
+
+function main(): i32 {
+    var a: Shape = Rect(3, 4);
+    var b: Shape = Rect(3, 4);
+    var c: Shape = Circle(5);
+    print(a.to_string());
+    print(c.to_string());
+    print(Dot.to_string());
+    if (a.eq(b)) { print("a-eq-b"); }
+    if (!a.eq(c)) { print("a-neq-c"); }
+    if (!c.eq(Dot)) { print("c-neq-dot"); }
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"Rect(3, 4)", "Circle(5)", "Dot", "a-eq-b", "a-neq-c", "c-neq-dot"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s\nstderr: %s", want, got, errb.String())
+		}
+	}
+}

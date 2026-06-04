@@ -1608,6 +1608,10 @@ type EnumDecl struct {
 	Name       string
 	TypeParams []string
 	Variants   []EnumVariant
+	// Derives lists the trait names from an `@derive(Trait, …)`
+	// attribute on the enum. The checker synthesises a variant-wise
+	// `impl` per derived trait. See docs/TRAITS.md.
+	Derives []string
 	// Public marks the enum as exported across modules. Same
 	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
 	// other modules name `Foo`, including its variants in match

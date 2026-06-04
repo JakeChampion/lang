@@ -2061,6 +2061,112 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			})
 		}
 	}
+	for _, ed := range prog.Enums {
+		if len(ed.Derives) == 0 {
+			continue
+		}
+		derives := ed.Derives
+		ed.Derives = nil
+		if len(ed.TypeParams) > 0 {
+			c.errfCode(ed.P, "E021", "@derive on a generic enum is not supported yet")
+			continue
+		}
+		recvType := ast.EnumType{Name: ed.Name}
+		for _, dn := range derives {
+			if _, ok := c.info.Traits[dn]; !ok {
+				c.errfCode(ed.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			var method *ast.FuncDecl
+			switch deriveKind(dn) {
+			case "Eq":
+				method = synthEnumEq(ed, recvType)
+			case "Display":
+				method = synthEnumDisplay(ed, recvType)
+			case "Ord":
+				c.errfCode(ed.P, "E021", "@derive(Ord) on enums is not supported yet")
+				continue
+			default:
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq and Display are derivable for enums", demangle(dn))
+				continue
+			}
+			method.SourceModule = ed.SourceModule
+			prog.Funcs = append(prog.Funcs, method)
+			prog.Impls = append(prog.Impls, &ast.ImplDecl{
+				P: ed.P, Trait: dn, TraitPos: ed.P, Type: recvType, TypePos: ed.P,
+				MethodNames: []string{method.Name}, SourceModule: ed.SourceModule,
+			})
+		}
+	}
+}
+
+// synthEnumEq builds a variant-wise `eq`: match self, and for each
+// variant match other — same variant compares payloads field-wise,
+// any other variant is unequal.
+func synthEnumEq(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		sBind := make([]string, len(v.Payloads))
+		oBind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			sBind[i] = fmt.Sprintf("__s%d", i)
+			oBind[i] = fmt.Sprintf("__o%d", i)
+		}
+		var eqExpr ast.Expr = &ast.BoolLit{Value: true}
+		for i := range v.Payloads {
+			cmp := methodCall(&ast.Ident{Name: sBind[i]}, "eq", &ast.Ident{Name: oBind[i]})
+			if i == 0 {
+				eqExpr = cmp
+			} else {
+				eqExpr = &ast.Binary{Op: "&&", Left: eqExpr, Right: cmp}
+			}
+		}
+		inner := &ast.Match{Tag: &ast.Ident{Name: "other"}, Arms: []*ast.MatchArm{
+			{VariantName: v.Name, Bindings: oBind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: eqExpr}}}},
+			{IsWildcard: true, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: &ast.BoolLit{Value: false}}}}},
+		}}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: sBind, Body: &ast.Block{Stmts: []ast.Stmt{inner}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.BoolLit{Value: false}},
+	}}
+	return &ast.FuncDecl{
+		Name: "eq", Receiver: &ast.Param{Name: "self", Type: recv},
+		Params: []ast.Param{{Name: "other", Type: recv}}, ReturnType: ast.BoolType{}, Body: body,
+	}
+}
+
+// synthEnumDisplay builds `to_string` rendering `Variant(payload, …)`.
+func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			bind[i] = fmt.Sprintf("__p%d", i)
+		}
+		var expr ast.Expr = &ast.StringLit{Value: v.Name}
+		if len(v.Payloads) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: "("})
+			for i := range v.Payloads {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_string"))
+			}
+			add(&ast.StringLit{Value: ")"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_string", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
 }
 
 // selfField builds `self.<name>`; otherField builds `other.<name>`.
