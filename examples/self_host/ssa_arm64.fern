@@ -197,25 +197,33 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         return store_reg(reg_of, ins.result, rsrc, widths[ins.result], out);
     }
     if (ins.kind == "alloc") {
-        // Bump-allocate imm i32 elements (4 bytes each); result = old hp.
+        // Bump-allocate imm 8-byte word slots (a pointer element fits; i32
+        // elements use the low 4 bytes); result = old hp.
         out = out + "    adrp x10, __fern_ssa_hp\n";
         out = out + "    add x10, x10, :lo12:__fern_ssa_hp\n";
         out = out + "    ldr x9, [x10]\n";
-        out = out + "    add x11, x9, #" + i32_to_string(ins.imm * 4) + "\n";
+        out = out + "    add x11, x9, #" + i32_to_string(ins.imm * 8) + "\n";
         out = out + "    str x11, [x10]\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "load_elem") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
-        out = out + "    ldr w9, [x9, w10, sxtw #2]\n";
+        // Byte offset = idx * 8 (word stride); a w-access can't use the
+        // scaled `sxtw #3` form, so compute it (sbfiz = sign-extend × 8)
+        // and use an unscaled register offset.
+        out = out + "    sbfiz x10, x10, #3, #32\n";
+        if (ins.imm == 64) { out = out + "    ldr x9, [x9, x10]\n"; }
+        else { out = out + "    ldr w9, [x9, x10]\n"; }
         return store_res(reg_of, widths, ins.result, "a", out);
     }
     if (ins.kind == "store_elem") {
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // ptr (x9)
         out = load_op(reg_of, widths, ins.args[1], "c", out);   // index (w10)
-        out = load_op(reg_of, widths, ins.args[2], "d", out);   // value (w11)
-        return out + "    str w11, [x9, w10, sxtw #2]\n";
+        out = load_op(reg_of, widths, ins.args[2], "d", out);   // value (w11/x11)
+        out = out + "    sbfiz x10, x10, #3, #32\n";
+        if (ins.imm == 64) { return out + "    str x11, [x9, x10]\n"; }
+        return out + "    str w11, [x9, x10]\n";
     }
     return out;
 }
