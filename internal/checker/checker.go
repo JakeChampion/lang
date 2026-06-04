@@ -1717,6 +1717,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				} else {
 					typeName = "f32"
 				}
+			case ast.BoolType:
+				typeName = "boolean"
 			default:
 				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
 				continue
@@ -1965,6 +1967,8 @@ func methodTypeName(t ast.Type) (string, bool) {
 			return "f64", true
 		}
 		return "f32", true
+	case ast.BoolType:
+		return "boolean", true
 	default:
 		return "", false
 	}
@@ -4809,6 +4813,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				} else {
 					typeName = "f32"
 				}
+			case ast.BoolType:
+				_ = t
+				typeName = "boolean"
 			case ast.ArrayType:
 				// Generic array methods (today: `push`, `len`).
 				// Treated as if Array were a one-type-param
@@ -4976,6 +4983,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			at := c.checkExpr(n.Args[i], s)
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
+				// If the expected param is a bare type parameter that an
+				// earlier argument already bound to a concrete numeric /
+				// float type (e.g. `assert_eq[T](a + b, 8000000000)` where
+				// `a + b` fixed T = i64), settle this arg's polymorphic
+				// numeric literal against that bound type. Without this the
+				// literal keeps its i32 default and inference reports
+				// "expected T, got i32" for a value that should be i64.
+				if pt, ok := expected.(ast.ParamType); ok && sub != nil {
+					if bound, isBound := sub[pt.Name]; isBound {
+						switch bound.(type) {
+						case ast.NumberType, ast.FloatType:
+							c.settleNumeric(n.Args[i], bound)
+							at = postSettleType(n.Args[i], at)
+						}
+					}
+				}
 				// Polymorphic-literal settling: `f(1)` where f
 				// expects i64 needs the literal to lock in i64
 				// before assignable / unifyType run, otherwise

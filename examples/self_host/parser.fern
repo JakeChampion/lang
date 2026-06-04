@@ -1925,6 +1925,25 @@ function tparam_arg_index(fd: FuncDecl): i32 {
     return 0 - 1;
 }
 
+// infer_inst infers the concrete type that instantiates `fd`'s type
+// variable from a call's arguments: it tries every argument whose
+// parameter type is the type variable and returns the first one whose
+// type it can infer (so `assert_eq(x.to_upper(), "Y")` still resolves
+// via the literal second argument when the first is opaque).
+function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): string {
+    if (fd.type_params.len() == 0) { return ""; }
+    var tp: string = fd.type_params[0];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].type_name == tp && i < args.len()) {
+            var ct: string = mono_infer(args[i], env, funcs);
+            if (ct.len() > 0) { return ct; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // func_ret_of returns the return type of a plain function by name.
 function func_ret_of(funcs: FuncDecl[], name: string): string {
     var i: i32 = 0;
@@ -1998,15 +2017,33 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                 ExprIdent(cid) => {
                     var bi: i32 = bg_index(funcs, cid.name);
                     if (bi >= 0) {
-                        var ti: i32 = tparam_arg_index(funcs[bi]);
-                        if (ti >= 0 && ti < c.args.len()) {
-                            var ct: string = mono_infer(c.args[ti], env, funcs);
-                            if (ct.len() > 0) {
-                                var mang: string = cid.name + "__" + ct;
-                                cur = cur.iadd(cid.name, ct);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs }, rins: cur };
-                            }
+                        var ct: string = infer_inst(funcs[bi], c.args, env, funcs);
+                        if (ct.len() > 0) {
+                            var mang: string = cid.name + "__" + ct;
+                            cur = cur.iadd(cid.name, ct);
+                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs }, rins: cur };
                         }
+                    }
+                },
+                ExprFieldAccess(fac) => {
+                    // Module-qualified call `mod.f(args)`: the merged
+                    // module names the function `mod.f`. Match the
+                    // bounded-generic registry on that dotted name and
+                    // rewrite the field to the mangled clone suffix so
+                    // the emitter resolves `mod.f__<type>`.
+                    match (fac.obj) {
+                        ExprIdent(modid) => {
+                            var qn: string = modid.name + "." + fac.field;
+                            var bi2: i32 = bg_index(funcs, qn);
+                            if (bi2 >= 0) {
+                                var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
+                                if (ct2.len() > 0) {
+                                    cur = cur.iadd(qn, ct2);
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2 }, args: nargs }, rins: cur };
+                                }
+                            }
+                        },
+                        _ => {}
                     }
                 },
                 _ => {}

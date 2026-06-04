@@ -1,6 +1,7 @@
 # Traits: static ad-hoc polymorphism for Fern
 
-Status: **Phases 1–3 landed.** This document is the design of record;
+Status: **Phases 1–3 landed; `std/test` collapse landed (both
+compilers).** This document is the design of record;
 it describes the whole feature and is implemented in phases (see
 [Phasing](#phasing)). Phase 1 (trait + impl declarations, conformance
 checking, coherence), Phase 2 (bounded generics `[T: Trait]` with
@@ -335,6 +336,29 @@ regressing the self-host gates. It needs traits in two slices:
   generics keep their erasure. Tested on x86-64 + arm64
   (`internal/e2e/self_host_traits_test.go`): primitive, struct,
   multi-type, and mixed-primitive-and-struct instantiations.
+
+## 7b. The `std/test` collapse (landed)
+
+The scalar `assert_eq_<T>` / `assert_neq_<T>` / `assert_{lt,le,gt,ge}_<T>`
+families collapsed onto generic `assert_eq` / `assert_neq` / `assert_lt`
+… over a new `core/cmp` module (`Display` / `Eq` / `Ord` traits + their
+primitive impls). Both compilers green. Beyond the trait engine + the
+self-host monomorphiser, landing it took:
+
+- **Go checker:** `boolean` as a method-receiver type (so `bool`
+  implements traits); and settling a polymorphic numeric literal against
+  a type variable already bound by an earlier argument
+  (`assert_eq(a + b /* i64 */, 8000000000)`).
+- **Self-host monomorphiser:** module-qualified call sites
+  (`test.assert_eq(…)` is an `ExprFieldAccess` callee, not an
+  `ExprIdent`); and multi-argument instantiation inference (infer the
+  type from *any* `T`-typed argument, so
+  `assert_eq("x".to_upper(), "X")` resolves via the literal).
+- **Self-host emitters (asm + asm_arm64):** the primitive
+  static-method-dispatch gate listed only `i32/string/bool/f64`; widened
+  to all integer tags (`is_int_tag`) + `f32`, so `i64`/`u32`/`u64`
+  receivers dispatch statically instead of crashing on the struct
+  shape-pointer path.
 
 ## 8. Testing
 

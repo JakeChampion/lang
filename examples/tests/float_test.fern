@@ -65,7 +65,7 @@ function test_f32_bits_round_trip(): Option[string] {
     // no-op for every finite, non-NaN value.
     var x: f32 = 1.0 as f32;
     var bits: i32 = f32_bits(x);
-    return test.assert_eq_i32(bits, 1065353216);
+    return test.assert_eq(bits, 1065353216);
 }
 
 function test_f32_from_bits_round_trips(): Option[string] {

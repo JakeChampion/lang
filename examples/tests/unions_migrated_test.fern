@@ -33,37 +33,37 @@ function eval(e: Expr): i32 {
 
 function test_add_two_positives(): Option[string] {
     var e: Expr = Add { l: 10, r: 32 };
-    return test.assert_eq_i32(eval(e), 42);
+    return test.assert_eq(eval(e), 42);
 }
 
 function test_add_left_identity_zero(): Option[string] {
     var e: Expr = Add { l: 0, r: 7 };
-    return test.assert_eq_i32(eval(e), 7);
+    return test.assert_eq(eval(e), 7);
 }
 
 function test_add_right_identity_zero(): Option[string] {
     var e: Expr = Add { l: 7, r: 0 };
-    return test.assert_eq_i32(eval(e), 7);
+    return test.assert_eq(eval(e), 7);
 }
 
 function test_add_negatives_cancel(): Option[string] {
     var e: Expr = Add { l: 5, r: 0 - 5 };
-    return test.assert_eq_i32(eval(e), 0);
+    return test.assert_eq(eval(e), 0);
 }
 
 function test_lit_positive(): Option[string] {
     var e: Expr = Lit { v: 99 };
-    return test.assert_eq_i32(eval(e), 99);
+    return test.assert_eq(eval(e), 99);
 }
 
 function test_lit_zero(): Option[string] {
     var e: Expr = Lit { v: 0 };
-    return test.assert_eq_i32(eval(e), 0);
+    return test.assert_eq(eval(e), 0);
 }
 
 function test_lit_negative(): Option[string] {
     var e: Expr = Lit { v: 0 - 100 };
-    return test.assert_eq_i32(eval(e), 0 - 100);
+    return test.assert_eq(eval(e), 0 - 100);
 }
 
 function main(): i32 {

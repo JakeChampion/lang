@@ -1,0 +1,111 @@
+// core/cmp — the comparison + display trait foundation.
+//
+// Three small traits underpin the generic assertion helpers in
+// `std/test` (and any user code that wants to abstract over
+// "printable" / "comparable" values):
+//
+//   - `Display` — `(v).to_string()` for an error / log message.
+//   - `Eq`      — value equality (`a.eq(b)`).
+//   - `Ord`     — total ordering via `a.cmp(b)` returning -1 / 0 / 1
+//                 (the std/sort convention).
+//
+// The primitive impls live here, in the trait's own module, which
+// satisfies the orphan rule (an impl is legal in the trait's module or
+// the type's module). The `Display` impls for the numeric types and
+// `string` are empty — those types already carry a `to_string` method
+// (from `std/i32` … and `std/string`), and an empty impl simply records
+// that the type satisfies the trait by adopting its existing method.
+// See docs/TRAITS.md.
+
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+import "std/string";
+
+pub trait Display {
+    function to_string(self: Self): string;
+}
+
+pub trait Eq {
+    function eq(self: Self, other: Self): boolean;
+}
+
+// `cmp(a, b)` returns -1 when a < b, 0 when equal, 1 when a > b — the
+// same shape std/sort's comparators use, so an `Ord` type drops
+// straight into a sort.
+pub trait Ord {
+    function cmp(self: Self, other: Self): i32;
+}
+
+// ---- Display ---------------------------------------------------
+// Numeric + string types already have `to_string`; empty impls adopt
+// it. `boolean` does not, so it gets a real body.
+
+impl Display for i32 { }
+impl Display for i64 { }
+impl Display for u32 { }
+impl Display for u64 { }
+impl Display for string { }
+
+impl Display for boolean {
+    function to_string(self: Self): string {
+        if (self) { return "true"; }
+        return "false";
+    }
+}
+
+// ---- Eq --------------------------------------------------------
+
+impl Eq for i32 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for i64 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for u32 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for u64 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for string {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for boolean {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+
+// ---- Ord -------------------------------------------------------
+// Relational comparison for the integer types. (string / boolean
+// ordering isn't needed by the assertion helpers, so it's left for a
+// follow-up.)
+
+impl Ord for i32 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}
+impl Ord for i64 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}
+impl Ord for u32 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}
+impl Ord for u64 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}

@@ -10,17 +10,17 @@ import "std/test";
 
 // ---------- wider-int relational ----------
 
-function test_i64_lt(): Option[string] { return test.assert_lt_i64(5000000000 as i64, 9000000000 as i64); }
-function test_i64_le(): Option[string] { return test.assert_le_i64(5000000000 as i64, 5000000000 as i64); }
-function test_i64_gt(): Option[string] { return test.assert_gt_i64(9000000000 as i64, 5000000000 as i64); }
-function test_i64_ge(): Option[string] { return test.assert_ge_i64(5000000000 as i64, 5000000000 as i64); }
+function test_i64_lt(): Option[string] { return test.assert_lt(5000000000 as i64, 9000000000 as i64); }
+function test_i64_le(): Option[string] { return test.assert_le(5000000000 as i64, 5000000000 as i64); }
+function test_i64_gt(): Option[string] { return test.assert_gt(9000000000 as i64, 5000000000 as i64); }
+function test_i64_ge(): Option[string] { return test.assert_ge(5000000000 as i64, 5000000000 as i64); }
 
-function test_u32_lt(): Option[string] { return test.assert_lt_u32(1u32, 4294967295u32); }
-function test_u64_gt(): Option[string] { return test.assert_gt_u64(18446744073709551615u64, 0u64); }
+function test_u32_lt(): Option[string] { return test.assert_lt(1u32, 4294967295u32); }
+function test_u64_gt(): Option[string] { return test.assert_gt(18446744073709551615u64, 0u64); }
 
 function test_i64_lt_failure_message(): Option[string] {
     // Confirm the failure message names the violation.
-    match (test.assert_lt_i64(10 as i64, 5 as i64)) {
+    match (test.assert_lt(10 as i64, 5 as i64)) {
         Some(msg) => {
             if (!msg.contains("expected 10")) {
                 return test.fail("missing actual value: " + msg);
@@ -38,7 +38,7 @@ function test_f64_bits_round_trip(): Option[string] {
     // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
     var x: f64 = 1.0;
     var bits: i64 = f64_bits(x);
-    return test.assert_eq_i64(bits, 4607182418800017408 as i64);
+    return test.assert_eq(bits, 4607182418800017408 as i64);
 }
 
 function test_f64_from_bits_round_trips(): Option[string] {

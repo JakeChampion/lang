@@ -65,7 +65,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	// below are all green suites (exit 0).
 	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
 	failSrc := "import \"std/test\";\n" +
-		"function bad(): Option[string] { return test.assert_eq_i32(1, 2); }\n" +
+		"function bad(): Option[string] { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad());\n" +
@@ -159,7 +159,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 
 	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
 	failSrc := "import \"std/test\";\n" +
-		"function bad(): Option[string] { return test.assert_eq_i32(1, 2); }\n" +
+		"function bad(): Option[string] { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad());\n" +

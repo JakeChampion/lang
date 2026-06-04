@@ -47,7 +47,7 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
             // helper sorts them so the verbatim pass is
             // deterministic across OS readdir orderings.
             rr = rr.it("first seed is 01.bin's content",
-                       test.assert_eq_string(seeds[0], "hello"));
+                       test.assert_eq(seeds[0], "hello"));
             // Use the loaded corpus to drive a fuzz target.
             rr = rr.fuzz_shrink("corpus-loaded fuzz harness",
                                 seeds, 50, check_no_x);
