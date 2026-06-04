@@ -144,4 +144,28 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 			})
 		}
 	})
+
+	// merge_blocks threads the empty br-only blocks that branch-folding
+	// leaves behind into their successors: a fully-foldable if collapses to
+	// a single block, while genuine control flow (a loop) keeps its blocks.
+	// `-blocks` returns the post-(opt) block count as the exit code.
+	t.Run("merges-blocks", func(t *testing.T) {
+		const collapse = "function main(): i32 { var x = 0; if (true) { x = 10; } else { x = 20; } return x + 1; }"
+		const nested = "function main(): i32 { var x = 1; if (true) { if (false) { x = 2; } else { x = 3; } } return x; }"
+		const loop = "function main(): i32 { var i = 1; var s = 0; while (i <= 5) { s = s + i; i = i + 1; } return s; }"
+
+		if b := run(t, collapse, "-opt", "-blocks"); b != 1 {
+			t.Errorf("constant if: optimised block count = %d, want 1", b)
+		}
+		if b := run(t, nested, "-opt", "-blocks"); b != 1 {
+			t.Errorf("nested constant if: optimised block count = %d, want 1", b)
+		}
+		// The loop's control flow is real: blocks must be preserved, not
+		// over-merged (the header has two predecessors).
+		rawB := run(t, loop, "-blocks")
+		optB := run(t, loop, "-opt", "-blocks")
+		if optB != rawB || optB < 2 {
+			t.Errorf("loop blocks: raw=%d opt=%d — control flow should be preserved (>=2, unchanged)", rawB, optB)
+		}
+	})
 }

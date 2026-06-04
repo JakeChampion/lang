@@ -16,10 +16,12 @@ function main(): i32 {
     var av: string[] = args();
     var want_opt: boolean = false;
     var want_count: boolean = false;
+    var want_blocks: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-opt") { want_opt = true; }
         else if (av[ai] == "-count") { want_count = true; }
+        else if (av[ai] == "-blocks") { want_blocks = true; }
         ai = ai + 1;
     }
 
@@ -33,6 +35,7 @@ function main(): i32 {
             var fn: ssa.SFunc = r.func;
             if (want_opt) { fn = ssa.optimize(fn); }
             if (want_count) { return ssa.count_insts(fn); }
+            if (want_blocks) { return ssa.count_blocks(fn); }
             var noargs: i32[] = [];
             return ssa.eval_func(fn, noargs);
         }
