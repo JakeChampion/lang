@@ -575,6 +575,25 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"nested-loop-break", "function main(): i32 { var c: i32 = 0; var i: i32 = 0; while (i < 5) { var j: i32 = 0; while (j < 5) { if (j == 3) { break; } c = c + 1; j = j + 1; } i = i + 1; } print_int(c); return 0; }", 0, "15"},
 		{"tuple-destructure-call", "function mm(): (i32, i32) { return (3, 7); } function main(): i32 { var (a, b) = mm(); print_int(a); print_int(b); return 0; }", 0, "37"},
 		{"tuple-destructure-literal", "function main(): i32 { var (x, y) = (11, 22); print_int(x + y); return 0; }", 0, "33"},
+
+		// Hardening pass 4: const declarations (the parser desugars a const
+		// to a zero-arg function; a bare reference lowers to a call, with
+		// the const's return type driving string / i64 / f64 typing).
+		{"const-i32", "const LIMIT: i32 = 100; function main(): i32 { print_int(LIMIT + 1); return 0; }", 0, "101"},
+		{"const-string-fstring", "const NAME: string = \"bob\"; function main(): i32 { write(f\"hello {NAME}\"); return 0; }", 0, "hello bob"},
+		{"const-i64", "const BIG: i64 = 5000000000; function main(): i32 { print_int(BIG + 1); return 0; }", 0, "5000000001"},
+		{"const-f64", "const HALF: f64 = 3.5; function main(): i32 { print_int((HALF * 2.0) as i32); return 0; }", 0, "7"},
+		{"const-shadowed-by-local", "const X: i32 = 5; function main(): i32 { var X: i32 = 99; print_int(X); return 0; }", 0, "99"},
+		// More combinations (all already worked; locked in as regressions).
+		{"continue-while", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 10) { i = i + 1; if (i % 2 == 0) { continue; } s = s + i; } print_int(s); return 0; }", 0, "25"},
+		{"push-loop", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 5) { xs = xs.push(i * i); i = i + 1; } var s: i32 = 0; for v in xs { s = s + v; } print_int(s); return 0; }", 0, "30"},
+		{"nested-struct-method", "struct Inner { v: i32 } function (n: Inner) dbl(): i32 { return n.v * 2; } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { v: 7 } }; print_int(o.inner.dbl()); return 0; }", 0, "14"},
+		{"wildcard-match", "function main(): i32 { var m = Map { 1: 10 }; match (m.get(2)) { Some(v) => { print_int(v); }, _ => { print_int(99); } } return 0; }", 0, "99"},
+		{"string-compare", "function main(): i32 { if (\"apple\" < \"banana\") { print_int(1); } if (\"zebra\" > \"ant\") { print_int(2); } return 0; }", 0, "12"},
+		{"fstring-method-interp", "function main(): i32 { var s: string = \"hello\"; write(f\"upper={s.to_upper()}\"); return 0; }", 0, "upper=HELLO"},
+		{"array-of-tuples", "function main(): i32 { var ps = [(1, 2), (3, 4)]; var t = ps[1]; print_int(t.0 + t.1); return 0; }", 0, "7"},
+		{"method-chain-struct", "struct Acc { total: i32 } function (a: Acc) add(n: i32): Acc { return Acc { total: a.total + n }; } function main(): i32 { var r = Acc { total: 0 }.add(5).add(10).add(20); print_int(r.total); return 0; }", 0, "35"},
+		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
 	}
 
 	for _, tc := range cases {
