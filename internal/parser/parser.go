@@ -854,6 +854,15 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	var params []ast.Param
 	if !p.match(lexer.Punct, ")") {
 		for {
+			// `own` is a CONTEXTUAL keyword: `own xs: T` marks an owned
+			// (consuming) param, but `own: T` is still a param named `own`.
+			// Disambiguate by the token AFTER `own` — a param name (Ident)
+			// means the modifier; a `:` means `own` IS the name.
+			own := false
+			if p.match(lexer.Ident, "own") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+				p.advance()
+				own = true
+			}
 			pname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
@@ -865,7 +874,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own})
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}

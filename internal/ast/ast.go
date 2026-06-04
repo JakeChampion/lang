@@ -1486,6 +1486,13 @@ type Param struct {
 	// declarations would be unrewrittable.
 	NamePos Position
 	Type    Type
+	// Own marks an OWNED (consuming) parameter — `function f(own x: T)`.
+	// The caller transfers ownership; the callee may consume / reclaim / reuse
+	// it (vs the default BORROWED param, where the caller keeps ownership). The
+	// checker enforces affine use (consumed at most once per path — see
+	// checkOwnedParams); the runtime ownership transfer + reuse it unlocks are
+	// later slices. Always false for struct fields / borrowed params.
+	Own bool
 }
 
 type FuncDecl struct {
