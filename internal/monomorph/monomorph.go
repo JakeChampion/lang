@@ -315,6 +315,24 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 	}
 
+	// 4c. Drop parametric impls (`impl[T] Trait for Box[T]`). Their
+	//     conformance + coherence were validated on the first check;
+	//     their methods have now been cloned per instantiation. The
+	//     ImplDecl still points at the generic `Box[T]`, whose
+	//     StructDecl was just removed above — so a re-check would
+	//     report a spurious orphan / missing-type error against a
+	//     type that no longer exists. A plain (non-parametric) impl
+	//     stays: its concrete type survives and the re-check
+	//     re-validates it unchanged. See docs/TRAITS.md.
+	keepImpls := prog.Impls[:0]
+	for _, impl := range prog.Impls {
+		if len(impl.TypeParams) > 0 {
+			continue
+		}
+		keepImpls = append(keepImpls, impl)
+	}
+	prog.Impls = keepImpls
+
 	// 5. Re-check. The cloned functions / structs need FuncSigs /
 	//    Structs entries + body type-checking with the
 	//    substituted types.

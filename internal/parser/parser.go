@@ -595,6 +595,20 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// Parametric impl: `impl[T: Bound] Trait for Box[T] { … }`. The
+	// type params come right after `impl` so the `for` type (`Box[T]`)
+	// and the method bodies can reference them. Each method inherits
+	// these params + bounds, so the receiver-hoist registers the
+	// methods as generics that monomorphise per instantiation. See
+	// docs/TRAITS.md.
+	var implTypeParams []string
+	var implBounds map[string][]string
+	if p.match(lexer.Punct, "[") {
+		implTypeParams, implBounds, err = p.parseTypeParamList()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	tnameTok, err := p.expect(lexer.Ident, "")
 	if err != nil {
 		return nil, nil, err
@@ -614,7 +628,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		fn, err := p.parseFunction()
@@ -641,6 +655,21 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		recv.Type = implType
 		fn.Receiver = &recv
 		fn.Params = fn.Params[1:]
+		// A parametric impl makes every method generic over the impl's
+		// type params: the receiver type (`Box[T]`), the other params,
+		// and the body all reference `T`, so the method must carry the
+		// params + bounds for resolveTypeNames → ParamType rewriting
+		// and for monomorphisation. A method may not also declare its
+		// own leading type params (no nested generics yet); reject the
+		// collision rather than silently merging.
+		if len(implTypeParams) > 0 {
+			if len(fn.TypeParams) > 0 {
+				return nil, nil, p.errorf(fn.P,
+					"impl method %q cannot declare its own type parameters inside a parametric `impl[…]` block", fn.Name)
+			}
+			fn.TypeParams = implTypeParams
+			fn.Bounds = implBounds
+		}
 		methods = append(methods, fn)
 		id.MethodNames = append(id.MethodNames, fn.Name)
 	}
@@ -697,6 +726,45 @@ func (p *parser) maybeQualify(first string) string {
 	return first
 }
 
+// parseTypeParamList parses a `[T, U: Bound + Other, …]` type-
+// parameter list (the `[` is at the current position) and returns
+// the parameter names plus an optional name→bounds map. Shared by
+// the generic-function, generic-method-receiver, and parametric-
+// impl (`impl[T: Bound] Trait for Box[T]`) parse paths so all three
+// accept the same bound syntax. See docs/TRAITS.md.
+func (p *parser) parseTypeParamList() ([]string, map[string][]string, error) {
+	if _, err := p.expect(lexer.Punct, "["); err != nil {
+		return nil, nil, err
+	}
+	var typeParams []string
+	var bounds map[string][]string
+	for {
+		pname, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, nil, err
+		}
+		typeParams = append(typeParams, pname.Text)
+		bs, err := p.parseOptBounds()
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(bs) > 0 {
+			if bounds == nil {
+				bounds = map[string][]string{}
+			}
+			bounds[pname.Text] = bs
+		}
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		return nil, nil, err
+	}
+	return typeParams, bounds, nil
+}
+
 // parseOptBounds parses an optional trait-bound list on a type
 // parameter: `: Display + Eq` (bounds may be qualified, `mod.Trait`).
 // Returns nil when no `:` follows. See docs/TRAITS.md.
@@ -736,29 +804,8 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	var typeParams []string
 	var bounds map[string][]string
 	if p.match(lexer.Punct, "[") {
-		p.advance() // [
-		for {
-			pname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			typeParams = append(typeParams, pname.Text)
-			bs, err := p.parseOptBounds()
-			if err != nil {
-				return nil, err
-			}
-			if len(bs) > 0 {
-				if bounds == nil {
-					bounds = map[string][]string{}
-				}
-				bounds[pname.Text] = bs
-			}
-			if _, ok := p.accept(lexer.Punct, ","); ok {
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		typeParams, bounds, err = p.parseTypeParamList()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -796,29 +843,8 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// the post-name `[T]` is rejected here (would conflict with
 	// the call-site `[T1, T2](...)` shape).
 	if p.match(lexer.Punct, "[") && len(typeParams) == 0 {
-		p.advance() // [
-		for {
-			pname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			typeParams = append(typeParams, pname.Text)
-			bs, err := p.parseOptBounds()
-			if err != nil {
-				return nil, err
-			}
-			if len(bs) > 0 {
-				if bounds == nil {
-					bounds = map[string][]string{}
-				}
-				bounds[pname.Text] = bs
-			}
-			if _, ok := p.accept(lexer.Punct, ","); ok {
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		typeParams, bounds, err = p.parseTypeParamList()
+		if err != nil {
 			return nil, err
 		}
 	}

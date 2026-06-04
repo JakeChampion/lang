@@ -2094,15 +2094,35 @@ function main(): i32 { return 0; }`, "unknown trait"},
 // with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {
 	cases := []struct{ src, want string }{
-		{`trait Eq { function eq(self: Self, other: Self): boolean; }
-@derive(Eq)
-enum E[T] { A(T), B }
-function main(): i32 { return 0; }`, "generic enum is not supported"},
+		// Only Eq/Display/Ord are derivable — a user-defined trait is not.
+		{`trait Foo { function foo(self: Self): boolean; }
+@derive(Foo)
+enum E { A, B }
+function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("src %q: got %v, want containing %q", c.src, err, c.want)
 		}
+	}
+}
+
+// TestDeriveGenericEnum — `@derive` on a generic enum synthesises a
+// parametric impl `impl[T: Trait] Trait for E[T]`, so the derived
+// methods type-check field-wise through the bound and monomorphise per
+// instantiation. (Generic-enum derive used to be rejected outright.)
+func TestDeriveGenericEnum(t *testing.T) {
+	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
+impl Eq for i32 { function eq(self: i32, other: i32): boolean { return self == other; } }
+@derive(Eq)
+enum E[T] { A(T), B }
+function main(): i32 {
+	var x = A(1);
+	if (x.eq(A(1))) { return 0; }
+	return 1;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("generic-enum @derive should check: %v", err)
 	}
 }

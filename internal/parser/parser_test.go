@@ -1231,6 +1231,61 @@ impl Display for Point {
 	}
 }
 
+// A parametric impl `impl[T: Bound] Trait for Box[T]` parses the
+// leading type params onto the ImplDecl and propagates them (plus the
+// bound) onto each desugared receiver-method, so the receiver-hoist
+// registers the methods as generics. See docs/TRAITS.md (Phase 6).
+func TestParametricImplDecl(t *testing.T) {
+	prog, err := Parse(`trait Display { function to_string(self: Self): string; }
+struct Box[T] { v: T }
+impl[T: Display] Display for Box[T] {
+    function to_string(self: Self): string { return "b"; }
+}`)
+	if err != nil {
+		t.Fatalf("parametric impl should parse: %v", err)
+	}
+	if len(prog.Impls) != 1 {
+		t.Fatalf("expected 1 impl, got %d", len(prog.Impls))
+	}
+	impl := prog.Impls[0]
+	if len(impl.TypeParams) != 1 || impl.TypeParams[0] != "T" {
+		t.Errorf("impl.TypeParams = %v, want [T]", impl.TypeParams)
+	}
+	// The `for` type carries the type arg `Box[T]`. The parser
+	// optimistically wraps `Name[…]` as an EnumType (it can't tell
+	// structs from enums by name alone); the checker later rewrites
+	// it to a StructType. Either way it must name Box with one arg.
+	et, ok := impl.Type.(ast.EnumType)
+	if !ok || et.Name != "Box" || len(et.Args) != 1 {
+		t.Errorf("impl.Type = %s, want Box[T]", impl.Type)
+	}
+	// The desugared method inherits the type params + bound.
+	var found *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "to_string" {
+			found = fn
+		}
+	}
+	if found == nil {
+		t.Fatalf("impl method not appended to Program.Funcs")
+	}
+	if len(found.TypeParams) != 1 || found.TypeParams[0] != "T" {
+		t.Errorf("method TypeParams = %v, want [T]", found.TypeParams)
+	}
+	if bs := found.Bounds["T"]; len(bs) != 1 || bs[0] != "Display" {
+		t.Errorf("method Bounds[T] = %v, want [Display]", bs)
+	}
+}
+
+// A method inside a parametric impl block must not declare its own
+// leading type params — that nested-generic shape isn't supported.
+func TestParametricImplMethodOwnTypeParamsRejected(t *testing.T) {
+	if _, err := Parse(`trait T { function f(self: Self): void; }
+impl[A] T for Box[A] { function [B] (self: Self) f(): void {} }`); err == nil {
+		t.Error("impl-method with its own type params inside a parametric impl should be a parse error")
+	}
+}
+
 // Error cases: trait method without a `self` first param, and `impl`
 // missing the `for` clause.
 func TestTraitImplParseErrors(t *testing.T) {

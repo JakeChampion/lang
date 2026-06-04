@@ -2031,7 +2031,14 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 		// re-check rebuilds + re-checks the program) doesn't
 		// synthesise the impls a second time.
 		sd.Derives = nil
-		recvType := ast.StructType{Name: sd.Name}
+		// Generic struct (`@derive(...) struct Box[T]`): synthesise a
+		// PARAMETRIC impl `impl[T: Trait] Trait for Box[T]`. The
+		// receiver carries `Box[T]` (ParamType args), each method is
+		// generic over the struct's type params, and each param is
+		// bound by the trait being derived — so the field-wise body
+		// (`self.v.to_string()`, where `self.v: T`) type-checks via the
+		// bound and monomorphises per instantiation. See docs/TRAITS.md.
+		recvType, implTypeParams := deriveRecvStruct(sd)
 		for _, dn := range derives {
 			td, ok := c.info.Traits[dn]
 			if !ok {
@@ -2054,10 +2061,12 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthOrd(sd, recvType)
 			}
 			method.SourceModule = sd.SourceModule
+			bindDeriveTypeParams(method, implTypeParams, dn)
 			prog.Funcs = append(prog.Funcs, method)
 			prog.Impls = append(prog.Impls, &ast.ImplDecl{
 				P: sd.P, Trait: dn, TraitPos: sd.P, Type: recvType, TypePos: sd.P,
 				MethodNames: []string{method.Name}, SourceModule: sd.SourceModule,
+				TypeParams: implTypeParams,
 			})
 		}
 	}
@@ -2067,11 +2076,11 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 		}
 		derives := ed.Derives
 		ed.Derives = nil
-		if len(ed.TypeParams) > 0 {
-			c.errfCode(ed.P, "E021", "@derive on a generic enum is not supported yet")
-			continue
-		}
-		recvType := ast.EnumType{Name: ed.Name}
+		// Generic enum (`@derive(...) enum Option[T]`): same parametric-
+		// impl synthesis as generic structs above — `impl[T: Trait]
+		// Trait for Option[T]`, with the variant-wise body comparing /
+		// rendering payloads via the bound. See docs/TRAITS.md.
+		recvType, implTypeParams := deriveRecvEnum(ed)
 		for _, dn := range derives {
 			if _, ok := c.info.Traits[dn]; !ok {
 				c.errfCode(ed.P, "E021", "@derive(%s): unknown trait", demangle(dn))
@@ -2090,12 +2099,58 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				continue
 			}
 			method.SourceModule = ed.SourceModule
+			bindDeriveTypeParams(method, implTypeParams, dn)
 			prog.Funcs = append(prog.Funcs, method)
 			prog.Impls = append(prog.Impls, &ast.ImplDecl{
 				P: ed.P, Trait: dn, TraitPos: ed.P, Type: recvType, TypePos: ed.P,
 				MethodNames: []string{method.Name}, SourceModule: ed.SourceModule,
+				TypeParams: implTypeParams,
 			})
 		}
+	}
+}
+
+// deriveRecvStruct builds the receiver type + impl type-parameter list
+// for a (possibly generic) struct's derived impl. For a plain struct
+// it's `Struct` with no params; for `struct Box[T]` it's `Box[T]`
+// (ParamType args) with type params `[T]`, driving a parametric impl.
+func deriveRecvStruct(sd *ast.StructDecl) (ast.StructType, []string) {
+	if len(sd.TypeParams) == 0 {
+		return ast.StructType{Name: sd.Name}, nil
+	}
+	args := make([]ast.Type, len(sd.TypeParams))
+	for i, tp := range sd.TypeParams {
+		args[i] = ast.ParamType{Name: tp}
+	}
+	return ast.StructType{Name: sd.Name, Args: args}, sd.TypeParams
+}
+
+// deriveRecvEnum mirrors deriveRecvStruct for enums.
+func deriveRecvEnum(ed *ast.EnumDecl) (ast.EnumType, []string) {
+	if len(ed.TypeParams) == 0 {
+		return ast.EnumType{Name: ed.Name}, nil
+	}
+	args := make([]ast.Type, len(ed.TypeParams))
+	for i, tp := range ed.TypeParams {
+		args[i] = ast.ParamType{Name: tp}
+	}
+	return ast.EnumType{Name: ed.Name, Args: args}, ed.TypeParams
+}
+
+// bindDeriveTypeParams turns a synthesised derive method into a generic
+// method when the underlying type is generic: every type parameter is
+// bound by the trait being derived (`@derive(Display)` on `Box[T]`
+// yields `[T: Display]`), so the field-wise body type-checks through
+// the bound and the method monomorphises per instantiation. A no-op
+// for non-generic types. See docs/TRAITS.md.
+func bindDeriveTypeParams(method *ast.FuncDecl, typeParams []string, trait string) {
+	if len(typeParams) == 0 {
+		return
+	}
+	method.TypeParams = typeParams
+	method.Bounds = make(map[string][]string, len(typeParams))
+	for _, tp := range typeParams {
+		method.Bounds[tp] = []string{trait}
 	}
 }
 
@@ -2506,6 +2561,21 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				c.resolveType(&ed.Variants[i].Payloads[j], params)
 			}
 		}
+	}
+	// Parametric impls: resolve the `for` type's own type-parameter
+	// references (`Box[T]`) to ParamType so the conformance check's
+	// SubstSelf-built expected signatures line up with the generic
+	// hoisted methods (whose receiver `Box[T]` was already resolved
+	// via the method's TypeParams). See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		if len(impl.TypeParams) == 0 {
+			continue
+		}
+		params := make(map[string]bool, len(impl.TypeParams))
+		for _, n := range impl.TypeParams {
+			params[n] = true
+		}
+		c.resolveType(&impl.Type, params)
 	}
 }
 
@@ -5409,9 +5479,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					for _, traitName := range genericFn.Bounds[tp] {
 						tn, ok := methodTypeName(args[i])
 						if !ok || !c.info.Impls[traitName][tn] {
+							// Render `__method_Box_to_string` as the
+							// user-facing `Box.to_string` when the generic
+							// decl is a hoisted receiver method.
+							site := demangle(genericFn.Name)
+							if genericFn.MethodRecv != "" {
+								site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+							}
 							c.errfCode(n.P, "E021",
 								"type argument %s = %s does not implement trait %s required by %s",
-								tp, demangle(args[i].String()), demangle(traitName), demangle(genericFn.Name))
+								tp, demangle(args[i].String()), demangle(traitName), site)
 						}
 					}
 				}
