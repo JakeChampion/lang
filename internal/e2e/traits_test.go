@@ -248,3 +248,58 @@ function main(): i32 { return 0; }
 		t.Errorf("expected orphan diagnostic naming `tr.Show`, got:\n%s", output)
 	}
 }
+
+// @derive(Eq, Display, Ord) synthesises field-wise impls: the generated
+// methods call the trait method on each field, so derivation composes
+// (a nested struct field only needs to itself derive/impl the trait).
+// See docs/TRAITS.md.
+func TestInterpDeriveStructTraits(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+
+@derive(cmp.Eq, cmp.Display)
+struct Inner { n: i32 }
+
+@derive(cmp.Eq, cmp.Display, cmp.Ord)
+struct Point { x: i32, y: i32 }
+
+@derive(cmp.Eq, cmp.Display)
+struct Outer { a: Inner, tag: string }
+
+function show[T: cmp.Display](v: T): string { return v.to_string(); }
+
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 7 };
+    var b: Point = Point { x: 3, y: 7 };
+    var c: Point = Point { x: 3, y: 9 };
+    print(show(a));
+    if (a.eq(b)) { print("a-eq-b"); }
+    if (!a.eq(c)) { print("a-neq-c"); }
+    print(a.cmp(c).to_string());
+    // Composition: Outer.eq recurses into Inner.eq.
+    var p: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    var q: Outer = Outer { a: Inner { n: 5 }, tag: "hi" };
+    if (p.eq(q)) { print("outer-eq"); }
+    print(p.to_string());
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"Point { x: 3, y: 7 }", "a-eq-b", "a-neq-c", "-1", "outer-eq", "Outer { a: Inner { n: 5 }, tag: hi }"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s\nstderr: %s", want, got, errb.String())
+		}
+	}
+}

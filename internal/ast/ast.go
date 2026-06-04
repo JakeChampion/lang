@@ -1576,6 +1576,11 @@ type StructDecl struct {
 	// Same semantics as FuncDecl.Public — private structs can't be
 	// referenced from other modules.
 	Public bool
+	// Derives lists the trait names from an `@derive(Trait, …)`
+	// attribute on the struct. The checker synthesises an `impl`
+	// per derived trait (field-wise) before conformance runs. See
+	// docs/TRAITS.md.
+	Derives []string
 	// SourceModule mirrors FuncDecl.SourceModule — modload stamps
 	// the canonical module path that declared this struct so the
 	// LSP can answer cross-module goto-definition queries (jump

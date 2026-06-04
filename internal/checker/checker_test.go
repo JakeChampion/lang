@@ -2059,3 +2059,33 @@ function main(): i32 { return 0; }`,
 		}
 	}
 }
+
+// @derive only accepts the three derivable traits; deriving a struct
+// whose field type doesn't implement the trait is a clean error. See
+// docs/TRAITS.md.
+func TestDeriveErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// Non-derivable user trait.
+		{`trait Foo { function bar(self: Self): i32; }
+@derive(Foo)
+struct S { x: i32 }
+function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
+		// Unknown trait in derive.
+		{`@derive(Nope)
+struct S { x: i32 }
+function main(): i32 { return 0; }`, "unknown trait"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}

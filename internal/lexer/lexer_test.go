@@ -66,9 +66,21 @@ func TestPositions(t *testing.T) {
 }
 
 func TestUnknownChar(t *testing.T) {
-	_, _, err := Tokenize("@")
+	// `~` is not a recognised punctuator (`@` now lexes — it leads the
+	// `@derive(...)` attribute).
+	_, _, err := Tokenize("~")
 	if err == nil {
-		t.Fatal("expected error on '@'")
+		t.Fatal("expected error on '~'")
+	}
+}
+
+func TestAtSignLexes(t *testing.T) {
+	toks, _, err := Tokenize("@derive")
+	if err != nil {
+		t.Fatalf("`@` should lex as a punctuator: %v", err)
+	}
+	if toks[0].Kind != Punct || toks[0].Text != "@" {
+		t.Errorf("first token = %v, want Punct(@)", toks[0])
 	}
 }
 

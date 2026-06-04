@@ -1294,3 +1294,33 @@ function f[T: shapes.Area + cmp.Ord](v: T): i32 { return 0; }`)
 		t.Errorf("bounds = %v, want [shapes.Area cmp.Ord]", got)
 	}
 }
+
+// `@derive(Trait, …)` on a struct records the (possibly qualified)
+// trait names on StructDecl.Derives. See docs/TRAITS.md.
+func TestDeriveAttributeParses(t *testing.T) {
+	prog, err := Parse(`@derive(cmp.Eq, cmp.Display)
+struct Point { x: i32, y: i32 }`)
+	if err != nil {
+		t.Fatalf("@derive should parse: %v", err)
+	}
+	sd := prog.Structs[0]
+	if len(sd.Derives) != 2 || sd.Derives[0] != "cmp.Eq" || sd.Derives[1] != "cmp.Display" {
+		t.Errorf("Derives = %v, want [cmp.Eq cmp.Display]", sd.Derives)
+	}
+	// @derive before `pub struct` works too.
+	prog2, err := Parse(`@derive(Eq) pub struct P { x: i32 }`)
+	if err != nil {
+		t.Fatalf("@derive pub struct: %v", err)
+	}
+	if !prog2.Structs[0].Public || len(prog2.Structs[0].Derives) != 1 {
+		t.Errorf("expected public struct with one derive, got %+v", prog2.Structs[0])
+	}
+	// @derive on a non-struct is rejected.
+	if _, err := Parse(`@derive(Eq) function f(): i32 { return 0; }`); err == nil {
+		t.Error("@derive on a function should be a parse error")
+	}
+	// Unknown attribute name.
+	if _, err := Parse(`@frobnicate(Eq) struct S { x: i32 }`); err == nil {
+		t.Error("@frobnicate should be rejected")
+	}
+}

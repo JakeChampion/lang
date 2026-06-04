@@ -483,7 +483,7 @@ func (l *lexer) next() (Token, error) {
 
 	// Single-char punctuator.
 	switch r {
-	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^', '?', '.':
+	case '+', '-', '*', '/', '%', '(', ')', '{', '}', '[', ']', ',', ';', ':', '=', '<', '>', '!', '&', '|', '^', '?', '.', '@':
 		l.advance()
 		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
 	}

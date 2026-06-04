@@ -236,6 +236,22 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
+		// Optional `@derive(Trait, …)` attribute preceding a struct
+		// declaration. The checker synthesises a field-wise impl per
+		// derived trait. See docs/TRAITS.md.
+		var derives []string
+		if p.match(lexer.Punct, "@") {
+			ds, err := p.parseDerive()
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToTopLevel()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			derives = ds
+		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
 		// inner parser stays unaware of visibility — we stamp the
@@ -272,7 +288,17 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if sd != nil {
 				sd.Public = isPub
+				sd.Derives = derives
 				prog.Structs = append(prog.Structs, sd)
+			}
+			continue
+		}
+		if len(derives) > 0 {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@derive only applies to a `struct` declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
 			}
 			continue
 		}
@@ -601,6 +627,39 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		return nil, nil, err
 	}
 	return id, methods, nil
+}
+
+// parseDerive parses an `@derive(Trait, Trait, …)` attribute (the `@`
+// is at the current position) and returns the (possibly module-
+// qualified) trait names. See docs/TRAITS.md.
+func (p *parser) parseDerive() ([]string, error) {
+	p.advance() // @
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	if name.Text != "derive" {
+		return nil, p.errorf(name.Pos, "unknown attribute @%s (only @derive is supported)", name.Text)
+	}
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return nil, err
+	}
+	var out []string
+	for {
+		tn, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p.maybeQualify(tn.Text))
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
