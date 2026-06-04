@@ -593,6 +593,7 @@ pub function optimize(f: SFunc): SFunc {
         prev = size;
         f = copy_propagate(f);
         f = const_fold(f);
+        f = cse(f);
         f = branch_simplify(f);
         f = merge_blocks(f);
         f = dead_code_elim(f);
@@ -735,6 +736,83 @@ function const_fold(f: SFunc): SFunc {
         f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
     }
     return f;
+}
+
+function index_of_str(xs: string[], n: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// is_commutative reports whether a binary op gives the same result with
+// its operands swapped — so CSE can canonicalise their order and catch
+// `a + b` ≡ `b + a`.
+function is_commutative(op: string): boolean {
+    return op == "+" || op == "*" || op == "==" || op == "!=" || op == "&" || op == "|" || op == "^";
+}
+
+// cse_key builds a structural key for a pure instruction so two
+// instructions computing the same value share it. Operands are referenced
+// by id (already canonicalised through copy-propagation); commutative
+// binary operands are sorted so order doesn't matter.
+function cse_key(ins: SInst): string {
+    if (ins.kind == "const_int") { return "ci|" + int_str(ins.imm); }
+    if (ins.kind == "const_bool") { return "cb|" + int_str(ins.imm); }
+    if (ins.kind == "unary") { return "u|" + ins.str + "|" + int_str(ins.args[0]); }
+    if (ins.kind == "binary") {
+        var a: i32 = ins.args[0];
+        var b: i32 = ins.args[1];
+        if (is_commutative(ins.str) && b < a) { var tmp: i32 = a; a = b; b = tmp; }
+        return "b|" + ins.str + "|" + int_str(a) + "|" + int_str(b);
+    }
+    return "";
+}
+
+// cse performs local (per-block) common-subexpression elimination: within
+// a block, the second computation of an identical pure expression
+// (const / unary / binary) is dropped and its uses redirected to the
+// first. It's confined to a single block — reusing a value computed in a
+// sibling branch would be unsound without a dominance check — and operands
+// are threaded through the accumulated replacement map so a CSE'd value
+// feeds the key of later expressions. Redundant defs are deleted outright;
+// their now-dead operands fall to DCE.
+function cse(f: SFunc): SFunc {
+    var repl: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { repl = repl.push(i); i = i + 1; }
+
+    var nblocks: SBlock[] = [];
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var keys: string[] = [];
+        var ids: i32[] = [];
+        var ninsts: SInst[] = [];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = rewrite_args(blk.insts[k], repl);
+            var pure: boolean = ins.kind == "const_int" || ins.kind == "const_bool" || ins.kind == "unary" || ins.kind == "binary";
+            if (pure) {
+                var key: string = cse_key(ins);
+                var j: i32 = index_of_str(keys, key);
+                if (j >= 0) {
+                    repl = env_set_at(repl, ins.result, ids[j]);
+                    k = k + 1;
+                    continue;   // drop the redundant definition
+                }
+                keys = keys.push(key);
+                ids = ids.push(ins.result);
+            }
+            ninsts = ninsts.push(ins);
+            k = k + 1;
+        }
+        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, repl), preds: blk.preds });
+        bi = bi + 1;
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
 }
 
 // term_targets reports whether a terminator branches to block id `to`.
