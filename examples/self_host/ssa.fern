@@ -15,10 +15,10 @@
 //   - a block (SBlock) is a list of instructions ending in a terminator;
 //   - a function (SFunc) is a list of blocks with an entry index.
 //
-// SCOPE (slice 1): straight-line function bodies — params, `var` / `=`
-// locals, i32/bool literals, the binary + unary operators, and calls,
-// terminated by `return`. Control flow (if / while → multiple blocks +
-// phi) lands in the next slice; build_func returns ok=false for any
+// SCOPE (slice 2): straight-line bodies PLUS `if` / `else` — control flow
+// now lowers to multiple blocks joined by a merge block whose phi nodes
+// reconcile values that differ between the arms. `while` (loop phi /
+// back-edge) lands in the next slice; build_func returns ok=false for any
 // construct outside this subset so callers can fall back to the AST path.
 
 import "core/no_prelude";
@@ -47,52 +47,77 @@ function digits_to_i32(s: string): i32 {
 //   "unary"      str = op ("-","!")        args=[x]
 //   "call"       str = callee name         args=[…]
 //   "param"      imm = param index                 result = the param value
+//   "copy"       args=[x]                          result aliases x (var read)
+//   "phi"        args parallel to the block's Preds; result = the merged
+//                value (operand i flows in when control arrives from Preds[i])
 pub struct SInst { kind: string, result: i32, args: i32[], imm: i32, str: string }
 
-// STerm kinds: "ret" (value = returned value id), "br" (target), "brif"
-// (cond, t, f). Slice 1 only emits "ret".
+// STerm kinds: "ret" (value), "br" (target), "brif" (cond, t, f).
 pub struct STerm { kind: string, cond: i32, target: i32, t: i32, f: i32, value: i32 }
 
 pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 
-// SFunc: params holds the value ids of the parameters (in order); nvals is
-// the next fresh value id; blocks[entry] is the entry block.
-pub struct SFunc { name: string, params: i32[], nvals: i32, blocks: SBlock[], entry: i32 }
+// SFunc: nparams params occupy value ids 0..nparams-1; nvals is the next
+// fresh value id; blocks[entry] is the entry block.
+pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32 }
 
 function t_ret(value: i32): STerm { return STerm { kind: "ret", cond: 0, target: 0, t: 0, f: 0, value: value }; }
+function t_br(target: i32): STerm { return STerm { kind: "br", cond: 0, target: target, t: 0, f: 0, value: 0 }; }
+function t_brif(cond: i32, t: i32, f: i32): STerm { return STerm { kind: "brif", cond: cond, target: 0, t: t, f: f, value: 0 }; }
 function t_none(): STerm { return STerm { kind: "", cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
 
 // ---- builder state -----------------------------------------------------
 // BState threads the in-progress function plus the variable→value
-// environment (parallel name/value arrays — the self-host has maps, but
-// parallel arrays keep this dependency-free and the var counts are small).
+// environment (parallel name/value arrays — the var counts are small).
+// `cur` is the block currently being built; finished blocks accumulate in
+// `blocks`. `next_blk` is the block-id allocator.
 
 pub struct BState {
-    func: SFunc,
-    blk: SBlock,        // the block currently being built
+    name: string,
+    nparams: i32,
+    nvals: i32,
+    next_blk: i32,
+    blocks: SBlock[],
+    cur: SBlock,
     var_names: string[],
     var_vals: i32[],
-    ok: boolean         // cleared when an out-of-subset construct is hit
+    ok: boolean
 }
 
-// fresh allocates a new value id.
+function mk_bs(name: string, nparams: i32, nvals: i32, next_blk: i32, blocks: SBlock[], cur: SBlock, vn: string[], vv: i32[], ok: boolean): BState {
+    return BState { name: name, nparams: nparams, nvals: nvals, next_blk: next_blk, blocks: blocks, cur: cur, var_names: vn, var_vals: vv, ok: ok };
+}
+
+// fresh allocates a new value id (read it back with cur_id()).
 function (s: BState) fresh(): BState {
-    return BState {
-        func: SFunc { name: s.func.name, params: s.func.params, nvals: s.func.nvals + 1, blocks: s.func.blocks, entry: s.func.entry },
-        blk: s.blk, var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
-    };
+    return mk_bs(s.name, s.nparams, s.nvals + 1, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, s.ok);
 }
-function (s: BState) cur_id(): i32 { return s.func.nvals - 1; }
+function (s: BState) cur_id(): i32 { return s.nvals - 1; }
 
-// emit appends an instruction to the current block and returns its result.
+// emit appends an instruction to the current block.
 function (s: BState) emit(inst: SInst): BState {
-    var ni: SInst[] = s.blk.insts.push(inst);
-    return BState {
-        func: s.func,
-        blk: SBlock { id: s.blk.id, insts: ni, term: s.blk.term, preds: s.blk.preds },
-        var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
-    };
+    var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts.push(inst), term: s.cur.term, preds: s.cur.preds };
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok);
 }
+
+// set_term sets the current block's terminator (does not close it).
+function (s: BState) set_term(term: STerm): BState {
+    var nc: SBlock = SBlock { id: s.cur.id, insts: s.cur.insts, term: term, preds: s.cur.preds };
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nc, s.var_names, s.var_vals, s.ok);
+}
+
+// close_cur pushes the current block into the finished list.
+function (s: BState) close_cur(): BState {
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks.push(s.cur), s.cur, s.var_names, s.var_vals, s.ok);
+}
+
+// open_block makes a fresh empty block (with the given preds) current.
+function (s: BState) open_block(id: i32, preds: i32[]): BState {
+    var nb: SBlock = SBlock { id: id, insts: [], term: t_none(), preds: preds };
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, nb, s.var_names, s.var_vals, s.ok);
+}
+
+function (s: BState) terminated(): boolean { return s.cur.term.kind != ""; }
 
 function (s: BState) set_var(name: string, val: i32): BState {
     var i: i32 = 0;
@@ -104,14 +129,11 @@ function (s: BState) set_var(name: string, val: i32): BState {
                 if (j == i) { nv = nv.push(val); } else { nv = nv.push(s.var_vals[j]); }
                 j = j + 1;
             }
-            return BState { func: s.func, blk: s.blk, var_names: s.var_names, var_vals: nv, ok: s.ok };
+            return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, nv, s.ok);
         }
         i = i + 1;
     }
-    return BState {
-        func: s.func, blk: s.blk,
-        var_names: s.var_names.push(name), var_vals: s.var_vals.push(val), ok: s.ok
-    };
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names.push(name), s.var_vals.push(val), s.ok);
 }
 function (s: BState) get_var(name: string): i32 {
     var i: i32 = 0;
@@ -119,16 +141,21 @@ function (s: BState) get_var(name: string): i32 {
         if (s.var_names[i] == name) { return s.var_vals[i]; }
         i = i + 1;
     }
-    return 0 - 1;   // unknown
+    return 0 - 1;
+}
+// set_env replaces the whole variable environment (used to restore a
+// snapshot or install a branch's outgoing env at a merge).
+function (s: BState) set_env(vn: string[], vv: i32[]): BState {
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, vn, vv, s.ok);
+}
+function (s: BState) bump_blk(n: i32): BState {
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk + n, s.blocks, s.cur, s.var_names, s.var_vals, s.ok);
 }
 function (s: BState) fail(): BState {
-    return BState { func: s.func, blk: s.blk, var_names: s.var_names, var_vals: s.var_vals, ok: false };
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, s.blocks, s.cur, s.var_names, s.var_vals, false);
 }
 
 // ---- expression lowering ----------------------------------------------
-// build_expr lowers `e` into instructions on the current block and records
-// the defining value id in s (read back with s.cur_id()). On an out-of-
-// subset construct it sets ok=false.
 
 function build_expr(e: parser.Expr, s: BState): BState {
     match (e) {
@@ -148,8 +175,6 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprIdent(id) => {
             var v: i32 = s.get_var(id.name);
             if (v < 0) { return s.fail(); }
-            // Reading a variable is just an alias to its current value:
-            // emit a no-op "copy" so cur_id() is well-defined.
             s = s.fresh();
             var a1: i32[] = [v];
             return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
@@ -197,6 +222,9 @@ function build_expr(e: parser.Expr, s: BState): BState {
 // ---- statement lowering ------------------------------------------------
 
 function build_stmt(st: parser.Stmt, s: BState): BState {
+    // Dead code after a terminator (e.g. statements following a return in
+    // the same block) is dropped — the block is already closed.
+    if (s.terminated()) { return s; }
     match (st) {
         parser.StmtVar(v) => {
             s = build_expr(v.init, s);
@@ -214,62 +242,167 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
         parser.StmtReturn(r) => {
             s = build_expr(r.value, s);
             if (!s.ok) { return s; }
-            var rv: i32 = s.cur_id();
-            return BState {
-                func: s.func,
-                blk: SBlock { id: s.blk.id, insts: s.blk.insts, term: t_ret(rv), preds: s.blk.preds },
-                var_names: s.var_names, var_vals: s.var_vals, ok: s.ok
-            };
+            return s.set_term(t_ret(s.cur_id()));
+        },
+        parser.StmtIf(f) => {
+            return build_if(f, s);
         },
         _ => { return s.fail(); }
     }
 }
 
-// build_func lowers a FuncDecl to an SFunc. ok=false (in the returned
-// SFunc via a sentinel empty name? no — use BResult) when the body falls
-// outside the slice-1 subset.
+function build_stmts(body: parser.Stmt[], s: BState): BState {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        s = build_stmt(body[i], s);
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s;
+}
+
+// build_if lowers `if (cond) { then } else { else }` into a diamond:
+//   pred ──brif──► then ──┐
+//        └────────► else ─┴──► merge
+// The merge block carries a phi for every pre-existing variable whose value
+// differs between the arms that reach it. A branch that ends in `return`
+// does not reach the merge and contributes no phi operand.
+function build_if(f: parser.StmtIf, s: BState): BState {
+    s = build_expr(f.cond, s);
+    if (!s.ok) { return s; }
+    var cond_val: i32 = s.cur_id();
+    var pred_id: i32 = s.cur.id;
+
+    var has_else: boolean = f.else_body.len() > 0;
+
+    var then_id: i32 = s.next_blk;
+    var else_id: i32 = s.next_blk + 1;
+    var merge_id: i32 = s.next_blk + 2;
+    s = s.bump_blk(3);
+
+    // Snapshot the entering environment so each arm starts from it.
+    var n0: i32 = s.var_names.len();
+    var env0_names: string[] = s.var_names;
+    var env0_vals: i32[] = s.var_vals;
+
+    // Terminate the predecessor with the conditional branch.
+    var false_target: i32 = merge_id;
+    if (has_else) { false_target = else_id; }
+    s = s.set_term(t_brif(cond_val, then_id, false_target));
+    s = s.close_cur();
+
+    // ---- then arm ----
+    var then_preds: i32[] = [pred_id];
+    s = s.open_block(then_id, then_preds);
+    s = s.set_env(env0_names, env0_vals);
+    s = build_stmts(f.then_body, s);
+    if (!s.ok) { return s; }
+    var then_reaches: boolean = !s.terminated();
+    var then_exit_id: i32 = s.cur.id;
+    var then_names: string[] = s.var_names;
+    var then_vals: i32[] = s.var_vals;
+    if (then_reaches) { s = s.set_term(t_br(merge_id)); }
+    s = s.close_cur();
+
+    // ---- else arm ----
+    var else_reaches: boolean = true;
+    var else_exit_id: i32 = pred_id;     // no-else: false edge is pred→merge
+    var else_names: string[] = env0_names;
+    var else_vals: i32[] = env0_vals;
+    if (has_else) {
+        var else_preds: i32[] = [pred_id];
+        s = s.open_block(else_id, else_preds);
+        s = s.set_env(env0_names, env0_vals);
+        s = build_stmts(f.else_body, s);
+        if (!s.ok) { return s; }
+        else_reaches = !s.terminated();
+        else_exit_id = s.cur.id;
+        else_names = s.var_names;
+        else_vals = s.var_vals;
+        if (else_reaches) { s = s.set_term(t_br(merge_id)); }
+        s = s.close_cur();
+    }
+
+    // ---- merge ----
+    var mpreds: i32[] = [];
+    if (then_reaches) { mpreds = mpreds.push(then_exit_id); }
+    if (else_reaches) { mpreds = mpreds.push(else_exit_id); }
+    s = s.open_block(merge_id, mpreds);
+
+    // Reconcile the environment with phi nodes. Iterate the pre-existing
+    // variables (indices 0..n0); arm-local vars (appended at higher
+    // indices) are out of scope past the branch.
+    var merge_names: string[] = env0_names;
+    var merge_vals: i32[] = env0_vals;
+    var vi: i32 = 0;
+    while (vi < n0) {
+        var tv: i32 = then_vals[vi];
+        var ev: i32 = else_vals[vi];
+        if (then_reaches && else_reaches) {
+            if (tv != ev) {
+                s = s.fresh();
+                var pa: i32[] = [tv, ev];
+                s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa, imm: 0, str: "" });
+                merge_vals = env_set_at(merge_vals, vi, s.cur_id());
+            }
+        } else if (then_reaches) {
+            merge_vals = env_set_at(merge_vals, vi, tv);
+        } else if (else_reaches) {
+            merge_vals = env_set_at(merge_vals, vi, ev);
+        }
+        vi = vi + 1;
+    }
+    s = s.set_env(merge_names, merge_vals);
+    return s;
+}
+
+// env_set_at returns vals with index i replaced by v.
+function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
+    var out: i32[] = [];
+    var k: i32 = 0;
+    while (k < vals.len()) {
+        if (k == i) { out = out.push(v); } else { out = out.push(vals[k]); }
+        k = k + 1;
+    }
+    return out;
+}
+
 pub struct BResult { func: SFunc, ok: boolean }
 
 pub function build_func(fd: parser.FuncDecl): BResult {
     // Params occupy value ids 0..nparams-1, defined by "param" insts in
-    // the entry block.
+    // the entry block (block id 0).
     var pnames: string[] = [];
     var pvals: i32[] = [];
-    var params: i32[] = [];
     var insts0: SInst[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
         var noargs: i32[] = [];
         insts0 = insts0.push(SInst { kind: "param", result: i, args: noargs, imm: i, str: "" });
-        params = params.push(i);
         pnames = pnames.push(fd.params[i].name);
         pvals = pvals.push(i);
         i = i + 1;
     }
+    var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
-    var f0: SFunc = SFunc { name: fd.name, params: params, nvals: fd.params.len(), blocks: [], entry: 0 };
-    var s: BState = BState { func: f0, blk: entryblk, var_names: pnames, var_vals: pvals, ok: true };
+    var f0: SFunc = SFunc { name: fd.name, nparams: nparams, nvals: nparams, blocks: [], entry: 0 };
+    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true);
 
-    var si: i32 = 0;
-    while (si < fd.body.len()) {
-        s = build_stmt(fd.body[si], s);
-        if (!s.ok) { return BResult { func: f0, ok: false }; }
-        si = si + 1;
-    }
-    // The block must end in a terminator (a return). If the body fell off
-    // without one, bail (slice 1 requires an explicit trailing return).
-    if (s.blk.term.kind != "ret") { return BResult { func: f0, ok: false }; }
-    var blks: SBlock[] = [s.blk];
-    var fout: SFunc = SFunc { name: s.func.name, params: s.func.params, nvals: s.func.nvals, blocks: blks, entry: 0 };
+    s = build_stmts(fd.body, s);
+    if (!s.ok) { return BResult { func: f0, ok: false }; }
+    // The current block must end in a return (slice requires every path to
+    // terminate explicitly; an un-returned fall-through bails).
+    if (!s.terminated()) { return BResult { func: f0, ok: false }; }
+    s = s.close_cur();
+    var fout: SFunc = SFunc { name: s.name, nparams: s.nparams, nvals: s.nvals, blocks: s.blocks, entry: 0 };
     return BResult { func: fout, ok: true };
 }
 
 // ---- interpreter -------------------------------------------------------
 // eval_func runs an SFunc with i32 args, returning the value `return`ed.
-// It maintains a value table (id → i32) sized to nvals, fills params from
-// args, executes the entry block's instructions in order, and reads the
-// terminator. (Slice 1 is single-block; multi-block dispatch arrives with
-// control flow.) `calls` maps a callee name → its SFunc for inlined eval.
+// It walks the CFG block by block, resolving phi nodes against the block we
+// arrived from (operand i of a phi flows in when control came from
+// block.preds[i]). A shared value table (id → i32) persists across blocks.
 
 function vtab_set(tab: i32[], id: i32, v: i32): i32[] {
     var out: i32[] = [];
@@ -279,6 +412,24 @@ function vtab_set(tab: i32[], id: i32, v: i32): i32[] {
         i = i + 1;
     }
     return out;
+}
+
+function block_index(f: SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function pred_slot(blk: SBlock, prev: i32): i32 {
+    var i: i32 = 0;
+    while (i < blk.preds.len()) {
+        if (blk.preds[i] == prev) { return i; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 function eval_binary(op: string, l: i32, r: i32): i32 {
@@ -304,34 +455,50 @@ function eval_binary(op: string, l: i32, r: i32): i32 {
 }
 
 pub function eval_func(f: SFunc, args: i32[]): i32 {
-    // value table sized to nvals, zero-initialised.
     var tab: i32[] = [];
     var i: i32 = 0;
     while (i < f.nvals) { tab = tab.push(0); i = i + 1; }
-    var blk: SBlock = f.blocks[f.entry];
-    var k: i32 = 0;
-    while (k < blk.insts.len()) {
-        var inst: SInst = blk.insts[k];
-        if (inst.kind == "param") {
-            var pv: i32 = 0;
-            if (inst.imm < args.len()) { pv = args[inst.imm]; }
-            tab = vtab_set(tab, inst.result, pv);
-        } else if (inst.kind == "const_int" || inst.kind == "const_bool") {
-            tab = vtab_set(tab, inst.result, inst.imm);
-        } else if (inst.kind == "copy") {
-            tab = vtab_set(tab, inst.result, tab[inst.args[0]]);
-        } else if (inst.kind == "binary") {
-            tab = vtab_set(tab, inst.result, eval_binary(inst.str, tab[inst.args[0]], tab[inst.args[1]]));
-        } else if (inst.kind == "unary") {
-            var x: i32 = tab[inst.args[0]];
-            if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
-            else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
+
+    var cur_id: i32 = f.blocks[f.entry].id;
+    var prev_id: i32 = 0 - 1;
+    var guard: i32 = 0;
+    while (guard < 1000000) {
+        guard = guard + 1;
+        var bi: i32 = block_index(f, cur_id);
+        if (bi < 0) { return 0; }
+        var blk: SBlock = f.blocks[bi];
+        var slot: i32 = pred_slot(blk, prev_id);
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var inst: SInst = blk.insts[k];
+            if (inst.kind == "param") {
+                var pv: i32 = 0;
+                if (inst.imm < args.len()) { pv = args[inst.imm]; }
+                tab = vtab_set(tab, inst.result, pv);
+            } else if (inst.kind == "const_int" || inst.kind == "const_bool") {
+                tab = vtab_set(tab, inst.result, inst.imm);
+            } else if (inst.kind == "copy") {
+                tab = vtab_set(tab, inst.result, tab[inst.args[0]]);
+            } else if (inst.kind == "phi") {
+                tab = vtab_set(tab, inst.result, tab[inst.args[slot]]);
+            } else if (inst.kind == "binary") {
+                tab = vtab_set(tab, inst.result, eval_binary(inst.str, tab[inst.args[0]], tab[inst.args[1]]));
+            } else if (inst.kind == "unary") {
+                var x: i32 = tab[inst.args[0]];
+                if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
+                else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
+            }
+            k = k + 1;
         }
-        // "call" is not evaluated in slice 1's standalone interp (no
-        // cross-function table); the builder still lowers it correctly.
-        k = k + 1;
+        if (blk.term.kind == "ret") { return tab[blk.term.value]; }
+        if (blk.term.kind == "br") { prev_id = cur_id; cur_id = blk.term.target; }
+        else if (blk.term.kind == "brif") {
+            prev_id = cur_id;
+            if (tab[blk.term.cond] != 0) { cur_id = blk.term.t; } else { cur_id = blk.term.f; }
+        } else {
+            return 0;   // no terminator (shouldn't happen for ok funcs)
+        }
     }
-    if (blk.term.kind == "ret") { return tab[blk.term.value]; }
     return 0;
 }
 
@@ -374,6 +541,8 @@ pub function print_func(f: SFunc): string {
             k = k + 1;
         }
         if (blk.term.kind == "ret") { out = out + "    ret v" + int_str(blk.term.value) + "\n"; }
+        else if (blk.term.kind == "br") { out = out + "    br b" + int_str(blk.term.target) + "\n"; }
+        else if (blk.term.kind == "brif") { out = out + "    brif v" + int_str(blk.term.cond) + " b" + int_str(blk.term.t) + " b" + int_str(blk.term.f) + "\n"; }
         bi = bi + 1;
     }
     return out + "}\n";
