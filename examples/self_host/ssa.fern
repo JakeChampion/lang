@@ -298,6 +298,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // print(s) — write the string's bytes to stdout. A
+                    // dedicated op (the backends emit a write-syscall helper);
+                    // not a generic call, so calls_all_known doesn't bail.
+                    if (cid.name == "print" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var sv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var pa: i32[] = [sv];
+                        return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: 0, str: "" });
+                    }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
                     while (i < c.args.len()) {
@@ -1678,6 +1689,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     var calls: i32[] = [];
 
     // Number instructions and record each value's def/use positions.
+    var def_pos: i32[] = [];
+    i = 0;
+    while (i < f.nvals) { def_pos = def_pos.push(0 - 1); i = i + 1; }
     var pos: i32 = 0;
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
@@ -1686,12 +1700,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
             lo = upd_lo(lo, ins.result, pos); hi = upd_hi(hi, ins.result, pos);
+            if (ins.result >= 0 && ins.result < def_pos.len()) { def_pos = env_set_at(def_pos, ins.result, pos); }
             var a: i32 = 0;
             while (a < ins.args.len()) {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call") { calls = calls.push(pos); }
+            if (ins.kind == "call" || ins.kind == "print") { calls = calls.push(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -1699,6 +1714,32 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         else if (blk.term.kind == "brif") { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
         pos = pos + 1;
         bi = bi + 1;
+    }
+    var total_pos: i32 = pos;
+
+    // Back-edge fix: a phi operand whose definition comes AFTER the phi (a
+    // loop back-edge value) is live from its def through the back-edge, not
+    // just to the phi's (earlier) position. Extend its interval to the end
+    // so it can't share a register with values computed in the loop body.
+    var bj: i32 = 0;
+    var ppos: i32 = 0;
+    while (bj < f.blocks.len()) {
+        var b2: SBlock = f.blocks[bj];
+        var kk: i32 = 0;
+        while (kk < b2.insts.len()) {
+            var pin: SInst = b2.insts[kk];
+            if (pin.kind == "phi") {
+                var pa2: i32 = 0;
+                while (pa2 < pin.args.len()) {
+                    if (def_pos[pin.args[pa2]] > ppos) { hi = upd_hi(hi, pin.args[pa2], total_pos); }
+                    pa2 = pa2 + 1;
+                }
+            }
+            ppos = ppos + 1;
+            kk = kk + 1;
+        }
+        ppos = ppos + 1;
+        bj = bj + 1;
     }
 
     var reg_of: i32[] = [];
@@ -1779,7 +1820,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
                 k = k + 1;
             }

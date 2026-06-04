@@ -144,10 +144,10 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("ssa-fallback", func(t *testing.T) {
-		// A program outside the SSA subset (uses strings) must fall back to
+		// A program outside the SSA subset (a float local) must fall back to
 		// the AST emitter: -ssa output is byte-identical to the default.
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi\\n\"); return 5; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 1.5; return 5; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		withSSA, code1 := runDriver(t, "-ssa", srcPath)

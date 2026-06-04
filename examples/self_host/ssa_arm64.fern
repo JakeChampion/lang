@@ -225,6 +225,11 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         if (ins.imm == 64) { return out + "    str x11, [x9, x10]\n"; }
         return out + "    str w11, [x9, x10]\n";
     }
+    if (ins.kind == "print") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // handle → x9
+        out = out + "    mov x0, x9\n";
+        return out + "    bl __fern_ssa_print\n";
+    }
     return out;
 }
 
@@ -317,6 +322,24 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
         out = out + emit_func(funcs[i], reg_of);
         i = i + 1;
     }
+    // __fern_ssa_print(x0 = string handle): write each byte to stdout. The
+    // string is [len, b0, …] as 8-byte words; each byte's low octet is at
+    // its word address (little-endian), so write 1 byte per word.
+    out = out + "__fern_ssa_print:\n";
+    out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+    out = out + "    stp x19, x20, [sp, #-16]!\n    str x21, [sp, #-16]!\n";
+    out = out + "    mov x19, x0\n";              // handle
+    out = out + "    ldr w20, [x19]\n";            // len = word[0]
+    out = out + "    mov w21, #0\n";               // i = 0
+    out = out + ".Lfsp_loop:\n";
+    out = out + "    cmp w21, w20\n    b.ge .Lfsp_done\n";
+    out = out + "    add w0, w21, #1\n";           // i+1
+    out = out + "    sbfiz x1, x0, #3, #32\n";      // (i+1)*8
+    out = out + "    add x1, x19, x1\n";            // &word[i+1] = byte address
+    out = out + "    mov x0, #1\n    mov x2, #1\n    mov x8, #64\n    svc #0\n";
+    out = out + "    add w21, w21, #1\n    b .Lfsp_loop\n";
+    out = out + ".Lfsp_done:\n";
+    out = out + "    ldr x21, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
     out = out + "_start:\n";
     out = out + "    adrp x9, __fern_ssa_heap\n";
     out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";
