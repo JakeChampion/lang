@@ -2319,6 +2319,24 @@ func demangle(s string) string {
 	return strings.Replace(s, "__", ".", 1)
 }
 
+// checkOpaqueAccess rejects reaching into an `opaque` struct's fields
+// (read or construction) from outside the module that declared it. The
+// type name + methods stay usable cross-module; only the representation
+// is private. `what` describes the offending access for the diagnostic.
+// See docs/TRAITS.md.
+func (c *checker) checkOpaqueAccess(sd *ast.StructDecl, pos ast.Position, what string) {
+	if sd == nil || !sd.Opaque || sd.SourceModule == "" {
+		return
+	}
+	cur := ""
+	if c.current != nil {
+		cur = c.current.SourceModule
+	}
+	if cur != sd.SourceModule {
+		c.errfCode(pos, "E021", "cannot %s opaque type %s outside the module that defines it", what, demangle(sd.Name))
+	}
+}
+
 // resolveTraitMethodForParam looks up method `field` among the traits
 // bound on type parameter `paramName` in the function currently being
 // checked. Returns the matching trait-method signature and the trait
@@ -5845,6 +5863,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E043", "unknown struct type %q", n.TypeName)
 			return nil
 		}
+		c.checkOpaqueAccess(sd, n.P, "construct")
 		// Each declared field must be initialised exactly once and
 		// have the right type. Surplus / unknown fields are an error.
 		seen := map[string]bool{}
@@ -6072,6 +6091,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
 			return nil
 		}
+		c.checkOpaqueAccess(sd, n.P, "access a field of")
 		for _, f := range sd.Fields {
 			if f.Name == n.Field {
 				if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
