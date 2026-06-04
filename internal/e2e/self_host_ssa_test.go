@@ -13,9 +13,10 @@ import (
 // lowers `main` to SSA via build_func, evaluates it with the SSA
 // interpreter, and returns the result as its exit code. Each case asserts
 // AST → SSA → eval reproduces the program's value — proving the IR + the
-// AST→SSA builder are semantics-preserving. Slice 1 is straight-line i32
-// (params/locals/arith/cmp/bitwise/calls + a trailing return); constructs
-// outside that subset make build_func bail (exit 200).
+// AST→SSA builder are semantics-preserving. Slice 2 covers straight-line
+// i32 (params/locals/arith/cmp/bitwise/calls) PLUS if/else — control flow
+// lowers to a multi-block CFG with phi nodes at the merge. Constructs
+// outside the subset (e.g. while) make build_func bail (exit 200).
 //
 // The driver is built natively via the Go x86-64 backend and fed each
 // program on stdin; its exit code is the SSA-computed result.
@@ -52,8 +53,17 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"comparison", "function main(): i32 { return 5 < 10; }", 1},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }", 10},
 		{"shift", "function main(): i32 { return 1 << 4; }", 16},
-		// Outside the slice-1 subset → build_func bails (200).
-		{"if-bails", "function main(): i32 { if (true) { return 1; } return 2; }", 200},
+		// Control flow: if / else lower to a CFG with phi at the merge.
+		{"if-taken", "function main(): i32 { var x = 1; if (5 < 10) { x = 7; } return x; }", 7},
+		{"if-not-taken", "function main(): i32 { var x = 1; if (10 < 5) { x = 7; } return x; }", 1},
+		{"if-else-then", "function main(): i32 { var x = 0; if (true) { x = 3; } else { x = 9; } return x; }", 3},
+		{"if-else-else", "function main(): i32 { var x = 0; if (false) { x = 3; } else { x = 9; } return x; }", 9},
+		{"phi-plus", "function main(): i32 { var x = 0; if (true) { x = 10; } else { x = 20; } return x + 1; }", 11},
+		{"early-return", "function main(): i32 { var x = 5; if (x > 3) { return 100; } return x; }", 100},
+		{"no-early-return", "function main(): i32 { var x = 2; if (x > 3) { return 100; } return x; }", 2},
+		{"nested-if", "function main(): i32 { var x = 5; if (x > 0) { if (x > 3) { x = 100; } else { x = 50; } } return x; }", 100},
+		{"two-var-phi", "function main(): i32 { var a = 1; var b = 2; if (false) { a = 10; b = 20; } else { a = 30; } return a + b; }", 32},
+		// Still outside the subset → build_func bails (200).
 		{"while-bails", "function main(): i32 { var i = 0; while (i < 3) { i = i + 1; } return i; }", 200},
 	}
 
