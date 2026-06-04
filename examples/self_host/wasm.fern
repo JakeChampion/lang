@@ -124,6 +124,10 @@ struct Ctx {
     // one char per element, 's' = string, else 'i'. Drives `t.N` typing.
     tup_names: string[],
     tup_kinds: string[],
+    // Per tuple local (parallel to tup_names): a comma-separated list of
+    // each element's struct type ("" for non-struct elements), so a
+    // `var (a, b) = t` destructure can type a struct element correctly.
+    tup_svtypes: string[],
     // Closure support. fn_names: locals/params that hold a closure value
     // (a lambda or an `fn`-typed param), so calling them lowers to
     // call_indirect. lam_ctr / lamdefs are module-wide shared cells (a
@@ -690,7 +694,7 @@ function collect_tuple_locals(body: parser.Stmt[], cx: Ctx): Ctx {
                 match (v.init) {
                     parser.ExprTuple(t) => {
                         if (!contains_str(cx.tup_names, v.name)) {
-                            cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)) };
+                            cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.push(tuple_svtypes_csv(t.elements, cx)) };
                         }
                     },
                     _ => {},
@@ -1246,6 +1250,121 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
         parser.ExprIndex(ix) => {
             // pts[i] is a struct when pts is a struct-array.
             return struct_array_elem_type(ix.array, cx);
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// str_trim_spaces strips leading/trailing ASCII spaces (32).
+function str_trim_spaces(s: string): string {
+    var a: i32 = 0;
+    while (a < s.len() && s[a] == 32) { a = a + 1; }
+    var b: i32 = s.len();
+    while (b > a && s[b - 1] == 32) { b = b - 1; }
+    return s[a:b];
+}
+
+// nth_tuple_type_elem parses a tuple-type spelling "(A, B, …)" and returns
+// the idx-th element type (trimmed), honouring bracket / paren nesting so a
+// comma inside a generic arg (Map[K, V]) or nested tuple doesn't split.
+// "" when the spelling isn't a parenthesised tuple or idx is out of range.
+function nth_tuple_type_elem(spelling: string, idx: i32): string {
+    if (spelling.len() < 2 || spelling[0] != 40) { return ""; }  // 40 = '('
+    var depth: i32 = 0;
+    var cur: i32 = 0;
+    var start: i32 = 1;
+    var i: i32 = 1;
+    while (i < spelling.len()) {
+        var ch: i32 = spelling[i];
+        if (ch == 91 || ch == 40) { depth = depth + 1; }         // '[' '('
+        else if (ch == 93) { depth = depth - 1; }                // ']'
+        else if (ch == 41) {                                     // ')'
+            if (depth == 0) {
+                if (cur == idx) { return str_trim_spaces(spelling[start:i]); }
+                return "";
+            }
+            depth = depth - 1;
+        } else if (ch == 44 && depth == 0) {                     // top-level ','
+            if (cur == idx) { return str_trim_spaces(spelling[start:i]); }
+            cur = cur + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// nth_csv_elem returns the idx-th comma-separated field of `csv` (used for
+// the per-element struct-type list tracked on a tuple local), or "".
+function nth_csv_elem(csv: string, idx: i32): string {
+    var cur: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < csv.len()) {
+        if (csv[i] == 44) {
+            if (cur == idx) { return csv[start:i]; }
+            cur = cur + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (cur == idx) { return csv[start:csv.len()]; }
+    return "";
+}
+
+// free_func_ret_spelling returns the declared return-type spelling of a
+// free function by name (e.g. "(P, i32)"), or "" if not found.
+function free_func_ret_spelling(cx: Ctx, name: string): string {
+    var i: i32 = 0;
+    while (i < cx.mod_funcs.len()) {
+        if (cx.mod_funcs[i].name == name && cx.mod_funcs[i].receiver_name.len() == 0) {
+            return cx.mod_funcs[i].ret_type;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// tuple_svtypes_csv builds the per-element struct-type list of a tuple
+// literal ("P," for `(P{…}, 1)`), so a later destructure of a tuple local
+// can recover each element's struct type.
+function tuple_svtypes_csv(elements: parser.Expr[], cx: Ctx): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < elements.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + struct_type_of(elements[i], cx);
+        i = i + 1;
+    }
+    return out;
+}
+
+// tuple_elem_struct_type resolves the struct type of element `idx` of a
+// tuple-valued expression, or "" when that element isn't a struct: an
+// inline tuple literal, a call to a tuple-returning free function / method
+// (parsed from its return-type spelling), or a tracked tuple local.
+function tuple_elem_struct_type(obj: parser.Expr, idx: i32, cx: Ctx): string {
+    match (obj) {
+        parser.ExprTuple(t) => {
+            if (idx >= 0 && idx < t.elements.len()) { return struct_type_of(t.elements[idx], cx); }
+            return "";
+        },
+        parser.ExprIdent(id) => {
+            var el: string = nth_csv_elem(lookup_pair(cx.tup_names, cx.tup_svtypes, id.name), idx);
+            if (is_struct_type(cx.structs, el)) { return el; }
+            return "";
+        },
+        parser.ExprCall(c) => {
+            var spelling: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => { spelling = free_func_ret_spelling(cx, cid.name); },
+                parser.ExprFieldAccess(fa) => { spelling = method_ret(cx, struct_type_of(fa.obj, cx), fa.field); },
+                _ => {},
+            }
+            var el2: string = nth_tuple_type_elem(spelling, idx);
+            if (is_struct_type(cx.structs, el2)) { return el2; }
+            return "";
         },
         _ => { return ""; },
     }
@@ -3671,20 +3790,48 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
     while (i < body.len()) {
         match (body[i]) {
             parser.StmtVar(v) => {
-                // Option/Result-typed var → track its payload type so a
-                // later `match (v)` types the Some/Ok binding.
-                var optpay: string = parse_option_payload(v.type_name);
-                if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
-                var styp: string = base_type_name(v.type_name);
-                if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
-                if (optpay.len() > 0) {
-                    cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
-                } else if (is_struct_type(cx.structs, styp)) {
-                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
-                } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
-                    cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
-                } else if (v.type_name == "string" || is_string_expr(v.init, cx)) {
-                    cx = Ctx { ...cx, locals: cx.locals.push(v.name) };
+                if (comma_index(v.name) >= 0) {
+                    // `var (a, b) = <tuple>` destructure: type each element
+                    // that is a struct so `a.field` resolves (without this
+                    // the field read falls back to a bogus `(i32.const 0)`).
+                    var an: string = before_comma(v.name);
+                    var at: string = tuple_elem_struct_type(v.init, 0, cx);
+                    if (is_struct_type(cx.structs, at)) {
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(an), sv_types: cx.sv_types.push(at) };
+                    }
+                    var bn: string = after_comma(v.name);
+                    var bt: string = tuple_elem_struct_type(v.init, 1, cx);
+                    if (is_struct_type(cx.structs, bt)) {
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(bn), sv_types: cx.sv_types.push(bt) };
+                    }
+                } else {
+                    // Record a tuple local's per-element kinds + struct types
+                    // here (in statement order) so a later destructure of it
+                    // can recover element types; collect_tuple_locals' guard
+                    // then skips the already-recorded name.
+                    match (v.init) {
+                        parser.ExprTuple(t) => {
+                            if (!contains_str(cx.tup_names, v.name)) {
+                                cx = Ctx { ...cx, tup_names: cx.tup_names.push(v.name), tup_kinds: cx.tup_kinds.push(tuple_kind_string(t.elements, cx)), tup_svtypes: cx.tup_svtypes.push(tuple_svtypes_csv(t.elements, cx)) };
+                            }
+                        },
+                        _ => {},
+                    }
+                    // Option/Result-typed var → track its payload type so a
+                    // later `match (v)` types the Some/Ok binding.
+                    var optpay: string = parse_option_payload(v.type_name);
+                    if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
+                    var styp: string = base_type_name(v.type_name);
+                    if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
+                    if (optpay.len() > 0) {
+                        cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
+                    } else if (is_struct_type(cx.structs, styp)) {
+                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
+                    } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
+                        cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };
+                    } else if (v.type_name == "string" || is_string_expr(v.init, cx)) {
+                        cx = Ctx { ...cx, locals: cx.locals.push(v.name) };
+                    }
                 }
             },
             parser.StmtIf(f) => {
@@ -3851,7 +3998,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_f64: is_float_type(f.ret_type),
         map_names: map_names, map_str_names: [],
         map_str_key_names: collect_str_key_map_names(f.body, map_names, []),
-        tup_names: [], tup_kinds: [],
+        tup_names: [], tup_kinds: [], tup_svtypes: [],
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
         all_locals: all_locals, cap_names: cap_names,
         sa_names: [], sa_types: [],
