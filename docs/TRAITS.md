@@ -318,35 +318,23 @@ regressing the self-host gates. It needs traits in two slices:
   the receiver's runtime *shape pointer* (a heap header), so concrete
   impls and struct-receiver bounded generics work for free.
 
-- **Self-host slice 2 (in progress): monomorphise bounded generics.**
+- **Self-host slice 2 (shipped): monomorphise bounded generics.**
   The dynamic dispatch reads a shape pointer from the receiver value —
   which heap values (struct/string) carry but **unboxed primitives
   (i32/i64/u32/u64/bool) do not**. So `assert_eq(1, 2)` — a bounded
-  generic whose `T` is i32 — falls into the struct dispatch path,
-  dereferences the integer as a pointer, and crashes. The fix is to
-  monomorphise: clone a bounded-generic function per concrete call-site
-  type so the receiver's *static* type is concrete, routing primitives
-  through the emitter's existing static-primitive dispatch
-  (`asm.fern` checks `infer_expr_type(receiver) == "i32" | "string" |
-  …`). Validated facts:
-  - **Choke point:** `parser.module_with_builtins(mod)` is called by
-    every asm driver (`asm_run`, `asm_load_run`, `asm_arm64_run`) right
-    before `emit_module`, and the asm path runs no checker — so the pass
-    belongs there (or immediately around it) and covers all backends
-    with one wiring change.
-  - **Clone correctness:** the emitter's `infer_expr_type(ExprIdent)`
-    returns the param's recorded type (`local_type_of`), so a clone
-    with `a: i32` makes `a.eq(b)` infer `i32` and dispatch statically.
-    No emitter change needed.
-  - **Inference:** infer the concrete type from the first argument whose
-    parameter type is the type variable `T`. Inferring from a *typed*
-    argument (var / expr), not the paired literal, keeps numeric width
-    correct (`assert_eq(a + b /* i64 */, 8000000000)` → clone `__i64`).
-  - **Plan:** parser keeps the bounded type-param names on `FuncDecl`
-    (unbounded generics stay erased); a pass walks call sites, infers
-    `T`, clones `f` → `f__<type>` substituting the type-var string in
-    param/return/var annotations, rewrites call sites, drops the
-    original. Mirror `constfold.fern`'s immutable Module-rebuild style.
+  generic whose `T` is i32 — fell into the struct dispatch path,
+  dereferenced the integer as a pointer, and crashed. The fix
+  monomorphises: `parser.monomorphize_module` (run inside
+  `module_with_builtins`, so every asm driver gets it with no checker)
+  walks call sites, infers each instantiation's concrete type from the
+  argument bound to the type variable, clones `f` → `f__<type>` with the
+  type variable substituted in params / return / `var` annotations, and
+  rewrites call sites; a worklist covers clones that call other bounded
+  generics. The clone's concrete receiver then routes through the
+  emitter's static-primitive dispatch — no emitter change. Unbounded
+  generics keep their erasure. Tested on x86-64 + arm64
+  (`internal/e2e/self_host_traits_test.go`): primitive, struct,
+  multi-type, and mixed-primitive-and-struct instantiations.
 
 ## 8. Testing
 

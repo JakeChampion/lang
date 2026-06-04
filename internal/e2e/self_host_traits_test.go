@@ -8,15 +8,14 @@ import (
 )
 
 // traitsCases cover trait / impl declarations through the self-hosted
-// compiler. The self-host handles them the same pragmatic way it
-// handles generics — by leaning on machinery it already has: an
-// `impl Trait for Type { … }` block is desugared (in the shared
-// parser) into ordinary receiver-method FuncDecls, and the trait
-// declaration itself is parsed-and-discarded (the self-host dispatches
-// `obj.method()` by the receiver's concrete type, so it needs no
-// conformance table). `[T: Bound]` bound syntax is swallowed by the
-// existing type-parameter discard loop. Exit codes are the behavioural
-// contract. See docs/TRAITS.md (self-host slice 1).
+// compiler. Concrete impls desugar (in the shared parser) to ordinary
+// receiver-method FuncDecls dispatched by the receiver's runtime shape.
+// Trait-BOUNDED generics are monomorphised in the parser's
+// `monomorphize_module` pass — cloned per concrete call-site type so a
+// method call on a `T`-typed value resolves to a concrete method (this
+// is required for primitive receivers, whose unboxed values carry no
+// shape pointer for dynamic dispatch). Exit codes are the behavioural
+// contract. See docs/TRAITS.md §7a.
 var traitsCases = []struct {
 	name string
 	src  string
@@ -52,12 +51,9 @@ var traitsCases = []struct {
 			"impl Area for Sq { function area(self: Self): i32 { return self.side * self.side; } } " +
 			"function describe[T: Area](v: T): i32 { return v.area(); } " +
 			"function main(): i32 { var s: Sq = Sq { side: 6 }; return describe(s); }", 36},
-	// The decisive case for std/test: ONE bounded-generic body called
-	// at TWO different concrete types. The self-host erases the type
-	// param, so a single emitted body must dispatch `v.show()` to the
-	// right impl per call — which works because the self-host resolves
-	// method calls dynamically by the receiver value's runtime type,
-	// not by a statically-monomorphised name.
+	// ONE bounded-generic body called at TWO different concrete types →
+	// monomorphised into two clones (describe__A, describe__B), each
+	// dispatching `v.show()` to its own impl.
 	{"trait-bounded-generic-multitype",
 		"trait Show { function show(self: Self): i32; } " +
 			"struct A { x: i32 } struct B { y: i32 } " +
@@ -65,6 +61,24 @@ var traitsCases = []struct {
 			"impl Show for B { function show(self: Self): i32 { return self.y; } } " +
 			"function describe[T: Show](v: T): i32 { return v.show(); } " +
 			"function main(): i32 { var a: A = A { x: 7 }; var b: B = B { y: 4 }; return describe(a) + describe(b); }", 11},
+	// Primitive receiver through an erased bounded generic — the case
+	// that crashed before monomorphisation (the dynamic shape-pointer
+	// dispatch can't read a tag off an unboxed i32). The pass clones
+	// `same` -> `same__i32` so the receiver's static type is concrete.
+	{"trait-bounded-generic-primitive",
+		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
+			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
+			"function same[T: Eq](a: T, b: T): i32 { if (a.eq(b)) { return 1; } return 0; } " +
+			"function main(): i32 { var n: i32 = 5; return same(n, 5) + same(n, 6); }", 1},
+	// One bounded generic instantiated at BOTH a primitive and a struct
+	// in the same program — two distinct clones.
+	{"trait-bounded-generic-mixed",
+		"trait Sized { function sz(self: Self): i32; } " +
+			"struct Boxx { v: i32 } " +
+			"impl Sized for i32 { function sz(self: Self): i32 { return self; } } " +
+			"impl Sized for Boxx { function sz(self: Self): i32 { return self.v; } } " +
+			"function getsz[T: Sized](x: T): i32 { return x.sz(); } " +
+			"function main(): i32 { var b: Boxx = Boxx { v: 30 }; var n: i32 = 12; return getsz(n) + getsz(b); }", 42},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted
