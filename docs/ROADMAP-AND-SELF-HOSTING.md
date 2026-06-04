@@ -692,14 +692,27 @@ both ways: `TestSelfHostWasmComponentFull` feeds the Go backend's own core
 to `component_full` and asserts byte-equality + a matching `wasmtime` run
 (ok path `main()==0` → exit 0; err path → exit 1).
 
-The remaining gap to fully self-hosted components is the **core's entry
-shape**: `component_full` needs a core exporting `_lang_run` (the preview2
-run entry), but the self-host core encoder still emits the preview1
-command shape (`_start` → `proc_exit(main())`). So the last component
-slice is shifting the core's entry/I/O from preview1 to the preview2
-`run` / `wasi:cli` shape in `wasm.fern` — a sizeable change on the order
-of the core encoder itself — after which `component_full` wraps the
-self-host's *own* core end-to-end.
+Slice C3 closed the loop for **no-I/O programs**: `wasm.fern` gained
+`emit_module_run` (alongside `emit_module`), which emits the Component
+*run* core — no preview1 scaffold, exporting `main` and `_lang_run`
+(`(i32.eqz (i32.eqz (call $main)))`, so `main()==0` → ok). For programs
+that use no WASI I/O the run core is import-free, so a core-instance can
+`instantiate` it with no args and `component_full` wraps it directly.
+This makes the whole pipeline self-hosted end to end: **source →
+`emit_module_run` (preview2 core WAT) → `emit_binary` (core) →
+`component_full` (component)**, producing a `wasi:cli/run@0.2.0` component
+`wasmtime` runs to the right result (`TestSelfHostWasmComponentEndToEnd`:
+ok path `main()==0` → exit 0; err path → exit 1; over `return 0` /
+`return 42` / `x-y` / `n*7`). The `emit_module` refactor (a shared
+`emit_module_mode`) is additive — the preview1 command path is unchanged
+and all the core-module suites stay green.
+
+The one remaining piece is **I/O in components**: the run core is
+import-free only because no-I/O programs emit no `fd_write`/preview1
+imports. A program that prints / reads files still needs the preview1→
+preview2 I/O shift (`wasi:cli/stdout`, `wasi:filesystem`, …) — the
+genuinely large remaining backend work, after which `component_full`
+wraps *any* self-host core.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature

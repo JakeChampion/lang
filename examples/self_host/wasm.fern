@@ -5332,7 +5332,23 @@ function module_uses_tostring(mod: parser.Module): boolean {
 // and a `_start` that calls `proc_exit(main())`. A program with no
 // `main` function (bare top-level statements) synthesises one from the
 // module's top statements.
+// emit_module emits the default WASI-preview1 *command* core module
+// (`_start` → `proc_exit(main())`, exit code = main()'s value).
 pub function emit_module(mod: parser.Module): string {
+    return emit_module_mode(mod, false);
+}
+
+// emit_module_run emits the Component-Model *run* core module: no preview1
+// scaffold, exporting `main` and `_lang_run` (`() -> i32`, 0 = ok). It is
+// the core component_full wraps into a `wasi:cli/run` component. Valid for
+// programs that use no WASI I/O (otherwise the core would import preview1
+// functions the component can't satisfy — that needs the preview2 I/O
+// codegen).
+pub function emit_module_run(mod: parser.Module): string {
+    return emit_module_mode(mod, true);
+}
+
+function emit_module_mode(mod: parser.Module, component: boolean): string {
     // Intern every string literal in the module into the data section.
     var tab: StrTable = new_str_table();
     tab = collect_strings_stmts(mod.top_stmts, tab);
@@ -5365,8 +5381,13 @@ pub function emit_module(mod: parser.Module): string {
     var has_i64: boolean = module_uses_i64(mod);
 
     var out: string = "(module\n";
-    out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
-    out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+    // Component-run cores are import-free (no preview1 entry / output), so
+    // a core-instance can `instantiate` them with no args; preview1 command
+    // cores import proc_exit (for _start) + fd_write (for print/write).
+    if (!component) {
+        out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        out = out + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+    }
     // wasi imports must sit in the import section (before funcs).
     if (has_env) { out = out + env_helpers(); }
     if (has_random) { out = out + random_helpers(); }
@@ -5509,7 +5530,15 @@ pub function emit_module(mod: parser.Module): string {
         out = out + ")\n";
     }
 
-    out = out + "  (func $_start (call $proc_exit (call $main)))\n";
-    out = out + "  (export \"_start\" (func $_start)))\n";
+    if (component) {
+        // Component run entry: export main, and _lang_run = (main() == 0)
+        // mapped to the 0=ok / 1=err result the canon lift expects.
+        out = out + "  (export \"main\" (func $main))\n";
+        out = out + "  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
+        out = out + "  (export \"_lang_run\" (func $_lang_run)))\n";
+    } else {
+        out = out + "  (func $_start (call $proc_exit (call $main)))\n";
+        out = out + "  (export \"_start\" (func $_start)))\n";
+    }
     return out;
 }
