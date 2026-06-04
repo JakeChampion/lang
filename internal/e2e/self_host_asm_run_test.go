@@ -121,6 +121,12 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, "", ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, "", ""},
 		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, "", ""},
+		// if-expressions — desugar to an immediately-invoked closure.
+		{"if-expr-true", "function main(): i32 { var x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, "", ""},
+		{"if-expr-capture", "function main(): i32 { var n: i32 = 10; var x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, "", ""},
+		{"if-expr-else-if", "function main(): i32 { var n: i32 = 2; var x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, "", ""},
+		{"direct-iife", "function main(): i32 { return (function(): i32 { return 3; })(); }", 3, "", ""},
+		{"iife-with-args", "function main(): i32 { return (function(a: i32, b: i32): i32 { return a + b; })(4, 5); }", 9, "", ""},
 		{"hello-world", "print(\"Hello, world!\"); return 0;", 0, "Hello, world!\n", ""},
 		{"print-twice", "print(\"line 1\"); print(\"line 2\"); return 0;", 0, "line 1\nline 2\n", ""},
 		{"print-then-return", "print(\"out\"); return 42;", 42, "out\n", ""},

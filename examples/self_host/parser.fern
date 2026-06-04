@@ -652,6 +652,17 @@ function parse_primary(p: Par): ExprResult {
                 p = lblk.par;
                 return parse_postfix(p, e_lambda(params, lret, lblk.body));
             }
+            if (x.name == "if") {
+                // if-expression in value position: desugar to an
+                // immediately-invoked closure (see parse_if_chain). Route
+                // through parse_postfix so `(if …).method()` chains.
+                var ic: IfChain = parse_if_chain(p);
+                var no_params: ParamDecl[] = [];
+                var lam_body: Stmt[] = [ic.stmt];
+                var no_args: Expr[] = [];
+                var iife: Expr = e_call(e_lambda(no_params, ic.rt, lam_body), no_args);
+                return parse_postfix(ic.par, iife);
+            }
             return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
         lexer.TokIdent(x) => {
@@ -878,6 +889,64 @@ function parse_binary(p: Par, min_prec: i32): ExprResult {
 
 function parse_expr(p: Par): ExprResult {
     return parse_pipe(p);
+}
+
+// IfChain carries a parsed if-expression chain: the StmtIf (whose arms
+// `return` the branch expressions) plus a return-type tag for the IIFE.
+pub struct IfChain { par: Par, stmt: Stmt, rt: string }
+
+// if_expr_rt picks a return-type tag for the if-expression's IIFE from
+// the then-branch's shape. The IIFE value itself is always correct (an
+// 8-byte slot); this tag only labels the result for the rare case of
+// dispatching a method directly on an unannotated if-expression.
+function if_expr_rt(e: Expr): string {
+    match (e) {
+        ExprString(_) => { return "string"; },
+        ExprBool(_) => { return "bool"; },
+        ExprNumber(n) => {
+            if (n.is_float) { return "f64"; }
+            return "i32";
+        },
+        _ => { return "i32"; }
+    }
+}
+
+// parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
+// chains, via recursion through the else arm) into a StmtIf whose arms
+// `return` the branch expressions. parse_primary wraps the result in an
+// IIFE `(function(): RT { <stmt> })()`, so it lowers to the ExprCall +
+// ExprLambda the rest of the pipeline already handles — no new AST node,
+// so every backend supports if-expressions at once. The IIFE captures
+// any referenced locals automatically (the lambda machinery computes
+// captures). Mirrors the Go parser's parseIfExpr: then/else are single
+// expressions and a final `else` is required (the if-expression is total).
+function parse_if_chain(p: Par): IfChain {
+    p = p.advance();                              // `if`
+    if (p.peek_punct() == "(") { p = p.advance(); }
+    var condr: ExprResult = parse_expr(p);
+    p = condr.par;
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    if (p.peek_punct() == "{") { p = p.advance(); }
+    var thenr: ExprResult = parse_expr(p);
+    p = thenr.par;
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    var then_body: Stmt[] = [s_return(thenr.expr)];
+    var rt: string = if_expr_rt(thenr.expr);
+    if (p.peek_keyword() == "else") { p = p.advance(); }
+    var else_body: Stmt[] = [];
+    if (p.peek_keyword() == "if") {
+        // `else if (…) { … }` — the else arm is itself an if-chain.
+        var nested: IfChain = parse_if_chain(p);
+        p = nested.par;
+        else_body = [nested.stmt];
+    } else {
+        if (p.peek_punct() == "{") { p = p.advance(); }
+        var elser: ExprResult = parse_expr(p);
+        p = elser.par;
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        else_body = [s_return(elser.expr)];
+    }
+    return IfChain { par: p, stmt: s_if(condr.expr, then_body, else_body), rt: rt };
 }
 
 // pipe_prepend builds [head] ++ tail — the argument list for a piped
