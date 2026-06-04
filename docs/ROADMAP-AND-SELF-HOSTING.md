@@ -561,9 +561,24 @@ differential test (`TestSelfHostWasmBinary`): a program → WAT (existing
 emitter) → tokenize → parse → `emit_binary` → `.wasm`, asserting `wasmtime
 run prog.wasm` matches the WAT path's exit (and `wasm-tools validate`
 passes). Verified on `return 42`, arithmetic, locals, subtraction, and
-bitwise. Remaining: grow opcode coverage to full WAT parity (control flow,
-strings / memory load-store, structs, closures, maps), then wrap the core
-module in the `wasi:cli/run` / `wasi:http` component shapes.
+bitwise.
+
+Slice 4c grew the opcode coverage to **control flow + i32 memory**:
+`block` / `loop` / `if` (with `(result …)` blocktypes) / `br` / `br_if`,
+and `i32.load` / `store` / `load8_u` / `store8` (natural-alignment
+memargs). The interesting part is `br`/`br_if`: WAT uses named labels
+(`$brk`/`$cont`) but binary uses *relative depths*, so the encoder
+threads a control-frame stack (block/loop/if, including anonymous `if`
+frames) and resolves each label to its depth. This surfaced a sharp
+self-host bug — `arr.push` mutates the backing array in place when it has
+spare capacity, so pushing an `if` frame onto the enclosing loop's stack
+corrupted that loop's later `br` depths; fixed with a copy-on-push
+(`labels_push`). `TestSelfHostWasmBinary` now also covers while-sum,
+if-then, return-in-if-in-loop, break/continue, short-circuit `&&`, and
+nested loops — each binary module matching the WAT path. Remaining: the
+string / struct / closure / map runtime opcodes (the string helpers pull
+in further ops), then wrap the core module in the `wasi:cli/run` /
+`wasi:http` component shapes.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
