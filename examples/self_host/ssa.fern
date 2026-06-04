@@ -568,8 +568,218 @@ pub function build_func(fd: parser.FuncDecl): BResult {
     return BResult { func: fout, ok: true };
 }
 
+// ---- optimisation passes -----------------------------------------------
+// optimize runs the SSA cleanup pipeline: copy-propagation removes the
+// alias `copy` nodes the builder emits for every variable read; constant
+// folding collapses arithmetic on known constants; dead-code elimination
+// drops instructions whose results are never used. Each pass takes an
+// SFunc and returns a semantically equivalent SFunc — verified by the
+// interpreter producing the same result before and after (the e2e test
+// runs every program with and without -opt and asserts identical output).
+
+pub function optimize(f: SFunc): SFunc {
+    f = copy_propagate(f);
+    f = const_fold(f);
+    f = dead_code_elim(f);
+    return f;
+}
+
+// zeros returns an n-long i32 array of 0s (scratch flag/value tables).
+function zeros(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.push(0); i = i + 1; }
+    return out;
+}
+
+function rewrite_args(ins: SInst, resolved: i32[]): SInst {
+    var na: i32[] = [];
+    var i: i32 = 0;
+    while (i < ins.args.len()) { na = na.push(resolved[ins.args[i]]); i = i + 1; }
+    return SInst { kind: ins.kind, result: ins.result, args: na, imm: ins.imm, str: ins.str };
+}
+function rewrite_term(t: STerm, resolved: i32[]): STerm {
+    if (t.kind == "ret") { return t_ret(resolved[t.value]); }
+    if (t.kind == "brif") { return t_brif(resolved[t.cond], t.t, t.f); }
+    return t;
+}
+
+// copy_propagate threads every operand through the chain of `copy`
+// aliases to its real definition, then deletes the copy instructions.
+function copy_propagate(f: SFunc): SFunc {
+    // ct[i] = the value a `copy` at id i aliases, or -1 if id i is not a copy.
+    var ct: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { ct = ct.push(0 - 1); i = i + 1; }
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind == "copy") { ct = env_set_at(ct, ins.result, ins.args[0]); }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    // resolved[i] = chase ct until a non-copy definition.
+    var resolved: i32[] = [];
+    i = 0;
+    while (i < f.nvals) {
+        var v: i32 = i;
+        var guard: i32 = 0;
+        while (ct[v] >= 0 && guard < 1000000) { v = ct[v]; guard = guard + 1; }
+        resolved = resolved.push(v);
+        i = i + 1;
+    }
+    // Rewrite operands through `resolved` and drop the copy nodes.
+    var nblocks: SBlock[] = [];
+    bi = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var ninsts: SInst[] = [];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind != "copy") { ninsts = ninsts.push(rewrite_args(ins, resolved)); }
+            k = k + 1;
+        }
+        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, resolved), preds: blk.preds });
+        bi = bi + 1;
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+}
+
+// is_div_by_zero guards the folder against evaluating a /0 or %0 at
+// compile time (which would crash the compiler) — such ops are left alone.
+function is_div_by_zero(op: string, rhs: i32): boolean {
+    if (rhs != 0) { return false; }
+    return op == "/" || op == "%";
+}
+
+// const_fold collapses binary / unary instructions whose operands are
+// known constants into a single const_int, iterating to a fixpoint so
+// folded results feed further folding.
+function const_fold(f: SFunc): SFunc {
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+        var cset: i32[] = zeros(f.nvals);
+        var cval: i32[] = zeros(f.nvals);
+        // Record current constants.
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                    cset = env_set_at(cset, ins.result, 1);
+                    cval = env_set_at(cval, ins.result, ins.imm);
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        // Fold const-operand arithmetic.
+        var nblocks: SBlock[] = [];
+        bi = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var ninsts: SInst[] = [];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                var folded: SInst = ins;
+                if (ins.kind == "binary" && cset[ins.args[0]] == 1 && cset[ins.args[1]] == 1) {
+                    var l: i32 = cval[ins.args[0]];
+                    var r: i32 = cval[ins.args[1]];
+                    if (!is_div_by_zero(ins.str, r)) {
+                        var noargs: i32[] = [];
+                        folded = SInst { kind: "const_int", result: ins.result, args: noargs, imm: eval_binary(ins.str, l, r), str: "" };
+                        changed = true;
+                    }
+                } else if (ins.kind == "unary" && cset[ins.args[0]] == 1) {
+                    var x: i32 = cval[ins.args[0]];
+                    var nv: i32 = 0;
+                    if (ins.str == "-") { nv = 0 - x; } else { if (x == 0) { nv = 1; } else { nv = 0; } }
+                    var noargs2: i32[] = [];
+                    folded = SInst { kind: "const_int", result: ins.result, args: noargs2, imm: nv, str: "" };
+                    changed = true;
+                }
+                ninsts = ninsts.push(folded);
+                k = k + 1;
+            }
+            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            bi = bi + 1;
+        }
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    }
+    return f;
+}
+
+// dead_code_elim drops pure instructions (const / binary / unary / phi)
+// whose result is never used, iterating to a fixpoint. Params and calls
+// are always kept (calls may have side effects).
+function dead_code_elim(f: SFunc): SFunc {
+    var changed: boolean = true;
+    var rounds: i32 = 0;
+    while (changed && rounds < 100000) {
+        changed = false;
+        rounds = rounds + 1;
+        // Mark every value referenced by a (currently present) instruction
+        // operand or terminator.
+        var used: i32[] = zeros(f.nvals);
+        var bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                var ai: i32 = 0;
+                while (ai < ins.args.len()) { used = env_set_at(used, ins.args[ai], 1); ai = ai + 1; }
+                k = k + 1;
+            }
+            if (blk.term.kind == "ret") { used = env_set_at(used, blk.term.value, 1); }
+            else if (blk.term.kind == "brif") { used = env_set_at(used, blk.term.cond, 1); }
+            bi = bi + 1;
+        }
+        // Drop unused pure instructions.
+        var nblocks: SBlock[] = [];
+        bi = 0;
+        while (bi < f.blocks.len()) {
+            var blk: SBlock = f.blocks[bi];
+            var ninsts: SInst[] = [];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || used[ins.result] == 1;
+                if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
+                k = k + 1;
+            }
+            nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+            bi = bi + 1;
+        }
+        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    }
+    return f;
+}
+
+// count_insts totals the instructions across all blocks (used by tests to
+// confirm the optimiser actually shrinks the IR).
+pub function count_insts(f: SFunc): i32 {
+    var n: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        n = n + f.blocks[bi].insts.len();
+        bi = bi + 1;
+    }
+    return n;
+}
+
 // ---- interpreter -------------------------------------------------------
-// eval_func runs an SFunc with i32 args, returning the value `return`ed.
 // It walks the CFG block by block, resolving phi nodes against the block we
 // arrived from (operand i of a phi flows in when control came from
 // block.preds[i]). A shared value table (id → i32) persists across blocks.

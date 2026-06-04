@@ -13,10 +13,16 @@ import (
 // lowers `main` to SSA via build_func, evaluates it with the SSA
 // interpreter, and returns the result as its exit code. Each case asserts
 // AST → SSA → eval reproduces the program's value — proving the IR + the
-// AST→SSA builder are semantics-preserving. Slice 3 covers straight-line
+// AST→SSA builder are semantics-preserving. The subset covers straight-line
 // i32 (params/locals/arith/cmp/bitwise/calls), if/else (CFG + merge phi),
-// and while loops (loop-header phi + back-edge). Constructs still outside
-// the subset (e.g. float literals) make build_func bail (exit 200).
+// and while loops (loop-header phi + back-edge). Constructs outside the
+// subset (e.g. float literals) make build_func bail (exit 200).
+//
+// Slice 4 adds the optimisation passes: every program is also run with
+// -opt and must evaluate to the same value (copy-propagation +
+// constant-folding + DCE are semantics-preserving), and a shrinks-ir
+// sub-test asserts the passes collapse foldable programs to far fewer
+// instructions via the driver's -count mode.
 //
 // The driver is built natively via the Go x86-64 backend and fed each
 // program on stdin; its exit code is the SSA-computed result.
@@ -75,17 +81,58 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
 
+	run := func(t *testing.T, src string, args ...string) int {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Stdin = strings.NewReader(src)
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("ssa_run did not exit normally for %q (args %v)", src, args)
+		}
+		return cmd.ProcessState.ExitCode()
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(bin)
-			cmd.Stdin = strings.NewReader(tc.src)
-			_ = cmd.Run()
-			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-				t.Fatalf("ssa_run did not exit normally for %q", tc.src)
-			}
-			if got := cmd.ProcessState.ExitCode(); got != tc.want {
+			// Raw SSA eval matches the program's value …
+			if got := run(t, tc.src); got != tc.want {
 				t.Errorf("SSA eval of %q = %d, want %d", tc.src, got, tc.want)
+			}
+			// … and the optimiser is semantics-preserving: -opt evals the
+			// same. (For out-of-subset bails the result is the same 200.)
+			if got := run(t, tc.src, "-opt"); got != tc.want {
+				t.Errorf("optimised SSA eval of %q = %d, want %d", tc.src, got, tc.want)
 			}
 		})
 	}
+
+	// The optimiser must actually shrink the IR: copy-propagation +
+	// constant-folding + DCE collapse these to far fewer instructions.
+	// `-count` returns the post-(opt) instruction total as the exit code.
+	t.Run("shrinks-ir", func(t *testing.T) {
+		shrink := []struct {
+			name    string
+			src     string
+			wantOpt int // exact instruction count after optimisation
+		}{
+			// 2 + 3*4 folds to a single const_int; everything else is dead.
+			{"fold-arith", "function main(): i32 { return 2 + 3 * 4; }", 1},
+			// Whole chain folds to one const; the unused var is DCE'd.
+			{"fold-chain", "function main(): i32 { var a = 2; var b = a + 3; var c = b * 10; return c; }", 1},
+			// Dead `var b = 99 * 99` removed; `a` folds to a const.
+			{"dce-unused", "function main(): i32 { var a = 1 + 2; var b = 99 * 99; return a; }", 1},
+		}
+		for _, sc := range shrink {
+			t.Run(sc.name, func(t *testing.T) {
+				raw := run(t, sc.src, "-count")
+				opt := run(t, sc.src, "-opt", "-count")
+				if opt != sc.wantOpt {
+					t.Errorf("%q: optimised inst count = %d, want %d", sc.src, opt, sc.wantOpt)
+				}
+				if opt >= raw {
+					t.Errorf("%q: optimiser did not shrink IR (raw=%d opt=%d)", sc.src, raw, opt)
+				}
+			})
+		}
+	})
 }
