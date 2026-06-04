@@ -1852,7 +1852,17 @@ func (b *builder) emitDeferCleanup() error {
 func (b *builder) computeFreeEligible() map[string]bool {
 	tainted := map[string]bool{}
 	for _, p := range b.fn.Params {
-		tainted[p.Name] = true
+		// `own` (consuming) params are OWNED by the callee — they're
+		// freeEligible (reclaimed / reused here) rather than borrowed, the
+		// reverse of the default. The caller transferred ownership (move-on-call
+		// + the E051 guard), so the callee is the sole owner; the rest of the
+		// escape analysis still re-taints an own param that escapes (stored /
+		// returned-as-alias), so an owned-but-escaping param leaks safely
+		// instead of double-freeing. Move-on-consume (passing it onward to
+		// another `own` param) skips its drop via computeMovedLocals.
+		if !p.Own {
+			tainted[p.Name] = true
+		}
 	}
 	// assigns[name] = list of RHS expressions ever written to it.
 	assigns := map[string][]ast.Expr{}
@@ -2113,6 +2123,30 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// literals are tainted above and skipped.
 			if ast.UseTwoWordStrings(b.ptrW) {
 				elig[v.Name] = true
+			}
+		}
+	}
+	// Owned (`own`) params get the SAME borrow-aware eligibility as an owned
+	// local — the callee reclaims them — but params aren't in info.Locals, so
+	// the loop above never reaches them. Add each untainted own param of a
+	// reclaimable type (the un-taint at the top kept them out of `tainted`; an
+	// own param that escapes was re-tainted and is skipped here).
+	for _, p := range b.fn.Params {
+		if !p.Own || tainted[p.Name] {
+			continue
+		}
+		switch t := p.Type.(type) {
+		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType:
+			elig[p.Name] = true
+		case ast.StructType:
+			if t.Name == "Map" {
+				elig[p.Name] = true
+			} else if _, isUser := b.info.Structs[t.Name]; isUser {
+				elig[p.Name] = true
+			}
+		case ast.StringType:
+			if ast.UseTwoWordStrings(b.ptrW) {
+				elig[p.Name] = true
 			}
 		}
 	}
@@ -2953,6 +2987,47 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			sawReturn = true
 		}
 	}
+
+	// Move-on-call: an `own` argument (one of THIS function's owned params)
+	// passed at its last use to an `own` PARAMETER of a callee is consumed —
+	// the callee now owns and drops it — so skip the caller's drop. There's no
+	// inc to elide (a call arg is passed without one), so only the exit-sweep /
+	// precise drop is suppressed via `moved`. Gated on the E051 guard, which is
+	// what guarantees an `own`-position arg is an owned, transferable value.
+	if len(b.info.OwnFuncs) > 0 {
+		ownParam := map[string]bool{}
+		for _, p := range b.fn.Params {
+			if p.Own {
+				ownParam[p.Name] = true
+			}
+		}
+		if len(ownParam) > 0 {
+			ast.Walk(b.fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.Call)
+				if !ok || call.Method != nil {
+					return true
+				}
+				id, ok := call.Callee.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				flags, isOwn := b.info.OwnFuncs[id.Name]
+				if !isOwn {
+					return true
+				}
+				for i := 0; i < len(call.Args) && i < len(flags); i++ {
+					if !flags[i] {
+						continue
+					}
+					if arg, ok := call.Args[i].(*ast.Ident); ok &&
+						ownParam[arg.Name] && identIdx[arg] == maxIdx[arg.Name] {
+						moved[arg.Name] = true
+					}
+				}
+				return true
+			})
+		}
+	}
 	return moved
 }
 
@@ -3494,6 +3569,23 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			continue
 		}
 		emitDec(slot, v.Type, b.freeEligible[v.Name], v.Name)
+	}
+	// Owned (`own`) params are reclaimed by the callee at exit, like an owned
+	// local — the borrow model sweeps only `var` locals, so they need an extra
+	// pass. A moved own param (passed onward to another `own` param) is already
+	// in `seen` (b.movedLocals) and skipped, so the value is freed exactly once
+	// at the end of the transfer chain; an own param that escaped is not
+	// freeEligible (re-tainted) and is likewise skipped.
+	for _, p := range b.fn.Params {
+		if !p.Own || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
+			continue
+		}
+		seen[p.Name] = true
+		slot, ok := b.locals[p.Name]
+		if !ok {
+			continue
+		}
+		emitDec(slot, p.Type, true, p.Name)
 	}
 }
 
@@ -10549,8 +10641,13 @@ func (b *builder) callBody(n *ast.Call) error {
 		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
-	for _, a := range n.Args {
-		if reclaimArgTemps {
+	// An `own` (consuming) parameter takes ownership of its argument, so the
+	// callee — not the caller — reclaims a fresh temp passed there. Suppress the
+	// stage-(b) post-call dec at those positions (else the temp is freed twice).
+	ownArgFlags := b.info.OwnFuncs[id.Name]
+	for ai, a := range n.Args {
+		toOwnParam := ai < len(ownArgFlags) && ownArgFlags[ai]
+		if reclaimArgTemps && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
 			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the

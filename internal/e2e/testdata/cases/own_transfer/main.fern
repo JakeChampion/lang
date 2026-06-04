@@ -1,0 +1,24 @@
+// Owned (`own`) parameter ownership transfer (Perceus consuming params): a
+// fresh array is transferred into an `own` parameter, threaded one hop, and
+// reclaimed by the final callee. The differential gates run this free-off vs
+// free-on AND reuse-off vs reuse-on; the result must be byte-identical,
+// proving the transfer (caller drop suppressed + callee reclaim) is balanced —
+// no double free, no use-after-free, no leak affecting the result.
+function consume(own xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
+function relay(own ys: i32[]): i32 { return consume(ys); }
+
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        acc = acc + relay([i, i + 1, i + 2]);   // fresh temp -> ys -> xs -> reclaimed
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    // consume = i + (i+1) + (i+2) = 3i+3; sum i=0..99 = 3*4950 + 300 = 15150
+    if (churn(100) != 15150) { return 99; }
+    return 0;
+}

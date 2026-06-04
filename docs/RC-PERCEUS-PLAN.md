@@ -1918,15 +1918,33 @@ reuse the argument. Sliced for risk:
     args OK) + the `E051` explanation file. Full checker + parser + non-e2e +
     e2e suites green (no behaviour change — `ownFuncs` is empty for every
     program that doesn't use `own`).
-  - **Slice B-codegen — ownership transfer (NEXT).** Un-taint `own` params in
-    `computeFreeEligible` (callee reclaims them); move-on-call at the caller
-    (the `moveSites` mechanism, a third site beside move-on-return /
-    move-on-alias). The drop obligation moves caller → callee. This is the
-    rc-correctness-sensitive slice (it changes WHO frees) — gated by the Slice A
-    + B static guarantees. Also needs owned MATCH-BINDINGS (a pointer payload of
-    an owned scrutinee is itself owned) so the recursive `map_inc(t)` shape — `t`
-    a binding — type-checks and transfers; that pairs naturally with Slice C's
-    reuse.
+  - **Slice B-codegen — ownership transfer. SHIPPED (gated on `own`).** The
+    callee reclaims its `own` params; the caller transfers ownership instead of
+    dropping. Four coordinated changes, all gated on the program declaring any
+    `own` function (`checker.Info.OwnFuncs`, exposed from the checker) so non-`own`
+    code is byte-identical:
+      1. `computeFreeEligible`: `own` params are no longer borrow-tainted, AND —
+         crucially — added to the eligibility result (params aren't in
+         `info.Locals`, so the normal elig loop skips them; the missing elig
+         entry, not the taint, was why a first attempt leaked).
+      2. The exit sweep gained an `own`-param pass (after the locals pass), so an
+         owned param is reclaimed at the callee's exit like an owned local; a
+         moved one (passed onward) is in `seen` and skipped.
+      3. `computeMovedLocals`: move-on-call — an `own` arg (this function's owned
+         param) passed at its last use to an `own` parameter is consumed by the
+         callee, so its caller-side drop is suppressed (`moved`; no inc to elide).
+      4. Stage-(b) post-call owned-temp reclaim is suppressed at `own`-arg
+         positions (the callee, not the caller, frees a fresh temp passed there).
+    The chain `[…] → relay(own) → consume(own)` frees the array exactly once at
+    `consume`. Tests: e2e `Test{X86_64,Arm64,WASM}OwnTransfer` (`fresh` temp
+    transfer, `chain` two-hop move-on-call — value-correct + 0 over-release) + a
+    wasm heap-bump bound (the transferred array is freed each turn, N=5000 ==
+    N=50000) + the `own_transfer` corpus fixture (free-on == free-off AND reuse-on
+    == reuse-off byte-identical, interp oracle). Full e2e (differential corpus +
+    both self-host gates) + non-e2e green — and non-`own` codegen is unchanged
+    (`OwnFuncs` empty ⇒ every branch is a no-op). Still missing for the recursive
+    `map`: owned MATCH-BINDINGS (a pointer payload of an owned scrutinee is itself
+    owned) — pairs with Slice C.
   - **Slice C — match-arm cons-cell reuse.** With the owned scrutinee now
     `freeEligible`, wire the 5d-ii hook (pair the dropped scrutinee box with a
     same-box-shape constructor in the arm) onto the reuse machinery from

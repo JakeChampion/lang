@@ -40,6 +40,12 @@ type Info struct {
 	VarTypes map[*ast.Var]ast.Type
 	Locals   map[*ast.FuncDecl][]*ast.Var
 	FuncSigs map[string]*ast.FuncType
+	// OwnFuncs maps a function name to its per-parameter `own` (owned /
+	// consuming) flags, for functions that have at least one owned parameter.
+	// The IR uses it to lower ownership transfer: a callee reclaims its `own`
+	// params, and a caller moves an owned argument into them instead of
+	// dropping it. Empty when no function uses `own`.
+	OwnFuncs map[string][]bool
 	// Structs maps a struct name to its declaration (which carries the
 	// ordered field list — codegen looks up field offsets here).
 	Structs map[string]*ast.StructDecl
@@ -1922,6 +1928,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			c.ownFuncs[fn.Name] = flags
 		}
 	}
+	c.info.OwnFuncs = c.ownFuncs // expose to the IR for ownership-transfer lowering
 
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
