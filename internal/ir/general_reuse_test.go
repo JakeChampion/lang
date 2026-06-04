@@ -110,6 +110,60 @@ function main(): i32 {
 	}
 }
 
+// Cross-block in a LOOP body: a loop-body-level `a` (dead after the inner if)
+// is reused by `b` nested in the if — fires every iteration.
+func TestGeneralReuseFiresCrossBlockInLoop(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var a: Point = Point { x: i, y: i + 1 };
+        var s: i32 = a.x + a.y;          // a's last use within the loop body
+        if (s > 0) {
+            var b: Point = Point { x: s, y: i };   // reuses a's box
+            acc = acc + b.x + b.y;
+        }
+        i = i + 1;
+    }
+    return acc;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("cross-block reuse should fire in the loop body (loop-local a -> nested b), got %d", got)
+	}
+}
+
+// Cross-block reuse composes at multiple nesting levels: with an outer body
+// `a` and a loop-body `m` both dead and eligible, the nested `c` reuses the
+// CLOSER `m` (innermost-ancestor preference), and the now-unclaimed loop `m`
+// in turn reuses the outer `a` — TWO independent reuse sites. (If c had instead
+// grabbed `a`, `m` would have no source and only one site would fire, so the
+// count pins the innermost-first choice.)
+func TestGeneralReuseCrossBlockComposesLevels(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 1, y: 2 };
+    var sa: i32 = a.x + a.y;          // a dead from here (body level)
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var m: Point = Point { x: i, y: i };
+        var sm: i32 = m.x + m.y;      // m dead from here (loop level)
+        if (sm >= 0) {
+            var c: Point = Point { x: sa + sm, y: i };
+            acc = acc + c.x + c.y;
+        }
+        i = i + 1;
+    }
+    return acc;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 2 {
+		t.Errorf("expected two reuse sites (c<-m innermost, m<-a), got %d", got)
+	}
+}
+
 // Skips: `a` is STILL LIVE at b's construction (read after) — no pairing.
 func TestGeneralReuseSkipsLiveSource(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
