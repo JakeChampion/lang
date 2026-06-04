@@ -211,8 +211,10 @@ pub function emit_func(f: ssa.SFunc): string {
 }
 
 // emit_program frames the whole module: each function body, then `_start`
-// dispatching into main().
-pub function emit_program(funcs: ssa.SFunc[]): string {
+// dispatching into main(). The use_regalloc flag is accepted for parity
+// with the arm64 backend; the x86-64 register allocator is a later slice,
+// so this backend currently always spills.
+pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n    .text\n";
     var i: i32 = 0;
     while (i < funcs.len()) {

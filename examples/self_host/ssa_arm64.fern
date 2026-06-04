@@ -42,6 +42,31 @@ function slot(v: i32): string {
 // argreg maps a parameter index to its AAPCS64 32-bit argument register.
 function argreg(i: i32): string { return "w" + i32_to_string(i); }
 
+// regname maps an allocatable register index to its AArch64 32-bit name.
+// We use the caller-saved temporaries w12..w15 (w9/w10/w11 are reserved as
+// computation scratch); register-allocated values never live across a call
+// (regalloc forces those to spill), so no save/restore is needed.
+function regname(k: i32): string {
+    if (k == 0) { return "w12"; }
+    if (k == 1) { return "w13"; }
+    if (k == 2) { return "w14"; }
+    return "w15";
+}
+// NREGS is the size of that allocatable set.
+function nregs(): i32 { return 4; }
+
+// load_op moves SSA value v into scratch register `sc` (reg→reg move when
+// v is allocated, else a load from its stack slot).
+function load_op(reg_of: i32[], v: i32, sc: string, out: string): string {
+    if (reg_of[v] >= 0) { return out + "    mov " + sc + ", " + regname(reg_of[v]) + "\n"; }
+    return out + "    ldr " + sc + ", " + slot(v) + "\n";
+}
+// store_res moves scratch register `sc` into SSA value v's location.
+function store_res(reg_of: i32[], v: i32, sc: string, out: string): string {
+    if (reg_of[v] >= 0) { return out + "    mov " + regname(reg_of[v]) + ", " + sc + "\n"; }
+    return out + "    str " + sc + ", " + slot(v) + "\n";
+}
+
 function block_index(f: ssa.SFunc, id: i32): i32 {
     var i: i32 = 0;
     while (i < f.blocks.len()) {
@@ -97,40 +122,40 @@ function emit_binary(op: string, out: string): string {
     return out;
 }
 
-function emit_inst(ins: ssa.SInst, out: string): string {
+function emit_inst(ins: ssa.SInst, reg_of: i32[], out: string): string {
     if (ins.kind == "const_int" || ins.kind == "const_bool") {
         out = emit_const(ins.imm, "w9", out);
-        return out + "    str w9, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "w9", out);
     }
     if (ins.kind == "copy") {
-        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
-        return out + "    str w9, " + slot(ins.result) + "\n";
+        out = load_op(reg_of, ins.args[0], "w9", out);
+        return store_res(reg_of, ins.result, "w9", out);
     }
     if (ins.kind == "binary") {
-        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
-        out = out + "    ldr w10, " + slot(ins.args[1]) + "\n";
+        out = load_op(reg_of, ins.args[0], "w9", out);
+        out = load_op(reg_of, ins.args[1], "w10", out);
         out = emit_binary(ins.str, out);
-        return out + "    str w9, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "w9", out);
     }
     if (ins.kind == "unary") {
-        out = out + "    ldr w9, " + slot(ins.args[0]) + "\n";
+        out = load_op(reg_of, ins.args[0], "w9", out);
         if (ins.str == "-") { out = out + "    neg w9, w9\n"; }
         else { out = out + "    cmp w9, #0\n    cset w9, eq\n"; }
-        return out + "    str w9, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "w9", out);
     }
     if (ins.kind == "call") {
         var i: i32 = 0;
         while (i < ins.args.len() && i < 8) {
-            out = out + "    ldr " + argreg(i) + ", " + slot(ins.args[i]) + "\n";
+            out = load_op(reg_of, ins.args[i], argreg(i), out);
             i = i + 1;
         }
         out = out + "    bl __fn_" + ins.str + "\n";
-        return out + "    str w0, " + slot(ins.result) + "\n";
+        return store_res(reg_of, ins.result, "w0", out);
     }
     return out;
 }
 
-function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string {
+function emit_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, tgt: i32, out: string): string {
     var ti: i32 = block_index(f, tgt);
     if (ti < 0) { return out; }
     var tb: ssa.SBlock = f.blocks[ti];
@@ -139,8 +164,8 @@ function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string 
     while (k < tb.insts.len()) {
         var ins: ssa.SInst = tb.insts[k];
         if (ins.kind == "phi") {
-            out = out + "    ldr w9, " + slot(ins.args[sl]) + "\n";
-            out = out + "    str w9, " + slot(ins.result) + "\n";
+            out = load_op(reg_of, ins.args[sl], "w9", out);
+            out = store_res(reg_of, ins.result, "w9", out);
         }
         k = k + 1;
     }
@@ -151,27 +176,27 @@ function blk_label(name: string, id: i32): string {
     return ".L_" + name + "_" + i32_to_string(id);
 }
 
-function emit_term(f: ssa.SFunc, blk: ssa.SBlock, out: string): string {
+function emit_term(f: ssa.SFunc, reg_of: i32[], blk: ssa.SBlock, out: string): string {
     var t: ssa.STerm = blk.term;
     if (t.kind == "ret") {
-        out = out + "    ldr w0, " + slot(t.value) + "\n";
+        out = load_op(reg_of, t.value, "w0", out);
         out = out + "    mov sp, x29\n";
         out = out + "    ldp x29, x30, [sp], #16\n";
         return out + "    ret\n";
     }
     if (t.kind == "br") {
-        out = emit_phi_moves(f, blk.id, t.target, out);
+        out = emit_phi_moves(f, reg_of, blk.id, t.target, out);
         return out + "    b " + blk_label(f.name, t.target) + "\n";
     }
     if (t.kind == "brif") {
-        out = out + "    ldr w9, " + slot(t.cond) + "\n";
+        out = load_op(reg_of, t.cond, "w9", out);
         out = out + "    cbnz w9, " + blk_label(f.name, t.t) + "\n";
         return out + "    b " + blk_label(f.name, t.f) + "\n";
     }
     return out;
 }
 
-pub function emit_func(f: ssa.SFunc): string {
+pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var out: string = "__fn_" + f.name + ":\n";
     out = out + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
     var frame: i32 = f.nvals * 8;
@@ -179,7 +204,7 @@ pub function emit_func(f: ssa.SFunc): string {
     if (frame > 0) { out = out + "    sub sp, sp, #" + i32_to_string(frame) + "\n"; }
     var p: i32 = 0;
     while (p < f.nparams) {
-        out = out + "    str " + argreg(p) + ", " + slot(p) + "\n";
+        out = store_res(reg_of, p, argreg(p), out);
         p = p + 1;
     }
     var bi: i32 = 0;
@@ -190,21 +215,23 @@ pub function emit_func(f: ssa.SFunc): string {
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                out = emit_inst(ins, out);
+                out = emit_inst(ins, reg_of, out);
             }
             k = k + 1;
         }
-        out = emit_term(f, blk, out);
+        out = emit_term(f, reg_of, blk, out);
         bi = bi + 1;
     }
     return out;
 }
 
-pub function emit_program(funcs: ssa.SFunc[]): string {
+pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n    .text\n";
     var i: i32 = 0;
     while (i < funcs.len()) {
-        out = out + emit_func(funcs[i]);
+        var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
+        if (use_regalloc) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
+        out = out + emit_func(funcs[i], reg_of);
         i = i + 1;
     }
     out = out + "_start:\n";
