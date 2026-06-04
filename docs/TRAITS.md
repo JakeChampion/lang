@@ -426,13 +426,27 @@ regressing the self-host gates. It needs traits in two slices:
   `Box[string]`) still needs monomorphisation — the self-host's dynamic
   dispatch can't read a shape off an unboxed primitive or a
   length-prefixed string, exactly the boundary the bounded-generic
-  monomorphiser (slice 2) handles for plain generic functions. Extending
-  the monomorphiser to clone generic *receiver* methods per
-  instantiation is the next sub-slice. Tested via
-  `trait-parametric-impl-struct-elem` on both backends; the self-host
-  fixpoint + stdtest gates confirm the compiler still builds itself.
-  (`@derive` is a Go-checker feature with no self-host equivalent yet,
-  so generic-`@derive` parity waits on a self-host derive pass.)
+  monomorphiser (slice 2) handles for plain generic functions. Tested
+  via `trait-parametric-impl-struct-elem` on both backends; the
+  self-host fixpoint + stdtest gates confirm the compiler still builds
+  itself.
+
+  **Boundary for primitive/string `T` (investigated, deferred):**
+  completing this is *not* just "clone the generic receiver method." The
+  method body does `self.v.m()` where the field `v` is declared `T`; to
+  dispatch that statically for `Box[i32]` the compiler must know
+  `self.v` is `i32` — i.e. it must monomorphise the generic STRUCT so the
+  instantiated field types are concrete (`Box[i32]` becomes a `Box__i32`
+  whose `v: i32`). The self-host deliberately ERASES generic structs
+  (every `Box[…]` shares one shape; fields are uniform 8-byte slots), so
+  neither the monomorphiser nor the emitter tracks a generic struct's
+  field types under instantiation. Generic-struct monomorphisation is a
+  large departure from that erasure model; it is the real prerequisite
+  for primitive/string-`T` parametric impls (and would also be the
+  vehicle for generic `@derive`, which has no self-host equivalent at
+  all). Deferred until a use case justifies the architectural cost — the
+  struct-typed-`T` slice above is the natural milestone within the
+  erasure model.
 
 ## 7b. The `std/test` collapse (landed)
 
