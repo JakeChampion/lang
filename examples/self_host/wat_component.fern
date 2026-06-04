@@ -1,0 +1,37 @@
+// examples/self_host/wat_component.fern — Component-Model wrapping for the
+// self-hosted binary wasm backend. The core-module encoder (wat_emit_bin)
+// produces a WASI-preview1 core module; this wraps it in the binary
+// Component-Model envelope. First slice: the component preamble + embedding
+// the core module as a component core-module section, which `wasm-tools`
+// validates as a `(component (core module …))`.
+//
+// A component's preamble is the wasm magic followed by `0d 00 01 00`
+// (version 13, layer 1) — distinct from a core module's `01 00 00 00` —
+// and its sections use the component section ids (1 = an embedded core
+// module, whose body is that module's own bytes).
+//
+// Later slices add the core-instance, the `canon lift`, and the
+// `wasi:cli/run` instance export. Depends on leb128.fern + wat_encode.fern
+// (wcat / wsection) but is otherwise import-free.
+
+// component_preamble: "\0asm" + component version (13) / layer (1).
+function component_preamble(): i32[] {
+    var o: i32[] = [];
+    o = o.push(0);
+    o = o.push(97);
+    o = o.push(115);
+    o = o.push(109);
+    o = o.push(13);
+    o = o.push(0);
+    o = o.push(1);
+    o = o.push(0);
+    return o;
+}
+
+// component_wrap embeds a core module's bytes in a component as a
+// core-module section (component section id 1), returning the component
+// binary. This is the structural envelope the canon / wasi layers build on.
+function component_wrap(core: i32[]): i32[] {
+    var o: i32[] = component_preamble();
+    return wcat(o, wsection(1, core));
+}
