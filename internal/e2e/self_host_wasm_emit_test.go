@@ -701,6 +701,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// trailing `[]` is consumed.
 		{"tuple-array-annotated", "function main(): i32 { var ps: (i32, i32)[] = [(1, 2), (3, 4)]; var t = ps[1]; return t.0 + t.1; }", 7, ""},
 		{"tuple-array-for", "function main(): i32 { var ps: (i32, i32)[] = [(10, 20), (30, 40)]; var s: i32 = 0; for p in ps { s = s + p.0; } return s; }", 40, ""},
+		// Closure arrays `(() => R)[]`: a closure read from an `fn[]` element
+		// (`var c = fns[i]` / `for f in fns`) is itself callable via
+		// call_indirect. (Needs the paren-fn-type parse + fn[]-element typing.)
+		{"closure-array-call", "function mk(s: i32): () => i32 { return function(): i32 { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(42), mk(9)]; var c = fns[0]; return c(); }", 42, ""},
+		{"closure-array-for", "function mk(s: i32): () => i32 { return function(): i32 { return s; }; } function main(): i32 { var fns: (() => i32)[] = [mk(10), mk(20), mk(12)]; var s: i32 = 0; for f in fns { s = s + f(); } return s; }", 42, ""},
+		{"closure-array-arg", "function adder(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var fs: ((i32) => i32)[] = [adder(10), adder(20)]; var g = fs[1]; return g(22); }", 42, ""},
 		{"method-chain-struct", "struct Acc { total: i32 } function (a: Acc) add(n: i32): Acc { return Acc { total: a.total + n }; } function main(): i32 { var r = Acc { total: 0 }.add(5).add(10).add(20); print_int(r.total); return 0; }", 0, "35"},
 		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
 
