@@ -86,6 +86,8 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		// The headline: a real i32_to_string (mod/div + digit chain + concat)
 		// printing formatted numbers — positive, negative, and zero.
 		{"print-number", i32ToString + " function main(): i32 { print(i32_to_string(12345)); print(\"\\n\"); print(i32_to_string(0 - 67)); print(\"\\n\"); print(i32_to_string(0)); print(\"\\n\"); return 0; }", "12345\n-67\n0\n"},
+		// eprint goes to stderr, so only the print() output lands on stdout.
+		{"eprint-separate", "function main(): i32 { print(\"OK\"); eprint(\"ERR\"); print(\"!\"); return 0; }", "OK!"},
 	}
 
 	run := func(t *testing.T, asm []byte, gcc string, pie bool, runner func(string) *exec.Cmd) string {

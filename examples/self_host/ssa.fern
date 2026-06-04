@@ -327,13 +327,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // print(s) — write the string's bytes to stdout. A
                     // dedicated op (the backends emit a write-syscall helper);
                     // not a generic call, so calls_all_known doesn't bail.
-                    if (cid.name == "print" && c.args.len() == 1) {
+                    // print → stdout (fd 1), eprint → stderr (fd 2); the fd
+                    // rides in the op's imm.
+                    if ((cid.name == "print" || cid.name == "eprint") && c.args.len() == 1) {
                         s = build_expr(c.args[0], s);
                         if (!s.ok) { return s; }
                         var sv: i32 = s.cur_id();
+                        var fd: i32 = 1;
+                        if (cid.name == "eprint") { fd = 2; }
                         s = s.fresh();
                         var pa: i32[] = [sv];
-                        return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: 0, str: "" });
+                        return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
                     }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
