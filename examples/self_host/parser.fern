@@ -964,6 +964,9 @@ pub struct PatternResult { par: Par, pattern: Pattern }
 
 function parse_pattern(p: Par): PatternResult {
     var name: string = p.peek_ident();
+    // `true` / `false` arms (and other keyword-named patterns) arrive as
+    // keyword tokens, not idents — fall back to the keyword text.
+    if (name.len() == 0) { name = p.peek_keyword(); }
     if (name == "_") {
         p = p.advance();
         return PatternResult { par: p, pattern: p_wildcard() };

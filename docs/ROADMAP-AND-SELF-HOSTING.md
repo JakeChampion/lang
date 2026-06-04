@@ -406,7 +406,19 @@ right operand runs only when needed; (3) **nested lambdas** lost the inner
 body because the shared lamdefs cell was read before the recursive
 `emit_lambda` appended to it — fixed by emitting into a temp first.
 
-Gated by 455 differential cases as of this writing. What remains for the
+A ninth pass caught a **boolean `match`** correctness bug: `match (b) {
+true => …, false => … }` always took the first arm. Two layers were
+wrong — the parser parsed the `true` / `false` *keywords* as
+`PatVariant{type_name:""}` (`peek_ident` returns `""` for keywords), and
+no backend emitted a comparison for those patterns. Fixed in the parser
+(a `peek_keyword` fallback so the arms become `PatVariant{type_name:
+"true"/"false"}`) and in every backend: wasm (`br_if` on `i32.eqz` /
+the raw value), x86-64 + arm64 asm (`test` / `cmp #0` + branch to the
+next arm), and the interpreter (compare against the `VBool` payload).
+Verified fixpoint-clean — the compiler's own source doesn't use
+bool-`match`, so the parser / native changes stay byte-identical.
+
+Gated by 460 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

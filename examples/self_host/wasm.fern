@@ -3377,7 +3377,15 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         var sid: i32 = struct_id(st.cx.structs, pv.type_name);
                         var nlabel: string = "$marm_" + i32_to_string(id) + "_" + i32_to_string(i);
                         st = st.w("    (block " + nlabel + "\n");
-                        if (tag >= 0) {
+                        // `match (b) { true => …, false => … }`: the
+                        // scrutinee is the bool value itself (not a tag box),
+                        // so compare it directly. `true` skips when zero,
+                        // `false` skips when non-zero.
+                        if (pv.type_name == "true") {
+                            st = st.w("    (br_if " + nlabel + " (i32.eqz (local.get " + mv + ")))\n");
+                        } else if (pv.type_name == "false") {
+                            st = st.w("    (br_if " + nlabel + " (local.get " + mv + "))\n");
+                        } else if (tag >= 0) {
                             st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + i32_to_string(tag) + ")))\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
                                 st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const 4))))\n");

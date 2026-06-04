@@ -259,6 +259,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"opt-string-write", "function name(): Option[i32] { return Some(0); } function main(): i32 { match (name()) { Some(v) => { write(\"got\"); return 0; }, None => { write(\"none\"); return 0; } } return 1; }", 0, "got"},
 		{"opt-in-if", "function lookup(k: i32): Option[i32] { if (k == 1) { return Some(100); } return None; } function main(): i32 { var sum = 0; match (lookup(1)) { Some(v) => { sum = sum + v; }, None => {} } match (lookup(2)) { Some(v) => { sum = sum + v; }, None => { sum = sum + 1; } } return sum; }", 101, ""},
 		{"opt-nested-match", "function a(): Option[i32] { return Some(1); } function b(): Option[i32] { return Some(2); } function main(): i32 { match (a()) { Some(x) => { match (b()) { Some(y) => { return x + y + 39; }, None => { return 0; } } }, None => { return 0; } } return 1; }", 42, ""},
+		// boolean `match`: `true`/`false` arms must compare the scrutinee,
+		// not unconditionally take the first arm (regression: harden9).
+		{"match-bool-true", "function main(): i32 { var b = true; match (b) { true => { return 8; }, false => { return 7; } } return 1; }", 8, ""},
+		{"match-bool-false", "function main(): i32 { var b = false; match (b) { true => { return 7; }, false => { return 8; } } return 1; }", 8, ""},
+		{"match-bool-cmp", "function main(): i32 { var x = 5; match (x > 3) { true => { return 42; }, false => { return 0; } } return 1; }", 42, ""},
+		{"match-bool-cmp-false", "function main(): i32 { var x = 2; match (x > 3) { true => { return 0; }, false => { return 42; } } return 1; }", 42, ""},
+		{"match-bool-nested", "function main(): i32 { var a = true; var b = false; match (a) { true => { match (b) { true => { return 1; }, false => { return 123; } } }, false => { return 0; } } return 1; }", 123, ""},
 		// `?` try-operator: unwrap Some/Ok, else early-return None/Err.
 		{"try-some", "function inner(): Option[i32] { return Some(41); } function f(): Option[i32] { var v = inner()?; return Some(v + 1); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } return 1; }", 42, ""},
 		{"try-none-propagates", "function inner(): Option[i32] { return None; } function f(): Option[i32] { var v = inner()?; return Some(v + 100); } function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } return 1; }", 7, ""},

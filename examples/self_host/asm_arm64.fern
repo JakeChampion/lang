@@ -5801,7 +5801,17 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
                 };
                 match (arm.pattern) {
                     parser.PatVariant(pv) => {
-                        if (pv.type_name == "Some" || pv.type_name == "None"
+                        if (pv.type_name == "true" || pv.type_name == "false") {
+                            // `match (b) { true => …, false => … }`: the
+                            // scrutinee is the bool itself (0/1), not a box.
+                            s = s.frame_ldr("x0", scrut_off);
+                            s = s.write("    cmp x0, #0\n");
+                            if (pv.type_name == "true") {
+                                s = s.write("    b.eq .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                            } else {
+                                s = s.write("    b.ne .Lmatch_next_" + i32_to_string(next_lbl) + "\n");
+                            }
+                        } else if (pv.type_name == "Some" || pv.type_name == "None"
                                 || pv.type_name == "Ok" || pv.type_name == "Err") {
                             // Built-in Option / Result: discriminate on
                             // the i32 tag at offset 0 (Some/Ok=0,
