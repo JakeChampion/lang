@@ -445,7 +445,21 @@ the helper name. Fixed by recursing `expr_uses_divrem` into every
 compound node (array, tuple, index, slice, struct-lit, field-access).
 wasm-only change; fixpoint byte-identical.
 
-Gated by 468 differential cases as of this writing. What remains for the
+A twelfth pass extended the returned-closure fix to **methods**: `var f =
+obj.m()` where the receiver method `m` returns a closure was still lowered
+as a direct `(call $f …)`. The tenth-pass fix only recognised
+*free-function* calls (`fn_returning_func_names` + an `ExprIdent` callee in
+`collect_fn_var_names`). Added `fn_returning_method_names` and an
+`ExprFieldAccess`-callee case so `var f = obj.m()` is marked closure-valued
+and flows through `call_indirect`. (Surfaced while probing with the
+Go-compiler-accurate `(i32) => i32` function-type spelling — the Go
+compiler rejects the bare `fn` type as non-callable, so probes must use the
+precise arrow form, which the self-host coarsens to `fn`.) wasm-only;
+fixpoint byte-identical. Capturing a struct *receiver* field directly
+inside such a lambda (`return function(x) { return x + a.base; }`) remains a
+separate, deeper capture-typing gap, tracked for a later pass.
+
+Gated by 471 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
