@@ -2990,6 +2990,141 @@ pub function module_with_builtins(mod: Module): Module {
 // FuncDecls produced from an `impl Trait for Type { … }` block.
 pub struct ImplResult { par: Par, funcs: FuncDecl[] }
 
+// ============ @derive synthesis (structs) ============
+// Mirrors the Go checker's synthEq / synthDisplay / synthOrd so a
+// self-host-compiled program gets the same field-wise methods. Structs
+// only for now — enums desugar to struct-unions here, so enum @derive
+// is a follow-up. See docs/TRAITS.md.
+
+// derive_simple_name returns a (possibly qualified) trait name's simple
+// name (after the last `.`): `cmp.Display` → "Display".
+function derive_simple_name(name: string): string {
+    var last_dot: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 46) { last_dot = i; }
+        i = i + 1;
+    }
+    if (last_dot >= 0) { return name[last_dot + 1 : name.len()]; }
+    return name;
+}
+
+// self_field / other_field build `self.f` / `other.f`.
+function dv_self_field(f: string): Expr { return e_field_access(e_ident("self"), f); }
+function dv_other_field(f: string): Expr { return e_field_access(e_ident("other"), f); }
+// dv_call0 / dv_call1 build `recv.m()` / `recv.m(arg)`.
+function dv_call0(recv: Expr, m: string): Expr {
+    var noargs: Expr[] = [];
+    return e_call(e_field_access(recv, m), noargs);
+}
+function dv_call1(recv: Expr, m: string, arg: Expr): Expr {
+    var args: Expr[] = [arg];
+    return e_call(e_field_access(recv, m), args);
+}
+
+// synth_struct_display: `to_string` rendering `Name { f: …, … }` — the
+// exact format the Go synthDisplay emits (so the differential oracle
+// agrees).
+function synth_struct_display(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_string(sd.name + " {");
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var sep: string = " ";
+        if (i > 0) { sep = ", "; }
+        expr = e_binary("+", expr, e_string(sep + sd.fields[i].name + ": "));
+        expr = e_binary("+", expr, dv_call0(dv_self_field(sd.fields[i].name), "to_string"));
+        i = i + 1;
+    }
+    if (sd.fields.len() == 0) {
+        expr = e_binary("+", expr, e_string("}"));
+    } else {
+        expr = e_binary("+", expr, e_string(" }"));
+    }
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body };
+}
+
+// synth_struct_eq: field-wise `self.f.eq(other.f) && …` (true for an
+// empty struct).
+function synth_struct_eq(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_bool(true);
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var cm: Expr = dv_call1(dv_self_field(sd.fields[i].name), "eq", dv_other_field(sd.fields[i].name));
+        if (i == 0) { expr = cm; } else { expr = e_binary("&&", expr, cm); }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body };
+}
+
+// synth_struct_ord: lexicographic `cmp` — first non-zero field cmp wins.
+function synth_struct_ord(sd: StructDecl): FuncDecl {
+    var stmts: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var vn: string = "__c" + dl_itoa(i);
+        var cc: Expr = dv_call1(dv_self_field(sd.fields[i].name), "cmp", dv_other_field(sd.fields[i].name));
+        stmts = stmts.push(s_var(vn, "i32", cc));
+        var cond: Expr = e_binary("!=", e_ident(vn), e_number("0", "", false));
+        var thenb: Stmt[] = [s_return(e_ident(vn))];
+        var elseb: Stmt[] = [];
+        stmts = stmts.push(s_if(cond, thenb, elseb));
+        i = i + 1;
+    }
+    stmts = stmts.push(s_return(e_number("0", "", false)));
+    var notp: string[] = [];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts };
+}
+
+// synth_derives appends the synthesised methods for each derivable trait
+// (`Eq` / `Display` / `Ord`) named in `derives` for struct `sd` onto
+// `funcs`. Non-derivable / unknown trait names are ignored (the Go
+// checker is the strict gate).
+function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
+    var di: i32 = 0;
+    while (di < derives.len()) {
+        var kind: string = derive_simple_name(derives[di]);
+        if (kind == "Display") { funcs = funcs.push(synth_struct_display(sd)); }
+        if (kind == "Eq") { funcs = funcs.push(synth_struct_eq(sd)); }
+        if (kind == "Ord") { funcs = funcs.push(synth_struct_ord(sd)); }
+        di = di + 1;
+    }
+    return funcs;
+}
+
+// parse_derive_attr consumes `@derive(Trait, mod.Trait, …)` (the `@` is
+// at the cursor) and returns the (possibly qualified) trait names.
+pub struct DeriveResult { par: Par, derives: string[] }
+function parse_derive_attr(p: Par): DeriveResult {
+    var derives: string[] = [];
+    p = p.advance(); // `@`
+    if (p.peek_ident() == "derive") { p = p.advance(); }
+    if (p.peek_punct() == "(") {
+        p = p.advance();
+        while (!p.at_end()) {
+            if (p.peek_punct() == ")") { break; }
+            var tn: string = p.peek_ident();
+            if (tn.len() == 0) { p = p.advance(); continue; }
+            p = p.advance();
+            while (p.peek_punct() == ".") {
+                p = p.advance();
+                var seg: string = p.peek_ident();
+                if (seg.len() > 0) { tn = tn + "." + seg; p = p.advance(); }
+            }
+            derives = derives.push(tn);
+            if (p.peek_punct() == ",") { p = p.advance(); }
+        }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+    }
+    return DeriveResult { par: p, derives: derives };
+}
+
 // parse_impl_decl consumes `impl Trait for Type { <function>… }`.
 // Each method is desugared into an ordinary receiver-method
 // FuncDecl — its first `self: Self` parameter becomes the receiver
@@ -3131,6 +3266,35 @@ pub function parse_module(toks: lexer.Token[]): Module {
         if (kw == "pub") {
             p = p.advance();
             kw = p.peek_keyword();
+        }
+        // `@derive(Trait, …)` attribute on the following struct/enum.
+        // Synthesise the field-wise trait methods (structs); enum
+        // derive is a follow-up. See docs/TRAITS.md.
+        if (p.peek_punct() == "@") {
+            var dr: DeriveResult = parse_derive_attr(p);
+            p = dr.par;
+            var dk: string = p.peek_keyword();
+            if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); }
+            if (dk == "struct") {
+                var dsr: StructResult = parse_struct_decl(p);
+                p = dsr.par;
+                structs = structs.push(dsr.decl);
+                funcs = synth_derives(dsr.decl, dr.derives, funcs);
+                continue;
+            }
+            if (dk == "enum") {
+                // Parse the enum normally; field-wise enum derive is a
+                // follow-up (enums desugar to struct-unions here).
+                var denr: EnumResult = parse_enum_decl(p);
+                p = denr.par;
+                var dei: i32 = 0;
+                while (dei < denr.variants.len()) {
+                    structs = structs.push(denr.variants[dei]);
+                    dei = dei + 1;
+                }
+                continue;
+            }
+            continue;
         }
         if (kw == "function") {
             var fr: FuncResult = parse_func_decl(p);

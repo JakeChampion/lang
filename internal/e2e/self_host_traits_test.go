@@ -136,6 +136,34 @@ var traitsCases = []struct {
 	{"trait-struct-array-loop-method",
 		"struct P { v: i32 } function (p: P) get(): i32 { return p.v; } " +
 			"function main(): i32 { var ps: P[] = [P { v: 3 }, P { v: 4 }]; var t: i32 = 0; for x in ps { t = t + x.get(); } return t; }", 7},
+	// `@derive(Eq)` synthesises a field-wise `eq` (the same shape the Go
+	// checker emits): `self.x.eq(other.x) && self.y.eq(other.y)`. The
+	// field type's `.eq` is provided inline (the trait-test harness
+	// doesn't load core/cmp), so this stays self-contained. r=3 only if
+	// eq on equal values is true AND eq on differing values is false.
+	{"trait-derive-struct-eq",
+		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
+			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
+			"@derive(Eq) struct P { x: i32, y: i32 } " +
+			"function main(): i32 { var a: P = P { x: 1, y: 2 }; var b: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; " +
+			"var r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3},
+	// `@derive(Ord)` synthesises a lexicographic `cmp` — first differing
+	// field decides. Inline `impl Ord for i32` provides the field cmp.
+	{"trait-derive-struct-ord",
+		"trait Ord { function cmp(self: Self, other: Self): i32; } " +
+			"impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } " +
+			"@derive(Ord) struct P { x: i32, y: i32 } " +
+			"function main(): i32 { var a: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; " +
+			"if (a.cmp(c) < 0) { if (c.cmp(a) > 0) { if (a.cmp(a) == 0) { return 42; } } } return 0; }", 42},
+	// `@derive(Display)` renders the same `Name { f: v, … }` string the
+	// Go checker emits, recursing into a nested derived struct. The i32
+	// + string `.to_string()` are emitter intrinsics, so no stdlib
+	// import is needed. Returns the rendered length (oracle-matched).
+	{"trait-derive-struct-display-nested",
+		"@derive(Display) struct Inner { n: i32 } " +
+			"@derive(Display) struct Outer { a: Inner, tag: string } " +
+			"function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; return p.to_string().len(); }",
+		len("Outer { a: Inner { n: 5 }, tag: hi }")},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted
