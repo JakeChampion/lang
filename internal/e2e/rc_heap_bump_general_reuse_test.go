@@ -281,9 +281,34 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// genReuseCrossBlockLoopSrc: the dominant cross-block shape — a loop-body D
+// reused by a construction nested in an if INSIDE the loop, every iteration.
+// The if runs on even iterations only, so odd iterations leave D for the
+// next-iteration reinit drop (the adversarial double-free / leak check across
+// the taken / not-taken alternation), with a pointer field to free.
+const genReuseCrossBlockLoopSrc = `struct Holder { id: i32, items: i32[] }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: Holder = Holder { id: i, items: [i, i + 1] };
+        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use in the loop body
+        if (i % 2 == 0) {
+            var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+            acc = acc + b.id + b.items[0] + b.items[1];
+        }
+        i = i + 1;
+    }
+    // even i in [0,198]: s = i + i + (i+1) = 3i+1; b.id=3i+1, b.items=(i+2)+(i+3)=2i+5; per = 5i+6
+    // i=2j, j=0..99: 5*2j+6 = 10j+6; sum = 10*(99*100/2) + 6*100 = 49500 + 600 = 50100
+    if (acc != 50100) { return 999; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
 	{"crossblock_scalar", genReuseCrossBlockScalarSrc},
 	{"crossblock_ptr", genReuseCrossBlockPtrSrc},
+	{"crossblock_loop", genReuseCrossBlockLoopSrc},
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
 	{"ptr_churn", genReusePtrChurnSrc},

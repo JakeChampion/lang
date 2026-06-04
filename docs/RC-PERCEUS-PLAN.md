@@ -1998,9 +1998,27 @@ cancellation — bounded, but separable, so it ships last.
     fires, old payload freed at `C`) and not-taken (`D` exit-swept), value-correct
     with 0 over-release, the adversarial double-free check}. Full e2e
     (differential corpus + both self-host gates) + non-e2e suites green.
+  - **5e-vii — cross-block reuse in ANY block (loop bodies). SHIPPED (all three
+    backends).** Generalises 5e-vi from a function-top-level `D` to a
+    block-top-level `D` in EVERY block, so the dominant shape — a loop-body
+    `var a = …` reused by a construction nested in an `if` inside the loop —
+    fires every iteration (`a` is block-scoped, re-declared and reinit-dropped
+    each turn; the reuse zeroes its slot, the reinit drop null-no-ops, the
+    not-taken path reinit-drops the live box — no double-free, no leak). Blocks
+    are visited **descendant-before-ancestor** (reversed pre-order) so a nested
+    `C` pairs with the INNERMOST eligible `D` (the per-iteration reuse), and
+    cross-block reuse composes across levels (a nested `c` ← loop `m`, and the
+    now-unclaimed `m` ← outer `a`). Same soundness gates (`deadFrom` over the
+    block, `freeEligible[D]`, runtime is_unique). Tests: IR
+    `TestGeneralReuse{FiresCrossBlockInLoop,CrossBlockComposesLevels}` + e2e
+    `…GeneralReuse` `crossblock_loop` (200-iter loop-body `Holder` reused by a
+    nested `if` construction on EVEN iterations only — odd iterations exercise
+    the not-taken reinit-drop, with a pointer field freed each way; value-correct,
+    0 over-release). Full e2e (differential corpus + both self-host gates) +
+    non-e2e suites green.
     With this the general FBIP reuse token covers all heap box kinds (struct /
     tuple / enum), scalar + single-word pointer fields, cross-type box-class
-    equality, and cross-block dominance.
+    equality, and cross-block dominance (function- and loop-level).
 
 ##### Test + safety contract (same bar as Phases 1–3)
 

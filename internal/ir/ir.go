@@ -10992,36 +10992,53 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return true
 	})
 
-	// CROSS-BLOCK pass: a top-level body local D dominates and outlives a
-	// construction C NESTED inside a later top-level statement. D pairs with C
-	// when D is dead from that enclosing top-level statement onward across the
-	// WHOLE body (deadFrom over body.Stmts rejects any use after k on any path —
-	// a sibling branch, the rest of C's block, or a post-merge use — so reusing
-	// D's box on the C-path and zeroing its slot can never strand a live read;
-	// the non-C path leaves D's slot intact for the exit sweep). The args-alias
-	// hazard is excluded by freeEligible[D] (a D whose field/element aliases a
-	// live local is tainted out) — and arrays are never reuse sources. Only C's
-	// not already paired same-block are considered; D is a top-level body var
-	// (unconditional, so it dominates any nested C after its declaration).
-	bodyStmts := b.fn.Body.Stmts
-	bodyDeclIdx := declIndices(bodyStmts)
-	bodyDeadFrom := deadFromIn(bodyStmts)
-	for k, st := range bodyStmts {
-		ast.Walk(st, func(n ast.Node) bool {
-			inner, ok := n.(ast.Stmt)
-			if !ok || ast.Node(inner) == ast.Node(st) {
-				return true // skip the enclosing top-level statement itself
-			}
-			cName, cNode := constructionAt(inner)
-			if cNode == nil {
+	// CROSS-BLOCK pass: a block-top-level local D dominates and outlives a
+	// construction C NESTED inside a LATER top-level statement of that same
+	// block (an if / loop / nested block). D pairs with C when D is dead from
+	// that enclosing top-level statement onward across the WHOLE block —
+	// deadFrom over the block's stmts rejects any use of D after k on any path
+	// (a sibling branch, the rest of C's block, or a post-merge use), so
+	// reusing D's box on the C-path and zeroing its slot can never strand a
+	// live read; the not-taken path leaves D's slot intact for the exit sweep /
+	// the next-iteration reinit drop. The args-alias hazard is excluded
+	// structurally by freeEligible[D] (a D whose field/element aliases a live
+	// local is tainted out) — and arrays are never reuse sources.
+	//
+	// This generalises the function-body case to EVERY block, so the dominant
+	// shape — a loop-body D (`var a = …`) reused by a construction nested in an
+	// `if` inside the loop — fires every iteration (D is block-scoped, so it's
+	// re-declared and the slot reinit-dropped each turn). Only C's not already
+	// paired (same-block, or a CLOSER cross-block ancestor) are considered:
+	// blocks are visited descendant-before-ancestor (reversed pre-order), so the
+	// innermost eligible D — the most natural, per-iteration reuse — wins.
+	var blocks []*ast.Block
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if blk, ok := n.(*ast.Block); ok {
+			blocks = append(blocks, blk)
+		}
+		return true
+	})
+	for i := len(blocks) - 1; i >= 0; i-- {
+		blkStmts := blocks[i].Stmts
+		declIdx := declIndices(blkStmts)
+		deadFrom := deadFromIn(blkStmts)
+		for k, st := range blkStmts {
+			ast.Walk(st, func(n ast.Node) bool {
+				inner, ok := n.(ast.Stmt)
+				if !ok || ast.Node(inner) == ast.Node(st) {
+					return true // skip the enclosing top-level statement itself
+				}
+				cName, cNode := constructionAt(inner)
+				if cNode == nil {
+					return true
+				}
+				if _, done := sources[cNode]; done {
+					return true // already paired (same-block, or a closer ancestor)
+				}
+				attemptPair(cName, cNode, declIdx, k, deadFrom)
 				return true
-			}
-			if _, done := sources[cNode]; done {
-				return true // already paired (same-block, a closer D)
-			}
-			attemptPair(cName, cNode, bodyDeclIdx, k, bodyDeadFrom)
-			return true
-		})
+			})
+		}
 	}
 	return sources, consumed
 }
