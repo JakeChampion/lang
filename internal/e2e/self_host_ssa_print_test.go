@@ -55,6 +55,11 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		{"print-in-loop", "function main(): i32 { var i = 0; while (i < 3) { print(\"x\"); i = i + 1; } return 0; }", "xxx"},
 		{"print-then-loop", "function main(): i32 { print(\"hi\\n\"); var s = 0; var i = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", "hi\n"},
 		{"print-string-var", "function main(): i32 { var msg = \"done\\n\"; print(msg); return 0; }", "done\n"},
+		// String concatenation feeding print.
+		{"print-concat", "function main(): i32 { var a = \"foo\"; var b = \"bar\\n\"; print(a + b); return 0; }", "foobar\n"},
+		{"print-chained-concat", "function main(): i32 { print(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", "abcd"},
+		// A string-returning helper + concat builds output (the i32_to_string shape).
+		{"print-built", "function digit(d: i32): string { if (d == 1) { return \"1\"; } if (d == 2) { return \"2\"; } return \"3\"; } function main(): i32 { var out = \"\"; out = out + digit(1); out = out + digit(2); out = out + digit(3); print(out); return 0; }", "123"},
 	}
 
 	run := func(t *testing.T, asm []byte, gcc string, pie bool, runner func(string) *exec.Cmd) string {

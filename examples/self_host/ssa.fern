@@ -237,6 +237,14 @@ function type_of_expr(e: parser.Expr, s: BState): string {
     match (e) {
         parser.ExprIdent(id) => { return s.get_var_type(id.name); },
         parser.ExprStructLit(sl) => { return sl.type_name; },
+        parser.ExprString(_) => { return "string"; },
+        parser.ExprBinary(b) => {
+            // `string + string` (concatenation) yields a string.
+            if (b.op == "+") {
+                if (type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string") { return "string"; }
+            }
+            return "";
+        },
         parser.ExprFieldAccess(fa) => {
             var st: string = type_of_expr(fa.obj, s);
             if (st.len() == 0) { return ""; }
@@ -277,6 +285,8 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "copy", result: s.cur_id(), args: a1, imm: 0, str: "" });
         },
         parser.ExprBinary(b) => {
+            // `string + string` is concatenation, not i32 add.
+            var is_concat: boolean = b.op == "+" && (type_of_expr(b.left, s) == "string" || type_of_expr(b.right, s) == "string");
             s = build_expr(b.left, s);
             if (!s.ok) { return s; }
             var lv: i32 = s.cur_id();
@@ -285,6 +295,9 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var rv: i32 = s.cur_id();
             s = s.fresh();
             var a2: i32[] = [lv, rv];
+            if (is_concat) {
+                return s.emit(SInst { kind: "concat", result: s.cur_id(), args: a2, imm: 0, str: "" });
+            }
             return s.emit(SInst { kind: "binary", result: s.cur_id(), args: a2, imm: 0, str: b.op });
         },
         parser.ExprUnary(u) => {
@@ -482,10 +495,10 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             s = build_expr(v.init, s);
             if (!s.ok) { return s; }
             s = s.set_var(v.name, s.cur_id());
-            // Record the variable's struct type (from the init's type or the
-            // declaration) so later field access can resolve offsets.
-            if (is_struct_type(ity, s.structs)) { return s.set_var_type(v.name, ity); }
-            if (is_struct_type(v.type_name, s.structs)) { return s.set_var_type(v.name, v.type_name); }
+            // Record the variable's struct / string type (from the init's
+            // type or the declaration) for field-offset / concat resolution.
+            if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
+            if (is_struct_type(v.type_name, s.structs) || v.type_name == "string") { return s.set_var_type(v.name, v.type_name); }
             return s;
         },
         parser.StmtAssign(a) => {
@@ -938,10 +951,11 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
     var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
-    // Record struct-typed params' types for field-access offset resolution.
+    // Record struct- / string-typed params' types for field-access and
+    // concat resolution.
     var pj: i32 = 0;
     while (pj < fd.params.len()) {
-        if (is_struct_type(fd.params[pj].type_name, structs)) { s = s.set_var_type(fd.params[pj].name, fd.params[pj].type_name); }
+        if (is_struct_type(fd.params[pj].type_name, structs) || fd.params[pj].type_name == "string") { s = s.set_var_type(fd.params[pj].name, fd.params[pj].type_name); }
         pj = pj + 1;
     }
 
@@ -1544,6 +1558,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
+                else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
                 else if (ins.kind == "phi") {
                     var a: i32 = 0;
@@ -1710,7 +1725,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "print") { calls = calls.push(pos); }
+            if (ins.kind == "call" || ins.kind == "print" || ins.kind == "concat") { calls = calls.push(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -1824,7 +1839,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
                 k = k + 1;
             }
@@ -1965,6 +1980,21 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var p2: i32 = tab[inst.args[0]];
                 var ix2: i32 = tab[inst.args[1]];
                 mem = vmem_set(mem, p2 + ix2, tab[inst.args[2]]);
+            } else if (inst.kind == "concat") {
+                // New string = [lenA+lenB, A's bytes…, B's bytes…].
+                var pa: i32 = tab[inst.args[0]];
+                var pb: i32 = tab[inst.args[1]];
+                var la: i32 = mem[pa];
+                var lb: i32 = mem[pb];
+                var cbase: i32 = mem.len();
+                var cz: i32 = 0;
+                while (cz < la + lb + 1) { mem = mem.push(0); cz = cz + 1; }
+                mem = vmem_set(mem, cbase, la + lb);
+                var ca: i32 = 0;
+                while (ca < la) { mem = vmem_set(mem, cbase + 1 + ca, mem[pa + 1 + ca]); ca = ca + 1; }
+                var cb: i32 = 0;
+                while (cb < lb) { mem = vmem_set(mem, cbase + 1 + la + cb, mem[pb + 1 + cb]); cb = cb + 1; }
+                tab = vtab_set(tab, inst.result, cbase);
             }
             k = k + 1;
         }

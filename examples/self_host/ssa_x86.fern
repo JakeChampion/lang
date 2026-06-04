@@ -222,6 +222,15 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    movq %rax, %rdi\n";
         return out + "    call __fern_ssa_print\n";
     }
+    if (ins.kind == "concat") {
+        // a ++ b → new heap string; __fern_ssa_concat(rdi=a, rsi=b) → rax.
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // a → %rax
+        out = out + "    movq %rax, %rdi\n";
+        out = load_op(reg_of, widths, ins.args[1], "a", out);   // b → %rax
+        out = out + "    movq %rax, %rsi\n";
+        out = out + "    call __fern_ssa_concat\n";
+        return store_res(reg_of, widths, ins.result, "a", out);  // result (64) ← %rax
+    }
     return out;
 }
 
@@ -337,6 +346,34 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    incl %r13d\n    jmp .Lfsp_loop\n";
     out = out + ".Lfsp_done:\n";
     out = out + "    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    // __fern_ssa_concat(%rdi = a, %rsi = b) → %rax: new length-prefixed
+    // string = lenA+lenB, then A's bytes, then B's bytes. Words are 8 bytes;
+    // each byte is an i32 (we copy the low 4 bytes per word).
+    out = out + "__fern_ssa_concat:\n";
+    out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
+    out = out + "    movq %rdi, %rbx\n";          // a
+    out = out + "    movq %rsi, %r12\n";          // b
+    out = out + "    movl (%rbx), %r13d\n";        // lenA
+    out = out + "    movl (%r12), %r14d\n";        // lenB
+    out = out + "    movl %r13d, %eax\n    addl %r14d, %eax\n";   // eax = total
+    out = out + "    movq __fern_ssa_hp(%rip), %r15\n";           // r15 = result ptr
+    out = out + "    leal 1(%rax), %ecx\n    movl %ecx, %ecx\n";   // ecx = total+1
+    out = out + "    leaq (,%rcx,8), %rdx\n    addq %rdx, __fern_ssa_hp(%rip)\n";   // hp += (total+1)*8
+    out = out + "    movl %eax, (%r15)\n";         // result[0] = total
+    out = out + "    xorl %ecx, %ecx\n";           // i = 0
+    out = out + ".Lcat_a:\n    cmpl %r13d, %ecx\n    jge .Lcat_a_done\n";
+    out = out + "    leal 1(%rcx), %eax\n    movl %eax, %eax\n";
+    out = out + "    movl (%rbx,%rax,8), %edx\n    movl %edx, (%r15,%rax,8)\n";
+    out = out + "    incl %ecx\n    jmp .Lcat_a\n.Lcat_a_done:\n";
+    out = out + "    xorl %ecx, %ecx\n";           // j = 0
+    out = out + ".Lcat_b:\n    cmpl %r14d, %ecx\n    jge .Lcat_b_done\n";
+    out = out + "    leal 1(%rcx), %eax\n    movl %eax, %eax\n";          // src word = j+1
+    out = out + "    movl (%r12,%rax,8), %edx\n";   // b[j+1]
+    out = out + "    movl %r13d, %edi\n    addl $1, %edi\n    addl %ecx, %edi\n    movl %edi, %edi\n";   // dst word = lenA+1+j
+    out = out + "    movl %edx, (%r15,%rdi,8)\n";
+    out = out + "    incl %ecx\n    jmp .Lcat_b\n.Lcat_b_done:\n";
+    out = out + "    movq %r15, %rax\n";           // return result ptr
+    out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
     out = out + "_start:\n";
     out = out + "    leaq __fern_ssa_heap(%rip), %rax\n";
     out = out + "    movq %rax, __fern_ssa_hp(%rip)\n";

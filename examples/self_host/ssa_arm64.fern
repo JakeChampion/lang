@@ -230,6 +230,14 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    mov x0, x9\n";
         return out + "    bl __fern_ssa_print\n";
     }
+    if (ins.kind == "concat") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);   // a → x9
+        out = out + "    mov x0, x9\n";
+        out = load_op(reg_of, widths, ins.args[1], "a", out);   // b → x9
+        out = out + "    mov x1, x9\n";
+        out = out + "    bl __fern_ssa_concat\n";
+        return store_reg(reg_of, ins.result, "x0", 64, out);
+    }
     return out;
 }
 
@@ -340,6 +348,28 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    add w21, w21, #1\n    b .Lfsp_loop\n";
     out = out + ".Lfsp_done:\n";
     out = out + "    ldr x21, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
+    // __fern_ssa_concat(x0 = a, x1 = b) → x0: new length-prefixed string.
+    // Leaf (no bl), so it uses caller-saved x9..x15 freely — no frame.
+    out = out + "__fern_ssa_concat:\n";
+    out = out + "    ldr w9, [x0]\n";              // lenA
+    out = out + "    ldr w10, [x1]\n";             // lenB
+    out = out + "    add w11, w9, w10\n";          // total
+    out = out + "    adrp x12, __fern_ssa_hp\n    add x12, x12, :lo12:__fern_ssa_hp\n";
+    out = out + "    ldr x13, [x12]\n";            // result = hp
+    out = out + "    add w14, w11, #1\n    sbfiz x14, x14, #3, #32\n    add x14, x13, x14\n    str x14, [x12]\n";   // hp += (total+1)*8
+    out = out + "    str w11, [x13]\n";            // result[0] = total
+    out = out + "    mov w11, #0\n";               // i = 0
+    out = out + ".Lcat_a:\n    cmp w11, w9\n    b.ge .Lcat_a_done\n";
+    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n";
+    out = out + "    ldr w14, [x0, x12]\n    str w14, [x13, x12]\n";
+    out = out + "    add w11, w11, #1\n    b .Lcat_a\n.Lcat_a_done:\n";
+    out = out + "    mov w11, #0\n";               // j = 0
+    out = out + ".Lcat_b:\n    cmp w11, w10\n    b.ge .Lcat_b_done\n";
+    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n    ldr w15, [x1, x12]\n";    // b[j+1]
+    out = out + "    add w12, w9, #1\n    add w12, w12, w11\n    sbfiz x12, x12, #3, #32\n";       // dst word = lenA+1+j
+    out = out + "    str w15, [x13, x12]\n";
+    out = out + "    add w11, w11, #1\n    b .Lcat_b\n.Lcat_b_done:\n";
+    out = out + "    mov x0, x13\n    ret\n";
     out = out + "_start:\n";
     out = out + "    adrp x9, __fern_ssa_heap\n";
     out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";
