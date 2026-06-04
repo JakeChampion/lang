@@ -1929,8 +1929,27 @@ cancellation — bounded, but separable, so it ships last.
     C's offsets), `crosstype_ptr` (200-iter Holder→Bag with array fields, D's
     old array freed at D's offset, 0 over-release)}. Full e2e (differential
     corpus + both self-host gates) + non-e2e suites green.
-    **Next general-FBIP cuts:** tuple / enum `D`; relaxing the same-block
-    constraint (cross-block dominance).
+  - **5e-iv — TUPLE sources. SHIPPED (all three backends).** Extends the
+    general reuse to tuple boxes: a dead, owned tuple local `D` is reused for a
+    later TupleLit construction `C` of the SAME freelist class. Tuples are
+    rc-header boxes with an element layout exactly like structs, so the
+    machinery is shared — the token select + D-slot zero + `__alloc_reuse`
+    (`emitReuseToken`) and the old-pointer-element release (`emitReuseOldFieldDrops`,
+    walking `D`'s own layout via `reuseSourceLayout`, which now returns parallel
+    (offset, type) slices for a struct OR tuple `D`) are factored helpers used by
+    BOTH the StructLit and TupleLit hooks (so the proven struct path and the new
+    tuple path are byte-identical, guarded by the existing struct tests). Pairing
+    is restricted to the same KIND (struct↔struct or tuple↔tuple) — a tuple `D`
+    never pairs with a struct `C` even at equal class; eligibility is the tuple
+    analogue `tupleReuseEligible` (i32-scalar / single-word rc-tracked element;
+    strings + wide/float excluded). Tests: IR `TestGeneralReuse{FiresForTuple,
+    FiresForTuplePointerElem,SkipsTupleToStructKindMismatch}` + e2e
+    `…GeneralReuse` {`tuple_churn` (300-iter (i32,i32) reuse, value-correct at
+    element offsets), `tuple_ptr` (200-iter (i32,i32[]) — D's old array freed
+    each turn, 0 over-release)}. Full e2e (differential corpus + both self-host
+    gates) + non-e2e suites green.
+    **Next general-FBIP cuts:** enum `D`; relaxing the same-block constraint
+    (cross-block dominance).
 
 ##### Test + safety contract (same bar as Phases 1–3)
 
