@@ -51,7 +51,11 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// Stage the full self-host project (lexer/parser/asm via the helper,
 	// plus the rest of the modules fern.fern imports).
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "fern.fern"} {
+	// fern.fern's full transitive import closure beyond what
+	// writeSelfHostAsmProject stages (asm / lexer / parser). The ssa* modules
+	// were added by the self-host SSA pipeline; without them modload fails to
+	// resolve `import "./ssa"` from fern.fern.
+	for _, name := range []string{"flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_arm64.fern", "ssa_x86.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
