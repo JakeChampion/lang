@@ -2,7 +2,31 @@ package ir_test
 
 import (
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
+
+// RcReuseEnabled=false disables the whole reuse layer: a shape that fires a
+// reuse with the flag on emits ZERO __alloc_reuse with it off (every site
+// falls back to a fresh alloc). Pins the differential gate's flag axis.
+func TestGeneralReuseDisabledByFlag(t *testing.T) {
+	src := `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 1, y: 2 };
+    var s: i32 = a.x + a.y;
+    var b: Point = Point { x: s + 1, y: 9 };
+    return b.x + b.y;
+}`
+	if got := allocReuseCount(funcByName(lowerForTest(t, src), "main")); got != 1 {
+		t.Fatalf("precondition: reuse should fire with the flag on, got %d", got)
+	}
+	prev := ast.RcReuseEnabled
+	ast.RcReuseEnabled = false
+	defer func() { ast.RcReuseEnabled = prev }()
+	if got := allocReuseCount(funcByName(lowerForTest(t, src), "main")); got != 0 {
+		t.Errorf("RcReuseEnabled=false should emit no __alloc_reuse, got %d", got)
+	}
+}
 
 // General FBIP reuse (computeReuseSources): a dead, owned, all-scalar struct
 // local D is paired with a LATER same-type construction C (a different local),

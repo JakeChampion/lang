@@ -509,6 +509,18 @@ func CaptureAlign(off int32, t Type, ptrW int) int32 {
 // struct/enum array fields.
 var RcFreeEnabled = true
 
+// RcReuseEnabled gates the constructor-reuse (FBIP) layer specifically — the
+// self-overwrite reuse (tryStructReuseOverwrite / tryEnumReuseOverwrite) AND
+// the general reuse token (computeReuseSources, threaded drop→alloc). It rides
+// ON top of RcFreeEnabled (reuse only makes sense when freeing), but is a
+// SEPARATE axis so the differential gate can pin reuse-on == reuse-off
+// byte-identical OUTPUT — isolating a reuse bug from a plain free bug. Default
+// on; the Test{X86_64,Arm64,WASM}ReuseMatchesNoReuse gate flips it off for the
+// baseline. Turning it off only DISABLES the optimisation (every reuse site
+// falls back to a fresh alloc + the normal drop), so it can never change
+// observable behaviour — that invariant is exactly what the gate asserts.
+var RcReuseEnabled = true
+
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86_64 only; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the
