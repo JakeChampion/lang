@@ -351,3 +351,36 @@ function main(): i32 {
 		}
 	}
 }
+
+// The collapsed generic array assertions (assert_eq_array / assert_at /
+// assert_array_contains / assert_array_not_contains) work over any
+// Eq+Display element type. See docs/TRAITS.md.
+func TestInterpGenericArrayAsserts(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "std/test";
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("arr");
+    r = r.it("eq i32[]", test.assert_eq_array([1, 2, 3], [1, 2, 3]));
+    r = r.it("eq string[]", test.assert_eq_array(["a", "b"], ["a", "b"]));
+    r = r.it("at", test.assert_at([10, 20, 30], 1, 20));
+    r = r.it("contains", test.assert_array_contains(["x", "y"], "y"));
+    r = r.it("not_contains", test.assert_array_not_contains([1, 2], 9));
+    return r.finish();
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0 (all asserts pass)\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if got := out.String(); !strings.Contains(got, "# pass 5") || strings.Contains(got, "not ok") {
+		t.Errorf("expected 5 passing asserts; got:\n%s\nstderr: %s", got, errb.String())
+	}
+}

@@ -2,27 +2,26 @@ import "core/no_prelude";
 import "std/test";
 // examples/tests/array_at_and_f32_range_test.fern — batch 28
 // additions to std/test:
-//   * `test.assert_at_i32(arr, idx, expected)` /
-//     `assert_at_string` / `assert_at_i64` — single-
+//   * `test.assert_at(arr, idx, expected)` — generic single-
 //     position spot check with bounds-aware diagnostics.
 //   * `test.assert_in_range_f32(v, lo, hi)` — f32 mirror of
 //     the existing `_i32` / `_i64` / `_f64` range
 //     helpers; NaN inputs always fail.
 
 function test_at_i32_pass(): Option[string] {
-    return test.assert_at_i32([10, 20, 30, 40], 2, 30);
+    return test.assert_at([10, 20, 30, 40], 2, 30);
 }
 
 function test_at_i32_first(): Option[string] {
-    return test.assert_at_i32([10, 20, 30], 0, 10);
+    return test.assert_at([10, 20, 30], 0, 10);
 }
 
 function test_at_i32_last(): Option[string] {
-    return test.assert_at_i32([10, 20, 30], 2, 30);
+    return test.assert_at([10, 20, 30], 2, 30);
 }
 
 function test_at_i32_wrong_value(): Option[string] {
-    match (test.assert_at_i32([10, 20, 30], 1, 99)) {
+    match (test.assert_at([10, 20, 30], 1, 99)) {
         None => { return test.fail("wrong value should fail"); },
         Some(msg) => {
             if (!msg.contains("at index 1") || !msg.contains("expected 99") || !msg.contains("got 20")) {
@@ -34,7 +33,7 @@ function test_at_i32_wrong_value(): Option[string] {
 }
 
 function test_at_i32_out_of_bounds_high(): Option[string] {
-    match (test.assert_at_i32([10, 20, 30], 5, 0)) {
+    match (test.assert_at([10, 20, 30], 5, 0)) {
         None => { return test.fail("OOB high should fail"); },
         Some(msg) => {
             // Distinct diagnostic from value-mismatch so the
@@ -48,7 +47,7 @@ function test_at_i32_out_of_bounds_high(): Option[string] {
 }
 
 function test_at_i32_out_of_bounds_negative(): Option[string] {
-    match (test.assert_at_i32([10, 20, 30], 0 - 1, 0)) {
+    match (test.assert_at([10, 20, 30], 0 - 1, 0)) {
         None => { return test.fail("negative OOB should fail"); },
         Some(msg) => {
             if (!msg.contains("out of bounds")) {
@@ -61,22 +60,25 @@ function test_at_i32_out_of_bounds_negative(): Option[string] {
 
 function test_at_i32_empty_array(): Option[string] {
     var empty: i32[] = [];
-    match (test.assert_at_i32(empty, 0, 0)) {
+    match (test.assert_at(empty, 0, 0)) {
         None => { return test.fail("empty array, idx 0 should fail OOB"); },
         Some(_) => { return None; }
     }
 }
 
 function test_at_string_pass(): Option[string] {
-    return test.assert_at_string(["alpha", "beta", "gamma"], 1, "beta");
+    return test.assert_at(["alpha", "beta", "gamma"], 1, "beta");
 }
 
-function test_at_string_wrong_value_quotes_both(): Option[string] {
-    match (test.assert_at_string(["alpha", "beta"], 0, "ALPHA")) {
+function test_at_string_wrong_value_embeds_both(): Option[string] {
+    // The generic `assert_at` renders values via Display (no quoting,
+    // matching the scalar `assert_eq` collapse) — the message embeds
+    // both the expected and actual element.
+    match (test.assert_at(["alpha", "beta"], 0, "ALPHA")) {
         None => { return test.fail("wrong value should fail"); },
         Some(msg) => {
-            if (!msg.contains("\"ALPHA\"") || !msg.contains("\"alpha\"")) {
-                return Some("expected both quoted: " + msg);
+            if (!msg.contains("ALPHA") || !msg.contains("alpha")) {
+                return Some("expected both values in message: " + msg);
             }
             return None;
         }
@@ -85,12 +87,12 @@ function test_at_string_wrong_value_quotes_both(): Option[string] {
 
 function test_at_i64_pass(): Option[string] {
     var arr: i64[] = [100 as i64, 200 as i64, 300 as i64];
-    return test.assert_at_i64(arr, 2, 300 as i64);
+    return test.assert_at(arr, 2, 300 as i64);
 }
 
 function test_at_i64_wrong_value(): Option[string] {
     var arr: i64[] = [100 as i64, 200 as i64];
-    match (test.assert_at_i64(arr, 0, 999 as i64)) {
+    match (test.assert_at(arr, 0, 999 as i64)) {
         None => { return test.fail("expected mismatch fail"); },
         Some(msg) => {
             if (!msg.contains("expected 999") || !msg.contains("got 100")) {
@@ -159,7 +161,7 @@ function main(): i32 {
     r = r.it("at_i32 negative index",        test_at_i32_out_of_bounds_negative());
     r = r.it("at_i32 empty array OOB",       test_at_i32_empty_array());
     r = r.it("at_string pass",               test_at_string_pass());
-    r = r.it("at_string quoted diff",        test_at_string_wrong_value_quotes_both());
+    r = r.it("at_string embeds both",        test_at_string_wrong_value_embeds_both());
     r = r.it("at_i64 pass",                  test_at_i64_pass());
     r = r.it("at_i64 wrong value",           test_at_i64_wrong_value());
     r = r.it("in_range_f32 pass",            test_in_range_f32_pass());

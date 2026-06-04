@@ -1438,7 +1438,7 @@ func TestRunnerArrayAtAndF32RangeExample(t *testing.T) {
 		"ok 5 - at_i32 out-of-bounds high",
 		"ok 6 - at_i32 negative index",
 		"ok 7 - at_i32 empty array OOB",
-		"ok 9 - at_string quoted diff",
+		"ok 9 - at_string embeds both",
 		"ok 11 - at_i64 wrong value",
 		"ok 13 - in_range_f32 inclusive bounds",
 		"ok 15 - in_range_f32 NaN fails",

@@ -35,7 +35,7 @@ function test_get_all_preserves_insertion_order(): Option[string] {
     // stdout; here we assert the returned array directly
     // so the failure message localises the first
     // divergence by index.
-    return test.assert_eq_string_array(h.get_all("set-cookie"),
+    return test.assert_eq_array(h.get_all("set-cookie"),
                                   ["a=1", "b=2", "c=3"]);
 }
 

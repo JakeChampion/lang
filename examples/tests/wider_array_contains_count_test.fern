@@ -3,12 +3,12 @@ import "std/test";
 // examples/tests/wider_array_contains_count_test.fern —
 // batch 22 additions to std/test:
 //   * Wider-int array equality:
-//       `assert_eq_i64_array`,
-//       `assert_eq_u32_array`,
-//       `assert_eq_u64_array`
+//       `assert_eq_array`,
+//       `assert_eq_array`,
+//       `assert_eq_array`
 //   * Array membership:
-//       `test.assert_array_contains_i32(arr, needle)` /
-//       `assert_array_contains_string` and the negative
+//       `test.assert_array_contains(arr, needle)` /
+//       `assert_array_contains` and the negative
 //       `_not_contains_*` variants
 //   * Cardinality:
 //       `test.assert_count_i32(arr, pred, n)` /
@@ -18,13 +18,13 @@ import "std/test";
 function test_eq_i64_array_pass(): Option[string] {
     var actual: i64[] = [1 as i64, 2 as i64, 3 as i64];
     var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
-    return test.assert_eq_i64_array(actual, expected);
+    return test.assert_eq_array(actual, expected);
 }
 
 function test_eq_i64_array_length_mismatch(): Option[string] {
     var actual: i64[] = [1 as i64, 2 as i64];
     var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
-    match (test.assert_eq_i64_array(actual, expected)) {
+    match (test.assert_eq_array(actual, expected)) {
         None => { return test.fail("expected length-mismatch"); },
         Some(msg) => {
             if (!msg.contains("length differs")) {
@@ -38,7 +38,7 @@ function test_eq_i64_array_length_mismatch(): Option[string] {
 function test_eq_i64_array_mismatch_reports_index(): Option[string] {
     var actual: i64[] = [10 as i64, 20 as i64, 30 as i64];
     var expected: i64[] = [10 as i64, 99 as i64, 30 as i64];
-    match (test.assert_eq_i64_array(actual, expected)) {
+    match (test.assert_eq_array(actual, expected)) {
         None => { return test.fail("expected value-mismatch"); },
         Some(msg) => {
             if (!msg.contains("at index 1")) {
@@ -52,29 +52,29 @@ function test_eq_i64_array_mismatch_reports_index(): Option[string] {
 function test_eq_u32_array_pass(): Option[string] {
     var actual: u32[] = [1 as u32, 2 as u32, 3 as u32];
     var expected: u32[] = [1 as u32, 2 as u32, 3 as u32];
-    return test.assert_eq_u32_array(actual, expected);
+    return test.assert_eq_array(actual, expected);
 }
 
 function test_eq_u64_array_pass(): Option[string] {
     var actual: u64[] = [100 as u64, 200 as u64];
     var expected: u64[] = [100 as u64, 200 as u64];
-    return test.assert_eq_u64_array(actual, expected);
+    return test.assert_eq_array(actual, expected);
 }
 
 function test_array_contains_i32_pass(): Option[string] {
-    return test.assert_array_contains_i32([1, 2, 3, 5, 8], 5);
+    return test.assert_array_contains([1, 2, 3, 5, 8], 5);
 }
 
 function test_array_contains_i32_first(): Option[string] {
-    return test.assert_array_contains_i32([1, 2, 3], 1);
+    return test.assert_array_contains([1, 2, 3], 1);
 }
 
 function test_array_contains_i32_last(): Option[string] {
-    return test.assert_array_contains_i32([1, 2, 3], 3);
+    return test.assert_array_contains([1, 2, 3], 3);
 }
 
 function test_array_contains_i32_missing(): Option[string] {
-    match (test.assert_array_contains_i32([1, 2, 3], 99)) {
+    match (test.assert_array_contains([1, 2, 3], 99)) {
         None => { return test.fail("expected missing-element fail"); },
         Some(msg) => {
             if (!msg.contains("99")) {
@@ -87,22 +87,22 @@ function test_array_contains_i32_missing(): Option[string] {
 
 function test_array_contains_i32_empty_fails(): Option[string] {
     var empty: i32[] = [];
-    match (test.assert_array_contains_i32(empty, 1)) {
+    match (test.assert_array_contains(empty, 1)) {
         None => { return test.fail("empty array should fail contains"); },
         Some(_) => { return None; }
     }
 }
 
 function test_array_contains_string_pass(): Option[string] {
-    return test.assert_array_contains_string(["a", "b", "c"], "b");
+    return test.assert_array_contains(["a", "b", "c"], "b");
 }
 
 function test_array_not_contains_i32_pass(): Option[string] {
-    return test.assert_array_not_contains_i32([1, 2, 3], 99);
+    return test.assert_array_not_contains([1, 2, 3], 99);
 }
 
 function test_array_not_contains_i32_fail(): Option[string] {
-    match (test.assert_array_not_contains_i32([1, 2, 3], 2)) {
+    match (test.assert_array_not_contains([1, 2, 3], 2)) {
         None => { return test.fail("expected found-element fail"); },
         Some(msg) => {
             if (!msg.contains("index 1")) {
@@ -115,11 +115,11 @@ function test_array_not_contains_i32_fail(): Option[string] {
 
 function test_array_not_contains_i32_empty_passes(): Option[string] {
     var empty: i32[] = [];
-    return test.assert_array_not_contains_i32(empty, 1);
+    return test.assert_array_not_contains(empty, 1);
 }
 
 function test_array_not_contains_string_pass(): Option[string] {
-    return test.assert_array_not_contains_string(["a", "b"], "z");
+    return test.assert_array_not_contains(["a", "b"], "z");
 }
 
 function is_even(n: i32): boolean { return n % 2 == 0; }

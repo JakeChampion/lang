@@ -79,6 +79,14 @@ var traitsCases = []struct {
 			"impl Sized for Boxx { function sz(self: Self): i32 { return self.v; } } " +
 			"function getsz[T: Sized](x: T): i32 { return x.sz(); } " +
 			"function main(): i32 { var b: Boxx = Boxx { v: 30 }; var n: i32 = 12; return getsz(n) + getsz(b); }", 42},
+	// Array-element method dispatch through a bounded generic: `a[i].eq`
+	// must dispatch on the element type. Probe for the std/test array
+	// collapse.
+	{"trait-bounded-generic-array-elem",
+		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
+			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
+			"function all_eq[T: Eq](a: T[], b: T[]): i32 { var i: i32 = 0; while (i < len(a)) { if (!a[i].eq(b[i])) { return 0; } i = i + 1; } return 1; } " +
+			"function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = [1, 2, 3]; return all_eq(x, y); }", 1},
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted

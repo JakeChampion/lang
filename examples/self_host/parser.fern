@@ -2223,9 +2223,21 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
     var tp: string = fd.type_params[0];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        if (fd.params[i].type_name == tp && i < args.len()) {
-            var ct: string = mono_infer(args[i], env, funcs);
-            if (ct.len() > 0) { return ct; }
+        if (i < args.len()) {
+            var pt: string = fd.params[i].type_name;
+            if (pt == tp) {
+                var ct: string = mono_infer(args[i], env, funcs);
+                if (ct.len() > 0) { return ct; }
+            }
+            // A `T[]` parameter: the concrete type is the element type
+            // of the array argument (`i32[]` -> `i32`).
+            if (pt == tp + "[]") {
+                var at: string = mono_infer(args[i], env, funcs);
+                if (at.len() > 2) {
+                    var el: string = at[0:at.len() - 2];
+                    if (el.len() > 0) { return el; }
+                }
+            }
         }
         i = i + 1;
     }
@@ -2254,6 +2266,14 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         },
         ExprString(_) => { return "string"; },
         ExprBool(_) => { return "boolean"; },
+        ExprArray(a) => {
+            // Array literal `[e0, …]`: the type is the element type
+            // plus `[]`, so a `T[]` parameter can recover the element.
+            if (a.elements.len() == 0) { return ""; }
+            var et: string = mono_infer(a.elements[0], env, funcs);
+            if (et.len() == 0) { return ""; }
+            return et + "[]";
+        },
         ExprIdent(id) => { return env.elook(id.name); },
         ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") {
@@ -2484,9 +2504,11 @@ function env_from_params(params: ParamDecl[]): MEnv {
     return e;
 }
 
-// subst_ty replaces the type variable `tp` with the concrete type `ct`.
+// subst_ty replaces the type variable `tp` with the concrete type `ct`,
+// including the `T[]` array form.
 function subst_ty(name: string, tp: string, ct: string): string {
     if (name == tp) { return ct; }
+    if (name == tp + "[]") { return ct + "[]"; }
     return name;
 }
 
