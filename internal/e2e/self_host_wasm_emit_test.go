@@ -594,6 +594,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"array-of-tuples", "function main(): i32 { var ps = [(1, 2), (3, 4)]; var t = ps[1]; print_int(t.0 + t.1); return 0; }", 0, "7"},
 		{"method-chain-struct", "struct Acc { total: i32 } function (a: Acc) add(n: i32): Acc { return Acc { total: a.total + n }; } function main(): i32 { var r = Acc { total: 0 }.add(5).add(10).add(20); print_int(r.total); return 0; }", 0, "35"},
 		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
+
+		// Hardening pass 5: string char-access s[i] (byte load) + more.
+		{"string-char-access", "function main(): i32 { var s: string = \"ABC\"; var sum: i32 = 0; var i: i32 = 0; while (i < s.len()) { sum = sum + s[i]; i = i + 1; } print_int(sum); return 0; }", 0, "198"},
+		{"string-char-compare", "function main(): i32 { var s: string = \"a1b2\"; var digits: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (s[i] >= 48 && s[i] <= 57) { digits = digits + 1; } i = i + 1; } print_int(digits); return 0; }", 0, "2"},
+		{"elseif-chain", "function grade(n: i32): string { if (n >= 90) { return \"A\"; } else if (n >= 80) { return \"B\"; } else if (n >= 70) { return \"C\"; } else { return \"F\"; } } function main(): i32 { write(grade(95)); write(grade(85)); write(grade(50)); return 0; }", 0, "ABF"},
+		{"three-variant-union", "struct A { v: i32 } struct B { v: i32 } struct C { v: i32 } type T = A | B | C; function f(t: T): i32 { match (t) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; }, C(c) => { return c.v + 3; } } return 0; } function main(): i32 { print_int(f(A { v: 10 })); print_int(f(B { v: 10 })); print_int(f(C { v: 10 })); return 0; }", 0, "111213"},
+		{"struct-mutate-via-fn", "struct Counter { n: i32 } function bump(c: Counter): i32 { c.n = c.n + 1; return 0; } function main(): i32 { var c = Counter { n: 5 }; bump(c); bump(c); print_int(c.n); return 0; }", 0, "7"},
+		{"array-elem-field-set", "struct Pt { x: i32, y: i32 } function main(): i32 { var pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]; pts[0].x = 99; print_int(pts[0].x); print_int(pts[1].x); return 0; }", 0, "993"},
+		{"string-methods-combo", "function main(): i32 { var s: string = \"hello world\"; if (s.starts_with(\"hello\")) { print_int(1); } if (s.contains(\"o w\")) { print_int(2); } print_int(s.index_of(\"world\")); return 0; }", 0, "126"},
 	}
 
 	for _, tc := range cases {

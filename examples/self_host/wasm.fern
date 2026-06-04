@@ -1763,7 +1763,12 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             return s;
         },
         parser.ExprIndex(ix) => {
-            // arr[i] → load the i32 element at base + 8 + i*4.
+            // `s[i]` on a string is a byte load (block is [len][bytes@4],
+            // 1 byte each); `arr[i]` on an array is the i32 element at
+            // base + 8 + i*4.
+            if (is_string_expr(ix.array, cx)) {
+                return "(i32.load8_u (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 4)) " + emit_expr(ix.index, cx, depth) + "))";
+            }
             return "(i32.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 4))))";
         },
         parser.ExprSlice(sl) => {
