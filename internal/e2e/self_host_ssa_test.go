@@ -129,6 +129,11 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// Pointer fields (string / array) — 64-bit word slots.
 		{"struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var n = Named { id: 5, label: \"hello\" }; return n.label.len(); }", 5},
 		{"struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 1, data: [10, 20, 30] }; return b.data[1] + b.tag; }", 21},
+		// Regression: a no-`else` if whose body modifies a variable, taking
+		// the FALL-THROUGH path — the merge phi's fall-through operand must
+		// flow correctly through the backends' phi-deconstruction.
+		{"no-else-fallthrough", "function main(): i32 { var x = 5; if (x > 100) { x = 1; } return x; }", 5},
+		{"no-else-string-fallthrough", "function main(): i32 { var s = \"ab\"; if (s.len() > 100) { s = \"zzz\"; } return s.len(); }", 2},
 		// String concatenation (`+` on strings → a new heap string).
 		{"concat-len", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }", 6},
 		{"concat-index", "function main(): i32 { var a = \"X\"; var b = \"YZ\"; var c = a + b; return c[2]; }", 90},

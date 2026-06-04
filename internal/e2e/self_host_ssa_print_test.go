@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+// i32ToString is the self-host's own integer formatter — it now compiles
+// through the SSA pipeline (mod/div, the 10-way digit chain, string concat,
+// negative handling), so -ssa can print real numbers.
+const i32ToString = `function i32_to_string(n: i32): string {
+	if (n == 0) { return "0"; }
+	var neg = false;
+	if (n < 0) { neg = true; n = 0 - n; }
+	var out = "";
+	while (n > 0) {
+		var d = n % 10;
+		var c = "";
+		if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+		else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+		else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+		else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+		else if (d == 8) { c = "8"; } else { c = "9"; }
+		out = c + out;
+		n = n / 10;
+	}
+	if (neg) { out = "-" + out; }
+	return out;
+}`
+
 // TestSelfHostSSAPrint exercises the SSA backends' `print` op + the
 // __fern_ssa_print write-syscall helper: it assembles emitted code and
 // captures STDOUT (not just the exit code), asserting the program's output.
@@ -60,6 +83,9 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		{"print-chained-concat", "function main(): i32 { print(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", "abcd"},
 		// A string-returning helper + concat builds output (the i32_to_string shape).
 		{"print-built", "function digit(d: i32): string { if (d == 1) { return \"1\"; } if (d == 2) { return \"2\"; } return \"3\"; } function main(): i32 { var out = \"\"; out = out + digit(1); out = out + digit(2); out = out + digit(3); print(out); return 0; }", "123"},
+		// The headline: a real i32_to_string (mod/div + digit chain + concat)
+		// printing formatted numbers — positive, negative, and zero.
+		{"print-number", i32ToString + " function main(): i32 { print(i32_to_string(12345)); print(\"\\n\"); print(i32_to_string(0 - 67)); print(\"\\n\"); print(i32_to_string(0)); print(\"\\n\"); return 0; }", "12345\n-67\n0\n"},
 	}
 
 	run := func(t *testing.T, asm []byte, gcc string, pie bool, runner func(string) *exec.Cmd) string {
