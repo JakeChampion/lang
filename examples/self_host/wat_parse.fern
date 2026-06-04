@@ -1,0 +1,48 @@
+// examples/self_host/wat_parse.fern — S-expression parser for the WAT
+// token stream produced by wat_lex.fern. Slice 3 of the self-hosted
+// *binary* wasm backend: tokenize (wat_lex) -> parse to a tree (here) ->
+// encode the tree to bytes with leb128.fern (a later slice).
+//
+// The grammar is just nested lists of atoms / strings:
+//   sexpr := atom | string | "(" sexpr* ")"
+// so a recursive-descent parse over the flat token array builds a tree of
+// SExpr nodes. Parsing one node returns the node plus the index of the
+// token after it (ParseOne), so the caller can continue scanning siblings.
+//
+// Depends on WatTok (from wat_lex.fern) but is otherwise import-free, so
+// the encoder can `import` both and the unit test can concatenate
+// wat_lex.fern + this file + a driver (the single-module wasm_run driver
+// doesn't resolve imports).
+
+// SExpr.kind: 0 = list (children in `items`, `text` empty), 2 = atom,
+// 3 = string (token text in `text`, `items` empty).
+pub struct SExpr { kind: i32, text: string, items: SExpr[] }
+
+// ParseOne carries a parsed node plus the index just past it.
+pub struct ParseOne { node: SExpr, pos: i32 }
+
+// wat_parse_one parses the single S-expr starting at toks[i].
+function wat_parse_one(toks: WatTok[], i: i32): ParseOne {
+    var t: WatTok = toks[i];
+    if (t.kind != 0) {
+        // Leaf: atom (kind 2) or string (kind 3).
+        return ParseOne { node: SExpr { kind: t.kind, text: t.text, items: [] }, pos: i + 1 };
+    }
+    // List: consume children until the matching ")".
+    var children: SExpr[] = [];
+    var j: i32 = i + 1;
+    while (j < toks.len() && toks[j].kind != 1) {
+        var r: ParseOne = wat_parse_one(toks, j);
+        children = children.push(r.node);
+        j = r.pos;
+    }
+    // Skip the closing ")".
+    return ParseOne { node: SExpr { kind: 0, text: "", items: children }, pos: j + 1 };
+}
+
+// wat_parse parses the whole token stream into its top-level S-expr (the
+// `(module …)` form emit_module produces).
+function wat_parse(toks: WatTok[]): SExpr {
+    var r: ParseOne = wat_parse_one(toks, 0);
+    return r.node;
+}
