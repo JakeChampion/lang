@@ -612,10 +612,25 @@ assembler — relevant when the goal becomes round-tripping the compiler's
 own (large) modules, which will want the self-host to emit a bigger
 `(memory …)` for such programs.
 
+Slice 4g added **closures** — the last big structural piece. Closures
+introduce named `(type $clos*)` function-type declarations, a `(table N
+funcref)`, a `(elem (i32.const 0) $f …)` segment, and `call_indirect
+(type $c) <args> <funcptr>`. The type section now emits the named types
+first (so `call_indirect` can reference them by index) and offsets every
+function's own type index past them; the table (id 4) and elem (id 9)
+sections slot into binary order; and `call_indirect` pushes its args then
+the table-index operand before the `0x11 typeidx 0`. (Signature parsing
+was also generalised to read the unnamed `(func …)` inside a type decl.)
+`TestSelfHostWasmBinary` adds a capturing closure, a closure capturing an
+array, and a lambda passed as an argument — each binary module matching
+the WAT path. With this the binary backend covers **everything
+`emit_module` produces except f64 constants**.
+
 Remaining: **f64** (blocked only on `f64.const`, whose immediate is a raw
-8-byte IEEE-754 double, not a LEB — needs a decimal→bits step);
-**closures** (the table + elem sections + `call_indirect`); then wrap the
-core module in the `wasi:cli/run` / `wasi:http` component shapes.
+8-byte IEEE-754 double, not a LEB — needs a decimal→bits step); then wrap
+the core module in the `wasi:cli/run` / `wasi:http` component shapes, and
+(for round-tripping the compiler's own large modules) emit a bigger
+`(memory …)` so the assembler doesn't OOM.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
