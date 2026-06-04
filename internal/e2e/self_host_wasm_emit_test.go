@@ -528,6 +528,16 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"tuple-string-concat", "function main(): i32 { var t = (1, \"x\"); write(t.1 + \"y\"); return 0; }", 0, "xy"},
 		{"tuple-string-len", "function main(): i32 { var t = (0, \"hello\"); print_int(t.1.len()); return 0; }", 0, "5"},
 		{"tuple-nested", "function main(): i32 { var t = (1, (2, 3)); var inner = t.1; print_int(inner.0 + inner.1); return 0; }", 0, "5"},
+		// Destructuring a tuple whose element is a struct must keep the
+		// element's struct type so `p.field` resolves (it previously read a
+		// bogus `(i32.const 0)`). Covers an inline literal, an intermediate
+		// tuple local, a tuple-returning free function and method, and a
+		// pair of structs. Regression: tuple-destructure-struct pass.
+		{"destructure-struct-inline", "struct P { x: i32 } function main(): i32 { var (p, n) = (P { x: 40 }, 2); return p.x + n; }", 42, ""},
+		{"destructure-struct-local", "struct P { x: i32 } function main(): i32 { var t = (P { x: 42 }, 1); var (p, n) = t; return p.x + n; }", 43, ""},
+		{"destructure-struct-funcret", "struct P { x: i32 } function mk(): (P, i32) { return (P { x: 40 }, 2); } function main(): i32 { var (p, n) = mk(); return p.x + n; }", 42, ""},
+		{"destructure-struct-methodret", "struct P { x: i32 } struct Maker { } function (m: Maker) build(): (P, i32) { return (P { x: 100 }, 5); } function main(): i32 { var mk = Maker { }; var (p, n) = mk.build(); return p.x + n; }", 105, ""},
+		{"destructure-struct-both", "struct P { x: i32 } struct Q { y: i32 } function main(): i32 { var (p, q) = (P { x: 30 }, Q { y: 12 }); return p.x + q.y; }", 42, ""},
 
 		// Non-capturing lambdas — a lambda value is a [table_idx] closure
 		// box; calls lower to call_indirect through the function table.

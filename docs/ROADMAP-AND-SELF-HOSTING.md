@@ -486,7 +486,20 @@ registers them in `sv_names` / `sv_types`. Covers struct locals,
 struct params, returned closures, and method receivers. wasm-only;
 fixpoint byte-identical.
 
-Gated by 477 differential cases as of this writing. What remains for the
+A fifteenth pass closed the **tuple-destructure-struct-typing** gap: a
+`var (p, n) = t` whose tuple element is a struct left the binding untyped,
+so `p.field` read a bogus `(i32.const 0)`. The destructure-emit (loading
+`t.0` / `t.1` as i32 pointers) was already correct; only the *type
+tracking* of the new bindings was missing. Fixed by typing each
+destructured struct element via a new `tuple_elem_struct_type` helper that
+resolves the element type from an inline tuple literal, a tuple-returning
+free function or method (parsed from its return-type spelling), or a
+tracked tuple local (a new `tup_svtypes` Ctx field, populated in statement
+order during `collect_str_locals_stmts` so an intermediate
+`var t = (P{…}, 1); var (p, n) = t;` works too). wasm-only; fixpoint
+byte-identical.
+
+Gated by 482 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this
