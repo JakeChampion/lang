@@ -433,7 +433,19 @@ spelling `fn`. wasm-only change (no parser / native edits), and no
 self-host source function returns bare `fn`, so the fixpoint stays
 byte-identical.
 
-Gated by 464 differential cases as of this writing. What remains for the
+An eleventh pass caught a **div/rem-in-compound-literal** codegen bug: a
+`/` or `%` nested inside a tuple literal (`(a / b, a % b)`), array
+literal (`[100 / 4, …]`), struct-literal field value (`R { v: 84 / 2 }`),
+or an index / slice position emitted a `(call $__fern_idiv …)` /
+`$__fern_irem` but the guarded helper functions weren't emitted —
+`module_uses_divrem` / `expr_uses_divrem` only looked through
+binary / unary / call / lambda nodes, so a divide buried in any
+compound-literal node went undetected and the module failed to resolve
+the helper name. Fixed by recursing `expr_uses_divrem` into every
+compound node (array, tuple, index, slice, struct-lit, field-access).
+wasm-only change; fixpoint byte-identical.
+
+Gated by 468 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

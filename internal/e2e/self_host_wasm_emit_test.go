@@ -67,6 +67,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// doesn't fit i32; the divisor `0 - 1` keeps it a runtime value.
 		{"int-min-div-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x / d == x) { return 42; } return 1; }", 42, ""},
 		{"int-min-mod-neg1", "function main(): i32 { var x = 0 - 2147483647 - 1; var d = 0 - 1; if (x % d == 0) { return 42; } return 1; }", 42, ""},
+		// `/` or `%` nested inside a compound literal (tuple / array /
+		// struct-lit) or an index/slice position must still trigger
+		// emission of the $__fern_idiv / $__fern_irem helpers — the
+		// "uses divrem?" scan has to recurse into those nodes (regression:
+		// harden11; it previously only looked through binary/unary/call).
+		{"div-in-tuple", "function divmod(a: i32, b: i32): (i32, i32) { return (a / b, a % b); } function main(): i32 { var (q, r) = divmod(17, 5); return q + r; }", 5, ""},
+		{"div-in-array", "function main(): i32 { var xs: i32[] = [100 / 4, 100 % 7]; return xs[0] + xs[1]; }", 27, ""},
+		{"div-in-struct-lit", "struct R { v: i32 } function main(): i32 { var r = R { v: 84 / 2 }; return r.v; }", 42, ""},
+		{"div-in-index", "function main(): i32 { var xs: i32[] = [5, 10, 15, 20]; return xs[6 / 2]; }", 20, ""},
 		{"unary-neg", "function main(): i32 { return 0 - 5 + 10; }", 5, ""},
 		{"nested", "function main(): i32 { return (2 + 3) * (4 + 4) - 1; }", 39, ""},
 		{"no-return-exits-0", "function main(): i32 { }", 0, ""},

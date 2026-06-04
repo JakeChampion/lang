@@ -2059,6 +2059,41 @@ function expr_uses_divrem(e: parser.Expr): boolean {
             return false;
         },
         parser.ExprLambda(lm) => { return stmts_use_divrem(lm.body); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_uses_divrem(a.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (expr_uses_divrem(t.elements[i])) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprIndex(ix) => {
+            if (expr_uses_divrem(ix.array)) { return true; }
+            return expr_uses_divrem(ix.index);
+        },
+        parser.ExprSlice(sl) => {
+            if (expr_uses_divrem(sl.array)) { return true; }
+            if (expr_uses_divrem(sl.start)) { return true; }
+            return expr_uses_divrem(sl.end);
+        },
+        parser.ExprStructLit(sx) => {
+            var i: i32 = 0;
+            while (i < sx.field_values.len()) {
+                if (expr_uses_divrem(sx.field_values[i])) { return true; }
+                i = i + 1;
+            }
+            if (sx.has_base) { return expr_uses_divrem(sx.base); }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => { return expr_uses_divrem(fa.obj); },
         _ => { return false; },
     }
     return false;
