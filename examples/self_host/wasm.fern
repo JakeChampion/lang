@@ -422,8 +422,9 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
 // collect_fn_var_names gathers `var f = function(...) {...}` binding names
 // (closure-valued locals), recursing nested bodies. `fnrets` lists the
 // free functions whose return type is `fn` (a closure) so a binding
-// `var f = make_adder(5)` is recognised as a closure-valued local too.
-function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[]): string[] {
+// `var f = make_adder(5)` is recognised as a closure-valued local too;
+// `fnmeths` does the same for receiver methods (`var f = obj.make()`).
+function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[], fnmeths: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -433,10 +434,16 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                         if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
                     },
                     parser.ExprCall(c) => {
-                        // `var f = g(...)` where g returns a closure.
+                        // `var f = g(...)` / `var f = obj.m(...)` where the
+                        // callee returns a closure.
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
                                 if (contains_str(fnrets, cid.name) && !contains_str(acc, v.name)) {
+                                    acc = acc.push(v.name);
+                                }
+                            },
+                            parser.ExprFieldAccess(fa) => {
+                                if (contains_str(fnmeths, fa.field) && !contains_str(acc, v.name)) {
                                     acc = acc.push(v.name);
                                 }
                             },
@@ -447,15 +454,15 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_fn_var_names(f.then_body, acc, fnrets);
-                acc = collect_fn_var_names(f.else_body, acc, fnrets);
+                acc = collect_fn_var_names(f.then_body, acc, fnrets, fnmeths);
+                acc = collect_fn_var_names(f.else_body, acc, fnrets, fnmeths);
             },
-            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc, fnrets); },
-            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc, fnrets); },
+            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc, fnrets, fnmeths); },
+            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc, fnrets, fnmeths); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
-                    acc = collect_fn_var_names(m.arms[k].body, acc, fnrets);
+                    acc = collect_fn_var_names(m.arms[k].body, acc, fnrets, fnmeths);
                     k = k + 1;
                 }
             },
@@ -473,6 +480,23 @@ function fn_returning_func_names(mod_funcs: parser.FuncDecl[]): string[] {
     var i: i32 = 0;
     while (i < mod_funcs.len()) {
         if (mod_funcs[i].ret_type == "fn" && mod_funcs[i].receiver_name.len() == 0) {
+            out = out.push(mod_funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// fn_returning_method_names lists the receiver-method names whose declared
+// return type is the coarse closure spelling `fn`. Keyed by bare method
+// name (not the mangled `$T__m`), which is enough to recognise a
+// `var f = obj.m()` binding as closure-valued at the call site.
+function fn_returning_method_names(mod_funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod_funcs.len()) {
+        if (mod_funcs[i].ret_type == "fn" && mod_funcs[i].receiver_name.len() > 0
+            && !contains_str(out, mod_funcs[i].name)) {
             out = out.push(mod_funcs[i].name);
         }
         i = i + 1;
@@ -3738,7 +3762,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     }
     // Closure-typed locals/params: `fn` params + vars bound to a lambda
     // or to a call of a function that returns a closure.
-    var fn_names: string[] = collect_fn_var_names(f.body, [], fn_returning_func_names(mod_funcs));
+    var fn_names: string[] = collect_fn_var_names(f.body, [], fn_returning_func_names(mod_funcs), fn_returning_method_names(mod_funcs));
     var fp: i32 = 0;
     while (fp < f.params.len()) {
         if (f.params[fp].type_name == "fn" && !contains_str(fn_names, f.params[fp].name)) {

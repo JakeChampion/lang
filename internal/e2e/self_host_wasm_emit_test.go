@@ -560,6 +560,14 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"return-closure-noncap", "function get_const(): fn { return function(): i32 { return 99; }; } function main(): i32 { var f = get_const(); return f(); }", 99, ""},
 		{"return-closure-twice", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); var b = adder(20); return a(1) + b(2); }", 33, ""},
 		{"return-closure-string", "function greeter(): fn { return function(): string { return \"hi\"; }; } function main(): i32 { var g = greeter(); write(g()); return 0; }", 0, "hi"},
+		// A *method* returning a closure must also flow through
+		// call_indirect: `var f = obj.m()` where m returns `fn` (regression:
+		// harden12; the earlier fix only recognised free-function calls).
+		// The precise `(i32) => i32` return spelling (which the Go compiler
+		// requires and the self-host coarsens to `fn`) is used here.
+		{"method-return-closure-noncap", "struct Maker { } function (m: Maker) make(): (i32) => i32 { return function(x: i32): i32 { return x * 2; }; } function main(): i32 { var m = Maker { }; var f = m.make(); return f(21); }", 42, ""},
+		{"method-return-closure-capture-local", "struct Adder { base: i32 } function (a: Adder) make(): (i32) => i32 { var b = a.base; return function(x: i32): i32 { return x + b; }; } function main(): i32 { var a = Adder { base: 100 }; var f = a.make(); return f(5); }", 105, ""},
+		{"method-return-closure-capture-param", "struct F { } function (f: F) mul(k: i32): (i32) => i32 { return function(x: i32): i32 { return x * k; }; } function main(): i32 { var f = F { }; var g = f.mul(7); return g(6); }", 42, ""},
 
 		// `.to_string()` (integer→string runtime) + f-strings (which the
 		// parser desugars to `"…" + (expr).to_string() + …`).
