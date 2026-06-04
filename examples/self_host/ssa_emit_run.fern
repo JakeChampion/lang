@@ -1,0 +1,27 @@
+// examples/self_host/ssa_emit_run.fern — driver for the SSA → x86-64
+// backend. Reads a program on stdin, lowers each in-subset function to SSA
+// (build_func), optimises it, and prints the emitted x86-64 assembly to
+// stdout. The companion Go test assembles the output with
+// `gcc -static -nostdlib -no-pie` and runs it, asserting the process exit
+// code matches the program's value — end-to-end proof that
+// AST → SSA → optimise → x86-64 → execute preserves semantics.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./ssa";
+import "./ssa_x86";
+
+function main(): i32 {
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    var funcs: ssa.SFunc[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
+        if (r.ok) { funcs = funcs.push(ssa.optimize(r.func)); }
+        i = i + 1;
+    }
+    write(ssa_x86.emit_program(funcs));
+    return 0;
+}

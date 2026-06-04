@@ -1,0 +1,228 @@
+// examples/self_host/ssa_x86.fern — an SSA → x86-64 (Linux, AT&T syntax)
+// code generator. This is the start of the endgame for the self-hosted
+// compiler: today the backends emit straight from the AST (asm.fern,
+// asm_arm64.fern); this lowers the optimised SSA from ssa.fern to machine
+// code instead, so the backends can eventually be rebuilt on the SSA +
+// optimiser pipeline (AST → SSA → optimise → emit) and the AST emitters
+// retired.
+//
+// Strategy (slice 8 — the i32 subset that build_func handles): no register
+// allocation yet. Every SSA value gets an 8-byte stack slot; instructions
+// load operands into scratch registers (%eax / %ecx), compute, and store
+// the result back to its slot. Correct and simple; a register allocator is
+// a later slice. SSA is taken out of phi form by inserting copies on the
+// predecessor edges (every phi block is entered only by an unconditional
+// `br` in our construction, so no critical-edge splitting is needed).
+//
+// The framing mirrors asm.fern: functions are labelled `__fn_<name>`, and
+// `_start` calls `__fn_main` and exits with its return value (syscall 60).
+
+import "core/no_prelude";
+import "./ssa";
+
+function i32_to_string(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i32 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
+// slot returns the AT&T memory operand for SSA value v's stack slot.
+function slot(v: i32): string {
+    return "-" + i32_to_string(8 * (v + 1)) + "(%rbp)";
+}
+
+// argreg32 maps a parameter index to its System V 32-bit argument register.
+function argreg32(i: i32): string {
+    if (i == 0) { return "%edi"; }
+    if (i == 1) { return "%esi"; }
+    if (i == 2) { return "%edx"; }
+    if (i == 3) { return "%ecx"; }
+    if (i == 4) { return "%r8d"; }
+    return "%r9d";
+}
+
+function block_index(f: ssa.SFunc, id: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.blocks.len()) {
+        if (f.blocks[i].id == id) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+function pred_slot(blk: ssa.SBlock, prev: i32): i32 {
+    var i: i32 = 0;
+    while (i < blk.preds.len()) {
+        if (blk.preds[i] == prev) { return i; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// emit_binary emits a binary op assuming %eax = lhs and %ecx = rhs, leaving
+// the result in %eax.
+function emit_binary(op: string, out: string): string {
+    if (op == "+") { return out + "    addl %ecx, %eax\n"; }
+    if (op == "-") { return out + "    subl %ecx, %eax\n"; }
+    if (op == "*") { return out + "    imull %ecx, %eax\n"; }
+    if (op == "/") { return out + "    cltd\n    idivl %ecx\n"; }
+    if (op == "%") { return out + "    cltd\n    idivl %ecx\n    movl %edx, %eax\n"; }
+    if (op == "&") { return out + "    andl %ecx, %eax\n"; }
+    if (op == "|") { return out + "    orl %ecx, %eax\n"; }
+    if (op == "^") { return out + "    xorl %ecx, %eax\n"; }
+    if (op == "<<") { return out + "    sall %cl, %eax\n"; }
+    if (op == ">>") { return out + "    sarl %cl, %eax\n"; }
+    // Comparisons: cmpl computes %eax - %ecx; set the byte then zero-extend.
+    if (op == "==") { return out + "    cmpl %ecx, %eax\n    sete %al\n    movzbl %al, %eax\n"; }
+    if (op == "!=") { return out + "    cmpl %ecx, %eax\n    setne %al\n    movzbl %al, %eax\n"; }
+    if (op == "<") { return out + "    cmpl %ecx, %eax\n    setl %al\n    movzbl %al, %eax\n"; }
+    if (op == "<=") { return out + "    cmpl %ecx, %eax\n    setle %al\n    movzbl %al, %eax\n"; }
+    if (op == ">") { return out + "    cmpl %ecx, %eax\n    setg %al\n    movzbl %al, %eax\n"; }
+    if (op == ">=") { return out + "    cmpl %ecx, %eax\n    setge %al\n    movzbl %al, %eax\n"; }
+    // Logical &&/|| — normalise both sides to 0/1 then bitwise combine.
+    if (op == "&&") {
+        return out + "    testl %eax, %eax\n    setne %al\n    movzbl %al, %eax\n    testl %ecx, %ecx\n    setne %cl\n    movzbl %cl, %ecx\n    andl %ecx, %eax\n";
+    }
+    if (op == "||") {
+        return out + "    testl %eax, %eax\n    setne %al\n    movzbl %al, %eax\n    testl %ecx, %ecx\n    setne %cl\n    movzbl %cl, %ecx\n    orl %ecx, %eax\n";
+    }
+    return out;
+}
+
+// emit_inst lowers a single value-defining instruction. param and phi are
+// handled elsewhere (prologue / edge copies) and skipped here.
+function emit_inst(ins: ssa.SInst, out: string): string {
+    if (ins.kind == "const_int" || ins.kind == "const_bool") {
+        return out + "    movl $" + i32_to_string(ins.imm) + ", " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "copy") {
+        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
+        return out + "    movl %eax, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "binary") {
+        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
+        out = out + "    movl " + slot(ins.args[1]) + ", %ecx\n";
+        out = emit_binary(ins.str, out);
+        return out + "    movl %eax, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "unary") {
+        out = out + "    movl " + slot(ins.args[0]) + ", %eax\n";
+        if (ins.str == "-") { out = out + "    negl %eax\n"; }
+        else { out = out + "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"; }
+        return out + "    movl %eax, " + slot(ins.result) + "\n";
+    }
+    if (ins.kind == "call") {
+        var i: i32 = 0;
+        while (i < ins.args.len() && i < 6) {
+            out = out + "    movl " + slot(ins.args[i]) + ", " + argreg32(i) + "\n";
+            i = i + 1;
+        }
+        out = out + "    call __fn_" + ins.str + "\n";
+        return out + "    movl %eax, " + slot(ins.result) + "\n";
+    }
+    return out;
+}
+
+// emit_phi_moves copies the phi operands flowing along the edge pred → tgt
+// into the phi result slots (out-of-SSA on this edge).
+function emit_phi_moves(f: ssa.SFunc, pred: i32, tgt: i32, out: string): string {
+    var ti: i32 = block_index(f, tgt);
+    if (ti < 0) { return out; }
+    var tb: ssa.SBlock = f.blocks[ti];
+    var sl: i32 = pred_slot(tb, pred);
+    var k: i32 = 0;
+    while (k < tb.insts.len()) {
+        var ins: ssa.SInst = tb.insts[k];
+        if (ins.kind == "phi") {
+            out = out + "    movl " + slot(ins.args[sl]) + ", %eax\n";
+            out = out + "    movl %eax, " + slot(ins.result) + "\n";
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+function blk_label(name: string, id: i32): string {
+    return ".L_" + name + "_" + i32_to_string(id);
+}
+
+function emit_term(f: ssa.SFunc, name: string, blk: ssa.SBlock, out: string): string {
+    var t: ssa.STerm = blk.term;
+    if (t.kind == "ret") {
+        out = out + "    movl " + slot(t.value) + ", %eax\n";
+        return out + "    leave\n    ret\n";
+    }
+    if (t.kind == "br") {
+        out = emit_phi_moves(f, blk.id, t.target, out);
+        return out + "    jmp " + blk_label(name, t.target) + "\n";
+    }
+    if (t.kind == "brif") {
+        out = out + "    movl " + slot(t.cond) + ", %eax\n";
+        out = out + "    testl %eax, %eax\n";
+        out = out + "    jne " + blk_label(name, t.t) + "\n";
+        return out + "    jmp " + blk_label(name, t.f) + "\n";
+    }
+    return out;
+}
+
+// emit_func lowers one SSA function to its `__fn_<name>` body.
+pub function emit_func(f: ssa.SFunc): string {
+    var out: string = "__fn_" + f.name + ":\n";
+    out = out + "    pushq %rbp\n    movq %rsp, %rbp\n";
+    var frame: i32 = f.nvals * 8;
+    if (frame % 16 != 0) { frame = frame + 8; }
+    if (frame > 0) { out = out + "    subq $" + i32_to_string(frame) + ", %rsp\n"; }
+    // Spill incoming arguments to their slots.
+    var p: i32 = 0;
+    while (p < f.nparams) {
+        out = out + "    movl " + argreg32(p) + ", " + slot(p) + "\n";
+        p = p + 1;
+    }
+    // Emit each block: label, instructions, terminator.
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[bi];
+        out = out + blk_label(f.name, blk.id) + ":\n";
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: ssa.SInst = blk.insts[k];
+            if (ins.kind != "param" && ins.kind != "phi") {
+                out = emit_inst(ins, out);
+            }
+            k = k + 1;
+        }
+        out = emit_term(f, f.name, blk, out);
+        bi = bi + 1;
+    }
+    return out;
+}
+
+// emit_program frames the whole module: each function body, then `_start`
+// dispatching into main().
+pub function emit_program(funcs: ssa.SFunc[]): string {
+    var out: string = "    .globl _start\n    .text\n";
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        out = out + emit_func(funcs[i]);
+        i = i + 1;
+    }
+    out = out + "_start:\n";
+    out = out + "    call __fn_main\n";
+    out = out + "    movl %eax, %edi\n";
+    out = out + "    movq $60, %rax\n";
+    out = out + "    syscall\n";
+    return out;
+}
