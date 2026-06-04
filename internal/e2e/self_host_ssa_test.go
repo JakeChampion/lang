@@ -93,6 +93,12 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"break-with-value", "function main(): i32 { var i = 0; var found = 0; while (i < 20) { if (i * i > 30) { found = i; break; } i = i + 1; } return found; }", 6},
 		{"continue-and-break", "function main(): i32 { var i = 0; var s = 0; while (i < 100) { i = i + 1; if (i == 3) { continue; } if (i == 7) { break; } s = s + i; } return s; }", 18},
 		{"nested-break-inner", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } t = t + 1; j = j + 1; } i = i + 1; } return t; }", 6},
+		// Algebraic identities on non-constant (loop) values — must not
+		// change results when simplified.
+		{"alg-mul-one", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i * 1); i = i + 1; } return s; }", 10},
+		{"alg-add-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = (s + 0) + i; i = i + 1; } return s; }", 10},
+		{"alg-mul-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i * 0); i = i + 1; } return s; }", 0},
+		{"alg-or-shift-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = (s | 0) + (i << 0); i = i + 1; } return s; }", 10},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
@@ -140,6 +146,9 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 			// Constant `if` collapses entirely: dead arm pruned, phi→copy
 			// propagated, x+1 folded — down to a single const_int.
 			{"branch-fold", "function main(): i32 { var x = 0; if (true) { x = 10; } else { x = 20; } return x + 1; }", 1},
+			// `x * 0` on a loop variable collapses to a constant 0, dropping
+			// the whole accumulator chain (algebraic simplification + DCE).
+			{"alg-mul-zero", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i * 0); i = i + 1; } return s; }", 7},
 		}
 		for _, sc := range shrink {
 			t.Run(sc.name, func(t *testing.T) {
