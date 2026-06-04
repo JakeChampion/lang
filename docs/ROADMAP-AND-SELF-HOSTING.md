@@ -418,7 +418,22 @@ next arm), and the interpreter (compare against the `VBool` payload).
 Verified fixpoint-clean — the compiler's own source doesn't use
 bool-`match`, so the parser / native changes stay byte-identical.
 
-Gated by 460 differential cases as of this writing. What remains for the
+A tenth pass caught a **returned-closure** bug: a function returning a
+closure (`function make_adder(n: i32): fn { return function(x) {…}; }`)
+worked, but binding its result — `var add5 = make_adder(5)` — then
+calling `add5(37)` emitted a *direct* `(call $add5 …)` to a function
+that doesn't exist. The wasm backend only treated a local as
+closure-valued (`fn_names`) when it was bound to a lambda *literal*; a
+local bound to a call of an `fn`-returning function was missed, so the
+call site took the direct-call path instead of `call_indirect`. Fixed by
+threading the set of `fn`-returning free functions
+(`fn_returning_func_names`) into `collect_fn_var_names`, which now also
+marks `var f = g(…)` when `g`'s return type is the coarse closure
+spelling `fn`. wasm-only change (no parser / native edits), and no
+self-host source function returns bare `fn`, so the fixpoint stays
+byte-identical.
+
+Gated by 464 differential cases as of this writing. What remains for the
 wasm backend to retire the Go wasm path is packaging, not language: the
 **`wasi:cli/run` / `wasi:http` component shapes** (the Component-Model
 packaging in `internal/wasm/component`, ported to Fern, on top of this

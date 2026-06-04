@@ -420,8 +420,10 @@ function collect_str_key_map_names(body: parser.Stmt[], map_names: string[], acc
 }
 
 // collect_fn_var_names gathers `var f = function(...) {...}` binding names
-// (closure-valued locals), recursing nested bodies.
-function collect_fn_var_names(body: parser.Stmt[], acc: string[]): string[] {
+// (closure-valued locals), recursing nested bodies. `fnrets` lists the
+// free functions whose return type is `fn` (a closure) so a binding
+// `var f = make_adder(5)` is recognised as a closure-valued local too.
+function collect_fn_var_names(body: parser.Stmt[], acc: string[], fnrets: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -430,19 +432,30 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[]): string[] {
                     parser.ExprLambda(_) => {
                         if (!contains_str(acc, v.name)) { acc = acc.push(v.name); }
                     },
+                    parser.ExprCall(c) => {
+                        // `var f = g(...)` where g returns a closure.
+                        match (c.callee) {
+                            parser.ExprIdent(cid) => {
+                                if (contains_str(fnrets, cid.name) && !contains_str(acc, v.name)) {
+                                    acc = acc.push(v.name);
+                                }
+                            },
+                            _ => {},
+                        }
+                    },
                     _ => {},
                 }
             },
             parser.StmtIf(f) => {
-                acc = collect_fn_var_names(f.then_body, acc);
-                acc = collect_fn_var_names(f.else_body, acc);
+                acc = collect_fn_var_names(f.then_body, acc, fnrets);
+                acc = collect_fn_var_names(f.else_body, acc, fnrets);
             },
-            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc); },
-            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc); },
+            parser.StmtWhile(w) => { acc = collect_fn_var_names(w.body, acc, fnrets); },
+            parser.StmtFor(f) => { acc = collect_fn_var_names(f.body, acc, fnrets); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
-                    acc = collect_fn_var_names(m.arms[k].body, acc);
+                    acc = collect_fn_var_names(m.arms[k].body, acc, fnrets);
                     k = k + 1;
                 }
             },
@@ -451,6 +464,20 @@ function collect_fn_var_names(body: parser.Stmt[], acc: string[]): string[] {
         i = i + 1;
     }
     return acc;
+}
+
+// fn_returning_func_names lists the module's free functions whose declared
+// return type is the coarse closure spelling `fn`.
+function fn_returning_func_names(mod_funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod_funcs.len()) {
+        if (mod_funcs[i].ret_type == "fn" && mod_funcs[i].receiver_name.len() == 0) {
+            out = out.push(mod_funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // collect_idents_expr / _stmts gather every referenced identifier in an
@@ -3674,8 +3701,9 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         if (!contains_str(all_locals, f.params[alp].name)) { all_locals = all_locals.push(f.params[alp].name); }
         alp = alp + 1;
     }
-    // Closure-typed locals/params: `fn` params + vars bound to a lambda.
-    var fn_names: string[] = collect_fn_var_names(f.body, []);
+    // Closure-typed locals/params: `fn` params + vars bound to a lambda
+    // or to a call of a function that returns a closure.
+    var fn_names: string[] = collect_fn_var_names(f.body, [], fn_returning_func_names(mod_funcs));
     var fp: i32 = 0;
     while (fp < f.params.len()) {
         if (f.params[fp].type_name == "fn" && !contains_str(fn_names, f.params[fp].name)) {

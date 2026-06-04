@@ -543,6 +543,15 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// total == 0, so this sums 1+2+3.
 		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "6"},
 
+		// Returned closures — a `var f = g(...)` bound to a call of a
+		// function whose return type is `fn` must go through call_indirect,
+		// not a direct `(call $f …)` to a nonexistent function (regression:
+		// harden10).
+		{"return-closure-capture", "function make_adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(37); }", 42, ""},
+		{"return-closure-noncap", "function get_const(): fn { return function(): i32 { return 99; }; } function main(): i32 { var f = get_const(); return f(); }", 99, ""},
+		{"return-closure-twice", "function adder(n: i32): fn { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var a = adder(10); var b = adder(20); return a(1) + b(2); }", 33, ""},
+		{"return-closure-string", "function greeter(): fn { return function(): string { return \"hi\"; }; } function main(): i32 { var g = greeter(); write(g()); return 0; }", 0, "hi"},
+
 		// `.to_string()` (integer→string runtime) + f-strings (which the
 		// parser desugars to `"…" + (expr).to_string() + …`).
 		{"tostring-i32", "function main(): i32 { var n: i32 = 42; write(n.to_string()); return 0; }", 0, "42"},
