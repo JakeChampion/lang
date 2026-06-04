@@ -6333,6 +6333,14 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             if (iter_ty == "array_u32") { elem_ty = "u32"; }
             if (iter_ty == "array_u64") { elem_ty = "u64"; }
             if (iter_ty == "array_i64") { elem_ty = "i64"; }
+            // Generic `array` tag (struct / `dyn Trait` / otherwise
+            // non-primitive elements — `ret_tag_of` collapses every
+            // `T[]` that isn't a known scalar array to "array", losing
+            // the element name). Bind the loop var as "unknown" rather
+            // than the i32 default so a method call on it
+            // (`for x in shapes { x.area() }`) routes through the
+            // runtime-shape dispatch instead of the primitive path.
+            if (iter_ty == "array") { elem_ty = "unknown"; }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
             s = s.bind_local(arr_name);

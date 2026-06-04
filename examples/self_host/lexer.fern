@@ -92,7 +92,7 @@ function is_keyword(name: string): boolean {
         || name == "struct" || name == "import" || name == "pub" || name == "const"
         || name == "enum" || name == "type" || name == "match" || name == "when"
         || name == "defer"
-        || name == "trait" || name == "impl";
+        || name == "trait" || name == "impl" || name == "dyn";
 }
 
 function is_valid_numeric_suffix(s: string): boolean {

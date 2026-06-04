@@ -5943,6 +5943,11 @@ function emit_stmt(stmt: parser.Stmt, s: EmitState): EmitState {
             if (iter_ty == "array_u32") { elem_ty = "u32"; }
             if (iter_ty == "array_u64") { elem_ty = "u64"; }
             if (iter_ty == "array_i64") { elem_ty = "i64"; }
+            // Generic `array` tag (struct / `dyn Trait` / otherwise
+            // non-primitive elements): bind the loop var "unknown" so a
+            // method call on it dispatches by runtime shape, not the
+            // primitive path. See the x86-64 backend for the rationale.
+            if (iter_ty == "array") { elem_ty = "unknown"; }
             s = emit_expr(f.iter, s);
             var arr_name: string = "__for_arr_" + i32_to_string(s.label_n);
             s = s.bind_local(arr_name);

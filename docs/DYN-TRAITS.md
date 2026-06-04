@@ -163,12 +163,35 @@ diagnostic (`dyn Trait is not yet supported on compiled backends; use
 the interpreter or a closed enum`) rather than crashing — so the feature
 is interpreter-only but never silently miscompiles.
 
-### 4.3 Self-host (follow-up slice)
+### 4.3 Self-host (x86-64 + arm64 — shipped)
 
 The self-hosted compiler dispatches heap values dynamically by shape
-pointer already, so a `dyn Trait` maps naturally onto that path; the
-work is parser + checker surface parity. Tracked as a follow-up, after
-the Go reference lands the compiled-backend vtable representation.
+pointer already, so `dyn Trait` maps onto that path for free — a
+struct/enum value carries its own shape, and `d.m()` shape-dispatches to
+the concrete impl regardless of `d`'s static type. So the self-host
+needed only the **parse**, not a new dispatch path:
+
+- `dyn` is a lexer keyword (`is_keyword`), and `parse_type_name`
+  consumes `dyn Trait` into a coarse `"dyn <trait>"` spelling (recursing
+  so `dyn Shape[]` / `dyn mod.Shape` reuse the array/qualified handling).
+- One real fix in the x86-64 + arm64 emitters: `ret_tag_of` collapses
+  every non-scalar `T[]` to the generic `"array"` tag (the element name
+  is lost), and the `for x in xs` lowering defaulted that element to
+  `i32` — so a method call on the loop var (`for x in shapes {
+  x.area() }`) mis-dispatched to the primitive path. The generic
+  `"array"` tag now binds the loop var as `"unknown"`, which routes the
+  call through runtime-shape dispatch. (This was a pre-existing bug for
+  *any* struct array, not just `dyn` — `for p in points { p.m() }` hit
+  it too; the `dyn` work surfaced it.)
+
+Same boundary as elsewhere: `dyn` over a **struct/enum** concrete type
+works (it has a shape); over an unboxed **primitive / string** it does
+not (no shape pointer) — that needs the monomorphisation path. The
+self-host checker (`checker.fern`) does not yet enforce object-safety or
+the coercion rule; the Go checker is the strict gate until it retires,
+at which point those rules move into `checker.fern`. The **wasm**
+self-host backend structures its for-loop element typing differently and
+is a separate follow-up.
 
 ## 5. Coercion (boxing) model
 
@@ -256,8 +279,11 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    per-(trait,type) vtable emission + coercion boxing + indirect-call
    lowering on arm64, then x86-64, then wasm (one backend per PR,
    mirroring the backend-parity cadence).
-3. **Slice 3: self-host parity.** Parser + checker surface in the
-   self-hosted compiler; dispatch rides its existing shape-pointer path.
+3. **Slice 3: self-host parity (x86-64 + arm64 — shipped).** `dyn Trait`
+   parses in the self-host and dispatches over its existing shape-pointer
+   path; struct/enum concrete types work end-to-end (see §4.3). Remaining:
+   the wasm self-host backend, and the strict object-safety / coercion
+   checks in `checker.fern` (only needed once the Go checker retires).
 4. **Follow-ups.** Multi-trait objects (`dyn A + B`), explicit upcast/
    downcast, `dyn` in struct fields with the fat-pointer layout.
 
