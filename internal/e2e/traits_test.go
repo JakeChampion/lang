@@ -384,3 +384,39 @@ function main(): i32 {
 		t.Errorf("expected 5 passing asserts; got:\n%s\nstderr: %s", got, errb.String())
 	}
 }
+
+// @derive(Ord) on an enum: a variant declared earlier sorts before a
+// later one; within a variant, payloads compare lexicographically. Also
+// exercises `impl Ord for string` (via a string payload). See
+// docs/TRAITS.md.
+func TestInterpDeriveEnumOrd(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(`import "core/cmp";
+@derive(cmp.Ord)
+enum Level { Low(i32), Mid(string), High }
+function sign(n: i32): string { if (n < 0) { return "lt"; } if (n > 0) { return "gt"; } return "eq"; }
+function main(): i32 {
+    print(sign(Low(1).cmp(Low(2))));    // lt
+    print(sign(Low(9).cmp(Mid("a"))));  // lt  (Low variant before Mid)
+    print(sign(High.cmp(Low(0))));      // gt  (High variant after Low)
+    print(sign(Mid("b").cmp(Mid("b")))); // eq
+    print(sign(Mid("apple").cmp(Mid("banana")))); // lt (string lex)
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if got := out.String(); got != "lt\nlt\ngt\neq\nlt\n" {
+		t.Errorf("enum Ord output = %q, want lt/lt/gt/eq/lt", got)
+	}
+}

@@ -2094,10 +2094,6 @@ function main(): i32 { return 0; }`, "unknown trait"},
 // with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {
 	cases := []struct{ src, want string }{
-		{`trait Ord { function cmp(self: Self, other: Self): i32; }
-@derive(Ord)
-enum E { A, B }
-function main(): i32 { return 0; }`, "@derive(Ord) on enums is not supported"},
 		{`trait Eq { function eq(self: Self, other: Self): boolean; }
 @derive(Eq)
 enum E[T] { A(T), B }
