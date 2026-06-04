@@ -516,10 +516,21 @@ variable-length integer encoding every wasm count / size / index /
 pipeline against the canonical vectors (`TestSelfHostLEB128`, which
 concatenates the module with a self-test driver — the module is kept
 import-free precisely so it can be both imported by the future encoder
-and concatenated for the test). Remaining slices: section framing +
-module scaffold (magic/version, the six sections, the WASI imports,
-memory, the `$heap` global, `__fern_alloc`), then opcode coverage to WAT
-parity, then the component wrapper.
+and concatenated for the test).
+
+Slice 2 landed: `examples/self_host/wat_lex.fern` — a tokenizer for the
+folded-S-expr WAT that `emit_module` produces (`(` / `)` / atoms /
+`"…"` strings, whitespace discarded). This fixes the encoder's
+architecture: rather than a second AST→binary backend duplicating
+`wasm.fern`'s ~5000 lines of lowering, the binary emitter **assembles the
+already-tested WAT** — tokenize → parse the S-exprs into module structure
+→ encode with `leb128.fern` — so it rides on the proven text emitter and
+only does the mechanical text→bytes mapping. Unit-tested end-to-end
+(`TestSelfHostWatLex`, same concatenate-with-driver shape as the LEB128
+test). Remaining slices: an S-expr parser + section/opcode encoder
+(module scaffold first: magic/version, the six sections, the WASI
+imports, memory, the `$heap` global, `__fern_alloc`, then opcode coverage
+to full parity), then the `wasi:cli/run` component wrapper.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
