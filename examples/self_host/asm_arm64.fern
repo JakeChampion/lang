@@ -4410,6 +4410,21 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                 s = s.mark_heap();
                 return s;
             }
+            // udp_send(host, port, data) → i32 — one-shot IPv4 datagram.
+            // Args reach the helper in x0 (host box) / x1 (port) / x2
+            // (data box).
+            if (name == "udp_send" && c.args.len() == 3) {
+                s = emit_expr(c.args[0], s);
+                s = emit_expr(c.args[1], s);
+                s = emit_expr(c.args[2], s);
+                s = s.write("    ldr x2, [sp], #16\n");   // data box
+                s = s.write("    ldr x1, [sp], #16\n");   // port
+                s = s.write("    ldr x0, [sp], #16\n");   // host box
+                s = s.write("    bl __fern_udp_send\n");
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.mark_heap();
+                return s;
+            }
             // temp_dir(prefix) — make a uniquely-named directory under
             // /tmp. Returns Result[string]: Ok(path) or Err(_). The
             // helper body is emitted unconditionally above; this was
@@ -9248,6 +9263,100 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         s = s.write("    ret\n");
         s = s.write(".size __fern_tcp_close, .-__fern_tcp_close\n");
 
+        // __fern_udp_send(x0 = host box, x1 = port, x2 = data box) → i32.
+        // One-shot fire-and-forget IPv4 datagram (telemetry / syslog to a
+        // local agent): socket(AF_INET, SOCK_DGRAM); parse the dotted-quad
+        // host into sin_addr; sendto the bytes; close. Returns the bytes
+        // accepted or -errno. Linux aarch64: socket=198, sendto=206,
+        // close=57. Darwin remaps via darwin_sysno (97/133/6) and the
+        // sockaddr_in gets a leading sin_len byte.
+        s = s.write(".globl __fern_udp_send\n");
+        s = s.write(".type __fern_udp_send, %function\n");
+        s = s.write("__fern_udp_send:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    str x23, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");           // host box
+        s = s.write("    mov x20, x1\n");           // port
+        s = s.write("    mov x21, x2\n");           // data box
+        s = s.write("    mov x0, #2\n");            // AF_INET
+        s = s.write("    mov x1, #2\n");            // SOCK_DGRAM
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    mov x8, #198\n");          // socket
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.lt .Ludp_err\n");
+        s = s.write("    mov x22, x0\n");           // fd
+        s = s.write("    sub sp, sp, #16\n");       // sockaddr_in
+        if (darwin) {
+            s = s.write("    mov w0, #16\n");
+            s = s.write("    strb w0, [sp]\n");     // sin_len
+            s = s.write("    mov w0, #2\n");
+            s = s.write("    strb w0, [sp, #1]\n"); // sin_family
+        } else {
+            s = s.write("    mov w0, #2\n");
+            s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
+        }
+        s = s.write("    rev16 w0, w20\n");         // htons(port)
+        s = s.write("    strh w0, [sp, #2]\n");
+        s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
+        // Parse host "a.b.c.d" → 4 octet bytes into sin_addr (sp+4):
+        // acc = acc*10 + digit; on '.' store acc and advance; store the
+        // final octet after the loop. (Mirrors the wasm udp parser.)
+        s = s.write("    ldr x9, [x19]\n");         // host data
+        s = s.write("    ldr x10, [x19, #8]\n");    // host len
+        s = s.write("    mov x11, #0\n");           // i
+        s = s.write("    mov x12, #0\n");           // acc
+        s = s.write("    mov x13, #0\n");           // octIdx
+        s = s.write(".Ludp_pl:\n");
+        s = s.write("    cmp x11, x10\n");
+        s = s.write("    b.ge .Ludp_pld\n");
+        s = s.write("    ldrb w14, [x9, x11]\n");
+        s = s.write("    cmp w14, #46\n");          // '.'
+        s = s.write("    b.ne .Ludp_pdig\n");
+        s = s.write("    add x15, sp, #4\n");
+        s = s.write("    strb w12, [x15, x13]\n");  // store octet
+        s = s.write("    add x13, x13, #1\n");
+        s = s.write("    mov x12, #0\n");
+        s = s.write("    b .Ludp_pn\n");
+        s = s.write(".Ludp_pdig:\n");
+        s = s.write("    mov x15, #10\n");
+        s = s.write("    mul x12, x12, x15\n");
+        s = s.write("    sub w14, w14, #48\n");     // '0'
+        s = s.write("    add x12, x12, x14\n");
+        s = s.write(".Ludp_pn:\n");
+        s = s.write("    add x11, x11, #1\n");
+        s = s.write("    b .Ludp_pl\n");
+        s = s.write(".Ludp_pld:\n");
+        s = s.write("    add x15, sp, #4\n");
+        s = s.write("    strb w12, [x15, x13]\n");  // final octet
+        // sendto(fd, data, len, 0, &sa, 16).
+        s = s.write("    mov x0, x22\n");
+        s = s.write("    ldr x1, [x21]\n");         // data ptr
+        s = s.write("    ldr x2, [x21, #8]\n");     // data len
+        s = s.write("    mov x3, #0\n");            // flags
+        s = s.write("    mov x4, sp\n");            // &sockaddr
+        s = s.write("    mov x5, #16\n");           // addrlen
+        s = s.write("    mov x8, #206\n");          // sendto
+        s = s.write("    svc #0\n");
+        s = s.write("    mov x23, x0\n");           // bytes sent / -errno
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    mov x0, x22\n");           // close(fd)
+        s = s.write("    mov x8, #57\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    mov x0, x23\n");
+        s = s.write("    b .Ludp_ret\n");
+        s = s.write(".Ludp_err:\n");                // x0 holds -errno
+        s = s.write(".Ludp_ret:\n");
+        s = s.write("    ldr x23, [sp], #16\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_udp_send, .-__fern_udp_send\n");
+
         // __fern_f64_to_string(x0 = IEEE-754 f64 bits) → string box.
         // arm64 mirror of asm.fern: fixed-precision decimal matching
         // std/float's __float_to_string (k=15) — NaN → "NaN"; sign
@@ -10643,7 +10752,8 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
 //     tcp_accept / tcp_recv / tcp_send / tcp_close — socket 198→97 /
 //     bind 200→104 / listen 201→106 / accept 202→30, plus the Darwin
 //     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
-//     loop is built on. UDP (udp_send) is not yet ported.
+//     loop is built on, and one-shot IPv4 UDP (udp_send — socket /
+//     sendto 206→133 / close, dotted-quad host parse).
 
 function darwin_starts_with(s: string, p: string): boolean {
     if (s.len() < p.len()) { return false; }
@@ -10690,6 +10800,7 @@ function darwin_sysno(n: i32): i32 {
     if (n == 200) { return 104; }  // bind (sockaddr_in gets a sin_len byte)
     if (n == 201) { return 106; }  // listen (same args)
     if (n == 202) { return 30; }   // accept (same args)
+    if (n == 206) { return 133; }  // sendto (same args)
     if (n == 93) { return 1; }     // exit
     if (n == 94) { return 1; }     // exit_group -> exit
     if (n == 222) { return 197; }  // mmap
@@ -11052,6 +11163,14 @@ function main(): i32 {
     if (!contains(tcd, "mov x16, #106")) { return 299; }    // Darwin: listen
     if (!contains(tcd, "mov x16, #30")) { return 300; }     // Darwin: accept
     if (!contains(tcd, "strb w0, [sp, #1]")) { return 301; } // Darwin: sin_len/family
+
+    // UDP — socket/sendto/close; the dotted-quad parse + SOCK_DGRAM.
+    var udsrc: string = "return udp_send(\"127.0.0.1\", 8125, \"m:1|c\");";
+    var udl: string = emit_module(parser.parse_module(lexer.tokenize(udsrc)), false);
+    if (!contains(udl, "mov x8, #206")) { return 302; }     // Linux: sendto
+    if (!contains(udl, ".Ludp_pl:")) { return 303; }        // dotted-quad parse loop
+    var udd: string = darwinize(emit_module(parser.parse_module(lexer.tokenize(udsrc)), true));
+    if (!contains(udd, "mov x16, #133")) { return 304; }    // Darwin: sendto
 
     return 0;
 }

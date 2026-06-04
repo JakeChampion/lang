@@ -336,6 +336,15 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
   return 7;
 }`,
 		7)
+
+	// udp_send — exercises the Darwin socket(97)/sendto(133)/close(6)
+	// path and the dotted-quad host parse. UDP is connectionless, so a
+	// sendto to a local port with no receiver still succeeds and returns
+	// the byte count (the datagram is simply dropped). Returns the 3
+	// payload bytes iff socket→parse→sendto→close all worked.
+	runCase("udp_send",
+		`function main(): i32 { return udp_send("127.0.0.1", 39518, "abc"); }`,
+		3)
 }
 
 // buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
