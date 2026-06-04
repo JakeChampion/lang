@@ -2089,3 +2089,24 @@ function main(): i32 { return 0; }`, "unknown trait"},
 		}
 	}
 }
+
+// @derive on a generic enum and @derive(Ord) on an enum are rejected
+// with clear messages (both are follow-ups). See docs/TRAITS.md.
+func TestDeriveEnumErrors(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`trait Ord { function cmp(self: Self, other: Self): i32; }
+@derive(Ord)
+enum E { A, B }
+function main(): i32 { return 0; }`, "@derive(Ord) on enums is not supported"},
+		{`trait Eq { function eq(self: Self, other: Self): boolean; }
+@derive(Eq)
+enum E[T] { A(T), B }
+function main(): i32 { return 0; }`, "generic enum is not supported"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("src %q: got %v, want containing %q", c.src, err, c.want)
+		}
+	}
+}

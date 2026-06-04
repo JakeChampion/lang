@@ -311,8 +311,9 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    the trait). Lives in the Go checker's `synthesizeDerives` (run before
    the receiver-hoist + conformance passes; idempotent across the
    monomorph re-check). Verified through the interpreter and the wasm
-   backend; nested-struct composition tested. Enums + collapsing the
-   remaining `std/test` array/map families are the follow-ups.
+   backend; nested-struct composition tested. Enums are supported too (variant-wise `match` synthesis for Eq /
+   Display; Ord-for-enums and generic enums are follow-ups). Collapsing
+   the remaining `std/test` array/map families is the other follow-up.
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.
 

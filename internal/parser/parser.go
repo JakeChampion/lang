@@ -293,15 +293,6 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			continue
 		}
-		if len(derives) > 0 {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@derive only applies to a `struct` declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
-			}
-			continue
-		}
 		if p.match(lexer.Keyword, "const") {
 			cd, err := p.parseConstDecl()
 			if err != nil {
@@ -330,7 +321,17 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if ed != nil {
 				ed.Public = isPub
+				ed.Derives = derives
 				prog.Enums = append(prog.Enums, ed)
+			}
+			continue
+		}
+		if len(derives) > 0 {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@derive only applies to a `struct` or `enum` declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
 			}
 			continue
 		}
