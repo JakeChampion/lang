@@ -102,6 +102,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
 		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120, ""},
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
+		// if-expressions — desugar to an immediately-invoked closure
+		// (call_indirect through the function table on wasm).
+		{"if-expr-true", "function main(): i32 { var x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, ""},
+		{"if-expr-capture", "function main(): i32 { var n: i32 = 10; var x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, ""},
+		{"if-expr-else-if", "function main(): i32 { var n: i32 = 2; var x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, ""},
+		{"direct-iife", "function main(): i32 { return (function(): i32 { return 7; })(); }", 7, ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
 		{"call-in-condition", "function dbl(n: i32): i32 { return n * 2; } function main(): i32 { if (dbl(5) == 10) { return 42; } return 1; }", 42, ""},
 		// Strings + linear memory: write (verbatim) and print (+\n) of

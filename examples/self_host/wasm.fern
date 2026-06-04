@@ -1553,6 +1553,25 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
         },
         parser.ExprCall(c) => {
             match (c.callee) {
+                parser.ExprLambda(_) => {
+                    // Inline-lambda call (IIFE), e.g. an if-expression
+                    // desugar `(function(): T { … })()`. The lambda value
+                    // is a box ptr; call_indirect needs it twice (as the
+                    // $__env arg and to load the table index box[0]), so
+                    // local.tee it into this expression's depth-owned
+                    // scratch ($__lit<depth>) — args evaluate at depth+1
+                    // and can't clobber it.
+                    var sc: string = "$__lit" + i32_to_string(depth);
+                    var boxe: string = emit_expr(c.callee, cx, depth + 1);
+                    var ci: string = "(call_indirect (type $clos" + i32_to_string(c.args.len()) + ") (local.tee " + sc + " " + boxe + ")";
+                    var k: i32 = 0;
+                    while (k < c.args.len()) {
+                        ci = ci + " " + emit_expr(c.args[k], cx, depth + 1);
+                        k = k + 1;
+                    }
+                    ci = ci + " (i32.load (local.get " + sc + ")))";
+                    return ci;
+                },
                 parser.ExprIdent(id) => {
                     // Option/Result constructors → tag boxes [tag@0][payload@4]:
                     // Some/Ok = tag 0, Err = tag 1 (None is the bare-ident case).

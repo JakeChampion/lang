@@ -3053,6 +3053,29 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
         },
         parser.ExprCall(c) => {
             var name: string = "";
+            // Inline-lambda call (IIFE), e.g. an if-expression desugar
+            // `(function(): T { … })()`. Emit the closure box, push the
+            // args above it, then invoke via the closure convention (box
+            // ptr in x9, args at +16, +32, …) — same as the local-closure
+            // path below, but the box comes from the inline lambda rather
+            // than a frame slot.
+            match (c.callee) {
+                parser.ExprLambda(_) => {
+                    s = emit_expr(c.callee, s);          // push closure box
+                    var la: i32 = c.args.len() - 1;
+                    while (la >= 0) {
+                        s = emit_expr(c.args[la], s);
+                        la = la - 1;
+                    }
+                    s = s.write("    ldr x9, [sp, #" + i32_to_string(c.args.len() * 16) + "]\n"); // box ptr
+                    s = s.write("    ldr x2, [x9]\n");
+                    s = s.write("    blr x2\n");
+                    s = s.write("    add sp, sp, #" + i32_to_string((c.args.len() + 1) * 16) + "\n"); // pop args + box
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    return s;
+                },
+                _ => {}
+            }
             match (c.callee) {
                 parser.ExprIdent(id) => { name = id.name; },
                 parser.ExprFieldAccess(fa) => {
