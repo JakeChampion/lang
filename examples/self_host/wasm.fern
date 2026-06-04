@@ -3726,9 +3726,11 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
     }
     var rt: string = lm.ret_type;
     if (rt.len() == 0) { rt = "i32"; }
+    var synth_tp: string[] = [];
     var synth: parser.FuncDecl = parser.FuncDecl {
         name: "__lambda" + i32_to_string(idx),
         receiver_name: "", receiver_type: "",
+        type_params: synth_tp,
         params: ps, ret_type: rt, body: lm.body,
     };
     // Captures that were strings in the enclosing scope stay string-typed.
@@ -4673,10 +4675,12 @@ pub function emit_module(mod: parser.Module): string {
 
     if (!has_main) {
         var noparams: parser.ParamDecl[] = [];
+        var notp: string[] = [];
         var synth: parser.FuncDecl = parser.FuncDecl {
             name: "main",
             receiver_name: "",
             receiver_type: "",
+            type_params: notp,
             params: noparams,
             ret_type: "i32",
             body: mod.top_stmts,

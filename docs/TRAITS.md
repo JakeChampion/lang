@@ -306,6 +306,48 @@ what makes traits *ergonomic* and is the lever that finally collapses the
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.
 
+## 7a. Self-hosting the trait feature
+
+The self-hosted compiler (`examples/self_host/*.fern`) must compile a
+trait-using `std/test` for the `assert_eq_*` collapse to land without
+regressing the self-host gates. It needs traits in two slices:
+
+- **Self-host slice 1 (shipped):** lexer + parser. Recognise
+  `trait`/`impl`, desugar impl methods to receiver-methods, swallow
+  `[T: Bound]`. The self-host dispatches `obj.method()` dynamically by
+  the receiver's runtime *shape pointer* (a heap header), so concrete
+  impls and struct-receiver bounded generics work for free.
+
+- **Self-host slice 2 (in progress): monomorphise bounded generics.**
+  The dynamic dispatch reads a shape pointer from the receiver value —
+  which heap values (struct/string) carry but **unboxed primitives
+  (i32/i64/u32/u64/bool) do not**. So `assert_eq(1, 2)` — a bounded
+  generic whose `T` is i32 — falls into the struct dispatch path,
+  dereferences the integer as a pointer, and crashes. The fix is to
+  monomorphise: clone a bounded-generic function per concrete call-site
+  type so the receiver's *static* type is concrete, routing primitives
+  through the emitter's existing static-primitive dispatch
+  (`asm.fern` checks `infer_expr_type(receiver) == "i32" | "string" |
+  …`). Validated facts:
+  - **Choke point:** `parser.module_with_builtins(mod)` is called by
+    every asm driver (`asm_run`, `asm_load_run`, `asm_arm64_run`) right
+    before `emit_module`, and the asm path runs no checker — so the pass
+    belongs there (or immediately around it) and covers all backends
+    with one wiring change.
+  - **Clone correctness:** the emitter's `infer_expr_type(ExprIdent)`
+    returns the param's recorded type (`local_type_of`), so a clone
+    with `a: i32` makes `a.eq(b)` infer `i32` and dispatch statically.
+    No emitter change needed.
+  - **Inference:** infer the concrete type from the first argument whose
+    parameter type is the type variable `T`. Inferring from a *typed*
+    argument (var / expr), not the paired literal, keeps numeric width
+    correct (`assert_eq(a + b /* i64 */, 8000000000)` → clone `__i64`).
+  - **Plan:** parser keeps the bounded type-param names on `FuncDecl`
+    (unbounded generics stay erased); a pass walks call sites, infers
+    `T`, clones `f` → `f__<type>` substituting the type-var string in
+    param/return/var annotations, rewrites call sites, drops the
+    original. Mirror `constfold.fern`'s immutable Module-rebuild style.
+
 ## 8. Testing
 
 Per the engineering bar (every feature ships with tests at the layer it
