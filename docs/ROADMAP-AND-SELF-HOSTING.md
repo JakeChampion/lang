@@ -597,13 +597,25 @@ mul-compare (values above 2³¹ round-tripping through the 8-byte ops and
 `i32.wrap_i64` on the `as i32`), and string length / index / concat /
 comparison — each binary module matching the WAT path.
 
+Slice 4f switched the differential test harness from **embedding** the
+target WAT in a string literal to **`read_file`**-ing it: the assembler
+(the five encoder modules + a driver) is now built once and reads the WAT
+from the preopened dir, so module size no longer caps the test. This
+unlocked **maps** — which need no further opcodes, but whose ~33 KB WAT
+overran the embed approach — and let the test diff **stdout** too (so
+`write(...)` programs are checked). `TestSelfHostWasmBinary` now also
+covers `write` output, a string-builder loop, i32-keyed and string-keyed
+map get, all matching the WAT path. One scaling limit surfaced: the
+assembler's bump heap is 16 pages (1 MB), so a WAT past ~40 KB (e.g. a
+program pulling in both the `string[]` and map runtimes at once) OOMs the
+assembler — relevant when the goal becomes round-tripping the compiler's
+own (large) modules, which will want the self-host to emit a bigger
+`(memory …)` for such programs.
+
 Remaining: **f64** (blocked only on `f64.const`, whose immediate is a raw
-8-byte IEEE-754 double, not a LEB — needs a decimal→bits step); **maps**
-(no missing *opcodes* — the 33 KB map WAT just overruns the embed-the-WAT
-test harness, so this needs the harness switched to `read_file` rather
-than a string literal); **closures** (the table + elem sections +
-`call_indirect`); then wrap the core module in the `wasi:cli/run` /
-`wasi:http` component shapes.
+8-byte IEEE-754 double, not a LEB — needs a decimal→bits step);
+**closures** (the table + elem sections + `call_indirect`); then wrap the
+core module in the `wasi:cli/run` / `wasi:http` component shapes.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):

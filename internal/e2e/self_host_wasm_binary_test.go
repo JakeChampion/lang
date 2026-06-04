@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,25 +10,25 @@ import (
 )
 
 // TestSelfHostWasmBinary exercises the self-hosted *binary* wasm emitter
-// end to end — slice 4b, the module-walker + opcode encoder
-// (wat_emit_bin.fern) on top of leb128 / wat_lex / wat_parse / wat_encode.
+// end to end — the module-walker + opcode encoder (wat_emit_bin.fern) on
+// top of leb128 / wat_lex / wat_parse / wat_encode.
 //
-// For each program it:
+// The "assembler" is the five binary-encoder modules concatenated with a
+// driver that read_file()s a target WAT, runs it through tokenize -> parse
+// -> emit_binary, and prints the resulting bytes as newline-separated
+// decimals. It is itself compiled through the self-host wasm pipeline and
+// built ONCE; reading the WAT from a file (rather than embedding it in a
+// string literal) keeps it independent of program size — large modules
+// (maps, the string runtime) assemble fine.
+//
+// For each program the test:
 //  1. runs the WAT emitter (wasm_run) to get the textual module + its
-//     reference exit code under wasmtime,
-//  2. builds an "assembler" program: the five binary-encoder modules
-//     concatenated with a driver that embeds that WAT, runs it through
-//     tokenize -> parse -> emit_binary, and prints the resulting bytes as
-//     newline-separated decimals,
-//  3. compiles + runs that assembler (itself through the self-host wasm
-//     pipeline) to obtain the bytes,
-//  4. reassembles the bytes into a .wasm and runs it,
-//  5. asserts the binary module's exit code matches both the WAT path and
-//     the expected value.
-//
-// The encoder modules are import-free, so the assembler is a single
-// concatenated module (the WAT is embedded rather than read from stdin,
-// which a stdin-less program can't do).
+//     reference exit code / stdout under wasmtime,
+//  2. writes that WAT into the preopened dir and runs the assembler to get
+//     the module bytes,
+//  3. reassembles the bytes into a .wasm and runs it,
+//  4. asserts the binary module's exit code + stdout match the WAT path
+//     (and the declared expected exit).
 func TestSelfHostWasmBinary(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -49,25 +48,32 @@ func TestSelfHostWasmBinary(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	// The binary-encoder modules, concatenated as the assembler's prelude.
-	var encPrelude strings.Builder
+	// Build the assembler once: the encoder modules + a read_file driver.
+	var asmSrc strings.Builder
 	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		encPrelude.Write(b)
-		encPrelude.WriteByte('\n')
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(asmReadFileDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("assembler emitter produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "assembler.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write assembler wat: %v", err)
 	}
 
-	runWat := func(t *testing.T, watBytes []byte, tag string) int {
-		watPath := filepath.Join(dir, tag+".wat")
-		if err := os.WriteFile(watPath, watBytes, 0o644); err != nil {
-			t.Fatalf("write %s: %v", watPath, err)
-		}
-		cmd := exec.Command(wasmtime, "run", watPath)
-		_ = cmd.Run()
-		return cmd.ProcessState.ExitCode()
+	// run executes a WAT/wasm module under wasmtime (preopening dir for the
+	// assembler's read_file), returning exit code + stdout.
+	run := func(path string) (int, string) {
+		cmd := exec.Command(wasmtime, "run", "--dir", dir, path)
+		out, _ := cmd.Output()
+		return cmd.ProcessState.ExitCode(), string(out)
 	}
 
 	cases := []struct {
@@ -80,77 +86,58 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"locals", "function main(): i32 { var x: i32 = 5; return x + 37; }", 42},
 		{"subtraction", "function main(): i32 { var a: i32 = 100; var b: i32 = 58; return a - b; }", 42},
 		{"bitwise", "function main(): i32 { return (10 & 6) + (10 | 1); }", 13},
-		// Control flow — block / loop / if / br / br_if, with the label
-		// stack resolving `$brk`/`$cont`/if-frame depths.
+		// Control flow.
 		{"while-sum", "function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", 10},
 		{"if-then", "function main(): i32 { var x: i32 = 5; if (x > 3) { return 1; } return 0; }", 1},
 		{"return-in-if-in-loop", "function main(): i32 { var i: i32 = 0; while (i < 10) { if (i == 3) { return i; } i = i + 1; } return 99; }", 3},
 		{"break-continue", "function main(): i32 { var i: i32 = 0; var s: i32 = 0; while (i < 10) { i = i + 1; if (i == 3) { continue; } if (i > 6) { break; } s = s + i; } return s; }", 18},
 		{"short-circuit-and", "function main(): i32 { var a: i32 = 5; if (a > 1 && a < 10) { return 7; } return 0; }", 7},
 		{"nested-loops", "function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 3) { var j: i32 = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
-		// Division / remainder / shifts (the shr_s opcode was off by one
-		// before this slice) + struct field load/store via i32.load/store.
+		// Division / shifts / structs.
 		{"div-rem", "function main(): i32 { var n: i32 = 17; return n / 5 + n % 5; }", 5},
 		{"shift-right", "function main(): i32 { return 100 >> 2; }", 25},
 		{"shift-left", "function main(): i32 { return 5 << 3; }", 40},
 		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
 		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n = c.n + 37; return c.n; }", 42},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
-		// i64 arithmetic / comparison / conversion (values above 2^31
-		// round-trip through the 8-byte ops + i32.wrap_i64 on the `as i32`).
+		// i64.
 		{"i64-div", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},
 		{"i64-sub", "function main(): i32 { var a: i64 = 100; var b: i64 = 58; var c: i64 = a - b; return c as i32; }", 42},
 		{"i64-mul-cmp", "function main(): i32 { var a: i64 = 1000000; var b: i64 = 1000000; var p: i64 = a * b; if (p > 999999999999) { return 1; } return 0; }", 1},
-		// Strings: the string runtime (memory layout, byte loads, concat,
-		// comparison) now encodes — these were unlocked by the i32 unsigned
-		// compares / select added in slice 4d.
+		// Strings (including stdout via write()).
 		{"str-len", "function main(): i32 { var s: string = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s: string = \"abcdef\"; return s[3]; }", 100},
 		{"str-concat-len", "function main(): i32 { var a: string = \"foo\"; var b: string = a + \"barbaz\"; return b.len(); }", 9},
 		{"str-compare", "function main(): i32 { if (\"apple\" < \"banana\") { return 7; } return 0; }", 7},
+		{"str-write", "function main(): i32 { write(\"hello world\"); return 0; }", 0},
+		{"str-builder", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 3) { s = s + \"ab\"; i = i + 1; } write(s); return s.len(); }", 6},
+		// Maps — now testable via the read_file harness (the 33 KB map WAT
+		// overran the old embed-the-WAT approach).
+		{"map-get", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; return m.get_or(2, 0) + m.get_or(3, 0); }", 50},
+		{"map-string-key", "function main(): i32 { var m = map_new(8); m = m.set(\"k\", 41); return m.get_or(\"k\", 0) + 1; }", 42},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// 1. WAT + its reference exit.
+			// 1. WAT + its reference exit / stdout.
 			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
 			if len(wat) == 0 {
 				t.Fatal("WAT emitter produced 0 bytes")
 			}
-			watExit := runWat(t, wat, tc.name+"_wat")
+			watPath := filepath.Join(dir, "target.wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write target wat: %v", err)
+			}
+			watExit, watOut := run(watPath)
 			if watExit != tc.exit {
 				t.Fatalf("WAT path exited %d, want %d", watExit, tc.exit)
 			}
 
-			// 2. Assembler program: encoder modules + driver embedding the
-			//    WAT (whitespace-collapsed; the tokenizer is whitespace-
-			//    insensitive) and printing the bytes as decimals.
-			flat := strings.Join(strings.Fields(string(wat)), " ")
-			esc := strings.ReplaceAll(flat, `\`, `\\`)
-			esc = strings.ReplaceAll(esc, `"`, `\"`)
-			driver := "function main(): i32 {\n" +
-				"    var wat: string = \"" + esc + "\";\n" +
-				"    var bytes: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));\n" +
-				"    var i: i32 = 0;\n" +
-				"    while (i < bytes.len()) { print_int(bytes[i]); write(\"\\n\"); i = i + 1; }\n" +
-				"    return 0;\n}\n"
-			asmSrc := encPrelude.String() + driver
-
-			// 3. Compile + run the assembler to get the bytes.
-			asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc))
-			if len(asmWat) == 0 {
-				t.Fatal("assembler emitter produced 0 bytes")
-			}
-			asmWatPath := filepath.Join(dir, tc.name+"_asm.wat")
-			if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
-				t.Fatalf("write asm wat: %v", err)
-			}
-			out, err := exec.Command(wasmtime, "run", asmWatPath).Output()
+			// 2. Assemble: run the (prebuilt) assembler over target.wat.
+			out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
 			if err != nil {
 				t.Fatalf("run assembler: %v", err)
 			}
-
-			// 4. Reassemble the decimal byte stream into a .wasm.
 			var bs []byte
 			for _, tok := range strings.Fields(string(out)) {
 				n, err := strconv.Atoi(tok)
@@ -170,13 +157,32 @@ func TestSelfHostWasmBinary(t *testing.T) {
 				t.Fatalf("write wasm: %v", err)
 			}
 
-			// 5. Run the binary module; assert it matches.
-			cmd := exec.Command(wasmtime, "run", wasmPath)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("binary module exited %d, want %d (WAT path: %d)\n%s",
-					code, tc.exit, watExit, fmt.Sprintf("%d bytes", len(bs)))
+			// 3. Run the binary module; assert exit + stdout match the WAT path.
+			binExit, binOut := run(wasmPath)
+			if binExit != tc.exit {
+				t.Errorf("binary module exited %d, want %d (WAT path: %d, %d bytes)", binExit, tc.exit, watExit, len(bs))
+			}
+			if binOut != watOut {
+				t.Errorf("binary stdout = %q, want %q (WAT path)", binOut, watOut)
 			}
 		})
 	}
 }
+
+// asmReadFileDriver is the assembler's entry point: read the target WAT
+// from the preopened dir, assemble it, and print the module bytes as
+// newline-separated decimals (the test reassembles them into a .wasm).
+const asmReadFileDriver = `
+function main(): i32 {
+    match (read_file("target.wat")) {
+        Ok(wat) => {
+            var bytes: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var i: i32 = 0;
+            while (i < bytes.len()) { print_int(bytes[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
