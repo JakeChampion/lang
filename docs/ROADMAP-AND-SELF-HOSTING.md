@@ -719,13 +719,28 @@ which `component_full`'s import-free path can't take):
    `TestSelfHostWasmComponentAdapter` compiles printing / f-string /
    loop-print programs through the self-host to a preview1 core, composes
    with the adapter, and asserts the component's stdout under `wasmtime`.
-2. **Preview2-native route — the large remaining backend work.** Emit the
-   I/O directly against `wasi:cli/stdout` / `wasi:filesystem` and
-   hand-roll the matching component imports / canon-lower (the WIT-world
-   component types — what the native compiler precomputes as `fern.bin`).
-   This is what the native compiler's default `-target wasm` produces, and
-   the only piece still missing for the self-host to match it byte-for-byte
-   on I/O programs.
+2. **Preview2-native route — now works for stdout.** The self-host emits
+   the I/O directly against the preview2 interfaces, no adapter:
+   - **Framing** (`component_full_io`, `wat_component.fern`): the wasi
+     `io/error` / `io/streams` / `cli/stdout` type imports + the two
+     canon-lower shim cores + the canon-lift / instance / export are
+     constant for the stdout shape, so they're embedded verbatim as `\xNN`
+     blobs (`io_prefix` / `io_suffix`) around the core — byte-identical to
+     the native compiler's I/O component when given the same core.
+   - **Core codegen** (`emit_module_run_io`, `wasm.fern`): a run core that
+     imports `wasi:cli/stdout/get-stdout` + `wasi:io/streams/[method]
+     output-stream.blocking-write-and-flush` and defines a `$fd_write`
+     *shim* over the stream (cached stdout handle; an 8-aligned return
+     area for the result), so every existing `fd_write` call site works
+     unchanged.
+   End to end — source → `emit_module_run_io` → `emit_binary` →
+   `component_full_io` → a `wasi:cli/run` component that prints under
+   `wasmtime`, with the right run() result (`TestSelfHostWasmComponentStdout`:
+   write / `\n` / f-string / print-int / multi-write, and a non-zero-main
+   err path). (Not byte-identical end-to-end — the self-host's core differs
+   from native's codegen — but the same preview2 shape, adapter-free.)
+   **Remaining: file I/O** (`wasi:filesystem` `read_file`/`write_file`)
+   needs its own imports + framing; stdout is done.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
