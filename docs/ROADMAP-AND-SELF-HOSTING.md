@@ -664,6 +664,23 @@ Remaining is packaging, not coverage: wrap the core module in the
 format — the self-host emits a WASI-preview1 command today, so this also
 involves the preview1→preview2 adapter composition the Go backend uses).
 
+The **component-wrapper track** has started. Investigation of the Go
+backend's `-target wasm` output shows it is preview2-native: the core
+module has *no* WASI imports and exports `_lang_run`, wrapped with `canon
+lift` into a `wasi:cli/run@0.2.0` instance export. A component's binary
+preamble is the wasm magic + `0d 00 01 00` (version 13, layer 1, vs a core
+module's `01 00 00 00`), and an embedded core module is a component
+section (id 1) holding that module's bytes. Slice C1 landed
+`examples/self_host/wat_component.fern` — `component_preamble` +
+`component_wrap(core)`, which embeds the core-module bytes in the
+component envelope; `TestSelfHostWasmComponent` assembles a core module,
+wraps it, and asserts `wasm-tools` validates a `(component (core module
+…))`. Remaining component slices: the core-instance + `canon lift` + the
+`wasi:cli/run` instance export, which also need the core module's I/O
+shifted from preview1 (`_start` / `fd_write` / `proc_exit`) to the
+preview2 `run` / `wasi:cli` shape (a sizeable wasm.fern change on the
+order of the core encoder itself).
+
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):
 **`i64[]` arrays whose elements exceed 32 bits** on the *compiled*
