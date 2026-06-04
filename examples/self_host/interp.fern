@@ -374,6 +374,28 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     _ => { return v_err("unary `!` operand not bool"); }
                 }
             }
+            // `expr as <Type>` numeric casts (desugared to `as_<Type>`).
+            // The interp's numeric model is VInt (i32) + VFloat (f64): an
+            // integer-target cast is identity on an int and truncates a
+            // float; a float-target cast widens an int and is identity on a
+            // float. Without these every cast fell through to the
+            // "unknown unary op" error below.
+            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_i64" || u.op == "as_u64"
+                || u.op == "as_i16" || u.op == "as_u16" || u.op == "as_i8" || u.op == "as_u8"
+                || u.op == "as_byte") {
+                match (ov) {
+                    VInt(i) => { return v_int(i.v); },
+                    VFloat(f) => { return v_int(f.v as i32); },
+                    _ => { return v_err("`as` integer cast operand not numeric"); }
+                }
+            }
+            if (u.op == "as_f64" || u.op == "as_f32") {
+                match (ov) {
+                    VInt(i) => { return v_float(i.v as f64); },
+                    VFloat(f) => { return v_float(f.v); },
+                    _ => { return v_err("`as` float cast operand not numeric"); }
+                }
+            }
             return v_err("unknown unary op: " + u.op);
         },
         parser.ExprCall(c) => {
