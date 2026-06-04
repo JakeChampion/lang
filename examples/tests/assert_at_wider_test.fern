@@ -2,10 +2,10 @@ import "core/no_prelude";
 import "std/test";
 // examples/tests/assert_at_wider_test.fern — batch 32
 // additions to std/test:
-//   * `test.assert_at_u32(arr, idx, expected)`,
-//     `test.assert_at_u64(arr, idx, expected)` — unsigned-int
-//     spot checks (parallel to `assert_at_i32` /
-//     `assert_at_i64` from batch 28).
+//   * `test.assert_at(arr, idx, expected)`,
+//     `test.assert_at(arr, idx, expected)` — unsigned-int
+//     spot checks (parallel to `assert_at` /
+//     `assert_at` from batch 28).
 //   * `test.assert_at_f64(arr, idx, expected, epsilon)`,
 //     `test.assert_at_f32(arr, idx, expected, epsilon)` —
 //     float spot checks with tolerance (NaN inputs always
@@ -13,12 +13,12 @@ import "std/test";
 
 function test_at_u32_pass(): Option[string] {
     var arr: u32[] = [10 as u32, 20 as u32, 30 as u32];
-    return test.assert_at_u32(arr, 1, 20 as u32);
+    return test.assert_at(arr, 1, 20 as u32);
 }
 
 function test_at_u32_wrong_value(): Option[string] {
     var arr: u32[] = [10 as u32, 20 as u32];
-    match (test.assert_at_u32(arr, 0, 999 as u32)) {
+    match (test.assert_at(arr, 0, 999 as u32)) {
         None => { return test.fail("wrong-value should fail"); },
         Some(msg) => {
             if (!msg.contains("at index 0") ||
@@ -33,7 +33,7 @@ function test_at_u32_wrong_value(): Option[string] {
 
 function test_at_u32_out_of_bounds(): Option[string] {
     var arr: u32[] = [10 as u32];
-    match (test.assert_at_u32(arr, 5, 0 as u32)) {
+    match (test.assert_at(arr, 5, 0 as u32)) {
         None => { return test.fail("OOB should fail"); },
         Some(msg) => {
             if (!msg.contains("out of bounds")) {
@@ -46,12 +46,12 @@ function test_at_u32_out_of_bounds(): Option[string] {
 
 function test_at_u64_pass(): Option[string] {
     var arr: u64[] = [100 as u64, 200 as u64, 300 as u64];
-    return test.assert_at_u64(arr, 2, 300 as u64);
+    return test.assert_at(arr, 2, 300 as u64);
 }
 
 function test_at_u64_wrong_value(): Option[string] {
     var arr: u64[] = [42 as u64];
-    match (test.assert_at_u64(arr, 0, 99 as u64)) {
+    match (test.assert_at(arr, 0, 99 as u64)) {
         None => { return test.fail("expected mismatch"); },
         Some(_) => { return None; }
     }

@@ -38,7 +38,7 @@ function test_read_dir_lists_what_we_wrote(): Option[string] {
                 Ok(names) => {
                     var sorted: string[] = sort.sort_strings_asc(names);
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
-                    return test.assert_eq_string_array(sorted, ["a.txt", "b.txt", "c.txt"]);
+                    return test.assert_eq_array(sorted, ["a.txt", "b.txt", "c.txt"]);
                 },
                 Err(_) => {
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
@@ -66,7 +66,7 @@ function test_remove_file_removes_a_single_file(): Option[string] {
             match (read_dir(dir)) {
                 Ok(names) => {
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
-                    return test.assert_eq_string_array(names, ["keep.txt"]);
+                    return test.assert_eq_array(names, ["keep.txt"]);
                 },
                 Err(_) => {
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }

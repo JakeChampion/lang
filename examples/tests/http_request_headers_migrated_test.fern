@@ -56,7 +56,7 @@ function test_duplicate_header_insertion_order(): Option[string] {
             // stdout; here we assert the array shape
             // directly so a divergence localises by
             // index.
-            return test.assert_eq_string_array(
+            return test.assert_eq_array(
                 req.headers.get_all("Set-Cookie"),
                 ["a=1", "b=2"]);
         },
