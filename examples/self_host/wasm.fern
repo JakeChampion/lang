@@ -1112,6 +1112,22 @@ function has_method(cx: Ctx, t: string, n: string): boolean {
     return false;
 }
 
+// is_enum_type_name reports whether `name` is a method-bearing ENUM type —
+// not a declared struct, but the receiver type of at least one method.
+// Enum names aren't in the struct table (only their variants are), so a
+// var typed `Shape` must record `Shape` (not the variant from its
+// initializer) for its methods to dispatch.
+function is_enum_type_name(cx: Ctx, name: string): boolean {
+    if (name.len() == 0) { return false; }
+    if (is_struct_type(cx.structs, name)) { return false; }
+    var i: i32 = 0;
+    while (i < cx.mr_types.len()) {
+        if (cx.mr_types[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // expr_is_void_call is true when `e` calls a user free function or method
 // declared with no return type — such a call leaves nothing on the stack,
 // so it must NOT be wrapped in `(drop …)`. Builtins (which return values)
@@ -1862,6 +1878,13 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             if (is_const_ref(cx, id.name)) {
                 return "(call $" + id.name + ")";
             }
+            // A bare reference to a 0-field declared struct is a unit enum
+            // variant (`Nil`, `Empty`): construct its [struct_id@0] tag box,
+            // so `match` reads the right tag at offset 0.
+            if (is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0) {
+                var uap: string = "$__lit" + i32_to_string(depth);
+                return "(block (result i32) (local.set " + uap + " (call $__fern_alloc (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
+            }
             return "(local.get $" + id.name + ")";
         },
         parser.ExprUnary(u) => {
@@ -2020,6 +2043,26 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         }
                         ci = ci + " (i32.load (local.get $" + id.name + ")))";
                         return ci;
+                    }
+                    // Positional variant constructor: `Circle(3)` where the
+                    // callee names a declared struct (an enum variant carries
+                    // its payload as field 0). Build the value
+                    // [struct_id@0, arg0@4, arg1@8, …] — the same layout a
+                    // struct literal produces, so `match` reads the tag at
+                    // offset 0 and the payload at offset 4. (Plain user enums:
+                    // only Option/Result were special-cased before.)
+                    if (is_struct_type(cx.structs, id.name)) {
+                        var vap: string = "$__lit" + i32_to_string(depth);
+                        var vnf: i32 = struct_field_count(cx.structs, id.name);
+                        var vs: string = "(block (result i32)";
+                        vs = vs + " (local.set " + vap + " (call $__fern_alloc (i32.const " + i32_to_string(4 + vnf * 4) + ")))";
+                        vs = vs + " (i32.store (local.get " + vap + ") (i32.const " + i32_to_string(struct_id(cx.structs, id.name)) + "))";
+                        var vi: i32 = 0;
+                        while (vi < c.args.len()) {
+                            vs = vs + " (i32.store (i32.add (local.get " + vap + ") (i32.const " + i32_to_string(struct_field_off(vi)) + ")) " + emit_expr(c.args[vi], cx, depth + 1) + ")";
+                            vi = vi + 1;
+                        }
+                        return vs + " (local.get " + vap + "))";
                     }
                     // Direct call to a free function: `f(a, b)` →
                     // `(call $f <a> <b>)`. Args bound to an i64 param are
@@ -3901,7 +3944,16 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                         } else if (sid >= 0) {
                             st = st.w("    (br_if " + nlabel + " (i32.ne (i32.load (local.get " + mv + ")) (i32.const " + i32_to_string(sid) + ")))\n");
                             if (pv.binding.len() > 0 && pv.binding != "_") {
-                                st = st.w("    (local.set $" + pv.binding + " (local.get " + mv + "))\n");
+                                // An enum variant carries its payload in the
+                                // synthetic `__ev` field at offset 4, so bind
+                                // the payload; a struct-union variant
+                                // (`type E = A | B`) binds the whole struct
+                                // value (accessed via its named fields).
+                                if (struct_field_index(st.cx.structs, pv.type_name, "__ev") >= 0) {
+                                    st = st.w("    (local.set $" + pv.binding + " (i32.load (i32.add (local.get " + mv + ") (i32.const 4))))\n");
+                                } else {
+                                    st = st.w("    (local.set $" + pv.binding + " (local.get " + mv + "))\n");
+                                }
                             }
                         }
                         st = emit_stmts(m.arms[i].body, st);
@@ -4117,10 +4169,13 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     var optpay: string = parse_option_payload(v.type_name);
                     if (optpay.len() == 0) { optpay = scrutinee_payload(v.init, cx); }
                     var styp: string = base_type_name(v.type_name);
-                    if (!is_struct_type(cx.structs, styp)) { styp = struct_type_of(v.init, cx); }
+                    // Keep an enum-typed declaration as the enum name (so its
+                    // methods dispatch); only fall back to the initializer's
+                    // type when the declared type is neither struct nor enum.
+                    if (!is_struct_type(cx.structs, styp) && !is_enum_type_name(cx, styp)) { styp = struct_type_of(v.init, cx); }
                     if (optpay.len() > 0) {
                         cx = Ctx { ...cx, ol_names: cx.ol_names.push(v.name), ol_payloads: cx.ol_payloads.push(optpay) };
-                    } else if (is_struct_type(cx.structs, styp)) {
+                    } else if (is_struct_type(cx.structs, styp) || is_enum_type_name(cx, styp)) {
                         cx = Ctx { ...cx, sv_names: cx.sv_names.push(v.name), sv_types: cx.sv_types.push(styp) };
                     } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
                         cx = Ctx { ...cx, str_arrays: cx.str_arrays.push(v.name) };

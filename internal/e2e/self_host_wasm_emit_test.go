@@ -628,6 +628,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"tostring-struct-method", "struct P { x: i32 } function (p: P) to_string(): string { return \"box\"; } function main(): i32 { var p = P { x: 1 }; write(p.to_string()); return 0; }", 0, "box"},
 		{"derive-display-struct", "@derive(Display) struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 3, y: 7 }; write(p.to_string()); return 0; }", 0, "P { x: 3, y: 7 }"},
 		{"derive-display-nested", "@derive(Display) struct Inner { n: i32 } @derive(Display) struct Outer { a: Inner, tag: string } function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; write(p.to_string()); return 0; }", 0, "Outer { a: Inner { n: 5 }, tag: hi }"},
+		// User-defined enums: positional variant construction (`Circle(3)`),
+		// unit variants (`Nil` as a bare ident), and `match` binding the
+		// payload — previously only Option/Result were special-cased, so a
+		// `$Circle` call was undefined. See docs/TRAITS.md.
+		{"enum-construct-match", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Circle(3); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 27, ""},
+		{"enum-second-variant", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Square(4); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 16, ""},
+		{"enum-unit-variant", "enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; match (n) { Has(v) => { return v; }, Nil => { return 9; } } return 0; }", 9, ""},
+		// Enum receiver method — dispatches via the enum type (a var typed
+		// `Shape` now records `Shape`, so its methods resolve).
+		{"enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43, ""},
+		// `@derive(Display)` on an enum: `Variant(payload)` / `Variant`.
+		{"enum-derive-display-payload", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var h: Opt = Has(7); write(h.to_string()); return 0; }", 0, "Has(7)"},
+		{"enum-derive-display-unit", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; write(n.to_string()); return 0; }", 0, "Nil"},
 		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
 		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
 		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},
