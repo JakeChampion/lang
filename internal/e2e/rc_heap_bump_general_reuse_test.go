@@ -160,6 +160,42 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// genReuseTupleChurnSrc: tuple-source reuse. Each iteration's dead tuple `a`
+// is reused for tuple `b`. Value-correct only if every reuse wrote the right
+// block at the tuple's element offsets.
+const genReuseTupleChurnSrc = `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 300) {
+        var a: (i32, i32) = (i, i + 1);
+        var s: i32 = a.0 + a.1;          // a's last use
+        var b: (i32, i32) = (s + 1, i);   // reuses a's box
+        acc = acc + b.0 + b.1;
+        i = i + 1;
+    }
+    // s = 2i+1, b.0=2i+2, b.1=i -> b.0+b.1 = 3i+2; sum i=0..299 = 3*44850 + 600 = 135150
+    if (acc != 135150) { return 999; }
+    return __rc_underflow_count();
+}`
+
+// genReuseTuplePtrSrc: tuple WITH a pointer element. Dead (i32, i32[]) reused
+// for a fresh (i32, i32[]) — D's old array released at D's offset each turn.
+const genReuseTuplePtrSrc = `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: (i32, i32[]) = (i, [i, i + 1]);
+        var s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
+        var b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
+        acc = acc + b.0 + b.1[0] + b.1[1];
+        i = i + 1;
+    }
+    // s = i + i + (i+1) = 3i+1; b.0=3i+1, b.1 sum = 2i+5; total 5i+6
+    // sum i=0..199 = 5*19900 + 6*200 = 100700
+    if (acc != 100700) { return 999; }
+    return __rc_underflow_count();
+}`
+
 var genReuseCases = []struct{ name, src string }{
 	{"churn", genReuseChurnSrc},
 	{"aliased", genReuseAliasedSrc},
@@ -167,6 +203,8 @@ var genReuseCases = []struct{ name, src string }{
 	{"ptr_aliased", genReusePtrAliasedSrc},
 	{"crosstype_churn", genReuseCrossTypeChurnSrc},
 	{"crosstype_ptr", genReuseCrossTypePtrSrc},
+	{"tuple_churn", genReuseTupleChurnSrc},
+	{"tuple_ptr", genReuseTuplePtrSrc},
 }
 
 func TestX86_64GeneralReuse(t *testing.T) {

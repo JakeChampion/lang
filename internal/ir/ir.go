@@ -1566,15 +1566,15 @@ type builder struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
-	// reuseSources pairs a struct-literal construction site C (the
-	// *ast.StructLit node) with the name of a dead, owned struct local D
+	// reuseSources pairs a construction site C (the *ast.StructLit or
+	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
 	// token threaded D's drop → C's alloc, across DIFFERENT locals, beyond
 	// the self-overwrite tryStructReuseOverwrite). reuseConsumed[D] marks
 	// such a D so computePreciseDrops doesn't ALSO drop it (the reuse
 	// already consumes D's box / dec's it on the shared path). See
 	// computeReuseSources.
-	reuseSources  map[*ast.StructLit]string
+	reuseSources  map[ast.Expr]string
 	reuseConsumed map[string]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
@@ -7904,8 +7904,23 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		offs, size := tupleElemLayout(elemTypes, b.ptrW)
 		const rcHeaderBytes = 8
-		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-		b.emit(Op{Kind: OpAlloc})
+		// General FBIP reuse (computeReuseSources): a dead, owned tuple local D
+		// of the same box class is reused in place for this TupleLit. Identical
+		// machinery to the StructLit hook — emitReuseToken leaves the box BASE
+		// on the stack (or a fresh OpAlloc), and emitReuseOldFieldDrops releases
+		// D's OLD pointer elements (D's own layout) on the reuse branch before
+		// the element stores below overwrite them.
+		reuseSrcUniqSlot := int32(-1)
+		var reuseSrcOffs []int32
+		var reuseSrcTypes []ast.Type
+		if dName, paired := b.reuseSources[n]; paired {
+			var dSize int32
+			reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
+			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
+		} else {
+			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+			b.emit(Op{Kind: OpAlloc})
+		}
 		baseSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_tup_%d", baseSlot)] = baseSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
@@ -7913,6 +7928,9 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		b.emit(Op{Kind: OpStore})
+		if reuseSrcUniqSlot >= 0 {
+			b.emitReuseOldFieldDrops(reuseSrcUniqSlot, baseSlot, reuseSrcOffs, reuseSrcTypes)
+		}
 		for i, elem := range n.Elems {
 			b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[i]})
@@ -7983,55 +8001,20 @@ func (b *builder) expr(e ast.Expr) error {
 		// __alloc_reuse falls through to a fresh alloc); D's slot is then
 		// zeroed so the exit sweep (and any path that didn't reach C) treats
 		// it as already consumed. Leaves the box BASE pointer on the stack,
-		// exactly where OpAlloc would. reuseSrcUniqSlot carries the is_unique
-		// result out to the old-field-drop block below: on the reuse branch
-		// the box still holds D's OLD pointer-field references, which must be
-		// released before C's stores overwrite them (D is dead at C, so every
-		// field is replaced — no carried field to keep).
+		// exactly where OpAlloc would. D may be a DIFFERENT type (even a
+		// different KIND) than C: emitReuseToken passes D's own alloc size
+		// (tokenSize) so a class mismatch frees D's block to ITS class, and the
+		// old-field release walks D's own layout. reuseSrcUniqSlot carries the
+		// is_unique result to the release block (the reused box still holds D's
+		// OLD pointer fields, which must go before C's stores overwrite them;
+		// D is dead at C, so every field is replaced, no carried field to keep).
 		reuseSrcUniqSlot := int32(-1)
-		// D's own layout (offsets + field types). D may be a DIFFERENT struct
-		// type than C (cross-type box-class reuse): tokenSize is D's alloc
-		// size, and D's OLD pointer fields are released at D's offsets — only
-		// C's stores below use C's layout.
-		var reuseSrcSd *ast.StructDecl
-		var reuseSrcOffs map[string]int32
+		var reuseSrcOffs []int32
+		var reuseSrcTypes []ast.Type
 		if dName, paired := b.reuseSources[n]; paired && updBaseSlot < 0 {
-			dSlot := b.locals[dName]
-			dStt, _ := b.localDeclType(dName)
-			reuseSrcSd = b.info.Structs[dStt.(ast.StructType).Name]
 			var dSize int32
-			reuseSrcOffs, dSize = structFieldLayout(reuseSrcSd.Fields, b.ptrW)
-			reusedSlot := b.allocSlot()
-			reuseSrcUniqSlot = reusedSlot
-			b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
-			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
-			b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
-			tokenSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
-			b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
-			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-			b.emit(Op{Kind: OpSub})
-			b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-			b.emit(Op{Kind: OpElse})
-			b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-			b.emit(Op{Kind: OpConstI32, I32: 0})
-			b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
-			b.emit(Op{Kind: OpEnd})
-			// D consumed (box taken or dec'd) — zero its slot.
-			b.emit(Op{Kind: OpConstI32, I32: 0})
-			b.emit(Op{Kind: OpStoreLocal, I32: dSlot})
-			// base = __alloc_reuse(token, D_alloc, C_alloc). tokenSize is D's
-			// real allocation size so a class mismatch frees D's block to its
-			// OWN class; for same-class C the runtime check matches and reuses.
-			b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
-			b.emit(Op{Kind: OpConstI32, I32: dSize + rcHeaderBytes})
-			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
-			b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+			reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
+			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 			b.emit(Op{Kind: OpAlloc})
@@ -8043,37 +8026,8 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		b.emit(Op{Kind: OpStore})
-		// General FBIP reuse, pointer fields: on the REUSE branch the reused
-		// box still holds D's OLD pointer-field values. D is dead at C (C never
-		// reads it), so every pointer field is REPLACED — release each old
-		// reference (deep freeing drop, emitFieldDropOnStack) before the field
-		// stores below overwrite them. Gated on the is_unique result: on the
-		// decline branch (reused==0) the box is fresh/uninitialised so there's
-		// nothing to release. Scalar fields need no drop. Uses D's OWN layout
-		// (reuseSrcSd / reuseSrcOffs) — D may be a different struct type than C.
 		if reuseSrcUniqSlot >= 0 {
-			hasPtrField := false
-			for _, sf := range reuseSrcSd.Fields {
-				if arrElemIsRcTracked(sf.Type) {
-					hasPtrField = true
-					break
-				}
-			}
-			if hasPtrField {
-				b.emit(Op{Kind: OpLoadLocal, I32: reuseSrcUniqSlot})
-				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-				for _, sf := range reuseSrcSd.Fields {
-					if !arrElemIsRcTracked(sf.Type) {
-						continue
-					}
-					b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-					b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + reuseSrcOffs[sf.Name]})
-					b.emit(Op{Kind: OpAdd})
-					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-					b.emitFieldDropOnStack(sf.Type)
-				}
-				b.emit(Op{Kind: OpEnd})
-			}
+			b.emitReuseOldFieldDrops(reuseSrcUniqSlot, baseSlot, reuseSrcOffs, reuseSrcTypes)
 		}
 		overridden := map[string]bool{}
 		for _, f := range n.Fields {
@@ -10724,14 +10678,35 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 	return true
 }
 
+// tupleReuseEligible is the tuple analogue of structReuseEligible: every
+// element is an i32-class scalar OR a single-word rc-tracked pointer (array /
+// struct / Map / enum / closure / tuple). Strings (two-word) and wide/float
+// scalars are excluded, exactly as for structs — single-word temps only, and
+// the old-element release rides emitFieldDropOnStack.
+func tupleReuseEligible(elems []ast.Type) bool {
+	if len(elems) == 0 {
+		return false
+	}
+	for _, e := range elems {
+		if nt, ok := e.(ast.NumberType); ok && nt.NormalWidth() <= 32 {
+			continue
+		}
+		if arrElemIsRcTracked(e) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // computeReuseSources is the general-FBIP pairing analysis: it matches a
-// struct-construction site C (a top-level `var c = T{…}` / `c = T{…}` whose
-// RHS is a plain StructLit) with a DEAD, OWNED struct local D of the SAME
-// type whose box C can reuse in place — the Perceus reuse token threaded from
-// D's drop to C's allocation, generalised beyond the self-overwrite
-// tryStructReuseOverwrite (where D == C). Returns the C→D map (keyed by the
-// StructLit node) and the set of consumed D names (so computePreciseDrops
-// won't ALSO drop them).
+// construction site C (a `var c = T{…}` / `c = (…)` whose RHS is a plain
+// StructLit or a TupleLit) with a DEAD, OWNED struct/tuple local D whose box C
+// can reuse in place — the Perceus reuse token threaded from D's drop to C's
+// allocation, generalised beyond the self-overwrite tryStructReuseOverwrite
+// (where D == C). Returns the C→D map (keyed by the StructLit / TupleLit node)
+// and the set of consumed D names (so computePreciseDrops won't ALSO drop
+// them). D and C must be the same KIND (struct↔struct or tuple↔tuple).
 //
 // First cut — deliberately narrow and obviously sound:
 //   - D and C are the SAME `structReuseEligible` struct type, so the box sizes
@@ -10757,8 +10732,8 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 //     — and any path that DOESN'T reach C — null-guards to a no-op / drops D
 //     normally. A mispaired or shared D degrades to dec-then-fresh-alloc
 //     (never unsound, never a leak — the same invariant as __alloc_reuse).
-func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]bool) {
-	sources := map[*ast.StructLit]string{}
+func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
+	sources := map[ast.Expr]string{}
 	consumed := map[string]bool{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil {
 		return sources, consumed
@@ -10786,34 +10761,67 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 		})
 		return found
 	}
-	reuseStructTypeOf := func(name string) (ast.StructType, bool) {
-		t, ok := b.localDeclType(name)
-		if !ok {
-			return ast.StructType{}, false
+	const rcHeaderBytes = 8
+	// reuseClassOf returns a local's box "kind" (struct vs tuple), its struct
+	// name (empty for tuples), and its freelist class — (alloc+15)&-16 of
+	// data+rc-header, within the exact-fit ≤ 2048 range — for any general-FBIP
+	// reuse-eligible struct OR tuple local. ok=false for anything else
+	// (non-box type, a string/wide-scalar field/element, or > 2048).
+	reuseClassOf := func(name string) (kind string, structName string, class int32, ok bool) {
+		t, ok2 := b.localDeclType(name)
+		if !ok2 {
+			return "", "", 0, false
 		}
-		stt, ok := t.(ast.StructType)
-		if !ok {
-			return ast.StructType{}, false
+		switch tt := t.(type) {
+		case ast.StructType:
+			sd, ok3 := b.info.Structs[tt.Name]
+			if !ok3 || !structReuseEligible(sd) {
+				return "", "", 0, false
+			}
+			_, size := structFieldLayout(sd.Fields, b.ptrW)
+			alloc := size + rcHeaderBytes
+			if alloc > 2048 {
+				return "", "", 0, false
+			}
+			return "struct", tt.Name, (alloc + 15) &^ 15, true
+		case ast.TupleType:
+			if !tupleReuseEligible(tt.Elems) {
+				return "", "", 0, false
+			}
+			_, size := tupleElemLayout(tt.Elems, b.ptrW)
+			alloc := size + rcHeaderBytes
+			if alloc > 2048 {
+				return "", "", 0, false
+			}
+			return "tuple", "", (alloc + 15) &^ 15, true
 		}
-		sd, ok := b.info.Structs[stt.Name]
-		if !ok || !structReuseEligible(sd) {
-			return ast.StructType{}, false
-		}
-		return stt, true
+		return "", "", 0, false
 	}
-	// constructionAt extracts (targetName, StructLit) from a `var c = T{…}` /
-	// `c = T{…}` whose RHS is a plain (non-update) StructLit.
-	constructionAt := func(st ast.Stmt) (string, *ast.StructLit) {
+	// constructionAt extracts (targetName, constructionNode) from a
+	// `var c = T{…}` / `c = (…)` (or the assign forms) whose RHS is a plain
+	// (non-update) StructLit or a TupleLit. The node keys reuseSources.
+	constructionAt := func(st ast.Stmt) (string, ast.Expr) {
+		rhsConstruction := func(e ast.Expr) ast.Expr {
+			switch v := e.(type) {
+			case *ast.StructLit:
+				if v.Base == nil {
+					return v
+				}
+			case *ast.TupleLit:
+				return v
+			}
+			return nil
+		}
 		switch s := st.(type) {
 		case *ast.Var:
-			if sl, ok := s.Init.(*ast.StructLit); ok && sl.Base == nil {
-				return s.Name, sl
+			if c := rhsConstruction(s.Init); c != nil {
+				return s.Name, c
 			}
 		case *ast.ExprStmt:
 			if a, ok := s.Expr.(*ast.Assign); ok {
 				if id, ok := a.Target.(*ast.Ident); ok {
-					if sl, ok := a.Value.(*ast.StructLit); ok && sl.Base == nil {
-						return id.Name, sl
+					if c := rhsConstruction(a.Value); c != nil {
+						return id.Name, c
 					}
 				}
 			}
@@ -10839,30 +10847,23 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 			}
 			return true
 		}
-		// boxClass returns the (sz+15)&-16 freelist class of a struct's
-		// allocation (data + rc header) and whether it sits within the
-		// exact-fit range (≤ 2048) used for cross-TYPE pairing. Mirrors the
-		// runtime's class arithmetic (__fern_alloc / __alloc_reuse).
-		const rcHeaderBytes = 8
-		boxClass := func(stt ast.StructType) (int32, bool) {
-			sd, ok := b.info.Structs[stt.Name]
-			if !ok {
-				return 0, false
-			}
-			_, size := structFieldLayout(sd.Fields, b.ptrW)
-			alloc := size + rcHeaderBytes
-			if alloc > 2048 {
-				return 0, false
-			}
-			return (alloc + 15) &^ 15, true
-		}
 		for k, st := range stmts {
-			cName, sl := constructionAt(st)
-			if sl == nil {
+			cName, cNode := constructionAt(st)
+			if cNode == nil {
 				continue
 			}
-			cType, ok := reuseStructTypeOf(cName)
-			if !ok || cType.Name != sl.TypeName {
+			// A StructLit construction targets a struct C of the matching named
+			// type; a TupleLit targets a tuple C. Skip if C's local isn't a
+			// reuse-eligible box of the right kind.
+			cKind, cStructName, cClass, ok := reuseClassOf(cName)
+			if !ok {
+				continue
+			}
+			if sl, isStruct := cNode.(*ast.StructLit); isStruct {
+				if cKind != "struct" || cStructName != sl.TypeName {
+					continue
+				}
+			} else if cKind != "tuple" {
 				continue
 			}
 			for dName, di := range declIdx {
@@ -10872,27 +10873,24 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 				if !b.freeEligible[dName] || !b.localNameUnique(dName) {
 					continue
 				}
-				dType, ok := reuseStructTypeOf(dName)
-				if !ok {
+				dKind, dStructName, dClass, ok := reuseClassOf(dName)
+				if !ok || dKind != cKind {
 					continue
 				}
-				// Same struct type pairs at any size (D's box is reused as
-				// itself). DIFFERENT types pair only when their alloc sizes fall
-				// in the SAME freelist class (and within the exact-fit range) —
-				// C's box fits D's reused block, and __alloc_reuse's runtime
-				// class check matches. D's old fields are still released and C's
-				// stored using each one's OWN layout (see the StructLit hook).
-				if dType.Name != cType.Name {
-					dClass, dok := boxClass(dType)
-					cClass, cok := boxClass(cType)
-					if !dok || !cok || dClass != cClass {
-						continue
-					}
+				// Same NAMED struct pairs at any size (D's box is reused as
+				// itself). Otherwise (a different struct type, or a tuple) pair
+				// only when D and C fall in the SAME freelist class — C's box
+				// fits D's reused block and __alloc_reuse's runtime class check
+				// matches. D's old fields are released and C's stored using each
+				// one's OWN layout (see the StructLit / TupleLit hooks).
+				sameNamedStruct := cKind == "struct" && dStructName == cStructName
+				if !sameNamedStruct && dClass != cClass {
+					continue
 				}
 				if !deadFrom(dName, k) {
 					continue
 				}
-				sources[sl] = dName
+				sources[cNode] = dName
 				consumed[dName] = true
 				break
 			}
@@ -10908,6 +10906,108 @@ func (b *builder) computeReuseSources() (map[*ast.StructLit]string, map[string]b
 		return true
 	})
 	return sources, consumed
+}
+
+// reuseSourceLayout returns the parallel (offset, type) slices and data size
+// of a general-FBIP reuse source local D — a struct OR tuple. Used by the
+// StructLit / TupleLit reuse hooks to compute D's allocation size (tokenSize)
+// and to walk D's OLD pointer fields/elements at D's own offsets when its box
+// is handed off (D may be a different type — even a different KIND — than C).
+func (b *builder) reuseSourceLayout(dName string) (offsets []int32, types []ast.Type, size int32) {
+	t, _ := b.localDeclType(dName)
+	switch dt := t.(type) {
+	case ast.StructType:
+		sd := b.info.Structs[dt.Name]
+		offMap, sz := structFieldLayout(sd.Fields, b.ptrW)
+		offsets = make([]int32, len(sd.Fields))
+		types = make([]ast.Type, len(sd.Fields))
+		for i, f := range sd.Fields {
+			offsets[i] = offMap[f.Name]
+			types[i] = f.Type
+		}
+		return offsets, types, sz
+	case ast.TupleType:
+		offs, sz := tupleElemLayout(dt.Elems, b.ptrW)
+		return offs, dt.Elems, sz
+	}
+	return nil, nil, 0
+}
+
+// emitReuseToken lowers the general-FBIP reuse allocation for a construction C
+// paired with the dead, owned source local D. It emits the runtime is_unique
+// gate, the token select (`reused ? base(D) : 0`; the shared/null branch dec's
+// D so its alias keeps the box and __alloc_reuse falls through to a fresh
+// alloc), zeroes D's slot (consumed — so the exit sweep / a non-C path never
+// double-releases), and the __alloc_reuse call — leaving the box BASE pointer
+// on the operand stack exactly where OpAlloc would. dAlloc / cAlloc are D's and
+// C's allocation sizes (data + rc header); tokenSize is D's real size so a
+// runtime class mismatch frees D's block to ITS class. Returns the slot holding
+// the i32 is_unique result so the caller can gate the old-field release.
+func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
+	const rcHeaderBytes = 8
+	dSlot := b.locals[dName]
+	reusedSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_src_uniq_%d", reusedSlot)] = reusedSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: reusedSlot})
+	tokenSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__reuse_src_tok_%d", tokenSlot)] = tokenSlot
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpSub})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpEnd})
+	// D consumed (box taken or dec'd) — zero its slot.
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: dSlot})
+	// base = __alloc_reuse(token, D_alloc, C_alloc).
+	b.emit(Op{Kind: OpLoadLocal, I32: tokenSlot})
+	b.emit(Op{Kind: OpConstI32, I32: dAlloc})
+	b.emit(Op{Kind: OpConstI32, I32: cAlloc})
+	b.emit(Op{Kind: OpCallDirect, Str: "__alloc_reuse", I32: 3})
+	return reusedSlot
+}
+
+// emitReuseOldFieldDrops releases D's OLD pointer fields/elements from the
+// reused box on the REUSE branch (gated reusedSlot), before C's stores
+// overwrite them. D is dead at C, so every pointer slot is replaced — each old
+// reference is deep-freeing-dropped (emitFieldDropOnStack). On the decline
+// branch the box is fresh, so this is gated out. offsets/types are D's OWN
+// layout (reuseSourceLayout). Scalar slots need no drop.
+func (b *builder) emitReuseOldFieldDrops(reusedSlot, baseSlot int32, offsets []int32, types []ast.Type) {
+	const rcHeaderBytes = 8
+	hasPtr := false
+	for _, t := range types {
+		if arrElemIsRcTracked(t) {
+			hasPtr = true
+			break
+		}
+	}
+	if !hasPtr {
+		return
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	for i, t := range types {
+		if !arrElemIsRcTracked(t) {
+			continue
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[i]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emitFieldDropOnStack(t)
+	}
+	b.emit(Op{Kind: OpEnd})
 }
 
 // tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where

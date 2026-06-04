@@ -148,6 +148,46 @@ function main(): i32 {
 		t.Errorf("cross-type pointer-field reuse should fire (dead Holder -> Bag), got %d", got)
 	}
 }
+func TestGeneralReuseFiresForTuple(t *testing.T) {
+	ip := lowerForTest(t, `function main(): i32 {
+    var a: (i32, i32) = (1, 2);
+    var s: i32 = a.0 + a.1;
+    var b: (i32, i32) = (s + 1, 9);
+    return b.0 + b.1;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("tuple reuse should fire (dead a -> b), got %d", got)
+	}
+}
+
+func TestGeneralReuseFiresForTuplePointerElem(t *testing.T) {
+	ip := lowerForTest(t, `function main(): i32 {
+    var a: (i32, i32[]) = (1, [1, 2]);
+    var s: i32 = a.0 + a.1[0];
+    var b: (i32, i32[]) = (s, [3, 4]);
+    return b.0 + b.1[0];
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("tuple pointer-elem reuse should fire, got %d", got)
+	}
+}
+
+func TestGeneralReuseSkipsTupleToStructKindMismatch(t *testing.T) {
+	ip := lowerForTest(t, `struct Pair { a: i32, b: i32 }
+function main(): i32 {
+    var a: (i32, i32) = (1, 2);
+    var s: i32 = a.0 + a.1;
+    var b: Pair = Pair { a: s, b: 9 };
+    return b.a + b.b;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("tuple D must not pair with struct C (kind mismatch), got %d", got)
+	}
+}
+
 func TestGeneralReuseSkipsStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function main(): i32 {
