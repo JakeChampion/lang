@@ -26,11 +26,19 @@ function main(): i32 {
     }
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    // Names of functions that return a pointer (array / string), so calls to
+    // them get a 64-bit result.
+    var ptr_ret: string[] = [];
+    var pi: i32 = 0;
+    while (pi < mod.funcs.len()) {
+        if (ssa.is_ptr_type(mod.funcs[pi].ret_type)) { ptr_ret = ptr_ret.push(mod.funcs[pi].name); }
+        pi = pi + 1;
+    }
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
-        if (r.ok) { funcs = funcs.push(ssa.optimize(r.func)); }
+        if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
     }
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
