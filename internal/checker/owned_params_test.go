@@ -197,3 +197,25 @@ func TestOwnModifierParses(t *testing.T) {
 function f(own xs: i32[]): i32 { return xs[0]; }
 function main(): i32 { return f([1, 2]); }`)
 }
+
+// --- E052: `own` not yet supported on methods ----------------------------
+
+func TestOwnRejectedOnMethodReceiver(t *testing.T) {
+	wantE052 := func(name, src string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("%s: expected E052, got none", name)
+		}
+		if !strings.Contains(err.Error(), "E052") && !strings.Contains(err.Error(), "not yet supported on a method") {
+			t.Errorf("%s: expected E052 / method error, got: %v", name, err)
+		}
+	}
+	// `own self` on a trait-impl method (the form that parses today) is rejected
+	// — the receiver/argument transfer for method calls isn't wired, so it would
+	// double-free at runtime.
+	wantE052("own-self-trait-impl", `struct Box { v: i32 }
+trait C { function eat(self: Self): i32; }
+impl C for Box { function eat(own self: Box): i32 { return self.v; } }
+function main(): i32 { return Box { v: 5 }.eat(); }`)
+}
