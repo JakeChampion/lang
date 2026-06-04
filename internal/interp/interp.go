@@ -163,6 +163,34 @@ func (c *Closure) String() string {
 	return "<closure>"
 }
 
+// valueTypeName recovers the `methodTypeName` dispatch key from a
+// runtime value — used by `dyn Trait` dynamic dispatch to resolve the
+// concrete `__method_<Type>_<name>` from the receiver's runtime type.
+// The interpreter's Number carries no width, so an integer maps to
+// "i32" (dyn over wider integer types in the interpreter is a known
+// slice-1 limitation; struct / enum / string trait objects — the
+// primary use case — dispatch exactly). See docs/DYN-TRAITS.md §4.1.
+func valueTypeName(v Value) (string, bool) {
+	switch x := v.(type) {
+	case *Struct:
+		return x.TypeName, true
+	case *Enum:
+		return x.EnumName, true
+	case String:
+		return "string", true
+	case Bool:
+		return "boolean", true
+	case Float:
+		if x.Width == 64 {
+			return "f64", true
+		}
+		return "f32", true
+	case Number:
+		return "i32", true
+	}
+	return "", false
+}
+
 func (n Number) String() string { return fmt.Sprintf("%d", int64(n)) }
 func (f Float) String() string {
 	if f.Width == 32 {
@@ -2681,6 +2709,35 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			return nil, err
 		}
 		args[k] = v
+	}
+	// Dynamic trait-object dispatch: the checker marked this call with
+	// the trait name and left the callee a FieldAccess (`d.area()`
+	// where `d: dyn Shape`). Resolve the concrete method from the
+	// receiver value's runtime type and call it with the receiver
+	// prepended. The orphan rule guarantees one impl per (trait, type),
+	// so the lookup is unambiguous. See docs/DYN-TRAITS.md §4.1.
+	if c.DynTrait != "" {
+		fa, ok := c.Callee.(*ast.FieldAccess)
+		if !ok {
+			return nil, fmt.Errorf("interp: dyn %s call without a field-access callee", c.DynTrait)
+		}
+		recv, err := i.evalExpr(fa.Target, env)
+		if err != nil {
+			return nil, err
+		}
+		tn, ok := valueTypeName(recv)
+		if !ok {
+			return nil, fmt.Errorf("interp: cannot dispatch dyn %s.%s on a %T value", c.DynTrait, fa.Field, recv)
+		}
+		mangled := "__method_" + tn + "_" + fa.Field
+		callArgs := append([]Value{recv}, args...)
+		if b, ok := i.Builtins[mangled]; ok {
+			return b.Fn(i, callArgs)
+		}
+		if fn, ok := i.Funcs[mangled]; ok {
+			return i.callFunc(fn, callArgs)
+		}
+		return nil, fmt.Errorf("interp: no impl of %s.%s for runtime type %s", c.DynTrait, fa.Field, tn)
 	}
 	if id, ok := c.Callee.(*ast.Ident); ok {
 		// Variant constructor: resolve the name (optionally

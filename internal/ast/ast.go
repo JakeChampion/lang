@@ -175,19 +175,29 @@ type ParamType struct{ Name string }
 // by the conformance check). See docs/TRAITS.md.
 type SelfType struct{}
 
-func (NumberType) isType() {}
-func (SelfType) isType()   {}
-func (BoolType) isType()   {}
-func (VoidType) isType()   {}
-func (StringType) isType() {}
-func (FloatType) isType()  {}
-func (ArrayType) isType()  {}
-func (SliceType) isType()  {}
-func (TupleType) isType()  {}
-func (*FuncType) isType()  {}
-func (StructType) isType() {}
-func (EnumType) isType()   {}
-func (ParamType) isType()  {}
+// DynTraitType is a runtime trait-object type, written `dyn Trait` in
+// type position. A concrete value whose type implements `Trait` coerces
+// to it (the checker's assignability gate); a method call on a
+// `dyn Trait` value dispatches at runtime by the value's concrete type
+// rather than being statically rewritten. `dyn` is the open,
+// runtime-dispatched counterpart to the static `impl`/bounded-generic
+// path — see docs/DYN-TRAITS.md.
+type DynTraitType struct{ Trait string }
+
+func (NumberType) isType()   {}
+func (SelfType) isType()     {}
+func (BoolType) isType()     {}
+func (VoidType) isType()     {}
+func (StringType) isType()   {}
+func (FloatType) isType()    {}
+func (ArrayType) isType()    {}
+func (SliceType) isType()    {}
+func (TupleType) isType()    {}
+func (*FuncType) isType()    {}
+func (StructType) isType()   {}
+func (EnumType) isType()     {}
+func (ParamType) isType()    {}
+func (DynTraitType) isType() {}
 func (n NumberType) String() string {
 	if n.IsPointerWidth() {
 		return "usize"
@@ -257,8 +267,9 @@ func (e EnumType) String() string {
 	}
 	return out + "]"
 }
-func (p ParamType) String() string { return p.Name }
-func (SelfType) String() string    { return "Self" }
+func (p ParamType) String() string    { return p.Name }
+func (SelfType) String() string       { return "Self" }
+func (d DynTraitType) String() string { return "dyn " + d.Trait }
 
 // SubstSelf recursively replaces every SelfType in t with self. Used
 // when desugaring `impl Trait for Type` methods (the parser) and when
@@ -568,6 +579,11 @@ func IsPointerType(t Type) bool {
 		return true
 	case *FuncType:
 		return true
+	case DynTraitType:
+		// A trait object is pointer-shaped (a tagged value in the
+		// interpreter; a two-word fat pointer on compiled backends —
+		// see docs/DYN-TRAITS.md §4.2).
+		return true
 	}
 	return false
 }
@@ -646,6 +662,9 @@ func Equal(a, b Type) bool {
 	case SelfType:
 		_, ok := b.(SelfType)
 		return ok
+	case DynTraitType:
+		y, ok := b.(DynTraitType)
+		return ok && x.Trait == y.Trait
 	}
 	return false
 }
@@ -862,6 +881,15 @@ type Call struct {
 	// (without the flag, `f(p: boolean[]): Option[i32]` had its
 	// return type rebuilt as `Option[boolean[]]`).
 	IsVariantCall bool
+	// DynTrait is set by the checker to the trait name when this Call
+	// is a method call on a `dyn Trait` receiver (`d.area()` where
+	// `d: dyn Shape` ⊢ DynTrait = "Shape"). Such a call is dispatched
+	// at runtime by the receiver value's concrete type rather than
+	// statically rewritten to `__method_<Type>_…`; the callee stays a
+	// FieldAccess. Monomorph leaves these untouched and the interpreter
+	// resolves the concrete method from the runtime tag. Empty for
+	// ordinary (statically dispatched) calls. See docs/DYN-TRAITS.md.
+	DynTrait string
 }
 
 // MethodCallSite records the original source-level shape of a

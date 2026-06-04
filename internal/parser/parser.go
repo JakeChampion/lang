@@ -1314,6 +1314,19 @@ func (p *parser) parseType() (ast.Type, error) {
 		} else {
 			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
+	case t.Kind == lexer.Keyword && t.Text == "dyn":
+		// `dyn Trait` — a runtime trait-object type. The trait name is
+		// a bare (optionally module-qualified) identifier; no generic
+		// args or bounds. Falls through to the trailing-`[]` suffix
+		// loop, so `dyn Shape[]` is an array of trait objects. See
+		// docs/DYN-TRAITS.md.
+		p.advance() // consume `dyn`
+		nameTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		name := p.maybeQualify(nameTok.Text)
+		base = ast.DynTraitType{Trait: name}
 	case t.Kind == lexer.Ident && t.Text == "Self" &&
 		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
 		// `Self` is the contextual trait/impl type. It's only valid

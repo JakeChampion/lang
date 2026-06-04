@@ -2126,3 +2126,52 @@ function main(): i32 {
 		t.Fatalf("generic-enum @derive should check: %v", err)
 	}
 }
+
+// `dyn Trait` (runtime trait objects): a concrete impl-ing type coerces
+// to `dyn Trait`, a trait method dispatches dynamically, and the
+// negative cases (non-impl coercion, object-unsafe trait, unknown
+// method, unknown trait) are rejected. See docs/DYN-TRAITS.md.
+func TestDynTraitChecker(t *testing.T) {
+	const prelude = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+`
+	// Accepted: coerce a Circle to dyn Shape, dispatch area().
+	if err := checkSource(t, prelude+`
+function f(d: dyn Shape): i32 { return d.area(); }
+function main(): i32 { var d: dyn Shape = Circle { r: 3 }; return f(d); }`); err != nil {
+		t.Fatalf("valid dyn use should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"non-impl coercion",
+			prelude + `struct NoShape { z: i32 }
+function main(): i32 { var d: dyn Shape = NoShape { z: 1 }; return 0; }`,
+			"cannot assign NoShape"},
+		{"unknown method",
+			prelude + `function f(d: dyn Shape): i32 { return d.perimeter(); }
+function main(): i32 { return 0; }`,
+			`no method "perimeter" on ` + "`dyn Shape`"},
+		{"unknown trait",
+			`function f(d: dyn Bogus): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown trait"},
+		{"object-unsafe",
+			`trait Eq { function eq(self: Self, other: Self): boolean; }
+function f(d: dyn Eq): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"not object-safe"},
+		{"heterogeneous array of non-impl",
+			prelude + `struct NoShape { z: i32 }
+function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]; return 0; }`,
+			"does not implement Shape"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}

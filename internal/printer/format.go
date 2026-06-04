@@ -1065,6 +1065,10 @@ func formatType(t ast.Type) string {
 			out += formatType(p)
 		}
 		return out + ") => " + formatType(x.Result)
+	case ast.SelfType:
+		return "Self"
+	case ast.DynTraitType:
+		return "dyn " + x.Trait
 	}
 	return ""
 }

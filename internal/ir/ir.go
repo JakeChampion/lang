@@ -678,11 +678,86 @@ func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 	return LowerWith(prog, info, 4)
 }
 
+// typeHasDynTrait reports whether a type is, or nests, a `dyn Trait`.
+func typeHasDynTrait(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		return true
+	case ast.ArrayType:
+		return typeHasDynTrait(x.Elem)
+	case ast.SliceType:
+		return typeHasDynTrait(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if typeHasDynTrait(e) {
+				return true
+			}
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if typeHasDynTrait(p) {
+				return true
+			}
+		}
+		return typeHasDynTrait(x.Result)
+	case ast.StructType:
+		for _, a := range x.Args {
+			if typeHasDynTrait(a) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if typeHasDynTrait(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rejectDynTrait scans a program's function signatures, local variable
+// annotations, and dynamic method-call markers for `dyn Trait` usage,
+// returning a clear unsupported-feature error if any is found. `dyn` is
+// interpreter-only until the compiled-backend vtable slices land. See
+// docs/DYN-TRAITS.md.
+func rejectDynTrait(prog *ast.Program) error {
+	const msg = "dyn Trait is not yet supported on compiled backends; run it on the interpreter (fern -interp) or model the closed case as an enum + match"
+	var found bool
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			for _, p := range x.Params {
+				found = found || typeHasDynTrait(p.Type)
+			}
+			found = found || typeHasDynTrait(x.ReturnType)
+		case *ast.Var:
+			found = found || typeHasDynTrait(x.Type)
+		case *ast.Call:
+			found = found || x.DynTrait != ""
+		}
+		return true
+	})
+	if found {
+		return fmt.Errorf("ir: %s", msg)
+	}
+	return nil
+}
+
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
 // struct fields, array elements, and closure captures so heap
 // addresses survive arm64-darwin's >= 4 GiB heap.
 func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
+	// `dyn Trait` (runtime trait objects) is interpreter-only in its
+	// first slice — the compiled backends need a fat-pointer + vtable
+	// representation that isn't built yet (docs/DYN-TRAITS.md §4.2). The
+	// IR layer is the single choke point for every compiled backend, so
+	// reject `dyn` here with a clear message rather than letting it fall
+	// through to a cryptic "indirect call from non-identifier" later.
+	if err := rejectDynTrait(prog); err != nil {
+		return nil, err
+	}
 	// Rename shadowed local variables so each Var declaration
 	// in a function carries a name that's globally unique
 	// within the function. The IR's per-name `b.locals` slot

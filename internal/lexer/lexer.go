@@ -137,6 +137,11 @@ var keywords = map[string]bool{
 	// and `self` is an ordinary identifier — neither is reserved.
 	"trait": true,
 	"impl":  true,
+	// `dyn` introduces a runtime trait-object type (`dyn Shape`) in
+	// type position. Reserved as a keyword for parser simplicity; it
+	// was not previously used as an identifier anywhere in the stdlib
+	// or examples. See docs/DYN-TRAITS.md.
+	"dyn": true,
 }
 
 // Keywords returns every reserved word the lexer recognises, in

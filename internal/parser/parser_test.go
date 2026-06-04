@@ -1235,6 +1235,40 @@ impl Display for Point {
 // leading type params onto the ImplDecl and propagates them (plus the
 // bound) onto each desugared receiver-method, so the receiver-hoist
 // registers the methods as generics. See docs/TRAITS.md (Phase 6).
+// `dyn Trait` parses to a DynTraitType in type position, and
+// `dyn Trait[]` wraps it in an array. See docs/DYN-TRAITS.md.
+func TestDynTraitTypeParse(t *testing.T) {
+	prog, err := Parse(`trait Shape { function area(self: Self): i32; }
+function one(d: dyn Shape): i32 { return d.area(); }
+function many(ds: dyn Shape[]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("dyn type should parse: %v", err)
+	}
+	var one, many *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		switch fn.Name {
+		case "one":
+			one = fn
+		case "many":
+			many = fn
+		}
+	}
+	if one == nil || many == nil {
+		t.Fatal("functions not parsed")
+	}
+	dt, ok := one.Params[0].Type.(ast.DynTraitType)
+	if !ok || dt.Trait != "Shape" {
+		t.Errorf("one param type = %#v, want dyn Shape", one.Params[0].Type)
+	}
+	at, ok := many.Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("many param type = %#v, want array", many.Params[0].Type)
+	}
+	if edt, ok := at.Elem.(ast.DynTraitType); !ok || edt.Trait != "Shape" {
+		t.Errorf("many element type = %#v, want dyn Shape", at.Elem)
+	}
+}
+
 func TestParametricImplDecl(t *testing.T) {
 	prog, err := Parse(`trait Display { function to_string(self: Self): string; }
 struct Box[T] { v: T }
