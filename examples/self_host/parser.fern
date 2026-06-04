@@ -1843,13 +1843,463 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 // Compilation drivers call this before emit; emit_module itself stays
 // pure so the asm self-test (which calls emit_module directly and is
 // compiled to native code) doesn't carry the injection path.
-pub function module_with_builtins(mod: Module): Module {
+// ---------------------------------------------------------------
+// Monomorphisation of trait-bounded generics.
+//
+// The self-host erases unbounded generics (uniform 8-byte ABI) and
+// dispatches `obj.method()` dynamically by a shape pointer read off the
+// receiver — which heap values carry but unboxed primitives do not. A
+// BOUNDED generic (`f[T: Eq](a: T, …)`) calls trait methods on a
+// `T`-typed value, so when T is a primitive the dynamic dispatch reads
+// garbage and crashes. The fix: clone the bounded generic per concrete
+// call-site type so the receiver's STATIC type is concrete and routes
+// through the emitter's working static-primitive dispatch. No emitter
+// change is needed (see docs/TRAITS.md §7a).
+//
+// monomorphize_module (called by module_with_builtins) walks every
+// non-generic body + the top stmts, rewrites each call to a bounded
+// generic `f(args)` to a mangled `f__<concretetype>(args)` (concrete
+// type inferred from the argument bound to the type variable), collects
+// the needed instantiations, then clones each bounded generic per
+// instantiation with the type variable substituted. A worklist handles
+// clones that themselves call bounded generics.
+
+// MEnv is a tiny var-name -> type-name environment for inference.
+struct MEnv { mnames: string[], mtypes: string[] }
+function (e: MEnv) ebind(n: string, t: string): MEnv {
+    return MEnv { mnames: e.mnames.push(n), mtypes: e.mtypes.push(t) };
+}
+function (e: MEnv) elook(n: string): string {
+    var i: i32 = e.mnames.len() - 1;
+    while (i >= 0) {
+        if (e.mnames[i] == n) { return e.mtypes[i]; }
+        i = i - 1;
+    }
+    return "";
+}
+
+// Insts accumulates the unique (bounded-generic name, concrete type)
+// instantiations discovered while rewriting call sites.
+struct Insts { inames: string[], itypes: string[] }
+function (a: Insts) ihas(n: string, t: string): boolean {
+    var i: i32 = 0;
+    while (i < a.inames.len()) {
+        if (a.inames[i] == n && a.itypes[i] == t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function (a: Insts) iadd(n: string, t: string): Insts {
+    if (a.ihas(n, t)) { return a; }
+    return Insts { inames: a.inames.push(n), itypes: a.itypes.push(t) };
+}
+
+struct RExpr { rexpr: Expr, rins: Insts }
+struct RStmtOne { rstmt: Stmt, renv: MEnv, rins2: Insts }
+struct RStmts { rstmts: Stmt[], rins3: Insts }
+
+// bg_index returns the index in `funcs` of a bounded-generic function
+// named `name` (type_params non-empty, plain function), or -1.
+function bg_index(funcs: FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].type_params.len() > 0) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// tparam_arg_index returns the index of the first parameter whose
+// declared type is the (first) type variable — the argument whose
+// concrete type fixes the instantiation. -1 if none.
+function tparam_arg_index(fd: FuncDecl): i32 {
+    if (fd.type_params.len() == 0) { return 0 - 1; }
+    var tp: string = fd.type_params[0];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].type_name == tp) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// func_ret_of returns the return type of a plain function by name.
+function func_ret_of(funcs: FuncDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// mono_infer computes a coarse type-name for an expression, enough to
+// pick the right clone. Unknown shapes return "" (the call stays
+// generic — fine for non-primitive receivers).
+function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+    match (e) {
+        ExprNumber(n) => {
+            if (n.is_float) { return "f64"; }
+            if (n.suffix.len() > 0) { return n.suffix; }
+            return "i32";
+        },
+        ExprString(_) => { return "string"; },
+        ExprBool(_) => { return "boolean"; },
+        ExprIdent(id) => { return env.elook(id.name); },
+        ExprBinary(b) => {
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") {
+                return "boolean";
+            }
+            return mono_infer(b.left, env, funcs);
+        },
+        ExprUnary(u) => {
+            if (u.op == "!") { return "boolean"; }
+            return mono_infer(u.operand, env, funcs);
+        },
+        ExprStructLit(sl) => { return sl.type_name; },
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// mono_expr rebuilds `e`, rewriting any call to a bounded generic into
+// its mangled clone name and recording the instantiation.
+function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+    match (e) {
+        ExprBinary(b) => {
+            var l: RExpr = mono_expr(b.left, env, funcs, ins);
+            var r: RExpr = mono_expr(b.right, env, funcs, l.rins);
+            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr }, rins: r.rins };
+        },
+        ExprUnary(u) => {
+            var o: RExpr = mono_expr(u.operand, env, funcs, ins);
+            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr }, rins: o.rins };
+        },
+        ExprCall(c) => {
+            var nargs: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
+                cur = ra.rins;
+                nargs = nargs.push(ra.rexpr);
+                i = i + 1;
+            }
+            match (c.callee) {
+                ExprIdent(cid) => {
+                    var bi: i32 = bg_index(funcs, cid.name);
+                    if (bi >= 0) {
+                        var ti: i32 = tparam_arg_index(funcs[bi]);
+                        if (ti >= 0 && ti < c.args.len()) {
+                            var ct: string = mono_infer(c.args[ti], env, funcs);
+                            if (ct.len() > 0) {
+                                var mang: string = cid.name + "__" + ct;
+                                cur = cur.iadd(cid.name, ct);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs }, rins: cur };
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+            var rc: RExpr = mono_expr(c.callee, env, funcs, cur);
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs }, rins: rc.rins };
+        },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                var re: RExpr = mono_expr(a.elements[i], env, funcs, cur);
+                cur = re.rins;
+                els = els.push(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
+        },
+        ExprTuple(t) => {
+            var els: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                var re: RExpr = mono_expr(t.elements[i], env, funcs, cur);
+                cur = re.rins;
+                els = els.push(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprTuple { elements: els }, rins: cur };
+        },
+        ExprIndex(ix) => {
+            var ar: RExpr = mono_expr(ix.array, env, funcs, ins);
+            var idx: RExpr = mono_expr(ix.index, env, funcs, ar.rins);
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr }, rins: idx.rins };
+        },
+        ExprSlice(sl) => {
+            var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
+            var st: RExpr = mono_expr(sl.start, env, funcs, ar.rins);
+            var en: RExpr = mono_expr(sl.end, env, funcs, st.rins);
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+        },
+        ExprFieldAccess(fa) => {
+            var o: RExpr = mono_expr(fa.obj, env, funcs, ins);
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field }, rins: o.rins };
+        },
+        ExprStructLit(s) => {
+            var vals: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < s.field_values.len()) {
+                var rv: RExpr = mono_expr(s.field_values[i], env, funcs, cur);
+                cur = rv.rins;
+                vals = vals.push(rv.rexpr);
+                i = i + 1;
+            }
+            var rb: RExpr = mono_expr(s.base, env, funcs, cur);
+            return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr }, rins: rb.rins };
+        },
+        ExprLambda(lm) => {
+            var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
+            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts }, rins: bodyr.rins3 };
+        },
+        _ => { return RExpr { rexpr: e, rins: ins }; }
+    }
+    return RExpr { rexpr: e, rins: ins };
+}
+
+// mono_stmt rebuilds a statement, threading the inference env (only
+// StmtVar extends it) and the instantiation accumulator.
+function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne {
+    match (st) {
+        StmtVar(v) => {
+            var iv: RExpr = mono_expr(v.init, env, funcs, ins);
+            var ty: string = v.type_name;
+            if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+        },
+        StmtReturn(r) => {
+            var rv: RExpr = mono_expr(r.value, env, funcs, ins);
+            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr }, renv: env, rins2: rv.rins };
+        },
+        StmtExpr(x) => {
+            var xv: RExpr = mono_expr(x.value, env, funcs, ins);
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+        },
+        StmtAssign(a) => {
+            var av: RExpr = mono_expr(a.value, env, funcs, ins);
+            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr }, renv: env, rins2: av.rins };
+        },
+        StmtIf(f) => {
+            var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
+            var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins);
+            var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3);
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+        },
+        StmtWhile(w) => {
+            var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
+            var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins);
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+        },
+        StmtFor(fr) => {
+            var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
+            var benv: MEnv = env.ebind(fr.var_name, "");
+            var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins);
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+        },
+        StmtMatch(m) => {
+            var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
+            var arms: MatchArm[] = [];
+            var cur: Insts = sv.rins;
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
+                cur = ab.rins3;
+                arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts });
+                i = i + 1;
+            }
+            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
+        },
+        _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
+    }
+    return RStmtOne { rstmt: st, renv: env, rins2: ins };
+}
+
+// mono_stmts walks a statement list, threading the (block-local) env.
+function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts): RStmts {
+    var out: Stmt[] = [];
+    var e2: MEnv = env;
+    var cur: Insts = ins;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var rs: RStmtOne = mono_stmt(stmts[i], e2, funcs, cur);
+        out = out.push(rs.rstmt);
+        e2 = rs.renv;
+        cur = rs.rins2;
+        i = i + 1;
+    }
+    return RStmts { rstmts: out, rins3: cur };
+}
+
+// env_from_params seeds an MEnv with a function's parameter types.
+function env_from_params(params: ParamDecl[]): MEnv {
+    var e: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < params.len()) {
+        e = e.ebind(params[i].name, params[i].type_name);
+        i = i + 1;
+    }
+    return e;
+}
+
+// subst_ty replaces the type variable `tp` with the concrete type `ct`.
+function subst_ty(name: string, tp: string, ct: string): string {
+    if (name == tp) { return ct; }
+    return name;
+}
+
+// subst_stmts rewrites `var x: T` annotations to the concrete type in a
+// cloned body (the only type annotations a body carries). Exprs hold no
+// open type annotations, so they're passed through.
+function subst_stmts(stmts: Stmt[], tp: string, ct: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: Stmt = stmts[i];
+        match (st) {
+            StmtVar(v) => { out = out.push(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tp, ct), init: v.init }); },
+            StmtIf(f) => { out = out.push(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tp, ct), else_body: subst_stmts(f.else_body, tp, ct) }); },
+            StmtWhile(w) => { out = out.push(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tp, ct) }); },
+            StmtFor(fr) => { out = out.push(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tp, ct) }); },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var j: i32 = 0;
+                while (j < m.arms.len()) {
+                    arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tp, ct) });
+                    j = j + 1;
+                }
+                out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms });
+            },
+            _ => { out = out.push(st); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// clone_bg builds the `f__<ct>` clone of bounded-generic func `fd`,
+// substituting its type variable with `ct` in params + return + body
+// annotations.
+function clone_bg(fd: FuncDecl, ct: string): FuncDecl {
+    var tp: string = fd.type_params[0];
+    var nparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        nparams = nparams.push(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tp, ct) });
+        i = i + 1;
+    }
+    var notp: string[] = [];
+    return FuncDecl {
+        name: fd.name + "__" + ct,
+        receiver_name: "",
+        receiver_type: "",
+        type_params: notp,
+        params: nparams,
+        ret_type: subst_ty(fd.ret_type, tp, ct),
+        body: subst_stmts(fd.body, tp, ct)
+    };
+}
+
+// monomorphize_module expands trait-bounded generics. Non-generic
+// bodies + top stmts get their bounded-generic call sites rewritten to
+// mangled clone names; the clones are then generated per instantiation
+// (a worklist covers clones that call other bounded generics).
+pub function monomorphize_module(mod: Module): Module {
+    var funcs: FuncDecl[] = mod.funcs;
+    // Nothing to do if there are no bounded generics.
+    var any_bg: boolean = false;
+    var bi: i32 = 0;
+    while (bi < funcs.len()) {
+        if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) { any_bg = true; }
+        bi = bi + 1;
+    }
+    if (!any_bg) { return mod; }
+
+    var ins: Insts = Insts { inames: [], itypes: [] };
+    // Rewrite call sites in every NON-bounded function body. Bounded
+    // generics themselves are dropped (replaced by clones), so their
+    // bodies are rewritten later, per clone.
+    var rewritten: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var fd: FuncDecl = funcs[i];
+        if (fd.receiver_name.len() == 0 && fd.type_params.len() > 0) {
+            // skip — will be cloned
+        } else {
+            var env: MEnv = env_from_params(fd.params);
+            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins);
+            ins = rb.rins3;
+            rewritten = rewritten.push(FuncDecl {
+                name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
+                type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts
+            });
+        }
+        i = i + 1;
+    }
+    // Rewrite top-level stmts too.
+    var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
+    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins);
+    ins = tr.rins3;
+
+    // Worklist: generate clones; a clone's own body may call bounded
+    // generics, adding new instantiations.
+    var done: Insts = Insts { inames: [], itypes: [] };
+    var wi: i32 = 0;
+    while (wi < ins.inames.len()) {
+        var nm: string = ins.inames[wi];
+        var ct: string = ins.itypes[wi];
+        if (done.ihas(nm, ct)) { wi = wi + 1; continue; }
+        done = done.iadd(nm, ct);
+        var gi: i32 = bg_index(funcs, nm);
+        if (gi >= 0) {
+            var cl: FuncDecl = clone_bg(funcs[gi], ct);
+            // Rewrite the clone's body so any bounded-generic calls it
+            // makes resolve too (and enqueue their instantiations).
+            var cenv: MEnv = env_from_params(cl.params);
+            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins);
+            ins = crb.rins3;
+            rewritten = rewritten.push(FuncDecl {
+                name: cl.name, receiver_name: "", receiver_type: "",
+                type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts
+            });
+        }
+        wi = wi + 1;
+    }
+
     return Module {
-        funcs: mod.funcs,
-        structs: inject_builtin_enums(mod.structs),
+        funcs: rewritten,
+        structs: mod.structs,
         aliases: mod.aliases,
         imports: mod.imports,
-        top_stmts: mod.top_stmts
+        top_stmts: tr.rstmts
+    };
+}
+
+pub function module_with_builtins(mod: Module): Module {
+    var mono: Module = monomorphize_module(mod);
+    return Module {
+        funcs: mono.funcs,
+        structs: inject_builtin_enums(mono.structs),
+        aliases: mono.aliases,
+        imports: mono.imports,
+        top_stmts: mono.top_stmts
     };
 }
 
