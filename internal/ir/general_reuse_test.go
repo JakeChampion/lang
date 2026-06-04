@@ -50,6 +50,66 @@ function main(): i32 {
 	}
 }
 
+// Cross-block: a top-level body local `a` (dead after the if) is reused by a
+// construction `b` NESTED inside the if-body.
+func TestGeneralReuseFiresCrossBlock(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 1, y: 2 };
+    var s: i32 = a.x + a.y;          // a's last use (before the if)
+    var acc: i32 = 0;
+    if (s > 0) {
+        var b: Point = Point { x: s, y: 9 };   // reuses a's box
+        acc = b.x + b.y;
+    }
+    return acc;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("cross-block reuse should fire (dead a -> nested b), got %d", got)
+	}
+}
+
+// Skips cross-block: `a` is used AFTER the if (the merge point), so reusing it
+// on the then-path would strand the later read — deadFrom(a, if) is false.
+func TestGeneralReuseSkipsCrossBlockUsedAfter(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 1, y: 2 };
+    var acc: i32 = 0;
+    if (acc == 0) {
+        var b: Point = Point { x: 5, y: 9 };
+        acc = b.x + b.y;
+    }
+    return acc + a.x;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("a used after the if — cross-block reuse must not fire, got %d", got)
+	}
+}
+
+// Skips cross-block: `a` is used in a SIBLING branch (else); deadFrom over the
+// whole if-statement rejects it (conservative — sound).
+func TestGeneralReuseSkipsCrossBlockSiblingUse(t *testing.T) {
+	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 1, y: 2 };
+    var acc: i32 = 0;
+    if (acc == 0) {
+        var b: Point = Point { x: 5, y: 9 };
+        acc = b.x + b.y;
+    } else {
+        acc = a.x + a.y;
+    }
+    return acc;
+}`)
+	f := funcByName(ip, "main")
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("a used in sibling else — cross-block reuse must not fire, got %d", got)
+	}
+}
+
 // Skips: `a` is STILL LIVE at b's construction (read after) — no pairing.
 func TestGeneralReuseSkipsLiveSource(t *testing.T) {
 	ip := lowerForTest(t, `struct Point { x: i32, y: i32 }
