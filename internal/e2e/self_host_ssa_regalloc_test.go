@@ -70,6 +70,13 @@ func TestSelfHostSSARegallocArm64(t *testing.T) {
 		// Heap arrays with register allocation: pointer-width (64-bit) values
 		// must use the x-register views.
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
+		// A for-in loop's desugared counter + element load round-trip through
+		// the allocator. (Heavier register pressure — deeply nested for-loops
+		// with several loop-carried array loads — can still exceed the
+		// linear-scan allocator's coarse interval model and is left to the
+		// spill baseline; that's a pre-existing regalloc limitation, not
+		// for-specific.)
+		{"for-sum", "function main(): i32 { var a = [5, 10, 15]; var s = 0; for x in a { s = s + x; } return s; }", 30},
 	}
 
 	for _, tc := range cases {

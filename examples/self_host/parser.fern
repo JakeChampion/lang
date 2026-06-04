@@ -276,7 +276,17 @@ function s_defer(action: Stmt): Stmt { return StmtDefer { action: action }; }
 // current cursor into it. We mutate via value-semantics (return
 // fresh Par from each consume()).
 
-struct Par { toks: lexer.Token[], pos: i32 }
+// `no_struct` suppresses the `Ident { … }` / `pkg.Type { … }`
+// struct-literal shortcut in parse_primary while parsing an
+// expression whose trailing `{` opens a block instead — the
+// `for VAR in EXPR { body }` iter being the motivating case
+// (`for x in a {}` must read `a` + an empty block, not the empty
+// struct literal `a {}`). Set true only around the iter parse and
+// restored afterward; it rides through advance() so it stays in
+// force for the whole iter sub-expression, matching the Go
+// parser's noStructLit (which likewise blocks nested struct lits
+// in the iter — `for x in f(Foo{…})` is rejected on both).
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean }
 
 function (p: Par) at_end(): boolean {
     if (p.pos >= p.toks.len()) { return true; }
@@ -294,7 +304,12 @@ function (p: Par) peek(): lexer.Token {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1 };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct };
+}
+// with_no_struct returns a cursor with the struct-literal-suppression
+// flag set as given (position unchanged).
+function (p: Par) with_no_struct(v: boolean): Par {
+    return Par { toks: p.toks, pos: p.pos, no_struct: v };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -543,7 +558,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 _ => { }
             }
             var qstruct_ok: boolean = false;
-            if (qname.len() > 0 && p.peek_punct() == "{") {
+            if (qname.len() > 0 && !p.no_struct && p.peek_punct() == "{") {
                 var qlook: Par = p.advance();
                 if (qlook.peek_punct() == "}") {
                     qstruct_ok = true;
@@ -595,7 +610,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
 // parser's parseExprFromText.
 function parse_expr_from_text(text: string): Expr {
     var toks: lexer.Token[] = lexer.tokenize(text);
-    var sub: Par = Par { toks: toks, pos: 0 };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false };
     var r: ExprResult = parse_expr(sub);
     return r.expr;
 }
@@ -693,7 +708,7 @@ function parse_primary(p: Par): ExprResult {
             // (`{}`) or starts with `Ident :`. Anything else
             // means the `{` belongs to a surrounding block.
             var struct_lit_ok: boolean = false;
-            if (p.peek_punct() == "{") {
+            if (!p.no_struct && p.peek_punct() == "{") {
                 var look: Par = p.advance();
                 if (look.peek_punct() == "}") {
                     struct_lit_ok = true;
@@ -1386,8 +1401,11 @@ function parse_stmt(p: Par): StmtResult {
             if (kvv.len() > 0) { p = p.advance(); }
             if (p.peek_punct() == ")") { p = p.advance(); }
             if (p.peek_ident() == "in") { p = p.advance(); }
-            var kvi: ExprResult = parse_expr(p);
-            p = kvi.par;
+            // Suppress trailing struct-literal parsing — the `{` that
+            // follows the iter opens the loop body, not a struct lit.
+            var kv_saved: boolean = p.no_struct;
+            var kvi: ExprResult = parse_expr(p.with_no_struct(true));
+            p = (kvi.par).with_no_struct(kv_saved);
             var kvb: BlockResult = parse_block(p);
             p = kvb.par;
             return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
@@ -1401,8 +1419,11 @@ function parse_stmt(p: Par): StmtResult {
             return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
         }
         p = p.advance();  // consume `in`
-        var fiter = parse_expr(p);
-        p = fiter.par;
+        // Suppress trailing struct-literal parsing on the iter so that
+        // `for x in a {}` reads `a` + an empty block, not `a {}`.
+        var f_saved: boolean = p.no_struct;
+        var fiter = parse_expr(p.with_no_struct(true));
+        p = (fiter.par).with_no_struct(f_saved);
         var fb: BlockResult = parse_block(p);
         p = fb.par;
         return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
@@ -1558,7 +1579,7 @@ function parse_stmt(p: Par): StmtResult {
 }
 
 pub function parse_program(toks: lexer.Token[]): Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var out: Stmt[] = [];
     while (!p.at_end()) {
         var r = parse_stmt(p);
@@ -3396,7 +3417,7 @@ function skip_trait_decl(p: Par): Par {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var p: Par = Par { toks: toks, pos: 0 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var funcs: FuncDecl[] = [];
     var structs: StructDecl[] = [];
     var aliases: TypeAlias[] = [];

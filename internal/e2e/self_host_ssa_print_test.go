@@ -76,6 +76,7 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		{"hello", "function main(): i32 { print(\"hello\\n\"); return 0; }", "hello\n"},
 		{"two-prints", "function main(): i32 { print(\"ab\"); print(\"cd\"); return 0; }", "abcd"},
 		{"print-in-loop", "function main(): i32 { var i = 0; while (i < 3) { print(\"x\"); i = i + 1; } return 0; }", "xxx"},
+		{"print-in-for", "function main(): i32 { var a = [1, 2, 3]; for x in a { print(\"y\"); } return 0; }", "yyy"},
 		{"print-then-loop", "function main(): i32 { print(\"hi\\n\"); var s = 0; var i = 0; while (i < 5) { s = s + i; i = i + 1; } return s; }", "hi\n"},
 		{"print-string-var", "function main(): i32 { var msg = \"done\\n\"; print(msg); return 0; }", "done\n"},
 		// String concatenation feeding print.
