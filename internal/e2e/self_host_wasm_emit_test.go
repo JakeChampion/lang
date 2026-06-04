@@ -234,6 +234,20 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"arr-push-empty", "function main(): i32 { var a: i32[] = []; a = a.push(42); return a[0]; }", 42, ""},
 		{"arr-push-chain", "function main(): i32 { var a: i32[] = []; a = a.push(1); a = a.push(2); a = a.push(3); return a[0] + a[1] + a[2]; }", 6, ""},
 		{"arr-push-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.push(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
+		// 64-bit-element arrays (i64[] / f64[]) use 8-byte element slots +
+		// i64/f64 load/store, so values above 2^31 round-trip (the 4-byte
+		// i32 slot would emit an out-of-range (i32.const …) and truncate).
+		// Exercises every element path: literal, index, for, set, push,
+		// slice. Regression: i64/f64 8-byte-slot series.
+		{"i64arr-literal-index-large", "function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }", 42, ""},
+		{"i64arr-for-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98, ""},
+		{"i64arr-set-index-large", "function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }", 7, ""},
+		{"i64arr-push-grow", "function main(): i32 { var xs: i64[] = [10]; xs = xs.push(20); xs = xs.push(30); var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 60, ""},
+		{"i64arr-slice", "function main(): i32 { var xs: i64[] = [10, 20, 30, 40]; var ys = xs[1:3]; return (ys[0] + ys[1]) as i32; }", 50, ""},
+		{"i64arr-param", "function sum(xs: i64[]): i64 { var s: i64 = 0; for v in xs { s = s + v; } return s; } function main(): i32 { var xs: i64[] = [10, 20, 30]; return sum(xs) as i32; }", 60, ""},
+		{"f64arr-for-sum", "function main(): i32 { var xs: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; for v in xs { s = s + v; } return s as i32; }", 7, ""},
+		// i32 arrays must be unaffected by the wide-slot machinery.
+		{"i32arr-noregress-mix", "function main(): i32 { var xs: i32[] = [3, 5, 9]; xs = xs.push(11); var s = 0; for v in xs { s = s + v; } var ys = xs[1:3]; return s + ys[0]; }", 33, ""},
 		// String arrays (string[]): literal, index, for-in, push, and
 		// element used in string contexts (needs element typing).
 		{"sarr-for-write", "function main(): i32 { var xs = [\"a\", \"b\", \"c\"]; for s in xs { write(s); } return 0; }", 0, "abc"},

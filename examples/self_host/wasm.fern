@@ -148,6 +148,16 @@ struct Ctx {
     // `for p in pts { p.field / p.method() }` and `pts[i].field` resolve.
     sa_names: string[],
     sa_types: string[],
+    // Arrays whose element type is 64-bit (i64[] / f64[]): they use an
+    // 8-byte element slot + i64/f64 load/store, vs the 4-byte i32 default.
+    // Tracked by local/param name so index / for / push / slice pick the
+    // right stride and op.
+    i64_arr_names: string[],
+    f64_arr_names: string[],
+    // The enclosing function's array-return element kind ("i64"/"f64"/
+    // "i32"), so `return [<bare literals>]` from an i64[]/f64[] function
+    // emits the literal with the right (8-byte) element width.
+    ret_arr_kind: string,
 }
 
 // func_param_is_i64 is true when free function `fn`'s parameter at index
@@ -760,6 +770,7 @@ function is_i64_expr(e: parser.Expr, cx: Ctx): boolean {
                 _ => { return false; },
             }
         },
+        parser.ExprIndex(ix) => { return array_elem_kind(ix.array, cx) == "i64"; },
         _ => { return false; },
     }
     return false;
@@ -858,6 +869,12 @@ function emit_i64(e: parser.Expr, cx: Ctx, depth: i32): string {
                 _ => {},
             }
         },
+        parser.ExprIndex(ix) => {
+            // i64[] element read — 8-byte slot, i64.load.
+            if (array_elem_kind(ix.array, cx) == "i64") {
+                return "(i64.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 8))))";
+            }
+        },
         _ => {},
     }
     // i32-producing expression in an i64 context — widen it.
@@ -933,6 +950,7 @@ function is_f64_expr(e: parser.Expr, cx: Ctx): boolean {
                 _ => { return false; },
             }
         },
+        parser.ExprIndex(ix) => { return array_elem_kind(ix.array, cx) == "f64"; },
         _ => { return false; },
     }
     return false;
@@ -1006,6 +1024,12 @@ function emit_f64(e: parser.Expr, cx: Ctx, depth: i32): string {
                     }
                 },
                 _ => {},
+            }
+        },
+        parser.ExprIndex(ix) => {
+            // f64[] element read — 8-byte slot, f64.load.
+            if (array_elem_kind(ix.array, cx) == "f64") {
+                return "(f64.load (i32.add (i32.add " + emit_expr(ix.array, cx, depth) + " (i32.const 8)) (i32.mul " + emit_expr(ix.index, cx, depth) + " (i32.const 8))))";
             }
         },
         _ => {},
@@ -1387,6 +1411,66 @@ function struct_array_elem_type(e: parser.Expr, cx: Ctx): string {
     return "";
 }
 
+// array_elem_kind classifies an array expression's element width: "i64" /
+// "f64" (an 8-byte slot + i64/f64 load/store) or "i32" (the 4-byte
+// default). It drives the stride and load/store op at every
+// array-element site. NOTE: an inline literal of bare integer literals
+// reads as "i32" here (the literals carry no width) — the i64/f64-ness of
+// such a literal comes from its declaration context, which passes the
+// kind explicitly to emit_array_literal.
+function array_elem_kind(e: parser.Expr, cx: Ctx): string {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (contains_str(cx.i64_arr_names, id.name)) { return "i64"; }
+            if (contains_str(cx.f64_arr_names, id.name)) { return "f64"; }
+            return "i32";
+        },
+        parser.ExprSlice(sl) => { return array_elem_kind(sl.array, cx); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return arr_kind_of_spelling(free_func_ret_spelling(cx, id.name)); },
+                parser.ExprFieldAccess(fa) => { return arr_kind_of_spelling(method_ret(cx, struct_type_of(fa.obj, cx), fa.field)); },
+                _ => { return "i32"; },
+            }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (is_i64_expr(a.elements[i], cx)) { return "i64"; }
+                if (is_f64_expr(a.elements[i], cx)) { return "f64"; }
+                i = i + 1;
+            }
+            return "i32";
+        },
+        _ => { return "i32"; },
+    }
+    return "i32";
+}
+
+// arr_kind_of_spelling maps an array type spelling to its element kind.
+function arr_kind_of_spelling(t: string): string {
+    if (t == "i64[]") { return "i64"; }
+    if (t == "f64[]" || t == "f32[]") { return "f64"; }
+    return "i32";
+}
+
+// elem_slot_size / elem_store_op / elem_load_op give the per-element byte
+// stride and the wasm store/load instruction for an element kind.
+function elem_slot_size(kind: string): i32 {
+    if (kind == "i64" || kind == "f64") { return 8; }
+    return 4;
+}
+function elem_store_op(kind: string): string {
+    if (kind == "i64") { return "i64.store"; }
+    if (kind == "f64") { return "f64.store"; }
+    return "i32.store";
+}
+function elem_load_op(kind: string): string {
+    if (kind == "i64") { return "i64.load"; }
+    if (kind == "f64") { return "f64.load"; }
+    return "i32.load";
+}
+
 // sa_elem_decl_type returns the element struct type a `var` declares as a
 // struct-array (from its init array literal or a `T[]` annotation), "" if
 // it isn't one.
@@ -1638,6 +1722,35 @@ function wasm_binop(op: string): string {
     return "i32.add";
 }
 
+// emit_array_literal_kind builds an array block `[len:i32 @0][cap:i32 @4]
+// [elems @8]` in a `(block (result i32) …)`. `kind` ("i32"/"i64"/"f64")
+// fixes the element slot size (4 or 8) and the per-element store op +
+// value-emit, so an `i64[]` / `f64[]` literal whose width comes from its
+// declaration (a bare-integer literal carries none) is stored correctly.
+// A depth-indexed temp ($__lit<depth>) holds the fresh pointer; nested
+// literals emit at depth+1 to avoid clobbering it.
+function emit_array_literal_kind(a: parser.ExprArray, kind: string, cx: Ctx, depth: i32): string {
+    var ap: string = "$__lit" + i32_to_string(depth);
+    var n: i32 = a.elements.len();
+    var slot: i32 = elem_slot_size(kind);
+    var sop: string = elem_store_op(kind);
+    var s: string = "(block (result i32)";
+    s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(8 + n * slot) + ")))";
+    s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(n) + "))";
+    s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) (i32.const " + i32_to_string(n) + "))";
+    var i: i32 = 0;
+    while (i < n) {
+        var ev: string = "";
+        if (kind == "i64") { ev = emit_i64(a.elements[i], cx, depth + 1); }
+        else if (kind == "f64") { ev = emit_f64(a.elements[i], cx, depth + 1); }
+        else { ev = emit_expr(a.elements[i], cx, depth + 1); }
+        s = s + " (" + sop + " (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(8 + i * slot) + ")) " + ev + ")";
+        i = i + 1;
+    }
+    s = s + " (local.get " + ap + "))";
+    return s;
+}
+
 // emit_expr lowers an expression to a folded WAT instruction tree. A
 // string value is a pointer (i32) to its `[len:i32][bytes]` block; a
 // string literal's value is the constant block offset interned in tab.
@@ -1867,7 +1980,16 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     }
                     // `.push(v)` is array-only (strings have no push), so it
                     // needs no type gate. Returns the (possibly grown) array.
+                    // i64[]/f64[] use 8-byte-slot push helpers taking a wide
+                    // value.
                     if (fa.field == "push" && c.args.len() == 1) {
+                        var pk: string = array_elem_kind(fa.obj, cx);
+                        if (pk == "i64") {
+                            return "(call $__fern_arr_push_i64 " + emit_expr(fa.obj, cx, depth) + " " + emit_i64(c.args[0], cx, depth) + ")";
+                        }
+                        if (pk == "f64") {
+                            return "(call $__fern_arr_push_f64 " + emit_expr(fa.obj, cx, depth) + " " + emit_f64(c.args[0], cx, depth) + ")";
+                        }
                         return "(call $__fern_arr_push " + emit_expr(fa.obj, cx, depth) + " " + emit_expr(c.args[0], cx, depth) + ")";
                     }
                     // `.join(sep)` is the array→string method (string[]
@@ -1948,24 +2070,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             }
         },
         parser.ExprArray(a) => {
-            // Array block: [len:i32 @0][cap:i32 @4][elems @8]. Built in a
-            // (block (result i32) …) so it stays a single expression. A
-            // depth-indexed temp ($__lit<depth>) holds the fresh pointer
-            // while the header + elements are stored; nesting uses a
-            // distinct temp per level (children emit at depth+1).
-            var ap: string = "$__lit" + i32_to_string(depth);
-            var n: i32 = a.elements.len();
-            var s: string = "(block (result i32)";
-            s = s + " (local.set " + ap + " (call $__fern_alloc (i32.const " + i32_to_string(8 + n * 4) + ")))";
-            s = s + " (i32.store (local.get " + ap + ") (i32.const " + i32_to_string(n) + "))";
-            s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const 4)) (i32.const " + i32_to_string(n) + "))";
-            var i: i32 = 0;
-            while (i < n) {
-                s = s + " (i32.store (i32.add (local.get " + ap + ") (i32.const " + i32_to_string(8 + i * 4) + ")) " + emit_expr(a.elements[i], cx, depth + 1) + ")";
-                i = i + 1;
-            }
-            s = s + " (local.get " + ap + "))";
-            return s;
+            // Element kind from the literal itself (i64/f64 only when the
+            // elements are typed wide; a bare-integer-literal i64[] gets its
+            // kind from its declaration via emit_array_literal_kind).
+            return emit_array_literal_kind(a, array_elem_kind(e, cx), cx, depth);
         },
         parser.ExprLambda(lm) => {
             // A lambda value is a 1-slot closure box [table_idx]. The body
@@ -2030,6 +2138,11 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // the array path.
             if (is_string_expr(sl.array, cx)) {
                 return "(call $__fern_substr " + emit_expr(sl.array, cx, depth) + " " + emit_expr(sl.start, cx, depth) + " " + emit_expr(sl.end, cx, depth) + ")";
+            }
+            // i64[]/f64[] slice copies 8-byte elements (the byte-move helper
+            // is element-type-agnostic, so one wide variant serves both).
+            if (array_elem_kind(sl.array, cx) != "i32") {
+                return "(call $__fern_arr_slice8 " + emit_expr(sl.array, cx, depth) + " " + emit_expr(sl.start, cx, depth) + " " + emit_expr(sl.end, cx, depth) + ")";
             }
             return "(call $__fern_arr_slice " + emit_expr(sl.array, cx, depth) + " " + emit_expr(sl.start, cx, depth) + " " + emit_expr(sl.end, cx, depth) + ")";
         },
@@ -2699,6 +2812,55 @@ function arr_helpers(): string {
     o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 4)))))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    // 8-byte-slot variants for i64[] / f64[]: push_i64 / push_f64 store a
+    // wide value; slice8 copies 8-byte elements (raw i64 move — works for
+    // both element types). Always emitted with the array runtime.
+    o = o + arr_push_wide("i64", "i64");
+    o = o + arr_push_wide("f64", "f64");
+    o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
+    o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
+    o = o + "    (local.set $na (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $n) (i32.const 8)))))\n";
+    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 8)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+
+// arr_push_wide emits a geometric-growth push for an 8-byte-slot array.
+// `vty` is the wasm value type of the appended element (i64 / f64);
+// `sop` its store op. Existing elements are copied with a raw i64 move
+// (8 bytes, element-type-agnostic).
+function arr_push_wide(vty: string, sop: string): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
+    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
+    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (" + sop + ".store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
+    o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (return (local.get $a))))\n";
+    o = o + "    (local.set $ncap (i32.const 4))\n";
+    o = o + "    (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))\n";
+    o = o + "    (local.set $na (call $__fern_alloc (i32.add (i32.const 8) (i32.mul (local.get $ncap) (i32.const 8)))))\n";
+    o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (" + sop + ".store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
     o = o + "    (local.get $na))\n";
     return o;
 }
@@ -3375,6 +3537,18 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                 st = st.w("    (local.set $" + an + " (i32.load (local.get $__lit0)))\n");
                 return st.w("    (local.set $" + bn + " (i32.load (i32.add (local.get $__lit0) (i32.const 4))))\n");
             }
+            // `var xs: i64[] = […]` / `f64[]`: a bare integer / float
+            // literal carries no width, so emit the literal with the
+            // declared element kind (8-byte slots + i64/f64 stores).
+            var dak: string = arr_kind_of_spelling(v.type_name);
+            if (dak != "i32") {
+                match (v.init) {
+                    parser.ExprArray(arr) => {
+                        return st.w("    (local.set $" + v.name + " " + emit_array_literal_kind(arr, dak, st.cx, 0) + ")\n");
+                    },
+                    _ => {},
+                }
+            }
             // An i64- / f64-typed binding coerces its initialiser to that
             // type so a bare literal (`var t: i64 = 0;` / `var x: f64 =
             // 1;`) becomes the right const.
@@ -3404,6 +3578,17 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             if (st.cx.ret_f64) {
                 return st.w("    (return " + emit_f64(r.value, st.cx, 0) + ")\n");
             }
+            // `return [<bare literals>]` from an i64[]/f64[] function: the
+            // literal carries no width, so build it with the declared
+            // element kind (8-byte slots).
+            if (st.cx.ret_arr_kind != "i32") {
+                match (r.value) {
+                    parser.ExprArray(arr) => {
+                        return st.w("    (return " + emit_array_literal_kind(arr, st.cx.ret_arr_kind, st.cx, 0) + ")\n");
+                    },
+                    _ => {},
+                }
+            }
             return st.w("    (return " + emit_expr(r.value, st.cx, 0) + ")\n");
         },
         parser.StmtExpr(e) => {
@@ -3424,9 +3609,15 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.cx, 0) + ")\n");
                             }
                             if (id.name == "__set_index" && c.args.len() == 3) {
-                                // arr[idx] = v  (parser desugar). Store v
-                                // at arr + 8 + idx*4.
-                                return st.w("    (i32.store (i32.add (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx, 0) + " (i32.const 4))) " + emit_expr(c.args[2], st.cx, 0) + ")\n");
+                                // arr[idx] = v  (parser desugar). Store v at
+                                // arr + 8 + idx*slot; an i64[]/f64[] uses an
+                                // 8-byte slot + i64/f64 store of a wide value.
+                                var sk: string = array_elem_kind(c.args[0], st.cx);
+                                var sv: string = "";
+                                if (sk == "i64") { sv = emit_i64(c.args[2], st.cx, 0); }
+                                else if (sk == "f64") { sv = emit_f64(c.args[2], st.cx, 0); }
+                                else { sv = emit_expr(c.args[2], st.cx, 0); }
+                                return st.w("    (" + elem_store_op(sk) + " (i32.add (i32.add " + emit_expr(c.args[0], st.cx, 0) + " (i32.const 8)) (i32.mul " + emit_expr(c.args[1], st.cx, 0) + " (i32.const " + i32_to_string(elem_slot_size(sk)) + "))) " + sv + ")\n");
                             }
                             if (id.name == "__set_field" && c.args.len() == 3) {
                                 // obj.field = v  (parser desugar). The
@@ -3549,12 +3740,17 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
             var bodycont: string = "$fcont_" + i32_to_string(id);
             var outer_brk: string = st.brk;
             var outer_cont: string = st.cont;
+            // Element kind picks the load op + slot stride (i64[]/f64[]
+            // are 8-byte; the loop var is typed wide to match — see
+            // collect_wide_loop_vars).
+            var ekind: string = array_elem_kind(f.iter, st.cx);
+            var eslot: string = i32_to_string(elem_slot_size(ekind));
             var head: string =
                 "    (local.set " + fa + " " + emit_expr(f.iter, st.cx, 0) + ")\n"
                 + "    (local.set " + fi + " (i32.const 0))\n"
                 + "    (block " + brk + " (loop " + loop + "\n"
                 + "    (br_if " + brk + " (i32.ge_s (local.get " + fi + ") (i32.load (local.get " + fa + "))))\n"
-                + "    (local.set $" + f.var_name + " (i32.load (i32.add (i32.add (local.get " + fa + ") (i32.const 8)) (i32.mul (local.get " + fi + ") (i32.const 4)))))\n"
+                + "    (local.set $" + f.var_name + " (" + elem_load_op(ekind) + " (i32.add (i32.add (local.get " + fa + ") (i32.const 8)) (i32.mul (local.get " + fi + ") (i32.const " + eslot + ")))))\n"
                 + "    (block " + bodycont + "\n";
             var inner: WState = WState {
                 ...st,
@@ -3817,6 +4013,17 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                         },
                         _ => {},
                     }
+                    // 64-bit-element array local: `var xs: i64[] = …`, or a
+                    // var bound to a wide-array expression (an i64[]/f64[]
+                    // call, or a slice of a wide array). Tracked so index /
+                    // for / push / slice use the 8-byte stride + i64/f64 op.
+                    var akind: string = arr_kind_of_spelling(v.type_name);
+                    if (akind == "i32") { akind = array_elem_kind(v.init, cx); }
+                    if (akind == "i64" && !contains_str(cx.i64_arr_names, v.name)) {
+                        cx = Ctx { ...cx, i64_arr_names: cx.i64_arr_names.push(v.name) };
+                    } else if (akind == "f64" && !contains_str(cx.f64_arr_names, v.name)) {
+                        cx = Ctx { ...cx, f64_arr_names: cx.f64_arr_names.push(v.name) };
+                    }
                     // Option/Result-typed var → track its payload type so a
                     // later `match (v)` types the Some/Ok binding.
                     var optpay: string = parse_option_payload(v.type_name);
@@ -3929,8 +4136,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     var ol_names: string[] = [];
     var ol_payloads: string[] = [];
     // i64- / f64-typed params, plus the i64- / f64-declared names in the body.
-    var i64_names: string[] = collect_i64_var_names(f.body, []);
-    var f64_names: string[] = collect_f64_var_names(f.body, []);
+    var i64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
+    var f64_names: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
     var map_names: string[] = collect_map_var_names(f.body, []);
     var pj: i32 = 0;
     while (pj < f.params.len()) {
@@ -3987,6 +4194,16 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         }
         cvi = cvi + 1;
     }
+    // 64-bit-element array params (i64[] / f64[]): seed the wide-array
+    // name sets so index / for / push / slice use the 8-byte stride.
+    var i64_arrs: string[] = [];
+    var f64_arrs: string[] = [];
+    var pa: i32 = 0;
+    while (pa < f.params.len()) {
+        if (f.params[pa].type_name == "i64[]") { i64_arrs = i64_arrs.push(f.params[pa].name); }
+        if (f.params[pa].type_name == "f64[]" || f.params[pa].type_name == "f32[]") { f64_arrs = f64_arrs.push(f.params[pa].name); }
+        pa = pa + 1;
+    }
     var cx: Ctx = Ctx {
         tab: tab, locals: locals, funcs: funcs, str_arrays: str_arrays, str_arr_funcs: str_arr_funcs,
         structs: structs, sv_names: sv_names, sv_types: sv_types, sf_names: sf_names, sf_types: sf_types,
@@ -4002,6 +4219,8 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         fn_names: fn_names, lam_ctr: lam_ctr, lamdefs: lamdefs,
         all_locals: all_locals, cap_names: cap_names,
         sa_names: [], sa_types: [],
+        i64_arr_names: i64_arrs, f64_arr_names: f64_arrs,
+        ret_arr_kind: arr_kind_of_spelling(f.ret_type),
     };
     // Struct-array locals (computed from the base cx so struct_type_of of
     // the array elements resolves) — needed before the string-locals pass
@@ -4173,8 +4392,8 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     }
     // The i64- / f64-typed local/param sets drive both the (param/local …)
     // decls here and the typed instruction paths in Ctx.
-    var i64_set: string[] = collect_i64_var_names(f.body, []);
-    var f64_set: string[] = collect_f64_var_names(f.body, []);
+    var i64_set: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "i64"), "i64", collect_i64_var_names(f.body, []));
+    var f64_set: string[] = collect_wide_loop_vars(f.body, wide_array_param_names(f, "f64"), "f64", collect_f64_var_names(f.body, []));
     var i: i32 = 0;
     while (i < f.params.len()) {
         if (f.params[i].type_name == "i64") {
@@ -4597,6 +4816,67 @@ function module_calls(mod: parser.Module, fn: string): boolean {
 // declared `i64` anywhere in a statement list (recursing nested bodies),
 // so emit_func can declare them as i64 wasm locals and Ctx can route
 // their uses through the i64 path.
+// collect_wide_loop_vars finds the binding names of `for v in xs` loops
+// whose iterated array has 64-bit elements, so the loop var is declared /
+// typed as i64 / f64 (else the 8-byte element load would `local.set` an
+// i64/f64 value into an i32 local). `kind` is "i64" or "f64"; `arrs` seeds
+// the known wide-array names (params), and same-`kind` `var x: T[]` decls
+// extend it in statement order as the walk descends.
+function collect_wide_loop_vars(body: parser.Stmt[], arrs: string[], kind: string, acc: string[]): string[] {
+    var declty: string = "i64[]";
+    if (kind == "f64") { declty = "f64[]"; }
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if ((v.type_name == declty || (kind == "f64" && v.type_name == "f32[]")) && !contains_str(arrs, v.name)) {
+                    arrs = arrs.push(v.name);
+                }
+            },
+            parser.StmtFor(f) => {
+                if (comma_index(f.var_name) < 0) {
+                    match (f.iter) {
+                        parser.ExprIdent(id) => {
+                            if (contains_str(arrs, id.name) && !contains_str(acc, f.var_name)) { acc = acc.push(f.var_name); }
+                        },
+                        _ => {},
+                    }
+                }
+                acc = collect_wide_loop_vars(f.body, arrs, kind, acc);
+            },
+            parser.StmtIf(f) => {
+                acc = collect_wide_loop_vars(f.then_body, arrs, kind, acc);
+                acc = collect_wide_loop_vars(f.else_body, arrs, kind, acc);
+            },
+            parser.StmtWhile(w) => { acc = collect_wide_loop_vars(w.body, arrs, kind, acc); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    acc = collect_wide_loop_vars(m.arms[k].body, arrs, kind, acc);
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// wide_array_param_names returns the i64[] (kind "i64") or f64[]/f32[]
+// (kind "f64") parameter names of a function.
+function wide_array_param_names(f: parser.FuncDecl, kind: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < f.params.len()) {
+        var t: string = f.params[i].type_name;
+        if (kind == "i64" && t == "i64[]") { out = out.push(f.params[i].name); }
+        if (kind == "f64" && (t == "f64[]" || t == "f32[]")) { out = out.push(f.params[i].name); }
+        i = i + 1;
+    }
+    return out;
+}
+
 function collect_i64_var_names(body: parser.Stmt[], acc: string[]): string[] {
     var i: i32 = 0;
     while (i < body.len()) {
