@@ -129,6 +129,9 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// Pointer fields (string / array) — 64-bit word slots.
 		{"struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var n = Named { id: 5, label: \"hello\" }; return n.label.len(); }", 5},
 		{"struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 1, data: [10, 20, 30] }; return b.data[1] + b.tag; }", 21},
+		// All-paths-return: every branch returns, leaving a dead merge.
+		{"all-return-if", "function main(): i32 { var x = 7; if (x > 3) { return 100; } else { return 200; } }", 100},
+		{"all-return-nested", "function main(): i32 { var n = 0; if (n < 0) { return 1; } else { if (n == 0) { return 42; } else { return 3; } } }", 42},
 		// Regression: a no-`else` if whose body modifies a variable, taking
 		// the FALL-THROUGH path — the merge phi's fall-through operand must
 		// flow correctly through the backends' phi-deconstruction.
