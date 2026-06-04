@@ -138,10 +138,16 @@ struct SsaResult { asm: string, ok: boolean }
 // allocation is always on for this path.
 function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
     if (target != "x86-64" && target != "arm64") { return SsaResult { asm: "", ok: false }; }
-    // The set of user-defined function names the SSA backend can `call`.
+    // The set of user-defined function names the SSA backend can `call`, and
+    // the subset that return a pointer (so their call results are 64-bit).
     var known: string[] = [];
+    var ptr_ret: string[] = [];
     var ni: i32 = 0;
-    while (ni < funcs.len()) { known = known.push(funcs[ni].name); ni = ni + 1; }
+    while (ni < funcs.len()) {
+        known = known.push(funcs[ni].name);
+        if (ssa.is_ptr_type(funcs[ni].ret_type)) { ptr_ret = ptr_ret.push(funcs[ni].name); }
+        ni = ni + 1;
+    }
     var sfuncs: ssa.SFunc[] = [];
     var has_main: boolean = false;
     var i: i32 = 0;
@@ -152,7 +158,7 @@ function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
         // lowered — fall back to the AST emitter for the whole program.
         if (!ssa.calls_all_known(r.func, known)) { return SsaResult { asm: "", ok: false }; }
         if (funcs[i].name == "main") { has_main = true; }
-        sfuncs = sfuncs.push(ssa.optimize(r.func));
+        sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret)));
         i = i + 1;
     }
     if (!has_main) { return SsaResult { asm: "", ok: false }; }

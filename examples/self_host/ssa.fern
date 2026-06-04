@@ -760,9 +760,6 @@ pub function is_ptr_type(tn: string): boolean {
 }
 
 pub function build_func(fd: parser.FuncDecl): BResult {
-    // Returning a pointer (array) is not supported yet — the call site
-    // can't know the callee returns 64-bit, so bail to the AST emitter.
-    if (is_ptr_type(fd.ret_type)) { return BResult { func: SFunc { name: fd.name, nparams: 0, nvals: 0, blocks: [], entry: 0 }, ok: false }; }
     // Params occupy value ids 0..nparams-1, defined by "param" insts in
     // the entry block (block id 0). A pointer-typed (array) param is marked
     // with str="ptr" so compute_widths gives it 64-bit width.
@@ -1381,6 +1378,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 var make64: boolean = false;
                 if (ins.kind == "alloc") { make64 = true; }
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
+                else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
                 else if (ins.kind == "phi") {
                     var a: i32 = 0;
@@ -1400,6 +1398,31 @@ pub function compute_widths(f: SFunc): i32[] {
 // call to `call __fn_<name>`, so a call to a builtin (print, write, …) or
 // any other unknown name can't be emitted — the caller bails to the AST
 // emitter in that case.
+// mark_ptr_calls tags (imm=1) every call whose callee returns a pointer
+// (its name is in ptr_ret), so compute_widths gives the call result 64-bit
+// width. Run after build_func, before optimise/emit. Leaves other insts
+// untouched.
+pub function mark_ptr_calls(f: SFunc, ptr_ret: string[]): SFunc {
+    var nblocks: SBlock[] = [];
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var ninsts: SInst[] = [];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind == "call" && index_of_str(ptr_ret, ins.str) >= 0) {
+                ins = SInst { kind: "call", result: ins.result, args: ins.args, imm: 1, str: ins.str };
+            }
+            ninsts = ninsts.push(ins);
+            k = k + 1;
+        }
+        nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+        bi = bi + 1;
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+}
+
 pub function calls_all_known(f: SFunc, known: string[]): boolean {
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
