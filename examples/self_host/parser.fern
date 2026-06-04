@@ -1160,8 +1160,112 @@ function parse_switch_arms(p: Par, scrut: Expr): BlockResult {
     return BlockResult { par: p, body: empty };
 }
 
+// expr_mentions / stmts_mention report whether `name` appears as an
+// identifier anywhere in an expression / statement list. Used to detect a
+// self-recursive local function (whose body references its own name) —
+// the closure-valued-local desugar below can't bind the name before the
+// lambda captures it, so recursion needs top-level hoisting (closureconv),
+// which isn't ported yet. Conservative: any mention counts.
+function expr_mentions(e: Expr, name: string): boolean {
+    match (e) {
+        ExprIdent(id) => { return id.name == name; },
+        ExprBinary(b) => { return expr_mentions(b.left, name) || expr_mentions(b.right, name); },
+        ExprUnary(u) => { return expr_mentions(u.operand, name); },
+        ExprCall(c) => {
+            if (expr_mentions(c.callee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_mentions(c.args[i], name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_mentions(a.elements[i], name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (expr_mentions(t.elements[i], name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprIndex(ix) => { return expr_mentions(ix.array, name) || expr_mentions(ix.index, name); },
+        ExprSlice(sl) => { return expr_mentions(sl.array, name) || expr_mentions(sl.start, name) || expr_mentions(sl.end, name); },
+        ExprFieldAccess(fa) => { return expr_mentions(fa.obj, name); },
+        ExprStructLit(s) => {
+            if (s.has_base && expr_mentions(s.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < s.field_values.len()) {
+                if (expr_mentions(s.field_values[i], name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprLambda(lm) => { return stmts_mention(lm.body, name); },
+        _ => { return false; }
+    }
+}
+
+function stmt_mentions(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtVar(v) => { return expr_mentions(v.init, name); },
+        StmtReturn(r) => { return expr_mentions(r.value, name); },
+        StmtExpr(e) => { return expr_mentions(e.value, name); },
+        StmtAssign(a) => { return expr_mentions(a.value, name); },
+        StmtIf(f) => { return expr_mentions(f.cond, name) || stmts_mention(f.then_body, name) || stmts_mention(f.else_body, name); },
+        StmtWhile(w) => { return expr_mentions(w.cond, name) || stmts_mention(w.body, name); },
+        StmtFor(fr) => { return expr_mentions(fr.iter, name) || stmts_mention(fr.body, name); },
+        StmtMatch(m) => {
+            if (expr_mentions(m.scrutinee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (stmts_mention(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+function stmts_mention(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (stmt_mentions(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function parse_stmt(p: Par): StmtResult {
     var kw: string = p.peek_keyword();
+    if (kw == "function") {
+        // Local (nested) function declaration: desugar to a closure-valued
+        // local `var name = function(params): ret { body };`. Calls resolve
+        // through the closure-call path, and references to enclosing locals
+        // are captured by the lambda machinery. Mirrors the Go parser
+        // marking it IsLocal + the closureconv hoist. (Self-reference /
+        // recursion isn't captured — the name is bound after the lambda is
+        // built — matching a plain closure-valued local.)
+        var fr: FuncResult = parse_func_decl(p);
+        p = fr.par;
+        if (stmts_mention(fr.func.body, fr.func.name)) {
+            // Self-recursive local function: the closure can't reference
+            // itself (the name binds after the lambda captures), so this
+            // needs top-level hoisting (closureconv), not yet ported.
+            // Surface it rather than miscompile silently.
+            return StmtResult { par: p, stmt: s_unknown("recursive local function: " + fr.func.name) };
+        }
+        var lam: Expr = e_lambda(fr.func.params, fr.func.ret_type, fr.func.body);
+        return StmtResult { par: p, stmt: s_var(fr.func.name, "", lam) };
+    }
     if (kw == "switch") {
         p = p.advance();  // consume `switch`
         if (p.peek_punct() == "(") { p = p.advance(); }

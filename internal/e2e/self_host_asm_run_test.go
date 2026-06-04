@@ -127,6 +127,10 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"if-expr-else-if", "function main(): i32 { var n: i32 = 2; var x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, "", ""},
 		{"direct-iife", "function main(): i32 { return (function(): i32 { return 3; })(); }", 3, "", ""},
 		{"iife-with-args", "function main(): i32 { return (function(a: i32, b: i32): i32 { return a + b; })(4, 5); }", 9, "", ""},
+		// Local (nested) functions — desugar to a closure-valued local.
+		{"local-fn-basic", "function main(): i32 { function helper(): i32 { return 5; } return helper(); }", 5, "", ""},
+		{"local-fn-capture", "function main(): i32 { var n: i32 = 10; function bump(): i32 { return n + 1; } return bump(); }", 11, "", ""},
+		{"local-fn-two", "function main(): i32 { function f(): i32 { return 2; } function g(): i32 { return 3; } return f() * g(); }", 6, "", ""},
 		{"hello-world", "print(\"Hello, world!\"); return 0;", 0, "Hello, world!\n", ""},
 		{"print-twice", "print(\"line 1\"); print(\"line 2\"); return 0;", 0, "line 1\nline 2\n", ""},
 		{"print-then-return", "print(\"out\"); return 42;", 42, "out\n", ""},
