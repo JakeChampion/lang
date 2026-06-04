@@ -839,6 +839,11 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		for i := range sd.Fields {
 			r.rewriteType(&sd.Fields[i].Type)
 		}
+		// `@derive(Trait)` trait names are rewritten like any other
+		// trait reference so a cross-module `@derive(cmp.Eq)` lines up.
+		for i, dn := range sd.Derives {
+			sd.Derives[i] = r.rewriteTraitNameAt(dn, sd.P)
+		}
 	}
 	for _, ed := range m.prog.Enums {
 		ed.Name = selfPrefix + ed.Name

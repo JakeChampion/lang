@@ -1674,6 +1674,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		c.info.Traits[td.Name] = td
 	}
 
+	// `@derive(Trait)` on a struct: synthesise a field-wise impl per
+	// derived trait (appending receiver-method FuncDecls + an ImplDecl)
+	// before the receiver-hoist and conformance passes pick them up.
+	c.synthesizeDerives(prog)
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
@@ -1993,6 +1998,156 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // reads as `mod.Name` (how the user wrote it) rather than the internal
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
+// deriveKind classifies a (possibly module-mangled) derived-trait name
+// by its simple name: "Eq", "Display", or "Ord". Returns "" for any
+// other trait — only these three are derivable.
+func deriveKind(name string) string {
+	simple := name
+	if i := strings.LastIndex(simple, "__"); i >= 0 {
+		simple = simple[i+2:]
+	}
+	switch simple {
+	case "Eq", "Display", "Ord":
+		return simple
+	}
+	return ""
+}
+
+// synthesizeDerives expands every struct's `@derive(Trait, …)` into a
+// field-wise `impl Trait for Struct`: the generated method bodies call
+// the corresponding trait method on each field (`self.f.eq(other.f)`,
+// `self.f.to_string()`, `self.f.cmp(other.f)`), so derivation composes
+// — a field type only needs to itself implement the trait. The
+// synthesised receiver-methods are appended to prog.Funcs and an
+// ImplDecl to prog.Impls, ahead of the receiver-hoist + conformance
+// passes. See docs/TRAITS.md.
+func (c *checker) synthesizeDerives(prog *ast.Program) {
+	for _, sd := range prog.Structs {
+		if len(sd.Derives) == 0 {
+			continue
+		}
+		derives := sd.Derives
+		// Idempotent: clear so a later Check pass (the monomorph
+		// re-check rebuilds + re-checks the program) doesn't
+		// synthesise the impls a second time.
+		sd.Derives = nil
+		recvType := ast.StructType{Name: sd.Name}
+		for _, dn := range derives {
+			td, ok := c.info.Traits[dn]
+			if !ok {
+				c.errfCode(sd.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			_ = td
+			kind := deriveKind(dn)
+			if kind == "" {
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable", demangle(dn))
+				continue
+			}
+			var method *ast.FuncDecl
+			switch kind {
+			case "Eq":
+				method = synthEq(sd, recvType)
+			case "Display":
+				method = synthDisplay(sd, recvType)
+			case "Ord":
+				method = synthOrd(sd, recvType)
+			}
+			method.SourceModule = sd.SourceModule
+			prog.Funcs = append(prog.Funcs, method)
+			prog.Impls = append(prog.Impls, &ast.ImplDecl{
+				P: sd.P, Trait: dn, TraitPos: sd.P, Type: recvType, TypePos: sd.P,
+				MethodNames: []string{method.Name}, SourceModule: sd.SourceModule,
+			})
+		}
+	}
+}
+
+// selfField builds `self.<name>`; otherField builds `other.<name>`.
+func selfField(name string) ast.Expr {
+	return &ast.FieldAccess{Target: &ast.Ident{Name: "self"}, Field: name}
+}
+func otherField(name string) ast.Expr {
+	return &ast.FieldAccess{Target: &ast.Ident{Name: "other"}, Field: name}
+}
+
+// methodCall builds `recv.<m>(args…)`.
+func methodCall(recv ast.Expr, m string, args ...ast.Expr) ast.Expr {
+	return &ast.Call{Callee: &ast.FieldAccess{Target: recv, Field: m}, Args: args}
+}
+
+// synthEq builds `function eq(self, other) { return f1.eq && f2.eq && … ; }`.
+func synthEq(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.BoolLit{Value: true}
+	for i, f := range sd.Fields {
+		cmp := methodCall(selfField(f.Name), "eq", otherField(f.Name))
+		if i == 0 {
+			expr = cmp
+		} else {
+			expr = &ast.Binary{Op: "&&", Left: expr, Right: cmp}
+		}
+	}
+	return &ast.FuncDecl{
+		Name:       "eq",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		Params:     []ast.Param{{Name: "other", Type: recv}},
+		ReturnType: ast.BoolType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthDisplay builds a `to_string` that renders `Name { f: …, … }`.
+func synthDisplay(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: demangle(sd.Name) + " {"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := " "
+		if i > 0 {
+			sep = ", "
+		}
+		add(&ast.StringLit{Value: sep + f.Name + ": "})
+		add(methodCall(selfField(f.Name), "to_string"))
+	}
+	if len(sd.Fields) == 0 {
+		add(&ast.StringLit{Value: "}"})
+	} else {
+		add(&ast.StringLit{Value: " }"})
+	}
+	return &ast.FuncDecl{
+		Name:       "to_string",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthOrd builds a lexicographic `cmp`: compare each field in turn,
+// returning the first non-zero result, else 0.
+func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var stmts []ast.Stmt
+	for i, f := range sd.Fields {
+		vn := fmt.Sprintf("__c%d", i)
+		// var __ci: i32 = self.f.cmp(other.f);
+		stmts = append(stmts, &ast.Var{
+			Name: vn, Type: ast.NumberType{},
+			Init: methodCall(selfField(f.Name), "cmp", otherField(f.Name)),
+		})
+		// if (__ci != 0) { return __ci; }
+		stmts = append(stmts, &ast.If{
+			Cond: &ast.Binary{Op: "!=", Left: &ast.Ident{Name: vn}, Right: &ast.NumberLit{Value: 0}},
+			Then: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: &ast.Ident{Name: vn}}}},
+		})
+	}
+	stmts = append(stmts, &ast.Return{Value: &ast.NumberLit{Value: 0}})
+	return &ast.FuncDecl{
+		Name:       "cmp",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		Params:     []ast.Param{{Name: "other", Type: recv}},
+		ReturnType: ast.NumberType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
 func demangle(s string) string {
 	return strings.Replace(s, "__", ".", 1)
 }

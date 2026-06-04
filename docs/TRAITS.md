@@ -303,7 +303,16 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    on.) This unblocks collapsing the `std/test` `assert_eq_*` /
    `assert_neq_*` families onto one generic helper per family — done as
    its own focused PR since it changes `std/test`'s public surface.
-4. **Phase 4:** `@derive`. Collapse the rest of the `std/test` families.
+4. **Phase 4 (shipped):** `@derive(Eq, Display, Ord)` on structs.
+   `@derive(Trait, …)` synthesises a field-wise `impl` per trait — the
+   generated method calls the trait method on each field
+   (`self.f.eq(other.f)`, `self.f.to_string()`, `self.f.cmp(other.f)`),
+   so derivation composes (a field type only needs to itself implement
+   the trait). Lives in the Go checker's `synthesizeDerives` (run before
+   the receiver-hoist + conformance passes; idempotent across the
+   monomorph re-check). Verified through the interpreter and the wasm
+   backend; nested-struct composition tested. Enums + collapsing the
+   remaining `std/test` array/map families are the follow-ups.
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.
 
