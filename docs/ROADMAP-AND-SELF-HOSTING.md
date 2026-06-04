@@ -585,9 +585,24 @@ Slice 4d filled in the rest of the **i32 arithmetic / comparison set** plus
 With i32.load/store already in, this brings **structs** into reach:
 `TestSelfHostWasmBinary` adds div/rem, left/right shift, and struct field
 read / mutate / nested-struct cases, each binary module matching the WAT
-path. Remaining: closures (which pull in the table + elem sections and
-`call_indirect`), then the i64 / f64 arithmetic + conversion ops and the
-string/map runtime, then wrap the core module in the `wasi:cli/run` /
+path.
+
+Slice 4e added the **i64 op set + numeric conversions**, and locked in
+**strings** (which `TestSelfHostWasmBinary` shows already encode once the
+slice-4d unsigned-compares / `select` landed — the string runtime needs
+no further opcodes). i64: `add` … `rotr`, the `i64` comparisons, plus the
+conversions `i32.wrap_i64` / `i64.extend_i32_s`-`u` / `*.trunc_f64_s`-`u`
+/ `f64.convert_*` (all single-byte, unary). New tests: i64 div / sub /
+mul-compare (values above 2³¹ round-tripping through the 8-byte ops and
+`i32.wrap_i64` on the `as i32`), and string length / index / concat /
+comparison — each binary module matching the WAT path.
+
+Remaining: **f64** (blocked only on `f64.const`, whose immediate is a raw
+8-byte IEEE-754 double, not a LEB — needs a decimal→bits step); **maps**
+(no missing *opcodes* — the 33 KB map WAT just overruns the embed-the-WAT
+test harness, so this needs the harness switched to `read_file` rather
+than a string literal); **closures** (the table + elem sections +
+`call_indirect`); then wrap the core module in the `wasi:cli/run` /
 `wasi:http` component shapes.
 
 A sixteenth pass found one remaining **language** gap (so the "what
