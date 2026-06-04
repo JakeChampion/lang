@@ -1,0 +1,29 @@
+// examples/self_host/ssa_run.fern — bootstrap-demo driver for the SSA
+// layer. Reads a program from stdin, parses it, builds SSA for `main`
+// (which must be a straight-line i32 function in slice 1), evaluates the
+// SSA with the SSA interpreter, and returns the result as the process exit
+// code. The companion Go test pipes a source program in and asserts the
+// exit code matches — end-to-end proof that AST → SSA → eval preserves the
+// program's value. A `main` outside the slice-1 subset exits 200.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./ssa";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == "main") {
+            var r: ssa.BResult = ssa.build_func(mod.funcs[i]);
+            if (!r.ok) { return 200; }
+            var noargs: i32[] = [];
+            return ssa.eval_func(r.func, noargs);
+        }
+        i = i + 1;
+    }
+    return 201;
+}
