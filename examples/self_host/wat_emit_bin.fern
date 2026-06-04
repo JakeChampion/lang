@@ -4,9 +4,9 @@
 // module via the leb128 + wat_encode primitives. Pipeline:
 //   tokenize (wat_lex) -> parse (wat_parse) -> ENCODE (this) -> .wasm
 //
-// Coverage: integer / control-flow / i32+i64 / struct / string / map /
-// closure programs — i.e. everything emit_module produces except f64
-// constants. Sections are emitted in binary id order (type, import, func,
+// Coverage: integer / control-flow / i32+i64+f64 / struct / string / map
+// / closure programs — i.e. the full core-module shape emit_module
+// produces. Sections are emitted in binary id order (type, import, func,
 // table, memory, global, export, elem, code, data). The type section
 // holds the named `(type $c …)` declarations first (referenced by
 // call_indirect), then one functype per function (imports first; no
@@ -65,6 +65,46 @@ function parse_dec_i64(s: string): i64 {
     }
     var z: i64 = 0;
     if (neg) { return z - v; }
+    return v;
+}
+
+// parse_f64 parses a decimal float literal (sign, integer part, optional
+// fraction, optional e±exponent) into an f64. NOTE: this digit-by-digit
+// accumulation is the nearest f64 for exactly-representable literals and
+// within ~1 ULP otherwise — fine for the values emit_module produces and
+// the truncate-to-int results the tests assert, but not a bit-exact strtod
+// for every decimal.
+function parse_f64(s: string): f64 {
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    var v: f64 = 0.0;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        v = v * 10.0 + ((s[i] - 48) as f64);
+        i = i + 1;
+    }
+    if (i < s.len() && s[i] == 46) {        // '.'
+        i = i + 1;
+        var scale: f64 = 0.1;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            v = v + ((s[i] - 48) as f64) * scale;
+            scale = scale / 10.0;
+            i = i + 1;
+        }
+    }
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {   // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        var exp: i32 = 0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) { exp = exp * 10 + (s[i] - 48); i = i + 1; }
+        var p: f64 = 1.0;
+        var k: i32 = 0;
+        while (k < exp) { p = p * 10.0; k = k + 1; }
+        if (eneg) { v = v / p; } else { v = v * p; }
+    }
+    if (neg) { return 0.0 - v; }
     return v;
 }
 
@@ -275,6 +315,28 @@ function arith_opcode(op: string): i32 {
     if (op == "f64.convert_i32_u") { return 184; }  // 0xb8
     if (op == "f64.convert_i64_s") { return 185; }  // 0xb9
     if (op == "f64.convert_i64_u") { return 186; }  // 0xba
+    // f64 comparison (binary) + arithmetic (binary, except the unary math
+    // ops abs/neg/ceil/floor/trunc/nearest/sqrt).
+    if (op == "f64.eq") { return 97; }     // 0x61
+    if (op == "f64.ne") { return 98; }
+    if (op == "f64.lt") { return 99; }
+    if (op == "f64.gt") { return 100; }
+    if (op == "f64.le") { return 101; }
+    if (op == "f64.ge") { return 102; }    // 0x66
+    if (op == "f64.abs") { return 153; }   // 0x99
+    if (op == "f64.neg") { return 154; }
+    if (op == "f64.ceil") { return 155; }
+    if (op == "f64.floor") { return 156; }
+    if (op == "f64.trunc") { return 157; }
+    if (op == "f64.nearest") { return 158; }
+    if (op == "f64.sqrt") { return 159; }  // 0x9f
+    if (op == "f64.add") { return 160; }   // 0xa0
+    if (op == "f64.sub") { return 161; }
+    if (op == "f64.mul") { return 162; }
+    if (op == "f64.div") { return 163; }
+    if (op == "f64.min") { return 164; }
+    if (op == "f64.max") { return 165; }
+    if (op == "f64.copysign") { return 166; } // 0xa6
     return 0;
 }
 
@@ -342,6 +404,18 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     if (op == "i64.const") {
         out = out.push(66);
         return leb_i64(out, parse_dec_i64(node.items[1].text));
+    }
+    if (op == "f64.const") {
+        // 0x44 then the 8-byte little-endian IEEE-754 double. The value's
+        // bits come from f64_bits() on the parsed literal.
+        out = out.push(68);
+        var bits: i64 = f64_bits(parse_f64(node.items[1].text));
+        var k: i32 = 0;
+        while (k < 8) {
+            out = out.push(((bits >> (k * 8)) & 255) as i32);
+            k = k + 1;
+        }
+        return out;
     }
     if (op == "local.get") {
         out = out.push(32);

@@ -635,8 +635,20 @@ encoder: the encoder will parse the decimal literal to an f64 value, then
 bytes, not a LEB). Guarded by `f64-bits-hi` / `f64-bits-roundtrip` in the
 wasm differential suite, cross-checked against the Go interpreter.
 
-Remaining: **f64.const** in the binary encoder (decimal→f64→`f64_bits`→8
-bytes) plus the f64 arithmetic opcodes; then wrap the core module in the
+Slice 4i added **f64.const + the f64 op set**, completing the core-module
+encoder. `f64.const` emits `0x44` then the 8-byte little-endian IEEE-754
+immediate, whose bits come from `f64_bits(parse_f64(literal))` — a small
+decimal float parser (sign / int / fraction / e±exp; nearest f64 for
+exactly-representable literals, ~1 ULP otherwise, which is fine for the
+values `emit_module` emits and the truncate-to-int results the tests
+assert). The f64 arithmetic / comparison ops and `f64.{abs,neg,ceil,floor,
+trunc,nearest,sqrt,min,max,copysign}` were added to the opcode table.
+`TestSelfHostWasmBinary` adds f64 mul / sub / compare / sqrt / int→float
+cases. **The self-hosted binary encoder now covers the full core-module
+shape `emit_module` produces** (36 differential cases, exit + stdout
+matching the WAT path).
+
+Remaining is packaging, not coverage: wrap the core module in the
 `wasi:cli/run` / `wasi:http` component shapes, and (for round-tripping the
 compiler's own large modules) emit a bigger `(memory …)` so the assembler
 doesn't OOM.
