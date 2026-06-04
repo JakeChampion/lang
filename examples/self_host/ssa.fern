@@ -204,6 +204,13 @@ function (s: BState) record_continue(): BState {
 
 // ---- expression lowering ----------------------------------------------
 
+// kconst emits a const_int and leaves it as the current value (cur_id()).
+function (s: BState) kconst(v: i32): BState {
+    s = s.fresh();
+    var na: i32[] = [];
+    return s.emit(SInst { kind: "const_int", result: s.cur_id(), args: na, imm: v, str: "" });
+}
+
 function build_expr(e: parser.Expr, s: BState): BState {
     match (e) {
         parser.ExprNumber(n) => {
@@ -259,24 +266,42 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     s = s.fresh();
                     return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: cid.name });
                 },
+                parser.ExprFieldAccess(fa) => {
+                    // arr.len() → the length stored at element 0.
+                    if (fa.field != "len" || c.args.len() != 0) { return s.fail(); }
+                    s = build_expr(fa.obj, s);
+                    if (!s.ok) { return s; }
+                    var ptr: i32 = s.cur_id();
+                    s = s.kconst(0);
+                    var zidx: i32 = s.cur_id();
+                    s = s.fresh();
+                    var la: i32[] = [ptr, zidx];
+                    return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
+                },
                 _ => { return s.fail(); }
             }
         },
         parser.ExprArray(arr) => {
-            // Heap-allocate an n-element i32 array, store each element, and
-            // yield the handle (a pointer). store_elem is a side-effecting
-            // op; the array's value is the alloc handle.
+            // Heap-allocate a length-prefixed i32 array: element 0 holds the
+            // length, the n elements follow at 1..n. The expression's value
+            // is the alloc handle (a pointer).
             var n: i32 = arr.elements.len();
             s = s.fresh();
             var handle: i32 = s.cur_id();
             var noargs: i32[] = [];
-            s = s.emit(SInst { kind: "alloc", result: handle, args: noargs, imm: n, str: "" });
+            s = s.emit(SInst { kind: "alloc", result: handle, args: noargs, imm: n + 1, str: "" });
+            // length at index 0
+            s = s.kconst(0);
+            var lenidx: i32 = s.cur_id();
+            s = s.kconst(n);
+            var lenval: i32 = s.cur_id();
+            s = s.fresh();
+            var la0: i32[] = [handle, lenidx, lenval];
+            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: la0, imm: 0, str: "" });
             var i: i32 = 0;
             while (i < n) {
-                s = s.fresh();
+                s = s.kconst(i + 1);
                 var idxv: i32 = s.cur_id();
-                var na: i32[] = [];
-                s = s.emit(SInst { kind: "const_int", result: idxv, args: na, imm: i, str: "" });
                 s = build_expr(arr.elements[i], s);
                 if (!s.ok) { return s; }
                 var elv: i32 = s.cur_id();
@@ -296,8 +321,15 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = build_expr(ix.index, s);
             if (!s.ok) { return s; }
             var idx: i32 = s.cur_id();
+            // Data lives at index+1 (element 0 is the length).
+            s = s.kconst(1);
+            var one: i32 = s.cur_id();
             s = s.fresh();
-            var la: i32[] = [ptr, idx];
+            var ba: i32[] = [idx, one];
+            s = s.emit(SInst { kind: "binary", result: s.cur_id(), args: ba, imm: 0, str: "+" });
+            var idx1: i32 = s.cur_id();
+            s = s.fresh();
+            var la: i32[] = [ptr, idx1];
             return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
         },
         _ => { return s.fail(); }
@@ -1059,7 +1091,22 @@ function cse(f: SFunc): SFunc {
         nblocks = nblocks.push(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, repl), preds: blk.preds });
         bi = bi + 1;
     }
-    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry };
+    // Final pass: apply the complete replacement map to every surviving
+    // instruction and terminator. The forward block walk above rewrites
+    // operands with the repl known so far, so a reference to a value merged
+    // in a LATER block — e.g. a loop-header phi's back-edge operand that CSE
+    // collapses into another expression in the body — would otherwise dangle.
+    var fblocks: SBlock[] = [];
+    bi = 0;
+    while (bi < nblocks.len()) {
+        var blk: SBlock = nblocks[bi];
+        var ri: SInst[] = [];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) { ri = ri.push(rewrite_args(blk.insts[k], repl)); k = k + 1; }
+        fblocks = fblocks.push(SBlock { id: blk.id, insts: ri, term: rewrite_term(blk.term, repl), preds: blk.preds });
+        bi = bi + 1;
+    }
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: fblocks, entry: f.entry };
 }
 
 // term_targets reports whether a terminator branches to block id `to`.
