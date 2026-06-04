@@ -132,7 +132,7 @@ function test_subseq_i32_needle_longer(): Option[string] {
 
 function test_subseq_i32_order_matters(): Option[string] {
     // The pieces are present but in the wrong order —
-    // subseq is order-sensitive, unlike `assert_subset_i32`.
+    // subseq is order-sensitive, unlike `assert_subset`.
     match (test.assert_array_contains_subseq_i32(
         [1, 2, 3, 4, 5], [2, 4])) {
         None => { return test.fail("non-contiguous should fail"); },

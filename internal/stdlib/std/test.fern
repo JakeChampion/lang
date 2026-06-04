@@ -1068,6 +1068,116 @@ pub function assert_string_count(haystack: string, needle: string, n: i32): Opti
 // array length checks. Split per element type because lang
 // doesn't have a `T[]` generic at the function-signature
 // level for the call sites we currently want.
+// Generic ordered / set array assertions over core/cmp. `assert_sorted_*`
+// need `Ord + Display`; `assert_set_eq` / `assert_subset` / `assert_unique`
+// need `Eq + Display`. These replaced the per-element-type families once
+// traits landed. (`set_eq` / `unique` compare in O(n^2) via `.eq()`
+// rather than sorting, since there is no generic sort — same result.)
+// See docs/TRAITS.md.
+pub function assert_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): Option[string] {
+    var i: i32 = 1;
+    while (i < arr.len()) {
+        if (arr[i - 1].cmp(arr[i]) > 0) {
+            return Some("assert_sorted_asc: inversion at index " + i.to_string() +
+                        ": " + arr[i - 1].to_string() + " > " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+pub function assert_sorted_desc[T: cmp.Ord + cmp.Display](arr: T[]): Option[string] {
+    var i: i32 = 1;
+    while (i < arr.len()) {
+        if (arr[i - 1].cmp(arr[i]) < 0) {
+            return Some("assert_sorted_desc: inversion at index " + i.to_string() +
+                        ": " + arr[i - 1].to_string() + " < " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+pub function assert_strictly_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): Option[string] {
+    var i: i32 = 1;
+    while (i < arr.len()) {
+        if (arr[i - 1].cmp(arr[i]) >= 0) {
+            return Some("assert_strictly_sorted_asc: not strict at index " + i.to_string() +
+                        ": " + arr[i - 1].to_string() + " >= " + arr[i].to_string());
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+pub function assert_unique[T: cmp.Eq + cmp.Display](arr: T[]): Option[string] {
+    var i: i32 = 0;
+    while (i < arr.len()) {
+        var j: i32 = i + 1;
+        while (j < arr.len()) {
+            if (arr[i].eq(arr[j])) {
+                return Some("assert_unique: duplicate value " + arr[i].to_string());
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return None;
+}
+
+pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]): Option[string] {
+    var used: boolean[] = [];
+    var sn: i32 = superset.len();
+    var i: i32 = 0;
+    while (i < sn) { used = used.push(false); i = i + 1; }
+    var j: i32 = 0;
+    while (j < subset.len()) {
+        var want: T = subset[j];
+        var matched: boolean = false;
+        var k: i32 = 0;
+        while (k < sn && !matched) {
+            if (!used[k] && superset[k].eq(want)) {
+                used[k] = true;
+                matched = true;
+            }
+            k = k + 1;
+        }
+        if (!matched) {
+            return Some("assert_subset: " + want.to_string() + " not in superset (with required multiplicity)");
+        }
+        j = j + 1;
+    }
+    return None;
+}
+
+pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]): Option[string] {
+    var an: i32 = actual.len();
+    var en: i32 = expected.len();
+    if (an != en) {
+        return Some("assert_set_eq: length differs - expected " +
+                    en.to_string() + ", got " + an.to_string());
+    }
+    // Equal length + actual is a (multiset) subset of expected ⟹ equal.
+    var used: boolean[] = [];
+    var i: i32 = 0;
+    while (i < en) { used = used.push(false); i = i + 1; }
+    var j: i32 = 0;
+    while (j < an) {
+        var want: T = actual[j];
+        var matched: boolean = false;
+        var k: i32 = 0;
+        while (k < en && !matched) {
+            if (!used[k] && expected[k].eq(want)) { used[k] = true; matched = true; }
+            k = k + 1;
+        }
+        if (!matched) {
+            return Some("assert_set_eq: multiset differs - extra " + want.to_string());
+        }
+        j = j + 1;
+    }
+    return None;
+}
+
 pub function assert_len_i32(arr: i32[], n: i32): Option[string] {
     var got: i32 = arr.len();
     if (got == n) { return None; }
@@ -1335,111 +1445,16 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
 // `sort_i32_asc` then delegates to the ordered comparison
 // — O(n²) on the sort but n is bounded by the array size
 // the test produced.
-pub function assert_set_eq_i32(actual: i32[], expected: i32[]): Option[string] {
-    var an: i32 = actual.len();
-    var en: i32 = expected.len();
-    if (an != en) {
-        return Some("assert_set_eq_i32: length differs - expected " +
-                    en.to_string() + ", got " + an.to_string());
-    }
-    var sa: i32[] = sort.sort_i32_asc(actual);
-    var se: i32[] = sort.sort_i32_asc(expected);
-    var i: i32 = 0;
-    while (i < an) {
-        if (sa[i] != se[i]) {
-            return Some("assert_set_eq_i32: multiset differs - sorted[" +
-                        i.to_string() + "]: expected " + se[i].to_string() +
-                        ", got " + sa[i].to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_set_eq_string(actual, expected)` — multiset
 // equality for string[]. Sorts both via `sort_strings_asc`
 // then delegates to ordered compare.
-pub function assert_set_eq_string(actual: string[], expected: string[]): Option[string] {
-    var an: i32 = actual.len();
-    var en: i32 = expected.len();
-    if (an != en) {
-        return Some("assert_set_eq_string: length differs - expected " +
-                    en.to_string() + ", got " + an.to_string());
-    }
-    var sa: string[] = sort.sort_strings_asc(actual);
-    var se: string[] = sort.sort_strings_asc(expected);
-    var i: i32 = 0;
-    while (i < an) {
-        if (sa[i] != se[i]) {
-            return Some("assert_set_eq_string: multiset differs - sorted[" +
-                        i.to_string() + "]: expected \"" + se[i] +
-                        "\", got \"" + sa[i] + "\"");
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_subset_i32(superset, subset)` — every element of
 // `subset` must appear in `superset` (with multiplicity).
 // O(n*m) over the two lengths; fine for the modest sizes
 // that come up in test fixtures.
-pub function assert_subset_i32(superset: i32[], subset: i32[]): Option[string] {
-    // Use a parallel boolean array to mark which superset
-    // entries we've consumed so duplicates in `subset` get
-    // matched to distinct positions.
-    var used: boolean[] = [];
-    var sn: i32 = superset.len();
-    var i: i32 = 0;
-    while (i < sn) { used = used.push(false); i = i + 1; }
-    var j: i32 = 0;
-    while (j < subset.len()) {
-        var want: i32 = subset[j];
-        var matched: boolean = false;
-        var k: i32 = 0;
-        while (k < sn && !matched) {
-            if (!used[k] && superset[k] == want) {
-                used[k] = true;
-                matched = true;
-            }
-            k = k + 1;
-        }
-        if (!matched) {
-            return Some("assert_subset_i32: " + want.to_string() +
-                        " (subset[" + j.to_string() +
-                        "]) not in superset");
-        }
-        j = j + 1;
-    }
-    return None;
-}
 
-pub function assert_subset_string(superset: string[], subset: string[]): Option[string] {
-    var used: boolean[] = [];
-    var sn: i32 = superset.len();
-    var i: i32 = 0;
-    while (i < sn) { used = used.push(false); i = i + 1; }
-    var j: i32 = 0;
-    while (j < subset.len()) {
-        var want: string = subset[j];
-        var matched: boolean = false;
-        var k: i32 = 0;
-        while (k < sn && !matched) {
-            if (!used[k] && superset[k] == want) {
-                used[k] = true;
-                matched = true;
-            }
-            k = k + 1;
-        }
-        if (!matched) {
-            return Some("assert_subset_string: \"" + want +
-                        "\" (subset[" + j.to_string() +
-                        "]) not in superset");
-        }
-        j = j + 1;
-    }
-    return None;
-}
 
 // =================== PROCESS ASSERTIONS ===================
 //
@@ -1791,135 +1806,37 @@ pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): Option[string] {
 // every adjacent pair. Empty / single-element arrays are
 // vacuously sorted. Failure message names the first
 // inversion + its index so the diagnostic is grep-able.
-pub function assert_sorted_asc_i32(arr: i32[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (arr[i - 1] > arr[i]) {
-            return Some("assert_sorted_asc_i32: inversion at index " +
-                        i.to_string() + ": " +
-                        arr[i - 1].to_string() + " > " + arr[i].to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_sorted_asc_string(arr)` — lexicographic
 // non-decreasing order on strings. Delegates to the
 // `sort.string_cmp` ordering used elsewhere in the stdlib
 // so "sorted" here means the same thing as
 // `sort_strings_asc(arr)` would produce.
-pub function assert_sorted_asc_string(arr: string[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (sort.string_cmp(arr[i - 1], arr[i]) > 0) {
-            return Some("assert_sorted_asc_string: inversion at index " +
-                        i.to_string() + ": \"" + arr[i - 1] +
-                        "\" > \"" + arr[i] + "\"");
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_sorted_desc_i32(arr)` — strictly the inverse of
 // `_asc_i32`: every adjacent pair must satisfy
 // `arr[i-1] >= arr[i]`. Use this to pin `sort_i32_desc(...)`
 // output or any reverse-sorted-by-construction code path.
-pub function assert_sorted_desc_i32(arr: i32[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (arr[i - 1] < arr[i]) {
-            return Some("assert_sorted_desc_i32: inversion at index " +
-                        i.to_string() + ": " +
-                        arr[i - 1].to_string() + " < " + arr[i].to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_sorted_desc_string(arr)` — descending lexicographic.
-pub function assert_sorted_desc_string(arr: string[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (sort.string_cmp(arr[i - 1], arr[i]) < 0) {
-            return Some("assert_sorted_desc_string: inversion at index " +
-                        i.to_string() + ": \"" + arr[i - 1] +
-                        "\" < \"" + arr[i] + "\"");
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_strictly_sorted_asc_i32(arr)` — `arr[i-1] < arr[i]`
 // (strict). Use when the contract is "sorted AND unique" —
 // equal adjacent pairs are a violation here, unlike the
 // non-strict `_asc_i32`. Saves writing `assert_sorted_asc +
 // assert_unique` separately.
-pub function assert_strictly_sorted_asc_i32(arr: i32[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (arr[i - 1] >= arr[i]) {
-            return Some("assert_strictly_sorted_asc_i32: not strict at index " +
-                        i.to_string() + ": " +
-                        arr[i - 1].to_string() + " >= " + arr[i].to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_strictly_sorted_asc_string(arr)` — strict
 // lexicographic order on strings (same "sorted + unique"
 // contract as the i32 variant).
-pub function assert_strictly_sorted_asc_string(arr: string[]): Option[string] {
-    var i: i32 = 1;
-    while (i < arr.len()) {
-        if (sort.string_cmp(arr[i - 1], arr[i]) >= 0) {
-            return Some("assert_strictly_sorted_asc_string: not strict at index " +
-                        i.to_string() + ": \"" + arr[i - 1] +
-                        "\" >= \"" + arr[i] + "\"");
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_unique_i32(arr)` — every element appears at most
 // once. Implementation sorts a copy then walks adjacent
 // pairs (O(n log n)) — simpler than a hash set and works
 // without any extra stdlib dependency. Failure message
 // names the first repeated value so the bug is grep-able.
-pub function assert_unique_i32(arr: i32[]): Option[string] {
-    if (arr.len() < 2) { return None; }
-    var sorted: i32[] = sort.sort_i32_asc(arr);
-    var i: i32 = 1;
-    while (i < sorted.len()) {
-        if (sorted[i - 1] == sorted[i]) {
-            return Some("assert_unique_i32: duplicate value " +
-                        sorted[i].to_string());
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // `assert_unique_string(arr)` — same pattern for strings.
-pub function assert_unique_string(arr: string[]): Option[string] {
-    if (arr.len() < 2) { return None; }
-    var sorted: string[] = sort.sort_strings_asc(arr);
-    var i: i32 = 1;
-    while (i < sorted.len()) {
-        if (sorted[i - 1] == sorted[i]) {
-            return Some("assert_unique_string: duplicate value \"" +
-                        sorted[i] + "\"");
-        }
-        i = i + 1;
-    }
-    return None;
-}
 
 // =================== FILESYSTEM ASSERTIONS ===================
 //

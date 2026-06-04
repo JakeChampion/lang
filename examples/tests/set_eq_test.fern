@@ -12,22 +12,22 @@ import "std/test";
 // just CONTAIN the other.
 
 function test_set_eq_i32_same_order(): Option[string] {
-    return test.assert_set_eq_i32([1, 2, 3], [1, 2, 3]);
+    return test.assert_set_eq([1, 2, 3], [1, 2, 3]);
 }
 
 function test_set_eq_i32_reversed(): Option[string] {
-    return test.assert_set_eq_i32([3, 2, 1], [1, 2, 3]);
+    return test.assert_set_eq([3, 2, 1], [1, 2, 3]);
 }
 
 function test_set_eq_i32_multiset(): Option[string] {
     // Duplicates must match: two 1s on each side.
-    return test.assert_set_eq_i32([1, 1, 2], [2, 1, 1]);
+    return test.assert_set_eq([1, 1, 2], [2, 1, 1]);
 }
 
 function test_set_eq_i32_multiset_mismatch(): Option[string] {
     // `[1, 1, 2]` has two 1s; `[1, 2, 2]` has only one.
     // Must fail.
-    match (test.assert_set_eq_i32([1, 1, 2], [1, 2, 2])) {
+    match (test.assert_set_eq([1, 1, 2], [1, 2, 2])) {
         Some(_) => { return None; },
         None => { return test.fail("expected multiset mismatch to fail"); }
     }
@@ -35,11 +35,11 @@ function test_set_eq_i32_multiset_mismatch(): Option[string] {
 }
 
 function test_set_eq_strings(): Option[string] {
-    return test.assert_set_eq_string(["b", "a", "c"], ["c", "a", "b"]);
+    return test.assert_set_eq(["b", "a", "c"], ["c", "a", "b"]);
 }
 
 function test_set_eq_length_mismatch(): Option[string] {
-    match (test.assert_set_eq_i32([1, 2], [1, 2, 3])) {
+    match (test.assert_set_eq([1, 2], [1, 2, 3])) {
         Some(msg) => {
             if (!msg.contains("length differs")) {
                 return test.fail("missing `length differs` in: " + msg);
@@ -52,13 +52,13 @@ function test_set_eq_length_mismatch(): Option[string] {
 }
 
 function test_subset_i32_pass(): Option[string] {
-    return test.assert_subset_i32([1, 2, 3, 4, 5], [4, 2]);
+    return test.assert_subset([1, 2, 3, 4, 5], [4, 2]);
 }
 
 function test_subset_i32_requires_multiplicity(): Option[string] {
     // Subset has two 1s but the superset only has one —
     // must fail.
-    match (test.assert_subset_i32([1, 2, 3], [1, 1])) {
+    match (test.assert_subset([1, 2, 3], [1, 1])) {
         Some(msg) => {
             if (!msg.contains("not in superset")) {
                 return test.fail("missing reason in: " + msg);
@@ -71,13 +71,15 @@ function test_subset_i32_requires_multiplicity(): Option[string] {
 }
 
 function test_subset_string_pass(): Option[string] {
-    return test.assert_subset_string(["apple", "banana", "cherry"], ["banana"]);
+    return test.assert_subset(["apple", "banana", "cherry"], ["banana"]);
 }
 
 function test_subset_empty_subset_always_passes(): Option[string] {
-    // Empty subset is vacuously a subset of anything,
-    // including itself.
-    return test.assert_subset_i32([1, 2, 3], []);
+    // Empty subset is vacuously a subset of anything, including itself.
+    // (The empty array needs a type annotation: a bare `[]` can't infer
+    // the element type for the generic `assert_subset[T]`.)
+    var empty: i32[] = [];
+    return test.assert_subset([1, 2, 3], empty);
 }
 
 function main(): i32 {
