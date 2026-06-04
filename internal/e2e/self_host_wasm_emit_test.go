@@ -616,6 +616,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Char-processing programs (now that s[i] byte access works).
 		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel(s[i])) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
 		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + s[i:i + 1]; i = i - 1; } write(out); return 0; }", 0, "edcba"},
+
+		// Hardening pass 7: compound assignment (incl. the array-element
+		// form, which previously dropped the old value), hex / escape /
+		// unary, and complex conditions.
+		{"compound-assign-var", "function main(): i32 { var x: i32 = 10; x += 5; x -= 2; x *= 2; x /= 3; x %= 5; print_int(x); return 0; }", 0, "3"},
+		{"compound-assign-array", "function main(): i32 { var xs = [1, 2, 3]; xs[1] += 10; xs[2] *= 5; print_int(xs[1]); print_int(xs[2]); return 0; }", 0, "1215"},
+		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},
+		{"hex-literal", "function main(): i32 { print_int(0xFF); print_int(0x10); return 0; }", 0, "25516"},
+		{"escape-sequences", "function main(): i32 { write(\"a\\tb\\nc\"); return 0; }", 0, "a\tb\nc"},
+		{"deep-nesting", "function main(): i32 { print_int(((1 + 2) * (3 + 4)) - ((5 - 1) / 2)); return 0; }", 0, "19"},
+		{"neg-float-compare", "function main(): i32 { var a: f64 = 0.0 - 2.5; if (a < 0.0) { print_int(1); } if (a > (0.0 - 3.0)) { print_int(2); } return 0; }", 0, "12"},
+		{"while-complex-cond", "function main(): i32 { var i: i32 = 0; var j: i32 = 10; while (i < j && j > 0) { i = i + 1; j = j - 1; } print_int(i); return 0; }", 0, "5"},
 	}
 
 	for _, tc := range cases {
