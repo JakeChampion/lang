@@ -1900,11 +1900,33 @@ reuse the argument. Sliced for risk:
     cases — consume-after-call / match / loop / non-diverging-branch FIRE;
     borrow* / diverging-branches / borrow-only / method-receiver are OK; the
     contextual-keyword disambiguation both ways) + the `E050` explanation file.
-  - **Slice B — ownership transfer (NEXT).** Un-taint `own` params in
+  - **Slice B — call-site ownership guard (E051). SHIPPED (no codegen).** The
+    static half of ownership transfer: an argument passed to an `own` parameter
+    must be a value the caller can TRANSFER — a fresh construction (struct /
+    tuple / array / map literal, string concat, variant-constructor call) or
+    another `own` parameter of the calling function. A borrowed value (borrowed
+    param, field / index read, plain local, non-fresh call result) is E051.
+    `checkOwnedParams` now also runs for callers that have no `own` params of
+    their own (gated on the program declaring ANY owned-param function, via
+    `c.ownFuncs` — a name→per-param-`own`-flags map built before body checking);
+    `isOwnedExpr` is the conservative ownership classifier and `guardCallArgs`
+    the per-call check (plain same-module callees; method / mangled callees are
+    skipped for now). Still NO codegen — owned params lower as borrowed; this
+    pins the invariant the transfer slice needs (you can't hand off something
+    you don't own). Tests: `owned_params_test.go` E051 cases (borrowed-param /
+    field-read / plain-local args FIRE; construction / own-param / variant-call
+    args OK) + the `E051` explanation file. Full checker + parser + non-e2e +
+    e2e suites green (no behaviour change — `ownFuncs` is empty for every
+    program that doesn't use `own`).
+  - **Slice B-codegen — ownership transfer (NEXT).** Un-taint `own` params in
     `computeFreeEligible` (callee reclaims them); move-on-call at the caller
     (the `moveSites` mechanism, a third site beside move-on-return /
     move-on-alias). The drop obligation moves caller → callee. This is the
-    rc-correctness-sensitive slice (it changes WHO frees).
+    rc-correctness-sensitive slice (it changes WHO frees) — gated by the Slice A
+    + B static guarantees. Also needs owned MATCH-BINDINGS (a pointer payload of
+    an owned scrutinee is itself owned) so the recursive `map_inc(t)` shape — `t`
+    a binding — type-checks and transfers; that pairs naturally with Slice C's
+    reuse.
   - **Slice C — match-arm cons-cell reuse.** With the owned scrutinee now
     `freeEligible`, wire the 5d-ii hook (pair the dropped scrutinee box with a
     same-box-shape constructor in the arm) onto the reuse machinery from

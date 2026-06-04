@@ -121,6 +121,68 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
+// --- E051: call-site ownership guard -------------------------------------
+
+const ownConsumer = `enum Box { Wrap(i32[]) }
+struct Pair { items: i32[], n: i32 }
+function consume(own xs: i32[]): i32 { return xs[0]; }
+function consumeBox(own b: Box): i32 { return 0; }
+`
+
+func wantE051(t *testing.T, name, src string) {
+	t.Helper()
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatalf("%s: expected an E051 ownership error, got none", name)
+	}
+	if !strings.Contains(err.Error(), "E051") && !strings.Contains(err.Error(), "owned parameter must be an owned value") {
+		t.Errorf("%s: expected E051 / owned-value error, got: %v", name, err)
+	}
+}
+
+func TestOwnGuardRejectsBorrowedParam(t *testing.T) {
+	wantE051(t, "borrowed-param-arg", ownConsumer+`
+function f(xs: i32[]): i32 {   // xs BORROWED
+    return consume(xs);        // E051: can't transfer a borrowed value
+}`)
+}
+
+func TestOwnGuardRejectsFieldRead(t *testing.T) {
+	wantE051(t, "field-read-arg", ownConsumer+`
+function f(p: Pair): i32 {
+    return consume(p.items);   // E051: a projection is a borrow
+}`)
+}
+
+func TestOwnGuardRejectsPlainLocal(t *testing.T) {
+	wantE051(t, "plain-local-arg", ownConsumer+`
+function f(): i32 {
+    var xs: i32[] = [1, 2];
+    return consume(xs);        // E051: a plain local isn't tracked as owned yet
+}`)
+}
+
+func TestOwnGuardAllowsConstruction(t *testing.T) {
+	wantOK(t, "construction-arg", ownConsumer+`
+function f(): i32 {
+    return consume([1, 2]);    // fresh construction → owned
+}`)
+}
+
+func TestOwnGuardAllowsOwnParam(t *testing.T) {
+	wantOK(t, "own-param-arg", ownConsumer+`
+function f(own ys: i32[]): i32 {
+    return consume(ys);        // ys is owned → transfer OK (consumed once)
+}`)
+}
+
+func TestOwnGuardAllowsVariantCall(t *testing.T) {
+	wantOK(t, "variant-call-arg", ownConsumer+`
+function f(): i32 {
+    return consumeBox(Wrap([1, 2]));   // fresh enum value → owned
+}`)
+}
+
 // --- parser: contextual `own` --------------------------------------------
 
 func TestParamNamedOwnStillWorks(t *testing.T) {
