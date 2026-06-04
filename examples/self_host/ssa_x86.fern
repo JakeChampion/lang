@@ -231,6 +231,15 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    call __fern_ssa_concat\n";
         return store_res(reg_of, widths, ins.result, "a", out);  // result (64) ← %rax
     }
+    if (ins.kind == "streq") {
+        // a == b by content; __fern_ssa_streq(rdi=a, rsi=b) → eax (0/1).
+        out = load_op(reg_of, widths, ins.args[0], "a", out);
+        out = out + "    movq %rax, %rdi\n";
+        out = load_op(reg_of, widths, ins.args[1], "a", out);
+        out = out + "    movq %rax, %rsi\n";
+        out = out + "    call __fern_ssa_streq\n";
+        return store_res(reg_of, widths, ins.result, "a", out);  // result (32) ← %eax
+    }
     return out;
 }
 
@@ -374,6 +383,19 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    incl %ecx\n    jmp .Lcat_b\n.Lcat_b_done:\n";
     out = out + "    movq %r15, %rax\n";           // return result ptr
     out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
+    // __fern_ssa_streq(%rdi = a, %rsi = b) → %eax (1 if equal content else 0).
+    out = out + "__fern_ssa_streq:\n";
+    out = out + "    movl (%rdi), %ecx\n";          // lenA
+    out = out + "    movl (%rsi), %edx\n";          // lenB
+    out = out + "    cmpl %edx, %ecx\n    jne .Lsne_no\n";   // lengths differ → 0
+    out = out + "    xorl %r8d, %r8d\n";            // i = 0
+    out = out + ".Lsne_loop:\n    cmpl %ecx, %r8d\n    jge .Lsne_yes\n";
+    out = out + "    leal 1(%r8d), %eax\n    movl %eax, %eax\n";
+    out = out + "    movl (%rdi,%rax,8), %r9d\n    movl (%rsi,%rax,8), %r10d\n";
+    out = out + "    cmpl %r10d, %r9d\n    jne .Lsne_no\n";
+    out = out + "    incl %r8d\n    jmp .Lsne_loop\n";
+    out = out + ".Lsne_yes:\n    movl $1, %eax\n    ret\n";
+    out = out + ".Lsne_no:\n    xorl %eax, %eax\n    ret\n";
     out = out + "_start:\n";
     out = out + "    leaq __fern_ssa_heap(%rip), %rax\n";
     out = out + "    movq %rax, __fern_ssa_hp(%rip)\n";

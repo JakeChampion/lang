@@ -238,6 +238,14 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    bl __fern_ssa_concat\n";
         return store_reg(reg_of, ins.result, "x0", 64, out);
     }
+    if (ins.kind == "streq") {
+        out = load_op(reg_of, widths, ins.args[0], "a", out);
+        out = out + "    mov x0, x9\n";
+        out = load_op(reg_of, widths, ins.args[1], "a", out);
+        out = out + "    mov x1, x9\n";
+        out = out + "    bl __fern_ssa_streq\n";
+        return store_reg(reg_of, ins.result, "w0", 32, out);
+    }
     return out;
 }
 
@@ -370,6 +378,19 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    str w15, [x13, x12]\n";
     out = out + "    add w11, w11, #1\n    b .Lcat_b\n.Lcat_b_done:\n";
     out = out + "    mov x0, x13\n    ret\n";
+    // __fern_ssa_streq(x0 = a, x1 = b) → w0 (1 if equal content else 0).
+    out = out + "__fern_ssa_streq:\n";
+    out = out + "    ldr w9, [x0]\n";              // lenA
+    out = out + "    ldr w10, [x1]\n";             // lenB
+    out = out + "    cmp w9, w10\n    b.ne .Lsne_no\n";
+    out = out + "    mov w11, #0\n";               // i = 0
+    out = out + ".Lsne_loop:\n    cmp w11, w9\n    b.ge .Lsne_yes\n";
+    out = out + "    add w12, w11, #1\n    sbfiz x12, x12, #3, #32\n";
+    out = out + "    ldr w13, [x0, x12]\n    ldr w14, [x1, x12]\n";
+    out = out + "    cmp w13, w14\n    b.ne .Lsne_no\n";
+    out = out + "    add w11, w11, #1\n    b .Lsne_loop\n";
+    out = out + ".Lsne_yes:\n    mov w0, #1\n    ret\n";
+    out = out + ".Lsne_no:\n    mov w0, #0\n    ret\n";
     out = out + "_start:\n";
     out = out + "    adrp x9, __fern_ssa_heap\n";
     out = out + "    add x9, x9, :lo12:__fern_ssa_heap\n";

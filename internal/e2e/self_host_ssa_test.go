@@ -137,6 +137,13 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// flow correctly through the backends' phi-deconstruction.
 		{"no-else-fallthrough", "function main(): i32 { var x = 5; if (x > 100) { x = 1; } return x; }", 5},
 		{"no-else-string-fallthrough", "function main(): i32 { var s = \"ab\"; if (s.len() > 100) { s = \"zzz\"; } return s.len(); }", 2},
+		// String equality (`==` / `!=` compare content, not pointers).
+		{"streq-same", "function main(): i32 { var a = \"hello\"; var b = \"hello\"; if (a == b) { return 1; } return 0; }", 1},
+		{"streq-diff", "function main(): i32 { var a = \"hello\"; var b = \"world\"; if (a == b) { return 1; } return 0; }", 0},
+		{"streq-difflen", "function main(): i32 { var a = \"hi\"; var b = \"hii\"; if (a == b) { return 1; } return 0; }", 0},
+		{"streq-literal", "function main(): i32 { var s = \"abc\"; if (s == \"abc\") { return 9; } return 0; }", 9},
+		{"strne", "function main(): i32 { var a = \"x\"; var b = \"y\"; if (a != b) { return 1; } return 0; }", 1},
+		{"streq-after-concat", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; if (a + b == \"foobar\") { return 5; } return 0; }", 5},
 		// String concatenation (`+` on strings → a new heap string).
 		{"concat-len", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }", 6},
 		{"concat-index", "function main(): i32 { var a = \"X\"; var b = \"YZ\"; var c = a + b; return c[2]; }", 90},
