@@ -630,6 +630,14 @@ function build_if(f: parser.StmtIf, s: BState): BState {
         vi = vi + 1;
     }
     s = s.set_env(merge_names, merge_vals);
+    // If neither arm reaches the merge (both returned/broke), the merge is
+    // unreachable — terminate it so the enclosing context sees this `if` as
+    // terminating (no fall-through). Without this, a nested all-return if
+    // would leave a dead, un-terminated block that looks reachable.
+    if (!then_reaches && !else_reaches) {
+        s = s.kconst(0);
+        s = s.set_term(t_ret(s.cur_id()));
+    }
     return s;
 }
 
@@ -955,9 +963,19 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
 
     s = build_stmts(fd.body, s);
     if (!s.ok) { return BResult { func: f0, ok: false }; }
-    // The current block must end in a return (slice requires every path to
-    // terminate explicitly; an un-returned fall-through bails).
-    if (!s.terminated()) { return BResult { func: f0, ok: false }; }
+    if (!s.terminated()) {
+        // An un-terminated trailing block with no predecessors is the dead
+        // merge left when every path already returned (e.g. an if whose
+        // both arms return) — terminate it harmlessly; it's unreachable, so
+        // branch_simplify prunes it. A REACHABLE un-returned fall-through is
+        // a genuinely missing return: bail to the AST emitter.
+        if (s.cur.preds.len() == 0 && s.cur.id != 0) {
+            s = s.kconst(0);
+            s = s.set_term(t_ret(s.cur_id()));
+        } else {
+            return BResult { func: f0, ok: false };
+        }
+    }
     s = s.close_cur();
     var fout: SFunc = SFunc { name: s.name, nparams: s.nparams, nvals: s.nvals, blocks: s.blocks, entry: 0 };
     return BResult { func: fout, ok: true };

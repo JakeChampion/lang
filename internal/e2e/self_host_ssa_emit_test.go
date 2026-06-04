@@ -94,6 +94,8 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"struct-return", "struct Point { x: i32, y: i32 } function mk(): Point { return Point { x: 5, y: 6 }; } function main(): i32 { var p: Point = mk(); return p.x + p.y; }", 11},
 		{"struct-passthrough", "struct P { a: i32, b: i32 } function id(p: P): P { return p; } function main(): i32 { var q = P { a: 8, b: 9 }; var r: P = id(q); return r.b; }", 9},
 		{"struct-param-string", "struct Named { id: i32, label: string } function llen(n: Named): i32 { return n.label.len(); } function main(): i32 { var n = Named { id: 1, label: \"abcd\" }; return llen(n); }", 4},
+		// All-paths-return helper (dispatch where every arm returns).
+		{"all-return-helper", "function sign(n: i32): i32 { if (n < 0) { return 0 - 1; } else if (n == 0) { return 0; } else { return 1; } } function main(): i32 { return sign(0 - 5) + 10 * sign(7); }", 9},
 	}
 
 	for _, tc := range cases {
