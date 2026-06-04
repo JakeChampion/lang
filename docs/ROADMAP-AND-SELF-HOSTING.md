@@ -530,14 +530,15 @@ pass.)
 
 Element width is baked into the literal emit, index read, `__set_index`,
 the `for` loop, `__fern_arr_push` / `__fern_arr_slice`, and the alloc
-size, so it's a **per-backend series** (`wasm.fern`, then `asm.fern`,
-then `asm_arm64.fern`) — each backend's array repr is internally
-consistent and independently testable (the wasm differential suite vs the
-Go oracle; the fixpoint for the native pair). The element-i64/f64-ness
-has to flow from a declaration type (`var xs: i64[]` / an `i64[]`-return /
-an `i64[]` param) down into an otherwise-untyped literal. (`f64[]` shares
-the same 8-byte slot, so it rides along.) **The wasm backend is done —
-see the eighteenth pass; `asm` / `asm_arm64` remain.**
+size. Only the **wasm** backend was on the broken 4-byte path; the
+eighteenth pass moved it to 8-byte slots. **The x86-64 and arm64 native
+backends were already correct** — they store 64-bit elements in 8-byte
+slots and large values round-trip (verified directly; see the nineteenth
+pass, which added the missing native regression tests). So with the wasm
+fix this language-parity gap is **closed across all compiled backends**.
+(`f64[]` shares the same 8-byte slot. The self-host *interpreter* still
+has its separate i32-backed `VInt` ceiling, noted above — that is a
+value-model limitation, not an array one.)
 
 A seventeenth pass fixed the **interpreter `as` cast** bug surfaced while
 investigating the above: `interp.fern`'s unary evaluator only handled `-`
@@ -569,8 +570,19 @@ the `for` loop (with `collect_wide_loop_vars` typing the loop var so the
 8-byte move). Values above 2³¹ now round-trip. Guarded by 8 new
 differential cases (`i64arr-*`, `f64arr-for-sum`, plus an `i32arr` mix to
 pin no-regression), all cross-checked against the Go compiler; the full
-self-host suite (incl. fixpoint) stays green. `asm` / `asm_arm64` are the
-remaining legs.
+self-host suite (incl. fixpoint) stays green.
+
+A nineteenth pass confirmed the other two compiled backends needed **no
+change**: the x86-64 and arm64 emitters already store `i64[]` / `f64[]`
+elements in 8-byte slots, so values above 2³¹ round-trip through literal,
+index, `for`, `__set_index`, push, and slice (verified end-to-end — x86-64
+natively, arm64 under qemu). That behaviour was previously **untested**,
+so the pass added 6 native cases each to `TestSelfHostAsmRunX86_64` and the
+arm64 emit suite (`arr-i64-literal-index-large`, `-for-sum`,
+`-set-index-large`, `-push-grow`, `-slice`, `arr-f64-for-sum`),
+cross-checked against the Go compiler. With wasm fixed (pass 18) and the
+natives guarded, the `i64[]` / `f64[]` language-parity gap is closed on
+every compiled backend.
 
 ### ✅ UPDATE (2026-06): self-hosted arm64-darwin (Mach-O) target
 
