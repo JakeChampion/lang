@@ -11126,6 +11126,17 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			if di >= k || dName == cName || consumed[dName] || reassigned[dName] {
 				continue
 			}
+			// A D whose box was MOVED into another live container (an array /
+			// struct / tuple / closure element, per markConstructionMoves) is
+			// freeEligible but no longer owns its box — that box is now reachable
+			// through the container. Reusing it in place for C would alias C's
+			// fresh value onto the element the container still points at
+			// (observed: `var a=[d]; var c=T{…}` made a[0] read as c). The exit
+			// sweep already excludes movedLocals (computePreciseDrops); the reuse
+			// pass must too.
+			if b.movedLocals[dName] {
+				continue
+			}
 			if !b.freeEligible[dName] || !b.localNameUnique(dName) {
 				continue
 			}

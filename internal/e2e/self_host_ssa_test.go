@@ -116,6 +116,26 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// the loop increment) collapse under CSE — the loop-header phi's
 		// back-edge operand must be rewritten to the survivor (cross-block).
 		{"cse-dup-increment", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i + 1); i = i + 1; } return s; }", 15},
+		// `for x in arr { body }` desugars to a counted while over the array
+		// (build_for), reusing build_while — the loop binds x to each element.
+		{"for-sum", "function main(): i32 { var a = [5, 10, 15]; var s = 0; for x in a { s = s + x; } return s; }", 30},
+		{"for-element-bind", "function main(): i32 { var a = [3, 7]; var last = 0; for x in a { last = x; } return last; }", 7},
+		{"for-empty-body", "function main(): i32 { var a = [5, 10]; for x in a { } return a.len(); }", 2},
+		{"for-single-elem", "function main(): i32 { var a = [42]; var n = 0; for x in a { n = n + 1; } return n; }", 1},
+		{"for-count", "function main(): i32 { var a = [9, 9, 9, 9]; var n = 0; for x in a { n = n + 1; } return n; }", 4},
+		{"for-len-invariant", "function main(): i32 { var a = [2, 4, 6]; var s = 0; for x in a { s = s + a.len(); } return s; }", 9},
+		// A nested for-loop: the OUTER loop must phi a variable written only
+		// inside the inner loop (collect_assigned recurses into StmtFor).
+		{"for-nested", "function main(): i32 { var rows = [1, 2, 3]; var cols = [10, 20]; var t = 0; for r in rows { for c in cols { t = t + r * c; } } return t; }", 180},
+		// break / continue inside a for-loop. continue jumps to the while
+		// header, so the index advance lives at the TOP of the body (sentinel
+		// start) — a bottom advance would be skipped and spin forever.
+		{"for-break", "function main(): i32 { var a = [1, 2, 3, 4, 5]; var s = 0; for x in a { if (x > 3) { break; } s = s + x; } return s; }", 6},
+		{"for-continue", "function main(): i32 { var a = [1, 2, 3, 4]; var s = 0; for x in a { if (x == 2) { continue; } s = s + x; } return s; }", 8},
+		// for over a string iterates its bytes.
+		{"for-string-bytes", "function main(): i32 { var t = 0; for b in \"AB\" { t = t + b; } return t; }", 131},
+		// for over a struct's array field.
+		{"for-struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 100, data: [1, 2, 3] }; var s = 0; for x in b.data { s = s + x; } return s; }", 6},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
