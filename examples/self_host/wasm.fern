@@ -2190,6 +2190,25 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         }
                         return s + ")";
                     }
+                    // Primitive-receiver user method: the receiver isn't a
+                    // struct/enum, so it's a primitive — pick its type and
+                    // dispatch to `$<prim>__method` when a user impl exists
+                    // (e.g. `impl Eq for i32`, which a derived struct/enum's
+                    // `self.x.eq(other.x)` field/payload compare needs).
+                    if (rt.len() == 0) {
+                        var prt: string = "i32";
+                        if (is_string_expr(fa.obj, cx)) { prt = "string"; }
+                        else if (is_i64_expr(fa.obj, cx)) { prt = "i64"; }
+                        if (has_method(cx, prt, fa.field)) {
+                            var ps: string = "(call $" + prt + "__" + fa.field + " " + emit_expr(fa.obj, cx, depth);
+                            var pai: i32 = 0;
+                            while (pai < c.args.len()) {
+                                ps = ps + " " + emit_expr(c.args[pai], cx, depth);
+                                pai = pai + 1;
+                            }
+                            return ps + ")";
+                        }
+                    }
                     return "(i32.const 0)";
                 },
                 _ => { return "(i32.const 0)"; },
@@ -4231,9 +4250,26 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                                     cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pt) };
                                 }
                             } else if (is_struct_type(cx.structs, pv.type_name) && pv.binding.len() > 0 && pv.binding != "_") {
-                                // Struct-union arm `Variant(b)` binds b to
-                                // the value itself, typed as that struct.
-                                cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pv.type_name) };
+                                if (struct_field_index(cx.structs, pv.type_name, "__ev") >= 0) {
+                                    // Enum-variant arm `Has(b)`: b is the
+                                    // PAYLOAD (the `__ev` field), so type it as
+                                    // the payload type. A primitive payload
+                                    // (i32) is left unrecorded — struct_type_of
+                                    // then returns "" and the primitive-method
+                                    // dispatch handles `b.eq(…)`; a string
+                                    // payload registers as a string local; a
+                                    // struct/enum payload as its nominal type.
+                                    var paytype: string = struct_field_type(cx.structs, pv.type_name, "__ev");
+                                    if (paytype == "string") {
+                                        cx = Ctx { ...cx, locals: cx.locals.push(pv.binding) };
+                                    } else if (is_struct_type(cx.structs, paytype) || is_enum_type_name(cx, paytype)) {
+                                        cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(paytype) };
+                                    }
+                                } else {
+                                    // Struct-union arm `Variant(b)` binds b to
+                                    // the value itself, typed as that struct.
+                                    cx = Ctx { ...cx, sv_names: cx.sv_names.push(pv.binding), sv_types: cx.sv_types.push(pv.type_name) };
+                                }
                             }
                         },
                         _ => {},

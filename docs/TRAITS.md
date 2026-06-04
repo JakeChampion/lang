@@ -518,9 +518,21 @@ regressing the self-host gates. It needs traits in two slices:
   struct-union; and an enum-typed var records the ENUM name (not the
   variant from its initializer) so enum methods dispatch. With those,
   **user enums + enum methods + enum `@derive(Display)`** work on wasm.
-  Still open: **primitive-receiver user methods** (`self.x.eq(other.x)`
-  on an i32 field has no `i32.eq` dispatch), so `@derive(Eq/Ord)` on
-  structs/enums still falls back — the last wasm trait gap.
+  Then **primitive-receiver user methods** landed: when the receiver
+  isn't a struct/enum (`struct_type_of` empty) the dispatch picks the
+  primitive type (i32 default, or string/i64) and calls `$<prim>__method`
+  if a user impl exists — so `self.x.eq(other.x)` on an i32 field reaches
+  `impl Eq for i32`. A match arm `Has(b)` over an enum variant now types
+  `b` as the payload (the `__ev` field type) rather than the variant, so
+  a primitive payload routes through that dispatch. With these,
+  **`@derive(Eq/Ord)` on structs and on var-typed enums** work on wasm.
+  The one remaining wasm hole: an INLINE variant-call receiver
+  (`Has(5).eq(…)`) — `struct_type_of` can't recover the enum type from a
+  bare variant constructor (the variant→enum map was dropped at parse),
+  so it falls to the i32 path and compares pointers; binding to a typed
+  var first (`var h: Opt = Has(5); h.eq(…)`) works. And `dyn Trait` on
+  wasm still needs genuine runtime dispatch (the backend is
+  static-dispatch).
 
 ## 7b. The `std/test` collapse (landed)
 
