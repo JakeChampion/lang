@@ -11,16 +11,16 @@ import "std/test";
 // cases print as `ok N - name # SKIP reason` per TAP-13 and
 // don't affect the exit code.
 
-function test_pass(): Option[string] { return test.assert_eq_i32(1, 1); }
+function test_pass(): Option[string] { return test.assert_eq(1, 1); }
 
-function test_addition(): Option[string] { return test.assert_eq_i32(2 + 2, 4); }
-function test_subtraction(): Option[string] { return test.assert_eq_i32(10 - 3, 7); }
+function test_addition(): Option[string] { return test.assert_eq(2 + 2, 4); }
+function test_subtraction(): Option[string] { return test.assert_eq(10 - 3, 7); }
 
 function test_to_upper(): Option[string] {
-    return test.assert_eq_string("hello".to_upper(), "HELLO");
+    return test.assert_eq("hello".to_upper(), "HELLO");
 }
 function test_to_lower(): Option[string] {
-    return test.assert_eq_string("HELLO".to_lower(), "hello");
+    return test.assert_eq("HELLO".to_lower(), "hello");
 }
 
 function main(): i32 {

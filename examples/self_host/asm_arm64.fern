@@ -3991,7 +3991,7 @@ function emit_expr(e: parser.Expr, s: EmitState): EmitState {
                             return s;
                         }
                     }
-                    if (prim_recv == "string" || prim_recv == "i32" || prim_recv == "bool" || prim_recv == "f64") {
+                    if (prim_recv == "string" || is_int_tag(prim_recv) || prim_recv == "bool" || prim_recv == "f64" || prim_recv == "f32") {
                         var pmi: i32 = c.args.len() - 1;
                         while (pmi >= 0) {
                             s = emit_expr(c.args[pmi], s);

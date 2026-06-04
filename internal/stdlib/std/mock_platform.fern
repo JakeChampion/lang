@@ -19,8 +19,8 @@
 //   var resp: HttpResponse = handle(req, Platform { version: 1 });
 //
 //   // Inspect the recorded call log:
-//   assert_eq_i32(m.call_count(), 2);
-//   assert_eq_string(m.calls[0].name, "fetch");
+//   assert_eq(m.call_count(), 2);
+//   assert_eq(m.calls[0].name, "fetch");
 //
 // Intended use (Phase 2 — once Platform grows capability
 // fields):
@@ -29,7 +29,7 @@
 //   var plat: Platform = m.as_platform();
 //   plat.kv_set("user:42", "{ \"name\": \"Alice\" }");
 //   var resp: HttpResponse = handle(req, plat);
-//   assert_eq_string(m.calls[0].name, "kv_set");
+//   assert_eq(m.calls[0].name, "kv_set");
 
 // `mock_platform_new()` — fresh MockPlatform with an empty
 // call log.
@@ -51,7 +51,7 @@ pub function (m: MockPlatform) record(name: string, args: string): MockPlatform 
 
 // `(m: MockPlatform).call_count()` — number of calls
 // recorded so far. Convenience for the common
-// `assert_eq_i32(m.call_count(), N)` shape.
+// `assert_eq(m.call_count(), N)` shape.
 pub function (m: MockPlatform) call_count(): i32 {
     return m.calls.len();
 }

@@ -16,13 +16,13 @@ import "std/test";
 function test_map(): Option[string] {
     var xs: i32[] = [1, 2, 3];
     var ys: i32[] = array.map(xs, function (n: i32): i32 { return n * 10; });
-    return test.assert_eq_i32(ys[0] + ys[1] + ys[2], 60);
+    return test.assert_eq(ys[0] + ys[1] + ys[2], 60);
 }
 
 function test_map_empty(): Option[string] {
     var xs: i32[] = [];
     var ys: i32[] = array.map(xs, function (n: i32): i32 { return n + 1; });
-    return test.assert_eq_i32(ys.len(), 0);
+    return test.assert_eq(ys.len(), 0);
 }
 
 // map changing the element type (i32 -> string), so the U !=
@@ -30,19 +30,19 @@ function test_map_empty(): Option[string] {
 function test_map_change_type(): Option[string] {
     var xs: i32[] = [1, 2, 3];
     var ss: string[] = array.map(xs, function (n: i32): string { return n.to_string(); });
-    return test.assert_eq_string(ss.join("-"), "1-2-3");
+    return test.assert_eq(ss.join("-"), "1-2-3");
 }
 
 function test_filter(): Option[string] {
     var xs: i32[] = [1, 2, 3, 4, 5, 6];
     var evens: i32[] = array.filter(xs, function (n: i32): boolean { return n % 2 == 0; });
-    return test.assert_eq_i32(evens.len() * 100 + evens[0] + evens[1] + evens[2], 312);
+    return test.assert_eq(evens.len() * 100 + evens[0] + evens[1] + evens[2], 312);
 }
 
 function test_filter_empty(): Option[string] {
     var xs: i32[] = [1, 2, 3];
     var none: i32[] = array.filter(xs, function (n: i32): boolean { return n > 100; });
-    return test.assert_eq_i32(none.len(), 0);
+    return test.assert_eq(none.len(), 0);
 }
 
 // filter with a closure that captures an outer variable — pins
@@ -51,19 +51,19 @@ function test_filter_capture(): Option[string] {
     var threshold: i32 = 3;
     var xs: i32[] = [1, 2, 3, 4, 5];
     var big: i32[] = array.filter(xs, function (n: i32): boolean { return n > threshold; });
-    return test.assert_eq_i32(big.len() * 100 + big[0] + big[1], 209);
+    return test.assert_eq(big.len() * 100 + big[0] + big[1], 209);
 }
 
 function test_fold(): Option[string] {
     var xs: i32[] = [4, 5, 6];
     var s: i32 = array.fold(xs, 0, function (a: i32, n: i32): i32 { return a + n; });
-    return test.assert_eq_i32(s, 15);
+    return test.assert_eq(s, 15);
 }
 
 function test_fold_empty(): Option[string] {
     var xs: i32[] = [];
     var s: i32 = array.fold(xs, 42, function (a: i32, n: i32): i32 { return a + n; });
-    return test.assert_eq_i32(s, 42);
+    return test.assert_eq(s, 42);
 }
 
 // fold whose accumulator type differs from the element type
@@ -73,7 +73,7 @@ function test_fold_acc_type(): Option[string] {
     var joined: string = array.fold(xs, "", function (a: string, n: i32): string {
         return a + n.to_string();
     });
-    return test.assert_eq_string(joined, "123");
+    return test.assert_eq(joined, "123");
 }
 
 function test_any_true(): Option[string] {
@@ -109,7 +109,7 @@ function test_all_empty(): Option[string] {
 function test_find_some(): Option[string] {
     var xs: i32[] = [1, 2, 3, 4];
     match (array.find(xs, function (n: i32): boolean { return n > 2; })) {
-        Some(v) => { return test.assert_eq_i32(v, 3); },
+        Some(v) => { return test.assert_eq(v, 3); },
         None => { return test.fail("find returned None, expected Some(3)"); }
     }
     return None;
@@ -135,13 +135,13 @@ function test_enumerate(): Option[string] {
         acc = acc + p.0 + p.1;
         i = i + 1;
     }
-    return test.assert_eq_i32(acc, 63);
+    return test.assert_eq(acc, 63);
 }
 
 function test_enumerate_empty(): Option[string] {
     var xs: i32[] = [];
     var pairs: (i32, i32)[] = array.enumerate(xs);
-    return test.assert_eq_i32(pairs.len(), 0);
+    return test.assert_eq(pairs.len(), 0);
 }
 
 // A small pipeline: map then fold, the canonical "transform and
@@ -150,7 +150,7 @@ function test_map_then_fold(): Option[string] {
     var xs: i32[] = [1, 2, 3, 4];
     var doubled: i32[] = array.map(xs, function (n: i32): i32 { return n + n; });
     var total: i32 = array.fold(doubled, 0, function (a: i32, n: i32): i32 { return a + n; });
-    return test.assert_eq_i32(total, 20);
+    return test.assert_eq(total, 20);
 }
 
 function main(): i32 {

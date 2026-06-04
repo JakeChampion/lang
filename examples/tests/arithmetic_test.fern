@@ -12,23 +12,23 @@ import "std/test";
 // if any case fails.
 
 function test_addition(): Option[string] {
-    return test.assert_eq_i32(2 + 2, 4);
+    return test.assert_eq(2 + 2, 4);
 }
 
 function test_subtraction(): Option[string] {
-    return test.assert_eq_i32(10 - 7, 3);
+    return test.assert_eq(10 - 7, 3);
 }
 
 function test_multiplication(): Option[string] {
-    return test.assert_eq_i32(6 * 7, 42);
+    return test.assert_eq(6 * 7, 42);
 }
 
 function test_integer_division(): Option[string] {
-    return test.assert_eq_i32(20 / 6, 3);
+    return test.assert_eq(20 / 6, 3);
 }
 
 function test_modulo(): Option[string] {
-    return test.assert_eq_i32(17 % 5, 2);
+    return test.assert_eq(17 % 5, 2);
 }
 
 // Tests that walk a fixture and bail out on the first
@@ -49,10 +49,10 @@ function test_modulo_table(): Option[string] {
 }
 
 // Comparison predicates.
-function test_lt(): Option[string] { return test.assert_lt_i32(3, 7); }
-function test_le(): Option[string] { return test.assert_le_i32(7, 7); }
-function test_gt(): Option[string] { return test.assert_gt_i32(9, 1); }
-function test_ge(): Option[string] { return test.assert_ge_i32(9, 9); }
+function test_lt(): Option[string] { return test.assert_lt(3, 7); }
+function test_le(): Option[string] { return test.assert_le(7, 7); }
+function test_gt(): Option[string] { return test.assert_gt(9, 1); }
+function test_ge(): Option[string] { return test.assert_ge(9, 9); }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("arithmetic");

@@ -57,7 +57,7 @@ function test_u64_asc_with_large_values(): Option[string] {
     // (not sign-extended i64) is what drives the order.
     var arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
     var sorted: u64[] = sort.sort_u64_asc(arr);
-    return test.assert_eq_u64(sorted[0], 0u64);
+    return test.assert_eq(sorted[0], 0u64);
 }
 
 function test_i64_empty(): Option[string] {
@@ -72,7 +72,7 @@ function test_i64_empty(): Option[string] {
 function test_i64_single(): Option[string] {
     var arr: i64[] = [42 as i64];
     var sorted: i64[] = sort.sort_i64_asc(arr);
-    return test.assert_eq_i64(sorted[0], 42 as i64);
+    return test.assert_eq(sorted[0], 42 as i64);
 }
 
 function main(): i32 {

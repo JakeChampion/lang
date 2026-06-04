@@ -19,7 +19,7 @@ import "std/http";
 // The Go original was 4 table-driven subprocess cases.
 // Migrated to one Lang file: instead of print-then-grep
 // the serialized wire, we assert directly on it via
-// `assert_eq_string` (whole-wire compare) and the new
+// `assert_eq` (whole-wire compare) and the new
 // `assert_contains` / `assert_not_contains` for
 // invariants that span multiple cases.
 
@@ -28,7 +28,7 @@ function test_user_headers_before_auto_block(): Option[string] {
     r = r.with_header("X-Trace-Id", "abc123");
     r = r.with_header("Cache-Control", "no-store");
     var wire: string = http.http_serialize_response(r);
-    return test.assert_eq_string(wire,
+    return test.assert_eq(wire,
         "HTTP/1.1 200 OK\r\n" +
         "x-trace-id: abc123\r\n" +
         "cache-control: no-store\r\n" +
@@ -50,7 +50,7 @@ function test_user_content_length_is_ignored(): Option[string] {
     // must override with the real length (2).
     r = r.with_header("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
-    return test.assert_eq_string(wire,
+    return test.assert_eq(wire,
         "HTTP/1.1 200 OK\r\n" +
         "Content-Length: 2\r\n" +
         "Connection: close\r\n" +
@@ -72,7 +72,7 @@ function test_duplicate_set_cookie_via_append(): Option[string] {
     r = r.with_appended_header("Set-Cookie", "a=1");
     r = r.with_appended_header("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
-    return test.assert_eq_string(wire,
+    return test.assert_eq(wire,
         "HTTP/1.1 200 OK\r\n" +
         "set-cookie: a=1\r\n" +
         "set-cookie: b=2\r\n" +

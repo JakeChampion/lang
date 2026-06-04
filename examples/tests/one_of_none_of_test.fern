@@ -16,7 +16,7 @@ function test_one_of_i32_pass(): Option[string] {
 
 function test_one_of_i32_single_element(): Option[string] {
     // Degenerate case — single-element allowed set works
-    // the same as `assert_eq_i32` but reads at the call
+    // the same as `assert_eq` but reads at the call
     // site as "this is the only acceptable value".
     return test.assert_one_of_i32(42, [42]);
 }

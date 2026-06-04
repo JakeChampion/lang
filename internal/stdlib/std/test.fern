@@ -62,6 +62,9 @@
 // explicitly.
 import "std/i32";
 import "core/map";
+// Display / Eq / Ord traits + their primitive impls back the generic
+// `assert_eq` / `assert_neq` / `assert_lt` … helpers.
+import "core/cmp";
 // Wider int formatters for the i64 / u32 / u64 assertion
 // families. Each module exposes a `(n).to_string()` receiver
 // method dispatching through `__int_to_string_u64`.
@@ -786,153 +789,44 @@ pub function assert_false(cond: boolean): Option[string] {
     return Some("assert_false: condition was true");
 }
 
-// `assert_eq_i32(actual, expected)` — i32 equality. Failure
-// message embeds both values so you don't have to re-run the
-// test to see what came out.
-pub function assert_eq_i32(actual: i32, expected: i32): Option[string] {
-    if (actual == expected) { return None; }
-    return Some("assert_eq_i32: expected " + expected.to_string() +
+// Generic equality + relational assertions over the core/cmp traits.
+// `assert_eq` / `assert_neq` accept any `Eq + Display` type (i32 / i64
+// / u32 / u64 / string / boolean, and any user type that implements
+// both traits); `assert_lt` / `_le` / `_gt` / `_ge` accept any
+// `Ord + Display` type. These replaced the old per-width
+// `assert_eq_i32` / `assert_lt_u64` / … families once traits landed
+// (docs/TRAITS.md). The failure messages embed both values via
+// `to_string` so you don't have to re-run a test to see what came out.
+pub function assert_eq[T: cmp.Eq + cmp.Display](actual: T, expected: T): Option[string] {
+    if (actual.eq(expected)) { return None; }
+    return Some("assert_eq: expected " + expected.to_string() +
                 ", got " + actual.to_string());
 }
 
-pub function assert_neq_i32(actual: i32, expected: i32): Option[string] {
-    if (actual != expected) { return None; }
-    return Some("assert_neq_i32: expected != " + expected.to_string() +
+pub function assert_neq[T: cmp.Eq + cmp.Display](actual: T, expected: T): Option[string] {
+    if (!actual.eq(expected)) { return None; }
+    return Some("assert_neq: expected != " + expected.to_string() +
                 ", got " + actual.to_string());
 }
 
-// `assert_lt_i32(a, b)` / `assert_le_i32(a, b)` — relational
-// predicates. Mirror the eq/neq shape so a test that checks
-// "monotonically increasing" doesn't have to roll its own
-// failure message every time.
-pub function assert_lt_i32(a: i32, b: i32): Option[string] {
-    if (a < b) { return None; }
-    return Some("assert_lt_i32: expected " + a.to_string() + " < " + b.to_string());
+pub function assert_lt[T: cmp.Ord + cmp.Display](a: T, b: T): Option[string] {
+    if (a.cmp(b) < 0) { return None; }
+    return Some("assert_lt: expected " + a.to_string() + " < " + b.to_string());
 }
 
-pub function assert_le_i32(a: i32, b: i32): Option[string] {
-    if (a <= b) { return None; }
-    return Some("assert_le_i32: expected " + a.to_string() + " <= " + b.to_string());
+pub function assert_le[T: cmp.Ord + cmp.Display](a: T, b: T): Option[string] {
+    if (a.cmp(b) <= 0) { return None; }
+    return Some("assert_le: expected " + a.to_string() + " <= " + b.to_string());
 }
 
-pub function assert_gt_i32(a: i32, b: i32): Option[string] {
-    if (a > b) { return None; }
-    return Some("assert_gt_i32: expected " + a.to_string() + " > " + b.to_string());
+pub function assert_gt[T: cmp.Ord + cmp.Display](a: T, b: T): Option[string] {
+    if (a.cmp(b) > 0) { return None; }
+    return Some("assert_gt: expected " + a.to_string() + " > " + b.to_string());
 }
 
-pub function assert_ge_i32(a: i32, b: i32): Option[string] {
-    if (a >= b) { return None; }
-    return Some("assert_ge_i32: expected " + a.to_string() + " >= " + b.to_string());
-}
-
-// i64 / u32 / u64 equality assertions. Same shape as the i32
-// family, split per width because lang doesn't have a numeric
-// width-polymorphic generic at the function-signature level
-// today. A future `Eq` trait would collapse the entire family
-// to one helper per direction (eq / neq / lt / le / ...).
-
-pub function assert_eq_i64(actual: i64, expected: i64): Option[string] {
-    if (actual == expected) { return None; }
-    return Some("assert_eq_i64: expected " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-pub function assert_neq_i64(actual: i64, expected: i64): Option[string] {
-    if (actual != expected) { return None; }
-    return Some("assert_neq_i64: expected != " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-pub function assert_eq_u32(actual: u32, expected: u32): Option[string] {
-    if (actual == expected) { return None; }
-    return Some("assert_eq_u32: expected " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-pub function assert_neq_u32(actual: u32, expected: u32): Option[string] {
-    if (actual != expected) { return None; }
-    return Some("assert_neq_u32: expected != " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-pub function assert_eq_u64(actual: u64, expected: u64): Option[string] {
-    if (actual == expected) { return None; }
-    return Some("assert_eq_u64: expected " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-pub function assert_neq_u64(actual: u64, expected: u64): Option[string] {
-    if (actual != expected) { return None; }
-    return Some("assert_neq_u64: expected != " + expected.to_string() +
-                ", got " + actual.to_string());
-}
-
-// i64 / u32 / u64 relational assertions mirror the i32 family
-// (`assert_lt_i32` / `_le_i32` / `_gt_i32` / `_ge_i32`). The
-// migration's monotonic-counter / capacity-bound checks need
-// these on every numeric width — and writing them out
-// per-width is friendlier than burying the width in a runtime
-// tag arg, especially since the failure messages name the
-// width so a grep across CI logs surfaces the right helper.
-
-pub function assert_lt_i64(a: i64, b: i64): Option[string] {
-    if (a < b) { return None; }
-    return Some("assert_lt_i64: expected " + a.to_string() + " < " + b.to_string());
-}
-
-pub function assert_le_i64(a: i64, b: i64): Option[string] {
-    if (a <= b) { return None; }
-    return Some("assert_le_i64: expected " + a.to_string() + " <= " + b.to_string());
-}
-
-pub function assert_gt_i64(a: i64, b: i64): Option[string] {
-    if (a > b) { return None; }
-    return Some("assert_gt_i64: expected " + a.to_string() + " > " + b.to_string());
-}
-
-pub function assert_ge_i64(a: i64, b: i64): Option[string] {
-    if (a >= b) { return None; }
-    return Some("assert_ge_i64: expected " + a.to_string() + " >= " + b.to_string());
-}
-
-pub function assert_lt_u32(a: u32, b: u32): Option[string] {
-    if (a < b) { return None; }
-    return Some("assert_lt_u32: expected " + a.to_string() + " < " + b.to_string());
-}
-
-pub function assert_le_u32(a: u32, b: u32): Option[string] {
-    if (a <= b) { return None; }
-    return Some("assert_le_u32: expected " + a.to_string() + " <= " + b.to_string());
-}
-
-pub function assert_gt_u32(a: u32, b: u32): Option[string] {
-    if (a > b) { return None; }
-    return Some("assert_gt_u32: expected " + a.to_string() + " > " + b.to_string());
-}
-
-pub function assert_ge_u32(a: u32, b: u32): Option[string] {
-    if (a >= b) { return None; }
-    return Some("assert_ge_u32: expected " + a.to_string() + " >= " + b.to_string());
-}
-
-pub function assert_lt_u64(a: u64, b: u64): Option[string] {
-    if (a < b) { return None; }
-    return Some("assert_lt_u64: expected " + a.to_string() + " < " + b.to_string());
-}
-
-pub function assert_le_u64(a: u64, b: u64): Option[string] {
-    if (a <= b) { return None; }
-    return Some("assert_le_u64: expected " + a.to_string() + " <= " + b.to_string());
-}
-
-pub function assert_gt_u64(a: u64, b: u64): Option[string] {
-    if (a > b) { return None; }
-    return Some("assert_gt_u64: expected " + a.to_string() + " > " + b.to_string());
-}
-
-pub function assert_ge_u64(a: u64, b: u64): Option[string] {
-    if (a >= b) { return None; }
-    return Some("assert_ge_u64: expected " + a.to_string() + " >= " + b.to_string());
+pub function assert_ge[T: cmp.Ord + cmp.Display](a: T, b: T): Option[string] {
+    if (a.cmp(b) >= 0) { return None; }
+    return Some("assert_ge: expected " + a.to_string() + " >= " + b.to_string());
 }
 
 // Float equality with a tolerance, plus exact equality for
@@ -1054,31 +948,10 @@ pub function assert_is_nan_f32(v: f32): Option[string] {
     return Some("assert_is_nan_f32: expected NaN, got " + v.to_string());
 }
 
-// `assert_eq_bool(actual, expected)` — boolean equality. Less
-// common than assert_true/false but useful for tests that
-// compute a boolean and want to compare it against an expected
-// value driven from a table.
-pub function assert_eq_bool(actual: boolean, expected: boolean): Option[string] {
-    if (actual == expected) { return None; }
-    var a: string = "false";
-    if (actual) { a = "true"; }
-    var e: string = "false";
-    if (expected) { e = "true"; }
-    return Some("assert_eq_bool: expected " + e + ", got " + a);
-}
-
-// `assert_eq_string(actual, expected)` — string equality. The
-// raw values are quoted in the message so leading / trailing
-// whitespace stays visible.
-pub function assert_eq_string(actual: string, expected: string): Option[string] {
-    if (actual == expected) { return None; }
-    return Some("assert_eq_string: expected \"" + expected + "\", got \"" + actual + "\"");
-}
-
-pub function assert_neq_string(actual: string, expected: string): Option[string] {
-    if (actual != expected) { return None; }
-    return Some("assert_neq_string: expected != \"" + expected + "\", got \"" + actual + "\"");
-}
+// boolean / string equality is handled by the generic `assert_eq` /
+// `assert_neq` above (boolean and string both implement
+// cmp.Eq + cmp.Display). For whitespace-sensitive string comparisons
+// where quoted diffs help, reach for `assert_eq_string_diff`.
 
 // `assert_contains(haystack, needle)` — substring search.
 // Empty needle always passes (mirrors `(s).contains("")` which

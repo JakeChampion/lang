@@ -143,11 +143,11 @@ func TestRunnerFailingSuiteExitsOne(t *testing.T) {
 import "std/test";
 
 function test_passing(): Option[string] {
-    return test.assert_eq_i32(1 + 1, 2);
+    return test.assert_eq(1 + 1, 2);
 }
 
 function test_failing(): Option[string] {
-    return test.assert_eq_i32(2 + 2, 5);
+    return test.assert_eq(2 + 2, 5);
 }
 
 function main(): i32 {
@@ -168,11 +168,11 @@ function main(): i32 {
 	wantPieces := []string{
 		"ok 1 - passing",
 		"not ok 2 - failing",
-		"  message: assert_eq_i32: expected 5, got 4",
+		"  message: assert_eq: expected 5, got 4",
 		"# pass 1",
 		"# fail 1",
 		"# failures:",
-		"failing: assert_eq_i32: expected 5, got 4",
+		"failing: assert_eq: expected 5, got 4",
 	}
 	for _, w := range wantPieces {
 		if !strings.Contains(gotOut, w) {
@@ -410,7 +410,7 @@ function main(): i32 {
                 Some(_) => { r = r.it("write", test.fail("write failed")); return r.finish(); }
             }
             match (read_file(dir + "/x.txt")) {
-                Ok(s) => { r = r.it("roundtrip", test.assert_eq_string(s, "x")); },
+                Ok(s) => { r = r.it("roundtrip", test.assert_eq(s, "x")); },
                 Err(_) => { r = r.it("roundtrip", test.fail("read failed")); }
             }
         },

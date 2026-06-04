@@ -15,18 +15,18 @@ import "std/test";
 
 function test_sum_i64(): Option[string] {
     var arr: i64[] = [1 as i64, 2 as i64, 3 as i64, 4 as i64];
-    return test.assert_eq_i64(array.sum_i64(arr), 10 as i64);
+    return test.assert_eq(array.sum_i64(arr), 10 as i64);
 }
 
 function test_sum_i64_empty(): Option[string] {
     var arr: i64[] = [];
-    return test.assert_eq_i64(array.sum_i64(arr), 0 as i64);
+    return test.assert_eq(array.sum_i64(arr), 0 as i64);
 }
 
 function test_max_i64(): Option[string] {
     var arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64];
     match (array.max_i64(arr)) {
-        Some(m) => { return test.assert_eq_i64(m, 5 as i64); },
+        Some(m) => { return test.assert_eq(m, 5 as i64); },
         None => { return test.fail("max_i64 returned None on non-empty input"); }
     }
     return None;
@@ -35,7 +35,7 @@ function test_max_i64(): Option[string] {
 function test_min_i64(): Option[string] {
     var arr: i64[] = [3 as i64, 1 as i64, 4 as i64];
     match (array.min_i64(arr)) {
-        Some(m) => { return test.assert_eq_i64(m, 1 as i64); },
+        Some(m) => { return test.assert_eq(m, 1 as i64); },
         None => { return test.fail("min_i64 returned None on non-empty input"); }
     }
     return None;
@@ -53,7 +53,7 @@ function test_max_i64_empty(): Option[string] {
 function test_avg_i64(): Option[string] {
     var arr: i64[] = [2 as i64, 4 as i64, 6 as i64];
     match (array.avg_i64(arr)) {
-        Some(m) => { return test.assert_eq_i64(m, 4 as i64); },
+        Some(m) => { return test.assert_eq(m, 4 as i64); },
         None => { return test.fail("avg_i64 returned None"); }
     }
     return None;
@@ -61,7 +61,7 @@ function test_avg_i64(): Option[string] {
 
 function test_sum_u32(): Option[string] {
     var arr: u32[] = [10u32, 20u32, 30u32];
-    return test.assert_eq_u32(array.sum_u32(arr), 60u32);
+    return test.assert_eq(array.sum_u32(arr), 60u32);
 }
 
 function test_max_u64_unsigned(): Option[string] {
@@ -71,7 +71,7 @@ function test_max_u64_unsigned(): Option[string] {
     // than 1u64 (because as signed it's -1).
     var arr: u64[] = [18446744073709551615u64, 1u64, 1000u64];
     match (array.max_u64(arr)) {
-        Some(m) => { return test.assert_eq_u64(m, 18446744073709551615u64); },
+        Some(m) => { return test.assert_eq(m, 18446744073709551615u64); },
         None => { return test.fail("max_u64 returned None"); }
     }
     return None;

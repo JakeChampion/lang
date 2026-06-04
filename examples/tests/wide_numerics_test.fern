@@ -9,26 +9,26 @@ import "std/test";
 function test_i64_addition(): Option[string] {
     var a: i64 = 5000000000;
     var b: i64 = 3000000000;
-    return test.assert_eq_i64(a + b, 8000000000);
+    return test.assert_eq(a + b, 8000000000);
 }
 
 function test_i64_max(): Option[string] {
     var max: i64 = 9223372036854775807;
-    return test.assert_eq_i64(max, 9223372036854775807);
+    return test.assert_eq(max, 9223372036854775807);
 }
 
 function test_u32_max(): Option[string] {
     var max: u32 = 4294967295u32;
-    return test.assert_eq_u32(max, 4294967295u32);
+    return test.assert_eq(max, 4294967295u32);
 }
 
 function test_u64_max(): Option[string] {
     var max: u64 = 18446744073709551615u64;
-    return test.assert_eq_u64(max, 18446744073709551615u64);
+    return test.assert_eq(max, 18446744073709551615u64);
 }
 
 function test_u64_neq(): Option[string] {
-    return test.assert_neq_u64(0u64, 1u64);
+    return test.assert_neq(0u64, 1u64);
 }
 
 function main(): i32 {

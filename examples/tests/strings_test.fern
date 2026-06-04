@@ -9,11 +9,11 @@ import "std/test";
 // main(), single TAP-13 stream on stdout.
 
 function test_uppercase(): Option[string] {
-    return test.assert_eq_string("hello".to_upper(), "HELLO");
+    return test.assert_eq("hello".to_upper(), "HELLO");
 }
 
 function test_lowercase(): Option[string] {
-    return test.assert_eq_string("HELLO".to_lower(), "hello");
+    return test.assert_eq("HELLO".to_lower(), "hello");
 }
 
 function test_contains_substring(): Option[string] {
@@ -33,12 +33,12 @@ function test_ends_with(): Option[string] {
 }
 
 function test_concat(): Option[string] {
-    return test.assert_eq_string("foo" + "bar", "foobar");
+    return test.assert_eq("foo" + "bar", "foobar");
 }
 
 function test_split_join_roundtrip(): Option[string] {
     var parts: string[] = "a,b,c,d".split(",");
-    return test.assert_eq_string(parts.join("|"), "a|b|c|d");
+    return test.assert_eq(parts.join("|"), "a|b|c|d");
 }
 
 // Length assertion + array-of-string assertion in one test.

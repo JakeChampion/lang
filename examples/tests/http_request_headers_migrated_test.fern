@@ -41,7 +41,7 @@ function test_parsed_header_count_is_3(): Option[string] {
         Some(req) => {
             // Three headers in the wire (Host, Content-
             // Type, Content-Length) → size() == 3.
-            return test.assert_eq_i32(req.headers.len(), 3);
+            return test.assert_eq(req.headers.len(), 3);
         },
         None => { return test.fail("parse failed"); }
     }
@@ -80,7 +80,7 @@ function test_get_all_on_missing_is_empty(): Option[string] {
     var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
-            return test.assert_eq_i32((req.headers.get_all("X-Absent")).len(), 0);
+            return test.assert_eq((req.headers.get_all("X-Absent")).len(), 0);
         },
         None => { return test.fail("parse failed"); }
     }
