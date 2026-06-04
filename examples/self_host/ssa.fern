@@ -247,6 +247,9 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
         parser.StmtIf(f) => {
             return build_if(f, s);
         },
+        parser.StmtWhile(w) => {
+            return build_while(w, s);
+        },
         _ => { return s.fail(); }
     }
 }
@@ -365,6 +368,173 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
         k = k + 1;
     }
     return out;
+}
+
+function contains_str(xs: string[], n: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function index_of_i32(xs: i32[], n: i32): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// collect_assigned returns the set of variable names targeted by an
+// assignment anywhere in `body` (recursing through nested if / while) —
+// these are the loop-carried variables that need a header phi.
+function collect_assigned(body: parser.Stmt[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        out = collect_assigned_stmt(body[i], out);
+        i = i + 1;
+    }
+    return out;
+}
+function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (!contains_str(out, a.target)) { out = out.push(a.target); }
+            return out;
+        },
+        parser.StmtIf(f) => {
+            out = merge_names(out, collect_assigned(f.then_body));
+            out = merge_names(out, collect_assigned(f.else_body));
+            return out;
+        },
+        parser.StmtWhile(w) => {
+            return merge_names(out, collect_assigned(w.body));
+        },
+        _ => { return out; }
+    }
+}
+function merge_names(a: string[], b: string[]): string[] {
+    var i: i32 = 0;
+    while (i < b.len()) {
+        if (!contains_str(a, b[i])) { a = a.push(b[i]); }
+        i = i + 1;
+    }
+    return a;
+}
+
+// patch_loop_header completes a loop header once the body's exit is known:
+// it appends the back-edge value to each header phi (parallel to the new
+// pred) and adds body_exit_id to the header's pred list. The header was
+// closed with a single (pre-edge) operand per phi; this supplies the
+// second.
+function patch_loop_header(s: BState, header_id: i32, phi_results: i32[], back_vals: i32[], body_exit_id: i32): BState {
+    var nb: SBlock[] = [];
+    var i: i32 = 0;
+    while (i < s.blocks.len()) {
+        var blk: SBlock = s.blocks[i];
+        if (blk.id == header_id) {
+            var ninsts: SInst[] = [];
+            var k: i32 = 0;
+            while (k < blk.insts.len()) {
+                var ins: SInst = blk.insts[k];
+                if (ins.kind == "phi") {
+                    var pj: i32 = index_of_i32(phi_results, ins.result);
+                    if (pj >= 0) {
+                        ins = SInst { kind: "phi", result: ins.result, args: ins.args.push(back_vals[pj]), imm: 0, str: "" };
+                    }
+                }
+                ninsts = ninsts.push(ins);
+                k = k + 1;
+            }
+            blk = SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds.push(body_exit_id) };
+        }
+        nb = nb.push(blk);
+        i = i + 1;
+    }
+    return mk_bs(s.name, s.nparams, s.nvals, s.next_blk, nb, s.cur, s.var_names, s.var_vals, s.ok);
+}
+
+// build_while lowers `while (cond) { body }` to a loop:
+//   pre ──► header ──brif──► body ──┐
+//          ▲   │  └──────► exit     │
+//          └───┴──────(back edge)───┘
+// The header carries a phi for each loop-carried variable: phi(pre_value,
+// back_edge_value). The back-edge operand isn't known until the body is
+// built, so the phis are emitted with just the pre operand and patched
+// afterward (patch_loop_header). On loop exit the live values are the
+// header phis (the merged values when the guard last evaluated false).
+function build_while(w: parser.StmtWhile, s: BState): BState {
+    var n0: i32 = s.var_names.len();
+    var pre_names: string[] = s.var_names;
+    var pre_vals: i32[] = s.var_vals;
+    var assigned: string[] = collect_assigned(w.body);
+
+    var header_id: i32 = s.next_blk;
+    var body_id: i32 = s.next_blk + 1;
+    var exit_id: i32 = s.next_blk + 2;
+    s = s.bump_blk(3);
+
+    // pre → header
+    s = s.set_term(t_br(header_id));
+    var pre_id: i32 = s.cur.id;
+    s = s.close_cur();
+
+    // header: phis for loop-carried vars, then the guard.
+    var hpreds: i32[] = [pre_id];
+    s = s.open_block(header_id, hpreds);
+    var phi_vars: i32[] = [];
+    var phi_results: i32[] = [];
+    var header_vals: i32[] = pre_vals;
+    var vi: i32 = 0;
+    while (vi < n0) {
+        if (contains_str(assigned, pre_names[vi])) {
+            s = s.fresh();
+            var pa: i32[] = [pre_vals[vi]];
+            s = s.emit(SInst { kind: "phi", result: s.cur_id(), args: pa, imm: 0, str: "" });
+            phi_vars = phi_vars.push(vi);
+            phi_results = phi_results.push(s.cur_id());
+            header_vals = env_set_at(header_vals, vi, s.cur_id());
+        }
+        vi = vi + 1;
+    }
+    s = s.set_env(pre_names, header_vals);
+    s = build_expr(w.cond, s);
+    if (!s.ok) { return s; }
+    var cond_val: i32 = s.cur_id();
+    s = s.set_term(t_brif(cond_val, body_id, exit_id));
+    s = s.close_cur();
+
+    // body
+    var bpreds: i32[] = [header_id];
+    s = s.open_block(body_id, bpreds);
+    s = s.set_env(pre_names, header_vals);
+    s = build_stmts(w.body, s);
+    if (!s.ok) { return s; }
+    // A body that never falls through to the back edge (always returns) is
+    // outside the subset.
+    if (s.terminated()) { return s.fail(); }
+    var body_exit_id: i32 = s.cur.id;
+    var body_vals: i32[] = s.var_vals;
+    s = s.set_term(t_br(header_id));
+    s = s.close_cur();
+
+    // Patch the header phis with the back-edge values.
+    var back_vals: i32[] = [];
+    var pk: i32 = 0;
+    while (pk < phi_vars.len()) {
+        back_vals = back_vals.push(body_vals[phi_vars[pk]]);
+        pk = pk + 1;
+    }
+    s = patch_loop_header(s, header_id, phi_results, back_vals, body_exit_id);
+
+    // exit: continue with the header phi values.
+    var epreds: i32[] = [header_id];
+    s = s.open_block(exit_id, epreds);
+    s = s.set_env(pre_names, header_vals);
+    return s;
 }
 
 pub struct BResult { func: SFunc, ok: boolean }
