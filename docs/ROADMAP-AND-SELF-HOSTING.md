@@ -707,12 +707,25 @@ ok path `main()==0` → exit 0; err path → exit 1; over `return 0` /
 `emit_module_mode`) is additive — the preview1 command path is unchanged
 and all the core-module suites stay green.
 
-The one remaining piece is **I/O in components**: the run core is
-import-free only because no-I/O programs emit no `fd_write`/preview1
-imports. A program that prints / reads files still needs the preview1→
-preview2 I/O shift (`wasi:cli/stdout`, `wasi:filesystem`, …) — the
-genuinely large remaining backend work, after which `component_full`
-wraps *any* self-host core.
+There are two routes to **I/O in components** (a printing / file program,
+which `component_full`'s import-free path can't take):
+
+1. **Adapter route — works today.** The self-host already emits a correct
+   WASI-preview1 *command* core (with `fd_write`); composing it with the
+   preview1→preview2 adapter via `wasm-tools component new --adapt
+   wasi_snapshot_preview1=$FERN_WASI_ADAPTER` yields a `wasi:cli/run`
+   component with real I/O — no codegen change. This is exactly the
+   native compiler's `-wasi-adapter` option.
+   `TestSelfHostWasmComponentAdapter` compiles printing / f-string /
+   loop-print programs through the self-host to a preview1 core, composes
+   with the adapter, and asserts the component's stdout under `wasmtime`.
+2. **Preview2-native route — the large remaining backend work.** Emit the
+   I/O directly against `wasi:cli/stdout` / `wasi:filesystem` and
+   hand-roll the matching component imports / canon-lower (the WIT-world
+   component types — what the native compiler precomputes as `fern.bin`).
+   This is what the native compiler's default `-target wasm` produces, and
+   the only piece still missing for the self-host to match it byte-for-byte
+   on I/O programs.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
