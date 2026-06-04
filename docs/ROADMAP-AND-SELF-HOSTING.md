@@ -575,9 +575,19 @@ spare capacity, so pushing an `if` frame onto the enclosing loop's stack
 corrupted that loop's later `br` depths; fixed with a copy-on-push
 (`labels_push`). `TestSelfHostWasmBinary` now also covers while-sum,
 if-then, return-in-if-in-loop, break/continue, short-circuit `&&`, and
-nested loops — each binary module matching the WAT path. Remaining: the
-string / struct / closure / map runtime opcodes (the string helpers pull
-in further ops), then wrap the core module in the `wasi:cli/run` /
+nested loops — each binary module matching the WAT path.
+
+Slice 4d filled in the rest of the **i32 arithmetic / comparison set** plus
+`select`: `div_s` / `div_u` / `rem_s` / `rem_u`, the unsigned comparisons
+(`lt_u` / `gt_u` / `le_u` / `ge_u`), `shr_u` / `rotl` / `rotr`, and a
+`select` (three stack operands). It also fixed a latent opcode bug —
+`i32.shr_s` was emitted as `0x76` (which is `shr_u`) instead of `0x75`.
+With i32.load/store already in, this brings **structs** into reach:
+`TestSelfHostWasmBinary` adds div/rem, left/right shift, and struct field
+read / mutate / nested-struct cases, each binary module matching the WAT
+path. Remaining: closures (which pull in the table + elem sections and
+`call_indirect`), then the i64 / f64 arithmetic + conversion ops and the
+string/map runtime, then wrap the core module in the `wasi:cli/run` /
 `wasi:http` component shapes.
 
 A sixteenth pass found one remaining **language** gap (so the "what
