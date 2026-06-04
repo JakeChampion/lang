@@ -626,11 +626,20 @@ array, and a lambda passed as an argument — each binary module matching
 the WAT path. With this the binary backend covers **everything
 `emit_module` produces except f64 constants**.
 
-Remaining: **f64** (blocked only on `f64.const`, whose immediate is a raw
-8-byte IEEE-754 double, not a LEB — needs a decimal→bits step); then wrap
-the core module in the `wasi:cli/run` / `wasi:http` component shapes, and
-(for round-tripping the compiler's own large modules) emit a bigger
-`(memory …)` so the assembler doesn't OOM.
+Slice 4h added the **`f64_bits` / `f64_from_bits`** builtins to the wasm
+backend (`wasm.fern`) — `i64.reinterpret_f64` / `f64.reinterpret_i64`.
+These were a real wasm-vs-native parity gap (the native backends already
+reinterpret), and they're the unblocker for `f64.const` in the binary
+encoder: the encoder will parse the decimal literal to an f64 value, then
+`f64_bits` it to the 8 IEEE-754 bytes (the `f64.const` immediate is raw
+bytes, not a LEB). Guarded by `f64-bits-hi` / `f64-bits-roundtrip` in the
+wasm differential suite, cross-checked against the Go interpreter.
+
+Remaining: **f64.const** in the binary encoder (decimal→f64→`f64_bits`→8
+bytes) plus the f64 arithmetic opcodes; then wrap the core module in the
+`wasi:cli/run` / `wasi:http` component shapes, and (for round-tripping the
+compiler's own large modules) emit a bigger `(memory …)` so the assembler
+doesn't OOM.
 
 A sixteenth pass found one remaining **language** gap (so the "what
 remains is packaging, not language" claim above is not yet absolute):

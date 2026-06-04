@@ -419,6 +419,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-int-to-float", "function main(): i32 { var n: i32 = 7; var x: f64 = n as f64; print_int((x + 0.5) as i32); return 0; }", 0, "7"},
 		{"f64-mixed-int-literal", "function main(): i32 { print_int((3.5 + 2) as i32); return 0; }", 0, "5"},
 		{"f64-reassign", "function main(): i32 { var a: f64 = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
+		// f64_bits / f64_from_bits reinterpret an f64 to/from its IEEE-754
+		// i64 bit pattern (i64.reinterpret_f64 / f64.reinterpret_i64) — the
+		// wasm backend previously lacked these (native had them).
+		{"f64-bits-hi", "function main(): i32 { return (f64_bits(3.5) >> 56) as i32; }", 64, ""},
+		{"f64-bits-roundtrip", "function main(): i32 { var x: f64 = 3.5; if (f64_from_bits(f64_bits(x)) == x) { return 7; } return 0; }", 7, ""},
 		{"f64-loop-accumulate", "function main(): i32 { var sum: f64 = 0.0; var i: i32 = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } print_int(sum as i32); return 0; }", 0, "6"},
 		{"f64-func-return", "function half(x: f64): f64 { return x / 2.0; } function main(): i32 { print_int(half(9.0) as i32); return 0; }", 0, "4"},
 		{"f64-param-int-arg", "function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { print_int(addhalf(3) as i32); return 0; }", 0, "3"},
