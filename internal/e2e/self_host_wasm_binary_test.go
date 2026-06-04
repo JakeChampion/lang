@@ -136,6 +136,12 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
 		// (it OOM'd before memory.grow).
 		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.set(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
+		// At-scale validation: substantial multi-feature programs round-trip
+		// through the binary encoder — deep recursion, a struct-array
+		// "linked list" walked by index, and a string split + iteration.
+		{"scale-recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(12) - 100; }", 44},
+		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { var ns: Node[] = []; ns = ns.push(Node { v: 10, next_idx: 1 }); ns = ns.push(Node { v: 20, next_idx: 2 }); ns = ns.push(Node { v: 12, next_idx: 0 - 1 }); var sum: i32 = 0; var i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
+		{"scale-string-split", "function main(): i32 { var s: string = \"the quick brown fox\"; var words = s.split(\" \"); var total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
 	}
 
 	for _, tc := range cases {
