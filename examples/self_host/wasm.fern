@@ -2043,7 +2043,16 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (fa.field == "to_string" && c.args.len() == 0) {
                         if (is_string_expr(fa.obj, cx)) { return emit_expr(fa.obj, cx, depth); }
                         if (is_i64_expr(fa.obj, cx)) { return "(call $__fern_i64_to_str " + emit_i64(fa.obj, cx, depth + 1) + ")"; }
-                        return "(call $__fern_i32_to_str " + emit_expr(fa.obj, cx, depth) + ")";
+                        // Only format as an integer when the receiver isn't a
+                        // struct / enum with its own `to_string` (hand-written
+                        // or `@derive(Display)`). Such a receiver must dispatch
+                        // to that method — fall through to the user-method
+                        // dispatch below instead of treating the pointer as an
+                        // i32.
+                        var tsrt: string = struct_type_of(fa.obj, cx);
+                        if (tsrt.len() == 0 || !has_method(cx, tsrt, "to_string")) {
+                            return "(call $__fern_i32_to_str " + emit_expr(fa.obj, cx, depth) + ")";
+                        }
                     }
                     // `.len()` reads the length word at offset 0 — shared
                     // by string blocks ([len][bytes]) and array blocks

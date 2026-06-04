@@ -621,6 +621,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"tostring-concat", "function main(): i32 { var n: i32 = 5; write(\"n=\" + n.to_string()); return 0; }", 0, "n=5"},
 		{"tostring-string-identity", "function main(): i32 { var s: string = \"hi\"; write(s.to_string()); return 0; }", 0, "hi"},
 		{"tostring-i64", "function main(): i32 { var b: i64 = 5000000000; write(b.to_string()); return 0; }", 0, "5000000000"},
+		// A struct/enum receiver with its own `to_string` (hand-written or
+		// `@derive(Display)`) dispatches to that method rather than the
+		// integer formatter — the `to_string` intrinsic now defers to a
+		// user method when one exists. See docs/TRAITS.md.
+		{"tostring-struct-method", "struct P { x: i32 } function (p: P) to_string(): string { return \"box\"; } function main(): i32 { var p = P { x: 1 }; write(p.to_string()); return 0; }", 0, "box"},
+		{"derive-display-struct", "@derive(Display) struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 3, y: 7 }; write(p.to_string()); return 0; }", 0, "P { x: 3, y: 7 }"},
+		{"derive-display-nested", "@derive(Display) struct Inner { n: i32 } @derive(Display) struct Outer { a: Inner, tag: string } function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; write(p.to_string()); return 0; }", 0, "Outer { a: Inner { n: 5 }, tag: hi }"},
 		{"tostring-expr", "function main(): i32 { write((3 * 14).to_string()); return 0; }", 0, "42"},
 		{"fstring-int", "function main(): i32 { var n: i32 = 42; write(f\"n is {n}!\"); return 0; }", 0, "n is 42!"},
 		{"fstring-two", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; write(f\"{a}+{b}={a + b}\"); return 0; }", 0, "3+4=7"},

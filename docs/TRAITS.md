@@ -495,7 +495,26 @@ regressing the self-host gates. It needs traits in two slices:
   `trait-derive-enum-{display,eq,ord}` on x86-64 + arm64, plus the enum
   section of `examples/tests/derive_test.fern` through the stdtest gate —
   so `@derive(Eq, Display, Ord)` reaches full parity for structs AND
-  non-generic enums in the self-host.
+  non-generic enums on the native (x86-64 + arm64) self-host backends.
+
+- **Self-host slice 7 (in progress): the wasm backend.** The wasm
+  self-host backend (`examples/self_host/wasm.fern`) dispatches methods
+  STATICALLY by the receiver's known type (`struct_type_of` →
+  `$Type__method`), unlike the native backends' runtime shape-compare,
+  so the trait fixes there don't port directly. First fix landed: the
+  `to_string` intrinsic deferred to a user method only when the receiver
+  is int/i64/string — a struct/enum receiver with its own `to_string`
+  (hand-written or `@derive(Display)`) was wrongly formatted as an
+  integer. Gated on `struct_type_of(recv)` having a `to_string` method,
+  so **struct `to_string` + `@derive(Display)`** (incl. nested structs)
+  now dispatch correctly on wasm. Still open for wasm trait/enum parity
+  (each a pre-existing gap, broader than traits): **primitive-receiver
+  user methods** (`self.x.eq(other.x)` on an i32 field has no `i32.eq`
+  dispatch, so `@derive(Eq/Ord)` on structs falls back); **user-enum
+  variant construction** (`Circle(3)` emits an undefined `$Circle` call —
+  only `Option`/`Result` are special-cased — and the numeric variant-tag
+  scheme has no canonical name→tag map); and on top of those, enum
+  methods + enum `@derive`. Tracked as the wasm self-host slice.
 
 ## 7b. The `std/test` collapse (landed)
 
