@@ -3164,14 +3164,63 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body };
 }
 
-// synth_enum_derives appends the derivable enum methods. Display + Eq
-// are supported; Ord-for-enums (variant-tag ordering) is a follow-up.
+// synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
+// before one declared later (by index); within the same variant the
+// single payload is compared. Mirrors the Go synthEnumOrd.
+function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var vi: StructDecl = variants[i];
+        var inner: MatchArm[] = [];
+        var j: i32 = 0;
+        while (j < variants.len()) {
+            var vj: StructDecl = variants[j];
+            var ob: string = "";
+            if (vj.fields.len() > 0) { ob = "__o0"; }
+            var ibody: Stmt[] = [];
+            if (j < i) {
+                ibody = [s_return(e_number("1", "", false))];
+            } else {
+                if (j > i) {
+                    ibody = [s_return(e_binary("-", e_number("0", "", false), e_number("1", "", false)))];
+                } else {
+                    if (vi.fields.len() > 0) {
+                        var cc: Expr = dv_call1(e_ident("__s0"), "cmp", e_ident("__o0"));
+                        var cstmts: Stmt[] = [s_var("__c0", "i32", cc)];
+                        var emptyb: Stmt[] = [];
+                        cstmts = cstmts.push(s_if(e_binary("!=", e_ident("__c0"), e_number("0", "", false)), [s_return(e_ident("__c0"))], emptyb));
+                        cstmts = cstmts.push(s_return(e_number("0", "", false)));
+                        ibody = cstmts;
+                    } else {
+                        ibody = [s_return(e_number("0", "", false))];
+                    }
+                }
+            }
+            inner = inner.push(MatchArm { pattern: p_variant(vj.name, ob), body: ibody });
+            j = j + 1;
+        }
+        var sb: string = "";
+        if (vi.fields.len() > 0) { sb = "__s0"; }
+        arms = arms.push(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)] });
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
+    var notp: string[] = [];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body };
+}
+
+// synth_enum_derives appends the derivable enum methods. Display, Eq,
+// and Ord are supported (Ord uses variant-declaration order then a
+// lexicographic payload compare).
 function synth_enum_derives(ename: string, variants: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
         if (kind == "Display") { funcs = funcs.push(synth_enum_display(ename, variants)); }
         if (kind == "Eq") { funcs = funcs.push(synth_enum_eq(ename, variants)); }
+        if (kind == "Ord") { funcs = funcs.push(synth_enum_ord(ename, variants)); }
         di = di + 1;
     }
     return funcs;

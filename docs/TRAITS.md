@@ -489,10 +489,13 @@ regressing the self-host gates. It needs traits in two slices:
   now threads the enum NAME through `EnumResult` (previously discarded)
   so the synthesised methods name their receiver type. Self-host enum
   variants carry a single payload (`__ev`), so multi-payload variants
-  render/compare their first field; **enum `Ord`** (variant-tag ordering)
-  is the remaining derivable, a follow-up. Tested via `trait-enum-method`,
-  `trait-derive-enum-{display,eq}` on x86-64 + arm64, plus the enum
-  section of `examples/tests/derive_test.fern` through the stdtest gate.
+  render/compare their first field. `@derive(Ord)` for enums followed
+  (`synth_enum_ord`: variant-declaration order decides cross-variant, the
+  payload decides within). Tested via `trait-enum-method`,
+  `trait-derive-enum-{display,eq,ord}` on x86-64 + arm64, plus the enum
+  section of `examples/tests/derive_test.fern` through the stdtest gate —
+  so `@derive(Eq, Display, Ord)` reaches full parity for structs AND
+  non-generic enums in the self-host.
 
 ## 7b. The `std/test` collapse (landed)
 
