@@ -17,9 +17,11 @@ import "./ssa_arm64";
 function main(): i32 {
     var av: string[] = args();
     var target: string = "x86-64";
+    var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-target") { ai = ai + 1; if (ai < av.len()) { target = av[ai]; } }
+        else if (av[ai] == "-regalloc") { use_regalloc = true; }
         ai = ai + 1;
     }
 
@@ -31,7 +33,7 @@ function main(): i32 {
         if (r.ok) { funcs = funcs.push(ssa.optimize(r.func)); }
         i = i + 1;
     }
-    if (target == "arm64") { write(ssa_arm64.emit_program(funcs)); }
-    else { write(ssa_x86.emit_program(funcs)); }
+    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

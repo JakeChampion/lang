@@ -1013,6 +1013,142 @@ function merge_blocks(f: SFunc): SFunc {
 // count_blocks returns the number of blocks (tests assert block merging).
 pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 
+// ---- register allocation ------------------------------------------------
+// regalloc assigns each SSA value either a physical register index
+// (0..nregs-1) or -1 (spilled — the backend keeps it in its [sp,#8*v] /
+// rbp-slot). It's a linear-scan allocator over a conservative live
+// interval per value: the value is numbered live from the lowest to the
+// highest instruction position among its definition and all its uses. For
+// our structured CFGs that range covers the true live range (a loop-
+// carried value used by a header phi gets a use position BELOW its body
+// def, which widens the interval to span the loop — exactly where it's
+// live). Any value whose interval strictly contains a `call` is forced to
+// spill, so the backend may allocate caller-saved registers without
+// save/restore: nothing in a register is ever live across a call.
+
+// regalloc_none spills everything (the original behaviour).
+pub function regalloc_none(f: SFunc): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { out = out.push(0 - 1); i = i + 1; }
+    return out;
+}
+
+function upd_lo(arr: i32[], idx: i32, pos: i32): i32[] {
+    if (idx < 0 || idx >= arr.len()) { return arr; }
+    if (pos < arr[idx]) { return env_set_at(arr, idx, pos); }
+    return arr;
+}
+function upd_hi(arr: i32[], idx: i32, pos: i32): i32[] {
+    if (idx < 0 || idx >= arr.len()) { return arr; }
+    if (pos > arr[idx]) { return env_set_at(arr, idx, pos); }
+    return arr;
+}
+// spans_call is true when some call position lies strictly inside (lo, hi).
+function spans_call(calls: i32[], lo: i32, hi: i32): boolean {
+    var i: i32 = 0;
+    while (i < calls.len()) {
+        if (calls[i] > lo && calls[i] < hi) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+// order_by_lo returns value ids 0..n-1 sorted ascending by lo (insertion).
+function order_by_lo(n: i32, lo: i32[]): i32[] {
+    var out: i32[] = [];
+    var v: i32 = 0;
+    while (v < n) {
+        // insert v into out keeping lo ascending.
+        var ins: i32[] = [];
+        var placed: boolean = false;
+        var j: i32 = 0;
+        while (j < out.len()) {
+            if (!placed && lo[v] < lo[out[j]]) { ins = ins.push(v); placed = true; }
+            ins = ins.push(out[j]);
+            j = j + 1;
+        }
+        if (!placed) { ins = ins.push(v); }
+        out = ins;
+        v = v + 1;
+    }
+    return out;
+}
+
+pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
+    var big: i32 = 2000000000;
+    var lo: i32[] = [];
+    var hi: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { lo = lo.push(big); hi = hi.push(0 - 1); i = i + 1; }
+    var calls: i32[] = [];
+
+    // Number instructions and record each value's def/use positions.
+    var pos: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            lo = upd_lo(lo, ins.result, pos); hi = upd_hi(hi, ins.result, pos);
+            var a: i32 = 0;
+            while (a < ins.args.len()) {
+                lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
+                a = a + 1;
+            }
+            if (ins.kind == "call") { calls = calls.push(pos); }
+            pos = pos + 1;
+            k = k + 1;
+        }
+        if (blk.term.kind == "ret") { lo = upd_lo(lo, blk.term.value, pos); hi = upd_hi(hi, blk.term.value, pos); }
+        else if (blk.term.kind == "brif") { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
+        pos = pos + 1;
+        bi = bi + 1;
+    }
+
+    var reg_of: i32[] = [];
+    i = 0;
+    while (i < f.nvals) { reg_of = reg_of.push(0 - 1); i = i + 1; }
+
+    // Linear scan in order of interval start.
+    var order: i32[] = order_by_lo(f.nvals, lo);
+    var act_val: i32[] = [];
+    var act_hi: i32[] = [];
+    var act_reg: i32[] = [];
+    var free: i32[] = [];
+    var r: i32 = nregs - 1;
+    while (r >= 0) { free = free.push(r); r = r - 1; }
+
+    var oi: i32 = 0;
+    while (oi < order.len()) {
+        var v: i32 = order[oi];
+        if (hi[v] < 0) { oi = oi + 1; continue; }   // never referenced
+        // Expire active intervals that end before v begins.
+        var nv: i32[] = []; var nh: i32[] = []; var nr: i32[] = [];
+        var ai: i32 = 0;
+        while (ai < act_val.len()) {
+            if (act_hi[ai] < lo[v]) { free = free.push(act_reg[ai]); }
+            else { nv = nv.push(act_val[ai]); nh = nh.push(act_hi[ai]); nr = nr.push(act_reg[ai]); }
+            ai = ai + 1;
+        }
+        act_val = nv; act_hi = nh; act_reg = nr;
+
+        if (spans_call(calls, lo[v], hi[v]) || free.len() == 0) {
+            reg_of = env_set_at(reg_of, v, 0 - 1);   // spill
+        } else {
+            var reg: i32 = free[free.len() - 1];
+            var nf: i32[] = [];
+            var fj: i32 = 0;
+            while (fj < free.len() - 1) { nf = nf.push(free[fj]); fj = fj + 1; }
+            free = nf;
+            reg_of = env_set_at(reg_of, v, reg);
+            act_val = act_val.push(v); act_hi = act_hi.push(hi[v]); act_reg = act_reg.push(reg);
+        }
+        oi = oi + 1;
+    }
+    return reg_of;
+}
+
 // dead_code_elim drops pure instructions (const / binary / unary / phi)
 // whose result is never used, iterating to a fixpoint. Params and calls
 // are always kept (calls may have side effects).
