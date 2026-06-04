@@ -556,8 +556,6 @@ function build_if(f: parser.StmtIf, s: BState): BState {
     var cond_val: i32 = s.cur_id();
     var pred_id: i32 = s.cur.id;
 
-    var has_else: boolean = f.else_body.len() > 0;
-
     var then_id: i32 = s.next_blk;
     var else_id: i32 = s.next_blk + 1;
     var merge_id: i32 = s.next_blk + 2;
@@ -568,10 +566,12 @@ function build_if(f: parser.StmtIf, s: BState): BState {
     var env0_names: string[] = s.var_names;
     var env0_vals: i32[] = s.var_vals;
 
-    // Terminate the predecessor with the conditional branch.
-    var false_target: i32 = merge_id;
-    if (has_else) { false_target = else_id; }
-    s = s.set_term(t_brif(cond_val, then_id, false_target));
+    // Terminate the predecessor with the conditional branch. The false edge
+    // always targets an explicit else block (empty when there's no `else`)
+    // that branches to the merge — so the merge is reached only by `br`
+    // edges, which is what phi-deconstruction in the backends relies on
+    // (a brif edge straight into a phi block would never copy its operand).
+    s = s.set_term(t_brif(cond_val, then_id, else_id));
     s = s.close_cur();
 
     // ---- then arm ----
@@ -587,24 +587,18 @@ function build_if(f: parser.StmtIf, s: BState): BState {
     if (then_reaches) { s = s.set_term(t_br(merge_id)); }
     s = s.close_cur();
 
-    // ---- else arm ----
-    var else_reaches: boolean = true;
-    var else_exit_id: i32 = pred_id;     // no-else: false edge is pred→merge
-    var else_names: string[] = env0_names;
-    var else_vals: i32[] = env0_vals;
-    if (has_else) {
-        var else_preds: i32[] = [pred_id];
-        s = s.open_block(else_id, else_preds);
-        s = s.set_env(env0_names, env0_vals);
-        s = build_stmts(f.else_body, s);
-        if (!s.ok) { return s; }
-        else_reaches = !s.terminated();
-        else_exit_id = s.cur.id;
-        else_names = s.var_names;
-        else_vals = s.var_vals;
-        if (else_reaches) { s = s.set_term(t_br(merge_id)); }
-        s = s.close_cur();
-    }
+    // ---- else arm (always built; empty when there's no `else`) ----
+    var else_preds: i32[] = [pred_id];
+    s = s.open_block(else_id, else_preds);
+    s = s.set_env(env0_names, env0_vals);
+    s = build_stmts(f.else_body, s);
+    if (!s.ok) { return s; }
+    var else_reaches: boolean = !s.terminated();
+    var else_exit_id: i32 = s.cur.id;
+    var else_names: string[] = s.var_names;
+    var else_vals: i32[] = s.var_vals;
+    if (else_reaches) { s = s.set_term(t_br(merge_id)); }
+    s = s.close_cur();
 
     // ---- merge ----
     var mpreds: i32[] = [];
