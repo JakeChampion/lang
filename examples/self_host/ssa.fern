@@ -281,6 +281,38 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 _ => { return s.fail(); }
             }
         },
+        parser.ExprString(strlit) => {
+            // A string is a byte sequence; lower it to the same length-
+            // prefixed array as ExprArray, one i32 per byte. s.len() and
+            // s[i] (a byte) then reuse the array path with no new ops.
+            var bytes: string = strlit.value;
+            var bn: i32 = bytes.len();
+            s = s.fresh();
+            var bhandle: i32 = s.cur_id();
+            var bna: i32[] = [];
+            s = s.emit(SInst { kind: "alloc", result: bhandle, args: bna, imm: bn + 1, str: "" });
+            s = s.kconst(0);
+            var blenidx: i32 = s.cur_id();
+            s = s.kconst(bn);
+            var blenval: i32 = s.cur_id();
+            s = s.fresh();
+            var bla0: i32[] = [bhandle, blenidx, blenval];
+            s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: bla0, imm: 0, str: "" });
+            var bi: i32 = 0;
+            while (bi < bn) {
+                s = s.kconst(bi + 1);
+                var bidx: i32 = s.cur_id();
+                s = s.kconst(bytes[bi]);
+                var bval: i32 = s.cur_id();
+                s = s.fresh();
+                var bsa: i32[] = [bhandle, bidx, bval];
+                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: bsa, imm: 0, str: "" });
+                bi = bi + 1;
+            }
+            s = s.fresh();
+            var bha: i32[] = [bhandle];
+            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: bha, imm: 0, str: "" });
+        },
         parser.ExprArray(arr) => {
             // Heap-allocate a length-prefixed i32 array: element 0 holds the
             // length, the n elements follow at 1..n. The expression's value
@@ -723,7 +755,8 @@ pub struct BResult { func: SFunc, ok: boolean }
 // `i32[]`). Scalars (i32 / bool) are not.
 pub function is_ptr_type(tn: string): boolean {
     if (tn.len() == 0) { return false; }
-    return tn[tn.len() - 1] == 93;   // ']'
+    if (tn == "string") { return true; }   // strings are byte-array pointers
+    return tn[tn.len() - 1] == 93;          // ']' — array types
 }
 
 pub function build_func(fd: parser.FuncDecl): BResult {
@@ -1360,6 +1393,31 @@ pub function compute_widths(f: SFunc): i32[] {
         }
     }
     return w;
+}
+
+// calls_all_known reports whether every `call` in f targets a name in
+// `known` (the program's user-defined functions). The SSA backend lowers a
+// call to `call __fn_<name>`, so a call to a builtin (print, write, …) or
+// any other unknown name can't be emitted — the caller bails to the AST
+// emitter in that case.
+pub function calls_all_known(f: SFunc, known: string[]): boolean {
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            if (ins.kind == "call") {
+                var found: boolean = false;
+                var j: i32 = 0;
+                while (j < known.len()) { if (known[j] == ins.str) { found = true; } j = j + 1; }
+                if (!found) { return false; }
+            }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return true;
 }
 
 pub function uses_memory(f: SFunc): boolean {

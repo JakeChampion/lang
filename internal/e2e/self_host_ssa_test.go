@@ -116,6 +116,12 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// the loop increment) collapse under CSE — the loop-header phi's
 		// back-edge operand must be rewritten to the survivor (cross-block).
 		{"cse-dup-increment", "function main(): i32 { var i = 0; var s = 0; while (i < 5) { s = s + (i + 1); i = i + 1; } return s; }", 15},
+		// Strings: a byte sequence lowered to the same length-prefixed array.
+		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
+		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
+		{"str-index-2", "function main(): i32 { var s = \"hi\"; return s[1]; }", 105},
+		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + s[i]; i = i + 1; } return t; }", 195},
+		{"str-empty", "function main(): i32 { var s = \"\"; return s.len(); }", 0},
 		// Still outside the subset → build_func bails (200).
 		{"float-bails", "function main(): i32 { var x = 1.5; return 0; }", 200},
 	}
