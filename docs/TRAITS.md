@@ -318,8 +318,9 @@ what makes traits *ergonomic* and is the lever that finally collapses the
    generics over `[T: Eq + Display]` — the self-host monomorphiser
    learned `T[]` parameters + array-literal element inference. The
    **map** families (two type params), the Ord-needing `sorted_*`
-   families, `@derive(Ord)`-for-enums and generic-enum derive remain
-   follow-ups.
+   families, `@derive(Ord)` is now supported for enums (variant-tag order,
+   then lexicographic payloads) and `impl Ord for string` was added.
+   Generic-enum derive and the Map collapse remain follow-ups.
 5. **Phase 5 (maybe):** `dyn Trait` objects, opaque types, if use cases
    appear.
 

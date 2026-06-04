@@ -22,6 +22,9 @@ import "std/i64";
 import "std/u32";
 import "std/u64";
 import "std/string";
+// For the lexicographic `impl Ord for string` (reuses the tested
+// byte-order comparator rather than re-deriving it).
+import "std/sort";
 
 pub trait Display {
     function to_string(self: Self): string;
@@ -107,5 +110,14 @@ impl Ord for u64 {
         if (self < other) { return 0 - 1; }
         if (self > other) { return 1; }
         return 0;
+    }
+}
+
+// Lexicographic byte-order comparison for strings, via std/sort's
+// tested comparator — so `[T: Ord]` generics (sorted-array asserts,
+// `@derive(Ord)` on a struct/enum with a string field) cover string.
+impl Ord for string {
+    function cmp(self: Self, other: Self): i32 {
+        return sort.string_cmp(self, other);
     }
 }

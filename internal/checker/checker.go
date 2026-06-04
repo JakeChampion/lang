@@ -2084,10 +2084,9 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			case "Display":
 				method = synthEnumDisplay(ed, recvType)
 			case "Ord":
-				c.errfCode(ed.P, "E021", "@derive(Ord) on enums is not supported yet")
-				continue
+				method = synthEnumOrd(ed, recvType)
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq and Display are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -2166,6 +2165,68 @@ func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	return &ast.FuncDecl{
 		Name: "to_string", Receiver: &ast.Param{Name: "self", Type: recv},
 		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
+// synthEnumOrd builds a variant-wise `cmp`: a variant declared earlier
+// sorts before one declared later (by tag); within the same variant,
+// payloads are compared lexicographically. `match self`, then for each
+// self-variant `match other` with one arm per other-variant returning
+// -1 / +1 by tag order, or the payload comparison when they match.
+func synthEnumOrd(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	negOne := func() ast.Expr {
+		return &ast.Binary{Op: "-", Left: &ast.NumberLit{Value: 0}, Right: &ast.NumberLit{Value: 1}}
+	}
+	retBlock := func(e ast.Expr) *ast.Block {
+		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
+	}
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for i, vi := range ed.Variants {
+		sBind := make([]string, len(vi.Payloads))
+		for k := range vi.Payloads {
+			sBind[k] = fmt.Sprintf("__s%d", k)
+		}
+		innerArms := make([]*ast.MatchArm, 0, len(ed.Variants))
+		for j, vj := range ed.Variants {
+			oBind := make([]string, len(vj.Payloads))
+			for k := range vj.Payloads {
+				oBind[k] = fmt.Sprintf("__o%d", k)
+			}
+			var body *ast.Block
+			if j < i {
+				body = retBlock(&ast.NumberLit{Value: 1}) // self's variant is later → greater
+			} else if j > i {
+				body = retBlock(negOne())
+			} else {
+				// Same variant: lexicographic payload compare. Both
+				// sBind (outer arm) and oBind (this arm) are in scope.
+				var stmts []ast.Stmt
+				for k := range vi.Payloads {
+					cn := fmt.Sprintf("__c%d", k)
+					stmts = append(stmts, &ast.Var{
+						Name: cn, Type: ast.NumberType{},
+						Init: methodCall(&ast.Ident{Name: sBind[k]}, "cmp", &ast.Ident{Name: oBind[k]}),
+					})
+					stmts = append(stmts, &ast.If{
+						Cond: &ast.Binary{Op: "!=", Left: &ast.Ident{Name: cn}, Right: &ast.NumberLit{Value: 0}},
+						Then: retBlock(&ast.Ident{Name: cn}),
+					})
+				}
+				stmts = append(stmts, &ast.Return{Value: &ast.NumberLit{Value: 0}})
+				body = &ast.Block{Stmts: stmts}
+			}
+			innerArms = append(innerArms, &ast.MatchArm{VariantName: vj.Name, Bindings: oBind, Body: body})
+		}
+		inner := &ast.Match{Tag: &ast.Ident{Name: "other"}, Arms: innerArms}
+		arms = append(arms, &ast.MatchArm{VariantName: vi.Name, Bindings: sBind, Body: &ast.Block{Stmts: []ast.Stmt{inner}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.NumberLit{Value: 0}},
+	}}
+	return &ast.FuncDecl{
+		Name: "cmp", Receiver: &ast.Param{Name: "self", Type: recv},
+		Params: []ast.Param{{Name: "other", Type: recv}}, ReturnType: ast.NumberType{}, Body: body,
 	}
 }
 
