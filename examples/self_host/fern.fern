@@ -144,9 +144,9 @@ function try_ssa(funcs: parser.FuncDecl[], target: string): SsaResult {
     while (i < funcs.len()) {
         var r: ssa.BResult = ssa.build_func(funcs[i]);
         if (!r.ok) { return SsaResult { asm: "", ok: false }; }
-        // Heap ops aren't lowered by the backends yet — fall back to the
-        // AST emitter for any program that uses memory.
-        if (ssa.uses_memory(r.func)) { return SsaResult { asm: "", ok: false }; }
+        // The x86-64 backend lowers heap ops; arm64 doesn't yet, so fall
+        // back to the AST emitter there for any program that uses memory.
+        if (target != "x86-64" && ssa.uses_memory(r.func)) { return SsaResult { asm: "", ok: false }; }
         if (funcs[i].name == "main") { has_main = true; }
         sfuncs = sfuncs.push(ssa.optimize(r.func));
         i = i + 1;

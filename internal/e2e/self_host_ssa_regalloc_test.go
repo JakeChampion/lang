@@ -154,6 +154,9 @@ func TestSelfHostSSARegallocX86_64(t *testing.T) {
 		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
 		{"recursion", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		{"call-spanning", "function id(x: i32): i32 { return x; } function main(): i32 { var a = 5; var b = id(7); return a + b; }", 12},
+		// Heap arrays with register allocation: pointer-width (64-bit) values
+		// must use the 64-bit register views.
+		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }", 75},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
