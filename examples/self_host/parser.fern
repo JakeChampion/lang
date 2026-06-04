@@ -877,7 +877,50 @@ function parse_binary(p: Par, min_prec: i32): ExprResult {
 }
 
 function parse_expr(p: Par): ExprResult {
-    return parse_binary(p, 1);
+    return parse_pipe(p);
+}
+
+// pipe_prepend builds [head] ++ tail — the argument list for a piped
+// call where `head` (the piped value) becomes the first argument.
+function pipe_prepend(head: Expr, tail: Expr[]): Expr[] {
+    var out: Expr[] = [head];
+    var i: i32 = 0;
+    while (i < tail.len()) {
+        out = out.push(tail[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
+// call's args → `f(x, a, b)`; `x |> f` (a bare callee) wraps it as a
+// single-arg call → `f(x)`. Mirrors the Go parser's parsePipe, lowering
+// to the same ExprCall the rest of the pipeline already handles.
+function pipe_desugar(left: Expr, right: Expr): Expr {
+    match (right) {
+        ExprCall(c) => { return e_call(c.callee, pipe_prepend(left, c.args)); },
+        _ => {
+            var one: Expr[] = [left];
+            return e_call(right, one);
+        }
+    }
+}
+
+// parse_pipe sits just above parse_binary (looser than every binary
+// operator, left-associative): the operands of `|>` are full binary
+// expressions and the pipe itself only binds at the expression top
+// level, matching the Go grammar (parseExpr -> parsePipe -> parseLogicOr).
+function parse_pipe(p: Par): ExprResult {
+    var left: ExprResult = parse_binary(p, 1);
+    p = left.par;
+    var acc: Expr = left.expr;
+    while (p.peek_punct() == "|>") {
+        p = p.advance();
+        var right: ExprResult = parse_binary(p, 1);
+        p = right.par;
+        acc = pipe_desugar(acc, right.expr);
+    }
+    return ExprResult { par: p, expr: acc };
 }
 
 // parse_stmt: `var x = expr;`, `return expr;`, or `expr;`.

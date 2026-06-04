@@ -122,6 +122,12 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21, ""},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1, ""},
 		{"func-with-local-vars", "function compute(a: i32): i32 { var b = a * 2; var c = b + 1; return c; } function main(): i32 { return compute(5); }", 11, ""},
+		// Pipe operator |> — desugars `x |> f(args)` to `f(x, args)`.
+		{"pipe-call", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 5 |> inc(); }", 6, ""},
+		{"pipe-bare-callee", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 5 |> inc; }", 6, ""},
+		{"pipe-extra-args", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return 5 |> add(10); }", 15, ""},
+		{"pipe-chained", "function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return 5 |> inc() |> dbl(); }", 12, ""},
+		{"pipe-binary-lhs", "function inc(n: i32): i32 { return n + 1; } function main(): i32 { return 2 + 3 |> inc(); }", 6, ""},
 		{"hello-arm64", "print(\"Hello, ARM64!\"); return 0;", 0, "Hello, ARM64!\n"},
 		{"print-twice", "print(\"line A\"); print(\"line B\"); return 0;", 0, "line A\nline B\n"},
 		{"print-then-return", "print(\"out\"); return 7;", 7, "out\n"},
