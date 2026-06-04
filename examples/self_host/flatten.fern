@@ -346,6 +346,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             name: new_name,
             receiver_name: fd.receiver_name,
             receiver_type: rewrite_type_name(fd.receiver_type, ctx),
+            type_params: fd.type_params,
             params: rewrite_params(fd.params, ctx),
             ret_type: rewrite_type_name(fd.ret_type, ctx),
             body: rewrite_block(fd.body, ctx)

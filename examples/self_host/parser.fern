@@ -161,7 +161,13 @@ pub struct ParamDecl { name: string, type_name: string }
 // receiver methods as plain functions for now (the receiver
 // is conceptually a hidden first parameter — a later slice
 // can prepend it to `params` during method-call lowering).
-pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, params: ParamDecl[], ret_type: string, body: Stmt[] }
+// type_params holds the BOUNDED type-parameter names (e.g. `["T"]` for
+// `function f[T: Eq](…)`). It's empty for non-generic functions and for
+// UNBOUNDED generics (`id[T]`), which the self-host still handles by
+// erasure. A non-empty type_params marks a function the monomorphiser
+// must clone per concrete call-site type — see monomorphize_module and
+// docs/TRAITS.md (self-host slice 2).
+pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ParamDecl[], ret_type: string, body: Stmt[] }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -1439,6 +1445,10 @@ function parse_func_decl(p: Par): FuncResult {
     p = p.advance();
     var empty_params: ParamDecl[] = [];
     var empty_body: Stmt[] = [];
+    // Bounded type-parameter names collected from a `[T: Bound]` list
+    // (empty for non-generic / unbounded-generic functions). Drives
+    // monomorphisation — see FuncDecl.type_params.
+    var bounded_tps: string[] = [];
     // Optional receiver clause: `function (recv: RecvType) name(…)`.
     // Distinguished from the param list by appearing before the
     // method name. A `(` immediately after `function` triggers
@@ -1461,25 +1471,45 @@ function parse_func_decl(p: Par): FuncResult {
     }
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
+        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
-    // Optional generic type parameters: `name[T]`, `name[T, U]`. The
-    // self-host ABI is a uniform 8-byte stack slot for every value
-    // (i32, ptr, …), so one emitted body is correct for every
-    // instantiation without cloning — type params are simply erased.
-    // Consume + discard the `[…]` so the param list parses.
+    // Optional generic type parameters: `name[T]`, `name[T: Bound, U]`.
+    // UNBOUNDED params are erased (the self-host ABI is a uniform 8-byte
+    // slot, so one body fits every instantiation). BOUNDED params name a
+    // trait whose methods the body calls on a `T`-typed value — those
+    // can't be erased (dynamic dispatch can't read a shape pointer off
+    // an unboxed primitive), so we record them for the monomorphiser.
+    // See docs/TRAITS.md (self-host slice 2).
     if (p.peek_punct() == "[") {
-        var gd: i32 = 0;
+        p = p.advance();
         while (!p.at_end()) {
-            var gpk: string = p.peek_punct();
-            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
-            if (gpk == "]") { gd = gd - 1; p = p.advance(); if (gd == 0) { break; } continue; }
+            if (p.peek_punct() == "]") { break; }
+            var tpname: string = p.peek_ident();
+            if (tpname.len() == 0) { p = p.advance(); continue; }
             p = p.advance();
+            var has_bound: boolean = false;
+            if (p.peek_punct() == ":") {
+                has_bound = true;
+                p = p.advance();
+                // Consume `Trait (+ Trait)*`, each possibly `mod.Trait`.
+                var go: boolean = true;
+                while (go && !p.at_end()) {
+                    if (p.peek_ident().len() > 0) { p = p.advance(); }
+                    if (p.peek_punct() == ".") {
+                        p = p.advance();
+                        if (p.peek_ident().len() > 0) { p = p.advance(); }
+                    }
+                    if (p.peek_punct() == "+") { p = p.advance(); } else { go = false; }
+                }
+            }
+            if (has_bound) { bounded_tps = bounded_tps.push(tpname); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
         }
+        if (p.peek_punct() == "]") { p = p.advance(); }
     }
     if (p.peek_punct() != "(") {
-        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, params: empty_params, ret_type: "", body: empty_body } };
+        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body } };
     }
     p = p.advance();
     var params: ParamDecl[] = [];
@@ -1502,7 +1532,7 @@ function parse_func_decl(p: Par): FuncResult {
     }
     var blk: BlockResult = parse_block(p);
     p = blk.par;
-    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, params: params, ret_type: ret_type, body: blk.body } };
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: blk.body } };
 }
 
 // parse_module is the entry point that handles both function
@@ -1700,7 +1730,8 @@ function parse_const_decl(p: Par): FuncResult {
     var body: Stmt[] = [];
     body = body.push(s_return(er.expr));
     var noparams: ParamDecl[] = [];
-    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", params: noparams, ret_type: ty, body: body } };
+    var notp: string[] = [];
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body } };
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -1879,6 +1910,7 @@ function parse_impl_decl(p: Par): ImplResult {
             name: m.name,
             receiver_name: rname,
             receiver_type: impl_type,
+            type_params: m.type_params,
             params: newparams,
             ret_type: rt,
             body: m.body
@@ -2030,6 +2062,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
             name: prefix + "." + fd.name,
             receiver_name: fd.receiver_name,
             receiver_type: fd.receiver_type,
+            type_params: fd.type_params,
             params: fd.params,
             ret_type: fd.ret_type,
             body: fd.body
@@ -2666,6 +2699,18 @@ function main(): i32 {
     var modGS: Module = parse_module(lexer.tokenize(srcGS));
     if (modGS.structs.len() != 1) { return 1084; }
     if (modGS.structs[0].fields[0].type_name != "Map[string, i32]") { return 1085; }
+
+    // BOUNDED type params are recorded on FuncDecl.type_params for the
+    // monomorphiser; UNBOUNDED ones stay erased (empty). See docs/TRAITS.md.
+    var srcBT: string = "function same[T: Eq + Display](a: T, b: T): i32 { return 0; }";
+    var modBT: Module = parse_module(lexer.tokenize(srcBT));
+    if (modBT.funcs[0].type_params.len() != 1) { return 1086; }
+    if (modBT.funcs[0].type_params[0] != "T") { return 1087; }
+    // The bound list is consumed; the param type stays the bare `T`.
+    if (modBT.funcs[0].params[0].type_name != "T") { return 1088; }
+    var srcUT: string = "function id[T](x: T): T { return x; }";
+    var modUT: Module = parse_module(lexer.tokenize(srcUT));
+    if (modUT.funcs[0].type_params.len() != 0) { return 1089; }
 
     // Module merge — flat-concatenate decls from a "main"
     // module with an "imported" module's decls.
