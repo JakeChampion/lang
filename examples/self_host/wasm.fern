@@ -688,7 +688,7 @@ function is_i64_expr(e: parser.Expr, cx: Ctx): boolean {
             return false;
         },
         parser.ExprBinary(b) => {
-            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+            if (is_int_binop(b.op)) {
                 return is_i64_expr(b.left, cx) || is_i64_expr(b.right, cx);
             }
             return false;
@@ -710,6 +710,14 @@ function is_i64_expr(e: parser.Expr, cx: Ctx): boolean {
     return false;
 }
 
+// is_int_binop is true for the integer binary ops whose RESULT is an
+// integer (arithmetic + bitwise) — so an i64 operand makes the whole
+// expression i64. Comparisons (i32 bool result) are excluded.
+function is_int_binop(op: string): boolean {
+    return op == "+" || op == "-" || op == "*" || op == "/" || op == "%"
+        || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>";
+}
+
 // wasm_binop_i64 maps a Fern operator to its i64 wasm instruction. Div /
 // rem route to the guarded i64 helpers (mirroring the i32 ops);
 // comparisons / logical ops produce an i32 result from i64 operands.
@@ -725,6 +733,11 @@ function wasm_binop_i64(op: string): string {
     if (op == ">=") { return "i64.ge_s"; }
     if (op == "==") { return "i64.eq"; }
     if (op == "!=") { return "i64.ne"; }
+    if (op == "&") { return "i64.and"; }
+    if (op == "|") { return "i64.or"; }
+    if (op == "^") { return "i64.xor"; }
+    if (op == "<<") { return "i64.shl"; }
+    if (op == ">>") { return "i64.shr_s"; }
     return "i64.add";
 }
 
@@ -763,7 +776,7 @@ function emit_i64(e: parser.Expr, cx: Ctx, depth: i32): string {
             }
         },
         parser.ExprBinary(b) => {
-            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+            if (is_int_binop(b.op)) {
                 return "(" + wasm_binop_i64(b.op) + " " + emit_i64(b.left, cx, depth) + " " + emit_i64(b.right, cx, depth) + ")";
             }
         },
@@ -1416,6 +1429,12 @@ function wasm_binop(op: string): string {
     if (op == "!=") { return "i32.ne"; }
     if (op == "&&") { return "i32.and"; }
     if (op == "||") { return "i32.or"; }
+    // Bitwise operators.
+    if (op == "&") { return "i32.and"; }
+    if (op == "|") { return "i32.or"; }
+    if (op == "^") { return "i32.xor"; }
+    if (op == "<<") { return "i32.shl"; }
+    if (op == ">>") { return "i32.shr_s"; }
     return "i32.add";
 }
 
@@ -3603,10 +3622,11 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         }
         pj = pj + 1;
     }
-    // A method's receiver is a struct-typed local.
+    // A method's receiver is a struct-typed local (a generic receiver
+    // `Box[T]` / `Box[i32]` strips to its base struct name).
     if (f.receiver_type.len() > 0) {
         sv_names = sv_names.push(f.receiver_name);
-        sv_types = sv_types.push(f.receiver_type);
+        sv_types = sv_types.push(base_type_name(f.receiver_type));
     }
     var i: i32 = 0;
     while (i < f.params.len()) {
@@ -3684,7 +3704,7 @@ function collect_method_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(mod.funcs[i].receiver_type); }
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.push(base_type_name(mod.funcs[i].receiver_type)); }
         i = i + 1;
     }
     return out;
@@ -3802,7 +3822,7 @@ function emit_func(f: parser.FuncDecl, tab: StrTable, str_funcs: string[], str_a
     var pnames: string[] = [];
     var head: string = "  (func $";
     if (f.receiver_type.len() > 0) {
-        fname = f.receiver_type + "__" + f.name;
+        fname = base_type_name(f.receiver_type) + "__" + f.name;
         head = head + fname + " (param $" + f.receiver_name + " i32)";
         pnames = pnames.push(f.receiver_name);
     } else {
