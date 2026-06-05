@@ -476,6 +476,25 @@ same code(s) the Go checker does — restricted to
   guards the scalar-unknown-stays-strict invariant. This narrows the
   type-model gap that blocks struct/union argument parity and (longer
   term) exhaustiveness.
+- **Slice 46 (done): E043 — struct-literal field-value type mismatch.**
+  Building on the slice-45 type model, `call_diags`' `ExprStructLit` arm
+  now checks each provided field's value type against the declared field
+  type (via `lookup_struct` + a new `field_index` helper) and emits E043
+  `field "f": expected X, got Y` at the value (Go's `f.Value.Pos()`).
+  Guarded on BOTH sides by `!is_unknown` — when the declared field type
+  doesn't resolve (cross-module struct types still mangle to `unknown`
+  here) or the value type is unresolved, the pair is skipped. That guard
+  is what makes it sound: an unguarded version produced ~370 false
+  positives per module (every `tok: lexer.Token` field, whose declared
+  type resolved to `unknown`); with the guard it's **zero** new false
+  positives across all thirteen modules. `P { x: 1, y: "no" }` for a
+  `y: i32` field → `2:48: error[E043]`, matching Go's code, position, and
+  message. Checker-only (fixpoint-safe). Gated by new corpus
+  (`struct-field-type-mismatch`, `struct-field-type-string-ok`) and
+  `check-position-struct-field-type`. *Next type-model step:* resolve
+  cross-module (mangled) struct/union names in field/param type strings,
+  which would lift the `unknown` guard's coverage here and unblock the
+  same comparison for struct-typed method args.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
