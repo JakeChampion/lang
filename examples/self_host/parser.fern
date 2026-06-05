@@ -130,7 +130,7 @@ pub struct PatVariant { type_name: string, binding: string }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32 }
-pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[] }
+pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32 }
 // StmtFor models `for VAR in EXPR { body }`. The iter expr
 // evaluates to an array (interp) / TypeArray (checker); the
 // loop binds `var_name` to each element in turn. break /
@@ -319,7 +319,10 @@ function s_assign_at(target: string, value: Expr, line: i32, col: i32): Stmt {
     return StmtAssign { target: target, value: value, line: line, col: col };
 }
 function s_match(scrutinee: Expr, arms: MatchArm[]): Stmt {
-    return StmtMatch { scrutinee: scrutinee, arms: arms };
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0 };
+}
+function s_match_at(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32): Stmt {
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col };
 }
 function p_variant(type_name: string, binding: string): Pattern {
     return PatVariant { type_name: type_name, binding: binding };
@@ -1215,6 +1218,9 @@ function parse_pattern(p: Par): PatternResult {
 pub struct MatchStmtResult { par: Par, stmt: Stmt }
 
 function parse_match_stmt(p: Par): MatchStmtResult {
+    // E030 (non-exhaustive match) is reported at the `match` keyword.
+    var mkline: i32 = p.peek_line();
+    var mkcol: i32 = p.peek_col();
     p = p.advance();  // consume `match`
     var empty_arms: MatchArm[] = [];
     if (p.peek_punct() != "(") {
@@ -1225,7 +1231,7 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     p = sr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
     if (p.peek_punct() != "{") {
-        return MatchStmtResult { par: p, stmt: s_match(sr.expr, empty_arms) };
+        return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, empty_arms, mkline, mkcol) };
     }
     p = p.advance();
     var arms: MatchArm[] = [];
@@ -1247,7 +1253,7 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return MatchStmtResult { par: p, stmt: s_match(sr.expr, arms) };
+    return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol) };
 }
 
 // parse_switch_arms consumes the `case` / `default` arms of a switch
@@ -2781,7 +2787,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
                 arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col });
                 i = i + 1;
             }
-            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
+            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col }, renv: env, rins2: cur };
         },
         _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
     }
@@ -2862,7 +2868,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
                     arms = arms.push(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col });
                     j = j + 1;
                 }
-                out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms });
+                out = out.push(StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col });
             },
             _ => { out = out.push(st); }
         }
@@ -3245,7 +3251,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
                 arms = arms.push(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col });
                 i = i + 1;
             }
-            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
+            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col }, renv: env, rins2: cur };
         },
         _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
     }
