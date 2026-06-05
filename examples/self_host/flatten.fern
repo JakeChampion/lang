@@ -142,13 +142,13 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
 pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
     match (e) {
         parser.ExprIdent(id) => {
-            return parser.ExprIdent { name: mangle_bare(id.name, ctx) };
+            return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col };
         },
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
-                        return parser.ExprIdent { name: id.name + "__" + fa.field };
+                        return parser.ExprIdent { name: id.name + "__" + fa.field, line: id.line, col: id.col };
                     }
                 },
                 _ => { }

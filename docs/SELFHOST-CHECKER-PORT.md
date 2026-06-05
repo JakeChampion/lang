@@ -312,6 +312,15 @@ same code(s) the Go checker does — restricted to
   matching Go. (E038 with a non-number argument still reports at 0 until
   the matching leaf node is positioned.) Fixpoint-safe. Gated by a new
   `check-position-number`.
+- **Slice 34 (done): `ExprIdent` positions → E036 + E038(ident) line:col.**
+  `ExprIdent` gains `line`/`col`, captured at the identifier token in
+  `parse_primary` via `e_ident_at`; the flatten mangle/qualified-collapse
+  and the mono callee rebuild propagate the original ident's position,
+  and the synthetic temps in `ssa` / `wasm` carry 0. `expr_line` /
+  `expr_col` gain an `ExprIdent` arm, so **E036** (ambiguous unqualified
+  variant) prints `3:32: error[E036]` and the ident-argument case of
+  **E038** prints `2:49: error[E038]`, both matching Go. Fixpoint-safe.
+  Gated by a new `check-position-ident`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

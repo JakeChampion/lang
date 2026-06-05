@@ -35,7 +35,7 @@ import "./lexer";
 // fewer variants to keep the union member count tractable.
 
 pub struct ExprNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
-pub struct ExprIdent { name: string }
+pub struct ExprIdent { name: string, line: i32, col: i32 }
 pub struct ExprString { value: string }
 pub struct ExprBool { value: boolean }
 pub struct ExprBinary { op: string, left: Expr, right: Expr }
@@ -244,7 +244,8 @@ function e_number(text: string, suffix: string, is_float: boolean): Expr {
 function e_number_at(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Expr {
     return ExprNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
 }
-function e_ident(name: string): Expr { return ExprIdent { name: name }; }
+function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, col: 0 }; }
+function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col }; }
 function e_string(value: string): Expr { return ExprString { value: value }; }
 function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
 function e_binary(op: string, left: Expr, right: Expr): Expr {
@@ -775,7 +776,7 @@ function parse_primary(p: Par): ExprResult {
             var idline: i32 = p.peek_line();
             var idcol: i32 = p.peek_col();
             p = p.advance();
-            var base: Expr = e_ident(x.name);
+            var base: Expr = e_ident_at(x.name, idline, idcol);
             // Map literal `Map { k0: v0, … }` — parsed in a helper
             // (kept out of this arm so it stays small enough for the
             // backend's branch-displacement limits).
@@ -2605,7 +2606,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                         if (ct.len() > 0) {
                             var mang: string = cid.name + "__" + ct;
                             cur = cur.iadd(cid.name, ct);
-                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs, line: c.line, col: c.col }, rins: cur };
+                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col }, rins: cur };
                         }
                     }
                 },

@@ -2113,7 +2113,7 @@ function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
     match (e) {
         parser.ExprIdent(id) => {
             if (name_in(ambig, id.name) && is_unknown(s.lookup(id.name))) {
-                out = out.push(dg("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference"));
+                out = out.push(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
             }
         },
         parser.ExprBinary(b) => { out = append_diags(vref_expr(b.left, s, ambig), vref_expr(b.right, s, ambig)); },
@@ -2284,6 +2284,7 @@ function dg_at(code: string, message: string, line: i32, col: i32): Diag {
 function expr_line(e: parser.Expr): i32 {
     match (e) {
         parser.ExprNumber(n) => { return n.line; },
+        parser.ExprIdent(id) => { return id.line; },
         parser.ExprCall(c) => { return c.line; },
         parser.ExprStructLit(s) => { return s.line; },
         _ => { return 0; }
@@ -2292,6 +2293,7 @@ function expr_line(e: parser.Expr): i32 {
 function expr_col(e: parser.Expr): i32 {
     match (e) {
         parser.ExprNumber(n) => { return n.col; },
+        parser.ExprIdent(id) => { return id.col; },
         parser.ExprCall(c) => { return c.col; },
         parser.ExprStructLit(s) => { return s.col; },
         _ => { return 0; }
