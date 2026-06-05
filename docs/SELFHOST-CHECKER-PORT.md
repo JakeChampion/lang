@@ -125,8 +125,14 @@ same code(s) the Go checker does — restricted to
   `break` / `continue` reached outside a loop — so a `break` in a match arm
   is legal only when that match is inside a loop (matching the Go checker).
   Purely structural, no scope.
-- **Later: control flow** (E012 return without value), pattern matching
-  (E014/E025/E036), traits (E021).
+- **Slice 10 (done): return without value** (E012). A bare `return;`
+  parses to a `punct:;` placeholder value; in a function with a declared
+  (non-void) return type — the only context `ret_diags` runs in — that's
+  E012. Void functions (no declared return) never reach `ret_diags`, so a
+  bare `return;` there is fine, matching the Go checker.
+- **Later: pattern matching** (E014/E025/E036), traits (E021), tuples /
+  maps / slices, owned-parameter move checking (E050/E051), then source
+  positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
