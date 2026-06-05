@@ -40,7 +40,7 @@ pub struct ExprString { value: string }
 pub struct ExprBool { value: boolean }
 pub struct ExprBinary { op: string, left: Expr, right: Expr }
 pub struct ExprUnary { op: string, operand: Expr }
-pub struct ExprCall { callee: Expr, args: Expr[] }
+pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32 }
 // Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
 // the checker rejects an empty literal in inference contexts
 // because it can't infer the element type.
@@ -248,7 +248,8 @@ function e_binary(op: string, left: Expr, right: Expr): Expr {
     return ExprBinary { op: op, left: left, right: right };
 }
 function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand }; }
-function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args }; }
+function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0 }; }
+function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col }; }
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index }; }
@@ -541,6 +542,10 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
     while (true) {
         var pk: string = p.peek_punct();
         if (pk == "(") {
+            // The Go parser positions a Call at its opening paren
+            // (`Call{P: open.Pos}`), so E004 (arity) lands here.
+            var oline: i32 = p.peek_line();
+            var ocol: i32 = p.peek_col();
             p = p.advance();
             var args: Expr[] = [];
             if (p.peek_punct() != ")") {
@@ -556,7 +561,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 return ExprResult { par: p, expr: e_unknown("missing ) in call") };
             }
             p = p.advance();
-            base = e_call(base, args);
+            base = e_call_at(base, args, oline, ocol);
         } else if (pk == "[") {
             p = p.advance();
             // Generic instantiation `f[i32](…)` / `Box[T] { … }`: the
@@ -2595,7 +2600,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                         if (ct.len() > 0) {
                             var mang: string = cid.name + "__" + ct;
                             cur = cur.iadd(cid.name, ct);
-                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs }, rins: cur };
+                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang }, args: nargs, line: c.line, col: c.col }, rins: cur };
                         }
                     }
                 },
@@ -2613,7 +2618,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
-                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2 }, args: nargs }, rins: cur };
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2 }, args: nargs, line: c.line, col: c.col }, rins: cur };
                                 }
                             }
                         },
@@ -2623,7 +2628,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                 _ => {}
             }
             var rc: RExpr = mono_expr(c.callee, env, funcs, cur);
-            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs }, rins: rc.rins };
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col }, rins: rc.rins };
         },
         ExprArray(a) => {
             var els: Expr[] = [];
@@ -3068,7 +3073,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 nargs = nargs.push(ra.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs }, rins: cur };
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col }, rins: cur };
         },
         ExprArray(a) => {
             var els: Expr[] = [];

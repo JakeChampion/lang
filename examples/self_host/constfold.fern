@@ -149,7 +149,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             var args: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) { args = args.push(fold_expr(c.args[i])); i = i + 1; }
-            return parser.ExprCall { callee: fold_expr(c.callee), args: args };
+            return parser.ExprCall { callee: fold_expr(c.callee), args: args, line: c.line, col: c.col };
         },
         parser.ExprTuple(t) => {
             var elems: parser.Expr[] = [];

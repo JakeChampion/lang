@@ -1892,7 +1892,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         var sig: FuncSig = s.lookup_sig(id.name);
                         if (sig.name.len() > 0) {
                             if (c.args.len() != sig.param_types.len()) {
-                                out = out.push(dg("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len())));
+                                out = out.push(dg_at("E004", "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()), c.line, c.col));
                             } else {
                                 // E038: per-argument type mismatch (only when
                                 // the arity matches, so indices line up).

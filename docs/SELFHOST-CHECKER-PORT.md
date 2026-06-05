@@ -293,6 +293,15 @@ same code(s) the Go checker does — restricted to
   rebuilds propagate. **E005** (struct literal missing field) now prints
   `2:35: error[E005]`, matching Go. Fixpoint-safe (the field is
   codegen-ignored). Gated by a new `check-position-structlit`.
+- **Slice 32 (done): `ExprCall` positions → E004 line:col.**
+  `ExprCall` gains `line`/`col`, captured at the call's **opening paren**
+  in `parse_postfix` (matching the Go parser's `Call{P: open.Pos}`, not
+  the callee start) via `e_call_at`; the mono / `flatten` / `constfold`
+  rebuilds propagate, and the synthetic `for`-desugar calls in `ssa`
+  carry 0. **E004** (free-call arity mismatch) now prints
+  `2:32: error[E004]`, matching Go. Fixpoint-safe. Gated by a new
+  `check-position-call`. (E038 — per-argument type mismatch — reports at
+  the *argument's* position, so it waits on leaf-expression positions.)
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
