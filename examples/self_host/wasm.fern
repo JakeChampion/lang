@@ -2930,6 +2930,25 @@ function eprint_func_p1(): string {
     return o;
 }
 
+// exit_func emits $__fern_exit(code): terminate the program. In component-io
+// it calls wasi:cli/exit's exit with `code` as the result discriminant (0 =
+// ok → exit 0, 1 = err → exit 1; a code > 1 is an invalid discriminant and
+// traps, mirroring the native compiler); in the preview1 / command path it
+// calls proc_exit(code), which honours the raw code. Either import diverges,
+// so the trailing `unreachable` keeps the (void) function well-formed without
+// a fallthrough path.
+function exit_func(component_io: boolean): string {
+    var o: string = "";
+    o = o + "  (func $__fern_exit (param $c i32)\n";
+    if (component_io) {
+        o = o + "    (call $exit (local.get $c))\n";
+    } else {
+        o = o + "    (call $proc_exit (local.get $c))\n";
+    }
+    o = o + "    (unreachable))\n";
+    return o;
+}
+
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
@@ -4316,6 +4335,11 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                             // (the preview2 stderr shim or the preview1 fd 2 path).
                             if (id.name == "eprint" && c.args.len() == 1) {
                                 return st.w("    (call $__fern_eprint " + emit_expr(c.args[0], st.cx, 0) + ")\n");
+                            }
+                            // exit(code): terminate via $__fern_exit (wasi:cli/exit
+                            // in component-io, proc_exit in the preview1 path).
+                            if (id.name == "exit" && c.args.len() == 1) {
+                                return st.w("    (call $__fern_exit " + emit_expr(c.args[0], st.cx, 0) + ")\n");
                             }
                             if (id.name == "print_int" && c.args.len() == 1) {
                                 if (is_i64_expr(c.args[0], st.cx)) {
@@ -6076,6 +6100,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_wallclock: boolean = module_calls(mod, "now_unix_ms") || module_calls(mod, "now_ns");
     var has_monoclock: boolean = module_calls(mod, "monotonic_ns");
     var has_eprint: boolean = module_calls(mod, "eprint");
+    var has_exit: boolean = module_calls(mod, "exit");
     var has_i64: boolean = module_uses_i64(mod);
 
     var out: string = "(module\n";
@@ -6104,6 +6129,13 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             out = out + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
             out = out + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
         }
+    }
+    // exit's wasi:cli/exit import sits immediately after the stdout pair (the
+    // native compiler's canonical slot, before random/clocks/args/env/fs).
+    // exit's status is a result discriminant: 0 = ok, 1 = err; the lowered
+    // import takes it as an i32.
+    if (component && io && has_exit) {
+        out = out + "  (import \"wasi:cli/exit@0.2.0\" \"exit\" (func $exit (param i32)))\n";
     }
     // wasi imports must sit in the import section (before funcs), and the
     // preview2-native (io) path emits them in the native compiler's canonical
@@ -6174,6 +6206,13 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // preview1 fd_write(2) helper (adapter / command path).
     if (has_eprint && !(component && io)) {
         out = out + eprint_func_p1();
+    }
+    // exit's terminator: wasi:cli/exit (component-io) or proc_exit (preview1).
+    // The no-I/O component path (component && !io) imports neither, so exit is
+    // only wired where its mechanism exists — the realistic CLI (preview1) and
+    // component-io targets.
+    if (has_exit && (!component || io)) {
+        out = out + exit_func(component && io);
     }
     // The string runtime is needed for string literals AND for the string
     // values that env() / args() produce; the map runtime's key-equality
