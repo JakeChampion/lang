@@ -1379,18 +1379,15 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // effects and don't return them yet. Returns true if every body
 // stmt type-checked (no TypeUnknown anywhere); the caller can
 // use that to count well-typed function bodies for diagnostics.
-function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
+// build_func_scope seeds a fresh scope for a function body: the declared
+// ret_type (so StmtReturn arms can compare against it), the receiver (for
+// methods), then the parameters. Shared by check_func_body and the
+// coded-diagnostic walks so they bind names identically.
+function build_func_scope(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
-    // Tag the scope with the declared ret_type so StmtReturn
-    // arms inside the body (at any nesting depth) can compare
-    // their value type against it.
     if (fd.ret_type.len() > 0) {
         s = s.with_ret_type(type_from_name_with_structs_unions(fd.ret_type, structs, unions));
     }
-    // Receiver methods bind the receiver as a first scope entry
-    // before walking params. The receiver's type is the
-    // declared receiver_type (resolved via the same path as
-    // params + ret_type).
     if (fd.receiver_name.len() > 0) {
         s = s.bind(fd.receiver_name, type_from_name_with_structs_unions(fd.receiver_type, structs, unions));
     }
@@ -1399,6 +1396,11 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
         s = s.bind(fd.params[i].name, type_from_name_with_structs_unions(fd.params[i].type_name, structs, unions));
         i = i + 1;
     }
+    return s;
+}
+
+function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
+    var s: Scope = build_func_scope(fd, sigs, structs, unions, methods);
     var ok: boolean = true;
     var j: i32 = 0;
     while (j < fd.body.len()) {
@@ -1408,6 +1410,79 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
         j = j + 1;
     }
     return ok;
+}
+
+// type_label renders a Type as a friendly name for a diagnostic message
+// (messages aren't part of the differential gate — codes are — so this is
+// best-effort).
+function type_label(t: Type): string {
+    match (t) {
+        TypeI32(_) => { return "i32"; },
+        TypeBool(_) => { return "bool"; },
+        TypeString(_) => { return "string"; },
+        TypeFloat(_) => { return "f64"; },
+        TypeArray(a) => { return type_label(a.elem) + "[]"; },
+        TypeStruct(sd) => { return sd.name; },
+        TypeTuple(_) => { return "tuple"; },
+        TypeFunc(_) => { return "fn"; },
+        TypeMap(_) => { return "map"; },
+        TypeUnion(u) => { return u.name; },
+        TypeUnknown(_) => { return "unknown"; },
+    }
+    return "unknown";
+}
+
+// append_diags concatenates two diagnostic lists.
+function append_diags(a: Diag[], b: Diag[]): Diag[] {
+    var i: i32 = 0;
+    while (i < b.len()) { a = a.push(b[i]); i = i + 1; }
+    return a;
+}
+
+// ret_diags walks a function body (recursing through if / while / for /
+// match / defer sub-bodies, threading scope so a return can see locals
+// declared earlier in the same block) and emits E002 for each return
+// whose value type isn't assignable to the function's declared return
+// type. It reuses the SAME `type_assignable` predicate check_stmt uses to
+// flag the mismatch, so it introduces no new false positives — it only
+// attaches the stable code. Branch-local bindings don't leak (each
+// sub-body re-threads from the scope at the block), and a return value /
+// ret_type that infers `unknown` is skipped (a separate error already).
+function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSig[]): Diag[] {
+    var out: Diag[] = [];
+    if (is_unknown(ret_ty)) { return out; }
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtReturn(r) => {
+                var t: Type = check_expr(r.value, cur);
+                if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
+                    out = out.push(Diag { code: "E002", message: "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) });
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, ret_diags(f.then_body, cur, ret_ty, unions));
+                out = append_diags(out, ret_diags(f.else_body, cur, ret_ty, unions));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, ret_diags(w.body, cur, ret_ty, unions)); },
+            parser.StmtFor(fr) => { out = append_diags(out, ret_diags(fr.body, cur, ret_ty, unions)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, ret_diags(m.arms[a].body, cur, ret_ty, unions)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, ret_diags(one, cur, ret_ty, unions));
+            },
+            _ => { }
+        }
+        // Advance the scope so a later return sees bindings from a `var`.
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
 }
 
 // check_module is the new entry point for sources that declare
@@ -1536,9 +1611,16 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     if (!validate_union_sigs(unions, struct_names)) { well_typed = false; }
     var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
     var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
+    var body_diags: Diag[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
+        // E002: return-type mismatch, per function (recursing into nested
+        // blocks). Only meaningful when a return type is declared.
+        if (mod.funcs[i].ret_type.len() > 0) {
+            var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
+            body_diags = append_diags(body_diags, ret_diags(mod.funcs[i].body, fsc, fsc.ret_type, unions));
+        }
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -1551,7 +1633,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         top_tys = top_tys.push(r.ty);
         j = j + 1;
     }
-    var dd: Diag[] = collect_decl_diags(mod);
+    var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }

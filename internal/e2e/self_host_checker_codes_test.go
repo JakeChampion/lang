@@ -25,6 +25,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 // emits codes the self-host port hasn't reached yet. Each checker-port
 // slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
 var selfHostImplementedCodes = map[string]bool{
+	"E002": true, // return-type mismatch
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
 	"E018": true, // duplicate parameter
@@ -143,6 +144,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"func-redeclared", "function f(): i32 { return 1; }\nfunction f(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"method-redeclared", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"free-and-method-same-name-ok", "struct P { x: i32 }\nfunction m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", []string{"E002"}},
+		{"return-mismatch-nested", "function f(): i32 { if (true) { return \"no\"; } return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"return-ok", "function f(): string { var s: string = \"x\"; return s; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
