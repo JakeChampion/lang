@@ -279,11 +279,31 @@ analysis, which is independent, pure, and de-risks the design.
   new e2e soundness + bounded-heap guards on all three backends; the
   differential gate stays byte-identical.
 
-  **Remaining sub-slices:** admit array/string/non-uniform-payload enums
-  and string-containing structs/tuples; then the **borrow-inference**
-  optimization (Slice 0's `inferParamEscapes`) that keeps a read-only
-  non-escaping param borrowed to skip the inc/dec — the step that makes
-  `own` truly unnecessary.
+  **Sub-slice 2d — borrow inference — DONE (default on,
+  `BorrowInferEnabled`).** The headline optimization that makes `own`
+  redundant: a parameter the escape analysis (`inferParamEscapes`, Slice 0)
+  proves cannot escape the callee is kept BORROWED rather than owned — the
+  caller skips the retain inc and the callee skips the exit dec, since a
+  balanced inc/dec pair on a non-escaping value can only change rc traffic,
+  never observable behaviour. A fresh-temp arg passed to a borrowed reader
+  is reclaimed by the caller's existing arg-temp path (`freshOwnedRcTempType`
+  / `ownedCallResultType`). `paramBorrowable(fn, i)` (escapes[fn][i] ==
+  false) is consulted on BOTH the definition side (`paramOwnedByDefault`)
+  and the call site (`calleeParamOwnedByDefault`) so they agree — except a
+  **consume-safe TRMC callee**, which always frees its scrutinee in the
+  loop and so stays owned at the call site regardless of escape facts (the
+  precedence fix that avoids a double free: the caller must not also reclaim
+  a cell the loop already freed). Verified: the differential gate
+  (`Test{X86_64,Arm64,WASM}BorrowInferMatchesOwned`) is byte-identical on
+  the whole corpus; IR tests pin that a pure reader loses both its
+  caller-side incs and its callee-side reclamation while an escaping
+  (returned) param stays owned.
+
+  **Remaining sub-slices (optional, later):** admit array/string/
+  non-uniform-payload enums and string-containing structs/tuples into
+  owned-by-default (more reclaim coverage; borrow inference already skips
+  the inc/dec for the non-escaping readers among them via the borrow
+  fallback).
 
 - **Slice 3 — demote `own` to optional + add the checked guarantee.**
   With inference driving reclaim, `own` is no longer required. Keep it

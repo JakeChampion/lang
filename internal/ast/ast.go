@@ -553,6 +553,19 @@ var EnumRcPayloads = true
 // OFF by default until the model is complete and the suite is green.
 var OwnedByDefault = true
 
+// BorrowInferEnabled (Slice 2 / borrow inference, docs/OWNERSHIP-INFERENCE-PLAN.md)
+// is the optimization that rides on top of OwnedByDefault: a parameter that the
+// escape analysis (inferParamEscapes) proves does NOT escape the callee is kept
+// BORROWED instead of owned — the caller skips the retain inc and the callee
+// skips the exit dec, since the value can't outlive the call frame and the
+// caller still owns it (a fresh-temp arg is reclaimed by the caller's arg-temp
+// path). This removes the inc/dec pair for the common reader (`len`/`sum`/field
+// fold) called on a live local — the step that makes `own` truly redundant. Like
+// the other rc axes it can never change observable output (a balanced inc/dec
+// pair elided on a non-escaping value), so the differential gate pins on == off
+// byte-identical. Default on.
+var BorrowInferEnabled = true
+
 var RcReuseEnabled = true
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR

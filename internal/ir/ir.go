@@ -802,8 +802,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// pointer-returning callee (findReturnsNoParamEscape).
 	returnsNoParamEscape := findReturnsNoParamEscape(prog, info)
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
+	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
+	// Both the definition side (paramOwnedByDefault) and the call site
+	// (calleeParamOwnedByDefault) consult this so they agree on which
+	// owned-by-default params are kept borrowed.
+	paramEscapes := inferParamEscapes(prog, info)
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
 		if err != nil {
 			return nil, err
 		}
@@ -2133,6 +2138,11 @@ type builder struct {
 	// findReturnsNoParamEscape. The stage-(b) arg-temp reclaim reads it to
 	// safely dec an owned temp passed to a POINTER-returning such callee.
 	returnsNoParamEscape map[string]bool
+	// paramEscapes[name][i] is true when parameter i of function `name` can
+	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
+	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
+	// dec — read consistently on both the definition and call sides so they agree.
+	paramEscapes map[string][]bool
 	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
 	// excludes their params from owned-by-default (their exit bypasses the sweep).
 	trmcFuncs map[string]bool
@@ -2395,7 +2405,7 @@ func (b *builder) emitDeferCleanup() error {
 // stable set since taint can flow backward through `x = f(y)`.
 func (b *builder) computeFreeEligible() map[string]bool {
 	tainted := map[string]bool{}
-	for _, p := range b.fn.Params {
+	for i, p := range b.fn.Params {
 		// `own` (consuming) params are OWNED by the callee — they're
 		// freeEligible (reclaimed / reused here) rather than borrowed, the
 		// reverse of the default. The caller transferred ownership (move-on-call
@@ -2404,7 +2414,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// returned-as-alias), so an owned-but-escaping param leaks safely
 		// instead of double-freeing. Move-on-consume (passing it onward to
 		// another `own` param) skips its drop via computeMovedLocals.
-		if !p.Own && !b.paramOwnedByDefault(p.Type) {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) {
 			tainted[p.Name] = true
 		}
 	}
@@ -2688,10 +2698,10 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// the loop above never reaches them. Add each untainted own param of a
 	// reclaimable type (the un-taint at the top kept them out of `tainted`; an
 	// own param that escapes was re-tainted and is skipped here).
-	for _, p := range b.fn.Params {
+	for i, p := range b.fn.Params {
 		// `own` params and (Slice 2) owned-by-default params are both reclaimed
 		// by the callee; an escaped one was re-tainted and is skipped here.
-		if (!p.Own && !b.paramOwnedByDefault(p.Type)) || tainted[p.Name] {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i)) || tainted[p.Name] {
 			continue
 		}
 		switch t := p.Type.(type) {
@@ -4260,8 +4270,8 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// in `seen` (b.movedLocals) and skipped, so the value is freed exactly once
 	// at the end of the transfer chain; an own param that escaped is not
 	// freeEligible (re-tainted) and is likewise skipped.
-	for _, p := range b.fn.Params {
-		if (!p.Own && !b.paramOwnedByDefault(p.Type)) || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
+	for i, p := range b.fn.Params {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i)) || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
 			continue
 		}
 		seen[p.Name] = true
@@ -5949,7 +5959,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5971,6 +5981,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		returnsNoParamEscape: returnsNoParamEscape,
 		trmcFuncs:            trmcFuncs,
 		trmcConsumeSafe:      trmcConsumeSafe,
+		paramEscapes:         paramEscapes,
 		thisIsPair:           pairForm[fn.Name],
 	}
 	if b.thisIsPair {
@@ -6439,21 +6450,50 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 	return false
 }
 
+// paramBorrowable reports whether parameter `i` of function `fnName` is kept
+// BORROWED by borrow inference (BorrowInferEnabled): the escape analysis proved
+// it cannot escape the callee, so the owned-by-default inc/dec pair is redundant
+// (the value can't outlive the call frame; the caller still owns it and reclaims
+// a fresh-temp arg through the arg-temp path). Both the definition side and the
+// call site consult this so they agree on which params skip the inc/dec.
+func (b *builder) paramBorrowable(fnName string, i int) bool {
+	if !ast.BorrowInferEnabled {
+		return false
+	}
+	esc, ok := b.paramEscapes[fnName]
+	return ok && i < len(esc) && !esc[i]
+}
+
 // paramOwnedByDefault: a parameter of the CURRENT function is owned-by-default
-// unless the function lowers via TRMC (its exit bypasses the param sweep).
-func (b *builder) paramOwnedByDefault(t ast.Type) bool {
-	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[b.fn.Name]
+// unless the function lowers via TRMC (its exit bypasses the param sweep) or
+// borrow inference keeps it borrowed (non-escaping → the exit dec is redundant).
+func (b *builder) paramOwnedByDefault(t ast.Type, i int) bool {
+	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[b.fn.Name] && !b.paramBorrowable(b.fn.Name, i)
 }
 
 // calleeParamOwnedByDefault: the CALLEE reclaims this parameter (so the caller
 // must retain an aliased arg) unless the callee lowers via TRMC — except a
 // consume-safe TRMC callee, which DOES reclaim its scrutinee cell-by-cell in the
-// loop and so is owned-by-default at the call site.
-func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type) bool {
+// loop and so is owned-by-default at the call site — or borrow inference keeps
+// the callee's param borrowed (non-escaping → the caller's retain inc is
+// redundant). The escape fact is global per function, so this matches the
+// callee's own paramOwnedByDefault verdict.
+func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type, i int) bool {
 	if !b.isOwnedByDefaultType(t) {
 		return false
 	}
-	return !b.trmcFuncs[callee] || b.trmcConsumeSafe[callee]
+	// A consume-safe TRMC callee ALWAYS frees its scrutinee cell-by-cell in the
+	// loop, so it is owned at the call site no matter what the escape analysis
+	// says — borrow inference must not flip it to borrowed (the caller would then
+	// also reclaim the arg the loop already freed: a double free). This takes
+	// precedence over paramBorrowable.
+	if b.trmcConsumeSafe[callee] {
+		return true
+	}
+	if b.paramBorrowable(callee, i) {
+		return false
+	}
+	return !b.trmcFuncs[callee]
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
@@ -11568,11 +11608,11 @@ func (b *builder) callBody(n *ast.Call) error {
 		if ai < len(ownArgFlags) && ownArgFlags[ai] {
 			return true
 		}
-		return calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai])
+		return calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai], ai)
 	}
 	ownedByDefaultAt := func(ai int) bool {
 		return !(ai < len(ownArgFlags) && ownArgFlags[ai]) &&
-			calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai])
+			calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai], ai)
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
