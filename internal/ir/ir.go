@@ -801,8 +801,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// stage-(b) arg-temp reclaim safely free an owned temp passed to a
 	// pointer-returning callee (findReturnsNoParamEscape).
 	returnsNoParamEscape := findReturnsNoParamEscape(prog, info)
+	trmcFuncs := findTrmcFuncs(prog, info, ptrW, pairForm)
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs)
 		if err != nil {
 			return nil, err
 		}
@@ -1086,6 +1087,27 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[stri
 // starts optimistic (all true) and removes any function whose body contradicts
 // the property — the greatest fixpoint, so a self-recursive fresh-returner like
 // `dup` (returns `Cons(h, t.dup())`) correctly stays true.
+// findTrmcFuncs returns the set of functions that will lower via the TRMC
+// hole-passing loop (detectTrmc + TrmcEnabled). Their custom loop exit bypasses
+// the normal param exit-sweep, so Slice 2 (OwnedByDefault) excludes a TRMC
+// function's parameters from owned-by-default — they keep the borrow model until
+// TRMC itself is taught to free its scrutinee (a follow-up sub-slice). Used at
+// both the definition side (the function's own params) and the call site (a
+// TRMC callee doesn't reclaim its argument, so the caller must not retain it).
+func findTrmcFuncs(prog *ast.Program, info *checker.Info, ptrW int, pairForm map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	if !ast.TrmcEnabled {
+		return out
+	}
+	for _, fn := range prog.Funcs {
+		lb := &builder{info: info, fn: fn, ptrW: ptrW, pairForm: pairForm, thisIsPair: pairForm[fn.Name]}
+		if lb.detectTrmc() != nil {
+			out[fn.Name] = true
+		}
+	}
+	return out
+}
+
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
 	// Variant-constructor name -> payload types, for the construction recursion.
 	variantPayloads := map[string][]ast.Type{}
@@ -2100,6 +2122,9 @@ type builder struct {
 	// findReturnsNoParamEscape. The stage-(b) arg-temp reclaim reads it to
 	// safely dec an owned temp passed to a POINTER-returning such callee.
 	returnsNoParamEscape map[string]bool
+	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
+	// excludes their params from owned-by-default (their exit bypasses the sweep).
+	trmcFuncs map[string]bool
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -2357,7 +2382,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// returned-as-alias), so an owned-but-escaping param leaks safely
 		// instead of double-freeing. Move-on-consume (passing it onward to
 		// another `own` param) skips its drop via computeMovedLocals.
-		if !p.Own {
+		if !p.Own && !b.paramOwnedByDefault(p.Type) {
 			tainted[p.Name] = true
 		}
 	}
@@ -2642,7 +2667,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// reclaimable type (the un-taint at the top kept them out of `tainted`; an
 	// own param that escapes was re-tainted and is skipped here).
 	for _, p := range b.fn.Params {
-		if !p.Own || tainted[p.Name] {
+		// `own` params and (Slice 2) owned-by-default params are both reclaimed
+		// by the callee; an escaped one was re-tainted and is skipped here.
+		if (!p.Own && !b.paramOwnedByDefault(p.Type)) || tainted[p.Name] {
 			continue
 		}
 		switch t := p.Type.(type) {
@@ -4212,7 +4239,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// at the end of the transfer chain; an own param that escaped is not
 	// freeEligible (re-tainted) and is likewise skipped.
 	for _, p := range b.fn.Params {
-		if !p.Own || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type)) || !rcTracked(p.Type) || seen[p.Name] || !b.freeEligible[p.Name] {
 			continue
 		}
 		seen[p.Name] = true
@@ -5900,7 +5927,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5920,6 +5947,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		genEnumDrops:         genEnumDrops,
 		genTupleDrops:        genTupleDrops,
 		returnsNoParamEscape: returnsNoParamEscape,
+		trmcFuncs:            trmcFuncs,
 		thisIsPair:           pairForm[fn.Name],
 	}
 	if b.thisIsPair {
@@ -6330,6 +6358,50 @@ func (b *builder) payloadWidthForCalleeReturn(retType ast.Type) int {
 // the move model (flag-off behaviour) at every site, a documented safe leak.
 func (b *builder) enumRcPayloadsEligible(enumName string) bool {
 	return ast.EnumRcPayloads && !b.enumTransitivelyContainsMap(enumName, map[string]bool{})
+}
+
+// isOwnedByDefaultType reports whether a parameter of type `t` is owned by the
+// callee under Slice 2 (OwnedByDefault). Rolled out per category, enums first:
+// they're immutable (so the caller-side retain inc can't disturb the in-place
+// mutation the borrow model protects) and, post-1b, their boxes are rc-counted
+// and deep-droppable. The callee reclaims such a parameter at exit; the caller
+// retains it with an inc at the call site.
+func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
+	if !ast.OwnedByDefault {
+		return false
+	}
+	if et, ok := t.(ast.EnumType); ok {
+		// First sub-slice: only enums whose deep drop is a pure, fully-wired
+		// box/enum walk — transitively scalar/enum/tuple payloads (no array /
+		// string / Map, keeping the array-payload deep-drop + self-overwrite-
+		// reuse interaction out of scope, e.g. `enum Bag { Keep(i32[]) }`) AND a
+		// UNIFORM box layout (emitDec only frees a uniform enum; a non-uniform
+		// one like `Shape { Circle(i32), Rect(i32,i32) }` flat-decs without
+		// freeing, so owned-by-default would mis-reclaim it). That is the FBIP
+		// list/tree case; other enums keep the borrow model for now.
+		if !b.enumRcPayloadsEligible(et.Name) || !b.typeIsStringArrayFree(t, map[string]bool{}) {
+			return false
+		}
+		ed, ok := b.info.Enums[et.Name]
+		if !ok {
+			return false
+		}
+		_, uniform := uniformEnumBoxSize(ed, b.ptrW)
+		return uniform
+	}
+	return false
+}
+
+// paramOwnedByDefault: a parameter of the CURRENT function is owned-by-default
+// unless the function lowers via TRMC (its exit bypasses the param sweep).
+func (b *builder) paramOwnedByDefault(t ast.Type) bool {
+	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[b.fn.Name]
+}
+
+// calleeParamOwnedByDefault: the CALLEE reclaims this parameter (so the caller
+// must retain an aliased arg) unless the callee lowers via TRMC.
+func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type) bool {
+	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[callee]
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
@@ -11432,8 +11504,23 @@ func (b *builder) callBody(n *ast.Call) error {
 	// callee — not the caller — reclaims a fresh temp passed there. Suppress the
 	// stage-(b) post-call dec at those positions (else the temp is freed twice).
 	ownArgFlags := b.info.OwnFuncs[id.Name]
+	calleeSig := b.info.FuncSigs[id.Name]
+	// ownedByCallee: the callee reclaims this argument — either an explicit `own`
+	// param or (Slice 2) an owned-by-default one. Both suppress the stage-(b)
+	// caller-side reclaim (the callee frees it) and, for owned-by-default, the
+	// caller retains the arg with an inc below so the callee's exit dec balances.
+	ownedByCalleeAt := func(ai int) bool {
+		if ai < len(ownArgFlags) && ownArgFlags[ai] {
+			return true
+		}
+		return calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai])
+	}
+	ownedByDefaultAt := func(ai int) bool {
+		return !(ai < len(ownArgFlags) && ownArgFlags[ai]) &&
+			calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai])
+	}
 	for ai, a := range n.Args {
-		toOwnParam := ai < len(ownArgFlags) && ownArgFlags[ai]
+		toOwnParam := ownedByCalleeAt(ai)
 		if reclaimArgTemps && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
@@ -11467,6 +11554,16 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 		if err := b.expr(a); err != nil {
 			return err
+		}
+		// Slice 2 (OwnedByDefault): an owned-by-default argument is reclaimed by
+		// the callee at exit. An ALIASED arg (a live local) is retained with an
+		// inc so the callee's dec balances and the local keeps its reference; a
+		// FRESH temp (a construction / fresh call) is MOVED — its rc=1 transfers
+		// to the callee, which frees it (the stage-(b) caller reclaim is already
+		// suppressed for it above). Mirrors StructLit field handling. An `own`
+		// param is a separate move and is excluded.
+		if ownedByDefaultAt(ai) && needsRcIncOnAlias(a, b) && !b.moveSites[a] {
+			b.emitAliasInc(a)
 		}
 		// Phase 2d-borrow: function parameters are borrowed, not
 		// owned, so passing a tracked argument is NOT an

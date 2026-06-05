@@ -218,14 +218,32 @@ analysis, which is independent, pure, and de-risks the design.
   underflow-zero (`TestX86_64EnumRcPayloadsSound`). The win: enum locals
   (lists/trees) now take precise drops and self-overwrite reuse.
 
-- **Slice 2 — owned-by-default behind a flag.** Flip parameter
-  ownership to owned-by-default, driving reclaim from Slice-0's
-  inference (borrow-only params keep the no-inc/no-reclaim borrow
-  path; everything else reclaims). Gate `OwnInferEnabled` (default
-  off); the differential gate pins infer-on == infer-off byte-identical
-  output (reclaim is invisible) and `__heap_bump_bytes()` proves the
-  added reclaim. This is the big one; ship it in narrow sub-slices
-  (by parameter shape) exactly like Phase 1 was sliced per type.
+- **Slice 2 — owned-by-default (`OwnedByDefault`).** Flip parameter
+  ownership toward the Koka model: a parameter is OWNED by the callee (the
+  caller retains it with an inc at the call site, the callee reclaims it
+  with a dec at exit) so an ordinary reader reclaims its argument when it
+  holds the last reference — no `own` needed. rc is invisible, so the
+  differential gate (`Test{X86_64,Arm64,WASM}OwnedByDefaultMatchesBorrow`)
+  pins owned == borrow byte-identical on the whole corpus; the reclaim is
+  the only effect. Shipped per parameter-type category, exactly like
+  Phase 1.
+
+  **Sub-slice 2a — DONE (default on).** Enum parameters that are
+  rc-eligible (1b), transitively string/array/Map-free, UNIFORM-boxed, and
+  in a NON-TRMC function. That is the FBIP list/tree reader case (`sum`,
+  `len`, tree folds reclaim their argument). Key balance points found en
+  route: the caller-side inc is **alias-only** (a fresh temp is moved, its
+  rc=1 transferred to the callee — inc'ing it orphans the original ref);
+  the stage-(b) caller temp-reclaim is suppressed for owned args (the
+  callee frees them). The whole e2e suite (every backend + self-host) is
+  green with the flag on.
+
+  **Remaining sub-slices:** teach TRMC to free its scrutinee (unblocks the
+  recursive `map`/`dup` writers); admit array/string/non-uniform-payload
+  enums; extend owned-by-default to structs/tuples/strings; then the
+  **borrow-inference** optimization (Slice 0's `inferParamEscapes`) that
+  keeps a read-only non-escaping param borrowed to skip the inc/dec — the
+  step that makes `own` truly unnecessary.
 
 - **Slice 3 — demote `own` to optional + add the checked guarantee.**
   With inference driving reclaim, `own` is no longer required. Keep it
