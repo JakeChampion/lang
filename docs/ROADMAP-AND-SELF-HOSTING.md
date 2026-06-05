@@ -862,8 +862,12 @@ which `component_full`'s import-free path can't take):
    Tests: `TestSelfHostWasmComponentFullIOClock` (byte-identical) +
    `TestSelfHostWasmComponentClock` (`now_unix_ms` is a recent epoch-ms value;
    `now_ns` > `now_unix_ms`, proving the two readings use distinct math). The
-   monotonic and combined clock shapes have correct cores but no framing yet —
-   a trivial follow-up once their fixed import-set blobs are captured.
+   monotonic clock shape is also wired: `component_full_io_clock_mono`
+   (`monotonic-clock` + stdout; `now` returns a u64 instant directly, no
+   record / no `cabi_realloc`), byte-identical to native, tested by
+   `TestSelfHostWasmComponentFullIOClockMono` +
+   `TestSelfHostWasmComponentClockMono` (a second read after a busy loop is
+   `>=` the first — monotonic never goes backwards).
 
    **The full preview1-builtin surface now has an adapter-free preview2 path**
    in the self-host: stdout, `read_file`, `write_file` (+ combined),
