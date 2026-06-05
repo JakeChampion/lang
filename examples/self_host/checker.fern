@@ -440,6 +440,20 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
 function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
     if (type_eq(from, to)) { return true; }
     match (to) {
+        TypeArray(te) => {
+            match (from) {
+                TypeArray(fe) => {
+                    // An empty / uninferred array literal types to
+                    // `unknown[]`; it flows into any concrete `T[]` slot.
+                    // (Scalar `unknown` is NOT treated as a wildcard — a
+                    // genuinely unresolved value should still surface its
+                    // assignment error, e.g. `var s: string = badcall()`.)
+                    if (is_unknown(fe.elem)) { return true; }
+                    return type_assignable(fe.elem, te.elem, unions);
+                },
+                _ => { return false; }
+            }
+        },
         TypeUnion(un) => {
             match (from) {
                 TypeStruct(sn) => { return is_variant_of(sn.name, un.name, unions); },
@@ -1265,6 +1279,15 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    // Array suffix `Elem[]` → TypeArray of the recursively-resolved
+    // element. Distinct from `Map[K,V]` / `Foo[T]` (those end with `]`
+    // but the char before isn't `[`). Nests: `X[][]` strips one level
+    // per recursion. Without this an `X[]` parameter type resolved to
+    // `unknown`, which made struct/array argument checks spuriously fire.
+    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
+        var elem_name: string = name[0:name.len() - 2];
+        return t_array(type_from_name_with_structs_unions(elem_name, structs, unions));
+    }
     // Generic-instantiated `Map[K, V]` arrives as a single
     // string spelling from parse_type_name. Strip the prefix
     // / suffix, split on the first top-level `,`, and recurse
@@ -1962,21 +1985,18 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     out = out.push(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
                                 } else {
                                     // E038: per-argument type mismatch on a
-                                    // user-defined method. Restricted to
-                                    // PRIMITIVE param-vs-arg pairs (i32 / bool
-                                    // / string / f64) — the self-host's
-                                    // type_assignable can't faithfully compare
-                                    // struct / union / qualified types the way
-                                    // Go does, so comparing those would false-
-                                    // positive on real code. Primitive
-                                    // mismatches (e.g. a string where the method
-                                    // wants i32) are unambiguous.
+                                    // user-defined method. Now that
+                                    // type_assignable resolves array / struct /
+                                    // union / qualified types and treats
+                                    // `unknown` as a wildcard, the full
+                                    // assignability check is sound on real code
+                                    // (verified across all self-host modules) —
+                                    // no longer restricted to primitives.
                                     var mi: i32 = 0;
                                     while (mi < c.args.len()) {
-                                        var pt: Type = msig.param_types[mi];
                                         var mat: Type = check_expr(c.args[mi], s);
-                                        if (is_primitive_type(pt) && is_primitive_type(mat) && !type_eq(mat, pt)) {
-                                            out = out.push(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                                        if (!is_unknown(mat) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
+                                            out = out.push(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
                                         mi = mi + 1;
                                     }
