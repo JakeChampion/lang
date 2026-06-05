@@ -2935,3 +2935,246 @@ function main(): i32 {
     return 2;
 }
 `
+
+// TestSelfHostWasmComponentFullIOFSRWEnv is the read+write+env+stdout
+// combination framing test: given the Go backend's own core, the self-host's
+// component_full_io_fs_rw_env framing must reproduce native's component
+// byte-for-byte, validate, and run. The richest realistic edge-handler shape.
+func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-full-io-fs-rw-env e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-rw-env e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	fernBin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("build fern: %v\n%s", err, out)
+	}
+	progPath := filepath.Join(dir, "prog.fern")
+	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Some(e) => { return 1; }, None => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
+	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write prog: %v", err)
+	}
+	refPath := filepath.Join(dir, "ref.wasm")
+	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	}
+	ref, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Fatalf("read ref: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.bin"), componentCoreSection(t, ref), 0o644); err != nil {
+		t.Fatalf("write core.bin: %v", err)
+	}
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_encode.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentFullIOFSRWEnvDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+	out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+	if err != nil {
+		t.Fatalf("run io-fs-rw-env component assembler: %v", err)
+	}
+	var got []byte
+	for _, tok := range strings.Fields(string(out)) {
+		n, err := strconv.Atoi(tok)
+		if err != nil {
+			t.Fatalf("bad byte %q: %v", tok, err)
+		}
+		got = append(got, byte(n))
+	}
+	if !bytesEqual(got, ref) {
+		t.Fatalf("io-fs-rw-env component differs from Go reference: got %d bytes, want %d", len(got), len(ref))
+	}
+	myPath := filepath.Join(dir, "mine.iofsrwenv.wasm")
+	if err := os.WriteFile(myPath, got, 0o644); err != nil {
+		t.Fatalf("write component: %v", err)
+	}
+	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("base"), 0o644); err != nil {
+		t.Fatalf("write in.txt: %v", err)
+	}
+	stdout, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", "--env", "SUFFIX=-X", myPath).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run io-fs-rw-env component: %v", err)
+	}
+	if string(stdout) != "done\n" {
+		t.Errorf("io-fs-rw-env component stdout = %q, want %q", string(stdout), "done\n")
+	}
+	wrote, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read back out.txt: %v", err)
+	}
+	if string(wrote) != "base-X" {
+		t.Errorf("io-fs-rw-env out.txt = %q, want %q", string(wrote), "base-X")
+	}
+}
+
+// componentFullIOFSRWEnvDriver reads a (read+write+env+stdout) core and wraps
+// it via component_full_io_fs_rw_env.
+const componentFullIOFSRWEnvDriver = `
+function main(): i32 {
+    match (read_file("core.bin")) {
+        Ok(s) => {
+            var core: i32[] = [];
+            var i: i32 = 0;
+            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            var comp: i32[] = component_full_io_fs_rw_env(core);
+            var j: i32 = 0;
+            while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
+
+// TestSelfHostWasmComponentReadWriteEnv exercises the fully self-hosted
+// preview2 read+write+env path end to end -- the full edge-handler shape:
+// read a config file, read an env var, write an output file, respond.
+func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-read-write-env e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-read-write-env e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
+		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
+
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentCompileIOFSRWEnvDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+
+	build := func(t *testing.T, source string) string {
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		if len(coreWat) == 0 {
+			t.Fatal("preview2 fs core WAT empty")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
+			t.Fatalf("write core.wat: %v", err)
+		}
+		out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+		if err != nil {
+			t.Fatalf("run io-fs-rw-env assembler: %v", err)
+		}
+		var comp []byte
+		for _, tok := range strings.Fields(string(out)) {
+			n, _ := strconv.Atoi(tok)
+			comp = append(comp, byte(n))
+		}
+		p := filepath.Join(dir, "comp.wasm")
+		if err := os.WriteFile(p, comp, 0o644); err != nil {
+			t.Fatalf("write comp: %v", err)
+		}
+		if vout, err := exec.Command(wasmtools, "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("validate: %v\n%s", err, vout)
+		}
+		return p
+	}
+
+	t.Run("read-transform-write", func(t *testing.T) {
+		// Read in.txt, append env PREFIX-derived text, write out.txt, respond.
+		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Some(e) => { return 1; }, None => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
+		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("payload"), 0o644); err != nil {
+			t.Fatalf("write in.txt: %v", err)
+		}
+		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", "--env", "TAG=prod", comp).Output()
+		if string(out) != "wrote\n" {
+			t.Errorf("rtw: stdout = %q, want %q", string(out), "wrote\n")
+		}
+		wrote, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+		if err != nil {
+			t.Fatalf("read back out.txt: %v", err)
+		}
+		if string(wrote) != "payload[prod]" {
+			t.Errorf("rtw: out.txt = %q, want %q", string(wrote), "payload[prod]")
+		}
+	})
+}
+
+// componentCompileIOFSRWEnvDriver reads a read+write+env+stdout core WAT,
+// assembles it, and wraps it via component_full_io_fs_rw_env.
+const componentCompileIOFSRWEnvDriver = `
+function main(): i32 {
+    match (read_file("core.wat")) {
+        Ok(wat) => {
+            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var comp: i32[] = component_full_io_fs_rw_env(core);
+            var i: i32 = 0;
+            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`

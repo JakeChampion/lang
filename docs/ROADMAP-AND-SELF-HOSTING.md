@@ -889,6 +889,11 @@ which `component_full`'s import-free path can't take):
    config file, read env secrets, respond). Tests:
    `TestSelfHostWasmComponentFullIOFSReadEnv` (byte-identical to native) +
    `TestSelfHostWasmComponentReadEnv` (config + secret; missing-env fallback).
+   The richest realistic edge shape also landed: `read_file` + `write_file` +
+   `env` + stdout (`component_full_io_fs_rw_env`) — read a config file, read
+   env secrets, write an output/log file, respond — tested by
+   `TestSelfHostWasmComponentFullIOFSRWEnv` (byte-identical) +
+   `TestSelfHostWasmComponentReadWriteEnv` (read→transform-with-env→write).
    Remaining combinations (random+write, args+fs, clock+fs, …) are now each a
    capture-the-blob-and-test slice; the **generative component builder**
    (mirroring `internal/wasm/component/component.go`, computing the
