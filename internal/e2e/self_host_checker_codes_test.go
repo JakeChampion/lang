@@ -26,6 +26,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 // slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
 var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
+	"E004": true, // free-function call arity
 	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
@@ -151,6 +152,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"struct-missing-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", []string{"E005"}},
 		{"struct-nested-missing", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q {} }; return 0; }\n", []string{"E005"}},
 		{"struct-complete-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; return p.x; }\n", nil},
+		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
+		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
+		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
+		{"call-shadowed-local-ok", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1607,6 +1607,117 @@ function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
     return out;
 }
 
+// itoa_nn renders a non-negative i32 as decimal (checker.fern has no
+// int→string, and diagnostic messages aren't part of the differential
+// gate, but a faithful count reads better).
+function itoa_nn(n: i32): string {
+    if (n == 0) { return "0"; }
+    var digits: string = "0123456789";
+    var s: string = "";
+    var v: i32 = n;
+    while (v > 0) {
+        var d: i32 = v % 10;
+        s = digits[d:d + 1] + s;
+        v = v / 10;
+    }
+    return s;
+}
+
+// call_diags recurses through an expression and emits E004 for a FREE
+// function call whose argument count doesn't match the function's
+// declared parameter count. It is conservative: a callee name that's a
+// local binding (a parameter, `var`, or a closure value) is skipped —
+// only a name that resolves to a module function sig is checked. Method
+// and closure arity are left to later slices.
+function call_diags(e: parser.Expr, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprCall(c) => {
+            out = call_diags(c.callee, s);
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (is_unknown(s.lookup(id.name))) {
+                        var sig: FuncSig = s.lookup_sig(id.name);
+                        if (sig.name.len() > 0 && c.args.len() != sig.param_types.len()) {
+                            out = out.push(Diag { code: "E004", message: "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()) });
+                        }
+                    }
+                },
+                _ => { }
+            }
+        },
+        parser.ExprBinary(b) => { out = append_diags(call_diags(b.left, s), call_diags(b.right, s)); },
+        parser.ExprUnary(u) => { out = call_diags(u.operand, s); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, call_diags(a.elements[i], s)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, call_diags(t.elements[i], s)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => { out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s)); },
+        parser.ExprSlice(s2) => {
+            out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
+        },
+        parser.ExprFieldAccess(fa) => { out = call_diags(fa.obj, s); },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { out = append_diags(out, call_diags(sl.field_values[i], s)); i = i + 1; }
+            if (sl.has_base) { out = append_diags(out, call_diags(sl.base, s)); }
+        },
+        parser.ExprLambda(lm) => { out = stmts_call_diags(lm.body, s); },
+        _ => { }
+    }
+    return out;
+}
+
+// stmts_call_diags walks a statement list, threading scope (so a callee
+// name shadowed by a local `var` is recognised as a local, not the
+// function) and collecting the E004s from every expression.
+function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => { out = append_diags(out, call_diags(v.init, cur)); },
+            parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
+            parser.StmtExpr(x) => { out = append_diags(out, call_diags(x.value, cur)); },
+            parser.StmtAssign(a) => { out = append_diags(out, call_diags(a.value, cur)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, call_diags(f.cond, cur));
+                out = append_diags(out, stmts_call_diags(f.then_body, cur));
+                out = append_diags(out, stmts_call_diags(f.else_body, cur));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, call_diags(w.cond, cur));
+                out = append_diags(out, stmts_call_diags(w.body, cur));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, call_diags(fr.iter, cur));
+                out = append_diags(out, stmts_call_diags(fr.body, cur));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, call_diags(m.scrutinee, cur));
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, stmts_call_diags(m.arms[a].body, cur)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, stmts_call_diags(one, cur));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // check_module is the new entry point for sources that declare
 // functions. Builds the sig table, walks each function body,
 // and (separately) type-checks top-level stmts in a scope that
@@ -1746,6 +1857,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // E005: struct literal missing a declared field (any expression in
         // the body, struct table is module-global so no scope needed).
         body_diags = append_diags(body_diags, stmts_slit_diags(mod.funcs[i].body, structs));
+        // E004: free-function call arity (scope-threaded so a shadowing
+        // local isn't mistaken for the function).
+        body_diags = append_diags(body_diags, stmts_call_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -1759,6 +1873,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         j = j + 1;
     }
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
+    body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
