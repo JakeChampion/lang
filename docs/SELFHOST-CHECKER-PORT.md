@@ -158,8 +158,15 @@ same code(s) the Go checker does — restricted to
   field-read path — the ExprCall arm recurses only into the object — so
   method calls aren't mis-flagged. Reuses the same struct/field lookup
   `check_expr` uses, so no new false positives.
+- **Slice 16 (done): slice bound must be i32** (E037). `call_diags` emits
+  E037 for a present slice bound whose type isn't i32. A missing bound
+  (`s[:]`, `s[a:]`) parses to an unknown placeholder and is skipped, so
+  full / open slices aren't flagged. (Aside: the existing `check_expr`
+  ExprSlice arm over-rejects open slices via `all_well_typed` — a separate
+  pre-existing quirk, not a diagnostic, so it doesn't affect the code
+  differential.)
 - **Later: pattern matching** (E014/E025/E036), traits (E021),
-  arithmetic operand type (E009 integer/float), tuples / maps / slices,
+  arithmetic operand type (E009 integer/float), tuples / maps,
   owned-parameter move checking (E050/E051), then source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.

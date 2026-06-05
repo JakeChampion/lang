@@ -1813,6 +1813,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         parser.ExprIndex(ix) => { out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s)); },
         parser.ExprSlice(s2) => {
             out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
+            // E037: a present slice bound must be i32. A missing bound
+            // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
+            var sbt: Type = check_expr(s2.start, s);
+            if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
+                out = out.push(Diag { code: "E037", message: "slice low bound must be i32, got " + type_label(sbt) });
+            }
+            var ebt: Type = check_expr(s2.end, s);
+            if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
+                out = out.push(Diag { code: "E037", message: "slice high bound must be i32, got " + type_label(ebt) });
+            }
         },
         parser.ExprFieldAccess(fa) => {
             out = call_diags(fa.obj, s);
