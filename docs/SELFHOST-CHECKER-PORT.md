@@ -517,6 +517,26 @@ same code(s) the Go checker does — restricted to
   self-test + full differential corpus continue to pass (the resolvers
   feed func / method / union sigs too, so this is a broad but verified
   change).
+- **Slice 48 (done): E030 — non-exhaustive union match.** The marquee
+  pattern-matching check, now reachable thanks to the slice-45/47 type
+  model (union scrutinees resolve to `TypeUnion`). In the scope-aware
+  `StmtMatch` arm: when the scrutinee types to a known union and no arm is
+  a `_` wildcard, every union variant not covered by a variant pattern is
+  one E030, reported at the **`match` keyword**. That required a new
+  `StmtMatch` `line`/`col` (captured in `parse_match_stmt`, appended last
+  per the asm positional-field rule, propagated through flatten /
+  constfold / mono / ssa rebuilds — fixpoint stays byte-identical). The
+  exhaustiveness logic was validated by a probe BEFORE the parser change:
+  **zero** false positives across all thirteen self-host modules (their
+  union matches are all exhaustive or wildcarded, and the check correctly
+  recognises them via mangled variant-name matching). `match (u) { A(a)
+  => … }` for `u: A | B` → `4:25: error[E030]: match is not exhaustive —
+  variant B of enum U is not covered (add an arm or use `_`)`, matching
+  Go's code, position, and message. Gated by new corpus
+  (`union-match-non-exhaustive`, `-exhaustive-ok`, `-wildcard-ok`) and
+  `check-position-exhaustiveness`. (Enum-decl exhaustiveness — distinct
+  from union aliases in this port — remains future work; the self-host
+  doesn't yet type enum-valued scrutinees, so those matches are skipped.)
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

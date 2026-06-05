@@ -2249,6 +2249,40 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                         ea = ea + 1;
                     }
                 }
+                // E030: a `match` on a union scrutinee must cover every
+                // variant or carry a `_` arm. Reported at the `match`
+                // keyword (Go's `n.P`). Each uncovered variant is one
+                // diagnostic (matching Go). Scrutinees that don't resolve to
+                // a known union are skipped, so this never fires on the
+                // union matches throughout the bundle (all exhaustive or
+                // wildcarded) — verified across every self-host module.
+                match (mst) {
+                    TypeUnion(mun) => {
+                        var usig: UnionSig = cur.lookup_union(mun.name);
+                        if (usig.name.len() > 0) {
+                            var saw_wild: boolean = false;
+                            var covered: string[] = [];
+                            var ca: i32 = 0;
+                            while (ca < m.arms.len()) {
+                                match (m.arms[ca].pattern) {
+                                    parser.PatWildcard(_) => { saw_wild = true; },
+                                    parser.PatVariant(cpv) => { if (cpv.type_name.len() > 0) { covered = covered.push(cpv.type_name); } },
+                                }
+                                ca = ca + 1;
+                            }
+                            if (!saw_wild) {
+                                var vi: i32 = 0;
+                                while (vi < usig.variants.len()) {
+                                    if (!name_in(covered, usig.variants[vi])) {
+                                        out = out.push(dg_at("E030", "match is not exhaustive — variant " + usig.variants[vi] + " of enum " + mun.name + " is not covered (add an arm or use `_`)", m.line, m.col));
+                                    }
+                                    vi = vi + 1;
+                                }
+                            }
+                        }
+                    },
+                    _ => { }
+                }
                 var a: i32 = 0;
                 while (a < m.arms.len()) { out = append_diags(out, stmts_call_diags(m.arms[a].body, cur)); a = a + 1; }
             },
