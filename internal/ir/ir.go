@@ -3184,7 +3184,7 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		// keeps the nested-use win for primitive arrays without crossing
 		// that unverified arm64 boundary. Straight-line (simple top-level
 		// last use) placement keeps the full slice 1-3 element scope.
-		if b.isControlFlowStmt(stmts[last]) && b.arrayElemIsPointer(name) {
+		if b.isControlFlowStmt(stmts[last]) && !b.safeForControlFlowDrop(name) {
 			continue
 		}
 		// A `return` whose value is this local is handled by the Return
@@ -3211,23 +3211,91 @@ func (b *builder) isControlFlowStmt(st ast.Node) bool {
 	return false
 }
 
-// arrayElemIsPointer reports whether `name`'s declared array type has a
-// pointer-shaped element (string / array / struct / enum / tuple / closure /
-// slice). Primitive-element arrays (i32[] / f64[] / bool[] / …) return false.
-// Gates the slice-5 control-flow placement: only primitive-element arrays
-// take the nested-use precise drop (no per-element rc to balance across the
-// drop), keeping the unverified arm64 two-word heap-string reclamation path
-// out of the early-drop scope.
-func (b *builder) arrayElemIsPointer(name string) bool {
+// safeForControlFlowDrop reports whether `name`'s declared type may take the
+// slice-5 control-flow precise-drop placement (a drop after the whole top-level
+// if/while/for/match that holds its last use, vs the function-exit sweep).
+// Allowed for:
+//   - PRIMITIVE-element arrays (i32[] / f64[] / …) — the original slice-5 scope;
+//     no per-element rc to balance across the early drop.
+//   - enum / struct / tuple values whose deep-drop touches NO string or array
+//     buffer (typeIsStringArrayFree) — the FBIP list/tree-of-scalars case. Their
+//     generated `__drop_*` helper is is_unique-gated and verified on every
+//     backend, and being string/array-free keeps the deferred arm64 two-word
+//     heap-string reclamation path (slice 5g) out of the early-drop window —
+//     exactly the hazard that excludes pointer-element arrays and strings.
+//
+// Everything else (pointer-element arrays, strings, anything transitively
+// containing them, Map, generics) falls back to the exit sweep. Unknown ⇒ false.
+func (b *builder) safeForControlFlowDrop(name string) bool {
 	t, ok := b.localDeclType(name)
 	if !ok {
-		return true // unknown — be conservative (exclude from nested placement)
+		return false
 	}
-	at, ok := t.(ast.ArrayType)
-	if !ok {
+	switch ty := t.(type) {
+	case ast.ArrayType:
+		return !ast.IsPointerType(ty.Elem)
+	case ast.EnumType, ast.StructType, ast.TupleType:
+		return b.typeIsStringArrayFree(t, map[string]bool{})
+	}
+	return false
+}
+
+// typeIsStringArrayFree reports whether `t`'s deep-drop reclaims no string or
+// array buffer — i.e. t is built transitively from scalars, enums, structs, and
+// tuples only (no string / array / slice / Map, no unresolved generic). `seen`
+// breaks recursive-type cycles (a self-recursive enum like List is fine: the
+// back-edge is assumed free, and any string/array on a real payload is caught on
+// its own first visit before the back-edge is taken).
+func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
+	switch ty := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
+		return true
+	case ast.StringType, ast.ArrayType, ast.SliceType:
+		return false
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !b.typeIsStringArrayFree(e, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		sd, ok := b.info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if !b.typeIsStringArrayFree(f.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		ed, ok := b.info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !b.typeIsStringArrayFree(pl, seen) {
+					return false
+				}
+			}
+		}
 		return true
 	}
-	return ast.IsPointerType(at.Elem)
+	return false
 }
 
 // flowsIntoUncountedAlias reports whether `name` appears inside an
