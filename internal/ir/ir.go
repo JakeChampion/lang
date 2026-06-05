@@ -1104,10 +1104,11 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 			if !q[fn.Name] || fn.Body == nil {
 				continue
 			}
+			freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
 			ok := true
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				if r, isRet := n.(*ast.Return); isRet && r.Value != nil {
-					if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q) {
+					if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals) {
 						ok = false
 					}
 				}
@@ -1125,6 +1126,81 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 	return q
 }
 
+// computeFreshLocals returns the locals of `fn` that provably hold a param-free
+// value at every return — letting `return r` (where r was built locally)
+// qualify, not just `return Ctor(..)`. A local is fresh when:
+//   - it has exactly one `var` declaration (no shadowing / redeclaration),
+//   - that declaration's init is itself param-free (exprNoParamEscape, with the
+//     fresh set available so one fresh local may seed another), and
+//   - the name is used ONLY inside return-value expressions.
+//
+// The last condition is the soundness crux: any MUTATION of the local (a
+// reassignment, or passing it as a call argument / method receiver that could
+// splice a param in) necessarily mentions the name OUTSIDE a return, so it
+// disqualifies the local. What remains is born fresh and only ever read on the
+// way out — its value can never come to alias a parameter. Fields being
+// immutable after construction (E048) means no `r.f = param` backdoor either.
+func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool) map[string]bool {
+	if fn.Body == nil {
+		return nil
+	}
+	decls := map[string]*ast.Var{}
+	multi := map[string]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok {
+			if _, seen := decls[v.Name]; seen {
+				multi[v.Name] = true
+			}
+			decls[v.Name] = v
+		}
+		return true
+	})
+	// Idents that occur inside a return value — the only use a fresh local is
+	// allowed. (The declared name itself is a Var.Name string, not an Ident, so
+	// it never counts as a use.)
+	inReturn := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if r, ok := n.(*ast.Return); ok && r.Value != nil {
+			ast.Walk(r.Value, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok {
+					inReturn[id] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	tainted := map[string]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] {
+			tainted[id.Name] = true
+		}
+		return true
+	})
+	fresh := map[string]bool{}
+	for name, v := range decls {
+		if !multi[name] && !tainted[name] && v.Init != nil {
+			fresh[name] = true
+		}
+	}
+	// Greatest fixpoint: drop any candidate whose init isn't param-free given the
+	// current set (a fresh local may legitimately appear in another's init).
+	for {
+		changed := false
+		for name := range fresh {
+			v := decls[name]
+			if !exprNoParamEscape(v.Init, v.Type, info, variantPayloads, q, fresh) {
+				delete(fresh, name)
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return fresh
+}
+
 func isDefinitelyScalar(t ast.Type) bool {
 	switch t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
@@ -1137,7 +1213,7 @@ func isDefinitelyScalar(t ast.Type) bool {
 // `slot` can never place a parameter's heap value into that slot. `q` is the
 // in-progress greatest-fixpoint set from findReturnsNoParamEscape. Any shape it
 // can't prove safe returns false (conservative — preserves the prior safe-leak).
-func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool) bool {
+func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool, freshLocals map[string]bool) bool {
 	// A definitely-scalar destination cannot hold a heap pointer at all, so
 	// whatever fills it carries no param heap. (Generic / unknown slot types are
 	// NOT assumed scalar — they fall through and must be proven structurally.)
@@ -1147,17 +1223,21 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 	switch x := e.(type) {
 	case *ast.Ident:
 		// A nullary variant constructor (`Nil`, `None`) parses as a bare ident
-		// and is a fresh constant — no parameter can escape through it. Any other
-		// bare pointer-typed ident (a parameter, a projection binding, or a fresh
-		// local) is conservatively an escape, preserving the prior safe-leak.
-		pls, isVariant := variantPayloads[x.Name]
-		return isVariant && len(pls) == 0
+		// and is a fresh constant — no parameter can escape through it. A
+		// fresh-proven local (computeFreshLocals: a single-assignment local with
+		// a fresh init, used only in return positions, so never mutated to embed
+		// a param) is likewise param-free. Any other bare pointer-typed ident (a
+		// parameter or a projection binding) is conservatively an escape.
+		if pls, isVariant := variantPayloads[x.Name]; isVariant && len(pls) == 0 {
+			return true
+		}
+		return freshLocals[x.Name]
 	case *ast.IfExpr:
-		return exprNoParamEscape(x.Then, slot, info, variantPayloads, q) &&
-			exprNoParamEscape(x.Else, slot, info, variantPayloads, q)
+		return exprNoParamEscape(x.Then, slot, info, variantPayloads, q, freshLocals) &&
+			exprNoParamEscape(x.Else, slot, info, variantPayloads, q, freshLocals)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
-			if !exprNoParamEscape(arm.Body, slot, info, variantPayloads, q) {
+			if !exprNoParamEscape(arm.Body, slot, info, variantPayloads, q, freshLocals) {
 				return false
 			}
 		}
@@ -1168,14 +1248,14 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			return false
 		}
 		for i, el := range x.Elems {
-			if !exprNoParamEscape(el, tt.Elems[i], info, variantPayloads, q) {
+			if !exprNoParamEscape(el, tt.Elems[i], info, variantPayloads, q, freshLocals) {
 				return false
 			}
 		}
 		return true
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
-			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q) {
+			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q, freshLocals) {
 				return false
 			}
 		}
@@ -1194,7 +1274,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		}
 		for _, fi := range x.Fields {
 			ft, ok := ftype[fi.Name]
-			if !ok || !exprNoParamEscape(fi.Value, ft, info, variantPayloads, q) {
+			if !ok || !exprNoParamEscape(fi.Value, ft, info, variantPayloads, q, freshLocals) {
 				return false
 			}
 		}
@@ -1212,7 +1292,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 				if i < len(pls) {
 					pt = pls[i]
 				}
-				if !exprNoParamEscape(a, pt, info, variantPayloads, q) {
+				if !exprNoParamEscape(a, pt, info, variantPayloads, q, freshLocals) {
 					return false
 				}
 			}

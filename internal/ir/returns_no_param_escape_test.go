@@ -54,3 +54,40 @@ function main(): i32 { return 0; }`)
 		}
 	}
 }
+
+// Fresh-local returns: `return r` where r was built locally qualifies, while a
+// local that aliases a parameter or is exposed to mutation does not. A false
+// positive here is a use-after-free, so pin both directions.
+func TestReturnsNoParamEscapeFreshLocals(t *testing.T) {
+	prog, err := parser.Parse(`enum List { Cons(i32, List), Nil }
+function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
+function sum(l: List): i32 { match (l) { Cons(h, t) => { return h; }, Nil => { return 0; } } }
+function freshlit(): List { var r: List = Cons(0, Nil); return r; }
+function freshcall(n: i32): List { var r: List = build(n); return r; }
+function embedfresh(n: i32): List { var r: List = build(n); return Cons(1, r); }
+function chainfresh(n: i32): List { var a: List = build(n); var b: List = build(n); return Cons(0, b); }
+function retparam(xs: List): List { var r: List = xs; return r; }
+function passthenret(xs: List): List { var r: List = build(2); var u: i32 = sum(r); return r; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := findReturnsNoParamEscape(prog, info)
+	want := map[string]bool{
+		"freshlit":    true,  // var r = Cons(0, Nil); return r
+		"freshcall":   true,  // var r = build(n); return r
+		"embedfresh":  true,  // var r = build(n); return Cons(1, r)
+		"chainfresh":  true,  // return Cons(0, b) where b is fresh
+		"retparam":    false, // var r = xs; return r — r aliases the param
+		"passthenret": false, // r passed to a call before return — exposed to mutation
+	}
+	for name, exp := range want {
+		if q[name] != exp {
+			t.Errorf("returnsNoParamEscape[%s] = %v, want %v", name, q[name], exp)
+		}
+	}
+}
