@@ -762,16 +762,43 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
             callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name }, field: "len" },
             args: [] } };
 
-    // body: $iN = $iN + 1; var x = $arrN[$iN]; <body>
+    // body: $iN = $iN + 1; <element binding>; <body>
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
         value: parser.ExprBinary { op: "+",
             left: parser.ExprIdent { name: i_name },
             right: parser.ExprNumber { text: "1", suffix: "", is_float: false } } };
-    var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
-        init: parser.ExprIndex {
-            array: parser.ExprIdent { name: arr_name },
-            index: parser.ExprIdent { name: i_name } } };
-    var wbody: parser.Stmt[] = [incr, bind_elem];
+    var wbody: parser.Stmt[] = [incr];
+    // `for (k, v) in m` — the parser joins the two names as "k,v". A comma in
+    // the loop variable means map iteration: bind each via __ssa_map_key_at /
+    // _val_at on $arrN ($arrN is a Map here, so the guard's `.len()` resolved
+    // to the entry count). A plain name iterates an array element by index.
+    var comma: i32 = index_of_byte(fr.var_name, 44);   // ','
+    if (comma >= 0) {
+        var kname: string = fr.var_name[0:comma];
+        var vname: string = fr.var_name[comma + 1 : fr.var_name.len()];
+        // Arg lists are built with .push (which coerces each element into the
+        // Expr union) rather than an array literal `[ExprIdent{…}, …]`: a
+        // literal of concrete struct values assigned to a union-typed array
+        // doesn't tag-wrap its elements, so a later match on them misfires.
+        var kargs: parser.Expr[] = [];
+        kargs = kargs.push(parser.ExprIdent { name: arr_name });
+        kargs = kargs.push(parser.ExprIdent { name: i_name });
+        var bind_k: parser.Stmt = parser.StmtVar { name: kname, type_name: "",
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at" }, args: kargs } };
+        var vargs: parser.Expr[] = [];
+        vargs = vargs.push(parser.ExprIdent { name: arr_name });
+        vargs = vargs.push(parser.ExprIdent { name: i_name });
+        var bind_v: parser.Stmt = parser.StmtVar { name: vname, type_name: "",
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at" }, args: vargs } };
+        wbody = wbody.push(bind_k);
+        wbody = wbody.push(bind_v);
+    } else {
+        var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
+            init: parser.ExprIndex {
+                array: parser.ExprIdent { name: arr_name },
+                index: parser.ExprIdent { name: i_name } } };
+        wbody = wbody.push(bind_elem);
+    }
     var bi: i32 = 0;
     while (bi < fr.body.len()) { wbody = wbody.push(fr.body[bi]); bi = bi + 1; }
 
@@ -890,6 +917,15 @@ function contains_str(xs: string[], n: string): boolean {
         i = i + 1;
     }
     return false;
+}
+// index_of_byte returns the first index of byte b in s, or -1.
+function index_of_byte(s: string, b: i32): i32 {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == b) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 function index_of_i32(xs: i32[], n: i32): i32 {
     var i: i32 = 0;
@@ -2362,6 +2398,10 @@ pub function map_helpers_src(): string {
     src = src + "  return 0;" + nl;
     src = src + "}" + nl;
     src = src + "function __ssa_map_len(m: i32[]): i32 { return m[0]; }" + nl;
+    // key_at / val_at expose entry i (0-based, insertion order) so a
+    // `for (k, v) in m` desugar can walk the buffer by index.
+    src = src + "function __ssa_map_key_at(m: i32[], i: i32): i32 { return m[1 + i * 2]; }" + nl;
+    src = src + "function __ssa_map_val_at(m: i32[], i: i32): i32 { return m[2 + i * 2]; }" + nl;
     return src;
 }
 
