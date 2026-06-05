@@ -41,14 +41,18 @@ emitted diagnostic codes.
    (E001/E045), closures (E044), and owned-parameter move checking
    (E050/E051).
 
-2. **Source positions.** Tokens carry `line`/`col`, but the parser's AST
-   nodes (`ExprBinary`, `StmtVar`, …) drop them, so diagnostics can't yet
-   say `line:col`. Full `line:col: error[E0XX]` parity needs positions
-   threaded from tokens into the AST — a front-end-wide change touching
-   every AST struct and `parse_*` production (a `type_params`-style sweep
-   across all backends' struct literals). Deferred behind code coverage:
-   matching the **set of codes** a program triggers is the first parity
-   milestone; precise spans are the second.
+2. **Source positions (in progress).** Tokens carry `line`/`col`; the
+   AST is gaining them node by node. `Diag` now carries an optional
+   `line`/`col` (0 = none), emitted via `dg` (no position) / `dg_at`
+   (positioned); `Par.peek_line` / `peek_col` read the current token's
+   position; and `fern -check` renders `line:col: error[E0XX]: …` when a
+   diagnostic has a position, else `error[E0XX]: …`. The first node to
+   carry a position is `EnumDecl`, so E006-enum / E017 already print the
+   exact `line:col` the Go checker does. Remaining AST nodes
+   (`StructDecl`, `FuncDecl`, then the `Expr` / `Stmt` variants) follow,
+   migrating their `dg(...)` emissions to `dg_at(...)` as they go — a
+   `type_params`-style sweep, done incrementally so the byte-identical
+   fixpoint holds at every step (codegen ignores the position fields).
 
 ## Slice plan
 
@@ -228,6 +232,18 @@ same code(s) the Go checker does — restricted to
   differential, waits on source positions for full output parity).
   Gated by `TestSelfHostCLIX86_64/check-bad`, which now also asserts the
   E004 code appears on stderr.
+- **Slice 25 (done): source-position foundation + `EnumDecl` positions.**
+  Established the position mechanism end-to-end: `Diag` gains optional
+  `line`/`col` (via `dg` / `dg_at`); `Par.peek_line` / `peek_col`; the 35
+  existing emissions moved to the position-less `dg(...)` helper; and
+  `fern -check` prints `line:col: error[E0XX]: …` when present. `EnumDecl`
+  is the first node to carry a position (captured at the `enum` keyword),
+  so **E006-enum / E017 now print the exact `line:col` the Go checker
+  emits** (an enum redeclared on line 2 → `2:1: error[E006]`).
+  parser.fern is in the fixpoint bundle, but the new fields are
+  codegen-ignored, so the byte-identical fixpoint holds (x86 + arm64).
+  Gated by a new `TestSelfHostCLIX86_64/check-position`. Remaining nodes
+  (`StructDecl`, `FuncDecl`, then `Expr`/`Stmt`) migrate in follow-ups.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

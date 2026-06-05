@@ -308,7 +308,12 @@ function main(): i32 {
         // is `error[E0XX]: message` without a line:col prefix for now.
         var di: i32 = 0;
         while (di < mt.diags.len()) {
-            eprint("error[" + mt.diags[di].code + "]: " + mt.diags[di].message + "\n");
+            var d: checker.Diag = mt.diags[di];
+            if (d.line > 0) {
+                eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+            } else {
+                eprint("error[" + d.code + "]: " + d.message + "\n");
+            }
             di = di + 1;
         }
         if (mt.all_well_typed) { return 0; }

@@ -216,7 +216,7 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // keeps it so the checker can detect enum-level declaration errors (an
 // enum redeclared, a duplicate variant) that the flat struct table can't
 // distinguish from ordinary structs. Codegen ignores it.
-pub struct EnumDecl { name: string, variant_names: string[] }
+pub struct EnumDecl { name: string, variant_names: string[], line: i32, col: i32 }
 
 // enum_variant_names extracts the variant names from an enum's desugared
 // variant structs.
@@ -330,6 +330,38 @@ function (p: Par) at_end(): boolean {
 function (p: Par) peek(): lexer.Token {
     if (p.pos < p.toks.len()) { return p.toks[p.pos]; }
     return lexer.eof_tok(0, 0);
+}
+
+// peek_line / peek_col return the 1-based source position of the current
+// token (0 when unavailable) — every token variant carries line/col, so
+// the parser can stamp positions onto the AST nodes it builds.
+function (p: Par) peek_line(): i32 {
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokEof(x) => { return x.line; },
+        lexer.TokNumber(x) => { return x.line; },
+        lexer.TokIdent(x) => { return x.line; },
+        lexer.TokKeyword(x) => { return x.line; },
+        lexer.TokPunct(x) => { return x.line; },
+        lexer.TokString(x) => { return x.line; },
+        lexer.TokError(x) => { return x.line; },
+        lexer.TokFString(x) => { return x.line; },
+    }
+    return 0;
+}
+function (p: Par) peek_col(): i32 {
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokEof(x) => { return x.col; },
+        lexer.TokNumber(x) => { return x.col; },
+        lexer.TokIdent(x) => { return x.col; },
+        lexer.TokKeyword(x) => { return x.col; },
+        lexer.TokPunct(x) => { return x.col; },
+        lexer.TokString(x) => { return x.col; },
+        lexer.TokError(x) => { return x.col; },
+        lexer.TokFString(x) => { return x.col; },
+    }
+    return 0;
 }
 
 function (p: Par) advance(): Par {
@@ -3943,9 +3975,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 continue;
             }
             if (dk == "enum") {
+                var deline: i32 = p.peek_line();
+                var decol: i32 = p.peek_col();
                 var denr: EnumResult = parse_enum_decl(p);
                 p = denr.par;
-                enums = enums.push(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants) });
+                enums = enums.push(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), line: deline, col: decol });
                 var dei: i32 = 0;
                 while (dei < denr.variants.len()) {
                     structs = structs.push(denr.variants[dei]);
@@ -3977,9 +4011,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         if (kw == "enum") {
+            var eline: i32 = p.peek_line();
+            var ecol: i32 = p.peek_col();
             var enr: EnumResult = parse_enum_decl(p);
             p = enr.par;
-            enums = enums.push(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants) });
+            enums = enums.push(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), line: eline, col: ecol });
             var ei: i32 = 0;
             while (ei < enr.variants.len()) {
                 structs = structs.push(enr.variants[ei]);

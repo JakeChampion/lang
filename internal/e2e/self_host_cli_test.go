@@ -192,6 +192,20 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position", func(t *testing.T) {
+		// A diagnostic emitted from an AST node that carries a source
+		// position renders `line:col: error[E0XX]: …`, matching the Go
+		// checker's format. An enum redeclared on line 2 → `2:1`.
+		srcPath := filepath.Join(dir, "enum_redecl.fern")
+		if err := os.WriteFile(srcPath, []byte("enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if !strings.Contains(string(combined), "2:1: error[E006]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"2:1: error[E006]\"", combined)
+		}
+	})
+
 	t.Run("interp", func(t *testing.T) {
 		// -interp evaluates via the tree-walker; the program's i32
 		// result becomes the exit code (mirrors interp_run.fern).
