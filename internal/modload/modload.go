@@ -266,7 +266,7 @@ type module struct {
 	// both mangle to `util__X`. See docs/ADVERSARIAL-REVIEW-2026-06.md (M2).
 	manglePrefix string
 	prog         *ast.Program
-	imports map[string]*module // local-name → loaded module
+	imports      map[string]*module // local-name → loaded module
 	// importPaths mirrors imports keyed by the canonical child path
 	// rather than the loaded module pointer. Used to patch a nil
 	// imports[localName] entry once every cyclically-loaded module
