@@ -26,13 +26,14 @@ function main(): i32 {
     }
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
-    // The map lowering (build_func) emits calls to injected helper functions
-    // (__ssa_map_*) defined in pure Fern (ssa.map_helpers_src). Parse them up
-    // front so their pointer-returning signatures join ptr_ret (the handle is
-    // an i32[]); they're only built + emitted when a program references a map.
-    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.map_helpers_src()));
+    // Several lowerings (build_func) emit calls to injected runtime helper
+    // functions (__ssa_*) defined in pure Fern (ssa.ssa_helpers_src) — the map
+    // operations and array push. Parse them up front so their pointer-
+    // returning signatures join ptr_ret (the handle is an i32[]); each helper
+    // body is built + emitted only if a program actually calls it.
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
     // Names of functions that return a pointer (array / string), so calls to
-    // them get a 64-bit result — user functions plus the map helpers.
+    // them get a 64-bit result — user functions plus the runtime helpers.
     var ptr_ret: string[] = [];
     var pi: i32 = 0;
     while (pi < mod.funcs.len()) {
@@ -51,14 +52,16 @@ function main(): i32 {
         if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
     }
-    // Inject the map helper bodies only when the program actually calls one.
-    if (ssa.references_map(funcs)) {
-        var hi: i32 = 0;
-        while (hi < hmod.funcs.len()) {
+    // Inject each runtime helper body only when the program actually calls it
+    // (helpers don't call each other, so a single direct-call check suffices —
+    // no transitive closure needed).
+    var hi: i32 = 0;
+    while (hi < hmod.funcs.len()) {
+        if (ssa.calls_func(funcs, hmod.funcs[hi].name)) {
             var hr: ssa.BResult = ssa.build_func(hmod.funcs[hi], mod.structs);
             if (hr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
-            hi = hi + 1;
         }
+        hi = hi + 1;
     }
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
