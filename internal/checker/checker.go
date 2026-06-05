@@ -1749,21 +1749,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			fn.Name = mangled
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
-			// `own` (consuming) parameters are supported on FREE functions only
-			// for now: a method call's receiver/argument ownership transfer
-			// isn't wired (move-on-call / the E051 guard skip method calls), so
-			// an `own` receiver or method parameter would compile and then
-			// double-free at runtime. Reject it with a clear message rather than
-			// miscompile — a consuming method is written as a free function
-			// `f(own x: T)` until method support lands.
-			if fn.Receiver.Own {
-				c.errfCode(fn.Receiver.NamePos, "E052", "`own` is not yet supported on a method receiver; use a free function `f(own self: T)` instead")
-			}
-			for _, p := range fn.Params {
-				if p.Own {
-					c.errfCode(p.NamePos, "E052", "`own` is not yet supported on a method parameter %q; use a free function instead", p.Name)
-				}
-			}
+			// Consuming methods are supported: the receiver â including an `own`
+			// one, `(own self: T)` â is hoisted to Params[0], so the method lowers
+			// like a free function with an `own` first parameter. The method-call
+			// ownership transfer (move-on-call) and the E051 call-site guard both
+			// handle method calls, so this is sound.
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.info.Methods[methodKey] = mangled
@@ -3830,9 +3820,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
 	// callees are conservatively skipped here — a later slice widens the guard.
 	guardCallArgs := func(x *ast.Call) {
-		if x.Method != nil {
-			return
-		}
 		id, ok := x.Callee.(*ast.Ident)
 		if !ok {
 			return

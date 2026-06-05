@@ -1,0 +1,23 @@
+// Consuming method (`own self`): the FBIP recursive map written in method form.
+// The receiver hoists to an `own` Params[0]; the recursive `t.inc()` consumes
+// the owned binding `t`. Differentially pinned: free-on == free-off and
+// reuse-on == reuse-off byte-identical, plus the interp oracle.
+enum List { Cons(i32, List), Nil }
+
+function (own xs: List) inc(): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, t.inc()); },
+        Nil => { return Nil; },
+    }
+}
+function sum(l: List): i32 {
+    match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
+}
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+
+function main(): i32 {
+    return sum(build(10).inc());   // [10..1] +1 each: sum(2..11) = 65
+}

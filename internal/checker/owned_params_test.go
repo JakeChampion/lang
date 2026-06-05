@@ -217,24 +217,19 @@ function f(): i32 {
 }`)
 }
 
-// --- E052: `own` not yet supported on methods ----------------------------
+// --- consuming methods (`own self`) ---------------------------------------
 
-func TestOwnRejectedOnMethodReceiver(t *testing.T) {
-	wantE052 := func(name, src string) {
-		t.Helper()
-		err := checkSource(t, src)
-		if err == nil {
-			t.Fatalf("%s: expected E052, got none", name)
-		}
-		if !strings.Contains(err.Error(), "E052") && !strings.Contains(err.Error(), "not yet supported on a method") {
-			t.Errorf("%s: expected E052 / method error, got: %v", name, err)
-		}
-	}
-	// `own self` on a trait-impl method (the form that parses today) is rejected
-	// — the receiver/argument transfer for method calls isn't wired, so it would
-	// double-free at runtime.
-	wantE052("own-self-trait-impl", `struct Box { v: i32 }
-trait C { function eat(self: Self): i32; }
-impl C for Box { function eat(own self: Box): i32 { return self.v; } }
-function main(): i32 { return Box { v: 5 }.eat(); }`)
+func TestConsumingMethodsAccepted(t *testing.T) {
+	// An inherent (receiver-clause) consuming method — the recursive `map`
+	// shape. `own self` parses, the receiver hoists to an `own` Params[0], and
+	// the method-call transfer makes `t.inc()` consume the owned binding `t`.
+	wantOK(t, "inherent-own-self", `enum List { Cons(i32, List), Nil }
+function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
+function main(): i32 { var ys: List = Cons(1, Nil).inc(); return 0; }`)
+
+	// A consuming method's receiver still goes through the E051 call-site guard:
+	// a BORROWED receiver can't be transferred.
+	wantE051(t, "borrowed-receiver-to-consuming-method", `enum List { Cons(i32, List), Nil }
+function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
+function f(borrowed: List): i32 { var ys: List = borrowed.inc(); return 0; }`)
 }
