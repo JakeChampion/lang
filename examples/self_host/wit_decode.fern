@@ -1013,3 +1013,115 @@ function wit_import_instance_index(tbody: i32[], iface: string): i32 {
     }
     return result;
 }
+
+// ---- P2 slice: parse a core module's function imports --------------------
+//
+// Self-host mirror of component.coreFuncImports: walk a core wasm module's
+// type + import sections and return each function import with its param
+// valtypes (the trampoline signature a memory lowering mirrors). Parallel
+// arrays: ifaces[i] / names[i] / params[i].
+
+struct WitCoreImports { ifaces: string[], names: string[], params: i32[][] }
+
+function wit_core_func_imports(bin: i32[]): WitCoreImports {
+    // pass 1: functype params from the type section (id 1).
+    var typeParams: i32[][] = [];
+    var off: i32 = 8;
+    var doneTypes: boolean = false;
+    while (off < bin.len() && !doneTypes) {
+        var id: i32 = bin[off];
+        off = off + 1;
+        var sr: UlebRead = wit_read_uleb(bin, off);
+        var size: i32 = sr.value;
+        off = sr.next;
+        var body: i32 = off;
+        off = off + size;
+        if (id == 1) {
+            var cr: UlebRead = wit_read_uleb(bin, body);
+            var count: i32 = cr.value;
+            var p: i32 = cr.next;
+            var i: i32 = 0;
+            while (i < count) {
+                p = p + 1;
+                var pr: UlebRead = wit_read_uleb(bin, p);
+                var pc: i32 = pr.value;
+                p = pr.next;
+                var params: i32[] = [];
+                var j: i32 = 0;
+                while (j < pc) {
+                    params = params.push(bin[p]);
+                    p = p + 1;
+                    j = j + 1;
+                }
+                var rr: UlebRead = wit_read_uleb(bin, p);
+                var rcount: i32 = rr.value;
+                p = rr.next;
+                var k: i32 = 0;
+                while (k < rcount) {
+                    p = p + 1;
+                    k = k + 1;
+                }
+                typeParams = typeParams.push(params);
+                i = i + 1;
+            }
+            doneTypes = true;
+        }
+    }
+    // pass 2: import section (id 2) -> func imports with their type's params.
+    var ifaces: string[] = [];
+    var names: string[] = [];
+    var params2: i32[][] = [];
+    off = 8;
+    var doneImports: boolean = false;
+    while (off < bin.len() && !doneImports) {
+        var id2: i32 = bin[off];
+        off = off + 1;
+        var sr2: UlebRead = wit_read_uleb(bin, off);
+        var size2: i32 = sr2.value;
+        off = sr2.next;
+        var body2: i32 = off;
+        off = off + size2;
+        if (id2 == 2) {
+            var cr2: UlebRead = wit_read_uleb(bin, body2);
+            var count2: i32 = cr2.value;
+            var p: i32 = cr2.next;
+            var i2: i32 = 0;
+            while (i2 < count2) {
+                var mr: NameR = wit_read_name(bin, p);
+                p = mr.next;
+                var fr: NameR = wit_read_name(bin, p);
+                p = fr.next;
+                var kind: i32 = bin[p];
+                p = p + 1;
+                if (kind == 0) {
+                    var tr: UlebRead = wit_read_uleb(bin, p);
+                    p = tr.next;
+                    var none: i32[] = [];
+                    var pp: i32[] = none;
+                    if (tr.value < typeParams.len()) { pp = typeParams[tr.value]; }
+                    ifaces = ifaces.push(mr.s);
+                    names = names.push(fr.s);
+                    params2 = params2.push(pp);
+                } else if (kind == 1) {
+                    p = p + 2;
+                    var lr: UlebRead = wit_read_uleb(bin, p);
+                    p = lr.next;
+                } else if (kind == 2) {
+                    var flag: i32 = bin[p];
+                    p = p + 1;
+                    var l1: UlebRead = wit_read_uleb(bin, p);
+                    p = l1.next;
+                    if (flag == 1) {
+                        var l2: UlebRead = wit_read_uleb(bin, p);
+                        p = l2.next;
+                    }
+                } else {
+                    p = p + 2;
+                }
+                i2 = i2 + 1;
+            }
+            doneImports = true;
+        }
+    }
+    return WitCoreImports { ifaces: ifaces, names: names, params: params2 };
+}
