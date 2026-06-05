@@ -81,12 +81,12 @@ func SplitComponentSections(payload []byte) ([]Section, error) {
 		body := payload[pos:end]
 		sec := Section{ID: id, Body: body}
 		if id == secCustom {
-			name, rest, err := readName(body)
+			name, k, err := readName(body)
 			if err != nil {
 				return nil, fmt.Errorf("componenttype: custom section %d name: %w", len(secs), err)
 			}
 			sec.Name = name
-			sec.Body = rest
+			sec.Body = body[k:]
 		}
 		secs = append(secs, sec)
 		pos = end
@@ -135,15 +135,15 @@ func readULEB(b []byte) (uint64, int, error) {
 	return 0, 0, fmt.Errorf("uleb128 truncated")
 }
 
-// readName reads a uleb-prefixed UTF-8 name and returns it plus the
-// remaining bytes.
-func readName(b []byte) (string, []byte, error) {
+// readName reads a uleb-prefixed UTF-8 name, returning it and the number of
+// bytes consumed (uleb length + name bytes).
+func readName(b []byte) (string, int, error) {
 	n, k, err := readULEB(b)
 	if err != nil {
-		return "", nil, err
+		return "", 0, err
 	}
 	if n > uint64(len(b)-k) {
-		return "", nil, fmt.Errorf("name length %d overruns %d bytes", n, len(b)-k)
+		return "", 0, fmt.Errorf("name length %d overruns %d bytes", n, len(b)-k)
 	}
-	return string(b[k : k+int(n)]), b[k+int(n):], nil
+	return string(b[k : k+int(n)]), k + int(n), nil
 }
