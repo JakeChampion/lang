@@ -717,6 +717,36 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
     if (s.terminated()) { return s; }
     match (st) {
         parser.StmtVar(v) => {
+            // Tuple destructuring `var (a, b, …) = t` — the parser joins the
+            // names as "a,b,…". Build the tuple once, then bind each name to
+            // its positional element (element i at offset i, no prefix).
+            if (index_of_byte(v.name, 44) >= 0) {
+                s = build_expr(v.init, s);
+                if (!s.ok) { return s; }
+                var dtptr: i32 = s.cur_id();
+                var dnm: string = "";
+                var didx: i32 = 0;
+                var dci: i32 = 0;
+                while (dci <= v.name.len()) {
+                    var d_end: boolean = dci == v.name.len();
+                    var d_comma: boolean = false;
+                    if (!d_end) { if (v.name[dci] == 44) { d_comma = true; } }
+                    if (d_end || d_comma) {
+                        s = s.kconst(didx);
+                        var deidx: i32 = s.cur_id();
+                        s = s.fresh();
+                        var dela: i32[] = [dtptr, deidx];
+                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: dela, imm: 0, str: "" });
+                        s = s.set_var(dnm, s.cur_id());
+                        dnm = "";
+                        didx = didx + 1;
+                    } else {
+                        dnm = dnm + v.name[dci : dci + 1];
+                    }
+                    dci = dci + 1;
+                }
+                return s;
+            }
             var ity: string = type_of_expr(v.init, s);
             s = build_expr(v.init, s);
             if (!s.ok) { return s; }
