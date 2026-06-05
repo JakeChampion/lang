@@ -99,3 +99,70 @@ func wrapCompSection(out []byte, id byte, body []byte) []byte {
 	out = appendULEB(out, uint64(len(body)))
 	return append(out, body...)
 }
+
+// compSecAlias is the component alias section id.
+const compSecAlias = 0x06
+
+// EmitWorldImports emits the full world's import prefix: the type / import /
+// alias sections that declare every interface the world imports, with shared
+// types surfaced and cross-referenced exactly as the world encodes them.
+//
+// It works by replaying the world component's declarations as top-level
+// component sections in order (a `type` decl → type section, `import` →
+// import section, `alias` → alias section). Because the replay preserves
+// declaration order, the component's top-level type-index space lines up with
+// the world component's, so each interface instance type's outer-alias
+// references to surfaced shared types stay valid and its body copies verbatim.
+// This is the whole-world (not per-shape minimized) prefix — see the P2
+// direction in docs/WIT-BRING-YOUR-OWN.md.
+func (w *World) EmitWorldImports() ([]byte, error) {
+	world := w.worldComponent()
+	if world == nil {
+		return nil, fmt.Errorf("componenttype: no world component")
+	}
+	var out []byte
+	for i := range world.Decls {
+		d := &world.Decls[i]
+		switch d.Kind {
+		case 0x01: // type
+			body := appendULEB(nil, 1)
+			body = encodeTypeDef(body, *d.Type)
+			out = wrapCompSection(out, compSecType, body)
+		case 0x02: // alias
+			body := appendULEB(nil, 1)
+			body = encodeAlias(body, *d.Alias)
+			out = wrapCompSection(out, compSecAlias, body)
+		case 0x03: // import
+			body := appendULEB(nil, 1)
+			body = append(body, 0x00) // importname kind = label
+			body = appendName(body, d.Name)
+			body = encodeExternDesc(body, *d.Extern)
+			out = wrapCompSection(out, compSecImport, body)
+		case 0x04: // export
+			// A world export (e.g. http's incoming-handler) is what the
+			// component must *provide*; it belongs to the export-wiring phase,
+			// not the import prefix. An instance/func/component export adds no
+			// type slot, so skipping it keeps the type-index alignment intact;
+			// a type export would surface a type, so refuse that until the
+			// export phase rather than silently misalign.
+			if d.Extern != nil && d.Extern.Kind == 0x03 {
+				return nil, fmt.Errorf("componenttype: world type-export not supported in import prefix yet")
+			}
+		default:
+			return nil, fmt.Errorf("componenttype: world decl kind %#x not supported in import prefix", d.Kind)
+		}
+	}
+	return out, nil
+}
+
+// ComponentWithWorldImports builds a complete (import-only) component that
+// declares the full world as top-level imports — for validating the emission
+// with the WASI tools.
+func (w *World) ComponentWithWorldImports() ([]byte, error) {
+	secs, err := w.EmitWorldImports()
+	if err != nil {
+		return nil, err
+	}
+	out := append([]byte{}, componentHeader...)
+	return append(out, secs...), nil
+}
