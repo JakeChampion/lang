@@ -3178,3 +3178,241 @@ function main(): i32 {
     return 2;
 }
 `
+
+// TestSelfHostWasmComponentFullIORandomWrite is the random+write+stdout
+// combination framing test: given the Go backend's own core, the self-host's
+// component_full_io_random_write framing must reproduce native's component
+// byte-for-byte, validate, and run. Mixes a memory-free import (random,
+// lowered without memory) with the memory-dependent fs write chain.
+func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-full-io-random-write e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-full-io-random-write e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	fernBin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("build fern: %v\n%s", err, out)
+	}
+	progPath := filepath.Join(dir, "prog.fern")
+	src := `function main(): i32 { var id: string = random_bytes(8); match (write_file("id.bin", id)) { Some(e) => { return 1; }, None => {} } write("saved\n"); return 0; }`
+	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write prog: %v", err)
+	}
+	refPath := filepath.Join(dir, "ref.wasm")
+	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	}
+	ref, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Fatalf("read ref: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.bin"), componentCoreSection(t, ref), 0o644); err != nil {
+		t.Fatalf("write core.bin: %v", err)
+	}
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_encode.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentFullIORandomWriteDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-random-write component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+	out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+	if err != nil {
+		t.Fatalf("run io-random-write component assembler: %v", err)
+	}
+	var got []byte
+	for _, tok := range strings.Fields(string(out)) {
+		n, err := strconv.Atoi(tok)
+		if err != nil {
+			t.Fatalf("bad byte %q: %v", tok, err)
+		}
+		got = append(got, byte(n))
+	}
+	if !bytesEqual(got, ref) {
+		t.Fatalf("io-random-write component differs from Go reference: got %d bytes, want %d", len(got), len(ref))
+	}
+	myPath := filepath.Join(dir, "mine.iorandwrite.wasm")
+	if err := os.WriteFile(myPath, got, 0o644); err != nil {
+		t.Fatalf("write component: %v", err)
+	}
+	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
+	}
+	stdout, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", myPath).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run io-random-write component: %v", err)
+	}
+	if string(stdout) != "saved\n" {
+		t.Errorf("io-random-write component stdout = %q, want %q", string(stdout), "saved\n")
+	}
+	idb, err := os.ReadFile(filepath.Join(dir, "id.bin"))
+	if err != nil {
+		t.Fatalf("read back id.bin: %v", err)
+	}
+	if len(idb) != 8 {
+		t.Errorf("io-random-write id.bin len = %d, want 8", len(idb))
+	}
+}
+
+// componentFullIORandomWriteDriver reads a (random+write+stdout) core and
+// wraps it via component_full_io_random_write.
+const componentFullIORandomWriteDriver = `
+function main(): i32 {
+    match (read_file("core.bin")) {
+        Ok(s) => {
+            var core: i32[] = [];
+            var i: i32 = 0;
+            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            var comp: i32[] = component_full_io_random_write(core);
+            var j: i32 = 0;
+            while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
+
+// TestSelfHostWasmComponentRandomWrite exercises the fully self-hosted preview2
+// random+write path end to end -- the token-generating handler shape: draw a
+// random id, persist it to a file, respond.
+func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-random-write e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-random-write e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
+		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
+
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentCompileIORandomWriteDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-random-write component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+
+	build := func(t *testing.T, source string) string {
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		if len(coreWat) == 0 {
+			t.Fatal("preview2 fs core WAT empty")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
+			t.Fatalf("write core.wat: %v", err)
+		}
+		out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+		if err != nil {
+			t.Fatalf("run io-random-write assembler: %v", err)
+		}
+		var comp []byte
+		for _, tok := range strings.Fields(string(out)) {
+			n, _ := strconv.Atoi(tok)
+			comp = append(comp, byte(n))
+		}
+		p := filepath.Join(dir, "comp.wasm")
+		if err := os.WriteFile(p, comp, 0o644); err != nil {
+			t.Fatalf("write comp: %v", err)
+		}
+		if vout, err := exec.Command(wasmtools, "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("validate: %v\n%s", err, vout)
+		}
+		return p
+	}
+
+	t.Run("gen-and-persist", func(t *testing.T) {
+		// Draw 16 random bytes (as a string), write them, report the count.
+		comp := build(t, `function main(): i32 { var id: string = random_bytes(16); match (write_file("token.bin", id)) { Some(e) => { return 1; }, None => {} } print_int(id.len()); return 0; }`)
+		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
+		if string(out) != "16" {
+			t.Errorf("gen-and-persist: stdout = %q, want %q", string(out), "16")
+		}
+		tok, err := os.ReadFile(filepath.Join(dir, "token.bin"))
+		if err != nil {
+			t.Fatalf("read back token.bin: %v", err)
+		}
+		if len(tok) != 16 {
+			t.Errorf("gen-and-persist: token.bin len = %d, want 16", len(tok))
+		}
+	})
+}
+
+// componentCompileIORandomWriteDriver reads a random+write+stdout core WAT,
+// assembles it, and wraps it via component_full_io_random_write.
+const componentCompileIORandomWriteDriver = `
+function main(): i32 {
+    match (read_file("core.wat")) {
+        Ok(wat) => {
+            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var comp: i32[] = component_full_io_random_write(core);
+            var i: i32 = 0;
+            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
