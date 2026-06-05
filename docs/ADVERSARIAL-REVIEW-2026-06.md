@@ -27,7 +27,9 @@ always-copy interp would lose bare-statement mutations (a *new* interp↔
 backend divergence), while never-copying keeps the original bug. Closing
 M1 correctly means giving the interpreter the runtime's Perceus-style RC
 discipline — a substantial, invasive change scoped as its own effort, not
-a point fix. M3 (delete order) was fixed independently of M1.
+a point fix. M3 (delete order) was fixed independently of M1. The full
+design + value-flow hook points + validation strategy are scoped in
+`docs/INTERP-MAP-COW-PLAN.md`.
 
 The fix decisions for the three originally-deferred items were:
 **F2** → require an explicit `as` cast in user code (the implicit usize
