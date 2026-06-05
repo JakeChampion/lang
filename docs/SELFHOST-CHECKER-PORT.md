@@ -72,9 +72,17 @@ same code(s) the Go checker does — restricted to
   enum name, so a `mod.structs` entry can't be told apart from a variant
   — that grouping must be recovered first. Duplicate var in scope (E013)
   and reserved-name (E010) also remain.
-- **Slice 3: assignment / return / arg type-mismatch** (E002, E003,
-  E004, E005, E038) — convert existing `TypeUnknown` mismatch detections
-  into coded diags.
+- **Slice 3 (in progress): return-type mismatch** (E002). `ret_diags`
+  walks each function body — recursing through if / while / for / match /
+  defer sub-bodies and threading scope so a return sees locals declared
+  earlier in its block — and emits E002 for every return whose value type
+  isn't assignable to the declared return type. It reuses the same
+  `type_assignable` predicate `check_stmt` already uses, so it fires
+  exactly where the checker already flagged the function ill-typed (no new
+  false positives) and only attaches the stable code. Remaining
+  type-mismatch codes — E003 (assignment), E004 (arity), E005 (struct
+  literal missing field), E038 (argument type) — follow in the next
+  slices via the same per-function diagnostic collection.
 - **Slice 4: control-flow + conditions** (E008, E011, E012).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
