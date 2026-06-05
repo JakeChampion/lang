@@ -632,3 +632,42 @@ function wit_section_body(payload: i32[], want_id: i32): i32[] {
     }
     return found;
 }
+
+// ---- P2 slice: world lift (import interface names) -----------------------
+//
+// Navigate the decoded world to its imported interface names -- the self-host
+// mirror of componenttype's World.Interfaces (names). The type section's
+// type 0 is the outer wrapper component; its first decl is the world
+// component (Type(component)); the world component's import decls (kind 0x03)
+// name the interfaces. Non-import decls are skipped with the slice-3
+// transcoder (wit_tx_decl, throwing away its output).
+
+function wit_world_import_names(tbody: i32[]): string[] {
+    var names: string[] = [];
+    var none: i32[] = [];
+    var rc: UlebRead = wit_read_uleb(tbody, 0);
+    var p: i32 = rc.next;
+    // type 0: outer component (0x41) + decl vec.
+    p = p + 1;
+    var oc: UlebRead = wit_read_uleb(tbody, p);
+    p = oc.next;
+    // outer decl 0: type decl (0x01) whose typedef is the world component (0x41).
+    p = p + 1;
+    p = p + 1;
+    var wc: UlebRead = wit_read_uleb(tbody, p);
+    var wcount: i32 = wc.value;
+    p = wc.next;
+    var i: i32 = 0;
+    while (i < wcount) {
+        var kind: i32 = tbody[p];
+        if (kind == 3) {
+            // import: externname is 0x00 + uleb-len + bytes.
+            var nr: NameR = wit_read_name(tbody, p + 2);
+            names = names.push(nr.s);
+        }
+        var skip: TxR = wit_tx_decl(tbody, p, none);
+        p = skip.next;
+        i = i + 1;
+    }
+    return names;
+}
