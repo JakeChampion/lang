@@ -527,3 +527,77 @@ function component_full_io_fs_rw_args(core: i32[]): i32[] {
     o = wcat(o, wsection(1, core));
     return wcat(o, blob_to_bytes(io_fs_rw_args_suffix()));
 }
+
+// ---- generative suffix builder: shim cores ------------------------------
+//
+// Phase of docs/WASM-COMPONENT-GENERATOR.md's suffix work. A memory-dependent
+// import (one taking/returning a list, lowered with (memory)) is wired through
+// the wit-component "$imports" table trampoline. Two tiny core modules per such
+// import, both parameterised by the import's lowered core signature:
+//   - shim_trampoline_core: exports func "0" (forwards its params, then
+//     call_indirect through table slot 0) + the "$imports" funcref table.
+//   - shim_tablefill_core: imports func "0" + the "$imports" table, and an
+//     elem writes func 0 into slot 0.
+// These reproduce the native compiler's shim cores byte-for-byte (validated by
+// TestSelfHostWasmShimCore against the stdout blocking-write-and-flush shape).
+
+// functype emits a core wasm functype: 0x60, vec(params), vec(results), where
+// each param/result is a valtype byte (i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c).
+function functype(params: i32[], results: i32[]): i32[] {
+    var t: i32[] = [96];
+    t = leb_u32(t, params.len());
+    t = wcat(t, params);
+    t = leb_u32(t, results.len());
+    return wcat(t, results);
+}
+
+function shim_trampoline_core(params: i32[], results: i32[]): i32[] {
+    var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+    o = wcat(o, wsection(1, wvec(1, functype(params, results))));
+    o = wcat(o, wsection(3, [1, 0]));
+    o = wcat(o, wsection(4, [1, 112, 1, 1, 1]));
+    var ex: i32[] = [2];
+    ex = wname(ex, "0");
+    ex = ex.push(0);
+    ex = ex.push(0);
+    ex = wname(ex, "$imports");
+    ex = ex.push(1);
+    ex = ex.push(0);
+    o = wcat(o, wsection(7, ex));
+    var body: i32[] = [0];
+    var k: i32 = 0;
+    while (k < params.len()) {
+        body = body.push(32);
+        body = body.push(k);
+        k = k + 1;
+    }
+    body = body.push(65);
+    body = body.push(0);
+    body = body.push(17);
+    body = body.push(0);
+    body = body.push(0);
+    body = body.push(11);
+    var fe: i32[] = [];
+    fe = leb_u32(fe, body.len());
+    fe = wcat(fe, body);
+    return wcat(o, wsection(10, wvec(1, fe)));
+}
+
+function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
+    var o: i32[] = [0, 97, 115, 109, 1, 0, 0, 0];
+    o = wcat(o, wsection(1, wvec(1, functype(params, results))));
+    var im: i32[] = [2];
+    im = im.push(0);
+    im = wname(im, "0");
+    im = im.push(0);
+    im = im.push(0);
+    im = im.push(0);
+    im = wname(im, "$imports");
+    im = im.push(1);
+    im = im.push(112);
+    im = im.push(1);
+    im = im.push(1);
+    im = im.push(1);
+    o = wcat(o, wsection(2, im));
+    return wcat(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
+}
