@@ -11,6 +11,17 @@ below was reproduced against the tree at commit `5a3a6c6` (probe tests
 written, run, then removed; no source modified during review). The
 build is clean (`go build ./...`) and all non-e2e unit packages pass.
 
+## Status (updated after the fix pass)
+
+15 of the 17 findings are **fixed** (each with a regression test and the
+full non-e2e suite + native e2e corpus re-run green): F1, B1, B2, I1, I2,
+F3, M2, L1, L2, L3, L4, L5, B3, I3, F4. The remaining three — **F2**
+(`usize` wormhole), **M1** (Map copy-on-write interp divergence), and
+**M3** (Map delete order) — are **deferred pending a design decision**
+(see "Open design questions" at the end); each changes language
+semantics or the interp-vs-runtime contract, so the right call is the
+maintainer's, not a mechanical fix.
+
 ## Summary
 
 | # | Severity | Subsystem | Title |
