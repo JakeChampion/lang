@@ -1917,11 +1917,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (b.op == "&&" || b.op == "||") {
                 var lt: Type = check_expr(b.left, s);
                 if (!is_unknown(lt) && !type_eq(lt, t_bool())) {
-                    out = out.push(dg("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt)));
+                    out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt), b.line, b.col));
                 }
                 var rt: Type = check_expr(b.right, s);
                 if (!is_unknown(rt) && !type_eq(rt, t_bool())) {
-                    out = out.push(dg("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt)));
+                    out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt), b.line, b.col));
                 }
             }
             // E041: `==` / `!=` require same-typed operands (the same rule
@@ -1931,7 +1931,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var elt: Type = check_expr(b.left, s);
                 var ert: Type = check_expr(b.right, s);
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
-                    out = out.push(dg("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert)));
+                    out = out.push(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
@@ -1947,7 +1947,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki2: boolean = type_eq(pl, t_i32()) && type_eq(pr, t_i32());
                     var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
                     if (!oks && !oki2 && !okf2) {
-                        out = out.push(dg("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr)));
+                        out = out.push(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
                     }
                 }
             }
@@ -1958,7 +1958,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var oki: boolean = type_eq(alt, t_i32()) && type_eq(art, t_i32());
                     var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
                     if (!oki && !okf) {
-                        out = out.push(dg("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art)));
+                        out = out.push(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
                     }
                 }
             }
@@ -1969,7 +1969,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (u.op == "!") {
                 var ot: Type = check_expr(u.operand, s);
                 if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
-                    out = out.push(dg("E009", "operator \"!\" requires boolean, got " + type_label(ot)));
+                    out = out.push(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
                 }
             }
         },

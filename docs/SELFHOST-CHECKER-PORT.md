@@ -321,6 +321,15 @@ same code(s) the Go checker does — restricted to
   variant) prints `3:32: error[E036]` and the ident-argument case of
   **E038** prints `2:49: error[E038]`, both matching Go. Fixpoint-safe.
   Gated by a new `check-position-ident`.
+- **Slice 35 (done): `ExprBinary` / `ExprUnary` positions → E009 + E041 line:col.**
+  Both gain `line`/`col`, captured at the **operator token** (matching
+  the Go parser's `Binary{P: opTok.Pos}` / `Unary{P: op.Pos}`) via
+  `e_binary_at` / `e_unary_at`; the flatten + mono rebuilds propagate,
+  and the synthetic `for`-desugar binaries in `ssa` plus constfold's
+  can't-fold returns carry 0. **E009** (non-boolean `&&`/`||`/`!`,
+  mismatched `+`/arithmetic operands) prints `1:60` / `1:38` and **E041**
+  (compare mismatch) prints `1:35`, all matching Go. Fixpoint-safe. Gated
+  by a new `check-position-operator`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

@@ -203,11 +203,11 @@ function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Exp
         if (op == "-") { return lit_i32(li.v - ri.v); }
         if (op == "*") { return lit_i32(li.v * ri.v); }
         if (op == "/") {
-            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs }; }
+            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 }; }
             return lit_i32(li.v / ri.v);
         }
         if (op == "%") {
-            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs }; }
+            if (ri.v == 0) { return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 }; }
             return lit_i32(li.v % ri.v);
         }
         if (op == "<") { return lit_bool(li.v < ri.v); }
@@ -235,7 +235,7 @@ function fold_binary(op: string, lhs: parser.Expr, rhs: parser.Expr): parser.Exp
         if (op == "!=") { return lit_bool(ls.v != rs.v); }
     }
     // Nothing to fold — rebuild with folded children.
-    return parser.ExprBinary { op: op, left: lhs, right: rhs };
+    return parser.ExprBinary { op: op, left: lhs, right: rhs, line: 0, col: 0 };
 }
 
 function fold_unary(op: string, operand: parser.Expr): parser.Expr {
@@ -247,7 +247,7 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
         var ob: OptBool = as_bool_lit(operand);
         if (ob.ok) { return lit_bool(!ob.v); }
     }
-    return parser.ExprUnary { op: op, operand: operand };
+    return parser.ExprUnary { op: op, operand: operand, line: 0, col: 0 };
 }
 
 // =================== STMT / MODULE FOLDING ====================
