@@ -27,5 +27,4 @@ internal/ir:Lower
 internal/fernsmith:New
 internal/fernsmith:NewWithConfig
 internal/wasm/encode:PutBytes
-internal/wasm/componenttype:PayloadFor
 internal/wasm/component:PutTypeSectionOneInstanceOneFuncNoResultExport

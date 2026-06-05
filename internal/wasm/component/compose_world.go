@@ -49,16 +49,6 @@ func ComposeFromWorld(core []byte, world, coreExportName string, imports []gImpo
 	return g.finish(core, coreExportName, ""), nil
 }
 
-// ComposeStdoutFromWorld wraps a stdout core (imports get-stdout +
-// output-stream.blocking-write-and-flush, exports _lang_run) into a
-// wasi:cli/run component whose imports are declared from the full WIT world.
-func ComposeStdoutFromWorld(core []byte, world string) ([]byte, error) {
-	return ComposeFromWorld(core, world, "_lang_run", []gImport{
-		{iface: "wasi:io/streams@0.2.0", name: composeBlockWriteName, kind: gMem, params: composeBlockWriteParams},
-		{iface: "wasi:cli/stdout@0.2.0", name: "get-stdout", kind: gNoOpt},
-	})
-}
-
 // coreFuncImport is one function import of a core module: its (module, name)
 // and the param valtypes of its type (the trampoline signature a memory
 // lowering mirrors).
