@@ -1,0 +1,80 @@
+// examples/self_host/wit_decode.fern — self-host port of
+// internal/wasm/componenttype's bring-your-own-WIT decoder
+// (docs/WIT-BRING-YOUR-OWN.md, P1). The destination is the self-hosted
+// compiler; the Go decoder is the byte-identical oracle.
+//
+// Slice 1: the byte-reader LEB primitives + the component-type payload
+// section walker. A `component-type` payload is itself a component binary
+// (\0asm 0d 00 01 00 + sections); this validates the header and walks the
+// top-level sections, then re-emits them (id + uleb size + body) so a
+// round-trip reproduces the input — exercising the uleb reader against the
+// real fern.bin through the self-host. Slices 2/3 add the value-type grammar
+// and the world model. Depends on leb128.fern (leb_u32).
+
+// UlebRead is the result of reading a uleb128: the decoded value and the
+// position just past it.
+struct UlebRead { value: i32, next: i32 }
+
+// wit_read_uleb reads an unsigned LEB128 from buf starting at pos.
+function wit_read_uleb(buf: i32[], pos: i32): UlebRead {
+    var v: i32 = 0;
+    var shift: i32 = 0;
+    var p: i32 = pos;
+    var done: boolean = false;
+    while (!done) {
+        var c: i32 = buf[p];
+        p = p + 1;
+        v = v | ((c & 127) << shift);
+        if ((c & 128) == 0) {
+            done = true;
+        } else {
+            shift = shift + 7;
+        }
+    }
+    return UlebRead { value: v, next: p };
+}
+
+// wit_component_header returns the 8-byte component preamble
+// (\0asm + version 13, layer 1) every component-type payload starts with.
+function wit_component_header(): i32[] {
+    return [0, 97, 115, 109, 13, 0, 1, 0];
+}
+
+// wit_reencode_sections validates the component header of a component-type
+// payload, walks its top-level sections (each: id byte + uleb size + body),
+// and re-emits them (id + uleb size + body). The result equals the input
+// when the walker and the uleb reader/writer agree — the slice-1 round-trip
+// gate. Returns an empty buffer if the header is wrong.
+function wit_reencode_sections(payload: i32[]): i32[] {
+    var hdr: i32[] = wit_component_header();
+    var i: i32 = 0;
+    while (i < hdr.len()) {
+        if (payload[i] != hdr[i]) {
+            return [];
+        }
+        i = i + 1;
+    }
+    var o: i32[] = [];
+    i = 0;
+    while (i < 8) {
+        o = o.push(payload[i]);
+        i = i + 1;
+    }
+    var pos: i32 = 8;
+    while (pos < payload.len()) {
+        var id: i32 = payload[pos];
+        pos = pos + 1;
+        var r: UlebRead = wit_read_uleb(payload, pos);
+        var size: i32 = r.value;
+        pos = r.next;
+        o = o.push(id);
+        o = leb_u32(o, size);
+        var j: i32 = 0;
+        while (j < size) {
+            o = o.push(payload[pos + j]);
+            j = j + 1;
+        }
+        pos = pos + size;
+    }
+    return o;
+}
