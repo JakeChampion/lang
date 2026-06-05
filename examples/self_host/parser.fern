@@ -34,7 +34,7 @@ import "./lexer";
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
 
-pub struct ExprNumber { text: string, suffix: string, is_float: boolean }
+pub struct ExprNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
 pub struct ExprIdent { name: string }
 pub struct ExprString { value: string }
 pub struct ExprBool { value: boolean }
@@ -239,7 +239,10 @@ function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
 // rule. Same pattern lexer.fern uses for Token construction.
 
 function e_number(text: string, suffix: string, is_float: boolean): Expr {
-    return ExprNumber { text: text, suffix: suffix, is_float: is_float };
+    return ExprNumber { text: text, suffix: suffix, is_float: is_float, line: 0, col: 0 };
+}
+function e_number_at(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Expr {
+    return ExprNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
 }
 function e_ident(name: string): Expr { return ExprIdent { name: name }; }
 function e_string(value: string): Expr { return ExprString { value: value }; }
@@ -699,10 +702,12 @@ function parse_primary(p: Par): ExprResult {
     var t: lexer.Token = p.peek();
     match (t) {
         lexer.TokNumber(x) => {
+            var nline: i32 = p.peek_line();
+            var ncol: i32 = p.peek_col();
             p = p.advance();
             // Route through parse_postfix so a numeric primary can
             // carry a trailing `as Type` cast (e.g. `15 as u8`).
-            return parse_postfix(p, e_number(x.text, x.suffix, x.is_float));
+            return parse_postfix(p, e_number_at(x.text, x.suffix, x.is_float, nline, ncol));
         },
         lexer.TokString(x) => {
             p = p.advance();

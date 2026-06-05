@@ -1821,7 +1821,7 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     match (v.init) {
                         parser.ExprNumber(num) => {
                             if (!num.is_float && num.suffix.len() == 0 && !digits_fit_i32(num.text)) {
-                                out = out.push(dg("E047", "literal " + num.text + " does not fit in i32"));
+                                out = out.push(dg_at("E047", "literal " + num.text + " does not fit in i32", num.line, num.col));
                             }
                         },
                         _ => { }
@@ -1900,7 +1900,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 while (ai < c.args.len()) {
                                     var at: Type = check_expr(c.args[ai], s);
                                     if (!is_unknown(at) && !type_assignable(at, sig.param_types[ai], s.unions)) {
-                                        out = out.push(dg("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at)));
+                                        out = out.push(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
                                     ai = ai + 1;
                                 }
@@ -2275,6 +2275,27 @@ function dg(code: string, message: string): Diag {
 }
 function dg_at(code: string, message: string, line: i32, col: i32): Diag {
     return Diag { code: code, message: message, line: line, col: col };
+}
+
+// expr_line / expr_col read the 1-based source position off a positioned
+// expression node (0 when the node doesn't yet carry one). Used by
+// argument-level diagnostics (E038) that the Go checker reports at the
+// argument's own position rather than the call's.
+function expr_line(e: parser.Expr): i32 {
+    match (e) {
+        parser.ExprNumber(n) => { return n.line; },
+        parser.ExprCall(c) => { return c.line; },
+        parser.ExprStructLit(s) => { return s.line; },
+        _ => { return 0; }
+    }
+}
+function expr_col(e: parser.Expr): i32 {
+    match (e) {
+        parser.ExprNumber(n) => { return n.col; },
+        parser.ExprCall(c) => { return c.col; },
+        parser.ExprStructLit(s) => { return s.col; },
+        _ => { return 0; }
+    }
 }
 
 // dup_name_before reports whether names[idx] already appears at a lower
