@@ -1988,11 +1988,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
             var sbt: Type = check_expr(s2.start, s);
             if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
-                out = out.push(dg("E037", "slice low bound must be i32, got " + type_label(sbt)));
+                out = out.push(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
             }
             var ebt: Type = check_expr(s2.end, s);
             if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
-                out = out.push(dg("E037", "slice high bound must be i32, got " + type_label(ebt)));
+                out = out.push(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
             }
         },
         parser.ExprFieldAccess(fa) => {
@@ -2222,7 +2222,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
             parser.StmtIf(f) => {
                 var ic: Type = check_expr(f.cond, cur);
                 if (!is_unknown(ic) && !type_eq(ic, t_bool())) {
-                    out = out.push(dg("E008", "if condition must be boolean, got " + type_label(ic)));
+                    out = out.push(dg_at("E008", "if condition must be boolean, got " + type_label(ic), expr_line(f.cond), expr_col(f.cond)));
                 }
                 out = append_diags(out, stmts_assign_diags(f.then_body, cur, unions));
                 out = append_diags(out, stmts_assign_diags(f.else_body, cur, unions));
@@ -2230,7 +2230,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
             parser.StmtWhile(w) => {
                 var wc: Type = check_expr(w.cond, cur);
                 if (!is_unknown(wc) && !type_eq(wc, t_bool())) {
-                    out = out.push(dg("E008", "while condition must be boolean, got " + type_label(wc)));
+                    out = out.push(dg_at("E008", "while condition must be boolean, got " + type_label(wc), expr_line(w.cond), expr_col(w.cond)));
                 }
                 out = append_diags(out, stmts_assign_diags(w.body, cur, unions));
             },

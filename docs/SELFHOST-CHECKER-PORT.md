@@ -342,6 +342,14 @@ same code(s) the Go checker does — restricted to
   expression node the self-host checker reports on (number / ident /
   call / struct-lit / binary / unary / field-access) carries a source
   position.
+- **Slice 37 (done): E008 + E037 line:col (checker-only).**
+  No AST change — both codes are reported at an already-positioned
+  sub-expression, so the emitters just call `expr_line` / `expr_col` on
+  it. **E008** (if / while condition not boolean) lands on the condition
+  (`1:28` for `if (5)`, `1:31` for `while (5)`) and **E037** (slice bound
+  not i32) lands on the offending bound (`1:72` low, `1:74` high), all
+  matching Go. Trivially fixpoint-safe (checker isn't in the bundle).
+  Gated by a new `check-position-cond-slice`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
