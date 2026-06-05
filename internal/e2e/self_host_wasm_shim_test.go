@@ -94,6 +94,8 @@ function main(): i32 {
 // list). A self-test asserts the generated suffixes for three shapes —
 // stdout (479B), eprint (545B), exit (531B) — match the native compiler's
 // bytes exactly. Check ids: 1/2 stdout, 3/4 eprint, 5/6 exit (len/bytes).
+// (fs_read's byte-identity to native is gated by TestSelfHostWasmComponentFullIOFS,
+// which byte-compares the whole fs component against the Go reference.)
 func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host component-suffix e2e")
@@ -141,9 +143,11 @@ func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 	}
 }
 
-// suffixStdoutSelfTestMain compares the generated stdout suffix against the
-// native compiler's exact 479 bytes (what the io_suffix() blob held before
-// it was replaced by the generator).
+// suffixStdoutSelfTestMain compares the generated suffixes against the native
+// compiler's exact bytes for stdout / eprint / exit. (fs_read's larger byte
+// array is verified via the whole-component compare in
+// TestSelfHostWasmComponentFullIOFS instead, to keep this self-host compile
+// within memory.)
 const suffixStdoutSelfTestMain = `
 function suffix_eq(got: i32[], want: i32[]): boolean {
     if (got.len() != want.len()) { return false; }
