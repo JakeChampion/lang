@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -181,6 +182,13 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_, code := runDriver(t, "-check", srcPath)
 		if code != 1 {
 			t.Errorf("-check on ill-typed program exited %d, want 1", code)
+		}
+		// The self-host checker surfaces the stable diagnostic code (the
+		// same E0XX the Go checker emits) on stderr — here E004 for the
+		// arity mismatch.
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if !strings.Contains(string(combined), "error[E004]") {
+			t.Errorf("-check diagnostics = %q, want it to contain error[E004]", combined)
 		}
 	})
 

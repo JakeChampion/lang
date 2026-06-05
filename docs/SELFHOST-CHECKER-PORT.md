@@ -218,6 +218,16 @@ same code(s) the Go checker does — restricted to
   system doesn't model yet), traits (E021), maps (E045), owned-parameter
   move checking (E050/E051), then source positions, then wiring the
   self-host checker in as the gate.
+- **Slice 24 (done): surface the diagnostics in `fern -check`.** The CLI
+  driver's `-check` mode now prints each coded diagnostic as
+  `error[E0XX]: message` on stderr (still no `line:col` prefix until
+  positions are threaded), instead of only signalling well-typedness
+  through the exit code. So the 24 codes built across slices 1–23 are now
+  user-visible from the self-hosted CLI — the first half of "wire it in as
+  the gate" (the second half, retiring the Go checker from the
+  differential, waits on source positions for full output parity).
+  Gated by `TestSelfHostCLIX86_64/check-bad`, which now also asserts the
+  E004 code appears on stderr.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
