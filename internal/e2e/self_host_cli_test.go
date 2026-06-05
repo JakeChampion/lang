@@ -144,6 +144,34 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-ssa-helpers", func(t *testing.T) {
+		// A program using push + slice pulls in the injected runtime helpers
+		// (__ssa_arr_push / __ssa_arr_slice). try_ssa must inject those helper
+		// bodies AND admit their names to the known set; otherwise calls_all_known
+		// rejects the call and the whole program falls back to the AST emitter.
+		// Asserting the -ssa output differs from AST proves the SSA path (with
+		// injected helpers) was taken.
+		srcPath := filepath.Join(dir, "ssa_helpers.fern")
+		src := "function main(): i32 { var a = [1, 2]; a = a.push(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		ssaAsm, code := runDriver(t, "-ssa", srcPath)
+		if code != 0 {
+			t.Fatalf("-ssa emit exited %d, want 0", code)
+		}
+		astAsm, _ := runDriver(t, srcPath)
+		if string(ssaAsm) == string(astAsm) {
+			t.Error("-ssa fell back to AST for a push/slice program (runtime helpers not injected)")
+		}
+		progBin := buildBin(t, gcc, dir, "ssa_helpers", string(ssaAsm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 10 {
+			t.Errorf("-ssa push/slice program exited %d, want 10", c)
+		}
+	})
+
 	t.Run("ssa-fallback", func(t *testing.T) {
 		// A program outside the SSA subset (a float local) must fall back to
 		// the AST emitter: -ssa output is byte-identical to the default.

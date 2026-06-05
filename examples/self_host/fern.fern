@@ -157,6 +157,18 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         if (ssa.is_ptr_type(allfuncs[ni].ret_type) || ssa.is_struct_type(allfuncs[ni].ret_type, structs)) { ptr_ret = ptr_ret.push(ssa.fn_sym(allfuncs[ni])); }
         ni = ni + 1;
     }
+    // The runtime helpers (map ops / array push / slice, ssa.ssa_helpers_src)
+    // are emitted as calls by build_func; their names join known / ptr_ret so
+    // those calls resolve, and the bodies are injected below (only the ones a
+    // program actually uses). Without this a program using a map / push / slice
+    // would fail calls_all_known and fall back to the AST emitter.
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
+    var hk: i32 = 0;
+    while (hk < hmod.funcs.len()) {
+        known = known.push(hmod.funcs[hk].name);
+        if (ssa.is_ptr_type(hmod.funcs[hk].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hk].name); }
+        hk = hk + 1;
+    }
     var sfuncs: ssa.SFunc[] = [];
     var has_main: boolean = false;
     var i: i32 = 0;
@@ -171,9 +183,23 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         i = i + 1;
     }
     if (!has_main) { return SsaResult { asm: "", ok: false }; }
+    // NOTE: emit without the register allocator. The SSA emit test-suite only
+    // ever exercises regalloc=false, and the allocator currently miscompiles
+    // some helper-heavy programs (e.g. a slice helper under spilling) — so the
+    // validated, always-correct stack path is used here. (Re-enabling regalloc
+    // is a separate task gated on test coverage + the spill fix.)
+    // Inject each runtime helper body the program actually calls.
+    var hj: i32 = 0;
+    while (hj < hmod.funcs.len()) {
+        if (ssa.calls_func(sfuncs, hmod.funcs[hj].name)) {
+            var hr: ssa.BResult = ssa.build_func(hmod.funcs[hj], structs, allfuncs);
+            if (hr.ok) { sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
+        }
+        hj = hj + 1;
+    }
     var asm: string = "";
-    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
-    else { asm = ssa_x86.emit_program(sfuncs, true); }
+    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, false); }
+    else { asm = ssa_x86.emit_program(sfuncs, false); }
     return SsaResult { asm: asm, ok: true };
 }
 
