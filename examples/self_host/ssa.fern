@@ -1114,7 +1114,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
             right: parser.ExprNumber { text: "1", suffix: "", is_float: false } },
         right: parser.ExprCall {
             callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name }, field: "len" },
-            args: [] } };
+            args: [], line: 0, col: 0 } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
@@ -1138,12 +1138,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         kargs = kargs.push(parser.ExprIdent { name: arr_name });
         kargs = kargs.push(parser.ExprIdent { name: i_name });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname, type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at" }, args: kargs }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at" }, args: kargs, line: 0, col: 0 }, line: 0, col: 0 };
         var vargs: parser.Expr[] = [];
         vargs = vargs.push(parser.ExprIdent { name: arr_name });
         vargs = vargs.push(parser.ExprIdent { name: i_name });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname, type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at" }, args: vargs }, line: 0, col: 0 };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at" }, args: vargs, line: 0, col: 0 }, line: 0, col: 0 };
         wbody = wbody.push(bind_k);
         wbody = wbody.push(bind_v);
     } else {
