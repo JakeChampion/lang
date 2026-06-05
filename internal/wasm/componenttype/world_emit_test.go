@@ -112,3 +112,58 @@ func TestEmitWorldImports(t *testing.T) {
 		})
 	}
 }
+
+// TestPrefixLayout checks the index counts a world-driven suffix consumes, and
+// cross-checks them against the actual emitted prefix: the type-index count
+// equals the number of type+alias sections emitted, and the instance count
+// equals the number of import sections.
+func TestPrefixLayout(t *testing.T) {
+	w, err := DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	pl := w.PrefixLayout()
+	if pl.Types != 26 || pl.Instances != 14 {
+		t.Errorf("PrefixLayout = {Types:%d Instances:%d}, want {26 14}", pl.Types, pl.Instances)
+	}
+	for name, want := range map[string]int{
+		"wasi:io/error@0.2.0":      0,
+		"wasi:io/streams@0.2.0":    1,
+		"wasi:cli/stdout@0.2.0":    3,
+		"wasi:cli/stderr@0.2.0":    4,
+		"wasi:random/random@0.2.0": 13,
+		"wasi:not/a-thing@9.9.9":   -1,
+	} {
+		if got := w.ImportInstanceIndex(name); got != want {
+			t.Errorf("ImportInstanceIndex(%q) = %d, want %d", name, got, want)
+		}
+	}
+
+	// Cross-check against the emitted prefix: count type/alias/import sections.
+	secs, err := w.EmitWorldImports()
+	if err != nil {
+		t.Fatalf("EmitWorldImports: %v", err)
+	}
+	var nTypeAlias, nImport uint32
+	for pos := 0; pos < len(secs); {
+		id := secs[pos]
+		pos++
+		size, n, err := readULEB(secs[pos:])
+		if err != nil {
+			t.Fatalf("section size: %v", err)
+		}
+		pos += n + int(size)
+		switch id {
+		case compSecType, compSecAlias:
+			nTypeAlias++
+		case compSecImport:
+			nImport++
+		}
+	}
+	if nTypeAlias != pl.Types {
+		t.Errorf("emitted type+alias sections = %d, PrefixLayout.Types = %d", nTypeAlias, pl.Types)
+	}
+	if nImport != pl.Instances {
+		t.Errorf("emitted import sections = %d, PrefixLayout.Instances = %d", nImport, pl.Instances)
+	}
+}
