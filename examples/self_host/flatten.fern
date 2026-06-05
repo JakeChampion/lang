@@ -253,7 +253,8 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             return parser.StmtVar {
                 name: v.name,
                 type_name: rewrite_type_name(v.type_name, ctx),
-                init: rewrite_expr(v.init, ctx)
+                init: rewrite_expr(v.init, ctx),
+                line: v.line, col: v.col
             };
         },
         parser.StmtReturn(r) => {
