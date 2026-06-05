@@ -1651,6 +1651,15 @@ type builder struct {
 	// computeReuseSources.
 	reuseSources  map[ast.Expr]string
 	reuseConsumed map[string]bool
+	// consumingMatchReuse marks a construction C (an arm's variant constructor)
+	// that reuses a CONSUMING match's scrutinee box in place (C2 — true
+	// zero-alloc FBIP): instead of freeing the consumed `own` box and allocating
+	// a fresh one for the arm's `return Ctor(..)`, the box shell is handed
+	// straight to C via the reuse token. The scrutinee's old payloads were MOVED
+	// into the arm bindings (reclaimed downstream), so unlike a general reuse C
+	// must NOT drop the box's old fields — this flag tells emitEnumNew to skip
+	// emitReuseOldFieldDrops. Rides on RcReuseEnabled.
+	consumingMatchReuse map[*ast.Call]bool
 	// locals maps parameter and var names to their 0-based slot index.
 	// Parameters are slots 0..len(params)-1; vars start at len(params).
 	locals map[string]int32
@@ -5321,6 +5330,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
 	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
+	b.consumingMatchReuse = map[*ast.Call]bool{}
 	b.closureTarget = map[string]string{}
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
@@ -5753,6 +5763,14 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	if dName, paired := b.reuseSources[callNode]; paired && callNode != nil {
 		var dSize int32
 		reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
+		if b.consumingMatchReuse[callNode] {
+			// Consuming-match reuse (C2): the scrutinee's pointer payloads were
+			// MOVED into the arm bindings and are reclaimed downstream, so the
+			// reused box's OLD fields must not be dropped — only its shell is
+			// taken. Keep dSize (for the reuse token's class accounting) but drop
+			// nothing.
+			reuseSrcOffs, reuseSrcTypes = nil, nil
+		}
 		reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
 	} else {
 		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
@@ -6918,7 +6936,21 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// doesn't deep-drop it too. Guarded arms free only on the matched
 			// path; a guard-false fall-through leaves the box for the next arm.
 			if consumeScrut && !pairFormScrutinee && arm.Guard == nil {
-				b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
+				// C2: when this arm's body is `return Ctor(..)` constructing a
+				// (payloadful) variant of the SAME enum, the scrutinee box and the
+				// constructed box share the enum's uniform box size — so instead of
+				// freeing the consumed box and allocating a fresh one, hand the box
+				// shell straight to that construction via the reuse token (true
+				// zero-alloc FBIP). Rides on RcReuseEnabled; otherwise free (C1).
+				reuseCtor := b.consumingReuseCtor(arm, consumeEnum)
+				scrutIdent, scrutIsIdent := n.Tag.(*ast.Ident)
+				_, already := b.reuseSources[reuseCtor]
+				if ast.RcReuseEnabled && reuseCtor != nil && scrutIsIdent && !already {
+					b.reuseSources[reuseCtor] = scrutIdent.Name
+					b.consumingMatchReuse[reuseCtor] = true
+				} else {
+					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
+				}
 			}
 			// Optional guard: with bindings now in locals, run
 			// the guard expression. On false, branch out of the
@@ -12333,6 +12365,48 @@ func (b *builder) emitOwnedEnumDrop(slot int32, et ast.EnumType, eligible bool) 
 		return
 	}
 	b.emitEnumSlotDrop(slot, et, eligible)
+}
+
+// consumingReuseCtor returns the arm's constructor call when the arm body is
+// exactly `return Ctor(args)` and Ctor is a PAYLOADFUL variant of the consumed
+// enum `et` — the case where the scrutinee box (uniform size for all variants
+// of et) can be reused in place for the construction (C2). Returns nil
+// otherwise (a payloadless `return Nil`, a non-constructor body, or a different
+// enum), leaving the box to the normal shallow free.
+func (b *builder) consumingReuseCtor(arm *ast.MatchArm, et ast.EnumType) *ast.Call {
+	if arm.Body == nil || len(arm.Body.Stmts) != 1 {
+		return nil
+	}
+	ret, ok := arm.Body.Stmts[0].(*ast.Return)
+	if !ok || ret.Value == nil {
+		return nil
+	}
+	call, ok := ret.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	cenum, _, payloadCount, ok := b.lookupVariant(cid.Name)
+	if !ok || cenum != et.Name || payloadCount == 0 {
+		return nil
+	}
+	// The enum must be uniform-box-sized (every variant the same box) for the
+	// matched box to fit the constructed variant — the same gate the shallow
+	// free uses.
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return nil
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	if _, ok := uniformEnumBoxSize(ed, b.ptrW); !ok {
+		return nil
+	}
+	return call
 }
 
 // emitConsumingMatchBoxFree frees an OWNED enum scrutinee's box after a
