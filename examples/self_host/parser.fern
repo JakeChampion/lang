@@ -185,7 +185,7 @@ pub struct StructFieldDecl { name: string, type_name: string }
 // `struct Box[T]`); empty for a non-generic struct. The monomorphiser
 // uses it to clone `Box[i32]` → a concrete `Box__i32` with the field
 // types substituted, so primitive/string payloads resolve their methods.
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[] }
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], line: i32, col: i32 }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -1978,12 +1978,14 @@ function parse_struct_field(p: Par): StructFieldResult {
 pub struct StructResult { par: Par, decl: StructDecl }
 
 function parse_struct_decl(p: Par): StructResult {
+    var sline: i32 = p.peek_line();
+    var scol: i32 = p.peek_col();
     p = p.advance();  // consume `struct`
     var name: string = p.peek_ident();
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0 } };
+        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol } };
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -2007,7 +2009,7 @@ function parse_struct_decl(p: Par): StructResult {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams } };
+        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol } };
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -2021,7 +2023,7 @@ function parse_struct_decl(p: Par): StructResult {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams } };
+    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol } };
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -2099,7 +2101,7 @@ function parse_enum_decl(p: Par): EnumResult {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.push(StructDecl { name: vname, fields: fields, type_params: [] });
+        out = out.push(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0 });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2174,7 +2176,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (payload_type.len() > 0) {
         fields = fields.push(StructFieldDecl { name: "__ev", type_name: payload_type });
     }
-    return acc.push(StructDecl { name: name, fields: fields, type_params: [] });
+    return acc.push(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0 });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -2208,7 +2210,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.push(StructFieldDecl { name: "is_file", type_name: "boolean" });
         fsf = fsf.push(StructFieldDecl { name: "is_dir", type_name: "boolean" });
         fsf = fsf.push(StructFieldDecl { name: "size", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "FileStat", fields: fsf, type_params: [] });
+        structs = structs.push(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0 });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -2221,7 +2223,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.push(StructFieldDecl { name: "stdout", type_name: "string" });
         prf = prf.push(StructFieldDecl { name: "stderr", type_name: "string" });
         prf = prf.push(StructFieldDecl { name: "exit_code", type_name: "i32" });
-        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf, type_params: [] });
+        structs = structs.push(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0 });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -2237,7 +2239,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.push(StructFieldDecl { name: "names", type_name: "string[]" });
         hmf = hmf.push(StructFieldDecl { name: "values", type_name: "string[]" });
-        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf, type_params: [] });
+        structs = structs.push(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0 });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -2245,14 +2247,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.push(StructFieldDecl { name: "path", type_name: "string" });
         hrf = hrf.push(StructFieldDecl { name: "body", type_name: "string" });
         hrf = hrf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf, type_params: [] });
+        structs = structs.push(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0 });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.push(StructFieldDecl { name: "status", type_name: "i32" });
         hsf = hsf.push(StructFieldDecl { name: "body", type_name: "string" });
         hsf = hsf.push(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf, type_params: [] });
+        structs = structs.push(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0 });
     }
     return structs;
 }
@@ -3280,7 +3282,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 nf = nf.push(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty });
                 fj = fj + 1;
             }
-            nstructs = nstructs.push(StructDecl { name: sd.name, fields: nf, type_params: [] });
+            nstructs = nstructs.push(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col });
         }
         si = si + 1;
     }
@@ -3327,7 +3329,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 cf = cf.push(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.push(StructDecl { name: mang, fields: cf, type_params: [] });
+            nstructs = nstructs.push(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
@@ -4119,7 +4121,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params });
+        nstructs = nstructs.push(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;

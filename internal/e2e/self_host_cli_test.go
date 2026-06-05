@@ -206,6 +206,18 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-struct", func(t *testing.T) {
+		// E007 (duplicate field) is reported at the struct decl position.
+		srcPath := filepath.Join(dir, "dup_field.fern")
+		if err := os.WriteFile(srcPath, []byte("struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		if !strings.Contains(string(combined), "1:1: error[E007]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"1:1: error[E007]\"", combined)
+		}
+	})
+
 	t.Run("interp", func(t *testing.T) {
 		// -interp evaluates via the tree-walker; the program's i32
 		// result becomes the exit code (mirrors interp_run.fern).

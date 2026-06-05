@@ -2305,7 +2305,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var fk: i32 = 0;
         while (fk < fnames.len()) {
             if (dup_name_before(fnames, fk)) {
-                out = out.push(dg("E007", "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name));
+                out = out.push(dg_at("E007", "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name, sd.line, sd.col));
             }
             fk = fk + 1;
         }
