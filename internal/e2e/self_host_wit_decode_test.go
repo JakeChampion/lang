@@ -272,3 +272,78 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWitWorldLift gates the self-host P2 lift: extracting the world's
+// imported interface names from the decoded fern world, run through the
+// self-host under wasmtime, must match the 14 fern imports in order. Returns
+// 0 on success, else the 1-based index of the first mismatch (or 99 for a
+// count mismatch).
+func TestSelfHostWitWorldLift(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-lift e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witLiftSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-lift self-test")
+	}
+	watPath := filepath.Join(dir, "wit_lift_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-lift self-test failed at check %d", code)
+	}
+}
+
+const witLiftSelfTestMain = `
+function wit_lift_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+function main(): i32 {
+    var want: string[] = [
+        "wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdin@0.2.0",
+        "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:io/poll@0.2.0",
+        "wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
+        "wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
+        "wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
+        "wasi:sockets/tcp-create-socket@0.2.0", "wasi:random/random@0.2.0"
+    ];
+    var got: string[] = wit_world_import_names(wit_section_body(wit_lift_bytes(FERN_BIN()), 7));
+    if (got.len() != want.len()) { return 99; }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (got[i] != want[i]) { return i + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+`
