@@ -153,6 +153,9 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// putchar(c): write c's low byte to stdout. Exits 0; the binary and
 		// WAT paths must agree on the emitted bytes ("Hi\n").
 		{"putchar", "function main(): i32 { putchar(72); putchar(105); putchar(10); return 0; }", 0},
+		// eprint(s): write to stderr (preview1 fd 2). stdout stays "x" (the
+		// stderr write must be a valid call and must not corrupt stdout).
+		{"eprint", "function main(): i32 { eprint(\"log\"); write(\"x\"); return 0; }", 0},
 	}
 
 	for _, tc := range cases {

@@ -3418,3 +3418,254 @@ function main(): i32 {
     return 2;
 }
 `
+
+// TestSelfHostWasmComponentFullIOEprint is the eprint+stdout framing test:
+// given the Go backend's own eprint+stdout core, the self-host's
+// component_full_io_eprint framing must reproduce native's component
+// byte-for-byte, validate, and run (writing to both stdout and stderr).
+func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-full-io-eprint e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-full-io-eprint e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	fernBin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("build fern: %v\n%s", err, out)
+	}
+	progPath := filepath.Join(dir, "prog.fern")
+	src := `function main(): i32 { write("out\n"); eprint("err\n"); return 0; }`
+	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write prog: %v", err)
+	}
+	refPath := filepath.Join(dir, "ref.wasm")
+	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	}
+	ref, err := os.ReadFile(refPath)
+	if err != nil {
+		t.Fatalf("read ref: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.bin"), componentCoreSection(t, ref), 0o644); err != nil {
+		t.Fatalf("write core.bin: %v", err)
+	}
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_encode.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentFullIOEprintDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-eprint component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+	out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+	if err != nil {
+		t.Fatalf("run io-eprint component assembler: %v", err)
+	}
+	var got []byte
+	for _, tok := range strings.Fields(string(out)) {
+		n, err := strconv.Atoi(tok)
+		if err != nil {
+			t.Fatalf("bad byte %q: %v", tok, err)
+		}
+		got = append(got, byte(n))
+	}
+	if !bytesEqual(got, ref) {
+		t.Fatalf("io-eprint component differs from Go reference: got %d bytes, want %d", len(got), len(ref))
+	}
+	myPath := filepath.Join(dir, "mine.ioeprint.wasm")
+	if err := os.WriteFile(myPath, got, 0o644); err != nil {
+		t.Fatalf("write component: %v", err)
+	}
+	if vout, err := exec.Command(wasmtools, "validate", myPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, vout)
+	}
+	cmd := exec.Command(wasmtime, "run", myPath)
+	var stderrBuf strings.Builder
+	cmd.Stderr = &stderrBuf
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("wasmtime run io-eprint component: %v", err)
+	}
+	if string(stdout) != "out\n" {
+		t.Errorf("io-eprint stdout = %q, want %q", string(stdout), "out\n")
+	}
+	if stderrBuf.String() != "err\n\n" {
+		t.Errorf("io-eprint stderr = %q, want %q", stderrBuf.String(), "err\n\n")
+	}
+}
+
+// componentFullIOEprintDriver reads a (eprint+stdout) core and wraps it via
+// component_full_io_eprint.
+const componentFullIOEprintDriver = `
+function main(): i32 {
+    match (read_file("core.bin")) {
+        Ok(s) => {
+            var core: i32[] = [];
+            var i: i32 = 0;
+            while (i < s.len()) { core = core.push(s[i]); i = i + 1; }
+            var comp: i32[] = component_full_io_eprint(core);
+            var j: i32 = 0;
+            while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
+
+// TestSelfHostWasmComponentEprint exercises the fully self-hosted preview2
+// eprint path end to end: source -> emit_module_run_io (a run core importing
+// wasi:cli/stderr's get-stderr + the stdout pair, with a preview2
+// $__fern_eprint stderr shim) -> emit_binary -> component_full_io_eprint -> a
+// wasi:cli/run component that logs to stderr (and stdout) under wasmtime.
+func TestSelfHostWasmComponentEprint(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping component-eprint e2e")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH; skipping component-eprint e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run.fern"), []byte(p1Driver), 0o644); err != nil {
+		t.Fatalf("write wasm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
+		t.Fatalf("write wasm_run_io.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
+
+	var asmSrc strings.Builder
+	for _, name := range []string{"leb128.fern", "wat_lex.fern", "wat_parse.fern", "wat_encode.fern", "wat_emit_bin.fern", "wat_component.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(componentCompileIOEprintDriver)
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("io-eprint component assembler produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "casm.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write casm wat: %v", err)
+	}
+
+	build := func(t *testing.T, source string) string {
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		if len(coreWat) == 0 {
+			t.Fatal("preview2 io core WAT empty")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "core.wat"), coreWat, 0o644); err != nil {
+			t.Fatalf("write core.wat: %v", err)
+		}
+		out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).Output()
+		if err != nil {
+			t.Fatalf("run io-eprint assembler: %v", err)
+		}
+		var comp []byte
+		for _, tok := range strings.Fields(string(out)) {
+			n, _ := strconv.Atoi(tok)
+			comp = append(comp, byte(n))
+		}
+		p := filepath.Join(dir, "comp.wasm")
+		if err := os.WriteFile(p, comp, 0o644); err != nil {
+			t.Fatalf("write comp: %v", err)
+		}
+		if vout, err := exec.Command(wasmtools, "validate", p).CombinedOutput(); err != nil {
+			t.Fatalf("validate: %v\n%s", err, vout)
+		}
+		return p
+	}
+
+	t.Run("stderr-and-stdout", func(t *testing.T) {
+		comp := build(t, `function main(): i32 { write("to-out"); eprint("to-err"); return 0; }`)
+		cmd := exec.Command(wasmtime, "run", comp)
+		var eb strings.Builder
+		cmd.Stderr = &eb
+		out, _ := cmd.Output()
+		if string(out) != "to-out" {
+			t.Errorf("stdout = %q, want %q", string(out), "to-out")
+		}
+		if eb.String() != "to-err\n" {
+			t.Errorf("stderr = %q, want %q", eb.String(), "to-err\n")
+		}
+	})
+
+	t.Run("eprint-only", func(t *testing.T) {
+		// No stdout output: the unused stdout import is harmless; stderr works.
+		comp := build(t, `function main(): i32 { eprint("just-err\n"); return 0; }`)
+		cmd := exec.Command(wasmtime, "run", comp)
+		var eb strings.Builder
+		cmd.Stderr = &eb
+		out, _ := cmd.Output()
+		if string(out) != "" {
+			t.Errorf("eprint-only stdout = %q, want empty", string(out))
+		}
+		if eb.String() != "just-err\n\n" {
+			t.Errorf("eprint-only stderr = %q, want %q", eb.String(), "just-err\n\n")
+		}
+	})
+}
+
+// componentCompileIOEprintDriver reads a eprint+stdout core WAT, assembles it,
+// and wraps it via component_full_io_eprint.
+const componentCompileIOEprintDriver = `
+function main(): i32 {
+    match (read_file("core.wat")) {
+        Ok(wat) => {
+            var core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var comp: i32[] = component_full_io_eprint(core);
+            var i: i32 = 0;
+            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
+            return 0;
+        },
+        Err(e) => { return 1; }
+    }
+    return 2;
+}
+`
