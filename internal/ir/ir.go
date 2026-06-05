@@ -6393,8 +6393,9 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 	if !ast.OwnedByDefault {
 		return false
 	}
-	if et, ok := t.(ast.EnumType); ok {
-		// First sub-slice: only enums whose deep drop is a pure, fully-wired
+	switch ty := t.(type) {
+	case ast.EnumType:
+		// Enums (sub-slice 2a): only those whose deep drop is a pure, fully-wired
 		// box/enum walk — transitively scalar/enum/tuple payloads (no array /
 		// string / Map, keeping the array-payload deep-drop + self-overwrite-
 		// reuse interaction out of scope, e.g. `enum Bag { Keep(i32[]) }`) AND a
@@ -6402,15 +6403,38 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 		// one like `Shape { Circle(i32), Rect(i32,i32) }` flat-decs without
 		// freeing, so owned-by-default would mis-reclaim it). That is the FBIP
 		// list/tree case; other enums keep the borrow model for now.
-		if !b.enumRcPayloadsEligible(et.Name) || !b.typeIsStringArrayFree(t, map[string]bool{}) {
+		if !b.enumRcPayloadsEligible(ty.Name) || !b.typeIsStringArrayFree(t, map[string]bool{}) {
 			return false
 		}
-		ed, ok := b.info.Enums[et.Name]
+		ed, ok := b.info.Enums[ty.Name]
 		if !ok {
 			return false
 		}
 		_, uniform := uniformEnumBoxSize(ed, b.ptrW)
 		return uniform
+	case ast.StructType:
+		// Structs (sub-slice 2c): Fern struct fields are immutable after
+		// construction (the checker rejects `p.x = v`; the idiom is a
+		// whole-struct rebuild `p = P{...old, x: v}`), so — exactly like enums —
+		// the caller-side retain inc that owned-by-default adds can never disturb
+		// an in-place mutation through the parameter; there is none. Admit a
+		// struct whose deep drop is the fully-wired pointer-box walk: transitively
+		// string/array/slice/Map-free (so __drop_struct_<N> never hits an unwired
+		// field) and backed by a real StructDecl. Runtime handles (Map / Reader /
+		// Writer / MapIter) have no decl and are rejected by typeIsStringArrayFree
+		// anyway; the box is uniform by construction (no variants), so no
+		// uniformity check is needed. Per-field rc counting (Phase 1e-struct-ii)
+		// balances the drop.
+		if _, ok := b.info.Structs[ty.Name]; !ok {
+			return false
+		}
+		return b.typeIsStringArrayFree(t, map[string]bool{})
+	case ast.TupleType:
+		// Tuples (sub-slice 2c): immutable, uniform headered boxes whose elements
+		// are rc-counted (the projection-site dup balances the per-element drop
+		// in emitDec's tuple branch). Same string/array/slice/Map-free gate as
+		// structs keeps the deep drop on the fully-wired path.
+		return b.typeIsStringArrayFree(t, map[string]bool{})
 	}
 	return false
 }
