@@ -568,8 +568,19 @@ same code(s) the Go checker does — restricted to
   (`A(a) => a.nope`) still flags E043 (matches Go). Checker-only
   (fixpoint-safe). Gated by new corpus (`match-binding-field-ok`,
   `match-binding-bad-field`).
-- **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
-  incl. exhaustiveness.
+- **Slice 51 (done): E014 — variant pattern not in the scrutinee's
+  enum/union.** Folded into the same `StmtMatch` coverage loop as E030: a
+  `PatVariant` whose name isn't in the scrutinee union's variant list is
+  E014, reported at the arm. Zero false positives across all fifteen
+  modules (the bundle's matches only name real variants). `match (u) { …,
+  C(c) => … }` for `type U = A | B` → `5:62: error[E014]: variant "C" is
+  not part of enum U`, matching Go (Go additionally emits E001 for the now-
+  undefined payload binding, which this port doesn't implement, so the
+  implemented-subset sets agree). Checker-only (fixpoint-safe). Gated by
+  new corpus (`union-match-foreign-variant`) and
+  `check-position-foreign-variant`.
+- **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
+  match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
 - **Slice 7: `?` / slices / tuples / maps / literal-fits** (E042, E037,
   E024/E046, E045, E047).

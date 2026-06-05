@@ -2266,7 +2266,17 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                             while (ca < m.arms.len()) {
                                 match (m.arms[ca].pattern) {
                                     parser.PatWildcard(_) => { saw_wild = true; },
-                                    parser.PatVariant(cpv) => { if (cpv.type_name.len() > 0) { covered = covered.push(cpv.type_name); } },
+                                    parser.PatVariant(cpv) => {
+                                        if (cpv.type_name.len() > 0) {
+                                            covered = covered.push(cpv.type_name);
+                                            // E014: a variant pattern that names
+                                            // something outside the scrutinee's
+                                            // enum/union, reported at the arm.
+                                            if (!name_in(usig.variants, cpv.type_name)) {
+                                                out = out.push(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                            }
+                                        }
+                                    },
                                 }
                                 ca = ca + 1;
                             }

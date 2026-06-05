@@ -52,6 +52,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E034": true, // heterogeneous array element type (primitives)
 	"E035": true, // variant pattern in a match on a non-enum scrutinee
 	"E030": true, // non-exhaustive match on a union scrutinee
+	"E014": true, // variant pattern not part of the scrutinee enum/union
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -264,6 +265,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-match-non-exhaustive", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; } } return 0; }\nfunction main(): i32 { return f(A); }\n", []string{"E030"}},
 		{"enum-match-exhaustive-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; }, B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"enum-match-payload-exhaustive-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
+		{"union-match-foreign-variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E014"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
