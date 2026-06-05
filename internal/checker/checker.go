@@ -3832,6 +3832,57 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.checkOwnedParams(fn)
 }
 
+// methodConsumesReceiver reports whether the method named by a call's
+// MethodCallSite takes its receiver by `own` (consuming) — for both concrete
+// methods (the impl's hoisted self own-flag in c.ownFuncs) and `dyn Trait`
+// dispatch (the trait method's declared self ownership). A consuming receiver is
+// a MOVE, not a borrow, so the affine use-after-move analysis must record it as
+// a consume; otherwise `x.consume(); x.consume()` slips past E050 and
+// double-frees at runtime.
+func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
+	if m == nil {
+		return false
+	}
+	if dt, ok := m.Receiver.(ast.DynTraitType); ok {
+		td, ok := c.info.Traits[dt.Trait]
+		if !ok {
+			return false
+		}
+		for i := range td.Methods {
+			if td.Methods[i].Name == m.Field {
+				return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+			}
+		}
+		return false
+	}
+	typeName, ok := methodTypeName(m.Receiver)
+	if !ok {
+		return false
+	}
+	if mangled, ok := c.info.Methods[typeName+"."+m.Field]; ok {
+		flags := c.ownFuncs[mangled]
+		return len(flags) > 0 && flags[0]
+	}
+	return false
+}
+
+// dynMethodConsumes reports whether trait method `field` on `trait` takes its
+// receiver by `own` — the `dyn Trait` analogue of methodConsumesReceiver, read
+// straight off the trait declaration (the dispatch is dynamic, so the trait
+// signature is the contract).
+func (c *checker) dynMethodConsumes(trait, field string) bool {
+	td, ok := c.info.Traits[trait]
+	if !ok {
+		return false
+	}
+	for i := range td.Methods {
+		if td.Methods[i].Name == field {
+			return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+		}
+	}
+	return false
+}
+
 // checkOwnedParams is the affine use-after-move analysis for `own` (owned /
 // consuming) parameters — the static foundation of Fern's ownership transfer.
 // An owned param may be CONSUMED at most once on every execution path; using it
@@ -3939,6 +3990,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return
 		}
 		borrow := map[*ast.Ident]bool{}
+		// dynConsumed holds receivers of `dyn Trait` calls to a CONSUMING (`own
+		// self`) trait method. The callee is a FieldAccess, so the case below
+		// would otherwise mark the receiver as a borrow; these are un-borrowed
+		// after the walk so the move is recorded.
+		dynConsumed := map[*ast.Ident]bool{}
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.FieldAccess:
@@ -3956,18 +4012,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					borrow[id] = true
 				}
 				// A method call (`xs.len()`) is rewritten by the checker to a
-				// plain Call with the receiver as Args[0] and Method set; that
-				// receiver is BORROWED, not consumed. (A pipe `x |> f()` also
-				// puts the LHS in Args[0] but Method is nil — there it IS a real
-				// argument, so it stays a consume.)
-				if x.Method != nil && len(x.Args) > 0 {
+				// plain Call with the receiver as Args[0] and Method set; a
+				// borrowed-self receiver is BORROWED, not consumed. (A pipe
+				// `x |> f()` also puts the LHS in Args[0] but Method is nil —
+				// there it IS a real argument, so it stays a consume.) A
+				// CONSUMING (`own self`) method, by contrast, MOVES its receiver,
+				// so it is left out of `borrow` and recorded as a consume —
+				// `x.consume(); x.consume()` is then a use-after-move (E050).
+				if x.Method != nil && len(x.Args) > 0 && !c.methodConsumesReceiver(x.Method) {
 					if id, ok := x.Args[0].(*ast.Ident); ok {
 						borrow[id] = true
+					}
+				}
+				// `dyn Trait` dispatch keeps the receiver in the FieldAccess
+				// callee (no Method / Args[0]). A consuming trait method moves it.
+				if x.DynTrait != "" {
+					if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+						if rid, ok := fa.Target.(*ast.Ident); ok && c.dynMethodConsumes(x.DynTrait, fa.Field) {
+							dynConsumed[rid] = true
+						}
 					}
 				}
 			}
 			return true
 		})
+		for id := range dynConsumed {
+			delete(borrow, id)
+		}
 		ast.Walk(e, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if !ok || !owned[id.Name] {
