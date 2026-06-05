@@ -78,7 +78,7 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
 // than sniff the sentinel). With a base, a subset of fields is
 // legal — the checker relaxes completeness. See
 // docs/IMMUTABILITY-MIGRATION-PLAN.md.
-pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr }
+pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32 }
 // Postfix field access `obj.field`. obj can be any Expr that
 // evaluates to a struct value.
 pub struct ExprFieldAccess { obj: Expr, field: string }
@@ -255,14 +255,14 @@ function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: arr
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
     return ExprSlice { array: array, start: start, end: end };
 }
-function e_struct_lit(type_name: string, field_names: string[], field_values: Expr[]): Expr {
-    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base") };
+function e_struct_lit(type_name: string, field_names: string[], field_values: Expr[], line: i32, col: i32): Expr {
+    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col };
 }
 // e_struct_update builds a struct-update literal carrying a base
 // spread source. The base is the value whose un-overridden fields
 // are copied into the new box; the listed fields override.
-function e_struct_update(type_name: string, field_names: string[], field_values: Expr[], base: Expr): Expr {
-    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base };
+function e_struct_update(type_name: string, field_names: string[], field_values: Expr[], base: Expr, line: i32, col: i32): Expr {
+    return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base, line: line, col: col };
 }
 function e_field_access(obj: Expr, field: string): Expr {
     return ExprFieldAccess { obj: obj, field: field };
@@ -469,7 +469,7 @@ function parse_map_lit(p: Par): ExprResult {
 // type_name. Shared by the bare-ident struct literal in
 // parse_primary and the qualified `pkg.Type { … }` form in
 // parse_postfix.
-function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
+function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32): ExprResult {
     p = p.advance();  // consume `{`
     var fnames: string[] = [];
     var fvals: Expr[] = [];
@@ -493,7 +493,7 @@ function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
                 return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
             }
             p = p.advance();
-            return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base) };
+            return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base, sline, scol) };
         }
     }
     if (p.peek_punct() != "}") {
@@ -526,9 +526,9 @@ function parse_struct_lit_body(p: Par, type_name: string): ExprResult {
     }
     p = p.advance();
     if (has_base) {
-        return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base) };
+        return ExprResult { par: p, expr: e_struct_update(type_name, fnames, fvals, base, sline, scol) };
     }
-    return ExprResult { par: p, expr: e_struct_lit(type_name, fnames, fvals) };
+    return ExprResult { par: p, expr: e_struct_lit(type_name, fnames, fvals, sline, scol) };
 }
 
 // parse_postfix runs the chained-postfix loop on a base
@@ -574,7 +574,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 if (p.peek_punct() == "{") {
                     match (base) {
                         ExprIdent(bid) => {
-                            var glit: ExprResult = parse_struct_lit_body(p, bid.name);
+                            var glit: ExprResult = parse_struct_lit_body(p, bid.name, 0, 0);
                             p = glit.par;
                             base = glit.expr;
                         },
@@ -641,7 +641,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 }
             }
             if (qstruct_ok) {
-                var qr: ExprResult = parse_struct_lit_body(p, qname + "." + fname);
+                var qr: ExprResult = parse_struct_lit_body(p, qname + "." + fname, 0, 0);
                 p = qr.par;
                 base = qr.expr;
             } else {
@@ -762,6 +762,8 @@ function parse_primary(p: Par): ExprResult {
             return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
         lexer.TokIdent(x) => {
+            var idline: i32 = p.peek_line();
+            var idcol: i32 = p.peek_col();
             p = p.advance();
             var base: Expr = e_ident(x.name);
             // Map literal `Map { k0: v0, … }` — parsed in a helper
@@ -814,7 +816,7 @@ function parse_primary(p: Par): ExprResult {
                             return ExprResult { par: p, expr: e_unknown("missing } in struct update") };
                         }
                         p = p.advance();
-                        return parse_postfix(p, e_struct_update(x.name, fnames, fvals, sbase));
+                        return parse_postfix(p, e_struct_update(x.name, fnames, fvals, sbase, idline, idcol));
                     }
                 }
                 if (p.peek_punct() != "}") {
@@ -846,9 +848,9 @@ function parse_primary(p: Par): ExprResult {
                 }
                 p = p.advance();
                 if (has_base) {
-                    base = e_struct_update(x.name, fnames, fvals, sbase);
+                    base = e_struct_update(x.name, fnames, fvals, sbase, idline, idcol);
                 } else {
-                    base = e_struct_lit(x.name, fnames, fvals);
+                    base = e_struct_lit(x.name, fnames, fvals, idline, idcol);
                 }
             }
             return parse_postfix(p, base);
@@ -2673,7 +2675,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                 i = i + 1;
             }
             var rb: RExpr = mono_expr(s.base, env, funcs, cur);
-            return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr }, rins: rb.rins };
+            return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
         },
         ExprLambda(lm) => {
             var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins);
@@ -3128,7 +3130,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                     cur = cur.iadd(s.type_name, key);
                 }
             }
-            return RExpr { rexpr: ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr }, rins: cur };
+            return RExpr { rexpr: ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
         },
         ExprLambda(lm) => {
             var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins);
