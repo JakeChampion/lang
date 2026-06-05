@@ -130,6 +130,12 @@ same code(s) the Go checker does — restricted to
   (non-void) return type — the only context `ret_diags` runs in — that's
   E012. Void functions (no declared return) never reach `ret_diags`, so a
   bare `return;` there is fine, matching the Go checker.
+- **Slice 11 (done): duplicate var in scope** (E013). `dupvar_diags`
+  emits E013 for a `var` whose name was already declared by an earlier
+  `var` in the SAME block; each block (function body, branch, loop /
+  match-arm body) gets a fresh name set, so shadowing across nested blocks
+  — and a `var` shadowing a parameter or loop / pattern binding — is
+  allowed, matching the Go checker. Purely structural.
 - **Later: pattern matching** (E014/E025/E036), traits (E021), tuples /
   maps / slices, owned-parameter move checking (E050/E051), then source
   positions.

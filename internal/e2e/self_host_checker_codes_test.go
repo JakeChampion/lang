@@ -30,6 +30,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E008": true, // non-boolean if/while condition
 	"E011": true, // break / continue outside a loop
 	"E012": true, // return without value in a non-void function
+	"E013": true, // duplicate var in the same block
 	"E004": true, // free-function call arity
 	"E038": true, // free-function argument type
 	"E005": true, // struct literal missing field
@@ -176,6 +177,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"return-no-value-nonvoid", "function f(): i32 { return; }\nfunction main(): i32 { return 0; }\n", []string{"E012"}},
 		{"return-no-value-void-ok", "function f() { return; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-no-value-nested", "function f(): i32 { if (1 < 2) { return; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E012"}},
+		{"dup-var-same-block", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", []string{"E013"}},
+		{"dup-var-nested-shadow-ok", "function main(): i32 { var x: i32 = 1; if (1 < 2) { var x: i32 = 2; } return x; }\n", nil},
+		{"var-shadows-param-ok", "function f(a: i32): i32 { var a: i32 = 1; return a; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
