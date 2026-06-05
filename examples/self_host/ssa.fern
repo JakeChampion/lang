@@ -314,6 +314,19 @@ function ends_with_brackets(t: string): boolean {
     return n >= 2 && t[n - 2 : n] == "[]";
 }
 
+// count_fn_markers counts var-type entries that name a lifted lambda ("fn:…").
+// A lambda binding's index (used to build its lifted name) is the number of
+// such markers already recorded — matching collect_lambdas's body order.
+function count_fn_markers(types: string[]): i32 {
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < types.len()) {
+        if (types[i].len() > 3 && types[i][0:3] == "fn:") { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
 function build_expr(e: parser.Expr, s: BState): BState {
     match (e) {
         parser.ExprNumber(n) => {
@@ -472,6 +485,11 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     var callee_name: string = cid.name;
                     if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
                     if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
+                    // A lambda-bound local: f(...) dispatches to the lifted
+                    // top-level function recorded as "fn:<name>" in the var-type
+                    // map (see the StmtVar lambda case).
+                    var cfnty: string = s.get_var_type(cid.name);
+                    if (cfnty.len() > 3 && cfnty[0:3] == "fn:") { callee_name = cfnty[3 : cfnty.len()]; }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
                     while (i < c.args.len()) {
@@ -776,6 +794,21 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                     dci = dci + 1;
                 }
                 return s;
+            }
+            // A lambda binding `var f = function(...){...}` — the lambda is
+            // lifted to a top-level function <parent>$lam$<i> (collect_lambdas,
+            // body order). Record f in the var-type map as "fn:<name>" so a
+            // later direct call f(...) dispatches there; the lambda has no SSA
+            // value of its own (so using f as a non-call value bails, falling
+            // back to the AST emitter — closures that escape aren't in the
+            // subset yet). The index is the count of fn: markers seen so far,
+            // which matches collect_lambdas's body-order numbering.
+            match (v.init) {
+                parser.ExprLambda(_) => {
+                    var lidx: i32 = count_fn_markers(s.vt_types);
+                    return s.set_var_type(v.name, "fn:" + s.name + "$lam$" + int_str(lidx));
+                },
+                _ => { }
             }
             var ity: string = type_of_expr(v.init, s);
             s = build_expr(v.init, s);
@@ -1339,6 +1372,43 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
     }
     s = s.set_env(pre_names, exit_vals);
     return s;
+}
+
+// collect_lambdas lifts each top-level `var f = function(...){...}` binding in
+// every module function to a synthesized top-level FuncDecl named
+// `<parent>$lam$<i>` (i = body order, matching build_func's fn: marker count).
+// The driver builds these alongside the user functions; build_func rewrites a
+// direct call `f(...)` to the lifted name. Captures aren't handled — a lifted
+// body that references an enclosing local fails to build, so the program falls
+// back to the AST emitter. Only top-level bindings are scanned (nested lambdas
+// inside if/while bodies are left for a later slice).
+pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
+    var out: parser.FuncDecl[] = [];
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        var fd: parser.FuncDecl = funcs[fi];
+        var cnt: i32 = 0;
+        var si: i32 = 0;
+        while (si < fd.body.len()) {
+            match (fd.body[si]) {
+                parser.StmtVar(v) => {
+                    match (v.init) {
+                        parser.ExprLambda(lam) => {
+                            var nm: string = fd.name + "$lam$" + int_str(cnt);
+                            var tp: string[] = [];
+                            out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body });
+                            cnt = cnt + 1;
+                        },
+                        _ => { }
+                    }
+                },
+                _ => { }
+            }
+            si = si + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
 }
 
 pub struct BResult { func: SFunc, ok: boolean }
