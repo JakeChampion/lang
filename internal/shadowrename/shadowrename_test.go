@@ -150,6 +150,58 @@ func TestRenameSiblingBlocksDontInterfere(t *testing.T) {
 	}
 }
 
+// TestRenameStructUpdateBaseFollowsShadowedDecl — a struct-update
+// literal's spread base (`P { ...base, y: v }`) is a sub-expression
+// (StructLit.Base). When `base` is shadowed by an inner binding, that
+// Ident must be renamed too, or IR lowering reads the wrong (outer)
+// slot and the program miscompiles. Regression for the F1 finding in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestRenameStructUpdateBaseFollowsShadowedDecl(t *testing.T) {
+	prog := runRename(t, `struct P { x: i32, y: i32 }
+	function f(): i32 {
+		var base: P = P { x: 1, y: 2 };
+		{
+			var base: P = P { x: 100, y: 200 };
+			var updated: P = P { ...base, y: 999 };
+			return updated.x;
+		}
+	}`)
+	fn := prog.Funcs[0]
+	var innerBlock *ast.Block
+	walkStmts(fn.Body, func(s ast.Stmt) {
+		if b, ok := s.(*ast.Block); ok {
+			innerBlock = b
+		}
+	})
+	if innerBlock == nil {
+		t.Fatal("inner block not found")
+	}
+	var updatedInit ast.Expr
+	for _, s := range innerBlock.Stmts {
+		if v, ok := s.(*ast.Var); ok && strings.HasPrefix(v.Name, "updated") {
+			updatedInit = v.Init
+			break
+		}
+	}
+	if updatedInit == nil {
+		t.Fatal("updated var-init not found")
+	}
+	lit, ok := updatedInit.(*ast.StructLit)
+	if !ok {
+		t.Fatalf("updated init: expected StructLit, got %T", updatedInit)
+	}
+	if lit.Base == nil {
+		t.Fatal("struct-update literal has no Base")
+	}
+	id, ok := lit.Base.(*ast.Ident)
+	if !ok {
+		t.Fatalf("StructLit.Base: expected Ident, got %T", lit.Base)
+	}
+	if !strings.HasPrefix(id.Name, "base$") {
+		t.Errorf("spread base reference: got %q, want `base$<N>` form", id.Name)
+	}
+}
+
 // ---- helpers ----
 
 func collectVarNames(b *ast.Block) []string {

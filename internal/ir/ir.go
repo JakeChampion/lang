@@ -7914,6 +7914,9 @@ func (b *builder) expr(e ast.Expr) error {
 			// i32; Unsigned is chosen per the destination's
 			// signed-ness.
 			realW := dstInt.NormalWidth()
+			if dstInt.IsPointerWidth() {
+				realW = b.ptrW * 8 // resolve usize/isize to target's ptr width
+			}
 			dw := realW
 			if dw < 32 {
 				dw = 32
