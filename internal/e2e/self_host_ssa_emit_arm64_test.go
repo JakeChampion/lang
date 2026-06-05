@@ -99,6 +99,12 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"array-of-struct-param", "struct P { x: i32, y: i32 } function sumx(a: P[]): i32 { var t = 0; var i = 0; while (i < a.len()) { t = t + a[i].x; i = i + 1; } return t; } function main(): i32 { var a = [P { x: 10, y: 0 }, P { x: 20, y: 0 }]; return sumx(a); }", 30},
 		{"array-of-struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var a = [Named { id: 1, label: \"hello\" }, Named { id: 2, label: \"hi\" }]; return a[0].label.len() + a[1].label.len() + a[1].id; }", 9},
 		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
+		// Tuples: fixed-arity heap box, `t.i` positional access — incl. a
+		// string element and a tuple returned across a call.
+		{"tuple-pair", "function main(): i32 { var t = (3, 4); return t.0 + t.1; }", 7},
+		{"tuple-triple", "function main(): i32 { var t = (10, 20, 30); return t.0 * 100 + t.1 * 10 + t.2; }", 1230 % 256},
+		{"tuple-string-elem", "function main(): i32 { var t = (42, \"hello\"); return t.0 + t.1.len(); }", 47},
+		{"tuple-return", "function pair(): (i32, i32) { return (6, 9); } function main(): i32 { var t = pair(); return t.0 + t.1; }", 15},
 		// Indexed assignment `arr[i] = v` (→ __set_index → store_elem):
 		// constant index, loop-fill, swap, compound, and cross-call mutation
 		// through a shared array param.

@@ -41,6 +41,19 @@ function digits_to_i32(s: string): i32 {
     return acc;
 }
 
+// is_all_digits reports whether every byte of s is an ASCII digit (and s is
+// non-empty) — used to tell a tuple index `t.0` from a struct field `t.x`.
+function is_all_digits(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b < 48 || b > 57) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // ---- IR ----------------------------------------------------------------
 
 // SInst kinds (string-tagged to stay simple and printable):
@@ -507,6 +520,21 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "copy", result: s.cur_id(), args: sha, imm: 0, str: "" });
         },
         parser.ExprFieldAccess(fa) => {
+            // Tuple element access `t.0` / `t.1` / … — a numeric field name is
+            // a positional index (struct fields are never all-digits). Tuple
+            // elements live at offsets 0..n-1 (no tag / length prefix), so the
+            // index is loaded directly. Width 0 (32-bit) matches the array /
+            // construct path; pointer elements fit the low-heap 32-bit slots.
+            if (is_all_digits(fa.field)) {
+                s = build_expr(fa.obj, s);
+                if (!s.ok) { return s; }
+                var tptr: i32 = s.cur_id();
+                s = s.kconst(digits_to_i32(fa.field));
+                var tidx: i32 = s.cur_id();
+                s = s.fresh();
+                var tla: i32[] = [tptr, tidx];
+                return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: tla, imm: 0, str: "" });
+            }
             var sty: string = type_of_expr(fa.obj, s);
             if (sty.len() == 0) { return s.fail(); }
             var off: i32 = struct_field_index(s.structs, sty, fa.field);
@@ -585,6 +613,31 @@ function build_expr(e: parser.Expr, s: BState): BState {
             s = s.fresh();
             var ha: i32[] = [handle];
             return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ha, imm: 0, str: "" });
+        },
+        parser.ExprTuple(tup) => {
+            // A tuple `(a, b, c)` is a fixed-arity heap box: element i at
+            // offset i (no length prefix — tuples are only ever indexed by the
+            // constant `t.i`). The value is the alloc handle.
+            var tn: i32 = tup.elements.len();
+            s = s.fresh();
+            var thandle: i32 = s.cur_id();
+            var tnoargs: i32[] = [];
+            s = s.emit(SInst { kind: "alloc", result: thandle, args: tnoargs, imm: tn, str: "" });
+            var ti: i32 = 0;
+            while (ti < tn) {
+                s = s.kconst(ti);
+                var tidxv: i32 = s.cur_id();
+                s = build_expr(tup.elements[ti], s);
+                if (!s.ok) { return s; }
+                var telev: i32 = s.cur_id();
+                s = s.fresh();
+                var tsa: i32[] = [thandle, tidxv, telev];
+                s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: tsa, imm: 0, str: "" });
+                ti = ti + 1;
+            }
+            s = s.fresh();
+            var tha: i32[] = [thandle];
+            return s.emit(SInst { kind: "copy", result: s.cur_id(), args: tha, imm: 0, str: "" });
         },
         parser.ExprIndex(ix) => {
             s = build_expr(ix.array, s);
