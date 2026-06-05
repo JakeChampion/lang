@@ -220,7 +220,14 @@ redundant and can be removed in that same phase. The end state: one
 combinations (anything the core can import) wrapped correctly — including
 shapes the native backend never emitted.
 
-## Implementation status (this session)
+> **Status: this plan is complete for the suffix side.** Rather than one
+> `component_build`, the generator landed as the data-driven
+> `component_suffix` (suffix) alongside the already-composed prefix; the
+> phase ordering above differs slightly from how it shipped (shim cores
+> first, then the engine, then all shapes batched), but every blob it
+> targeted is gone. See "Suffix builder — COMPLETE" below.
+
+## Implementation status
 
 The **prefix decomposition is complete** (PRs #2079, #2080, #2083). Every
 component prefix is now assembled from shared per-interface type blocks —
@@ -247,15 +254,45 @@ differ, e.g. the `i64`-offset read/write trampolines vs the stdout
 share only a partial head (~120–700 bytes) before the per-import wiring
 interleaves with the lift/export tail. So suffix dedup has **no
 composition shortcut**: it requires the computed table-trampoline wiring
-described above (the `shim_core` + `wire` building blocks). That remains
-the one large, deferred phase.
+described above (the `shim_core` + `wire` building blocks).
 
-**Pragmatic priority.** With prefixes composed, adding a new program shape
-is already cheap: the prefix composes for free from existing blocks, and
-only **one** captured `io_*_suffix` blob (plus tests) is needed per shape.
-That keeps the combinatorial cost linear, not exponential — so the full
-generative *suffix* builder is now a lower-priority cleanup (it removes the
-last per-shape artifact) rather than a blocker for new shapes.
+**This is now done.** The generative suffix builder shipped over PRs
+#2093 / #2095 / #2098 / #2099 / #2102 — see the status section above. Every
+`io_*_suffix` blob is gone; the suffix is computed from the import list.
+
+## Suffix builder — COMPLETE
+
+The deferred suffix phase is finished. `component_suffix` (in
+`wat_component.fern`) is a Fern port of the native composer's
+`gComposer.lower()` Phases B–H + `finish()`'s `cli/run` tail
+(`internal/wasm/component/compose_general.go` + the `Put*` encoders in
+`component.go`). It takes the program's preview-2 import list (parallel
+arrays: interface / name / kind / instance index / trampoline signature /
+resource type) plus the index state Phase A + the user core module leave
+behind (`n_type0`, `n_inst0`), and regenerates the whole suffix:
+
+- **shim cores** (`shim_trampoline_core` / `shim_tablefill_core`) — the
+  signature-parameterized table-trampoline pair per memory import (#2093).
+- **`comp_*` encoders** — Fern ports of the `Put*` section emitters.
+- **`component_suffix`** — Phases B–H (trampoline instantiate, no-opt /
+  resource.drop / mem lowers grouped by interface, user-module instantiate,
+  memory/realloc/table aliases, mem lowers, table fixups) + the lift/export
+  tail (#2098).
+
+Per-shape drivers (`component_suffix_stdout` / `_eprint` / `_exit` /
+`_fs_read` / `_random` / `_env` / `_args` / `_clock` / `_clock_mono` /
+`_random_write` / `_fs_write` / `_fs_rw` / `_fs_read_env` / `_fs_rw_env` /
+`_fs_args_read` / `_fs_rw_args`) are a few lines each — just the import
+list + index state. Every shape reproduces its old blob byte-for-byte, and
+each `component_full_io_*` wrapper's whole-component byte-identity to
+`fern -target wasm` is gated by its existing `TestSelfHostWasmComponentFullIO*`
+e2e (self-host compile → byte-compare → wasmtime run).
+
+**Remaining frontier:** the `gDrop` (resource-handle drop) path in
+`component_suffix` is implemented but unexercised in the self-host, because
+the TCP / UDP / HTTP component shapes (which drop handles) aren't emitted by
+the self-host backend yet. When they land they are thin drivers over this
+same engine — no new suffix machinery.
 
 ## Risks / notes
 
@@ -268,5 +305,7 @@ last per-shape artifact) rather than a blocker for new shapes.
 - This mirrors `internal/wasm/component/component.go` (~2700 LOC of Go).
   The Fern port is large but each phase is small and independently
   validated, so it need not land in one change.
-- Until Phase 6 lands, the existing blobs stay; `component_build` is added
-  alongside and switched on per-interface as each phase proves out.
+- The component-suffix self-test (`TestSelfHostWasmComponentSuffixStdout`)
+  embeds expected bytes for the three small CLI shapes only; larger shapes
+  (fs_read and up) would OOM the self-host compile, so their byte-identity
+  is covered by the whole-component `FullIO*` compares instead.
