@@ -6016,6 +6016,66 @@ function stmts_use_tostring(body: parser.Stmt[]): boolean {
     return false;
 }
 
+// module_uses_string_type is true when the program references the `string`
+// type anywhere — a function param/return, a struct field, or a local `var`
+// declaration — even with no string literals. Such a program can still need
+// the string runtime: string `==` lowers to a `$__fern_streq` call, so the
+// string helpers must be emitted. Without this, a literal-free string-using
+// program references an undefined `$__fern_streq` (a helper-emission gap akin
+// to the f-string `__str_concat` one).
+function type_is_string(t: string): boolean {
+    return t == "string" || is_str_array_type(t);
+}
+
+function stmts_declare_string(body: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (type_is_string(v.type_name)) { return true; } },
+            parser.StmtIf(f) => {
+                if (stmts_declare_string(f.then_body)) { return true; }
+                if (stmts_declare_string(f.else_body)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (stmts_declare_string(w.body)) { return true; } },
+            parser.StmtFor(f) => { if (stmts_declare_string(f.body)) { return true; } },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { if (stmts_declare_string(m.arms[k].body)) { return true; } k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_uses_string_type(mod: parser.Module): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var f: parser.FuncDecl = mod.funcs[i];
+        if (type_is_string(f.ret_type)) { return true; }
+        var pi: i32 = 0;
+        while (pi < f.params.len()) {
+            if (type_is_string(f.params[pi].type_name)) { return true; }
+            pi = pi + 1;
+        }
+        if (stmts_declare_string(f.body)) { return true; }
+        i = i + 1;
+    }
+    if (stmts_declare_string(mod.top_stmts)) { return true; }
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var st: parser.StructDecl = mod.structs[si];
+        var fi: i32 = 0;
+        while (fi < st.fields.len()) {
+            if (type_is_string(st.fields[fi].type_name)) { return true; }
+            fi = fi + 1;
+        }
+        si = si + 1;
+    }
+    return false;
+}
+
 function module_uses_tostring(mod: parser.Module): boolean {
     if (stmts_use_tostring(mod.top_stmts)) { return true; }
     var i: i32 = 0;
@@ -6076,7 +6136,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         si = si + 1;
     }
 
-    var has_strings: boolean = tab.values.len() > 0;
+    var has_strings: boolean = tab.values.len() > 0 || module_uses_string_type(mod);
     var str_funcs: string[] = collect_str_funcs(mod);
     var str_arr_funcs: string[] = collect_str_arr_funcs(mod);
     var sf_names: string[] = collect_struct_func_names(mod);
