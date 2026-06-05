@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -251,4 +252,20 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 			run(t, tc.src, tc.want, runDriver(t, tc.src, "-regalloc", "-target", "arm64"))
 		})
 	}
+
+	// Scaling: a module with many functions must emit in roughly linear time
+	// rather than OOM (the seed-once / balanced-join fix). Mirrors the x86
+	// suite; h{i} computes ((x + i%9) * 3) - i%5, main sums h1(2)=8 + h7(3)=28.
+	t.Run("scaling-600-functions", func(t *testing.T) {
+		var b strings.Builder
+		for i := 0; i < 600; i++ {
+			fmt.Fprintf(&b, "function h%d(x: i32): i32 { var s = x; s = s + %d; s = s * 3; s = s - %d; return s; }\n", i, i%9, i%5)
+		}
+		b.WriteString("function main(): i32 { return (h1(2) + h7(3)) % 256; }\n")
+		asm := runDriver(t, b.String(), "-target", "arm64")
+		if len(asm) == 0 {
+			t.Fatalf("emit produced empty output for 600-function module")
+		}
+		run(t, "scaling-600-functions", 36, asm)
+	})
 }

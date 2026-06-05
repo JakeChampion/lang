@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,4 +302,32 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 			run(t, tc.src, tc.want, asm)
 		})
 	}
+
+	// Scaling: a module with many functions must emit in roughly linear time
+	// rather than OOM. Before the fix, build_func re-derived the whole-module
+	// var-type seed (every global function + receiver method) on every one of
+	// the n calls — O(n²)+ persistent-vt pushes — and emit_program folded each
+	// function body into one growing string (O(functions·total)); together they
+	// killed the process (exit 137) on a few hundred functions. With the seed
+	// computed once and the asm joined balanced, 600 functions emit fine. Each
+	// h{i} computes ((x + i%9) * 3) - i%5; main sums two of them: h1(2)=8,
+	// h7(3)=28 → 36.
+	t.Run("scaling-600-functions", func(t *testing.T) {
+		var b strings.Builder
+		for i := 0; i < 600; i++ {
+			fmt.Fprintf(&b, "function h%d(x: i32): i32 { var s = x; s = s + %d; s = s * 3; s = s - %d; return s; }\n", i, i%9, i%5)
+		}
+		b.WriteString("function main(): i32 { return (h1(2) + h7(3)) % 256; }\n")
+		src := b.String()
+		emit := exec.Command(bin)
+		emit.Stdin = strings.NewReader(src)
+		asm, err := emit.Output()
+		if err != nil {
+			t.Fatalf("emit driver failed for 600-function module: %v", err)
+		}
+		if len(asm) == 0 {
+			t.Fatalf("emit produced empty output for 600-function module")
+		}
+		run(t, "scaling-600-functions", 36, asm)
+	})
 }
