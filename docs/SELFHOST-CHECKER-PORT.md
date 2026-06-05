@@ -434,6 +434,24 @@ same code(s) the Go checker does — restricted to
   message text.) Checker-only (trivially fixpoint-safe). Gated by new
   corpus (`method-too-few-args`, `method-too-many-args`,
   `method-correct-arity-ok`) and `check-position-method-arity`.
+- **Slice 44 (done): E038 for method arguments (primitive-restricted).**
+  When a method call's arity matches, each argument is type-checked
+  against the method's `param_types` and a mismatch is E038, reported at
+  the argument (Go's `arg.Pos()`), message `argument N to "m": expected X,
+  got Y`. **Restricted to primitive param-vs-arg pairs** (i32 / bool /
+  string / f64): the self-host's `type_assignable` can't faithfully
+  compare struct / union / qualified types the way Go's `assignable`
+  does, so an UNRESTRICTED version false-positived all over the bundle.
+  The primitive guard (same shape as E034) keeps it sound — verified zero
+  method-E038 across all thirteen self-host modules — while still catching
+  the unambiguous case (`p.add(s)` with a string where the method wants
+  i32 → `3:81: error[E038]`, matching Go's code + position). Checker-only
+  (trivially fixpoint-safe). Gated by new corpus (`method-arg-type-
+  mismatch`, `method-arg-type-ok`) and `check-position-method-argtype`.
+  *Limitation recorded:* full (non-primitive) method-arg type parity needs
+  a stronger `type_assignable` (struct/union/qualified-type comparison) —
+  the same type-model gap that blocks exhaustiveness (E030) and several
+  other codes.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

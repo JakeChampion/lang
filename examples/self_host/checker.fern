@@ -1957,8 +1957,30 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     match (recv) {
                         TypeStruct(sn) => {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
-                            if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
-                                out = out.push(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+                            if (msig.name.len() > 0) {
+                                if (c.args.len() != msig.param_types.len()) {
+                                    out = out.push(dg_at("E004", "method \"" + mfa.field + "\" expects " + itoa_nn(msig.param_types.len()) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+                                } else {
+                                    // E038: per-argument type mismatch on a
+                                    // user-defined method. Restricted to
+                                    // PRIMITIVE param-vs-arg pairs (i32 / bool
+                                    // / string / f64) — the self-host's
+                                    // type_assignable can't faithfully compare
+                                    // struct / union / qualified types the way
+                                    // Go does, so comparing those would false-
+                                    // positive on real code. Primitive
+                                    // mismatches (e.g. a string where the method
+                                    // wants i32) are unambiguous.
+                                    var mi: i32 = 0;
+                                    while (mi < c.args.len()) {
+                                        var pt: Type = msig.param_types[mi];
+                                        var mat: Type = check_expr(c.args[mi], s);
+                                        if (is_primitive_type(pt) && is_primitive_type(mat) && !type_eq(mat, pt)) {
+                                            out = out.push(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                                        }
+                                        mi = mi + 1;
+                                    }
+                                }
                             }
                         },
                         _ => { }
