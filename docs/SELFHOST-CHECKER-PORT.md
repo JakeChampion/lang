@@ -371,6 +371,21 @@ same code(s) the Go checker does — restricted to
   always append new `line`/`col` fields at the END of both the struct
   and every literal, never the front. (This bit slice 39: a blanket
   insert put them first and segfaulted the fixpoint until reordered.)
+- **Slice 40 (done): E019 line:col (checker-only) — positioning arc complete.**
+  E019 (generic-struct type-argument arity mismatch) is reported at the
+  struct's *declaration* (Go's `sd.P`), not the use site. New
+  `struct_decl_line` / `struct_decl_col` helpers look the struct up in the
+  `StructDecl[]` (whose positions landed in slice 26) and the emitter
+  passes them. **E019** now prints `1:1: error[E019]`, matching Go.
+  Trivially fixpoint-safe (checker-only). Gated by a new
+  `check-position-type-arity`.
+
+  **With slice 40, every diagnostic the self-host checker emits carries a
+  source position matching the Go checker.** The full set — E002, E003,
+  E004, E005, E006, E007, E008, E009, E011, E012, E013, E017, E018, E019,
+  E020, E026, E028, E036, E037, E038, E041, E043, E046, E047 — prints
+  `line:col: error[E0XX]` identically to `diag.Format`. The
+  source-positioning goal (slice 9 / 10 below) is achieved.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
