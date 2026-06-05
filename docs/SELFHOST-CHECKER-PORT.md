@@ -173,9 +173,15 @@ same code(s) the Go checker does — restricted to
   to a `TypeTuple` (a separate self-host gap), so it's under-reported there
   — safe, and the differential corpus uses inferred tuples where the two
   checkers agree.
-- **Later: pattern matching** (E014/E025/E036), traits (E021),
-  arithmetic operand type (E009 integer/float), maps (E045),
-  owned-parameter move checking (E050/E051), then source positions.
+- **Slice 18 (done): arithmetic operand type** (E009, extending slice
+  13). `call_diags`' binary arm now also flags `+` operands that aren't a
+  matching string / i32 / f64 pair, and `-` / `*` / `/` / `%` operands
+  that aren't matching i32 / f64 (`%` is i32-only) — the same overload
+  rules `check_expr` applies, so E009 fires only where check_expr already
+  rejects the operands.
+- **Later: pattern matching** (E014/E025/E036), traits (E021), maps
+  (E045), owned-parameter move checking (E050/E051), then source
+  positions, then wiring the self-host checker in as the gate.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
