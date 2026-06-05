@@ -3043,6 +3043,67 @@ func stmtDiverges(s ast.Stmt) bool {
 	return false
 }
 
+// funcBodyExits reports whether every path through a function body either
+// returns or never falls off the end (an infinite loop). It is the
+// missing-return analysis behind E052 and is deliberately CONSERVATIVE:
+// it only returns false when the body can demonstrably fall through, so
+// it never rejects a valid function. (It therefore accepts some functions
+// that could in principle fall through — e.g. an infinite loop with a
+// break — rather than risk a false positive.) See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
+func funcBodyExits(b *ast.Block) bool {
+	if b == nil || len(b.Stmts) == 0 {
+		return false
+	}
+	return stmtExits(b.Stmts[len(b.Stmts)-1])
+}
+
+func stmtExits(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return funcBodyExits(x)
+	case *ast.If:
+		// A one-armed if can fall through; both arms must exit.
+		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
+	case *ast.IfLet:
+		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
+	case *ast.Match:
+		// Exhaustiveness is checked separately; here every arm must exit
+		// for the match to guarantee the function exits.
+		if len(x.Arms) == 0 {
+			return false
+		}
+		for _, arm := range x.Arms {
+			if !funcBodyExits(arm.Body) {
+				return false
+			}
+		}
+		return true
+	case *ast.While:
+		// `while (true) { … }` never falls through. Conservatively treat
+		// any literal-true loop as divergent (ignoring breaks): a loop
+		// that can actually break and needs a following value will still
+		// have a trailing return, which the surrounding block catches.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// isVoidReturn reports whether a function's declared return type is void
+// (or unspecified), in which case it may fall off the end legitimately.
+func isVoidReturn(t ast.Type) bool {
+	if t == nil {
+		return true
+	}
+	_, ok := t.(ast.VoidType)
+	return ok
+}
+
 // resolveType rewrites a single Type slot in place. Handles
 // nominal references (StructType promoted to EnumType when
 // appropriate, or ParamType when the name matches an enclosing
@@ -3830,6 +3891,14 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	}
 	c.checkBlock(fn.Body, root)
 	c.checkOwnedParams(fn)
+	// A value-returning function must return on every path. Falling off
+	// the end leaves the result undefined (the interpreter yields Void
+	// where a real value is expected and crashes downstream; a scalar
+	// silently reads 0). Void functions may fall through. See
+	// docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
+	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+	}
 }
 
 // methodConsumesReceiver reports whether the method named by a call's

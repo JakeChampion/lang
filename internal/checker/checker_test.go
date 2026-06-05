@@ -947,6 +947,65 @@ func TestStructLitMissingField(t *testing.T) {
 	}
 }
 
+// A value-returning function that can fall off the end without a return
+// is rejected (E052). Regression for F4 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md — previously this type-checked and
+// crashed at runtime with a void value where a struct was expected.
+func TestMissingReturnRejected(t *testing.T) {
+	for _, src := range []string{
+		// one-armed if: falls through when b is false
+		`struct P { x: i32, y: i32 }
+		function f(b: boolean): P {
+			if (b) { return P { x: 10, y: 20 }; }
+		}`,
+		// no return at all
+		`function g(): i32 { var x = 1; }`,
+		// if/else where only one arm returns
+		`function h(b: boolean): i32 {
+			if (b) { return 1; } else { var z = 2; }
+		}`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected a missing-return error (E052) for:\n%s", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "missing return") {
+			t.Errorf("expected a missing-return error, got %v for:\n%s", err, src)
+		}
+	}
+}
+
+// Forms that DO return on every path (or never fall through) must NOT
+// trip E052 — guarding against false positives that would reject valid
+// code. Covers if/else both-return, exhaustive match, infinite loop, and
+// void functions.
+func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
+	for _, src := range []string{
+		// if/else both return
+		`function f(b: boolean): i32 {
+			if (b) { return 1; } else { return 2; }
+		}`,
+		// trailing return after a one-armed if
+		`function g(b: boolean): i32 {
+			if (b) { return 1; }
+			return 0;
+		}`,
+		// infinite loop never falls through
+		`function loops(): i32 {
+			while (true) { var x = 1; }
+		}`,
+		// void function may fall through
+		`function v(n: i32) { var x = n + 1; }`,
+		// plain trailing return
+		`function id(n: i32): i32 { return n; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("valid function wrongly rejected: %v\n%s", err, src)
+		}
+	}
+}
+
 func TestStructLitWrongFieldType(t *testing.T) {
 	src := `struct P { x: i32 }
 		function f(): P { return P { x: true }; }`
