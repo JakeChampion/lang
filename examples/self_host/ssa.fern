@@ -288,7 +288,21 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     var cgt: string = s.get_var_type(cid.name);
                     if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { if (cgt[4 : cgt.len()] == "fn") { return "fn"; } }
                 },
-                parser.ExprFieldAccess(fa2) => { if (fa2.field == "set") { return type_of_expr(fa2.obj, s); } },
+                parser.ExprFieldAccess(fa2) => {
+                    if (fa2.field == "set") { return type_of_expr(fa2.obj, s); }
+                    // A user method call → its declared return type (so a
+                    // chained `a.m().n()` resolves n's receiver), read from the
+                    // "<recv>#<m>" → "m:<sym>:<ret>" seed.
+                    var mrt: string = type_of_expr(fa2.obj, s);
+                    if (mrt.len() > 0) {
+                        var mm: string = s.get_var_type(mrt + "#" + fa2.field);
+                        if (mm.len() > 2 && mm[0:2] == "m:") {
+                            var mrest: string = mm[2 : mm.len()];
+                            var mcolon: i32 = index_of_byte(mrest, 58);
+                            if (mcolon >= 0) { return mrest[mcolon + 1 : mrest.len()]; }
+                        }
+                    }
+                },
                 _ => { }
             }
             return "";
@@ -317,6 +331,15 @@ function type_of_expr(e: parser.Expr, s: BState): string {
 function ends_with_brackets(t: string): boolean {
     var n: i32 = t.len();
     return n >= 2 && t[n - 2 : n] == "[]";
+}
+
+// fn_sym is the emitted symbol name for a function: a receiver method
+// `function (r: T) m(...)` mangles to "T__m" (so methods on different types
+// don't collide and the call site can name it); a free function keeps its
+// name. The "__" mirrors the module-mangling style.
+pub function fn_sym(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() > 0) { return fd.receiver_type + "__" + fd.name; }
+    return fd.name;
 }
 
 // is_boxed_fnty reports whether a callee's recorded type denotes a closure
@@ -598,6 +621,34 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // User-defined receiver method `recv.m(args)` → a direct
+                    // call to the method's symbol (seeded "<recv-type>#<m>" →
+                    // "m:<sym>"), passing the receiver as the first argument.
+                    // Keyed by the receiver's type, so it only fires for a
+                    // declared method — map / array builtins (below) handle Map
+                    // / array receivers, which carry no such seed.
+                    var urt: string = type_of_expr(fa.obj, s);
+                    if (urt.len() > 0) {
+                        var um: string = s.get_var_type(urt + "#" + fa.field);
+                        if (um.len() > 2 && um[0:2] == "m:") {
+                            var urest: string = um[2 : um.len()];
+                            var ucolon: i32 = index_of_byte(urest, 58);   // ':' before ret type
+                            var usym: string = urest;
+                            if (ucolon >= 0) { usym = urest[0 : ucolon]; }
+                            s = build_expr(fa.obj, s);
+                            if (!s.ok) { return s; }
+                            var uargs: i32[] = [s.cur_id()];
+                            var uai: i32 = 0;
+                            while (uai < c.args.len()) {
+                                s = build_expr(c.args[uai], s);
+                                if (!s.ok) { return s; }
+                                uargs = uargs.push(s.cur_id());
+                                uai = uai + 1;
+                            }
+                            s = s.fresh();
+                            return s.emit(SInst { kind: "call", result: s.cur_id(), args: uargs, imm: 0, str: usym });
+                        }
+                    }
                     // Map methods (i32-keyed maps): set / get_or / has, and
                     // len on a Map receiver. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8).set(k0,v0)… and user code calls
@@ -1766,7 +1817,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprLambda(lam) => {
-                            var nm: string = fd.name + "$lam$" + int_str(cnt);
+                            var nm: string = fn_sym(fd) + "$lam$" + int_str(cnt);
                             cnt = cnt + 1;
                             var caps: string[] = lambda_free_caps(lam, parent_locals_upto(fd, si));
                             var tp: string[] = [];
@@ -1883,28 +1934,50 @@ function struct_field_width(structs: parser.StructDecl[], sname: string, field: 
 }
 
 pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): BResult {
-    var f0: SFunc = SFunc { name: fd.name, nparams: 0, nvals: 0, blocks: [], entry: 0 };
-    // Params occupy value ids 0..nparams-1, defined by "param" insts in
-    // the entry block (block id 0). A pointer-shaped param — array / string
-    // OR a struct — is marked str="ptr" so compute_widths gives it 64-bit
-    // width; struct params also get their type recorded (below) so field
-    // access on them resolves.
+    var sym: string = fn_sym(fd);
+    var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0 };
+    // Params occupy value ids 0..nparams-1, defined by "param" insts in the
+    // entry block (block id 0). A pointer-shaped param — array / string / struct
+    // / enum — is marked str="ptr" so compute_widths gives it 64-bit width.
+    // A receiver method `function (r: T) m(...)` binds the receiver as the
+    // implicit param 0 (a pointer; its type recorded so field access resolves),
+    // with the declared params following.
     var pnames: string[] = [];
     var pvals: i32[] = [];
     var insts0: SInst[] = [];
+    var pidx: i32 = 0;
+    if (fd.receiver_type.len() > 0) {
+        var rna: i32[] = [];
+        insts0 = insts0.push(SInst { kind: "param", result: 0, args: rna, imm: 0, str: "ptr" });
+        pnames = pnames.push(fd.receiver_name);
+        pvals = pvals.push(0);
+        pidx = 1;
+    }
     var i: i32 = 0;
     while (i < fd.params.len()) {
         var noargs: i32[] = [];
         var pmark: string = "";
         if (is_ptr_type(fd.params[i].type_name) || is_struct_type(fd.params[i].type_name, structs)) { pmark = "ptr"; }
-        insts0 = insts0.push(SInst { kind: "param", result: i, args: noargs, imm: i, str: pmark });
+        insts0 = insts0.push(SInst { kind: "param", result: pidx, args: noargs, imm: pidx, str: pmark });
         pnames = pnames.push(fd.params[i].name);
-        pvals = pvals.push(i);
+        pvals = pvals.push(pidx);
+        pidx = pidx + 1;
         i = i + 1;
     }
-    var nparams: i32 = fd.params.len();
+    var nparams: i32 = pidx;
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
-    var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
+    var s: BState = mk_bs(sym, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
+    // The receiver's type, so field access / method calls on it resolve.
+    if (fd.receiver_type.len() > 0) { s = s.set_var_type(fd.receiver_name, fd.receiver_type); }
+    // Seed receiver methods as "<recv>#<name>" → "m:<sym>" so a `recv.m(...)`
+    // call site can find the method's symbol (keyed by the receiver's type).
+    var mi: i32 = 0;
+    while (mi < funcs.len()) {
+        if (funcs[mi].receiver_type.len() > 0) {
+            s = s.set_var_type(funcs[mi].receiver_type + "#" + funcs[mi].name, "m:" + fn_sym(funcs[mi]) + ":" + funcs[mi].ret_type);
+        }
+        mi = mi + 1;
+    }
     // Seed the var-type map with every top-level function as "gfn:<ret>" so a
     // name used as a VALUE (→ funcaddr) and a call's result type are both
     // visible: `apply(work, …)` passes work's address, `var g = maker()` (maker
