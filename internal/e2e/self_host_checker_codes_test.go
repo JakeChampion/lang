@@ -50,6 +50,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E007": true, // duplicate struct field
 	"E018": true, // duplicate parameter
 	"E034": true, // heterogeneous array element type (primitives)
+	"E035": true, // variant pattern in a match on a non-enum scrutinee
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -240,6 +241,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-elem-i32-in-string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
 		{"array-elem-homogeneous-i32-ok", "function main(): i32 { var a = [1, 2, 3]; return a[0]; }\n", nil},
 		{"array-elem-homogeneous-string-ok", "function main(): i32 { var a = [\"p\", \"q\"]; return 0; }\n", nil},
+		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
+		{"match-variant-on-string", "enum E { A, B }\nfunction main(): i32 { var s: string = \"x\"; match (s) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
+		{"match-i32-wildcard-only-ok", "function main(): i32 { var n: i32 = 5; match (n) { _ => { return 0; } } }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

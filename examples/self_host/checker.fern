@@ -2121,6 +2121,28 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
             },
             parser.StmtMatch(m) => {
                 out = append_diags(out, call_diags(m.scrutinee, cur));
+                // E035: a `match` on a non-enum (primitive) scrutinee only
+                // accepts literal patterns or `_`. A named variant pattern
+                // (`Foo`, `Some(x)`) over an i32 / string / f64 / bool
+                // scrutinee is the error, reported at the arm. Literal
+                // patterns parse to empty-name variants (skipped here), and
+                // `true` / `false` are literal bool patterns (also skipped),
+                // so this fires only on genuine variant patterns.
+                var mst: Type = check_expr(m.scrutinee, cur);
+                if (is_primitive_type(mst)) {
+                    var ea: i32 = 0;
+                    while (ea < m.arms.len()) {
+                        match (m.arms[ea].pattern) {
+                            parser.PatVariant(epv) => {
+                                if (epv.type_name.len() > 0 && epv.type_name != "true" && epv.type_name != "false") {
+                                    out = out.push(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts literal patterns or `_`", m.arms[ea].line, m.arms[ea].col));
+                                }
+                            },
+                            _ => { }
+                        }
+                        ea = ea + 1;
+                    }
+                }
                 var a: i32 = 0;
                 while (a < m.arms.len()) { out = append_diags(out, stmts_call_diags(m.arms[a].body, cur)); a = a + 1; }
             },
