@@ -552,6 +552,22 @@ same code(s) the Go checker does — restricted to
   `enum-match-exhaustive-ok`, `enum-match-payload-exhaustive-ok`) and an
   `enum_missing_variant` CLI case. With this, E030 has full match-
   exhaustiveness parity with Go for both enum and union scrutinees.
+- **Slice 50 (done): fix — bind match payloads in the diagnostic walk.**
+  A real correctness bug (not a new code): the body-check path bound a
+  variant pattern's payload (`TokIdent(t) => …`) to `TypeStruct(variant)`,
+  but the *diagnostic* walk (`stmts_call_diags`) walked arm bodies in the
+  un-extended scope, so a field access on the binding (`t.name`)
+  mis-resolved and tripped a spurious read-side E043 ("struct X has no
+  field"). This false-positived 8× per module on lexer's union-variant
+  matches — latent today (those files aren't differential-corpus inputs)
+  but a blocker for actually running the self-host checker on real
+  multi-module code. The fix mirrors the body-check binding: each arm gets
+  a derived scope binding `pv.binding → TypeStruct(pv.type_name)` before
+  its body is walked. Read-side E043 false positives drop from 8/module to
+  **zero** across all fifteen modules, while a genuine bad access
+  (`A(a) => a.nope`) still flags E043 (matches Go). Checker-only
+  (fixpoint-safe). Gated by new corpus (`match-binding-field-ok`,
+  `match-binding-bad-field`).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
