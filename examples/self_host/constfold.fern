@@ -258,7 +258,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
         parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col }; },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
         parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value) }; },
-        parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value) }; },
+        parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value), line: a.line, col: a.col }; },
         parser.StmtIf(ifs) => {
             return parser.StmtIf {
                 cond: fold_expr(ifs.cond),
