@@ -162,13 +162,28 @@ analysis, which is independent, pure, and de-risks the design.
   no behaviour change yet. This is the core of borrow inference and the
   foundation every later slice builds on.
 
-- **Slice 1 — per-arm precise drops.** Extend `computePreciseDrops`
-  past the straight-line subset to place drops per control-flow arm
-  (the `if/while/for/match` cases that currently fall back to the
-  sweep), starting with enum/struct (deferring the arm64
-  native-heap-string array case the current code flags). Pure upside:
-  lower peak memory, and the prerequisite that removes the
-  use-after-free hazard E050 guards.
+- **Slice 1 — per-arm precise drops (PARTIAL).** Extend
+  `computePreciseDrops`' control-flow placement (slice 5) past
+  primitive-element arrays. Landed: string/array-free **struct / tuple**
+  locals whose last use is inside an `if/while/for/match` now drop right
+  after that statement instead of at the function-exit sweep
+  (`safeForControlFlowDrop` + `typeIsStringArrayFree` — being
+  string/array-free keeps the deferred arm64 two-word heap-string
+  reclamation path out of the early-drop window; struct/tuple fields are
+  rc-counted so the early deep-drop is rc-protected). Differentially
+  gated (free-on == free-off, full corpus, all backends).
+
+  **Blocked (the real prize): ENUM precise drops.** `preciseDroppableType`
+  *soundly excludes enums* — enum construction MOVES its payloads without
+  an rc inc (the consuming/taint model), so an early deep-drop could free
+  a payload a live local still aliases; and `initMayAliasLive` excludes
+  the variant-constructor inits anyway. So the FBIP list/tree case (the
+  headline) cannot take precise drops until enum construction **rc-counts
+  its pointer payloads** the way `StructLit`/`TupleLit` already do. That
+  inc-on-store + matching dec is a real rc-balance change across every
+  enum site and is the genuine Slice-1 body; the struct/tuple extension
+  above lands the infrastructure (`safeForControlFlowDrop`) it will reuse.
+  Sequenced as its own slice (1b) given the risk surface.
 
 - **Slice 2 — owned-by-default behind a flag.** Flip parameter
   ownership to owned-by-default, driving reclaim from Slice-0's
