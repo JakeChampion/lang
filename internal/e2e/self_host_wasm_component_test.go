@@ -643,6 +643,8 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 		{"print-int", `function main(): i32 { print_int(42); return 0; }`, "42", 0},
 		{"multi-write", `function main(): i32 { var i: i32 = 0; while (i < 3) { write("ab"); i = i + 1; } return 0; }`, "ababab", 0},
 		{"err-path", `function main(): i32 { write("x"); return 5; }`, "x", 1},
+		{"putchar", `function main(): i32 { putchar(72); putchar(105); putchar(33); return 0; }`, "Hi!", 0},
+		{"putchar-loop", `function main(): i32 { var c: i32 = 97; while (c < 101) { putchar(c); c = c + 1; } return 0; }`, "abcd", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			coreWat := runCapture(t, gcc, runner, ioBin, []byte(tc.source))
