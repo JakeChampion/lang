@@ -12700,6 +12700,45 @@ func (b *builder) localDeclType(name string) (ast.Type, bool) {
 	return nil, false
 }
 
+// constructionMovesIdent reports whether `name` is MOVED into a CONSTRUCTION in
+// e — it appears as a bare-ident payload of a variant constructor or a struct /
+// tuple / array literal. Such a pointer-payload store transfers ownership of the
+// value WITHOUT a retaining inc, so in `x = Ctor(.., x, ..)` the old `x` is
+// handed to the new box's payload. Dropping it on the reassignment (the normal
+// overwrite dec) would then leave that payload at rc 0 — which a later
+// consuming-match free under-counts (its is_unique gate misses rc 0 and dec's
+// to -1). Suppressing the drop in this case is what keeps the rc balanced.
+func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
+	isName := func(x ast.Expr) bool { id, ok := x.(*ast.Ident); return ok && id.Name == name }
+	any := func(es []ast.Expr) bool {
+		for _, el := range es {
+			if isName(el) || b.constructionMovesIdent(el, name) {
+				return true
+			}
+		}
+		return false
+	}
+	switch x := e.(type) {
+	case *ast.Call:
+		if id, ok := x.Callee.(*ast.Ident); ok && x.Method == nil {
+			if _, _, _, isVar := b.lookupVariant(id.Name); isVar {
+				return any(x.Args)
+			}
+		}
+	case *ast.TupleLit:
+		return any(x.Elems)
+	case *ast.ArrayLit:
+		return any(x.Elems)
+	case *ast.StructLit:
+		for _, f := range x.Fields {
+			if isName(f.Value) || b.constructionMovesIdent(f.Value, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
@@ -12799,6 +12838,13 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 				b.emit(Op{Kind: OpDrop})
+			} else if b.constructionMovesIdent(n.Value, t.Name) {
+				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): the old `x`
+				// was MOVED into the new box's payload — its ownership transferred
+				// without a retaining inc, so it must NOT be dropped here. The
+				// normal overwrite dec would push that payload to rc 0, which a
+				// later consuming-match free under-counts (its is_unique gate
+				// misses rc 0 and dec's to -1). No drop.
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && b.freeEligible[t.Name] {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
