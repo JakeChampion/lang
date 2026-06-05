@@ -201,10 +201,15 @@ same code(s) the Go checker does — restricted to
   shadowing local isn't flagged) emit E036 for a bare, unqualified
   reference to one — a qualified `Enum.Variant` is an `ExprFieldAccess`,
   so it's not flagged. Fires only on reference, matching the Go checker.
+- **Slice 22 (done): structural match-arm errors** (E026, E028).
+  `match_diags` walks each `match` (no types needed): E026 when a wildcard
+  `_` arm isn't last, E028 when a variant pattern repeats one an earlier
+  arm already covered. Recurses into nested blocks + arm bodies.
 - **Later: pattern matching** (E014 bad-variant-in-match, E023 — both
-  need match-scrutinee enum inference), traits (E021), maps (E045),
-  owned-parameter move checking (E050/E051), then source positions, then
-  wiring the self-host checker in as the gate.
+  need match-scrutinee enum *type* tracking, which the checker's type
+  system doesn't model yet), traits (E021), maps (E045), owned-parameter
+  move checking (E050/E051), then source positions, then wiring the
+  self-host checker in as the gate.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

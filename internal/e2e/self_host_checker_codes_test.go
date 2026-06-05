@@ -35,6 +35,8 @@ var selfHostImplementedCodes = map[string]bool{
 	"E017": true, // duplicate variant in an enum
 	"E020": true, // empty array literal needs a type annotation
 	"E004": true, // free-function call arity
+	"E026": true, // wildcard arm not last in a match
+	"E028": true, // variant covered twice in a match
 	"E036": true, // unqualified reference to a variant shared by 2+ enums
 	"E037": true, // slice bound must be i32
 	"E038": true, // free-function argument type
@@ -225,6 +227,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-multi-enum-ref", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { var a: A = X; return 0; }\n", []string{"E036"}},
 		{"variant-multi-enum-unref-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-disjoint-ref-ok", "enum A { P, Q }\nenum B { R, S }\nfunction main(): i32 { var a: A = P; return 0; }\n", nil},
+		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
+		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
+		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
+		{"match-wildcard-last-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, _ => { return 0; } } }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
