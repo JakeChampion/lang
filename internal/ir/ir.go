@@ -13753,7 +13753,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the overwrite dec is REQUIRED to balance that inc — this skip
 				// is disabled there and the normal enum-overwrite drop below
 				// fires.
-			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
 				// like a scope exit (or a loop reinit) would, so deep-drop the
@@ -14193,6 +14193,33 @@ func tupleTypeOfLocal(name string, b *builder) (ast.TupleType, bool) {
 // is included but dropFnNameFor declines it, so emitStructEnumSlotDrop
 // falls back to the flat dec for it (its self-mutation case is handled
 // earlier via isSelfMapMutation).
+// selfReassignOwnedLocal reports whether `name` is a LOCAL variable (not a
+// parameter) being self-reassigned — the RHS mentions `name`, as in
+// `s = s.emit(x)` / `s = f(s)`. Such a local owns its slot's value (struct
+// fields are always inc'd at construction, so the box rc is accurate — unlike a
+// borrowed param, whose box may be an rc undercount), and the old value is being
+// replaced, so the rc-gated deep-drop (emitStructEnumSlotDrop: is_unique on the
+// box, rc-gated field drops) reclaims it without ever over-releasing a value an
+// alias still holds — closing the O(N^2) accumulator leak where `x = x.m()`
+// flat-dec'd the old box and orphaned its array/struct fields. The conservative
+// freeEligible taint flags such an `x` (the call result may alias it), but that
+// aliasing is harmless for the drop precisely because the drop is rc-gated.
+func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return false
+		}
+	}
+	mentions := false
+	ast.Walk(rhs, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			mentions = true
+		}
+		return !mentions
+	})
+	return mentions
+}
+
 func structOrEnumTypeOfLocal(name string, b *builder) (ast.Type, bool) {
 	t, ok := b.localDeclType(name)
 	if !ok {
