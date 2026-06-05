@@ -270,8 +270,30 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             }
             return "";
         },
+        parser.ExprArray(arr) => {
+            // An array literal's type is "<elem>[]" when its elements carry a
+            // known type (struct / string / nested array) — so indexing it
+            // (below) recovers the element type for field-access / concat.
+            if (arr.elements.len() == 0) { return ""; }
+            var et: string = type_of_expr(arr.elements[0], s);
+            if (et.len() == 0) { return ""; }
+            return et + "[]";
+        },
+        parser.ExprIndex(ix) => {
+            // a[i] has the array's element type: strip one trailing "[]".
+            var at: string = type_of_expr(ix.array, s);
+            var n: i32 = at.len();
+            if (n >= 2 && at[n - 2 : n] == "[]") { return at[0 : n - 2]; }
+            return "";
+        },
         _ => { return ""; }
     }
+}
+
+// ends_with_brackets reports whether a type name is an array type `T[]`.
+function ends_with_brackets(t: string): boolean {
+    var n: i32 = t.len();
+    return n >= 2 && t[n - 2 : n] == "[]";
 }
 
 function build_expr(e: parser.Expr, s: BState): BState {
@@ -598,12 +620,15 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             s = build_expr(v.init, s);
             if (!s.ok) { return s; }
             s = s.set_var(v.name, s.cur_id());
-            // Record the variable's struct / string / Map type (from the
-            // init's type or the declaration) for field-offset / concat /
-            // map-method resolution. "Map" lets a later `m.len()` dispatch to
-            // the map helper instead of the array length load.
+            // Record the variable's struct / string / Map / array type (from
+            // the init's type or the declaration) for field-offset / concat /
+            // map-method / element-type resolution. An array type "T[]" lets a
+            // later `a[i].field` recover the element type T (type_of_expr's
+            // ExprIndex arm strips the trailing "[]").
             if (ity == "Map") { return s.set_var_type(v.name, "Map"); }
+            if (ends_with_brackets(ity)) { return s.set_var_type(v.name, ity); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
+            if (ends_with_brackets(v.type_name)) { return s.set_var_type(v.name, v.type_name); }
             if (is_struct_type(v.type_name, s.structs) || v.type_name == "string") { return s.set_var_type(v.name, v.type_name); }
             return s;
         },
@@ -1244,6 +1269,7 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     while (pj < fd.params.len()) {
         var ptn: string = fd.params[pj].type_name;
         if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }
         else if (is_struct_type(ptn, structs) || ptn == "string") { s = s.set_var_type(fd.params[pj].name, ptn); }
         pj = pj + 1;
     }

@@ -85,6 +85,13 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// for over an array-typed param / a struct's array field.
 		{"for-param", "function sum(a: i32[]): i32 { var s = 0; for x in a { s = s + x; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
 		{"for-struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 100, data: [1, 2, 3] }; var s = 0; for x in b.data { s = s + x; } return s; }", 6},
+		// Typed-array element access: indexing a struct/string array recovers
+		// the element type so `a[i].field` / `a[i] + …` / `a[i] == …` resolve.
+		{"array-of-struct-field", "struct P { x: i32, y: i32 } function main(): i32 { var a = [P { x: 1, y: 2 }, P { x: 10, y: 20 }]; return a[0].x + a[1].y; }", 21},
+		{"array-of-struct-iter", "struct P { x: i32, y: i32 } function main(): i32 { var a = [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }]; var t = 0; for p in a { t = t + p.x + p.y; } return t; }", 21},
+		{"array-of-struct-param", "struct P { x: i32, y: i32 } function sumx(a: P[]): i32 { var t = 0; var i = 0; while (i < a.len()) { t = t + a[i].x; i = i + 1; } return t; } function main(): i32 { var a = [P { x: 10, y: 0 }, P { x: 20, y: 0 }]; return sumx(a); }", 30},
+		{"array-of-struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var a = [Named { id: 1, label: \"hello\" }, Named { id: 2, label: \"hi\" }]; return a[0].label.len() + a[1].label.len() + a[1].id; }", 9},
+		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
 		// Indexed assignment `arr[i] = v` (parser desugar → __set_index →
 		// store_elem): constant index, computed RHS, loop-fill, swap, and
 		// compound `+=`.
