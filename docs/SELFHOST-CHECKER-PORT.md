@@ -452,6 +452,30 @@ same code(s) the Go checker does — restricted to
   a stronger `type_assignable` (struct/union/qualified-type comparison) —
   the same type-model gap that blocks exhaustiveness (E030) and several
   other codes.
+- **Slice 45 (done): type-model strengthening — array-type resolution +
+  array assignability; lifts the slice-44 restriction.** Two fixes to the
+  type layer:
+  1. `type_from_name_with_structs_unions` now recognises the `Elem[]`
+     **array suffix** (recursing on the element, wrapping in `TypeArray`,
+     nesting for `X[][]`). Previously an `X[]` parameter / field type
+     resolved to `unknown`, which is what made struct / array argument
+     checks spuriously fire.
+  2. `type_assignable` now recurses **element-wise into arrays**, and an
+     empty / uninferred array literal (`unknown[]`) is assignable to any
+     concrete `T[]`. Crucially, **scalar `unknown` is NOT a wildcard** —
+     a genuinely unresolved value still surfaces its assignment error
+     (e.g. `var s: string = badMethodCall()` stays ill-typed; the
+     checker self-test `src55` guards exactly this).
+  With both, the method-argument E038 check (slice 44) drops its
+  primitive-only restriction and uses full `type_assignable`. Verified
+  **zero** false positives across all thirteen self-host modules, and it
+  now catches non-primitive mismatches Go does — e.g. passing an `i32`
+  where a method wants `string[]` (`3:77: error[E038]`). Checker-only
+  (fixpoint-safe). Gated by new corpus (`method-arg-array-mismatch`,
+  `method-arg-empty-array-ok`); the existing `src55` self-test assertion
+  guards the scalar-unknown-stays-strict invariant. This narrows the
+  type-model gap that blocks struct/union argument parity and (longer
+  term) exhaustiveness.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
