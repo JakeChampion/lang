@@ -388,7 +388,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         structs: structs,
         aliases: aliases,
         imports: mod.imports,
-        top_stmts: rewrite_block(mod.top_stmts, ctx)
+        top_stmts: rewrite_block(mod.top_stmts, ctx),
+        enums: mod.enums
     };
 }
 
@@ -475,26 +476,38 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var funcs: parser.FuncDecl[] = [];
     var structs: parser.StructDecl[] = [];
     var aliases: parser.TypeAlias[] = [];
+    var enums: parser.EnumDecl[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
         var m: parser.Module = mangle_module(imports[i].mod, imports[i].name);
         funcs = append_funcs(funcs, m.funcs);
         structs = append_structs(structs, m.structs);
         aliases = append_aliases(aliases, m.aliases);
+        enums = append_enum_decls(enums, m.enums);
         i = i + 1;
     }
     var e: parser.Module = flatten_qualified(entry);
     funcs = append_funcs(funcs, e.funcs);
     structs = append_structs(structs, e.structs);
     aliases = append_aliases(aliases, e.aliases);
+    enums = append_enum_decls(enums, e.enums);
     var no_imports: parser.Import[] = [];
     return parser.Module {
         funcs: funcs,
         structs: structs,
         aliases: aliases,
         imports: no_imports,
-        top_stmts: e.top_stmts
+        top_stmts: e.top_stmts,
+        enums: enums
     };
+}
+
+// append_enum_decls concatenates two enum-decl lists (bundle merging).
+function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
+    var out: parser.EnumDecl[] = into;
+    var i: i32 = 0;
+    while (i < more.len()) { out = out.push(more[i]); i = i + 1; }
+    return out;
 }
 
 function flatten_source(src: string): parser.Module {

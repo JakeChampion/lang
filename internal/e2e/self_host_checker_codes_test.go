@@ -32,6 +32,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E011": true, // break / continue outside a loop
 	"E012": true, // return without value in a non-void function
 	"E013": true, // duplicate var in the same block
+	"E017": true, // duplicate variant in an enum
 	"E020": true, // empty array literal needs a type annotation
 	"E004": true, // free-function call arity
 	"E037": true, // slice bound must be i32
@@ -217,6 +218,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-i32-max-ok", "function main(): i32 { var x: i32 = 2147483647; return 0; }\n", nil},
 		{"literal-i32-maxplus1", "function main(): i32 { var x: i32 = 2147483648; return 0; }\n", []string{"E047"}},
 		{"literal-fits-i32-ok", "function main(): i32 { var x: i32 = 2000000000; return 0; }\n", nil},
+		{"enum-redeclared", "enum Opt { A, B }\nenum Opt { C, D }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"enum-dup-variant", "enum Opt { A, A, B }\nfunction main(): i32 { return 0; }\n", []string{"E017"}},
+		{"enum-clean-ok", "enum Opt { A, B }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
