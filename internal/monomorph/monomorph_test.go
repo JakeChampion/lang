@@ -590,6 +590,40 @@ func trimPkg(s string) string {
 // intact, so the clone name `id__(i32__i32)` reached the native
 // assemblers and failed to assemble (wasm tolerated it). The
 // emitted clone names must be `[A-Za-z0-9_]`-only.
+// A polymorphically-recursive generic struct (`Nest[T]` whose field is
+// typed `Nest[Nest[T]]`) demands an unbounded family of instantiations,
+// so monomorphisation can't terminate. It must report a clear
+// "did not terminate / infinitely recursive" error rather than running
+// off the round cap and failing the trailing re-check with a misleading
+// "compiler bug". Regression for I3 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestRunReportsPolymorphicRecursion(t *testing.T) {
+	src := `struct Nest[T] { head: T, tail: Nest[Nest[T]] }
+function f(n: Nest[i32]): i32 { return n.head; }
+function main(): i32 { return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		// If a future checker rule pre-rejects polymorphic recursion,
+		// that's an acceptable place to catch it — but then this test
+		// should move to the checker. For now the checker accepts it and
+		// monomorph is the gate.
+		t.Skipf("checker rejected the recursive generic (moved earlier): %v", err)
+	}
+	err = monomorph.Run(prog, info)
+	if err == nil {
+		t.Fatal("expected monomorph to reject polymorphically-recursive generic struct")
+	}
+	if strings.Contains(err.Error(), "compiler bug") {
+		t.Errorf("error should be a clear non-termination diagnostic, not a 'compiler bug': %v", err)
+	}
+	if !strings.Contains(err.Error(), "did not terminate") {
+		t.Errorf("error should explain non-termination, got: %v", err)
+	}
+}
+
 func TestMonomorphTupleArgProducesAssemblerSafeName(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {

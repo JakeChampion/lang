@@ -12088,6 +12088,20 @@ func TestArm64UsizeDivRem(t *testing.T) {
 	}
 }
 
+// TestArm64LargeStringLiteral — a string literal longer than 64 KiB must
+// compile: its byte length no longer fits `mov w0, #imm16`, so OpConstStr
+// must fall back to the literal-pool form. Regression for B3 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md (the assembler would reject the
+// over-wide `mov` before the fix).
+func TestArm64LargeStringLiteral(t *testing.T) {
+	const n = 70000 // > 0xffff
+	src := fmt.Sprintf("function main(): i32 {\n    var s: string = %q;\n    if (s.len() == %d) { return 7; }\n    return 1;\n}", strings.Repeat("a", n), n)
+	_, code := compileAndRunArm64(t, src)
+	if code != 7 {
+		t.Errorf("got exit %d, want 7 (>64KiB literal: assembled and len()==%d?)", code, n)
+	}
+}
+
 // TestArm64FloatToUsize — parity mirror of TestX86_64FloatToUsize for the
 // shared-IR B2 fix. See docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestArm64FloatToUsize(t *testing.T) {

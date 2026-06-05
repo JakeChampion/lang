@@ -6759,7 +6759,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		lbl := g.internString(op.Str)
 		g.adrpAdd("x0", lbl)
 		g.push() // data
-		g.emit("mov w0, #%d", len(op.Str))
+		// `mov w0, #N` only takes a 16-bit immediate; a string literal
+		// longer than 64 KiB needs the literal-pool form, exactly like
+		// the OpConstI32 path above. See docs/ADVERSARIAL-REVIEW-2026-06.md (B3).
+		if n := len(op.Str); n <= 0xffff {
+			g.emit("mov w0, #%d", n)
+		} else {
+			g.emit("ldr w0, =%d", n)
+		}
 		g.push() // len
 
 	case ir.OpConstFunc:
