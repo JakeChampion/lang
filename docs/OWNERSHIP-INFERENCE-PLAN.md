@@ -238,9 +238,32 @@ analysis, which is independent, pure, and de-risks the design.
   callee frees them). The whole e2e suite (every backend + self-host) is
   green with the flag on.
 
-  **Remaining sub-slices:** teach TRMC to free its scrutinee (unblocks the
-  recursive `map`/`dup` writers); admit array/string/non-uniform-payload
-  enums; extend owned-by-default to structs/tuples/strings; then the
+  **Sub-slice 2b — TRMC-as-consuming — DONE (default on).** A TRMC
+  function's hole-passing loop bypasses the param exit-sweep, so 2a kept
+  TRMC params on the borrow model. 2b teaches the *consume-safe* subset
+  (`trmcShapeConsumeSafe`: an owned-by-default scrutinee whose recursive
+  arm steals a same-enum tail and whose every other binding is scalar —
+  the FBIP list-map `Cons(i32, List)` walk) to FREE each input cell as the
+  loop advances. The walk is a Perceus consuming traversal: a `stillFreeing`
+  flag, set until the first SHARED cell; while set, an `is_unique`-gated
+  `__fern_box_free` (recycled by the freelist into the next node's alloc —
+  in-place reuse), else a single `__fern_rc_dec` that balances the caller's
+  retain inc and stops. The free is emitted at the END of the recursive arm
+  (after every read of the box — bindings, head payloads, self-call arg
+  temps — and before the param store rebinds the scrutinee to the tail), so
+  it is correct regardless of whether those expressions reference the
+  scrutinee. Pointer-headed cells and trees are excluded (a shallow free
+  would lose a non-tail reference). Consume-safe TRMC callees become
+  owned-by-default at the CALL site (`calleeParamOwnedByDefault`) while the
+  definition side still skips the exit-sweep (the loop frees, not the
+  sweep). Verified: the differential gate stays byte-identical; IR tests pin
+  the consume sequence fires for the scalar-head list and is withheld for
+  the borrow model and pointer-head lists; and a peak-memory e2e shows the
+  consume high-water at ~half the borrow model (62 vs 125 cells for N=2000,
+  identical on all three backends) — the in-place-reuse dividend.
+
+  **Remaining sub-slices:** admit array/string/non-uniform-payload enums;
+  extend owned-by-default to structs/tuples/strings; then the
   **borrow-inference** optimization (Slice 0's `inferParamEscapes`) that
   keeps a read-only non-escaping param borrowed to skip the inc/dec — the
   step that makes `own` truly unnecessary.

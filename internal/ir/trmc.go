@@ -245,6 +245,20 @@ func (b *builder) emitTrmc(sh *trmcShape) {
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 
+	// TRMC-consuming (Slice 2): a consume-safe TRMC function frees its scrutinee
+	// cell as the loop advances. trmcScrutSlot tracks the current cell (the
+	// rebound param slot), stillFreeing stays 1 until the first SHARED cell.
+	if b.trmcConsumeSafe[b.fn.Name] {
+		if et, ok := b.fn.Params[sh.matchedParam].Type.(ast.EnumType); ok {
+			b.trmcConsuming = true
+			b.trmcScrutEnum = et
+			b.trmcScrutSlot = mp
+			b.trmcStillSlot = b.allocSlot()
+			b.emit(Op{Kind: OpConstI32, I32: 1})
+			b.emit(Op{Kind: OpStoreLocal, I32: b.trmcStillSlot})
+		}
+	}
+
 	b.openBlock(BlockTypeVoid) // exit block — `break` target
 	exitD := b.depth
 	b.openLoop(BlockTypeVoid) // loop — `continue` target
@@ -372,8 +386,124 @@ func (b *builder) emitTrmcRecArm(arm trmcArm, holeSlot, resultSlot int32) {
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
 		tmp[j] = ts
 	}
+	// TRMC-consuming: free the just-walked scrutinee cell now — after every read
+	// of it (bindings, head payloads, the self-call arg temps) and BEFORE the
+	// param store overwrites trmcScrutSlot with the tail. The freed cell recycles
+	// via the freelist into the next iteration's node alloc (bounded heap).
+	b.emitTrmcConsumeScrut()
 	for j := range b.fn.Params {
 		b.emit(Op{Kind: OpLoadLocal, I32: tmp[j]})
 		b.emit(Op{Kind: OpStoreLocal, I32: int32(j)})
 	}
+}
+
+// trmcShapeConsumeSafe reports whether a TRMC function can CONSUME its scrutinee
+// in the loop (Slice 2 TRMC-consuming). Soundness turns entirely on the SHAPE OF
+// THE SCRUTINEE BOX that the loop shallow-frees — not the node it builds. A
+// shallow free discards the box and decs NONE of its payloads, so it is correct
+// only when, for every recursive arm:
+//
+//   - the scrutinee parameter is owned-by-default-eligible (uniform box,
+//     string/array/Map-free), AND
+//   - the self-call advances the matched param to a bare binding ident — the
+//     "tail" cell whose reference we STEAL (move forward as the next
+//     scrutinee), which must itself be the same enum (a same-class cell), AND
+//   - every OTHER scrutinee binding is definitely-scalar, so dropping the box
+//     without dec'ing those payloads leaks nothing.
+//
+// That is exactly the FBIP list walk (`Cons(i32, List)` → recurse on the tail);
+// trees (two pointer payloads) and pointer-headed cells are excluded because a
+// non-tail pointer payload would be lost by the shallow free.
+func (b *builder) trmcShapeConsumeSafe(sh *trmcShape) bool {
+	if sh == nil {
+		return false
+	}
+	mp := sh.matchedParam
+	if mp < 0 || mp >= len(b.fn.Params) {
+		return false
+	}
+	scrutEnum, ok := b.fn.Params[mp].Type.(ast.EnumType)
+	if !ok || !b.isOwnedByDefaultType(scrutEnum) {
+		return false
+	}
+	for _, arm := range sh.arms {
+		if !arm.recursive {
+			continue
+		}
+		// The self-call must advance the matched param to a bare binding ident.
+		if mp >= len(arm.selfCall.Args) {
+			return false
+		}
+		adv, ok := arm.selfCall.Args[mp].(*ast.Ident)
+		if !ok {
+			return false
+		}
+		tailIdx := -1
+		for i, bn := range arm.bindings {
+			if bn == adv.Name {
+				tailIdx = i
+				break
+			}
+		}
+		if tailIdx < 0 {
+			return false // advance arg isn't one of this arm's own bindings
+		}
+		for i, bt := range arm.bindingTypes {
+			if i == tailIdx {
+				// The stolen tail must be a same-class cell of the scrutinee enum.
+				if et, ok := bt.(ast.EnumType); !ok || et.Name != scrutEnum.Name {
+					return false
+				}
+				continue
+			}
+			if !isDefinitelyScalar(bt) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// emitTrmcConsumeScrut frees the current scrutinee cell as the loop advances,
+// under owned-by-default. Perceus consuming traversal: while still-freeing,
+// shallow-free a uniquely-owned cell (recycled by the freelist into the next
+// node's alloc — in-place reuse); at the first SHARED cell, dec it once (balances
+// the caller's retain inc) and stop freeing — the rest of the list belongs to
+// the sharer and must not be touched. Net: a uniquely-owned input is fully
+// reclaimed; an aliased input loses exactly the one retained reference.
+func (b *builder) emitTrmcConsumeScrut() {
+	if !b.trmcConsuming {
+		return
+	}
+	ed, ok := b.info.Enums[b.trmcScrutEnum.Name]
+	if !ok {
+		return
+	}
+	if len(b.trmcScrutEnum.Args) > 0 {
+		ed = substituteEnumDecl(ed, b.trmcScrutEnum.Args)
+	}
+	size, ok := uniformEnumBoxSize(ed, b.ptrW)
+	if !ok {
+		return
+	}
+	// if stillFreeing {
+	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcStillSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	//   if is_unique(scrut) { box_free(scrut, size) }
+	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
+	b.emit(Op{Kind: OpDrop})
+	//   else { dec(scrut); stillFreeing = 0 }
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: b.trmcScrutSlot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStoreLocal, I32: b.trmcStillSlot})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpEnd})
 }
