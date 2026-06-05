@@ -26,6 +26,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 // slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
 var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
+	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
 	"E018": true, // duplicate parameter
@@ -147,6 +148,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"return-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", []string{"E002"}},
 		{"return-mismatch-nested", "function f(): i32 { if (true) { return \"no\"; } return 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"return-ok", "function f(): string { var s: string = \"x\"; return s; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"struct-missing-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", []string{"E005"}},
+		{"struct-nested-missing", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q {} }; return 0; }\n", []string{"E005"}},
+		{"struct-complete-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; return p.x; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
