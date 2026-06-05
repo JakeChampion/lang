@@ -147,6 +147,15 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"set-index-compound", "function main(): i32 { var a = [10, 20, 30]; a[0] += 5; a[1] -= 4; a[2] *= 2; return a[0] + a[1] + a[2]; }", 91},
 		{"set-index-in-for", "function main(): i32 { var a = [5, 5, 5, 5]; for x in a { a[0] = a[0] + 1; } return a[0]; }", 9},
 		{"set-index-running-sum", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; var run = 0; while (i < 4) { run = run + (i + 1); a[i] = run; i = i + 1; } return a[3]; }", 10},
+		// Typed-array element access: indexing a struct / string array recovers
+		// the element type (type_of_expr's ExprIndex arm), so `a[i].field`
+		// resolves a field offset and `a[i] + …` / `a[i] == …` dispatch as
+		// string ops rather than i32.
+		{"array-of-struct-field", "struct P { x: i32, y: i32 } function main(): i32 { var a = [P { x: 1, y: 2 }, P { x: 10, y: 20 }]; return a[0].x + a[1].y; }", 21},
+		{"array-of-struct-iter", "struct P { x: i32, y: i32 } function main(): i32 { var a = [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }]; var t = 0; for p in a { t = t + p.x + p.y; } return t; }", 21},
+		{"array-of-struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var a = [Named { id: 1, label: \"hello\" }, Named { id: 2, label: \"hi\" }]; return a[0].label.len() + a[1].label.len() + a[1].id; }", 9},
+		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
+		{"string-array-eq", "function main(): i32 { var a = [\"add\", \"sub\"]; if (a[1] == \"sub\") { return 7; } return 0; }", 7},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
