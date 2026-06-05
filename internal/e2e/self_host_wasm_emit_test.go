@@ -650,10 +650,18 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"derive-ord-struct", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) struct P { x: i32, y: i32 } function main(): i32 { var a: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; if (a.cmp(c) < 0) { if (c.cmp(a) > 0) { if (a.cmp(a) == 0) { return 42; } } } return 0; }", 42, ""},
 		{"derive-eq-enum", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { var a: Opt = Has(5); var a2: Opt = Has(5); var b: Opt = Has(6); var n: Opt = Nil; var n2: Opt = Nil; var r: i32 = 0; if (a.eq(a2)) { r = r + 1; } if (!a.eq(b)) { r = r + 2; } if (!a.eq(n)) { r = r + 4; } if (n.eq(n2)) { r = r + 8; } return r; }", 15, ""},
 		// `@derive(Ord)` on an enum (variant order then payload), via the
-		// var-typed receiver form. An INLINE variant-call receiver
-		// (`Low(1).cmp(Low(2))`) is the one remaining wasm gap — see
-		// docs/TRAITS.md — so receivers are bound to vars first.
+		// var-typed receiver form.
 		{"derive-ord-enum", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var a: Lvl = Low(1); var a2: Lvl = Low(2); var h: Lvl = High; var lo: Lvl = Low(0); var a3: Lvl = Low(1); var r: i32 = 0; if (a.cmp(a2) < 0) { r = r + 1; } if (a.cmp(h) < 0) { r = r + 2; } if (h.cmp(lo) > 0) { r = r + 4; } if (a.cmp(a3) == 0) { r = r + 8; } return r; }", 15, ""},
+		// INLINE variant-call receivers (`Has(5).eq(…)`, `Nil.eq(…)`,
+		// `Low(1).cmp(…)`, `Circle(3).area()`) — previously the one wasm
+		// gap: struct_type_of couldn't recover the enum from a bare variant
+		// constructor, so dispatch fell to the i32 path (pointer compare).
+		// enum_of_variant now maps the variant to its enum via the enum
+		// methods' match arms, so inline receivers dispatch statically.
+		{"inline-variant-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { var r: i32 = 0; if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15, ""},
+		{"inline-variant-display", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { write(Has(7).to_string()); write(\"|\"); write(Nil.to_string()); return 0; }", 0, "Has(7)|Nil"},
+		{"inline-variant-ord", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var r: i32 = 0; if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15, ""},
+		{"inline-enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { return Circle(3).area() + Square(4).area(); }", 43, ""},
 		// Generic-struct monomorphisation reaches the wasm backend through
 		// the shared module_with_builtins pass: `Box[i32]` / `Box[string]`
 		// become concrete `Box__i32` / `Box__string` clones, and wasm's

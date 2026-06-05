@@ -523,13 +523,16 @@ regressing the self-host gates. It needs traits in two slices:
   `b` as the payload (the `__ev` field type) rather than the variant, so
   a primitive payload routes through that dispatch. With these,
   **`@derive(Eq/Ord)` on structs and on var-typed enums** work on wasm.
-  The one remaining wasm hole: an INLINE variant-call receiver
-  (`Has(5).eq(…)`) — `struct_type_of` can't recover the enum type from a
-  bare variant constructor (the variant→enum map was dropped at parse),
-  so it falls to the i32 path and compares pointers; binding to a typed
-  var first (`var h: Opt = Has(5); h.eq(…)`) works. And `dyn Trait` on
-  wasm still needs genuine runtime dispatch (the backend is
-  static-dispatch).
+  Then **INLINE variant-call receivers** landed (`Has(5).eq(…)`,
+  `Nil.eq(…)`, `Circle(3).area()`): `struct_type_of` couldn't recover the
+  enum type from a bare variant constructor (the variant→enum map is
+  dropped at parse), so dispatch fell to the i32 path and compared
+  pointers. `enum_of_variant` now reconstructs the map from the enum
+  methods themselves — a receiver method whose type is an enum (not a
+  struct) carries each variant in its `match (self)` arms — so an inline
+  variant receiver dispatches to `$Enum__method` statically, exactly like
+  the var-typed form. The remaining wasm hole: `dyn Trait` still needs
+  genuine runtime dispatch (the backend is static-dispatch).
 
 - **Self-host slice 8 (shipped): generic-struct monomorphisation.**
   Closes the slice-4 boundary: a generic struct instantiated at a
