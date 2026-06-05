@@ -311,6 +311,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// keyword.
 		for _, c := range []struct{ name, src, want string }{
 			{"missing_variant", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", "4:25: error[E030]"},
+			{"enum_missing_variant", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { A => { return 1; } } return 0; }\nfunction main(): i32 { return f(A); }\n", "2:25: error[E030]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
