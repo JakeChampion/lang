@@ -27,7 +27,10 @@ func incCountInFn(ip *ir.Program, fn string) int {
 
 func TestEnumRcPayloadsInc(t *testing.T) {
 	prev := ast.EnumRcPayloads
-	defer func() { ast.EnumRcPayloads = prev }()
+	// Isolate the 1b payload inc from Slice 2's call-site retain inc.
+	pobd := ast.OwnedByDefault
+	ast.OwnedByDefault = false
+	defer func() { ast.EnumRcPayloads = prev; ast.OwnedByDefault = pobd }()
 
 	// Aliased List payload (`C(0, t)`, t a borrowed param read again): inc'd
 	// under the flag, not under the move model.

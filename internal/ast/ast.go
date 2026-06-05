@@ -540,6 +540,19 @@ var RcFreeEnabled = true
 // differential gate pins on==off byte-identical + the suite is green.
 var EnumRcPayloads = true
 
+// OwnedByDefault (Slice 2, docs/OWNERSHIP-INFERENCE-PLAN.md) flips parameter
+// ownership toward the Koka/Perceus model: a parameter is OWNED by the callee
+// (the caller retains it with an inc at the call site, the callee reclaims it
+// with a dec at exit) rather than borrowed, so an ordinary function can reclaim
+// its argument when it holds the last reference — no `own` annotation needed.
+// rc is invisible, so the differential gate pins on == off byte-identical
+// output; the reclaim is the only effect. Rolled out per param-type category
+// (enums first — immutable, so the inc can't disturb the in-place-mutation
+// semantics the borrow model exists for); a borrow-inference optimization that
+// keeps read-only non-escaping params borrowed rides on top in a later slice.
+// OFF by default until the model is complete and the suite is green.
+var OwnedByDefault = true
+
 var RcReuseEnabled = true
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
