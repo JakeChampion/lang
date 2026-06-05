@@ -436,3 +436,79 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWitClassify gates the self-host P2 classifier: deriving each
+// import's lowering kind from the decoded fern world (via the canonical-ABI
+// flattening rules) must match the Go classifier's kinds, run through the
+// self-host under wasmtime. Covers all three kinds and the subtle cases
+// (indirect-return mem, scalar-handle no-opt, heap-result mem+realloc).
+// Returns 0 on success, else the 1-based index of the first mismatch.
+func TestSelfHostWitClassify(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-classify e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witClassifySelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-classify self-test")
+	}
+	watPath := filepath.Join(dir, "wit_classify_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-classify self-test failed at check %d", code)
+	}
+}
+
+const witClassifySelfTestMain = `
+function wit_cl_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+function wit_ck(tb: i32[], iface: string, fn: string, want: i32, id: i32): i32 {
+    if (wit_classify(tb, iface, fn) != want) { return id; }
+    return 0;
+}
+function main(): i32 {
+    var tb: i32[] = wit_cl_bytes(FERN_BIN());
+    tb = wit_section_body(tb, 7);
+    var r: i32 = 0;
+    r = wit_ck(tb, "wasi:cli/stdout@0.2.0", "get-stdout", 0, 1); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush", 1, 2); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:io/streams@0.2.0", "[method]input-stream.blocking-read", 2, 3); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:filesystem/preopens@0.2.0", "get-directories", 2, 4); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:filesystem/types@0.2.0", "[method]descriptor.open-at", 1, 5); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:filesystem/types@0.2.0", "[method]descriptor.read-via-stream", 1, 6); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:io/poll@0.2.0", "[method]pollable.block", 0, 7); if (r != 0) { return r; }
+    r = wit_ck(tb, "wasi:sockets/tcp@0.2.0", "[method]tcp-socket.accept", 1, 8); if (r != 0) { return r; }
+    return 0;
+}
+`

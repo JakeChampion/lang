@@ -732,3 +732,205 @@ function wit_emit_world_imports(tbody: i32[]): i32[] {
     }
     return out;
 }
+
+// ---- P2 slice: classify imports from the world --------------------------
+//
+// Self-host mirror of componenttype's Classify: derive each imported
+// function's lowering kind (0 no-opt, 1 mem, 2 mem+realloc) from its resolved
+// signature via the canonical-ABI flattening rules. Value-type indices are
+// resolved against a per-scope offset table (the byte offset of each type's
+// encoding), reusing wit_decode_def; sentinel -1 entries (aliases / surfaced
+// resources) resolve as scalar handles, matching the Go ResolveDef==nil case.
+
+// wit_iface_instance_offset returns the byte offset (in the type-section body)
+// of the instance type the world imports under `iface`, or -1.
+function wit_iface_instance_offset(tbody: i32[], iface: string): i32 {
+    var none: i32[] = [];
+    var rc: UlebRead = wit_read_uleb(tbody, 0);
+    var p: i32 = rc.next;
+    p = p + 1;
+    var oc: UlebRead = wit_read_uleb(tbody, p);
+    p = oc.next;
+    p = p + 1;
+    p = p + 1;
+    var wc: UlebRead = wit_read_uleb(tbody, p);
+    var wcount: i32 = wc.value;
+    p = wc.next;
+    var typeOffsets: i32[] = [];
+    var result: i32 = 0 - 1;
+    var found: boolean = false;
+    var i: i32 = 0;
+    while (i < wcount && !found) {
+        var kind: i32 = tbody[p];
+        if (kind == 1) {
+            typeOffsets = typeOffsets.push(p + 1);
+        } else if (kind == 2) {
+            if (tbody[p + 1] == 3) { typeOffsets = typeOffsets.push(0 - 1); }
+        } else if (kind == 3) {
+            var nr: NameR = wit_read_name(tbody, p + 2);
+            if (nr.s == iface) {
+                var tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
+                result = typeOffsets[tr.value];
+                found = true;
+            }
+        }
+        var skip: TxR = wit_tx_decl(tbody, p, none);
+        p = skip.next;
+        i = i + 1;
+    }
+    return result;
+}
+
+function wit_contains_heap(tbody: i32[], offs: i32[], v: i32): boolean {
+    if (v < 0) {
+        return v == (0 - 13);
+    }
+    if (v >= offs.len()) { return false; }
+    var off: i32 = offs[v];
+    if (off < 0) { return false; }
+    var d: WitDef = wit_decode_def(tbody, off).def;
+    if (d.tag == 112) { return true; }
+    if (d.tag == 107) { return wit_contains_heap(tbody, offs, d.elem); }
+    if (d.tag == 111) {
+        var i: i32 = 0;
+        while (i < d.tup_elems.len()) {
+            if (wit_contains_heap(tbody, offs, d.tup_elems[i])) { return true; }
+            i = i + 1;
+        }
+    }
+    if (d.tag == 114) {
+        var j: i32 = 0;
+        while (j < d.rec_vals.len()) {
+            if (wit_contains_heap(tbody, offs, d.rec_vals[j])) { return true; }
+            j = j + 1;
+        }
+    }
+    if (d.tag == 113) {
+        var k: i32 = 0;
+        while (k < d.var_ty.len()) {
+            if (d.var_has_ty[k] == 1 && wit_contains_heap(tbody, offs, d.var_ty[k])) { return true; }
+            k = k + 1;
+        }
+    }
+    if (d.tag == 106) {
+        if (d.has_ok == 1 && wit_contains_heap(tbody, offs, d.ok)) { return true; }
+        if (d.has_err == 1 && wit_contains_heap(tbody, offs, d.err)) { return true; }
+    }
+    return false;
+}
+
+function wit_flatten(tbody: i32[], offs: i32[], v: i32): i32 {
+    if (v < 0) {
+        if (v == (0 - 13)) { return 2; }
+        return 1;
+    }
+    if (v >= offs.len()) { return 1; }
+    var off: i32 = offs[v];
+    if (off < 0) { return 1; }
+    var d: WitDef = wit_decode_def(tbody, off).def;
+    if (d.tag == 112) { return 2; }
+    if (d.tag == 105 || d.tag == 104 || d.tag == 109 || d.tag == 110) { return 1; }
+    if (d.tag == 107) { return 1 + wit_flatten(tbody, offs, d.elem); }
+    if (d.tag == 111) {
+        var n: i32 = 0;
+        var i: i32 = 0;
+        while (i < d.tup_elems.len()) {
+            n = n + wit_flatten(tbody, offs, d.tup_elems[i]);
+            i = i + 1;
+        }
+        return n;
+    }
+    if (d.tag == 114) {
+        var n2: i32 = 0;
+        var j: i32 = 0;
+        while (j < d.rec_vals.len()) {
+            n2 = n2 + wit_flatten(tbody, offs, d.rec_vals[j]);
+            j = j + 1;
+        }
+        return n2;
+    }
+    if (d.tag == 113) {
+        var mx: i32 = 0;
+        var k: i32 = 0;
+        while (k < d.var_ty.len()) {
+            var c: i32 = 0;
+            if (d.var_has_ty[k] == 1) { c = wit_flatten(tbody, offs, d.var_ty[k]); }
+            if (c > mx) { mx = c; }
+            k = k + 1;
+        }
+        return 1 + mx;
+    }
+    if (d.tag == 106) {
+        var ok: i32 = 0;
+        var er: i32 = 0;
+        if (d.has_ok == 1) { ok = wit_flatten(tbody, offs, d.ok); }
+        if (d.has_err == 1) { er = wit_flatten(tbody, offs, d.err); }
+        if (ok > er) { return 1 + ok; }
+        return 1 + er;
+    }
+    return 1;
+}
+
+// wit_classify returns the lowering kind (0/1/2) for (iface, fname) in the world.
+function wit_classify(tbody: i32[], iface: string, fname: string): i32 {
+    var instOff: i32 = wit_iface_instance_offset(tbody, iface);
+    if (instOff < 0) { return 0; }
+    var none: i32[] = [];
+    var p: i32 = instOff + 1;
+    var dc: UlebRead = wit_read_uleb(tbody, p);
+    var dcount: i32 = dc.value;
+    p = dc.next;
+    var offs: i32[] = [];
+    var funcOff: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < dcount) {
+        var kind: i32 = tbody[p];
+        if (kind == 1) {
+            offs = offs.push(p + 1);
+        } else if (kind == 2) {
+            if (tbody[p + 1] == 3) { offs = offs.push(0 - 1); }
+        } else if (kind == 4) {
+            var nr: NameR = wit_read_name(tbody, p + 2);
+            var edk: i32 = tbody[nr.next];
+            if (edk == 3) {
+                offs = offs.push(0 - 1);
+            } else if (edk == 1 && nr.s == fname) {
+                var tr: UlebRead = wit_read_uleb(tbody, nr.next + 1);
+                funcOff = offs[tr.value];
+            }
+        }
+        var skip: TxR = wit_tx_decl(tbody, p, none);
+        p = skip.next;
+        i = i + 1;
+    }
+    if (funcOff < 0) { return 0; }
+    var f: WitFunc = wit_decode_func(tbody, funcOff).fn;
+    var needR: boolean = false;
+    if (f.named == 0) {
+        if (wit_contains_heap(tbody, offs, f.result)) { needR = true; }
+    } else {
+        var r: i32 = 0;
+        while (r < f.r_vals.len()) {
+            if (wit_contains_heap(tbody, offs, f.r_vals[r])) { needR = true; }
+            r = r + 1;
+        }
+    }
+    if (needR) { return 2; }
+    var pj: i32 = 0;
+    while (pj < f.p_vals.len()) {
+        if (wit_contains_heap(tbody, offs, f.p_vals[pj])) { return 1; }
+        pj = pj + 1;
+    }
+    var flat: i32 = 0;
+    if (f.named == 0) {
+        flat = wit_flatten(tbody, offs, f.result);
+    } else {
+        var rk: i32 = 0;
+        while (rk < f.r_vals.len()) {
+            flat = flat + wit_flatten(tbody, offs, f.r_vals[rk]);
+            rk = rk + 1;
+        }
+    }
+    if (flat > 1) { return 1; }
+    return 0;
+}
