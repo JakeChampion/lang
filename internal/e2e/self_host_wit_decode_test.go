@@ -99,3 +99,84 @@ function main(): i32 {
 `)
 	return sb.String()
 }
+
+// TestSelfHostWitValtypeRoundTrip gates P1 slice 2 of the self-host WIT
+// decoder port: the value-type grammar (defined types + func types) decoded
+// into a model and re-encoded must reproduce crafted byte vectors, run
+// through the self-host under wasmtime. Returns 0 on success, else a check id
+// (def checks 1..6, func checks 7..8).
+func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-valtype e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" + witValtypeSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-valtype self-test")
+	}
+	watPath := filepath.Join(dir, "wit_valtype_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-valtype round-trip failed at check %d", code)
+	}
+}
+
+// witValtypeSelfTestMain round-trips one crafted vector per defined-type kind
+// and func shape (incl. the result variants, a multi-byte sleb type index,
+// and the empty-named-results func), returning the first failing check id.
+const witValtypeSelfTestMain = `
+function wit_eq(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+function wit_rt_def(v: i32[]): boolean {
+    var r: WitDefR = wit_decode_def(v, 0);
+    if (r.next != v.len()) { return false; }
+    return wit_eq(wit_encode_def([], r.def), v);
+}
+function wit_rt_func(v: i32[]): boolean {
+    var r: WitFuncR = wit_decode_func(v, 0);
+    if (r.next != v.len()) { return false; }
+    return wit_eq(wit_encode_func([], r.fn), v);
+}
+function main(): i32 {
+    if (!wit_rt_def([114, 2, 7, 115,101,99,111,110,100,115, 119, 11, 110,97,110,111,115,101,99,111,110,100,115, 121])) { return 1; }
+    if (!wit_rt_def([113, 2, 21, 108,97,115,116,45,111,112,101,114,97,116,105,111,110,45,102,97,105,108,101,100, 1, 2, 0, 6, 99,108,111,115,101,100, 0, 0])) { return 2; }
+    if (!wit_rt_def([109, 2, 1, 97, 1, 98])) { return 3; }
+    if (!wit_rt_def([106, 0, 1, 4])) { return 4; }
+    if (!wit_rt_def([106, 1, 119, 0])) { return 5; }
+    if (!wit_rt_def([111, 1, 193, 0])) { return 6; }
+    if (!wit_rt_func([64, 2, 4, 115,101,108,102, 7, 3, 108,101,110, 119, 0, 9])) { return 7; }
+    if (!wit_rt_func([64, 0, 1, 0])) { return 8; }
+    return 0;
+}
+`
