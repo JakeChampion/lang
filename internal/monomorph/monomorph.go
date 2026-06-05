@@ -42,6 +42,16 @@ type instKey struct {
 	mang string
 }
 
+// maxStructInstRounds bounds the generic-struct instantiation
+// fixpoint loop. Each round discovers the instantiations one nesting
+// level deeper, so the bound is the deepest legal finite nesting of a
+// generic struct inside another's type argument (e.g.
+// Box[Box[…Box[i32]…]]). It's set generously so realistic code
+// converges well within it; exceeding it means the family is unbounded
+// (polymorphic recursion), which is reported as an error. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (I3).
+const maxStructInstRounds = 64
+
 // Run mutates prog in place, replacing every generic function +
 // its call sites with monomorphic equivalents. After Run returns
 // successfully, no FuncDecl / StructDecl in prog has non-empty
@@ -280,7 +290,8 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	//     newly-cloned struct's field types may need their own
 	//     mangling. Two passes typically suffice but we loop
 	//     until no new instantiations are discovered.
-	for round := 0; round < 8; round++ {
+	converged := false
+	for round := 0; round < maxStructInstRounds; round++ {
 		before := len(structInsts)
 		rewriteGenericStructTypes(prog, info, structInsts)
 		// Append any structs the new pass found.
@@ -311,8 +322,21 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			prog.Structs = append(prog.Structs, &c)
 		}
 		if len(structInsts) == before {
+			converged = true
 			break
 		}
+	}
+	if !converged {
+		// The instantiation set was still growing when we hit the round
+		// cap. Since each round only expands one nesting level deeper, an
+		// unbounded set means a generic struct is polymorphically
+		// recursive — its own instantiation demands an ever-larger type
+		// argument (e.g. `struct Nest[T] { tail: Nest[Nest[T]]; }`).
+		// Fern monomorphises generics, so that family is infinite and
+		// can't be lowered. Report it clearly instead of letting the
+		// re-check below fail with a misleading "compiler bug". See
+		// docs/ADVERSARIAL-REVIEW-2026-06.md (I3).
+		return fmt.Errorf("monomorph: generic struct instantiation did not terminate after %d rounds — a generic type appears to be infinitely (polymorphically) recursive, e.g. a field typed `T[T]`-style that nests the struct inside its own type argument; such types can't be monomorphised", maxStructInstRounds)
 	}
 
 	// 4c. Drop parametric impls (`impl[T] Trait for Box[T]`). Their
