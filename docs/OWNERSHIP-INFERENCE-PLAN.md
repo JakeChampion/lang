@@ -262,11 +262,28 @@ analysis, which is independent, pure, and de-risks the design.
   consume high-water at ~half the borrow model (62 vs 125 cells for N=2000,
   identical on all three backends) — the in-place-reuse dividend.
 
-  **Remaining sub-slices:** admit array/string/non-uniform-payload enums;
-  extend owned-by-default to structs/tuples/strings; then the
-  **borrow-inference** optimization (Slice 0's `inferParamEscapes`) that
-  keeps a read-only non-escaping param borrowed to skip the inc/dec — the
-  step that makes `own` truly unnecessary.
+  **Sub-slice 2c — structs + tuples — DONE (default on).**
+  `isOwnedByDefaultType` now also admits `StructType` (backed by a real
+  `StructDecl`, so runtime handles — Map/Reader/Writer/MapIter — are
+  excluded) and `TupleType` when `typeIsStringArrayFree` (which
+  transitively rejects string/array/slice/Map, the not-fully-wired
+  deep-drop fields). Fern struct fields are **immutable** after
+  construction, so — like enums — there is no in-place mutation for the
+  caller-side retain inc to disturb; no copy-on-write concern. Boxes are
+  uniform by construction (no variants), and per-field/element rc counting
+  (Phase 1e) balances the deep drop; the reclamation machinery (`emitDec`
+  struct/tuple branches, `rcTracked`, `computeFreeEligible`, call-site
+  `emitAliasInc`) was already type-generic, so this is purely a gate
+  widening. `TestStructReuseSkipsBorrowedParam` became flag-aware (an owned
+  param's box IS reused in place under owned-by-default — is_unique-gated);
+  new e2e soundness + bounded-heap guards on all three backends; the
+  differential gate stays byte-identical.
+
+  **Remaining sub-slices:** admit array/string/non-uniform-payload enums
+  and string-containing structs/tuples; then the **borrow-inference**
+  optimization (Slice 0's `inferParamEscapes`) that keeps a read-only
+  non-escaping param borrowed to skip the inc/dec — the step that makes
+  `own` truly unnecessary.
 
 - **Slice 3 — demote `own` to optional + add the checked guarantee.**
   With inference driving reclaim, `own` is no longer required. Keep it
