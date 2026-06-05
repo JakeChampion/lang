@@ -1415,7 +1415,69 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
 // and (separately) type-checks top-level stmts in a scope that
 // has the sigs available — so `function main(): i32 { … }` and
 // loose `var x = add(1, 2);` both resolve `add`.
-pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean }
+pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boolean, diags: Diag[] }
+
+// Diag is a coded diagnostic — the stable `E0XX` code (matching the Go
+// checker's `internal/checker` codes, so the two can be differentially
+// gated) plus a human message. Positions are not yet threaded through the
+// AST (tokens carry line/col, the parser drops them), so a Diag is
+// message-only for now — the first parity milestone is matching the SET of
+// codes a program triggers; spans follow once positions reach the AST.
+// See docs/SELFHOST-CHECKER-PORT.md.
+pub struct Diag { code: string, message: string }
+
+// dup_name_before reports whether names[idx] already appears at a lower
+// index — the duplicate test shared by the declaration-level rules.
+function dup_name_before(names: string[], idx: i32): boolean {
+    var j: i32 = 0;
+    while (j < idx) {
+        if (names[j] == names[idx]) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// collect_decl_diags emits the declaration-level coded diagnostics that
+// are detectable from the decl tables alone (no positions, no type
+// inference): E007 (a struct field name repeated) and E018 (a function
+// parameter name repeated). These mirror the Go checker's E007 / E018.
+function collect_decl_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = [];
+    // E007: duplicate field within a struct (enum-variant structs carry at
+    // most one `__ev` field, so they never trip this).
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var sd: parser.StructDecl = mod.structs[si];
+        var fnames: string[] = [];
+        var fi: i32 = 0;
+        while (fi < sd.fields.len()) { fnames = fnames.push(sd.fields[fi].name); fi = fi + 1; }
+        var fk: i32 = 0;
+        while (fk < fnames.len()) {
+            if (dup_name_before(fnames, fk)) {
+                out = out.push(Diag { code: "E007", message: "duplicate field \"" + fnames[fk] + "\" in struct " + sd.name });
+            }
+            fk = fk + 1;
+        }
+        si = si + 1;
+    }
+    // E018: duplicate parameter within a function.
+    var ui: i32 = 0;
+    while (ui < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[ui];
+        var pnames: string[] = [];
+        var pi: i32 = 0;
+        while (pi < fd.params.len()) { pnames = pnames.push(fd.params[pi].name); pi = pi + 1; }
+        var pk: i32 = 0;
+        while (pk < pnames.len()) {
+            if (dup_name_before(pnames, pk)) {
+                out = out.push(Diag { code: "E018", message: "duplicate parameter \"" + pnames[pk] + "\"" });
+            }
+            pk = pk + 1;
+        }
+        ui = ui + 1;
+    }
+    return out;
+}
 
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
@@ -1445,7 +1507,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         top_tys = top_tys.push(r.ty);
         j = j + 1;
     }
-    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed };
+    var dd: Diag[] = collect_decl_diags(mod);
+    if (dd.len() > 0) { well_typed = false; }
+    return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
 
 // =================== VALIDATION ====================

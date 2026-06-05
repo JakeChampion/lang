@@ -1,0 +1,27 @@
+// examples/self_host/checker_codes_run.fern — stdin-driven driver that
+// runs the self-hosted type checker and prints the diagnostic CODE of
+// every diagnostic it emits, one per line (e.g. "E007"). Companion to
+// checker_run.fern (which only signals well-typed via the exit code):
+// this driver exposes the coded diagnostics so the Go-vs-self-host
+// differential gate (internal/e2e/self_host_checker_codes_test.go) can
+// compare the SET of codes the two checkers produce for the same source.
+// Exits 1 when any diagnostic was emitted, 0 otherwise.
+
+import "core/no_prelude";
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./checker";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mt: checker.ModuleTypes = checker.check_module(mod);
+    var i: i32 = 0;
+    while (i < mt.diags.len()) {
+        print(mt.diags[i].code);
+        i = i + 1;
+    }
+    if (mt.diags.len() > 0) { return 1; }
+    return 0;
+}
