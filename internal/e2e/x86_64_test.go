@@ -2221,6 +2221,50 @@ function main(): i32 {
 	}
 }
 
+// TestX86_64UsizeDivRem — usize is 64-bit on x86-64, so `usize / usize`
+// and `usize % usize` must use the 64-bit idiv/div register form. A
+// 32-bit form truncates the dividend to its low 32 bits and produces a
+// wrong quotient/remainder for values exceeding 2^32. Regression for the
+// B1 finding in docs/ADVERSARIAL-REVIEW-2026-06.md. arm64 + wasm32 were
+// already correct (wasm32's usize is genuinely 32-bit); x86-64 was the
+// lone broken backend.
+func TestX86_64UsizeDivRem(t *testing.T) {
+	// 5_000_000_000 = 0x1_2A05_F200. Low 32 bits = 705032704.
+	//   64-bit: 5000000000 / 3 = 1666666666, 5000000000 % 3 = 2.
+	//   32-bit (buggy): 705032704 / 3 = 235010901, % 3 = 1.
+	src := `function main(): i32 {
+    var x: usize = 5000000000 as usize;
+    var q: usize = x / 3;
+    var r: usize = x % 3;
+    if ((q as i32) != 1666666666) { return 1; }
+    if ((r as i32) != 2) { return 2; }
+    return 7;
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 7 {
+		t.Errorf("got %d, want 7 (usize div/rem truncated to 32 bits?)", code)
+	}
+}
+
+// TestX86_64FloatToUsize — `f64 as usize` must produce a 64-bit
+// truncation on natives (usize is pointer-width = 8 bytes). The shared
+// IR cast lowering previously clamped usize's width to 32, emitting a
+// 32-bit float-trunc that lost the high bits for values exceeding 2^32.
+// Regression for B2 in docs/ADVERSARIAL-REVIEW-2026-06.md (shared IR, so
+// arm64 has the matching test).
+func TestX86_64FloatToUsize(t *testing.T) {
+	src := `function main(): i32 {
+    var f: f64 = 5000000000.0;
+    var u: usize = f as usize;
+    if (u == 5000000000 as usize) { return 7; }
+    return 1;
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 7 {
+		t.Errorf("got %d, want 7 (f64->usize truncated to 32 bits?)", code)
+	}
+}
+
 // Wide-scalar `Map[K, V]` works on natives even though the
 // prelude's `__map_*_impl` functions declare K + V as `i32`:
 // the native operand stack uses 8-byte slots so i64 / f64

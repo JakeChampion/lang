@@ -293,6 +293,13 @@ func (r *renamer) walkExpr(e ast.Expr) {
 			r.popFrame()
 		}
 	case *ast.StructLit:
+		// Base is the spread source of a struct-update literal
+		// (`Foo { ...base, field: v }`). It must be walked too, or a
+		// shadowed `base` Ident resolves to the wrong (outer) slot and
+		// the program miscompiles. See docs/ADVERSARIAL-REVIEW-2026-06.md (F1).
+		if n.Base != nil {
+			r.walkExpr(n.Base)
+		}
 		for _, f := range n.Fields {
 			r.walkExpr(f.Value)
 		}

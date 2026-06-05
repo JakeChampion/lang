@@ -1975,7 +1975,10 @@ func (g *generator) aRegForWidth(width int) string {
 // unsigned forms clear it).
 func (g *generator) emitIntDivRem(op ir.Op, isRem bool) {
 	g.binPop()
-	w64 := op.Width == 64
+	// WidthPtr (usize/isize) is pointer-width: 64 bits on x86-64. Use the
+	// 64-bit register form so a usize dividend isn't truncated to its low
+	// 32 bits. See docs/ADVERSARIAL-REVIEW-2026-06.md (B1).
+	w64 := op.Width == 64 || op.Width == ir.WidthPtr
 	a, c, d := "eax", "ecx", "edx"
 	if w64 {
 		a, c, d = "rax", "rcx", "rdx"

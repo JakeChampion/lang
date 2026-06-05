@@ -12069,6 +12069,40 @@ function main(): i32 {
 	}
 }
 
+// TestArm64UsizeDivRem — parity mirror of TestX86_64UsizeDivRem. arm64
+// already resolves WidthPtr to the 64-bit register form via regForWidth,
+// so this guards against a regression and documents the cross-backend
+// contract. See docs/ADVERSARIAL-REVIEW-2026-06.md (B1).
+func TestArm64UsizeDivRem(t *testing.T) {
+	src := `function main(): i32 {
+    var x: usize = 5000000000 as usize;
+    var q: usize = x / 3;
+    var r: usize = x % 3;
+    if ((q as i32) != 1666666666) { return 1; }
+    if ((r as i32) != 2) { return 2; }
+    return 7;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 7 {
+		t.Errorf("got %d, want 7 (usize div/rem truncated to 32 bits?)", code)
+	}
+}
+
+// TestArm64FloatToUsize — parity mirror of TestX86_64FloatToUsize for the
+// shared-IR B2 fix. See docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestArm64FloatToUsize(t *testing.T) {
+	src := `function main(): i32 {
+    var f: f64 = 5000000000.0;
+    var u: usize = f as usize;
+    if (u == 5000000000 as usize) { return 7; }
+    return 1;
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 7 {
+		t.Errorf("got %d, want 7 (f64->usize truncated to 32 bits?)", code)
+	}
+}
+
 // Mirror of TestX86_64WideScalarMap. Native arm64 (Linux qemu)
 // shares the slot-wider-than-declared-type coincidence with
 // x86-64 — i64 / f64 / u64 keys + values flow through the
