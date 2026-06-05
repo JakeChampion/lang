@@ -166,3 +166,59 @@ func (w *World) ComponentWithWorldImports() ([]byte, error) {
 	out := append([]byte{}, componentHeader...)
 	return append(out, secs...), nil
 }
+
+// PrefixLayout reports the component-level index counts a world-driven suffix
+// needs after the import prefix: the size of the component type-index space
+// (type + type-alias + type-export decls) and the number of imported
+// instances. These feed the suffix's n_type0 / n_inst0.
+type PrefixLayout struct {
+	Types     uint32
+	Instances uint32
+}
+
+// PrefixLayout walks the world component's decls and counts the component
+// type and instance index spaces the import prefix produces.
+func (w *World) PrefixLayout() PrefixLayout {
+	world := w.worldComponent()
+	var pl PrefixLayout
+	if world == nil {
+		return pl
+	}
+	for i := range world.Decls {
+		d := &world.Decls[i]
+		switch {
+		case d.Kind == 0x01:
+			pl.Types++
+		case d.Kind == 0x02 && d.Alias != nil && d.Alias.Sort == 0x03:
+			pl.Types++
+		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
+			pl.Types++
+		}
+		if d.Kind == 0x03 {
+			pl.Instances++
+		}
+	}
+	return pl
+}
+
+// ImportInstanceIndex returns the component-instance index an imported
+// interface lands at in the import prefix (its position among import decls),
+// or -1 if the world does not import it. This is the instance the suffix
+// aliases the interface's functions from.
+func (w *World) ImportInstanceIndex(name string) int {
+	world := w.worldComponent()
+	if world == nil {
+		return -1
+	}
+	idx := 0
+	for i := range world.Decls {
+		d := &world.Decls[i]
+		if d.Kind == 0x03 {
+			if d.Name == name {
+				return idx
+			}
+			idx++
+		}
+	}
+	return -1
+}
