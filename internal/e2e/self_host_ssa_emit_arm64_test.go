@@ -108,6 +108,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// __new_array(n): runtime-sized allocation (alloc op size in args[0]).
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
 		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},
+		// arr.push(x) → __ssa_arr_push (copy into fresh __new_array, append).
+		{"array-push", "function main(): i32 { var a = [1, 2]; a = a.push(3); a = a.push(4); return a[0] + a[1] + a[2] + a[3] + a.len(); }", 14},
+		{"array-push-loop", "function main(): i32 { var a = [0]; var i = 1; while (i <= 5) { a = a.push(i * i); i = i + 1; } var s = 0; var j = 0; while (j < a.len()) { s = s + a[j]; j = j + 1; } return s; }", 55},
+		{"array-push-string", "function main(): i32 { var a = [\"ab\"]; a = a.push(\"cde\"); return a[0].len() + a[1].len() + a.len(); }", 7},
 		// Indexed assignment `arr[i] = v` (→ __set_index → store_elem):
 		// constant index, loop-fill, swap, compound, and cross-call mutation
 		// through a shared array param.
