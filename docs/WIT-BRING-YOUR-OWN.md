@@ -102,6 +102,18 @@ The existing `Wasi*InstanceTypeBody` emitters are the **oracle**: a
 WIT-driven path must reproduce today's `fern` / `http` worlds byte-for-byte
 before it's trusted, exactly like the suffix generator reproduced each blob.
 
+**Self-host parity is part of every phase's definition of done — not a
+deferred afterthought.** The self-hosted compiler (`examples/self_host/`) is
+the destination; the Go compiler is the reference that eventually retires
+(see `CLAUDE.md`). So each phase below ships in *both*: the Go side may lead
+(its round-trip oracle against `fern.bin` / `http.bin` is the easiest place
+to nail the encoding down first), but the phase is not complete until the
+self-host port lands too, gated by the same byte-identical reproduction
+against the Go reference — the exact pattern the suffix builder used (the Go
+composer was the oracle; the deliverable was `wat_component.fern`). A phase
+that lands Go-only is a half-phase; the self-host port follows immediately,
+per phase, before moving on.
+
 1. **P1 — decode the component-type binary.** Add a decoder for the
    `component-type` payload (option 1); round-trip
    `componenttype/fern.bin` → structured world → re-encode == original.
@@ -141,9 +153,12 @@ cost lives.
 - **Ingestion: shell-out vs. in-tree parser** (the dependency-light project
   ethos pushes toward eventually owning a parser, but shelling out unblocks
   the early phases cheaply).
-- **Self-host parity.** Every phase eventually needs a self-host port
-  (`examples/self_host/`). The Go side can lead, but resources/exports will
-  be sizeable there too.
+- **Self-host parity is required, per phase** (see the phased-plan note
+  above), not deferred. The Go side leads only to pin the encoding against
+  the `fern.bin` / `http.bin` oracle; the `examples/self_host/` port follows
+  immediately and is gated byte-identical against the Go reference.
+  Resources/exports (P5/P6) will be sizeable on the self-host side too —
+  budget for it rather than letting Go race ahead.
 
 ## Risks / notes
 
