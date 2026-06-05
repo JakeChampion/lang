@@ -486,10 +486,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
                     if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
                     // A lambda-bound local: f(...) dispatches to the lifted
-                    // top-level function recorded as "fn:<name>" in the var-type
-                    // map (see the StmtVar lambda case).
+                    // top-level function recorded as "fn:<name>|cap,cap" in the
+                    // var-type map (see the StmtVar lambda case). The part after
+                    // "|" is the capture list to pass as trailing args.
+                    var cap_csv: string = "";
                     var cfnty: string = s.get_var_type(cid.name);
-                    if (cfnty.len() > 3 && cfnty[0:3] == "fn:") { callee_name = cfnty[3 : cfnty.len()]; }
+                    if (cfnty.len() > 3 && cfnty[0:3] == "fn:") {
+                        var crest: string = cfnty[3 : cfnty.len()];
+                        var cbar: i32 = index_of_byte(crest, 124);   // '|'
+                        if (cbar >= 0) { callee_name = crest[0 : cbar]; cap_csv = crest[cbar + 1 : crest.len()]; }
+                        else { callee_name = crest; }
+                    }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
                     while (i < c.args.len()) {
@@ -497,6 +504,16 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         if (!s.ok) { return s; }
                         argvals = argvals.push(s.cur_id());
                         i = i + 1;
+                    }
+                    // Append captured values (marker order) as trailing args.
+                    var ccn: string = "";
+                    var cpi: i32 = 0;
+                    while (cpi <= cap_csv.len()) {
+                        if (cpi == cap_csv.len() || cap_csv[cpi] == 44) {
+                            if (ccn.len() > 0) { argvals = argvals.push(s.get_var(ccn)); }
+                            ccn = "";
+                        } else { ccn = ccn + cap_csv[cpi : cpi + 1]; }
+                        cpi = cpi + 1;
                     }
                     s = s.fresh();
                     return s.emit(SInst { kind: "call", result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
@@ -797,16 +814,26 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             }
             // A lambda binding `var f = function(...){...}` — the lambda is
             // lifted to a top-level function <parent>$lam$<i> (collect_lambdas,
-            // body order). Record f in the var-type map as "fn:<name>" so a
-            // later direct call f(...) dispatches there; the lambda has no SSA
-            // value of its own (so using f as a non-call value bails, falling
-            // back to the AST emitter — closures that escape aren't in the
+            // body order). Record f in the var-type map as "fn:<name>" (plus
+            // "|cap,cap" when it captures) so a later direct call f(...)
+            // dispatches there and passes the captured values; the lambda has
+            // no SSA value of its own (so using f as a non-call value bails,
+            // falling back to the AST emitter — escaping closures aren't in the
             // subset yet). The index is the count of fn: markers seen so far,
-            // which matches collect_lambdas's body-order numbering.
+            // matching collect_lambdas's body-order numbering; the capture set
+            // (lambda_free_caps over the in-scope vars) matches it too.
             match (v.init) {
-                parser.ExprLambda(_) => {
+                parser.ExprLambda(lam) => {
                     var lidx: i32 = count_fn_markers(s.vt_types);
-                    return s.set_var_type(v.name, "fn:" + s.name + "$lam$" + int_str(lidx));
+                    var marker: string = "fn:" + s.name + "$lam$" + int_str(lidx);
+                    var lcaps: string[] = lambda_free_caps(lam, s.var_names);
+                    var mci: i32 = 0;
+                    while (mci < lcaps.len()) {
+                        if (mci == 0) { marker = marker + "|"; } else { marker = marker + ","; }
+                        marker = marker + lcaps[mci];
+                        mci = mci + 1;
+                    }
+                    return s.set_var_type(v.name, marker);
                 },
                 _ => { }
             }
@@ -1374,19 +1401,257 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
     return s;
 }
 
+// ---- lambda free-variable (capture) analysis ---------------------------
+// Mirrors the walkers in asm.fern's closure boxing. collect_idents_* gather
+// every identifier an expression / statement reads; collect_bound_stmt gathers
+// the names a statement binds (so they're subtracted from the read set);
+// collect_assigned_stmt gathers reassignment targets (used to reject capturing
+// a mutated outer var — by-value-at-call would then diverge from by-value-at-
+// creation). Captures are reads that resolve to an enclosing local.
+function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.push(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_idents_expr(b.left, acc);
+            return collect_idents_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
+        parser.ExprCall(c) => {
+            acc = collect_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = collect_idents_expr(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = collect_idents_expr(a.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = collect_idents_expr(t.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_idents_expr(x.array, acc);
+            return collect_idents_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_idents_expr(sl.array, acc);
+            acc = collect_idents_expr(sl.start, acc);
+            return collect_idents_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = collect_idents_expr(sl.field_values[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { acc = collect_idents_stmt(lm.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_idents_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) { acc = collect_idents_stmt(i.then_body[ti], acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) { acc = collect_idents_stmt(i.else_body[ei], acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_idents_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = collect_idents_stmt(w.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
+        parser.StmtMatch(m) => {
+            acc = collect_idents_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = collect_idents_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_idents_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) { acc = collect_idents_stmt(f.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return acc.push(v.name); },
+        parser.StmtReturn(_) => { return acc; },
+        parser.StmtExpr(_) => { return acc; },
+        parser.StmtIf(i) => {
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) { acc = collect_bound_stmt(i.then_body[ti], acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) { acc = collect_bound_stmt(i.else_body[ei], acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = collect_bound_stmt(w.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtAssign(_) => { return acc; },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                match (m.arms[ai].pattern) {
+                    parser.PatVariant(pv) => { if (pv.binding.len() > 0) { acc = acc.push(pv.binding); } },
+                    parser.PatWildcard(_) => { }
+                }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = collect_bound_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = acc.push(f.var_name);
+            var i: i32 = 0;
+            while (i < f.body.len()) { acc = collect_bound_stmt(f.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// lambda_free_caps returns the names a lambda reads that resolve to an
+// enclosing local (`locals`), minus its own params + body-bound names — its
+// captures, in first-read order (deterministic, so the lift site and the call
+// site agree).
+function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
+    var refs: string[] = [];
+    var bi: i32 = 0;
+    while (bi < lm.body.len()) { refs = collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
+    var bound: string[] = [];
+    var pi: i32 = 0;
+    while (pi < lm.params.len()) { bound = bound.push(lm.params[pi].name); pi = pi + 1; }
+    var si: i32 = 0;
+    while (si < lm.body.len()) { bound = collect_bound_stmt(lm.body[si], bound); si = si + 1; }
+    var caps: string[] = [];
+    var ri: i32 = 0;
+    while (ri < refs.len()) {
+        var nm: string = refs[ri];
+        if (index_of_str(bound, nm) < 0 && index_of_str(caps, nm) < 0 && index_of_str(locals, nm) >= 0) {
+            caps = caps.push(nm);
+        }
+        ri = ri + 1;
+    }
+    return caps;
+}
+
+// parent_locals_upto returns the names in scope at body index `upto` of fd:
+// the function's params plus the top-level `var` names declared before it
+// (comma-joined destructure names split out). Matches build_func's var_names
+// at a top-level statement, so both passes compute the same capture set.
+function parent_locals_upto(fd: parser.FuncDecl, upto: i32): string[] {
+    var out: string[] = [];
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) { out = out.push(fd.params[pi].name); pi = pi + 1; }
+    var si: i32 = 0;
+    while (si < upto) {
+        match (fd.body[si]) {
+            parser.StmtVar(v) => {
+                var nm: string = "";
+                var ci: i32 = 0;
+                while (ci <= v.name.len()) {
+                    if (ci == v.name.len() || v.name[ci] == 44) {
+                        if (nm.len() > 0) { out = out.push(nm); }
+                        nm = "";
+                    } else { nm = nm + v.name[ci : ci + 1]; }
+                    ci = ci + 1;
+                }
+            },
+            _ => { }
+        }
+        si = si + 1;
+    }
+    return out;
+}
+
+// resolve_capture_type finds a capture's type for the lifted function's param:
+// a parent param's annotation, a parent `var`'s annotation, or a literal
+// init's inferred type (number → i32, string → string, bool → boolean).
+// Returns "" when uncertain — collect_lambdas then declines to lift (the
+// program falls back to the AST emitter) rather than risk a wrong width.
+function resolve_capture_type(name: string, fd: parser.FuncDecl): string {
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        if (fd.params[pi].name == name) { return fd.params[pi].type_name; }
+        pi = pi + 1;
+    }
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        match (fd.body[si]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (v.type_name.len() > 0) { return v.type_name; }
+                    match (v.init) {
+                        parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+                        parser.ExprString(_) => { return "string"; },
+                        parser.ExprBool(_) => { return "boolean"; },
+                        _ => { return ""; }
+                    }
+                }
+            },
+            _ => { }
+        }
+        si = si + 1;
+    }
+    return "";
+}
+
 // collect_lambdas lifts each top-level `var f = function(...){...}` binding in
 // every module function to a synthesized top-level FuncDecl named
 // `<parent>$lam$<i>` (i = body order, matching build_func's fn: marker count).
 // The driver builds these alongside the user functions; build_func rewrites a
-// direct call `f(...)` to the lifted name. Captures aren't handled — a lifted
-// body that references an enclosing local fails to build, so the program falls
-// back to the AST emitter. Only top-level bindings are scanned (nested lambdas
-// inside if/while bodies are left for a later slice).
+// direct call `f(...)` to the lifted name. Free variables (captures) become
+// trailing params on the lifted function, passed at each (non-escaping) call
+// site — but only when every capture's type resolves and none is reassigned in
+// the parent (so by-value-at-call matches by-value-at-creation). An unliftable
+// lambda is simply not emitted; its call lands on an unbuilt name and the
+// program falls back to the AST emitter. Only top-level bindings are scanned.
 pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
     var out: parser.FuncDecl[] = [];
     var fi: i32 = 0;
     while (fi < funcs.len()) {
         var fd: parser.FuncDecl = funcs[fi];
+        var parent_assigned: string[] = collect_assigned(fd.body);
         var cnt: i32 = 0;
         var si: i32 = 0;
         while (si < fd.body.len()) {
@@ -1395,9 +1660,29 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                     match (v.init) {
                         parser.ExprLambda(lam) => {
                             var nm: string = fd.name + "$lam$" + int_str(cnt);
-                            var tp: string[] = [];
-                            out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body });
                             cnt = cnt + 1;
+                            var caps: string[] = lambda_free_caps(lam, parent_locals_upto(fd, si));
+                            // A capture is passed by value at each call site.
+                            // That's unambiguously correct only when the capture
+                            // is never reassigned — in the parent (call-time
+                            // value would then differ from creation-time) or in
+                            // the lambda body (a by-value copy wouldn't propagate
+                            // the write out). Bail to the AST emitter otherwise,
+                            // or when a capture's type can't be resolved.
+                            var lam_assigned: string[] = collect_assigned(lam.body);
+                            var params: parser.ParamDecl[] = lam.params;
+                            var ok: boolean = true;
+                            var ci: i32 = 0;
+                            while (ci < caps.len()) {
+                                var ct: string = resolve_capture_type(caps[ci], fd);
+                                var muted: boolean = index_of_str(parent_assigned, caps[ci]) >= 0 || index_of_str(lam_assigned, caps[ci]) >= 0;
+                                if (ct.len() == 0 || muted) { ok = false; ci = caps.len(); }
+                                else { params = params.push(parser.ParamDecl { name: caps[ci], type_name: ct }); ci = ci + 1; }
+                            }
+                            if (ok) {
+                                var tp: string[] = [];
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: params, ret_type: lam.ret_type, body: lam.body });
+                            }
                         },
                         _ => { }
                     }
