@@ -14,6 +14,21 @@ type WorldInterface struct {
 	Name      string
 	Funcs     []string
 	Resources []string
+
+	// FuncSigs are the exported functions with resolved signatures (P2 slice
+	// 2), parallel in order to Funcs. LocalTypes is the interface's
+	// type-index space: a function param/result Valtype with IsPrim == false
+	// resolves to LocalTypes[Idx] (nil for a slot introduced by a type alias —
+	// i.e. an imported resource handle, which lowers as a scalar).
+	FuncSigs   []WorldFunc
+	LocalTypes []*TypeDef
+}
+
+// WorldFunc is an exported function with its decoded signature. Resolve a
+// param/result type index against the owning interface's LocalTypes.
+type WorldFunc struct {
+	Name string
+	Sig  *FuncType
 }
 
 // Interfaces lifts the world's import declarations into per-interface
@@ -69,9 +84,28 @@ func (w *World) worldComponent() *TypeDef {
 }
 
 // liftInterface collects an interface instance type's exported functions
-// (externdesc func) and resources (externdesc type with a `sub` bound).
+// (externdesc func) and resources (externdesc type with a `sub` bound), and
+// resolves each function's signature against the interface's local type-index
+// space.
 func liftInterface(name string, inst *TypeDef) WorldInterface {
 	wi := WorldInterface{Name: name}
+	// Build the instance's type-index space. Anything that binds a type index
+	// advances it: a `type` decl (its defined type), a `type` alias, and an
+	// import/export whose externdesc is a type — the latter covers resource
+	// exports (`export X: (type (sub resource))`) and type re-exports, which
+	// we only need as nil slots to keep the indices aligned so a function's
+	// externdesc typeidx lands on the right func type.
+	for i := range inst.Decls {
+		d := &inst.Decls[i]
+		switch {
+		case d.Kind == 0x01:
+			wi.LocalTypes = append(wi.LocalTypes, d.Type)
+		case d.Kind == 0x02 && d.Alias != nil && d.Alias.Sort == 0x03:
+			wi.LocalTypes = append(wi.LocalTypes, nil)
+		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
+			wi.LocalTypes = append(wi.LocalTypes, nil)
+		}
+	}
 	for i := range inst.Decls {
 		d := &inst.Decls[i]
 		if d.Kind != 0x04 || d.Extern == nil { // export
@@ -80,9 +114,28 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 		switch {
 		case d.Extern.Kind == 0x01: // func
 			wi.Funcs = append(wi.Funcs, d.Name)
+			var sig *FuncType
+			if idx := int(d.Extern.TypeIdx); idx >= 0 && idx < len(wi.LocalTypes) &&
+				wi.LocalTypes[idx] != nil && wi.LocalTypes[idx].Tag == tagFunc {
+				sig = wi.LocalTypes[idx].Func
+			}
+			wi.FuncSigs = append(wi.FuncSigs, WorldFunc{Name: d.Name, Sig: sig})
 		case d.Extern.Kind == 0x03 && d.Extern.Bound == 0x01: // type (sub) = resource
 			wi.Resources = append(wi.Resources, d.Name)
 		}
 	}
 	return wi
+}
+
+// ResolveDef returns the defined type a value type refers to within this
+// interface, or nil for a primitive or an unresolved (handle) slot.
+func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
+	if v.IsPrim || int(v.Idx) >= len(wi.LocalTypes) {
+		return nil
+	}
+	td := wi.LocalTypes[v.Idx]
+	if td == nil {
+		return nil
+	}
+	return td.Def // nil unless td is a defvaltype
 }
