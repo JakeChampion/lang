@@ -1218,7 +1218,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], structs: StructSig[], uni
 // type_from_name path used for function params — bare strings
 // like "i32" / "bool" / "string", plus references to other
 // declared structs.
-function collect_struct_sigs(structs: parser.StructDecl[]): StructSig[] {
+function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]): StructSig[] {
     var out: StructSig[] = [];
     // First pass: build a name-only table so type_from_name
     // can resolve struct → struct references (e.g. a `Box`
@@ -1231,8 +1231,9 @@ function collect_struct_sigs(structs: parser.StructDecl[]): StructSig[] {
     }
     // Second pass: resolve fields with the full name set
     // available. Struct-to-struct field references resolve via
-    // type_from_name_with_struct_names which knows about every
-    // declared struct.
+    // the name set; union-typed fields (`f: SomeUnion`, `xs:
+    // SomeUnion[]`) resolve via union_names so they don't fall
+    // through to `unknown` and trip the field-value E043 check.
     var k: i32 = 0;
     while (k < structs.len()) {
         var sd: parser.StructDecl = structs[k];
@@ -1241,7 +1242,7 @@ function collect_struct_sigs(structs: parser.StructDecl[]): StructSig[] {
         var j: i32 = 0;
         while (j < sd.fields.len()) {
             fnames = fnames.push(sd.fields[j].name);
-            ftypes = ftypes.push(type_from_name_with_struct_names(sd.fields[j].type_name, names));
+            ftypes = ftypes.push(type_from_name_with_names_and_unions(sd.fields[j].type_name, names, union_names));
             j = j + 1;
         }
         out = out.push(StructSig { name: sd.name, field_names: fnames, field_types: ftypes });
@@ -1260,6 +1261,9 @@ function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
+        return t_array(type_from_name_with_structs(name[0:name.len() - 2], structs));
+    }
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -1273,6 +1277,12 @@ function type_from_name_with_struct_names(name: string, struct_names: string[]):
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    // Array suffix `Elem[]` → TypeArray of the recursively-resolved
+    // element, so a field / param typed `T[]` (incl. cross-module
+    // `mod__T[]`) resolves instead of falling through to `unknown`.
+    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
+        return t_array(type_from_name_with_struct_names(name[0:name.len() - 2], struct_names));
+    }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -1358,6 +1368,9 @@ function type_from_name_with_names_and_unions(name: string, struct_names: string
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
+        return t_array(type_from_name_with_names_and_unions(name[0:name.len() - 2], struct_names, union_names));
+    }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -2603,7 +2616,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
     // so func sigs can reference union-typed params / returns.
-    var structs: StructSig[] = collect_struct_sigs(mod.structs);
+    // Union NAMES are needed before the struct sigs so a struct field
+    // typed as a union (or union array) resolves rather than going
+    // unknown. The full UnionSig table (with variants) still comes after.
+    var alias_names: string[] = [];
+    var an: i32 = 0;
+    while (an < mod.aliases.len()) { alias_names = alias_names.push(mod.aliases[an].name); an = an + 1; }
+    var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
     var struct_names: string[] = [];
     var sn: i32 = 0;
     while (sn < structs.len()) { struct_names = struct_names.push(structs[sn].name); sn = sn + 1; }

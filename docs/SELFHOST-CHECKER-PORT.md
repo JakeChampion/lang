@@ -495,6 +495,28 @@ same code(s) the Go checker does — restricted to
   cross-module (mangled) struct/union names in field/param type strings,
   which would lift the `unknown` guard's coverage here and unblock the
   same comparison for struct-typed method args.
+- **Slice 47 (done): resolver unification — array + union field types.**
+  The type-name resolvers had drifted: only `_with_structs_unions` knew
+  the `Elem[]` array suffix (slice 45), and the struct-field-type builder
+  used `_with_struct_names`, which knew neither arrays nor unions. So a
+  field typed `T[]` or a union (`parser.Expr`, `parser.Stmt[]`) resolved
+  to `unknown`, which is why slice 46's E043 had to skip them. This slice
+  (1) adds the array-suffix branch to `_with_structs`,
+  `_with_struct_names`, and `_with_names_and_unions`, and (2) threads the
+  module's **union names** into `collect_struct_sigs` (extracted from
+  `mod.aliases` up front, before the full `UnionSig` table) so field
+  types resolve through `_with_names_and_unions`. Net effect: struct
+  field types now resolve to `TypeArray` / `TypeUnion` / cross-module
+  `TypeStruct` instead of `unknown`, and the slice-46 field-value E043
+  check covers them — e.g. `P { xs: 5 }` for an `xs: i32[]` field →
+  `2:43: error[E043]: field "xs": expected i32[], got i32`, matching Go.
+  Verified **zero** field-value E043 false positives across all thirteen
+  modules (down from ~82/module mid-slice before the union fix).
+  Checker-only (fixpoint-safe). Gated by new corpus
+  (`struct-field-array-mismatch`, `struct-field-array-ok`); the checker
+  self-test + full differential corpus continue to pass (the resolvers
+  feed func / method / union sigs too, so this is a broad but verified
+  change).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
