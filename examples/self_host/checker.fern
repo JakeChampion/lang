@@ -1775,6 +1775,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires boolean, got " + type_label(rt) });
                 }
             }
+            // E041: `==` / `!=` require same-typed operands (the same rule
+            // check_expr applies). Ordering ops on mismatched types are
+            // E009 instead, so they're not handled here.
+            if (b.op == "==" || b.op == "!=") {
+                var elt: Type = check_expr(b.left, s);
+                var ert: Type = check_expr(b.right, s);
+                if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
+                    out = out.push(Diag { code: "E041", message: "cannot compare " + type_label(elt) + " and " + type_label(ert) });
+                }
+            }
         },
         parser.ExprUnary(u) => {
             out = call_diags(u.operand, s);
