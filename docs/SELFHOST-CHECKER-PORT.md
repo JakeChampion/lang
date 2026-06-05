@@ -113,7 +113,14 @@ same code(s) the Go checker does — restricted to
   count is E004). Same conservative free-function / non-local gate as E004;
   method/closure argument types deferred. This completes the core
   type-mismatch family (E002/E003/E004/E005/E038).
-- **Later: control-flow + conditions** (E008, E011, E012).
+- **Slice 8 (done): non-boolean condition** (E008). `stmts_assign_diags`
+  now also checks each `if` / `while` condition's type and emits E008 when
+  it isn't boolean (using the same `type_eq` against `bool` the checker
+  uses). (Note: the self-host accepts `bool` as well as `boolean` as a
+  type name; the Go checker only accepts `boolean` — a separate, minor
+  leniency, not one of the ported codes.)
+- **Later: control flow** (E011 break/continue outside loop, E012 return
+  without value).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

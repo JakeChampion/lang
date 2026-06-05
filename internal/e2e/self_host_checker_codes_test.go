@@ -27,6 +27,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
 	"E003": true, // assignment / annotated-var type mismatch
+	"E008": true, // non-boolean if/while condition
 	"E004": true, // free-function call arity
 	"E038": true, // free-function argument type
 	"E005": true, // struct literal missing field
@@ -163,6 +164,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"assign-ok", "function main(): i32 { var x: i32 = 1; x = 2; return x; }\n", nil},
 		{"arg-type-mismatch", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, \"no\"); }\n", []string{"E038"}},
 		{"arg-type-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
+		{"if-nonbool-cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", []string{"E008"}},
+		{"while-nonbool-cond", "function main(): i32 { while (\"x\") { return 1; } return 0; }\n", []string{"E008"}},
+		{"if-bool-cond-ok", "function main(): i32 { if (1 < 2) { return 1; } return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
