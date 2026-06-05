@@ -2493,13 +2493,21 @@ func (b *builder) computeFreeEligible() map[string]bool {
 						escape(s.Args[1])
 					}
 				default:
-					// Variant constructor (`Arr(xs)`): emitEnumNew
-					// stores the payload without an inc, so an array
-					// local passed as a payload escapes into the box.
+					// Variant constructor (`Arr(xs)`): under the move model
+					// emitEnumNew stores the payload without an inc, so a local
+					// passed as a payload escapes into the box (full escape). Under
+					// EnumRcPayloads it inc's like StructLit, so only a direct-Ident
+					// source can strand an uncounted alias — escapeOwned (a
+					// projection is inc'd, so its container stays reclaimable).
 					if _, isLocal := b.locals[id.Name]; !isLocal {
-						if _, _, _, isVariant := b.lookupVariant(id.Name); isVariant {
+						if en, _, _, isVariant := b.lookupVariant(id.Name); isVariant {
+							rc := b.enumRcPayloadsEligible(en)
 							for _, a := range s.Args {
-								escape(a)
+								if rc {
+									escapeOwned(a)
+								} else {
+									escape(a)
+								}
 							}
 						}
 					}
@@ -2519,8 +2527,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				escape(ent.Value)
 			}
 		case *ast.EnumLit:
+			rc := b.enumRcPayloadsEligible(s.EnumName)
 			for _, a := range s.Args {
-				escape(a)
+				if rc {
+					escapeOwned(a)
+				} else {
+					escape(a)
+				}
 			}
 		case *ast.CastExpr:
 			// Casting a pointer-shaped local to a raw integer (`buf as usize`)
@@ -2709,6 +2722,19 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// not worth the over-release risk.
 		return !x.IsStringConcat
 	case *ast.Call:
+		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
+		// rc=1 box that inc's its pointer payloads (like StructLit), so the
+		// constructed value is reclaimable regardless of payload taint — return
+		// false, mirroring the StructLit/TupleLit cases. Without this the generic
+		// any-arg-tainted recursion below propagates a tainted nullary-variant
+		// arg (`Nil`) up to the enum local, leaving it permanently ineligible.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if _, isLocal := b.locals[id.Name]; !isLocal {
+				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+					return false
+				}
+			}
+		}
 		// Map builtins return the MAP HANDLE, which aliases only the
 		// receiver (cow) — never the stored key/value args. The generic
 		// any-arg-tainted rule below would taint every map handle (the
@@ -3410,6 +3436,15 @@ func (b *builder) preciseDroppableType(name string) bool {
 	if !ok {
 		return false
 	}
+	if et, isEnum := t.(ast.EnumType); isEnum {
+		// ENUMs are precise-droppable only under Slice 1b (rc-eligible enums):
+		// once enum construction rc-counts its pointer payloads (like StructLit)
+		// the deep drop is rc-protected exactly like a struct, and the
+		// escape-taint that kept enum locals ineligible is lifted in tandem.
+		// Under the default move model (or for Map-containing enums) they stay
+		// excluded (payloads carry no counted box reference).
+		return b.enumRcPayloadsEligible(et.Name)
+	}
 	switch t.(type) {
 	case ast.ArrayType, ast.StructType, ast.TupleType:
 		// Arrays (every element kind — slices 1–3) and STRUCT / Map / tuple
@@ -3419,11 +3454,7 @@ func (b *builder) preciseDroppableType(name string) bool {
 		// alias gates exclude boxes bound from / flowing into an uncounted
 		// alias. Struct & tuple construction INC their pointer fields/elements
 		// (StructLit / TupleLit), so a precise drop is rc-protected — the same
-		// reason slice-2 rc-element arrays are sound. ENUMs are excluded: enum
-		// construction does NOT rc-count payloads (move/taint semantics), so a
-		// precise drop could free a payload aliased by a live local — and
-		// since enums are built via variant-constructor CALLS, initMayAliasLive
-		// already excludes them anyway. Non-droppable runtime handles (Reader /
+		// reason slice-2 rc-element arrays are sound. Non-droppable runtime handles (Reader /
 		// Writer / MapIter) aren't freeEligible, so they never reach here.
 		return true
 	}
@@ -3701,6 +3732,20 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 		for _, cap := range lit.Captures {
 			if arrElemIsRcTracked(b.exprType(cap)) {
 				mark(cap)
+			}
+		}
+	case *ast.Call:
+		// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
+		// aliased pointer payload and the enum's deep drop dec's it, so a moved
+		// last-use OWNED-LOCAL payload balances (mark self-filters via
+		// isOwnedRcLocal — own params aren't locals, so they're inc'd and
+		// balanced by the exit-sweep dec, exactly like a struct field). Only
+		// variant-constructor calls.
+		if id, ok := lit.Callee.(*ast.Ident); ok {
+			if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+				for _, a := range lit.Args {
+					mark(a)
+				}
 			}
 		}
 	}
@@ -6276,6 +6321,96 @@ func (b *builder) payloadWidthForCalleeReturn(retType ast.Type) int {
 	return 0
 }
 
+// enumRcPayloadsEligible reports whether the Slice-1b EnumRcPayloads model
+// applies to enum `enumName`: the flag is on AND the enum's deep drop is fully
+// wired on every backend. Enums whose payloads transitively contain a Map are
+// excluded — a Map-in-enum deep drop calls `__map_drop_values`, a runtime helper
+// the wasm helper-inclusion pass doesn't pull in for a generated `__drop_enum_`
+// body, and Map key/value reclamation is itself an open gap. Excluded enums keep
+// the move model (flag-off behaviour) at every site, a documented safe leak.
+func (b *builder) enumRcPayloadsEligible(enumName string) bool {
+	return ast.EnumRcPayloads && !b.enumTransitivelyContainsMap(enumName, map[string]bool{})
+}
+
+// enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
+// variant constructor (`Cons(..)`) or enum literal of an rc-eligible enum.
+func (b *builder) enumRcPayloadsEligibleForValue(e ast.Expr) bool {
+	var name string
+	switch x := e.(type) {
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		en, _, _, isVar := b.lookupVariant(id.Name)
+		if !isVar {
+			return false
+		}
+		name = en
+	case *ast.EnumLit:
+		name = x.EnumName
+	default:
+		return false
+	}
+	return b.enumRcPayloadsEligible(name)
+}
+
+func (b *builder) enumTransitivelyContainsMap(enumName string, seen map[string]bool) bool {
+	if seen["e:"+enumName] {
+		return false
+	}
+	seen["e:"+enumName] = true
+	ed, ok := b.info.Enums[enumName]
+	if !ok {
+		return true // unknown / generic-erased — conservative (exclude)
+	}
+	for _, v := range ed.Variants {
+		for _, pl := range v.Payloads {
+			if b.typeTransitivelyContainsMap(pl, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *builder) typeTransitivelyContainsMap(t ast.Type, seen map[string]bool) bool {
+	switch ty := t.(type) {
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return true
+		}
+		if seen["s:"+ty.Name] {
+			return false
+		}
+		seen["s:"+ty.Name] = true
+		sd, ok := b.info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if b.typeTransitivelyContainsMap(f.Type, seen) {
+				return true
+			}
+		}
+		return false
+	case ast.EnumType:
+		return b.enumTransitivelyContainsMap(ty.Name, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if b.typeTransitivelyContainsMap(e, seen) {
+				return true
+			}
+		}
+		return false
+	case ast.ArrayType:
+		return b.typeTransitivelyContainsMap(ty.Elem, seen)
+	case ast.SliceType:
+		return b.typeTransitivelyContainsMap(ty.Elem, seen)
+	}
+	return false
+}
+
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
 	// Payloadless variants return a shared static 4-byte
 	// `[tag=varIdx]` sentinel instead of allocating a fresh
@@ -6377,6 +6512,16 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		}
 		if err := b.expr(a); err != nil {
 			return err
+		}
+		// Slice 1b (EnumRcPayloads): rc-count pointer payloads exactly like
+		// StructLit fields — an aliased payload (`Cons(0, t)`, t live elsewhere)
+		// is inc'd so the box co-owns its reference, a moved last-use owned-local
+		// payload (b.moveSites, markConstructionMoves' enum case) skips the inc.
+		// Inc-and-passthrough (leaves the value on the stack for the store).
+		// Consuming-match reuse stores moved-out bindings back, so it's excluded.
+		if b.enumRcPayloadsEligible(enumName) && !b.consumingMatchReuse[callNode] &&
+			needsRcIncOnAlias(a, b) && !b.moveSites[a] {
+			b.emitAliasInc(a)
 		}
 		valSlot := b.allocSlot()
 		if pt != nil {
@@ -13404,13 +13549,18 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
 				b.emit(Op{Kind: OpDrop})
-			} else if b.constructionMovesIdent(n.Value, t.Name) {
-				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): the old `x`
-				// was MOVED into the new box's payload — its ownership transferred
-				// without a retaining inc, so it must NOT be dropped here. The
-				// normal overwrite dec would push that payload to rc 0, which a
-				// later consuming-match free under-counts (its is_unique gate
-				// misses rc 0 and dec's to -1). No drop.
+			} else if !b.enumRcPayloadsEligibleForValue(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
+				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): under the
+				// move model the old `x` is MOVED into the new box's payload —
+				// its ownership transferred without a retaining inc, so it must
+				// NOT be dropped here (the normal overwrite dec would push that
+				// payload to rc 0, which a later consuming-match free under-counts
+				// — its is_unique gate misses rc 0 and dec's to -1). No drop.
+				//
+				// Under EnumRcPayloads the payload is INC'd at construction, so
+				// the overwrite dec is REQUIRED to balance that inc — this skip
+				// is disabled there and the normal enum-overwrite drop below
+				// fires.
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && b.freeEligible[t.Name] {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
