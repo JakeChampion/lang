@@ -1112,6 +1112,63 @@ function has_method(cx: Ctx, t: string, n: string): boolean {
     return false;
 }
 
+// wasm_result_type maps a Fern return-type spelling to the wasm value type
+// a dispatch `(block (result …))` should carry: f64 for floats, i64 for
+// i64, else i32 (covers i32 / bool / string / heap-pointer returns).
+function wasm_result_type(ret: string): string {
+    if (is_float_type(ret)) { return "f64"; }
+    if (ret == "i64") { return "i64"; }
+    return "i32";
+}
+
+// wasm_zero emits the zero literal of a wasm value type — the innermost
+// (no-variant-matched) arm of a runtime dispatch chain.
+function wasm_zero(wt: string): string {
+    if (wt == "f64") { return "(f64.const 0)"; }
+    if (wt == "i64") { return "(i64.const 0)"; }
+    return "(i32.const 0)";
+}
+
+// emit_dyn_dispatch lowers a method call on a `dyn Trait` (trait-object)
+// receiver whose concrete type isn't known statically: it reads the
+// receiver's runtime struct id (the type tag at offset 0, the same one
+// `match` reads) and branches to the matching `$Struct__method`, over
+// every struct that implements `field`. Returns "" when no struct
+// implements it (so the caller keeps its `(i32.const 0)` fallback).
+// The wasm backend is otherwise static-dispatch; this is the runtime
+// dispatch that makes `dyn Trait` work (mirroring the native backends'
+// runtime shape-compare). The receiver is parked in `$__lit<depth>` so a
+// non-trivial receiver expression evaluates once.
+function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[], cx: Ctx, depth: i32): string {
+    var impls: string[] = [];
+    var i: i32 = 0;
+    while (i < cx.mr_names.len()) {
+        if (cx.mr_names[i] == field && is_struct_type(cx.structs, cx.mr_types[i])
+                && !contains_str(impls, cx.mr_types[i])) {
+            impls = impls.push(cx.mr_types[i]);
+        }
+        i = i + 1;
+    }
+    if (impls.len() == 0) { return ""; }
+    var sc: string = "$__lit" + i32_to_string(depth);
+    var argtext: string = "";
+    var a: i32 = 0;
+    while (a < args.len()) {
+        argtext = argtext + " " + emit_expr(args[a], cx, depth + 1);
+        a = a + 1;
+    }
+    var wt: string = wasm_result_type(method_ret(cx, impls[0], field));
+    var chain: string = wasm_zero(wt);
+    var k: i32 = impls.len() - 1;
+    while (k >= 0) {
+        var sid: i32 = struct_id(cx.structs, impls[k]);
+        chain = "(if (result " + wt + ") (i32.eq (i32.load (local.get " + sc + ")) (i32.const " + i32_to_string(sid)
+            + ")) (then (call $" + impls[k] + "__" + field + " (local.get " + sc + ")" + argtext + ")) (else " + chain + "))";
+        k = k - 1;
+    }
+    return "(block (result " + wt + ") (local.set " + sc + " " + emit_expr(obj, cx, depth + 1) + ") " + chain + ")";
+}
+
 // is_enum_type_name reports whether `name` is a method-bearing ENUM type —
 // not a declared struct, but the receiver type of at least one method.
 // Enum names aren't in the struct table (only their variants are), so a
@@ -1632,6 +1689,11 @@ function elem_load_op(kind: string): string {
 // struct-array (from its init array literal or a `T[]` annotation), "" if
 // it isn't one.
 function sa_elem_decl_type(v: parser.StmtVar, cx: Ctx): string {
+    // A `dyn Trait[]` local is a heterogeneous trait-object array — never a
+    // homogeneous struct array, even when its initializer literal happens to
+    // start with a concrete struct. Leaving it untyped keeps the loop var's
+    // method calls on the runtime-dispatch (emit_dyn_dispatch) path.
+    if (v.type_name.len() >= 4 && v.type_name[0:4] == "dyn ") { return ""; }
     var et: string = struct_array_elem_type(v.init, cx);
     if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, base_type_name(v.type_name))) {
         et = base_type_name(v.type_name);
@@ -2275,6 +2337,10 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                             }
                             return ps + ")";
                         }
+                        // `dyn Trait` receiver: the concrete type isn't known
+                        // statically, so dispatch on the runtime struct id.
+                        var dynd: string = emit_dyn_dispatch(fa.obj, fa.field, c.args, cx, depth);
+                        if (dynd.len() > 0) { return dynd; }
                     }
                     return "(i32.const 0)";
                 },

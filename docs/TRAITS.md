@@ -531,8 +531,8 @@ regressing the self-host gates. It needs traits in two slices:
   methods themselves — a receiver method whose type is an enum (not a
   struct) carries each variant in its `match (self)` arms — so an inline
   variant receiver dispatches to `$Enum__method` statically, exactly like
-  the var-typed form. The remaining wasm hole: `dyn Trait` still needs
-  genuine runtime dispatch (the backend is static-dispatch).
+  the var-typed form. Finally **`dyn Trait`** landed (slice 9), closing the
+  last wasm trait gap.
 
 - **Self-host slice 8 (shipped): generic-struct monomorphisation.**
   Closes the slice-4 boundary: a generic struct instantiated at a
@@ -573,6 +573,31 @@ regressing the self-host gates. It needs traits in two slices:
   and `trait-generic-struct-parametric-impl` on x86-64 + arm64, the
   `generic-struct-*` cases through the wasm gate, and the x86-64 + arm64
   fixpoint gates (the compiler still builds itself byte-identically).
+
+- **Self-host slice 9 (shipped): `dyn Trait` on wasm.** Closes the last
+  wasm trait gap. The native backends dispatch a trait-object method by the
+  value's runtime shape, so `dyn Trait` needed only the type parse there;
+  the wasm backend is static-dispatch (`struct_type_of` → `$Type__method`),
+  so a `dyn Shape` receiver — whose concrete type isn't known until run
+  time — resolved to `""` and fell through to `(i32.const 0)`.
+  `emit_dyn_dispatch` adds the missing runtime dispatch: it reads the
+  receiver's struct id (the type tag at offset 0, the same one `match`
+  reads) and branches to the matching `$Struct__method` over every struct
+  that implements the method — the static-dispatch analogue of the native
+  runtime shape-compare. It fires only as a fallback (after the
+  struct-typed and primitive-receiver paths), so existing dispatch is
+  untouched, and returns `""` (keeping the old fallback) when no struct
+  implements the method. One companion fix: a `dyn Trait[]` local
+  initialised with a struct-literal array (`var xs: dyn Named[] = [Cat {},
+  Dog {}]`) was pinned to the first element's concrete type by
+  `sa_elem_decl_type` (so the loop var dispatched statically to `Cat`);
+  a `dyn`-spelled annotation now suppresses that homogeneous-array
+  inference, keeping the loop var on the runtime path. `wasm.fern` is not
+  in the native fixpoint bundle, so the fixpoint is unaffected. Tested via
+  `dyn-object-{heterogeneous,param,string-method}` through the wasm gate.
+  With this, **the full trait surface — traits/impls, parametric impls,
+  `@derive` on structs + enums (incl. generic structs), enum methods, and
+  `dyn Trait` — works on all three self-host backends.**
 
 ## 7b. The `std/test` collapse (landed)
 
