@@ -347,3 +347,92 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWitEmitWorldImports gates the self-host P2 emit: replaying the
+// decoded world's decls as component sections must reproduce the Go
+// EmitWorldImports bytes exactly (which wasm-tools validates, see the Go
+// tests), run through the self-host under wasmtime. The Go reference is
+// computed and injected so the two implementations are pinned together.
+func TestSelfHostWitEmitWorldImports(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-emit e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	w, err := componenttype.DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	ref, err := w.EmitWorldImports()
+	if err != nil {
+		t.Fatalf("EmitWorldImports: %v", err)
+	}
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" +
+		witPayloadFunc(t, "FERN_BIN", "fern") + witBytesFunc("EMIT_REF", ref) + witEmitSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-emit self-test")
+	}
+	watPath := filepath.Join(dir, "wit_emit_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-emit self-test failed at check %d", code)
+	}
+}
+
+// witBytesFunc emits `function <fn>(): string { return "<bytes>"; }`.
+func witBytesFunc(fn string, b []byte) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, `function %s(): string { return "`, fn)
+	for _, c := range b {
+		fmt.Fprintf(&sb, `\x%02x`, c)
+	}
+	sb.WriteString("\"; }\n")
+	return sb.String()
+}
+
+const witEmitSelfTestMain = `
+function wit_emit_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+function main(): i32 {
+    var got: i32[] = wit_emit_world_imports(wit_section_body(wit_emit_bytes(FERN_BIN()), 7));
+    var want: i32[] = wit_emit_bytes(EMIT_REF());
+    if (got.len() != want.len()) { return 1; }
+    var i: i32 = 0;
+    while (i < got.len()) {
+        if (got[i] != want[i]) { return 2; }
+        i = i + 1;
+    }
+    return 0;
+}
+`

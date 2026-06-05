@@ -671,3 +671,64 @@ function wit_world_import_names(tbody: i32[]): string[] {
     }
     return names;
 }
+
+// ---- P2 slice: emit the world import prefix ------------------------------
+//
+// Self-host mirror of componenttype's EmitWorldImports: replay the world
+// component's decls as top-level component sections (type decl -> type
+// section id 7, alias -> alias section id 6, import -> import section id 10),
+// skipping exports. Each decl's payload (the bytes after its kind byte) is
+// the section body content, prefixed with vec(1) -- so the output is
+// byte-identical to the Go EmitWorldImports.
+
+function wit_emit_section(out: i32[], id: i32, body: i32[]): i32[] {
+    out = out.push(id);
+    out = leb_u32(out, body.len());
+    var k: i32 = 0;
+    while (k < body.len()) {
+        out = out.push(body[k]);
+        k = k + 1;
+    }
+    return out;
+}
+
+function wit_emit_world_imports(tbody: i32[]): i32[] {
+    var out: i32[] = [];
+    var none: i32[] = [];
+    var rc: UlebRead = wit_read_uleb(tbody, 0);
+    var p: i32 = rc.next;
+    p = p + 1;
+    var oc: UlebRead = wit_read_uleb(tbody, p);
+    p = oc.next;
+    p = p + 1;
+    p = p + 1;
+    var wc: UlebRead = wit_read_uleb(tbody, p);
+    var wcount: i32 = wc.value;
+    p = wc.next;
+    var i: i32 = 0;
+    while (i < wcount) {
+        var kind: i32 = tbody[p];
+        var skip: TxR = wit_tx_decl(tbody, p, none);
+        var declEnd: i32 = skip.next;
+        var sec: i32 = 0;
+        if (kind == 1) {
+            sec = 7;
+        } else if (kind == 2) {
+            sec = 6;
+        } else if (kind == 3) {
+            sec = 10;
+        }
+        if (sec != 0) {
+            var body: i32[] = [1];
+            var j: i32 = p + 1;
+            while (j < declEnd) {
+                body = body.push(tbody[j]);
+                j = j + 1;
+            }
+            out = wit_emit_section(out, sec, body);
+        }
+        p = declEnd;
+        i = i + 1;
+    }
+    return out;
+}
