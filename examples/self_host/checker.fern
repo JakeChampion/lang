@@ -1640,8 +1640,21 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 parser.ExprIdent(id) => {
                     if (is_unknown(s.lookup(id.name))) {
                         var sig: FuncSig = s.lookup_sig(id.name);
-                        if (sig.name.len() > 0 && c.args.len() != sig.param_types.len()) {
-                            out = out.push(Diag { code: "E004", message: "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()) });
+                        if (sig.name.len() > 0) {
+                            if (c.args.len() != sig.param_types.len()) {
+                                out = out.push(Diag { code: "E004", message: "function expects " + itoa_nn(sig.param_types.len()) + " arguments, got " + itoa_nn(c.args.len()) });
+                            } else {
+                                // E038: per-argument type mismatch (only when
+                                // the arity matches, so indices line up).
+                                var ai: i32 = 0;
+                                while (ai < c.args.len()) {
+                                    var at: Type = check_expr(c.args[ai], s);
+                                    if (!is_unknown(at) && !type_assignable(at, sig.param_types[ai], s.unions)) {
+                                        out = out.push(Diag { code: "E038", message: "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at) });
+                                    }
+                                    ai = ai + 1;
+                                }
+                            }
                         }
                     }
                 },

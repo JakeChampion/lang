@@ -28,6 +28,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
 	"E003": true, // assignment / annotated-var type mismatch
 	"E004": true, // free-function call arity
+	"E038": true, // free-function argument type
 	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
@@ -160,6 +161,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"var-annotation-mismatch", "function main(): i32 { var x: i32 = \"no\"; return x; }\n", []string{"E003"}},
 		{"assign-mismatch", "function main(): i32 { var x: i32 = 1; x = \"no\"; return x; }\n", []string{"E003"}},
 		{"assign-ok", "function main(): i32 { var x: i32 = 1; x = 2; return x; }\n", nil},
+		{"arg-type-mismatch", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, \"no\"); }\n", []string{"E038"}},
+		{"arg-type-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

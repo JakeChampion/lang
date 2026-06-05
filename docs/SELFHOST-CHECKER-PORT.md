@@ -103,10 +103,17 @@ same code(s) the Go checker does — restricted to
   an annotated `var x: T = v` whose init type isn't assignable to T, or an
   assignment `x = v` whose value type isn't assignable to x's declared
   type. Reuses the same `type_assignable` predicate check_stmt uses, so no
-  new false positives. The remaining type-mismatch code, E038 (argument
-  type), follows. (The scope-threaded walks — ret_diags / stmts_call_diags
-  / stmts_assign_diags — could later be unified into one pass.)
-- **Slice 4: control-flow + conditions** (E008, E011, E012).
+  new false positives. (The scope-threaded walks — ret_diags /
+  stmts_call_diags / stmts_assign_diags — could later be unified into one
+  pass.)
+- **Slice 7 (done): free-function argument type** (E038). When a
+  free-function call's arity matches, `call_diags` checks each argument
+  against the declared parameter type (`type_assignable`) and emits E038
+  per mismatch — only when arity matches (so indices line up; a wrong
+  count is E004). Same conservative free-function / non-local gate as E004;
+  method/closure argument types deferred. This completes the core
+  type-mismatch family (E002/E003/E004/E005/E038).
+- **Later: control-flow + conditions** (E008, E011, E012).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
