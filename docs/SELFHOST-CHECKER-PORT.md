@@ -272,6 +272,13 @@ same code(s) the Go checker does — restricted to
   stays position-less — Go reports it at the literal, an `ExprNumber`
   position, in a later slice.) Fixpoint-safe (x86 + arm64). Gated by
   `TestSelfHostCLIX86_64/check-position-var`.
+- **Slice 29 (done): `StmtReturn` positions → E002 / E012 line:col.**
+  `StmtReturn` gains `line`/`col`; `parse_stmt` captures the `return`
+  keyword and the parse path builds via `s_return_at` (`s_return` keeps a 0
+  position for the ~24 synth / desugar callers); rebuilds propagate. E002
+  (return-type mismatch) and E012 (return without value) now point at the
+  `return` keyword, matching Go. Fixpoint-safe (x86 + arm64). Gated by
+  `TestSelfHostCLIX86_64/check-position-return`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

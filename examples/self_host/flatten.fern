@@ -258,7 +258,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             };
         },
         parser.StmtReturn(r) => {
-            return parser.StmtReturn { value: rewrite_expr(r.value, ctx) };
+            return parser.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
         },
         parser.StmtExpr(x) => {
             return parser.StmtExpr { value: rewrite_expr(x.value, ctx) };

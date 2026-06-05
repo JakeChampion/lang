@@ -100,7 +100,7 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // TypeStruct("Circle"). Interp / VM ignore it (annotations
 // are checker-only metadata).
 pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32 }
-pub struct StmtReturn { value: Expr }
+pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 pub struct StmtExpr { value: Expr }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
 // is empty (`[]`) when the source omits the `else` branch; the
@@ -281,7 +281,9 @@ function s_var(name: string, type_name: string, init: Expr): Stmt {
 function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i32): Stmt {
     return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col };
 }
-function s_return(value: Expr): Stmt { return StmtReturn { value: value }; }
+function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
+// s_return_at carries the `return` keyword position so E002 / E012 point at it.
+function s_return_at(value: Expr, line: i32, col: i32): Stmt { return StmtReturn { value: value, line: line, col: col }; }
 function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
@@ -1552,11 +1554,13 @@ function parse_stmt(p: Par): StmtResult {
         return StmtResult { par: p, stmt: s_var_at(name, type_name, init.expr, vline, vcol) };
     }
     if (kw == "return") {
+        var rline: i32 = p.peek_line();
+        var rcol: i32 = p.peek_col();
         p = p.advance();
         var val = parse_expr(p);
         p = val.par;
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_return(val.expr) };
+        return StmtResult { par: p, stmt: s_return_at(val.expr, rline, rcol) };
     }
     if (kw == "break") {
         p = p.advance();
@@ -2684,7 +2688,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         },
         StmtReturn(r) => {
             var rv: RExpr = mono_expr(r.value, env, funcs, ins);
-            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr }, renv: env, rins2: rv.rins };
+            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
             var xv: RExpr = mono_expr(x.value, env, funcs, ins);
@@ -3148,7 +3152,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
-            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr }, renv: env, rins2: rv.rins };
+            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         StmtExpr(x) => {
             var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);

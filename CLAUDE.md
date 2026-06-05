@@ -131,6 +131,15 @@ flow rather than driving manual CI checks after the fact.
   `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
   `FERN_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
   treat that as a missing dependency to fix, not a green light.
+- **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
+  run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
+  the slow part of a local sweep (minutes). Locally, gate on the
+  **x86-64** equivalents (fixpoint, checker, CLI, e2e) plus the WASM
+  tests, which give the same signal far faster; CI runs the full arm64
+  matrix on every push. Reach for qemu locally only to **debug** a
+  specific arm64 failure CI surfaced, not as a pre-push gate. (The
+  backends are kept in lockstep, so an x86-64-green change is almost
+  always arm64-green; CI is the backstop.)
 - **Every new feature ships with tests.** Parser-time desugar →
   parser test. Checker rule → checker test. Runtime behaviour →
   e2e test. No "the next PR will add coverage."
