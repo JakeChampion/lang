@@ -186,12 +186,6 @@ function tb_fsread_args_tail(): string { return "\x07\x1d\x01\x42\x03\x01\x70\x7
 function tb_fsrw_env_tail(): string { return "\x07\x24\x01\x42\x04\x01\x6f\x02\x73\x73\x01\x70\x00\x01\x40\x00\x00\x01\x04\x00\x0f\x67\x65\x74\x2d\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x01\x02\x0a\x1f\x01\x00\x1a\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x65\x6e\x76\x69\x72\x6f\x6e\x6d\x65\x6e\x74\x40\x30\x2e\x32\x2e\x30\x05\x09"; }
 function tb_fswrite_random_tail(): string { return "\x07\x1b\x01\x42\x02\x01\x40\x00\x00\x77\x04\x00\x0e\x67\x65\x74\x2d\x72\x61\x6e\x64\x6f\x6d\x2d\x75\x36\x34\x01\x00\x0a\x1d\x01\x00\x18\x77\x61\x73\x69\x3a\x72\x61\x6e\x64\x6f\x6d\x2f\x72\x61\x6e\x64\x6f\x6d\x40\x30\x2e\x32\x2e\x30\x05\x08"; }
 
-// io_suffix: everything after the user core — the canon-lower shim cores,
-// core-instances, canon lift, instance, and wasi:cli/run export.
-function io_suffix(): string {
-    return "\x01\x42\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x07\x10\x02\x01\x30\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x0a\x11\x01\x0f\x00\x20\x00\x20\x01\x20\x02\x20\x03\x41\x00\x11\x00\x00\x0b\x01\x32\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x08\x01\x60\x04\x7f\x7f\x7f\x7f\x00\x02\x15\x02\x00\x01\x30\x00\x00\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x70\x01\x01\x01\x09\x07\x01\x00\x41\x00\x0b\x01\x00\x02\x04\x01\x00\x01\x00\x06\x07\x01\x00\x00\x01\x00\x01\x30\x06\x0f\x01\x01\x00\x02\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x08\x05\x01\x01\x00\x00\x00\x02\x34\x01\x01\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x00\x00\x02\x10\x01\x01\x01\x0a\x67\x65\x74\x2d\x73\x74\x64\x6f\x75\x74\x00\x01\x02\x34\x01\x00\x00\x02\x15\x77\x61\x73\x69\x3a\x69\x6f\x2f\x73\x74\x72\x65\x61\x6d\x73\x40\x30\x2e\x32\x2e\x30\x12\x01\x15\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x73\x74\x64\x6f\x75\x74\x40\x30\x2e\x32\x2e\x30\x12\x02\x06\x0c\x01\x00\x02\x01\x03\x06\x6d\x65\x6d\x6f\x72\x79\x06\x0e\x01\x00\x01\x01\x00\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x06\x33\x01\x01\x00\x01\x2e\x5b\x6d\x65\x74\x68\x6f\x64\x5d\x6f\x75\x74\x70\x75\x74\x2d\x73\x74\x72\x65\x61\x6d\x2e\x62\x6c\x6f\x63\x6b\x69\x6e\x67\x2d\x77\x72\x69\x74\x65\x2d\x61\x6e\x64\x2d\x66\x6c\x75\x73\x68\x08\x07\x01\x01\x00\x01\x01\x03\x00\x02\x12\x01\x01\x02\x08\x24\x69\x6d\x70\x6f\x72\x74\x73\x01\x00\x01\x30\x00\x02\x02\x07\x01\x00\x02\x01\x00\x12\x04\x06\x0f\x01\x00\x00\x01\x03\x09\x5f\x6c\x61\x6e\x67\x5f\x72\x75\x6e\x07\x08\x02\x6a\x00\x00\x40\x00\x00\x05\x08\x06\x01\x00\x00\x03\x00\x06\x05\x0a\x01\x01\x01\x00\x03\x72\x75\x6e\x01\x02\x0b\x18\x01\x00\x12\x77\x61\x73\x69\x3a\x63\x6c\x69\x2f\x72\x75\x6e\x40\x30\x2e\x32\x2e\x30\x05\x03\x00";
-}
-
 // blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
 function blob_to_bytes(s: string): i32[] {
     var o: i32[] = [];
@@ -207,7 +201,9 @@ function component_full_io(core: i32[]): i32[] {
     // of the generative builder (the blocks are reused by other shapes).
     var o: i32[] = io_stdout_head();
     o = wcat(o, wsection(1, core));
-    return wcat(o, blob_to_bytes(io_suffix()));
+    // The suffix (shim cores + lower/finish wiring) is now generated from the
+    // import list rather than emitted as one opaque blob.
+    return wcat(o, component_suffix_stdout());
 }
 
 // ---- file-I/O (read_file + stdout) component framing --------------------
@@ -600,4 +596,174 @@ function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
     im = im.push(1);
     o = wcat(o, wsection(2, im));
     return wcat(o, wsection(9, [1, 0, 65, 0, 11, 1, 0]));
+}
+
+// ---- generative suffix builder: component-section encoders --------------
+//
+// Ports of internal/wasm/component/component.go's Put* primitives that the
+// native composer's lower() (Phases B-H) + finish() emit. Each wraps a body
+// in a component section (wsection = native wrapSection; wname = putName).
+// Together with the shim cores above they regenerate a CLI component's whole
+// suffix from the import list. The component section ids: 1 core-module,
+// 2 core-instance, 5 instance, 6 alias, 7 type, 8 canon, 11 export.
+
+function comp_core_module_section(mod: i32[]): i32[] {
+    return wsection(1, mod);
+}
+
+// core-instance "instantiate" with no args (a self-contained module).
+function comp_core_instance_instantiate(modidx: i32): i32[] {
+    var b: i32[] = [1, 0];
+    b = leb_u32(b, modidx);
+    b = b.push(0);
+    return wsection(2, b);
+}
+
+// core-instance "instantiate" passing N instance args (name -> instance idx).
+function comp_core_instance_instantiate_args(modidx: i32, names: string[], insts: i32[]): i32[] {
+    var b: i32[] = [1, 0];
+    b = leb_u32(b, modidx);
+    b = leb_u32(b, names.len());
+    var i: i32 = 0;
+    while (i < names.len()) {
+        b = wname(b, names[i]);
+        b = b.push(18);
+        b = leb_u32(b, insts[i]);
+        i = i + 1;
+    }
+    return wsection(2, b);
+}
+
+// core-instance "from-exports": package N (name, core-sort, idx) entries.
+function comp_core_instance_from_exports(names: string[], sorts: i32[], idxs: i32[]): i32[] {
+    var b: i32[] = [1, 1];
+    b = leb_u32(b, names.len());
+    var i: i32 = 0;
+    while (i < names.len()) {
+        b = wname(b, names[i]);
+        b = b.push(sorts[i]);
+        b = leb_u32(b, idxs[i]);
+        i = i + 1;
+    }
+    return wsection(2, b);
+}
+
+// alias a func exported by a component instance -> top-level component func.
+function comp_alias_inst_func(inst: i32, name: string): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, inst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// alias a func exported by a CORE instance -> top-level core func.
+function comp_alias_core_func(coreinst: i32, name: string): i32[] {
+    var b: i32[] = [1, 0, 0, 1];
+    b = leb_u32(b, coreinst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// alias a core-instance export of any sort (memory=2 / table=1 / func=0).
+function comp_alias_core_export(coresort: i32, coreinst: i32, name: string): i32[] {
+    var b: i32[] = [1, 0, coresort, 1];
+    b = leb_u32(b, coreinst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// canon lower a component func with no opts.
+function comp_canon_lower_noopts(funcidx: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(0);
+    return wsection(8, b);
+}
+
+// canon lower carrying a single `memory` option.
+function comp_canon_lower_mem(funcidx: i32, memidx: i32): i32[] {
+    var b: i32[] = [1, 1, 0];
+    b = leb_u32(b, funcidx);
+    b = b.push(1);
+    b = b.push(3);
+    b = leb_u32(b, memidx);
+    return wsection(8, b);
+}
+
+// canon lift a core func into a component func of the given type, no opts.
+function comp_canon_lift_noopts(corefunc: i32, typeidx: i32): i32[] {
+    var b: i32[] = [1, 0, 0];
+    b = leb_u32(b, corefunc);
+    b = b.push(0);
+    b = leb_u32(b, typeidx);
+    return wsection(8, b);
+}
+
+// two component types: result<_,_> at `rt`, then func() -> result<rt> at rt+1.
+function comp_type_result_unit(rt: i32): i32[] {
+    var b: i32[] = [2, 106, 0, 0, 64, 0, 0];
+    b = leb_u32(b, rt);
+    return wsection(7, b);
+}
+
+// component instance packaging one func under `name`.
+function comp_instance_one_func(name: string, funcidx: i32): i32[] {
+    var b: i32[] = [1, 1, 1, 0];
+    b = wname(b, name);
+    b = b.push(1);
+    b = leb_u32(b, funcidx);
+    return wsection(5, b);
+}
+
+// export a component instance under a WASI interface name.
+function comp_export_one_instance(name: string, inst: i32): i32[] {
+    var b: i32[] = [1, 0];
+    b = wname(b, name);
+    b = b.push(5);
+    b = leb_u32(b, inst);
+    b = b.push(0);
+    return wsection(11, b);
+}
+
+// component_suffix_stdout regenerates the entire CLI-component suffix for the
+// stdout (write-to-stdout) shape: the import list [blocking-write-and-flush
+// (mem), get-stdout (no-opt)] lowered through lower()'s Phases B-H and the
+// cli/run finish() tail. Reproduces io_suffix() byte-for-byte; the starting
+// index state (component types=5, instances streams=1 / stdout=2, user core
+// module=0) is what Phase A + the user module leave behind for this shape.
+function component_suffix_stdout(): i32[] {
+    var bwf: string = "[method]output-stream.blocking-write-and-flush";
+    var sig: i32[] = [127, 127, 127, 127];
+    var none: i32[] = [];
+    var o: i32[] = [];
+    // Phase B: trampoline + table-fill cores for the one mem import.
+    o = wcat(o, comp_core_module_section(shim_trampoline_core(sig, none)));
+    o = wcat(o, comp_core_module_section(shim_tablefill_core(sig, none)));
+    // Phase C: instantiate the trampoline (core module 1) -> core instance 0.
+    o = wcat(o, comp_core_instance_instantiate(1));
+    // Phase D: bwf placeholder (alias trampoline func "0"); get-stdout no-opt.
+    o = wcat(o, comp_alias_core_func(0, "0"));
+    o = wcat(o, comp_alias_inst_func(2, "get-stdout"));
+    o = wcat(o, comp_canon_lower_noopts(0));
+    // group the lowered funcs by import interface.
+    o = wcat(o, comp_core_instance_from_exports([bwf], [0], [0]));
+    o = wcat(o, comp_core_instance_from_exports(["get-stdout"], [0], [1]));
+    // Phase E: instantiate the user module (core module 0) with both args.
+    o = wcat(o, comp_core_instance_instantiate_args(0, ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"], [1, 2]));
+    // Phase F: alias the user instance's memory + the trampoline's table.
+    o = wcat(o, comp_alias_core_export(2, 3, "memory"));
+    o = wcat(o, comp_alias_core_export(1, 0, "$imports"));
+    // Phase G: lower bwf with the memory option.
+    o = wcat(o, comp_alias_inst_func(1, bwf));
+    o = wcat(o, comp_canon_lower_mem(1, 0));
+    // Phase H: fill the trampoline table with the lowered bwf, instantiate fixup.
+    o = wcat(o, comp_core_instance_from_exports(["$imports", "0"], [1, 0], [0, 2]));
+    o = wcat(o, comp_core_instance_instantiate_args(2, [""], [4]));
+    // finish (cli/run): lift _lang_run and export the run instance.
+    o = wcat(o, comp_alias_core_func(3, "_lang_run"));
+    o = wcat(o, comp_type_result_unit(5));
+    o = wcat(o, comp_canon_lift_noopts(3, 6));
+    o = wcat(o, comp_instance_one_func("run", 2));
+    o = wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", 3));
+    return o;
 }

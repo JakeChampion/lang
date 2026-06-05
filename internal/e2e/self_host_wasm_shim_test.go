@@ -87,3 +87,105 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWasmComponentSuffixStdout gates the full CLI-component suffix
+// generator (wat_component.fern's component_suffix_stdout, which runs the
+// native composer's lower() Phases B-H + cli/run finish() for the stdout
+// import shape). A self-test asserts the generated 479-byte suffix matches
+// the native compiler's bytes exactly. Check ids: 1 = length, 2 = bytes.
+func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host component-suffix e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	enc, err := os.ReadFile("../../examples/self_host/wat_encode.fern")
+	if err != nil {
+		t.Fatalf("read wat_encode.fern: %v", err)
+	}
+	comp, err := os.ReadFile("../../examples/self_host/wat_component.fern")
+	if err != nil {
+		t.Fatalf("read wat_component.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(enc) + "\n" + string(comp) + "\n" + suffixStdoutSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the component-suffix self-test")
+	}
+	watPath := filepath.Join(dir, "suffix_stdout_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("component-suffix self-test failed at check %d", code)
+	}
+}
+
+// suffixStdoutSelfTestMain compares the generated stdout suffix against the
+// native compiler's exact 479 bytes (what the io_suffix() blob held before
+// it was replaced by the generator).
+const suffixStdoutSelfTestMain = `
+function suffix_eq(got: i32[], want: i32[]): boolean {
+    if (got.len() != want.len()) { return false; }
+    var i: i32 = 0;
+    while (i < got.len()) {
+        if (got[i] != want[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+function main(): i32 {
+    var got: i32[] = component_suffix_stdout();
+    var want: i32[] = [
+` + suffixStdoutBytes + `
+    ];
+    if (got.len() != want.len()) { return 1; }
+    if (!suffix_eq(got, want)) { return 2; }
+    return 0;
+}
+`
+
+// suffixStdoutBytes is the native compiler's 479-byte stdout-component suffix.
+const suffixStdoutBytes = `		1, 66, 0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0,
+		3, 2, 1, 0, 4, 5, 1, 112, 1, 1, 1, 7, 16, 2, 1, 48, 0, 0, 8, 36,
+		105, 109, 112, 111, 114, 116, 115, 1, 0, 10, 17, 1, 15, 0, 32, 0, 32, 1, 32, 2,
+		32, 3, 65, 0, 17, 0, 0, 11, 1, 50, 0, 97, 115, 109, 1, 0, 0, 0, 1, 8,
+		1, 96, 4, 127, 127, 127, 127, 0, 2, 21, 2, 0, 1, 48, 0, 0, 0, 8, 36, 105,
+		109, 112, 111, 114, 116, 115, 1, 112, 1, 1, 1, 9, 7, 1, 0, 65, 0, 11, 1, 0,
+		2, 4, 1, 0, 1, 0, 6, 7, 1, 0, 0, 1, 0, 1, 48, 6, 15, 1, 1, 0,
+		2, 10, 103, 101, 116, 45, 115, 116, 100, 111, 117, 116, 8, 5, 1, 1, 0, 0, 0, 2,
+		52, 1, 1, 1, 46, 91, 109, 101, 116, 104, 111, 100, 93, 111, 117, 116, 112, 117, 116, 45,
+		115, 116, 114, 101, 97, 109, 46, 98, 108, 111, 99, 107, 105, 110, 103, 45, 119, 114, 105, 116,
+		101, 45, 97, 110, 100, 45, 102, 108, 117, 115, 104, 0, 0, 2, 16, 1, 1, 1, 10, 103,
+		101, 116, 45, 115, 116, 100, 111, 117, 116, 0, 1, 2, 52, 1, 0, 0, 2, 21, 119, 97,
+		115, 105, 58, 105, 111, 47, 115, 116, 114, 101, 97, 109, 115, 64, 48, 46, 50, 46, 48, 18,
+		1, 21, 119, 97, 115, 105, 58, 99, 108, 105, 47, 115, 116, 100, 111, 117, 116, 64, 48, 46,
+		50, 46, 48, 18, 2, 6, 12, 1, 0, 2, 1, 3, 6, 109, 101, 109, 111, 114, 121, 6,
+		14, 1, 0, 1, 1, 0, 8, 36, 105, 109, 112, 111, 114, 116, 115, 6, 51, 1, 1, 0,
+		1, 46, 91, 109, 101, 116, 104, 111, 100, 93, 111, 117, 116, 112, 117, 116, 45, 115, 116, 114,
+		101, 97, 109, 46, 98, 108, 111, 99, 107, 105, 110, 103, 45, 119, 114, 105, 116, 101, 45, 97,
+		110, 100, 45, 102, 108, 117, 115, 104, 8, 7, 1, 1, 0, 1, 1, 3, 0, 2, 18, 1,
+		1, 2, 8, 36, 105, 109, 112, 111, 114, 116, 115, 1, 0, 1, 48, 0, 2, 2, 7, 1,
+		0, 2, 1, 0, 18, 4, 6, 15, 1, 0, 0, 1, 3, 9, 95, 108, 97, 110, 103, 95,
+		114, 117, 110, 7, 8, 2, 106, 0, 0, 64, 0, 0, 5, 8, 6, 1, 0, 0, 3, 0,
+		6, 5, 10, 1, 1, 1, 0, 3, 114, 117, 110, 1, 2, 11, 24, 1, 0, 18, 119, 97,
+		115, 105, 58, 99, 108, 105, 47, 114, 117, 110, 64, 48, 46, 50, 46, 48, 5, 3, 0`
