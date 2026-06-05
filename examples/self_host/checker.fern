@@ -1457,9 +1457,21 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
         var st: parser.Stmt = stmts[i];
         match (st) {
             parser.StmtReturn(r) => {
-                var t: Type = check_expr(r.value, cur);
-                if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
-                    out = out.push(Diag { code: "E002", message: "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) });
+                // A bare `return;` parses to a `punct:;` placeholder value.
+                // In a function with a (non-void) declared return type —
+                // the only context ret_diags runs in — that's E012.
+                var bare: boolean = false;
+                match (r.value) {
+                    parser.ExprUnknown(u) => { if (u.kind == "punct:;") { bare = true; } },
+                    _ => { }
+                }
+                if (bare) {
+                    out = out.push(Diag { code: "E012", message: "return without value in function returning " + type_label(ret_ty) });
+                } else {
+                    var t: Type = check_expr(r.value, cur);
+                    if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
+                        out = out.push(Diag { code: "E002", message: "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) });
+                    }
                 }
             },
             parser.StmtIf(f) => {
