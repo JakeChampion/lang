@@ -849,6 +849,32 @@ which `component_full`'s import-free path can't take):
    (byte-identical) + `TestSelfHostWasmComponentArgs` (count incl. argv[0] /
    the passed values in order). `now_unix_ms` (→ `wasi:clocks/wall-clock`)
    is the remaining same-shape builtin.
+9. **Preview2-native clock — `now_unix_ms` / `now_ns` work.** The wall-clock
+   builtins go adapter-free over `wasi:clocks/wall-clock@0.2.0`'s `now`, which
+   returns a `datetime` record (`seconds: u64` @ 0, `nanoseconds: u32` @ 8)
+   into an 8-aligned return area (no list → no `cabi_realloc`): `now_ns =
+   seconds*1e9 + nanos`, `now_unix_ms = seconds*1000 + nanos/1e6`. The clock
+   path is now emitted **precisely per builtin** (matching native): `io`-gated,
+   wall-clock is imported only when `now_unix_ms`/`now_ns` is called and
+   monotonic-clock (`monotonic_ns`, a u64 instant returned directly) only when
+   `monotonic_ns` is — so the core's import set matches its framing. Framing
+   `component_full_io_clock` (wall-clock + stdout) is byte-identical to native.
+   Tests: `TestSelfHostWasmComponentFullIOClock` (byte-identical) +
+   `TestSelfHostWasmComponentClock` (`now_unix_ms` is a recent epoch-ms value;
+   `now_ns` > `now_unix_ms`, proving the two readings use distinct math). The
+   monotonic and combined clock shapes have correct cores but no framing yet —
+   a trivial follow-up once their fixed import-set blobs are captured.
+
+   **The full preview1-builtin surface now has an adapter-free preview2 path**
+   in the self-host: stdout, `read_file`, `write_file` (+ combined),
+   `random_bytes`, `env`, `args`, and the wall clock. With seven distinct
+   import-set framings now embedded as `\xNN` blobs (and more combinations
+   looming — file+random, env+args, clock+fs, …), the static-blob-per-shape
+   approach has reached the point where a **generative component builder** in
+   the self-host (mirroring `internal/wasm/component/component.go`) is the
+   right next investment: it would compute the lift/lower/instance/canon
+   wiring from the core's actual import set instead of pasting a per-shape
+   constant, collapsing the blob zoo and unlocking arbitrary combinations.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
