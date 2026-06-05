@@ -109,3 +109,28 @@ func TestFuncTypeRoundTrip(t *testing.T) {
 		t.Errorf("decoded wrong: %+v", f)
 	}
 }
+
+// TestValtypeSignedLEB locks the s33 encoding: a type index >= 64 needs a
+// second byte (65 -> c1 00), and primitives stay single-byte. (Regression:
+// a uleb encoder mis-encoded index 65 and only the http world caught it.)
+func TestValtypeSignedLEB(t *testing.T) {
+	idx65 := []byte{0xc1, 0x00}
+	v, n, err := decodeValtype(idx65)
+	if err != nil || n != 2 || v.IsPrim || v.Idx != 65 {
+		t.Fatalf("decodeValtype(c1 00) = (%+v, %d, %v), want idx 65", v, n, err)
+	}
+	if got := v.encode(nil); !bytes.Equal(got, idx65) {
+		t.Errorf("encode idx 65 = % x, want c1 00", got)
+	}
+	// index 63 stays one byte; index 64 needs two.
+	if got := (Valtype{Idx: 63}).encode(nil); !bytes.Equal(got, []byte{0x3f}) {
+		t.Errorf("encode idx 63 = % x, want 3f", got)
+	}
+	if got := (Valtype{Idx: 64}).encode(nil); !bytes.Equal(got, []byte{0xc0, 0x00}) {
+		t.Errorf("encode idx 64 = % x, want c0 00", got)
+	}
+	// primitive bool stays the single byte 0x7f.
+	if got := (Valtype{IsPrim: true, Prim: primBool}).encode(nil); !bytes.Equal(got, []byte{0x7f}) {
+		t.Errorf("encode bool = % x, want 7f", got)
+	}
+}

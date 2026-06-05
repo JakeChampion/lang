@@ -55,6 +55,12 @@ func isPrimByte(b byte) bool { return b >= primString && b <= primBool }
 
 // Valtype is a component-model value type: either a primitive (Prim holds
 // the single-byte code) or a reference to a defined type by index.
+//
+// A valtype is encoded as a signed LEB128 (`s33`): primitives are small
+// negative values whose single-byte form is exactly the 0x73..0x7f codes,
+// and a type index is the non-negative value. Index ≥ 64 therefore needs a
+// second byte (e.g. 65 → `c1 00`) so the high bit of the payload stays clear
+// — a uleb would mis-encode it.
 type Valtype struct {
 	IsPrim bool
 	Prim   byte
@@ -62,24 +68,57 @@ type Valtype struct {
 }
 
 func decodeValtype(b []byte) (Valtype, int, error) {
-	if len(b) == 0 {
-		return Valtype{}, 0, fmt.Errorf("valtype: empty")
-	}
-	if isPrimByte(b[0]) {
-		return Valtype{IsPrim: true, Prim: b[0]}, 1, nil
-	}
-	idx, n, err := readULEB(b)
+	v, n, err := readSLEB(b)
 	if err != nil {
-		return Valtype{}, 0, fmt.Errorf("valtype index: %w", err)
+		return Valtype{}, 0, fmt.Errorf("valtype: %w", err)
 	}
-	return Valtype{Idx: uint32(idx)}, n, nil
+	if v < 0 {
+		prim := byte(v & 0x7f)
+		if !isPrimByte(prim) {
+			return Valtype{}, 0, fmt.Errorf("valtype: bad primitive code %#x", prim)
+		}
+		return Valtype{IsPrim: true, Prim: prim}, n, nil
+	}
+	return Valtype{Idx: uint32(v)}, n, nil
 }
 
 func (v Valtype) encode(out []byte) []byte {
 	if v.IsPrim {
-		return append(out, v.Prim)
+		return append(out, v.Prim) // the canonical single-byte sleb of the negative code
 	}
-	return appendULEB(out, uint64(v.Idx))
+	return appendSLEB(out, int64(v.Idx))
+}
+
+// readSLEB reads a signed LEB128 from the front of b.
+func readSLEB(b []byte) (int64, int, error) {
+	var result int64
+	var shift uint
+	for i, c := range b {
+		if i >= 10 {
+			return 0, 0, fmt.Errorf("sleb128 too long")
+		}
+		result |= int64(c&0x7f) << shift
+		shift += 7
+		if c&0x80 == 0 {
+			if shift < 64 && c&0x40 != 0 {
+				result |= -1 << shift
+			}
+			return result, i + 1, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("sleb128 truncated")
+}
+
+// appendSLEB appends the signed LEB128 of v.
+func appendSLEB(out []byte, v int64) []byte {
+	for {
+		b := byte(v & 0x7f)
+		v >>= 7
+		if (v == 0 && b&0x40 == 0) || (v == -1 && b&0x40 != 0) {
+			return append(out, b)
+		}
+		out = append(out, b|0x80)
+	}
 }
 
 // NamedValtype is a (name, value-type) pair — a record field, func param, or
