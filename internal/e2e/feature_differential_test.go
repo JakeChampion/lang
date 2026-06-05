@@ -361,6 +361,68 @@ function main(): i32 {
     return 0;
 }`},
 
+		// ---- Map copy-on-write (M1) ----
+		// Aliasing a map then mutating the alias must NOT bleed into the
+		// original — the interp now does rc-based COW like every backend.
+		// (Old interp aliased the shared *Map and printed 999/999.)
+		{"map_cow_alias_isolation", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 1);
+    var n = m;
+    n = n.set(1, 999);
+    print(m.get_or(1, -1).to_string());
+    print(n.get_or(1, -1).to_string());
+    return 0;
+}`},
+		// A map passed to a function and mutated there (via reassignment
+		// of the local param) leaves the caller's map untouched.
+		{"map_cow_func_arg", `import "std/i32";
+import "core/map";
+function bump(p: Map[i32, i32]): i32 {
+    p = p.set(1, 999);
+    return p.get_or(1, -1);
+}
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 1);
+    print(bump(m).to_string());
+    print(m.get_or(1, -1).to_string());
+    return 0;
+}`},
+		// A map built and returned by a function escapes correctly and is
+        // usable by the caller (rc transfers across the return).
+		{"map_cow_returned", `import "std/i32";
+import "core/map";
+function build(): Map[i32, i32] {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 10);
+    m = m.set(2, 20);
+    return m;
+}
+function main(): i32 {
+    var a: Map[i32, i32] = build();
+    var b = a;
+    b = b.set(1, 111);
+    print(a.get_or(1, -1).to_string());
+    print(b.get_or(1, -1).to_string());
+    print(a.get_or(2, -1).to_string());
+    return 0;
+}`},
+		// An alias that dies in an inner scope must not leave the original
+		// permanently "shared": a bare mutation afterward still applies.
+		{"map_cow_alias_then_scope_exit", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.set(1, 1);
+    { var n = m; n = n.set(1, 2); }
+    m = m.set(1, 7);
+    print(m.get_or(1, -1).to_string());
+    return 0;
+}`},
+
 		// ---- floats in aggregates (struct / tuple / array / map) ----
 		{"float_aggregates", `import "std/float";
 import "std/i32";

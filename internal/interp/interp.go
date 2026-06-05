@@ -106,6 +106,65 @@ type Enum struct {
 type Map struct {
 	keys []Value
 	vals []Value
+	// rc is the copy-on-write reference count: the number of owning
+	// slots (variables, struct fields, array/tuple elements, closure
+	// captures) that hold this *Map. A freshly produced map (map_new /
+	// clone) starts at 0 — an unowned temporary — and is bumped to 1 by
+	// the store that binds it. Mutating methods (set/delete/clear)
+	// mutate in place when rc <= 1 and copy when rc > 1, mirroring the
+	// compiled runtime's rc-based COW (core/map.fern __map_cow_inplace)
+	// so `fern -interp` agrees with every backend. See
+	// docs/INTERP-MAP-COW-PLAN.md (M1).
+	rc int
+}
+
+// clone returns an independent copy of the map (rc 0 — an unowned
+// temporary the binding store will retain to 1). Used by set/delete/
+// clear when the receiver is shared (rc > 1) so the mutation can't bleed
+// into an aliased holder.
+func (m *Map) clone() *Map {
+	return &Map{
+		keys: append([]Value(nil), m.keys...),
+		vals: append([]Value(nil), m.vals...),
+	}
+}
+
+// retain bumps the COW reference count of every Map reachable from v
+// (v itself, or maps nested inside a struct / array / tuple / enum /
+// map). Called at every store site — a binding, assignment, function
+// argument, container element, or capture — because each creates a new
+// owning slot. release is the exact inverse, called when an owning slot
+// dies (scope exit, reassignment of the old value, function return). The
+// net count is what set/delete/clear consult to decide mutate-in-place
+// vs copy. See docs/INTERP-MAP-COW-PLAN.md (M1).
+func retain(v Value) { adjustRC(v, +1) }
+func release(v Value) { adjustRC(v, -1) }
+
+func adjustRC(v Value, delta int) {
+	switch x := v.(type) {
+	case *Map:
+		x.rc += delta
+		// Map values/keys can themselves be maps (Map[K, Map[...]]);
+		// the owning map shares them, so the count flows through.
+		for _, kv := range x.keys {
+			adjustRC(kv, delta)
+		}
+		for _, vv := range x.vals {
+			adjustRC(vv, delta)
+		}
+	case Array:
+		for _, e := range x {
+			adjustRC(e, delta)
+		}
+	case *Struct:
+		for _, f := range x.Fields {
+			adjustRC(f, delta)
+		}
+	case *Enum:
+		for _, p := range x.Payloads {
+			adjustRC(p, delta)
+		}
+	}
 }
 
 func (m *Map) findKey(k Value) int {
@@ -887,13 +946,25 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("__method_Map_set: expected 3 args (m, k, v), got %d", len(args))
 	}
-	if idx := m.findKey(args[1]); idx >= 0 {
-		m.vals[idx] = args[2]
+	t := cowTarget(m)
+	if idx := t.findKey(args[1]); idx >= 0 {
+		t.vals[idx] = args[2]
 	} else {
-		m.keys = append(m.keys, args[1])
-		m.vals = append(m.vals, args[2])
+		t.keys = append(t.keys, args[1])
+		t.vals = append(t.vals, args[2])
 	}
-	return args[0], nil // Map.set is value-returning; return the map handle.
+	return t, nil // value-returning; t is m (in-place) or a fresh copy (shared)
+}
+
+// cowTarget returns the map a mutating method should write to: the
+// receiver itself when it has at most one owner (mutate in place), or a
+// fresh copy when it is shared (rc > 1) so the mutation can't bleed into
+// an aliased holder. Mirrors core/map.fern's __map_cow_inplace.
+func cowTarget(m *Map) *Map {
+	if m.rc <= 1 {
+		return m
+	}
+	return m.clone()
 }
 
 func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
@@ -906,19 +977,23 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	}
 	idx := m.findKey(args[1])
 	if idx < 0 {
-		return Array{args[0], Bool(false)}, nil
+		return Array{m, Bool(false)}, nil // unchanged; in-place receiver is fine
+	}
+	t := cowTarget(m)
+	if t != m {
+		idx = t.findKey(args[1]) // re-find in the copy (same order, but be explicit)
 	}
 	// Swap-with-last, mirroring core/map.fern's __map_delete_impl: move
 	// the final entry into the removed slot and truncate. This keeps the
 	// interpreter's iteration order identical to the compiled runtime's
 	// after a delete (the runtime can't cheaply shift-down its open-
 	// addressed entries array). See docs/ADVERSARIAL-REVIEW-2026-06.md (M3).
-	last := len(m.keys) - 1
-	m.keys[idx] = m.keys[last]
-	m.vals[idx] = m.vals[last]
-	m.keys = m.keys[:last]
-	m.vals = m.vals[:last]
-	return Array{args[0], Bool(true)}, nil
+	last := len(t.keys) - 1
+	t.keys[idx] = t.keys[last]
+	t.vals[idx] = t.vals[last]
+	t.keys = t.keys[:last]
+	t.vals = t.vals[:last]
+	return Array{t, Bool(true)}, nil
 }
 
 func builtinMapClear(_ *Interp, args []Value) (Value, error) {
@@ -929,9 +1004,12 @@ func builtinMapClear(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_Map_clear: expected 1 arg (receiver), got %d", len(args))
 	}
+	if m.rc > 1 {
+		return &Map{}, nil // shared: hand back a fresh empty map, leave the holders intact
+	}
 	m.keys = m.keys[:0]
 	m.vals = m.vals[:0]
-	return args[0], nil // Map.clear is value-returning; return the map handle.
+	return m, nil // Map.clear is value-returning; return the map handle.
 }
 
 func builtinMapGetOr(_ *Interp, args []Value) (Value, error) {
@@ -1859,8 +1937,25 @@ func (e *env) set(name string, v Value) {
 	e.vars[name] = v
 }
 
-// declare always binds in the innermost scope (for `var` decls).
-func (e *env) declare(name string, v Value) { e.vars[name] = v }
+// declare always binds in the innermost scope (for `var` decls, params,
+// match-arm / for / let bindings). Binding is an owning store, so it
+// retains any Map reachable from v; the matching release happens when
+// the scope is torn down (releaseScope) or the binding is reassigned.
+func (e *env) declare(name string, v Value) {
+	e.vars[name] = v
+	retain(v)
+}
+
+// releaseScope drops the COW references held by every binding in a scope
+// that is going out of scope. The escaping value (a block's return value)
+// is released here too and re-retained by the caller's binding store — a
+// transient dec that nets out, since the interpreter never frees at rc 0
+// (Go's GC owns memory; rc only drives mutate-in-place vs copy).
+func (e *env) releaseScope() {
+	for _, v := range e.vars {
+		release(v)
+	}
+}
 
 // tryOpEarlyReturn is the sentinel error the `?` postfix
 // operator raises when its receiver is `None` (Option) or
@@ -1893,7 +1988,12 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
-		e.declare(p.Name, args[k])
+		// Parameters are BORROWED, not owned: the backends pass a map to
+		// a function without bumping its COW refcount, so a mutation
+		// through the param (e.g. `p = p.set(...)`) hits the caller's map
+		// in place (rc stays 1). Bind directly, bypassing declare's
+		// retain, so the interp matches. See docs/INTERP-MAP-COW-PLAN.md.
+		e.vars[p.Name] = args[k]
 	}
 	i.deferStack = append(i.deferStack, nil)
 	r, err := i.execBlock(fn.Body, e)
@@ -1934,6 +2034,7 @@ func (i *Interp) runDefers(defers []ast.Expr, e *env) {
 
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	e := newEnv(parent)
+	defer e.releaseScope()
 	for _, s := range b.Stmts {
 		r, err := i.execStmt(s, e)
 		if err != nil {
@@ -3164,6 +3265,13 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 	}
 	switch t := a.Target.(type) {
 	case *ast.Ident:
+		// Reassignment: the slot drops its old value and acquires the
+		// new one. Retain before release so a self-assign (m = m.set(..)
+		// returning the same in-place map) nets zero without dipping to
+		// rc 0.
+		old, _ := env.get(t.Name)
+		retain(v)
+		release(old)
 		env.set(t.Name, v)
 		return v, nil
 	case *ast.Index:
@@ -3186,6 +3294,8 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		if idx < 0 || int(idx) >= len(arr) {
 			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
 		}
+		retain(v)
+		release(arr[idx])
 		arr[idx] = v
 		return v, nil
 	case *ast.FieldAccess:
@@ -3197,6 +3307,8 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("field assignment on non-struct %T", tv)
 		}
+		retain(v)
+		release(s.Fields[t.Field])
 		s.Fields[t.Field] = v
 		return v, nil
 	}
