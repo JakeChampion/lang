@@ -164,6 +164,10 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"tuple-in-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var t = (i, i * i); s = s + t.0 + t.1; i = i + 1; } return s; }", 8},
 		{"tuple-string-elem", "function main(): i32 { var t = (42, \"hello\"); return t.0 + t.1.len(); }", 47},
 		{"tuple-two", "function main(): i32 { var a = (1, 2); var b = (3, 4); return a.0 + a.1 + b.0 + b.1; }", 10},
+		// Tuple destructuring `var (a, b) = t` binds each name to the tuple's
+		// positional element (the parser joins the names as "a,b").
+		{"tuple-destructure", "function main(): i32 { var (a, b) = (5, 6); return a + b; }", 11},
+		{"tuple-destructure-var", "function main(): i32 { var t = (3, 9); var (x, y) = t; return x + y + t.0; }", 15},
 		// __new_array(n): the dynamic-allocation primitive — a length-prefixed
 		// i32 array of n zeroed elements at a RUNTIME size (the alloc op carries
 		// its size in args[0] rather than the imm). Filled / read via the

@@ -105,6 +105,9 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"tuple-triple", "function main(): i32 { var t = (10, 20, 30); return t.0 * 100 + t.1 * 10 + t.2; }", 1230 % 256},
 		{"tuple-string-elem", "function main(): i32 { var t = (42, \"hello\"); return t.0 + t.1.len(); }", 47},
 		{"tuple-return", "function pair(): (i32, i32) { return (6, 9); } function main(): i32 { var t = pair(); return t.0 + t.1; }", 15},
+		// Tuple destructuring `var (a, b) = t`, incl. from a tuple return.
+		{"tuple-destructure", "function main(): i32 { var (a, b) = (5, 6); return a + b; }", 11},
+		{"tuple-destructure-call", "function pair(): (i32, i32) { return (7, 8); } function main(): i32 { var (lo, hi) = pair(); return hi - lo; }", 1},
 		// __new_array(n): runtime-sized allocation (alloc op size in args[0]).
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
 		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},
