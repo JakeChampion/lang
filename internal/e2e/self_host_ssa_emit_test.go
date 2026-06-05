@@ -120,6 +120,11 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		// Iterating a Map passed across a call.
 		{"map-iter-param", "function sumv(m: Map[i32, i32]): i32 { var s = 0; for (k, v) in m { s = s + v; } return s; } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return sumv(m); }", 66},
+		// delete: removes a key (swap-with-last, count--), missing key is a
+		// no-op, and delete composes with set / iteration.
+		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
+		{"map-delete-missing", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m.delete(99); return m.len() * 10 + m.get_or(2, 0); }", 40},
+		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(3); m.set(4, 40); m.delete(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
 		// Passing arrays to functions: pointer-typed (64-bit) params.
 		{"arr-param-index", "function get(a: i32[], i: i32): i32 { return a[i]; } function main(): i32 { var xs = [10, 20, 30]; return get(xs, 1); }", 20},
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},

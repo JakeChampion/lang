@@ -413,6 +413,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     if (fa.field == "set" && c.args.len() == 2) { mname = "__ssa_map_set"; }
                     else if (fa.field == "get_or" && c.args.len() == 2) { mname = "__ssa_map_get_or"; }
                     else if (fa.field == "has" && c.args.len() == 1) { mname = "__ssa_map_has"; }
+                    else if (fa.field == "delete" && c.args.len() == 1) { mname = "__ssa_map_delete"; }
                     else if (fa.field == "len" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_len"; }
                     if (mname.len() > 0) {
                         s = build_expr(fa.obj, s);
@@ -2398,6 +2399,21 @@ pub function map_helpers_src(): string {
     src = src + "  return 0;" + nl;
     src = src + "}" + nl;
     src = src + "function __ssa_map_len(m: i32[]): i32 { return m[0]; }" + nl;
+    // delete removes key k (if present) by swapping the last entry into its
+    // slot and dropping the count — O(1), insertion order not preserved past
+    // a delete. Returns the (in-place mutated) map. A missing key is a no-op.
+    src = src + "function __ssa_map_delete(m: i32[], k: i32): i32[] {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) {" + nl;
+    src = src + "    if (m[1 + i * 2] == k) {" + nl;
+    src = src + "      var last = n - 1;" + nl;
+    src = src + "      m[1 + i * 2] = m[1 + last * 2]; m[2 + i * 2] = m[2 + last * 2]; m[0] = last;" + nl;
+    src = src + "      return m;" + nl;
+    src = src + "    }" + nl;
+    src = src + "    i = i + 1;" + nl;
+    src = src + "  }" + nl;
+    src = src + "  return m;" + nl;
+    src = src + "}" + nl;
     // key_at / val_at expose entry i (0-based, insertion order) so a
     // `for (k, v) in m` desugar can walk the buffer by index.
     src = src + "function __ssa_map_key_at(m: i32[], i: i32): i32 { return m[1 + i * 2]; }" + nl;
