@@ -1329,6 +1329,9 @@ function build_if(f: parser.StmtIf, s: BState): BState {
 }
 
 // env_set_at returns vals with index i replaced by v.
+// env_set_at returns a COPY of vals with index i set to v — functional
+// update, used where the input array is aliased (e.g. an env snapshot shared
+// with a parent scope, `merge_vals = env0_vals`).
 function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
     var out: i32[] = [];
     var k: i32 = 0;
@@ -1337,6 +1340,19 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
         k = k + 1;
     }
     return out;
+}
+
+// env_put updates vals[i] = v IN PLACE and returns vals. The copying
+// env_set_at is O(len) per call, so a pass that updates a scratch table
+// O(n) times is O(n²) — the dominant cost that OOM'd the optimiser on a
+// large function. env_put is O(1); use it only on a freshly-allocated,
+// locally-owned table that no one else aliases (every optimiser / regalloc
+// scratch array: cset/cval, used, ct, repl, the width and live-range
+// tables). Arrays are reference-typed and index assignment is in place, so
+// the caller's `x = env_put(x, …)` and the mutation refer to the same array.
+function env_put(vals: i32[], i: i32, v: i32): i32[] {
+    vals[i] = v;
+    return vals;
 }
 
 function contains_str(xs: string[], n: string): boolean {
@@ -2141,7 +2157,7 @@ function copy_propagate(f: SFunc): SFunc {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "copy") { ct = env_set_at(ct, ins.result, ins.args[0]); }
+            if (ins.kind == "copy") { ct = env_put(ct, ins.result, ins.args[0]); }
             k = k + 1;
         }
         bi = bi + 1;
@@ -2182,8 +2198,12 @@ function is_div_by_zero(op: string, rhs: i32): boolean {
 }
 
 // const_fold collapses binary / unary instructions whose operands are
-// known constants into a single const_int, iterating to a fixpoint so
-// folded results feed further folding.
+// known constants into a single const_int. A single forward pass records
+// each constant as it is seen AND folds in the same sweep, so a dependent
+// chain (a = c1 + c2; b = a + c3; …) collapses entirely in one pass rather
+// than one link per round. The outer `while (changed)` then just confirms a
+// fixpoint with a second no-op pass — O(n) overall instead of the O(n²) a
+// per-round constant snapshot produced (which OOM'd on a long fold chain).
 function const_fold(f: SFunc): SFunc {
     var changed: boolean = true;
     var rounds: i32 = 0;
@@ -2192,24 +2212,11 @@ function const_fold(f: SFunc): SFunc {
         rounds = rounds + 1;
         var cset: i32[] = zeros(f.nvals);
         var cval: i32[] = zeros(f.nvals);
-        // Record current constants.
-        var bi: i32 = 0;
-        while (bi < f.blocks.len()) {
-            var blk: SBlock = f.blocks[bi];
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ins: SInst = blk.insts[k];
-                if (ins.kind == "const_int" || ins.kind == "const_bool") {
-                    cset = env_set_at(cset, ins.result, 1);
-                    cval = env_set_at(cval, ins.result, ins.imm);
-                }
-                k = k + 1;
-            }
-            bi = bi + 1;
-        }
-        // Fold const-operand arithmetic.
+        // One sweep: record constants as encountered and fold const-operand
+        // arithmetic, updating cset/cval inline so a just-folded result feeds
+        // the next instruction in the same pass.
         var nblocks: SBlock[] = [];
-        bi = 0;
+        var bi: i32 = 0;
         while (bi < f.blocks.len()) {
             var blk: SBlock = f.blocks[bi];
             var ninsts: SInst[] = [];
@@ -2217,12 +2224,18 @@ function const_fold(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var folded: SInst = ins;
-                if (ins.kind == "binary" && cset[ins.args[0]] == 1 && cset[ins.args[1]] == 1) {
+                if (ins.kind == "const_int" || ins.kind == "const_bool") {
+                    cset = env_put(cset, ins.result, 1);
+                    cval = env_put(cval, ins.result, ins.imm);
+                } else if (ins.kind == "binary" && cset[ins.args[0]] == 1 && cset[ins.args[1]] == 1) {
                     var l: i32 = cval[ins.args[0]];
                     var r: i32 = cval[ins.args[1]];
                     if (!is_div_by_zero(ins.str, r)) {
                         var noargs: i32[] = [];
-                        folded = SInst { kind: "const_int", result: ins.result, args: noargs, imm: eval_binary(ins.str, l, r), str: "" };
+                        var fv: i32 = eval_binary(ins.str, l, r);
+                        folded = SInst { kind: "const_int", result: ins.result, args: noargs, imm: fv, str: "" };
+                        cset = env_put(cset, ins.result, 1);
+                        cval = env_put(cval, ins.result, fv);
                         changed = true;
                     }
                 } else if (ins.kind == "unary" && cset[ins.args[0]] == 1) {
@@ -2231,6 +2244,8 @@ function const_fold(f: SFunc): SFunc {
                     if (ins.str == "-") { nv = 0 - x; } else { if (x == 0) { nv = 1; } else { nv = 0; } }
                     var noargs2: i32[] = [];
                     folded = SInst { kind: "const_int", result: ins.result, args: noargs2, imm: nv, str: "" };
+                    cset = env_put(cset, ins.result, 1);
+                    cval = env_put(cval, ins.result, nv);
                     changed = true;
                 }
                 ninsts = ninsts.push(folded);
@@ -2312,8 +2327,8 @@ function algebraic_simplify(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 if (ins.kind == "const_int" || ins.kind == "const_bool") {
-                    cset = env_set_at(cset, ins.result, 1);
-                    cval = env_set_at(cval, ins.result, ins.imm);
+                    cset = env_put(cset, ins.result, 1);
+                    cval = env_put(cval, ins.result, ins.imm);
                 }
                 k = k + 1;
             }
@@ -2404,7 +2419,7 @@ function cse(f: SFunc): SFunc {
                 var key: string = cse_key(ins);
                 var j: i32 = index_of_str(keys, key);
                 if (j >= 0) {
-                    repl = env_set_at(repl, ins.result, ids[j]);
+                    repl = env_put(repl, ins.result, ids[j]);
                     k = k + 1;
                     continue;   // drop the redundant definition
                 }
@@ -2490,8 +2505,8 @@ function branch_simplify(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 if (ins.kind == "const_int" || ins.kind == "const_bool") {
-                    cset = env_set_at(cset, ins.result, 1);
-                    cval = env_set_at(cval, ins.result, ins.imm);
+                    cset = env_put(cset, ins.result, 1);
+                    cval = env_put(cval, ins.result, ins.imm);
                 }
                 k = k + 1;
             }
@@ -2669,7 +2684,7 @@ pub function compute_widths(f: SFunc): i32[] {
                     var a: i32 = 0;
                     while (a < ins.args.len()) { if (w[ins.args[a]] == 64) { make64 = true; } a = a + 1; }
                 }
-                if (make64 && w[ins.result] != 64) { w = env_set_at(w, ins.result, 64); changed = true; }
+                if (make64 && w[ins.result] != 64) { w = env_put(w, ins.result, 64); changed = true; }
                 k = k + 1;
             }
             bi = bi + 1;
@@ -2771,12 +2786,12 @@ pub function regalloc_none(f: SFunc): i32[] {
 
 function upd_lo(arr: i32[], idx: i32, pos: i32): i32[] {
     if (idx < 0 || idx >= arr.len()) { return arr; }
-    if (pos < arr[idx]) { return env_set_at(arr, idx, pos); }
+    if (pos < arr[idx]) { return env_put(arr, idx, pos); }
     return arr;
 }
 function upd_hi(arr: i32[], idx: i32, pos: i32): i32[] {
     if (idx < 0 || idx >= arr.len()) { return arr; }
-    if (pos > arr[idx]) { return env_set_at(arr, idx, pos); }
+    if (pos > arr[idx]) { return env_put(arr, idx, pos); }
     return arr;
 }
 // spans_call is true when some call position lies strictly inside (lo, hi).
@@ -2829,7 +2844,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
             lo = upd_lo(lo, ins.result, pos); hi = upd_hi(hi, ins.result, pos);
-            if (ins.result >= 0 && ins.result < def_pos.len()) { def_pos = env_set_at(def_pos, ins.result, pos); }
+            if (ins.result >= 0 && ins.result < def_pos.len()) { def_pos = env_put(def_pos, ins.result, pos); }
             var a: i32 = 0;
             while (a < ins.args.len()) {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
@@ -2950,14 +2965,14 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         act_val = nv; act_hi = nh; act_reg = nr;
 
         if (spans_call(calls, lo[v], hi[v]) || free.len() == 0) {
-            reg_of = env_set_at(reg_of, v, 0 - 1);   // spill
+            reg_of = env_put(reg_of, v, 0 - 1);   // spill
         } else {
             var reg: i32 = free[free.len() - 1];
             var nf: i32[] = [];
             var fj: i32 = 0;
             while (fj < free.len() - 1) { nf = nf.push(free[fj]); fj = fj + 1; }
             free = nf;
-            reg_of = env_set_at(reg_of, v, reg);
+            reg_of = env_put(reg_of, v, reg);
             act_val = act_val.push(v); act_hi = act_hi.push(hi[v]); act_reg = act_reg.push(reg);
         }
         oi = oi + 1;
@@ -2984,11 +2999,11 @@ function dead_code_elim(f: SFunc): SFunc {
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
                 var ai: i32 = 0;
-                while (ai < ins.args.len()) { used = env_set_at(used, ins.args[ai], 1); ai = ai + 1; }
+                while (ai < ins.args.len()) { used = env_put(used, ins.args[ai], 1); ai = ai + 1; }
                 k = k + 1;
             }
-            if (blk.term.kind == "ret") { used = env_set_at(used, blk.term.value, 1); }
-            else if (blk.term.kind == "brif") { used = env_set_at(used, blk.term.cond, 1); }
+            if (blk.term.kind == "ret") { used = env_put(used, blk.term.value, 1); }
+            else if (blk.term.kind == "brif") { used = env_put(used, blk.term.cond, 1); }
             bi = bi + 1;
         }
         // Drop unused pure instructions.
