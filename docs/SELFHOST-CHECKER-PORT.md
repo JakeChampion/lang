@@ -537,6 +537,21 @@ same code(s) the Go checker does — restricted to
   `check-position-exhaustiveness`. (Enum-decl exhaustiveness — distinct
   from union aliases in this port — remains future work; the self-host
   doesn't yet type enum-valued scrutinees, so those matches are skipped.)
+- **Slice 49 (done): E030 for enum decls too.** Resolves the slice-48
+  follow-up: `check_module` now registers every `enum` decl as a
+  `UnionSig` (name = enum name, variants = the variant names), so an
+  enum-typed scrutinee types to `TypeUnion` and flows through the exact
+  same E030 path (and union-variant assignability) as a `type X = A | B`
+  alias. Zero new machinery in the match arm. The self-host's own source
+  uses **no** enum decls, so the change is inert on the bundle (verified:
+  zero E030/E003/E038 across the modules) and the existing E026/E028 enum
+  corpus + the union-match self-test assertions stay green. `match (e) {
+  A => … }` for `enum E { A, B }` → `2:25: error[E030]`, matching Go; an
+  exhaustive enum match (incl. payload variants like `Has(i32)` / `Nil`)
+  stays clean. Gated by new corpus (`enum-match-non-exhaustive`,
+  `enum-match-exhaustive-ok`, `enum-match-payload-exhaustive-ok`) and an
+  `enum_missing_variant` CLI case. With this, E030 has full match-
+  exhaustiveness parity with Go for both enum and union scrutinees.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

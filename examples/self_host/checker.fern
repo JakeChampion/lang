@@ -2661,6 +2661,17 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var sn: i32 = 0;
     while (sn < structs.len()) { struct_names = struct_names.push(structs[sn].name); sn = sn + 1; }
     var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+    // Register enum decls as union sigs (variants = variant names) so an
+    // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
+    // check (plus union-variant assignability) covers enums the same way
+    // it covers `type X = A | B` aliases. The self-host's own source uses
+    // no enum decls, so this is inert on the bundle; it lights up
+    // exhaustiveness for user / corpus enum matches.
+    var een: i32 = 0;
+    while (een < mod.enums.len()) {
+        unions = unions.push(UnionSig { name: mod.enums[een].name, variants: mod.enums[een].variant_names });
+        een = een + 1;
+    }
     var well_typed: boolean = true;
     if (!validate_union_sigs(unions, struct_names)) { well_typed = false; }
     var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
