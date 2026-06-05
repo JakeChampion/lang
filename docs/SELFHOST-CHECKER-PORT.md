@@ -252,6 +252,16 @@ same code(s) the Go checker does — restricted to
   prints `1:1: error[E007]: …`, matching Go. 13 parser + 1 flatten site
   updated; fixpoint-safe (codegen ignores the fields; x86 + arm64
   verified). Gated by `TestSelfHostCLIX86_64/check-position-struct`.
+- **Slice 27 (done): `FuncDecl` positions → E006 / E018 line:col.** The
+  largest sweep — `FuncDecl` gains `line`/`col` across all 33 construction
+  sites (found via the compiler's own "missing field" errors).
+  `parse_func_decl` captures the `function` keyword; `parse_impl_decl`, the
+  monomorphiser clones, `lower_defers`, merge, and the flatten / constfold
+  / ssa / wasm rewrites propagate; synthesised `@derive` methods + the
+  lambda / main wrappers carry 0. **E006** (func/method redeclared) and
+  **E018** (dup param) now print `2:1: error[E006]` / `1:1: error[E018]`,
+  matching Go. Fixpoint-safe (x86 + arm64 verified). Gated by
+  `TestSelfHostCLIX86_64/check-position-func`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

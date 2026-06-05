@@ -1730,7 +1730,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             }
                             if (ok) {
                                 var tp: string[] = [];
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: params, ret_type: lam.ret_type, body: lam.body });
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0 });
                             }
                         },
                         _ => { }

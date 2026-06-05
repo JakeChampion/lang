@@ -218,6 +218,27 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-func", func(t *testing.T) {
+		// E018 (dup param) reports at the function decl; E006 (redeclared)
+		// at the redeclaration site.
+		dupParam := filepath.Join(dir, "dup_param.fern")
+		if err := os.WriteFile(dupParam, []byte("function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, _ := exec.Command(fernBin, "-check", dupParam).CombinedOutput()
+		if !strings.Contains(string(out1), "1:1: error[E018]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"1:1: error[E018]\"", out1)
+		}
+		redecl := filepath.Join(dir, "func_redecl.fern")
+		if err := os.WriteFile(redecl, []byte("function f(): i32 { return 1; }\nfunction f(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out2, _ := exec.Command(fernBin, "-check", redecl).CombinedOutput()
+		if !strings.Contains(string(out2), "2:1: error[E006]") {
+			t.Errorf("-check diagnostics = %q, want it to contain \"2:1: error[E006]\"", out2)
+		}
+	})
+
 	t.Run("interp", func(t *testing.T) {
 		// -interp evaluates via the tree-walker; the program's i32
 		// result becomes the exit code (mirrors interp_run.fern).

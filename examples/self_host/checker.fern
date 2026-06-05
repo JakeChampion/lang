@@ -2321,7 +2321,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var pk: i32 = 0;
         while (pk < pnames.len()) {
             if (dup_name_before(pnames, pk)) {
-                out = out.push(dg("E018", "duplicate parameter \"" + pnames[pk] + "\""));
+                out = out.push(dg_at("E018", "duplicate parameter \"" + pnames[pk] + "\"", fd.line, fd.col));
             }
             pk = pk + 1;
         }
@@ -2352,9 +2352,9 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         if (earlier) {
             if (f2.receiver_name.len() == 0) {
-                out = out.push(dg("E006", "function \"" + f2.name + "\" redeclared"));
+                out = out.push(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
             } else {
-                out = out.push(dg("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared"));
+                out = out.push(dg_at("E006", "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared", f2.line, f2.col));
             }
         }
         di = di + 1;

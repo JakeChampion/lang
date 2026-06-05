@@ -174,7 +174,7 @@ pub struct ParamDecl { name: string, type_name: string }
 // erasure. A non-empty type_params marks a function the monomorphiser
 // must clone per concrete call-site type — see monomorphize_module and
 // docs/TRAITS.md (self-host slice 2).
-pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ParamDecl[], ret_type: string, body: Stmt[] }
+pub struct FuncDecl { name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ParamDecl[], ret_type: string, body: Stmt[], line: i32, col: i32 }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
 // Same simplifying assumption as FuncDecl: type names are
@@ -1853,6 +1853,8 @@ pub struct FuncResult { par: Par, func: FuncDecl }
 
 function parse_func_decl(p: Par): FuncResult {
     // Caller has already peeked the `function` keyword. Consume.
+    var fline: i32 = p.peek_line();
+    var fcol: i32 = p.peek_col();
     p = p.advance();
     var empty_params: ParamDecl[] = [];
     var empty_body: Stmt[] = [];
@@ -1882,7 +1884,7 @@ function parse_func_decl(p: Par): FuncResult {
     }
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body } };
+        return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol } };
     }
     p = p.advance();
     // Optional generic type parameters: `name[T]`, `name[T: Bound, U]`.
@@ -1920,7 +1922,7 @@ function parse_func_decl(p: Par): FuncResult {
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
     if (p.peek_punct() != "(") {
-        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body } };
+        return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol } };
     }
     p = p.advance();
     var params: ParamDecl[] = [];
@@ -1943,7 +1945,7 @@ function parse_func_decl(p: Par): FuncResult {
     }
     var blk: BlockResult = parse_block(p);
     p = blk.par;
-    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: blk.body } };
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: blk.body, line: fline, col: fcol } };
 }
 
 // parse_module is the entry point that handles both function
@@ -2152,7 +2154,7 @@ function parse_const_decl(p: Par): FuncResult {
     body = body.push(s_return(er.expr));
     var noparams: ParamDecl[] = [];
     var notp: string[] = [];
-    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body } };
+    return FuncResult { par: p, func: FuncDecl { name: name, receiver_name: "", receiver_type: "", type_params: notp, params: noparams, ret_type: ty, body: body, line: 0, col: 0 } };
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -2823,7 +2825,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         type_params: notp,
         params: nparams,
         ret_type: subst_ty(fd.ret_type, tparams, cts),
-        body: subst_stmts(fd.body, tparams, cts)
+        body: subst_stmts(fd.body, tparams, cts), line: fd.line, col: fd.col
     };
 }
 
@@ -2858,7 +2860,7 @@ pub function monomorphize_module(mod: Module): Module {
             ins = rb.rins3;
             rewritten = rewritten.push(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
-                type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts
+                type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts, line: fd.line, col: fd.col
             });
         }
         i = i + 1;
@@ -2887,7 +2889,7 @@ pub function monomorphize_module(mod: Module): Module {
             ins = crb.rins3;
             rewritten = rewritten.push(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",
-                type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts
+                type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts, line: cl.line, col: cl.col
             });
         }
         wi = wi + 1;
@@ -3220,7 +3222,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     return FRes {
         ffn: FuncDecl {
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: rcv.ty,
-            type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts
+            type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts, line: fn.line, col: fn.col
         },
         fins: cur
     };
@@ -3249,7 +3251,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     return FuncDecl {
         name: m.name, receiver_name: m.receiver_name, receiver_type: mang,
         type_params: notp, params: nparams, ret_type: rt,
-        body: subst_stmts(m.body, tparams, cts)
+        body: subst_stmts(m.body, tparams, cts), line: m.line, col: m.col
     };
 }
 
@@ -3339,7 +3341,7 @@ pub function monomorphize_structs(mod: Module): Module {
                     ins = br2.rins3;
                     nfuncs = nfuncs.push(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
-                        type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts
+                        type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col
                     });
                 }
                 mi = mi + 1;
@@ -3539,7 +3541,7 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
     while (c < cleanup.len()) { body = body.push(cleanup[c]); c = c + 1; }
     return FuncDecl {
         name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
-        type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body
+        type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col
     };
 }
 
@@ -3622,7 +3624,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body };
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0 };
 }
 
 // synth_struct_eq: field-wise `self.f.eq(other.f) && …` (true for an
@@ -3638,7 +3640,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
-    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body };
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0 };
 }
 
 // synth_struct_ord: lexicographic `cmp` — first non-zero field cmp wins.
@@ -3658,7 +3660,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     stmts = stmts.push(s_return(e_number("0", "", false)));
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name }];
-    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts };
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0 };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
@@ -3683,7 +3685,7 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
     var notp: string[] = [];
     var noparams: ParamDecl[] = [];
-    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body };
+    return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0 };
 }
 
 // synth_enum_eq: match self, then match other — same variant compares
@@ -3710,7 +3712,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
-    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body };
+    return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0 };
 }
 
 // synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
@@ -3757,7 +3759,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
     var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename }];
-    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body };
+    return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0 };
 }
 
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
@@ -3916,7 +3918,7 @@ function parse_impl_decl(p: Par): ImplResult {
             type_params: mtps,
             params: newparams,
             ret_type: rt,
-            body: m.body
+            body: m.body, line: m.line, col: m.col
         });
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
@@ -4113,7 +4115,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
             type_params: fd.type_params,
             params: fd.params,
             ret_type: fd.ret_type,
-            body: fd.body
+            body: fd.body, line: fd.line, col: fd.col
         });
         fi = fi + 1;
     }
