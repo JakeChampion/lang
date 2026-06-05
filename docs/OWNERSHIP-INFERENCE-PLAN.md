@@ -194,16 +194,29 @@ analysis, which is independent, pure, and de-risks the design.
   pointer-payload enums before the new code runs, and layer (3) makes the
   scalar enums boxless. Reverted rather than land dead code.
 
-  **The genuine Slice 1b is: make enum construction rc-count its pointer
-  payloads** (inc-on-store + matching dec-on-drop), which dissolves all
-  three layers at once. That is a large, sound-critical rc-balance change
-  that touches the consuming match (C1/C2 rely on the move-without-inc
-  semantics), the move analysis (the iterative-build over-release fix
-  #2026), and the reuse machinery — a dedicated project, **not a quick
-  slice**, and one worth explicit sign-off before starting given its blast
-  radius on the carefully-balanced enum rc. The struct/tuple control-flow
-  placement (Slice 1, shipped) and `inferParamEscapes` (Slice 0) stand on
-  their own meanwhile.
+  **Slice 1b — DONE (`EnumRcPayloads`, default on).** Enum construction now
+  rc-counts its pointer payloads exactly like `StructLit`: an aliased
+  payload is inc'd (`emitEnumNew`), a moved last-use owned-local payload is
+  move-marked (`markConstructionMoves`' enum case), and an own-param payload
+  is inc'd + balanced by the exit-sweep dec — so enum boxes carry counted
+  payload references. That dissolves all three blockers in tandem: the
+  escape analysis treats a variant constructor like a fresh `StructLit`
+  (`escapeOwned` + `rhsTainted`→fresh), so enum locals become `freeEligible`,
+  and `preciseDroppableType` admits them. The consuming match (C1/C2) is
+  unchanged — it transfers the box's payload reference to the binding the
+  same way regardless of how the box acquired it — and the #2026
+  iterative-build reassignment skip is disabled under the flag (the inc
+  needs the overwrite dec to balance it). Enums transitively containing a
+  **Map** are excluded (their deep drop calls the not-everywhere-wired
+  `__map_drop_values`) and keep the move model — a documented safe leak,
+  losing nothing for the FBIP list/tree case.
+
+  Soundness: a byte-identical differential gate
+  (`Test{X86_64,Arm64,WASM}EnumRcPayloadsMatchesMove`) pins rc-on ==
+  move-model on the full corpus, the whole e2e suite is green with the flag
+  on (every backend + the self-host), and the FBIP shapes are
+  underflow-zero (`TestX86_64EnumRcPayloadsSound`). The win: enum locals
+  (lists/trees) now take precise drops and self-overwrite reuse.
 
 - **Slice 2 — owned-by-default behind a flag.** Flip parameter
   ownership to owned-by-default, driving reclaim from Slice-0's

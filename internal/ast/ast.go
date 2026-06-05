@@ -530,6 +530,16 @@ var RcFreeEnabled = true
 // baseline. Turning it off only DISABLES the optimisation (every reuse site
 // falls back to a fresh alloc + the normal drop), so it can never change
 // observable behaviour — that invariant is exactly what the gate asserts.
+// EnumRcPayloads (Slice 1b, docs/OWNERSHIP-INFERENCE-PLAN.md) makes enum
+// construction rc-count its pointer payloads exactly like StructLit/TupleLit —
+// an aliased payload is inc'd (box co-owns), a moved last-use OWNED-LOCAL
+// payload is move-marked; an own-PARAM payload is inc'd and balanced by the
+// exit-sweep dec (same as a struct field). This gives enum boxes counted
+// payload references, which dissolves the escape-taint + preciseDroppable
+// exclusions that block FBIP enum precise drops. Off by default until the
+// differential gate pins on==off byte-identical + the suite is green.
+var EnumRcPayloads = true
+
 var RcReuseEnabled = true
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR

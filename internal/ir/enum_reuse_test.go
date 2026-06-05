@@ -2,6 +2,8 @@ package ir_test
 
 import (
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Phase 5e enum drop-reuse. A self-overwrite of an owned enum local with
@@ -142,7 +144,7 @@ function main(): i32 { return 0; }`)
 // stays off. Documents the current eligibility boundary (safe: such
 // boxes leak under the baseline too, so skipping reuse loses nothing).
 func TestEnumReuseSkipsLiteralScalar(t *testing.T) {
-	ip := lowerForTest(t, `enum Step { Fwd(i32), Bwd(i32) }
+	const src = `enum Step { Fwd(i32), Bwd(i32) }
 function churn(n: i32): i32 {
     var s: Step = Fwd(0);
     var i: i32 = 0;
@@ -152,12 +154,23 @@ function churn(n: i32): i32 {
     }
     return 0;
 }
-function main(): i32 { return churn(3); }`)
-	f := funcByName(ip, "churn")
-	if f == nil {
-		t.Fatal("no func churn")
+function main(): i32 { return churn(3); }`
+	prev := ast.EnumRcPayloads
+	defer func() { ast.EnumRcPayloads = prev }()
+
+	// Move model: a scalar-payload enum is not free-eligible, so the
+	// self-overwrite reuse is skipped.
+	ast.EnumRcPayloads = false
+	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got != 0 {
+		t.Errorf("move model: expected 0 reuse, got %d", got)
 	}
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("literal-scalar enum is not free-eligible, expected 0 reuse, got %d", got)
+
+	// EnumRcPayloads (Slice 1b): the enum now rc-counts its payloads, becoming
+	// free-eligible, so `s = Fwd(i)` reuses its box in place each iteration —
+	// the FBIP win the model unblocks. Sound: the byte-identical differential
+	// gate pins rc-on == move-model output.
+	ast.EnumRcPayloads = true
+	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got == 0 {
+		t.Errorf("rc model: expected the eligible enum to reuse its box, got 0")
 	}
 }
