@@ -777,9 +777,26 @@ which `component_full`'s import-free path can't take):
    single byte, so the success check reads it with `i32.load8_u`, not a
    4-byte `i32.load` that would trip over stale padding in the reused return
    area — the read path's discriminant checks were tightened to match.)
-   **File I/O is done** for read + write; remaining filesystem builtins
-   (`stat` / `read_dir` / `remove_*` / `temp_dir`) are the next preview2
-   surface.
+5. **Preview2-native read + write together.** A program that calls *both*
+   `read_file` and `write_file` (the realistic edge shape — read a config,
+   write a log) needs the combined import set: `get-stdout` +
+   `blocking-write-and-flush`, then `get-directories`, `open-at`,
+   `read-via-stream`, `blocking-read`, `write-via-stream`. The `fs` mode
+   already emits exactly that order (the imports adapt to the ops used and the
+   read/write helpers are both emitted), so this slice is framing-only:
+   `component_full_io_fs_rw` (`wat_component.fern`) carries the combined
+   import-set's prefix/suffix `\xNN` blobs, byte-identical to native's
+   component for that core (`TestSelfHostWasmComponentFullIOFSRW`). End to end
+   — `TestSelfHostWasmComponentReadWriteFile` copies one preopened file to
+   another (`read_file` → `write_file` → stdout marker) and exercises the
+   missing-source error arm. (Native's *no-stdout* read+write shape orders the
+   imports differently — `bwf` last — but the self-host always includes the
+   stdout shim, so the read+write+stdout shape is the one it targets.)
+   **File I/O is done** for read + write (single and combined). The remaining
+   filesystem builtins (`stat` / `read_dir` / `remove_*` / `temp_dir`) have no
+   preview2 path in the native `wasmbin` backend either, so there is no
+   framing to mirror — they would need their component types hand-rolled from
+   scratch, a separate effort from the I/O-stream parity tracked here.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
