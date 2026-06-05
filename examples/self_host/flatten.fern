@@ -155,7 +155,9 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             }
             return parser.ExprFieldAccess {
                 obj: rewrite_expr(fa.obj, ctx),
-                field: fa.field
+                field: fa.field,
+                line: fa.line,
+                col: fa.col
             };
         },
         parser.ExprCall(c) => {
