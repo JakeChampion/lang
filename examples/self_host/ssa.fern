@@ -687,6 +687,22 @@ function build_expr(e: parser.Expr, s: BState): BState {
             var la: i32[] = [ptr, idx1];
             return s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: la, imm: 0, str: "" });
         },
+        parser.ExprSlice(sl) => {
+            // a[lo:hi] → __ssa_arr_slice(a, lo, hi): a fresh array (or
+            // substring, since a string is a byte array) holding a[lo..hi-1].
+            s = build_expr(sl.array, s);
+            if (!s.ok) { return s; }
+            var slarr: i32 = s.cur_id();
+            s = build_expr(sl.start, s);
+            if (!s.ok) { return s; }
+            var sllo: i32 = s.cur_id();
+            s = build_expr(sl.end, s);
+            if (!s.ok) { return s; }
+            var slhi: i32 = s.cur_id();
+            s = s.fresh();
+            var slargs: i32[] = [slarr, sllo, slhi];
+            return s.emit(SInst { kind: "call", result: s.cur_id(), args: slargs, imm: 0, str: "__ssa_arr_slice" });
+        },
         _ => { return s.fail(); }
     }
 }
@@ -2540,6 +2556,14 @@ pub function ssa_helpers_src(): string {
     src = src + "  var n = a.len(); var b = __new_array(n + 1); var i = 0;" + nl;
     src = src + "  while (i < n) { b[i] = a[i]; i = i + 1; }" + nl;
     src = src + "  b[n] = x; return b;" + nl;
+    src = src + "}" + nl;
+    // a[lo:hi] → a fresh length-(hi-lo) array holding a[lo..hi-1]. Works for a
+    // string too (a byte array), giving a substring. Same element-agnostic
+    // copy as push.
+    src = src + "function __ssa_arr_slice(a: i32[], lo: i32, hi: i32): i32[] {" + nl;
+    src = src + "  var n = hi - lo; var b = __new_array(n); var i = 0;" + nl;
+    src = src + "  while (i < n) { b[i] = a[lo + i]; i = i + 1; }" + nl;
+    src = src + "  return b;" + nl;
     src = src + "}" + nl;
     return src;
 }
