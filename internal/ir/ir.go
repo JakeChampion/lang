@@ -3028,9 +3028,6 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				case *ast.MatchExpr:
 					markScrutinee(x.Tag)
 				case *ast.Call:
-					if x.Method != nil {
-						return true
-					}
 					id, ok := x.Callee.(*ast.Ident)
 					if !ok {
 						return true

@@ -539,6 +539,14 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		var params []ast.Param
 		if !p.match(lexer.Punct, ")") {
 			for {
+				// Contextual `own` (consuming) modifier — `own self: Self`.
+				// `own` + ident is the modifier; `own:` makes `own` the
+				// parameter name (mirrors the function-param loop).
+				own := false
+				if p.match(lexer.Ident, "own") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+					p.advance()
+					own = true
+				}
 				pname, err := p.expect(lexer.Ident, "")
 				if err != nil {
 					return nil, err
@@ -550,7 +558,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 				if err != nil {
 					return nil, err
 				}
-				params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+				params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own})
 				if _, ok := p.accept(lexer.Punct, ","); !ok {
 					break
 				}
@@ -816,6 +824,13 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	var receiver *ast.Param
 	if p.match(lexer.Punct, "(") && p.looksLikeReceiverClause() {
 		p.advance() // (
+		// Contextual `own` (consuming) receiver — `(own self: List)`. `own` +
+		// ident is the modifier; `own:` makes `own` the receiver name.
+		rOwn := false
+		if p.match(lexer.Ident, "own") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+			p.advance()
+			rOwn = true
+		}
 		rname, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return nil, err
@@ -830,7 +845,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype}
+		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype, Own: rOwn}
 	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
@@ -927,6 +942,13 @@ func (p *parser) looksLikeReceiverClause() bool {
 		return false
 	}
 	p.i++ // skip (
+	// Optional `own` modifier on the receiver — `(own self: T)`. Only treat it
+	// as the modifier when followed by an ident (the receiver name); `own:` is
+	// a receiver named `own`.
+	if p.peek().Kind == lexer.Ident && p.peek().Text == "own" &&
+		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+		p.i++ // skip own
+	}
 	if p.peek().Kind != lexer.Ident {
 		p.i = start
 		return false
