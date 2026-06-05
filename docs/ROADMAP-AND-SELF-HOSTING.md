@@ -797,6 +797,24 @@ which `component_full`'s import-free path can't take):
    preview2 path in the native `wasmbin` backend either, so there is no
    framing to mirror — they would need their component types hand-rolled from
    scratch, a separate effort from the I/O-stream parity tracked here.
+6. **Preview2-native randomness — `random_bytes` works.** Beyond file I/O,
+   the preview2-native (`io`) path now also draws randomness adapter-free.
+   `random_bytes` is gated on `io`: the adapter route (`emit_module_run`,
+   `io=false`) keeps the preview1 `random_get` import for the adapter to
+   wrap, while the adapter-free route (`emit_module_run_io`) imports
+   `wasi:random/random@0.2.0`'s `get-random-u64` and fills the same `i32[]`
+   byte-array result one u64 (8 bytes) at a time, slicing each byte out with
+   a shift+mask — so every `random_bytes` call site is unchanged. Import
+   order is `get-stdout`, `blocking-write-and-flush`, `get-random-u64`
+   (no `cabi_realloc` — the source is a scalar, not a list). The framing
+   (`component_full_io_random`, `wat_component.fern`) is byte-identical to
+   native's component for that core. Tests:
+   `TestSelfHostWasmComponentFullIORandom` (byte-identical) +
+   `TestSelfHostWasmComponentRandom` (length / every byte in 0..255 / a
+   non-multiple-of-8 length). `env` / `args` (→ `wasi:cli/environment`) and
+   `now_unix_ms` (→ `wasi:clocks/wall-clock`) are the same shape and the
+   natural follow-ups; the static-blob-per-import-set approach will want a
+   generative component builder once the combinations multiply.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
