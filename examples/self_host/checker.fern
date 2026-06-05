@@ -1656,6 +1656,56 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     return out;
 }
 
+// match_diags emits the structural `match`-arm diagnostics (no types
+// needed): E026 when a wildcard `_` arm isn't the last arm, and E028 when
+// a variant pattern repeats one covered by an earlier arm. Recurses into
+// nested blocks + arm bodies.
+function match_diags(stmts: parser.Stmt[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var seen: string[] = [];
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    match (m.arms[a].pattern) {
+                        parser.PatWildcard(_) => {
+                            if (a < m.arms.len() - 1) {
+                                out = out.push(Diag { code: "E026", message: "wildcard `_` arm must be last in the match" });
+                            }
+                        },
+                        parser.PatVariant(pv) => {
+                            if (pv.type_name.len() > 0) {
+                                if (name_in(seen, pv.type_name)) {
+                                    out = out.push(Diag { code: "E028", message: "variant \"" + pv.type_name + "\" already covered earlier in this match" });
+                                } else {
+                                    seen = seen.push(pv.type_name);
+                                }
+                            }
+                        },
+                    }
+                    out = append_diags(out, match_diags(m.arms[a].body));
+                    a = a + 1;
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, match_diags(f.then_body));
+                out = append_diags(out, match_diags(f.else_body));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, match_diags(w.body)); },
+            parser.StmtFor(fr) => { out = append_diags(out, match_diags(fr.body)); },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, match_diags(one));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // dupvar_diags emits the structural `var`-declaration diagnostics, per
 // block: E013 for a name already declared by an earlier `var` IN THE SAME
 // BLOCK (each block — function body, branch, loop / match-arm body — gets
@@ -2314,6 +2364,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, loop_diags(mod.funcs[i].body, false));
         // E013: duplicate `var` in the same block (structural, no scope).
         body_diags = append_diags(body_diags, dupvar_diags(mod.funcs[i].body));
+        // E026 / E028: structural match-arm errors (wildcard order, dup
+        // variant).
+        body_diags = append_diags(body_diags, match_diags(mod.funcs[i].body));
         // E036: unqualified reference to a variant shared by 2+ enums.
         if (ambig.len() > 0) {
             body_diags = append_diags(body_diags, vref_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), ambig));
@@ -2338,6 +2391,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
     body_diags = append_diags(body_diags, dupvar_diags(mod.top_stmts));
+    body_diags = append_diags(body_diags, match_diags(mod.top_stmts));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
