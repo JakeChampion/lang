@@ -1722,12 +1722,14 @@ function itoa_nn(n: i32): string {
     return s;
 }
 
-// call_diags recurses through an expression and emits E004 for a FREE
-// function call whose argument count doesn't match the function's
-// declared parameter count. It is conservative: a callee name that's a
-// local binding (a parameter, `var`, or a closure value) is skipped —
-// only a name that resolves to a module function sig is checked. Method
-// and closure arity are left to later slices.
+// call_diags recurses through an expression (scope-threaded) emitting the
+// expression-level diagnostics: E004 for a FREE function call whose
+// argument count doesn't match the declared parameter count, E038 for a
+// matching-arity free call whose argument types don't match, and E009 for
+// a `&&` / `||` / `!` operand that isn't boolean. The call checks are
+// conservative — a callee name that's a local binding (parameter, `var`,
+// or closure) is skipped, so only a real module function sig is checked
+// (method / closure arity + argument types are left to later slices).
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
@@ -1760,8 +1762,30 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 _ => { }
             }
         },
-        parser.ExprBinary(b) => { out = append_diags(call_diags(b.left, s), call_diags(b.right, s)); },
-        parser.ExprUnary(u) => { out = call_diags(u.operand, s); },
+        parser.ExprBinary(b) => {
+            out = append_diags(call_diags(b.left, s), call_diags(b.right, s));
+            // E009: `&&` / `||` require both operands to be boolean.
+            if (b.op == "&&" || b.op == "||") {
+                var lt: Type = check_expr(b.left, s);
+                if (!is_unknown(lt) && !type_eq(lt, t_bool())) {
+                    out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires boolean, got " + type_label(lt) });
+                }
+                var rt: Type = check_expr(b.right, s);
+                if (!is_unknown(rt) && !type_eq(rt, t_bool())) {
+                    out = out.push(Diag { code: "E009", message: "operator \"" + b.op + "\" requires boolean, got " + type_label(rt) });
+                }
+            }
+        },
+        parser.ExprUnary(u) => {
+            out = call_diags(u.operand, s);
+            // E009: `!` requires a boolean operand.
+            if (u.op == "!") {
+                var ot: Type = check_expr(u.operand, s);
+                if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
+                    out = out.push(Diag { code: "E009", message: "operator \"!\" requires boolean, got " + type_label(ot) });
+                }
+            }
+        },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) { out = append_diags(out, call_diags(a.elements[i], s)); i = i + 1; }
