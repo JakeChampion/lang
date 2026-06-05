@@ -169,11 +169,15 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
         if (ssa.is_ptr_type(hmod.funcs[hk].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hk].name); }
         hk = hk + 1;
     }
+    // Derive the module-wide var-type seed (global function + receiver-method
+    // signatures) once; build_func would otherwise rebuild it per function —
+    // O(n²)+ persistent-vt pushes that OOM on large modules.
+    var seed: ssa.Seed = ssa.build_seed(allfuncs);
     var sfuncs: ssa.SFunc[] = [];
     var has_main: boolean = false;
     var i: i32 = 0;
     while (i < allfuncs.len()) {
-        var r: ssa.BResult = ssa.build_func(allfuncs[i], structs, allfuncs);
+        var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
         if (!r.ok) { return SsaResult { asm: "", ok: false }; }
         // A call to a builtin (print, write, …) or any unknown name can't be
         // lowered — fall back to the AST emitter for the whole program.
@@ -187,7 +191,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     var hj: i32 = 0;
     while (hj < hmod.funcs.len()) {
         if (ssa.calls_func(sfuncs, hmod.funcs[hj].name)) {
-            var hr: ssa.BResult = ssa.build_func(hmod.funcs[hj], structs, allfuncs);
+            var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hj], structs, seed);
             if (hr.ok) { sfuncs = sfuncs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
         }
         hj = hj + 1;

@@ -40,6 +40,23 @@ function i32_to_string(n: i32): string {
     return out;
 }
 
+// str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
+// A left fold (out = out + parts[i]) copies the whole accumulator on every
+// append → O(total²) when emitting a large program; this splits the range in
+// half and merges, so each of the log n levels copies O(total) → O(total·log n)
+// overall. (Array push is amortised O(1), but string concat is O(len), so the
+// emit hot path collects chunks in a string[] and joins once through here.)
+function str_join_range(parts: string[], lo: i32, hi: i32): string {
+    var n: i32 = hi - lo;
+    if (n <= 0) { return ""; }
+    if (n == 1) { return parts[lo]; }
+    var mid: i32 = lo + n / 2;
+    return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
+}
+function str_join_chunks(parts: string[]): string {
+    return str_join_range(parts, 0, parts.len());
+}
+
 // slot returns the AT&T memory operand for SSA value v's stack slot.
 function slot(v: i32): string {
     return "-" + i32_to_string(8 * (v + 1)) + "(%rbp)";
@@ -317,36 +334,40 @@ function emit_term(f: ssa.SFunc, name: string, reg_of: i32[], widths: i32[], blk
 // emit_func lowers one SSA function to its `__fn_<name>` body.
 pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     var widths: i32[] = ssa.compute_widths(f);
-    var out: string = "__fn_" + f.name + ":\n";
-    out = out + "    pushq %rbp\n    movq %rsp, %rbp\n";
+    // Collect asm fragments in a string[] (amortised-O(1) push) and join once
+    // at the end; emit_inst / emit_term append to their `out` arg and never
+    // read it, so passing "" returns just that piece's contribution.
+    var chunks: string[] = [];
+    chunks = chunks.push("__fn_" + f.name + ":\n");
+    chunks = chunks.push("    pushq %rbp\n    movq %rsp, %rbp\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { out = out + "    subq $" + i32_to_string(frame) + ", %rsp\n"; }
+    if (frame > 0) { chunks = chunks.push("    subq $" + i32_to_string(frame) + ", %rsp\n"); }
     // Spill incoming arguments to their locations, at each param's width
     // (a pointer / array param is 64-bit).
     var p: i32 = 0;
     while (p < f.nparams) {
         var pw: i32 = widths[p];
-        out = out + "    " + w_mov(pw) + " " + argreg_w(p, pw) + ", " + regn(reg_of, p, pw) + "\n";
+        chunks = chunks.push("    " + w_mov(pw) + " " + argreg_w(p, pw) + ", " + regn(reg_of, p, pw) + "\n");
         p = p + 1;
     }
     // Emit each block: label, instructions, terminator.
     var bi: i32 = 0;
     while (bi < f.blocks.len()) {
         var blk: ssa.SBlock = f.blocks[bi];
-        out = out + blk_label(f.name, blk.id) + ":\n";
+        chunks = chunks.push(blk_label(f.name, blk.id) + ":\n");
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: ssa.SInst = blk.insts[k];
             if (ins.kind != "param" && ins.kind != "phi") {
-                out = emit_inst(ins, reg_of, widths, out);
+                chunks = chunks.push(emit_inst(ins, reg_of, widths, ""));
             }
             k = k + 1;
         }
-        out = emit_term(f, f.name, reg_of, widths, blk, out);
+        chunks = chunks.push(emit_term(f, f.name, reg_of, widths, blk, ""));
         bi = bi + 1;
     }
-    return out;
+    return str_join_chunks(chunks);
 }
 
 // emit_program frames the whole module: a heap (a .bss arena + bump
@@ -360,13 +381,17 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 16777216\n";
     out = out + "    .data\n__fern_ssa_hp:\n    .quad 0\n";
     out = out + "    .text\n";
+    // Collect each function body, then join once — a left fold here is
+    // O(total²) and OOMs on a whole compiler's worth of asm.
+    var chunks: string[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
         var reg_of: i32[] = ssa.regalloc_none(funcs[i]);
         if (use_regalloc) { reg_of = ssa.regalloc_linear(funcs[i], nregs()); }
-        out = out + emit_func(funcs[i], reg_of);
+        chunks = chunks.push(emit_func(funcs[i], reg_of));
         i = i + 1;
     }
+    out = out + str_join_chunks(chunks);
     // __fern_ssa_print(%rdi = string handle): write each byte to stdout.
     // The string is [len, b0, b1, …] as 8-byte words; each byte's low octet
     // sits at its word's address (little-endian), so write 1 byte per word.

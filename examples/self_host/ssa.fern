@@ -1899,6 +1899,38 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
 
 pub struct BResult { func: SFunc, ok: boolean }
 
+// Seed is the per-module var-type seed shared by every function build: the
+// global function signatures (gfn:<ret>) and receiver-method symbols
+// (<recv>#<m> → m:<sym>:<ret>). It depends only on the module's function set,
+// not on the function being built, so build_seed computes it once and
+// build_func_seeded reuses it — building it inside build_func re-derived the
+// whole O(n)-entry table on every one of the n calls, an O(n²)+ blow-up
+// (persistent vt pushes) that OOM'd on large modules.
+pub struct Seed { names: string[], types: string[] }
+
+// build_seed derives the module-wide var-type seed (method + global-function
+// entries) once, in the order build_func used to append them (methods first,
+// then globals), so a later param/local of the same name still shadows.
+pub function build_seed(funcs: parser.FuncDecl[]): Seed {
+    var names: string[] = [];
+    var types: string[] = [];
+    var mi: i32 = 0;
+    while (mi < funcs.len()) {
+        if (funcs[mi].receiver_type.len() > 0) {
+            names = names.push(funcs[mi].receiver_type + "#" + funcs[mi].name);
+            types = types.push("m:" + fn_sym(funcs[mi]) + ":" + funcs[mi].ret_type);
+        }
+        mi = mi + 1;
+    }
+    var gi: i32 = 0;
+    while (gi < funcs.len()) {
+        names = names.push(funcs[gi].name);
+        types = types.push("gfn:" + funcs[gi].ret_type);
+        gi = gi + 1;
+    }
+    return Seed { names: names, types: types };
+}
+
 // is_ptr_type reports whether a declared type is a heap pointer in the SSA
 // model — currently array types, spelled with a trailing `]` (e.g.
 // `i32[]`). Scalars (i32 / bool) are not.
@@ -1957,7 +1989,15 @@ function struct_field_width(structs: parser.StructDecl[], sname: string, field: 
     return 32;
 }
 
+// build_func builds one function, deriving the module seed itself. Callers
+// that build many functions from the same module should compute the seed once
+// with build_seed and call build_func_seeded — this wrapper re-derives it on
+// every call (fine for one-off builds; O(n²) across a whole module).
 pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): BResult {
+    return build_func_seeded(fd, structs, build_seed(funcs));
+}
+
+pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
     var sym: string = fn_sym(fd);
     var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0 };
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
@@ -1990,28 +2030,15 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
     }
     var nparams: i32 = pidx;
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
-    var s: BState = mk_bs(sym, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
+    // The module-wide seed (every global function as "gfn:<ret>" so a name used
+    // as a VALUE → funcaddr and a call's result type are both visible, plus
+    // receiver methods "<recv>#<name>" → "m:<sym>:<ret>") is precomputed once
+    // per module and installed as the initial vt here — a param / local of the
+    // same name shadows it (last-wins lookup), so the per-function receiver /
+    // param types appended below win.
+    var s: BState = mk_bs(sym, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, seed.names, seed.types);
     // The receiver's type, so field access / method calls on it resolve.
     if (fd.receiver_type.len() > 0) { s = s.set_var_type(fd.receiver_name, fd.receiver_type); }
-    // Seed receiver methods as "<recv>#<name>" → "m:<sym>" so a `recv.m(...)`
-    // call site can find the method's symbol (keyed by the receiver's type).
-    var mi: i32 = 0;
-    while (mi < funcs.len()) {
-        if (funcs[mi].receiver_type.len() > 0) {
-            s = s.set_var_type(funcs[mi].receiver_type + "#" + funcs[mi].name, "m:" + fn_sym(funcs[mi]) + ":" + funcs[mi].ret_type);
-        }
-        mi = mi + 1;
-    }
-    // Seed the var-type map with every top-level function as "gfn:<ret>" so a
-    // name used as a VALUE (→ funcaddr) and a call's result type are both
-    // visible: `apply(work, …)` passes work's address, `var g = maker()` (maker
-    // returning a function) records g as a function value. Seeded first, so a
-    // param / local of the same name shadows it (last-wins lookup).
-    var gi: i32 = 0;
-    while (gi < funcs.len()) {
-        s = s.set_var_type(funcs[gi].name, "gfn:" + funcs[gi].ret_type);
-        gi = gi + 1;
-    }
     // Record struct- / string- / Map-typed params' types for field-access,
     // concat, and map-method (.len) resolution. A map param is spelled
     // `Map[K, V]`; record it as "Map" so `m.len()` dispatches to the helper.
