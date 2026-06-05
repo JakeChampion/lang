@@ -47,6 +47,37 @@ func TestWeaveHTMLStructure(t *testing.T) {
 	}
 }
 
+// Woven HTML must not emit dangerous link schemes: a javascript: or
+// data: URL in a Markdown link would become a working script-injection
+// vector in the self-contained page the CLI advertises as browser-
+// openable. Dangerous schemes drop to plain text; http/https/mailto and
+// relative links still render as anchors. Regression for L2 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestRenderEmphasisLinkSchemeAllowlist(t *testing.T) {
+	for _, in := range []string{
+		`[x](javascript:alert(1))`,
+		`[y](JavaScript:alert(1))`,
+		`[z](data:text/html,payload)`,
+		`[v](vbscript:msgbox)`,
+	} {
+		if got := renderEmphasis(in); strings.Contains(got, "<a href") {
+			t.Errorf("renderEmphasis(%q) = %q, must not emit an anchor for a dangerous scheme", in, got)
+		}
+	}
+	safe := map[string]string{
+		`[a](https://example.com)`: `<a href="https://example.com">a</a>`,
+		`[b](http://example.com)`:  `<a href="http://example.com">b</a>`,
+		`[c](mailto:me@x.com)`:     `<a href="mailto:me@x.com">c</a>`,
+		`[d](./rel/path)`:          `<a href="./rel/path">d</a>`,
+		`[e](#frag)`:               `<a href="#frag">e</a>`,
+	}
+	for in, want := range safe {
+		if got := renderEmphasis(in); !strings.Contains(got, want) {
+			t.Errorf("renderEmphasis(%q) = %q, want it to contain %q", in, got, want)
+		}
+	}
+}
+
 // A reference must point at the *first* definition's anchor; a
 // continuation (`+≡`) reuses the same id-less label.
 func TestWeaveHTMLAnchorOnFirstDefinitionOnly(t *testing.T) {

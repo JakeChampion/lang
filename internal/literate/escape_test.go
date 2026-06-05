@@ -48,6 +48,61 @@ func TestTangleEscapedRefIsLiteral(t *testing.T) {
 	}
 }
 
+// The diagnostic-remap ColShift accounts for the backslash stripped from
+// an escaped chunk marker, so a column at/after the marker maps back to
+// the correct document column instead of being off by one. Regression
+// for L1 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestTangleEscapedRefColShift(t *testing.T) {
+	// Root references <<body>> at 4-space indent; <<body>> contains an
+	// escaped marker. Tangled middle line is "    <<lit>> = 5;".
+	src := "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n" +
+		"```fern\n<<body>>=\n\\<<lit>> = 5;\n```\n"
+	code, lm, err := Parse(src).Tangle()
+	if err != nil {
+		t.Fatalf("tangle: %v", err)
+	}
+	// Find the generated line carrying the escaped marker.
+	var gi = -1
+	for i, line := range strings.Split(code, "\n") {
+		if strings.Contains(line, "<<lit>> = 5;") {
+			gi = i
+			break
+		}
+	}
+	if gi < 0 || gi >= len(lm) {
+		t.Fatalf("could not locate generated <<lit>> line in:\n%s", code)
+	}
+	// indent is 4 spaces, one backslash stripped → ColShift 4-1 = 3.
+	if lm[gi].ColShift != 3 {
+		t.Errorf("ColShift = %d, want 3 (4 indent minus 1 stripped backslash)", lm[gi].ColShift)
+	}
+	if lm[gi].Lit != 9 {
+		t.Errorf("Lit = %d, want 9 (the \\<<lit>> document line)", lm[gi].Lit)
+	}
+	// `lit` sits at generated column 7 ("    <<l"); the inverse remap
+	// (genCol - ColShift) must land on document column 4 ("\<<l").
+	if docCol := 7 - lm[gi].ColShift; docCol != 4 {
+		t.Errorf("remapped column = %d, want 4 (the `l` of \\<<lit>>)", docCol)
+	}
+}
+
+// An unclosed fern fence at EOF (with a trailing newline) must not
+// absorb the trailing-newline split artifact as a phantom blank body
+// line. Regression for L5 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestTangleUnclosedFenceNoPhantomLine(t *testing.T) {
+	src := "```fern\n<<*>>=\nfn main() {}\n" // no closing ```, trailing \n
+	code, lm, err := Parse(src).Tangle()
+	if err != nil {
+		t.Fatalf("tangle: %v", err)
+	}
+	if code != "fn main() {}" {
+		t.Errorf("tangled code = %q, want %q (no phantom trailing blank line)", code, "fn main() {}")
+	}
+	if len(lm) != 1 {
+		t.Errorf("lineMap has %d entries, want 1 (phantom line leaked?): %+v", len(lm), lm)
+	}
+}
+
 // An escaped reference does not count as a use (so it can't keep a chunk
 // "reached" for the unused-chunk lint, nor appear in weave cross-refs).
 func TestEscapedRefNotCountedAsUse(t *testing.T) {

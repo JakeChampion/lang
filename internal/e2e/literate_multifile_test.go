@@ -119,3 +119,49 @@ func TestLiterateMultiFileDiagnosticRemap(t *testing.T) {
 		t.Errorf("diagnostic should render the document source line, got:\n%s", msg)
 	}
 }
+
+// A top-level error (here a const initialiser type mismatch) in a
+// non-entry module is emitted UNATTRIBUTED (File()=="") because the
+// checker only stamps the file inside a FuncDecl. In a multi-file
+// document each module has its own tangle line map, so routing such an
+// error through the entry module's map would point a caret at the wrong
+// `.fern.md` line. The fix renders the bare message instead — honest,
+// not misattributed. Regression for L3 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestLiterateMultiFileUnattributedErrorNotMisremapped(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	doc := "# Buggy\n" + // 1
+		"\n" + // 2
+		"```fern file=main.fern entry\n" + // 3
+		"import \"./helper\";\n" + // 4
+		"function main(): i32 { return helper.val(); }\n" + // 5
+		"```\n" + // 6
+		"\n" + // 7
+		"```fern file=helper.fern\n" + // 8
+		"pub const BAD: i32 = \"oops\";\n" + // 9  <- top-level error here
+		"pub function val(): i32 { return 1; }\n" + // 10
+		"```\n" // 11
+	src := filepath.Join(dir, "buggy.fern.md")
+	if err := os.WriteFile(src, []byte(doc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-check", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("expected -check to fail\nstdout: %s", out.String())
+	}
+	msg := errb.String()
+	// Must surface the real error.
+	if !strings.Contains(msg, "does not match") {
+		t.Errorf("diagnostic should describe the type mismatch, got:\n%s", msg)
+	}
+	// Must NOT misattribute to a document position via the entry's map.
+	// (Before the fix, the unattributed error was remapped through
+	// main.fern's line map and pointed a caret at the wrong doc line.)
+	if strings.Contains(msg, "buggy.fern.md:") {
+		t.Errorf("unattributed multi-file error must not be remapped to a (wrong) document line, got:\n%s", msg)
+	}
+}
