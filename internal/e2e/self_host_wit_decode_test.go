@@ -512,3 +512,72 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWitPrefixLayout gates the self-host prefix index layout: the
+// component type / instance counts and per-interface instance index derived
+// from the decoded fern world must match the Go PrefixLayout /
+// ImportInstanceIndex, run through the self-host under wasmtime. Returns 0 on
+// success, else a check id.
+func TestSelfHostWitPrefixLayout(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-layout e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witLayoutSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-layout self-test")
+	}
+	watPath := filepath.Join(dir, "wit_layout_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-layout self-test failed at check %d", code)
+	}
+}
+
+const witLayoutSelfTestMain = `
+function wit_ly_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+function main(): i32 {
+    var tb: i32[] = wit_section_body(wit_ly_bytes(FERN_BIN()), 7);
+    var pl: WitPrefixLayout = wit_prefix_layout(tb);
+    if (pl.types != 26) { return 1; }
+    if (pl.instances != 14) { return 2; }
+    if (wit_import_instance_index(tb, "wasi:io/error@0.2.0") != 0) { return 3; }
+    if (wit_import_instance_index(tb, "wasi:io/streams@0.2.0") != 1) { return 4; }
+    if (wit_import_instance_index(tb, "wasi:cli/stdout@0.2.0") != 3) { return 5; }
+    if (wit_import_instance_index(tb, "wasi:random/random@0.2.0") != 13) { return 6; }
+    if (wit_import_instance_index(tb, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
+    return 0;
+}
+`
