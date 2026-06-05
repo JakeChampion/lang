@@ -118,6 +118,11 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m.set(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		{"map-iter-param", "function sumv(m: Map[i32, i32]): i32 { var s = 0; for (k, v) in m { s = s + v; } return s; } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return sumv(m); }", 66},
+		// delete: removes a key (swap-with-last, count--), missing key no-op,
+		// and composes with set / iteration.
+		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
+		{"map-delete-missing", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m.delete(99); return m.len() * 10 + m.get_or(2, 0); }", 40},
+		{"map-delete-readd-iter", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(3); m.set(4, 40); m.delete(1); var s = 0; for (k, v) in m { s = s + v; } return s + m.len(); }", 62},
 		// Passing arrays to functions: pointer-typed (64-bit) params.
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
 		{"arr-param-two", "function dot2(a: i32[], b: i32[]): i32 { return a[0] * b[0] + a[1] * b[1]; } function main(): i32 { var p = [2, 3]; var q = [10, 20]; return dot2(p, q); }", 80},
