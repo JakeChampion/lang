@@ -25,6 +25,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 // emits codes the self-host port hasn't reached yet. Each checker-port
 // slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
 var selfHostImplementedCodes = map[string]bool{
+	"E006": true, // function / method redeclared
 	"E007": true, // duplicate struct field
 	"E018": true, // duplicate parameter
 }
@@ -139,6 +140,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
 		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
 		{"clean-struct-and-func", "struct Q { a: i32, b: string }\nfunction h(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"func-redeclared", "function f(): i32 { return 1; }\nfunction f(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"method-redeclared", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"free-and-method-same-name-ok", "struct P { x: i32 }\nfunction m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1476,7 +1476,51 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         ui = ui + 1;
     }
+    // E006: a free function redeclared (same name, both receiver-less), or
+    // a method redeclared (same name AND receiver type). The redeclaration
+    // SITE — the second + occurrences — is flagged, matching the Go
+    // checker. Enum / struct redeclaration aren't covered yet: the parser
+    // desugars enums into variant structs and drops the enum name, so a
+    // struct name in `mod.structs` can't be told apart from a variant (a
+    // later slice handles them once that grouping is recovered).
+    var di: i32 = 0;
+    while (di < mod.funcs.len()) {
+        var f2: parser.FuncDecl = mod.funcs[di];
+        var earlier: boolean = false;
+        var ej: i32 = 0;
+        while (ej < di) {
+            var pe: parser.FuncDecl = mod.funcs[ej];
+            if (f2.receiver_name.len() == 0 && pe.receiver_name.len() == 0 && pe.name == f2.name) {
+                earlier = true;
+            }
+            if (f2.receiver_name.len() > 0 && pe.receiver_name.len() > 0 && pe.name == f2.name
+                    && strip_generic_args(pe.receiver_type) == strip_generic_args(f2.receiver_type)) {
+                earlier = true;
+            }
+            ej = ej + 1;
+        }
+        if (earlier) {
+            if (f2.receiver_name.len() == 0) {
+                out = out.push(Diag { code: "E006", message: "function \"" + f2.name + "\" redeclared" });
+            } else {
+                out = out.push(Diag { code: "E006", message: "method \"" + f2.name + "\" on " + strip_generic_args(f2.receiver_type) + " redeclared" });
+            }
+        }
+        di = di + 1;
+    }
     return out;
+}
+
+// strip_generic_args drops a `[...]` argument list from a (possibly
+// generic) receiver/type spelling: `Box[T]` -> `Box`, `P` -> `P`. Used so
+// a method's receiver identity and message render by base struct name.
+function strip_generic_args(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 91) { return t[0:i]; }   // 91 = '['
+        i = i + 1;
+    }
+    return t;
 }
 
 pub function check_module(mod: parser.Module): ModuleTypes {

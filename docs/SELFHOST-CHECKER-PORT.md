@@ -64,10 +64,14 @@ same code(s) the Go checker does — restricted to
   tables. `all_well_typed` now also reflects `diags`. Added
   `checker_codes_run.fern` (prints one code per line) and the
   differential gate.
-- **Slice 2: remaining declaration rules** — E006 (redeclaration of
-  struct / enum / func / method), E017 (duplicate variant), E013
-  (duplicate var in scope), E010 (reserved name). Needs care around the
-  enum→variant-struct desugaring (variants live in `mod.structs`).
+- **Slice 2 (done): function / method redeclaration** — E006 for a
+  free function (same name, both receiver-less) and a method (same name +
+  receiver type), flagging the redeclaration site like the Go checker.
+  Struct / enum redeclaration (E006) and duplicate variants (E017) are
+  deferred: the parser desugars enums into variant structs and drops the
+  enum name, so a `mod.structs` entry can't be told apart from a variant
+  — that grouping must be recovered first. Duplicate var in scope (E013)
+  and reserved-name (E010) also remain.
 - **Slice 3: assignment / return / arg type-mismatch** (E002, E003,
   E004, E005, E038) — convert existing `TypeUnknown` mismatch detections
   into coded diags.
