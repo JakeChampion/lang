@@ -136,9 +136,16 @@ same code(s) the Go checker does — restricted to
   match-arm body) gets a fresh name set, so shadowing across nested blocks
   — and a `var` shadowing a parameter or loop / pattern binding — is
   allowed, matching the Go checker. Purely structural.
-- **Later: pattern matching** (E014/E025/E036), traits (E021), tuples /
-  maps / slices, owned-parameter move checking (E050/E051), then source
-  positions.
+- **Slice 12 (done): empty array literal needs annotation** (E020).
+  `dupvar_diags` (now the structural `var`-declaration walk) also emits
+  E020 for an un-annotated `var x = []` whose empty-array initializer
+  can't infer an element type. (E010 reserved-name was investigated and
+  skipped: it doesn't fire in the standalone `-check` path the differential
+  gate uses — builtins aren't injected there — so it isn't differentially
+  testable.)
+- **Later: pattern matching** (E014/E025/E036), traits (E021), unknown
+  field (E043), operator-type (E009/E041), tuples / maps / slices,
+  owned-parameter move checking (E050/E051), then source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

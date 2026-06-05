@@ -1656,11 +1656,12 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     return out;
 }
 
-// dupvar_diags emits E013 for a `var` whose name was already declared by
-// an earlier `var` IN THE SAME BLOCK. Each block (function body, branch,
-// loop / match-arm body) gets its own fresh name set, so shadowing across
-// nested blocks — and a `var` shadowing a parameter or a loop / pattern
-// binding — is allowed, matching the Go checker. Purely structural.
+// dupvar_diags emits the structural `var`-declaration diagnostics, per
+// block: E013 for a name already declared by an earlier `var` IN THE SAME
+// BLOCK (each block — function body, branch, loop / match-arm body — gets
+// a fresh name set, so shadowing across nested blocks / over a parameter
+// is allowed, matching the Go checker), and E020 for an un-annotated
+// `var x = []` whose empty-array initializer can't infer an element type.
 function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
     var out: Diag[] = [];
     var declared: string[] = [];
@@ -1672,6 +1673,16 @@ function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
                     out = out.push(Diag { code: "E013", message: "variable \"" + v.name + "\" already declared in this scope" });
                 } else {
                     declared = declared.push(v.name);
+                }
+                if (v.type_name.len() == 0) {
+                    match (v.init) {
+                        parser.ExprArray(arr) => {
+                            if (arr.elements.len() == 0) {
+                                out = out.push(Diag { code: "E020", message: "empty array literal needs a type annotation" });
+                            }
+                        },
+                        _ => { }
+                    }
                 }
             },
             parser.StmtIf(f) => {

@@ -31,6 +31,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E011": true, // break / continue outside a loop
 	"E012": true, // return without value in a non-void function
 	"E013": true, // duplicate var in the same block
+	"E020": true, // empty array literal needs a type annotation
 	"E004": true, // free-function call arity
 	"E038": true, // free-function argument type
 	"E005": true, // struct literal missing field
@@ -180,6 +181,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dup-var-same-block", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", []string{"E013"}},
 		{"dup-var-nested-shadow-ok", "function main(): i32 { var x: i32 = 1; if (1 < 2) { var x: i32 = 2; } return x; }\n", nil},
 		{"var-shadows-param-ok", "function f(a: i32): i32 { var a: i32 = 1; return a; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"empty-array-no-annotation", "function main(): i32 { var x = []; return 0; }\n", []string{"E020"}},
+		{"empty-array-annotated-ok", "function main(): i32 { var x: i32[] = []; return 0; }\n", nil},
+		{"nonempty-array-ok", "function main(): i32 { var x = [1, 2]; return x[0]; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
