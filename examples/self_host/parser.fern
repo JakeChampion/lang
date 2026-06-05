@@ -38,8 +38,8 @@ pub struct ExprNumber { text: string, suffix: string, is_float: boolean, line: i
 pub struct ExprIdent { name: string, line: i32, col: i32 }
 pub struct ExprString { value: string }
 pub struct ExprBool { value: boolean }
-pub struct ExprBinary { op: string, left: Expr, right: Expr }
-pub struct ExprUnary { op: string, operand: Expr }
+pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32 }
+pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32 }
 pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32 }
 // Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
 // the checker rejects an empty literal in inference contexts
@@ -249,9 +249,13 @@ function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent 
 function e_string(value: string): Expr { return ExprString { value: value }; }
 function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
 function e_binary(op: string, left: Expr, right: Expr): Expr {
-    return ExprBinary { op: op, left: left, right: right };
+    return ExprBinary { op: op, left: left, right: right, line: 0, col: 0 };
 }
-function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand }; }
+function e_binary_at(op: string, left: Expr, right: Expr, line: i32, col: i32): Expr {
+    return ExprBinary { op: op, left: left, right: right, line: line, col: col };
+}
+function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand, line: 0, col: 0 }; }
+function e_unary_at(op: string, operand: Expr, line: i32, col: i32): Expr { return ExprUnary { op: op, operand: operand, line: line, col: col }; }
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0 }; }
 function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col }; }
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
@@ -914,9 +918,13 @@ function parse_primary(p: Par): ExprResult {
                 return parse_postfix(p, e_array(elems));
             }
             if (x.text == "-" || x.text == "!") {
+                // The Go parser positions a Unary at its operator token
+                // (`Unary{P: op.Pos}`), so E009 (`!`) lands there.
+                var uline: i32 = p.peek_line();
+                var ucol: i32 = p.peek_col();
                 p = p.advance();
                 var operand = parse_primary(p);
-                return ExprResult { par: operand.par, expr: e_unary(x.text, operand.expr) };
+                return ExprResult { par: operand.par, expr: e_unary_at(x.text, operand.expr, uline, ucol) };
             }
             // Unknown leading punct — advance past it so the
             // surrounding parse loop can recover. Skipping the
@@ -987,10 +995,14 @@ function parse_binary(p: Par, min_prec: i32): ExprResult {
         var op: string = p.peek_punct();
         var prec: i32 = precedence(op);
         if (prec < min_prec) { return ExprResult { par: p, expr: lhs.expr }; }
+        // The Go parser positions a Binary at its operator token
+        // (`Binary{P: opTok.Pos}`), so E009 / E041 land there.
+        var opline: i32 = p.peek_line();
+        var opcol: i32 = p.peek_col();
         p = p.advance();
         var rhs = parse_binary(p, prec + 1);
         p = rhs.par;
-        var combined: Expr = e_binary(op, lhs.expr, rhs.expr);
+        var combined: Expr = e_binary_at(op, lhs.expr, rhs.expr, opline, opcol);
         lhs = ExprResult { par: p, expr: combined };
     }
     return lhs;
@@ -2582,11 +2594,11 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         ExprBinary(b) => {
             var l: RExpr = mono_expr(b.left, env, funcs, ins);
             var r: RExpr = mono_expr(b.right, env, funcs, l.rins);
-            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr }, rins: r.rins };
+            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr, line: b.line, col: b.col }, rins: r.rins };
         },
         ExprUnary(u) => {
             var o: RExpr = mono_expr(u.operand, env, funcs, ins);
-            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr }, rins: o.rins };
+            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr, line: u.line, col: u.col }, rins: o.rins };
         },
         ExprCall(c) => {
             var nargs: Expr[] = [];
@@ -3062,11 +3074,11 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         ExprBinary(b) => {
             var l: RExpr = ms_expr(b.left, env, gstructs, funcs, ins);
             var r: RExpr = ms_expr(b.right, env, gstructs, funcs, l.rins);
-            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr }, rins: r.rins };
+            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr, line: b.line, col: b.col }, rins: r.rins };
         },
         ExprUnary(u) => {
             var o: RExpr = ms_expr(u.operand, env, gstructs, funcs, ins);
-            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr }, rins: o.rins };
+            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr, line: u.line, col: u.col }, rins: o.rins };
         },
         ExprCall(c) => {
             var rc: RExpr = ms_expr(c.callee, env, gstructs, funcs, ins);

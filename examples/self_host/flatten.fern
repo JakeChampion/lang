@@ -171,11 +171,13 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             return parser.ExprBinary {
                 op: b.op,
                 left: rewrite_expr(b.left, ctx),
-                right: rewrite_expr(b.right, ctx)
+                right: rewrite_expr(b.right, ctx),
+                line: b.line,
+                col: b.col
             };
         },
         parser.ExprUnary(u) => {
-            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx) };
+            return parser.ExprUnary { op: u.op, operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col };
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex {

@@ -278,6 +278,26 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-operator", func(t *testing.T) {
+		// E009 (boolean/numeric operand) and E041 (compare mismatch) are
+		// reported at the operator token: the binary operator, or the
+		// unary `!`.
+		for _, c := range []struct{ name, src, want string }{
+			{"and_nonbool", "function main(): i32 { var b: bool = true; var x: bool = b && 5; return 0; }\n", "1:60: error[E009]"},
+			{"not_nonbool", "function main(): i32 { var x: bool = !5; return 0; }\n", "1:38: error[E009]"},
+			{"compare_mismatch", "function main(): i32 { var t = (1 == \"x\"); return 0; }\n", "1:35: error[E041]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-ident", func(t *testing.T) {
 		// E036 (ambiguous unqualified variant) and the ident-argument
 		// case of E038 are reported at the identifier's own position.
