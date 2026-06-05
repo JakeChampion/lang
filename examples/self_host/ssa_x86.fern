@@ -190,6 +190,26 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], out: string): s
         out = out + "    call __fn_" + ins.str + "\n";
         return store_res(reg_of, widths, ins.result, "a", out);
     }
+    if (ins.kind == "funcaddr") {
+        // Materialise a function's address (a closure code pointer) via a
+        // RIP-relative lea; the result is pointer-width.
+        out = out + "    leaq __fn_" + ins.str + "(%rip), %rax\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
+    if (ins.kind == "call_indirect") {
+        // args[0] is the code pointer; args[1..] the call args. Load the
+        // pointer into %rax (not an allocatable reg, r10/r11, nor an arg reg)
+        // before staging argregs, then call through it.
+        out = out + "    movq " + regn(reg_of, ins.args[0], 64) + ", %rax\n";
+        var ci: i32 = 1;
+        while (ci < ins.args.len() && ci <= 6) {
+            var caw: i32 = widths[ins.args[ci]];
+            out = out + "    " + w_mov(caw) + " " + regn(reg_of, ins.args[ci], caw) + ", " + argreg_w(ci - 1, caw) + "\n";
+            ci = ci + 1;
+        }
+        out = out + "    call *%rax\n";
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
     if (ins.kind == "alloc") {
         // Bump-allocate 8-byte word slots off the heap pointer. Every element
         // occupies a word so a pointer element (struct field) fits; i32

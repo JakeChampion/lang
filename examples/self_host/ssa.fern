@@ -343,6 +343,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
             return s.emit(SInst { kind: "const_bool", result: s.cur_id(), args: args0, imm: iv, str: "" });
         },
         parser.ExprIdent(id) => {
+            // A no-capture lambda binding used as a VALUE (passed / returned)
+            // becomes its function address — a code pointer for an indirect
+            // call. Capturing ones need a heap box (deferred), so they bail.
+            var idfn: string = s.get_var_type(id.name);
+            if (idfn.len() > 3 && idfn[0:3] == "fn:") {
+                var idrest: string = idfn[3 : idfn.len()];
+                if (index_of_byte(idrest, 124) >= 0) { return s.fail(); }   // captures: no box yet
+                s = s.fresh();
+                var faa: i32[] = [];
+                return s.emit(SInst { kind: "funcaddr", result: s.cur_id(), args: faa, imm: 0, str: idrest });
+            }
             var v: i32 = s.get_var(id.name);
             if (v < 0) { return s.fail(); }
             s = s.fresh();
@@ -389,6 +400,27 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // Indirect call: the callee is a function-VALUE local (a
+                    // param/var of type "fn", recorded "fnval"), holding a code
+                    // pointer. Lower to call_indirect — args[0] is the pointer,
+                    // args[1..] the call args. (A no-capture lambda passed by
+                    // name reaches here as that pointer via funcaddr.)
+                    if (s.get_var_type(cid.name) == "fnval") {
+                        var iav: i32[] = [];
+                        var iai: i32 = 0;
+                        while (iai < c.args.len()) {
+                            s = build_expr(c.args[iai], s);
+                            if (!s.ok) { return s; }
+                            iav = iav.push(s.cur_id());
+                            iai = iai + 1;
+                        }
+                        var fpv: i32 = s.get_var(cid.name);
+                        var icargs: i32[] = [fpv];
+                        var ica: i32 = 0;
+                        while (ica < iav.len()) { icargs = icargs.push(iav[ica]); ica = ica + 1; }
+                        s = s.fresh();
+                        return s.emit(SInst { kind: "call_indirect", result: s.cur_id(), args: icargs, imm: 0, str: "" });
+                    }
                     // print(s) — write the string's bytes to stdout. A
                     // dedicated op (the backends emit a write-syscall helper);
                     // not a generic call, so calls_all_known doesn't bail.
@@ -1704,6 +1736,7 @@ pub struct BResult { func: SFunc, ok: boolean }
 pub function is_ptr_type(tn: string): boolean {
     if (tn.len() == 0) { return false; }
     if (tn == "string") { return true; }   // strings are byte-array pointers
+    if (tn == "fn") { return true; }        // function value — a code pointer
     return tn[tn.len() - 1] == 93;          // ']' — array types
 }
 
@@ -1786,6 +1819,7 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
         var ptn: string = fd.params[pj].type_name;
         if (ptn.len() >= 10 && ptn[0:10] == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
         else if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        else if (ptn == "fn") { s = s.set_var_type(fd.params[pj].name, "fnval"); }
         else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }
         else if (is_struct_type(ptn, structs) || ptn == "string") { s = s.set_var_type(fd.params[pj].name, ptn); }
         pj = pj + 1;
@@ -2397,6 +2431,7 @@ pub function compute_widths(f: SFunc): i32[] {
                 var ins: SInst = blk.insts[k];
                 var make64: boolean = false;
                 if (ins.kind == "alloc") { make64 = true; }
+                else if (ins.kind == "funcaddr") { make64 = true; }   // a code pointer
                 else if (ins.kind == "param" && ins.str == "ptr") { make64 = true; }
                 else if (ins.kind == "call" && ins.imm == 1) { make64 = true; }   // pointer-returning call
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
@@ -2681,7 +2716,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.push(ins); } else { changed = true; }
                 k = k + 1;
             }
