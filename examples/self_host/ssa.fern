@@ -319,6 +319,37 @@ function ends_with_brackets(t: string): boolean {
     return n >= 2 && t[n - 2 : n] == "[]";
 }
 
+// is_boxed_fnty reports whether a callee's recorded type denotes a closure
+// BOX held in the variable (called indirectly through box[0]): a function
+// value ("fnval") or a capturing lambda binding ("fn:…|…").
+function is_boxed_fnty(t: string): boolean {
+    if (t == "fnval") { return true; }
+    if (t.len() > 3 && t[0:3] == "fn:" && index_of_byte(t, 124) >= 0) { return true; }
+    return false;
+}
+
+// emit_fn_box materialises a 1-slot closure box [funcaddr(fnname)] — the value
+// form of a no-capture lambda or a named function, so it flows through the
+// same indirect-call path as a capturing closure (which carries extra slots).
+function emit_fn_box(s: BState, fnname: string): BState {
+    s = s.fresh();
+    var fa: i32 = s.cur_id();
+    var ea: i32[] = [];
+    s = s.emit(SInst { kind: "funcaddr", result: fa, args: ea, imm: 0, str: fnname });
+    s = s.fresh();
+    var box: i32 = s.cur_id();
+    var na: i32[] = [];
+    s = s.emit(SInst { kind: "alloc", result: box, args: na, imm: 1, str: "" });
+    s = s.kconst(0);
+    var z: i32 = s.cur_id();
+    s = s.fresh();
+    var sa: i32[] = [box, z, fa];
+    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: sa, imm: 0, str: "" });
+    s = s.fresh();
+    var ca: i32[] = [box];
+    return s.emit(SInst { kind: "copy", result: s.cur_id(), args: ca, imm: 0, str: "" });
+}
+
 // count_fn_markers counts var-type entries that name a lifted lambda ("fn:…").
 // A lambda binding's index (used to build its lifted name) is the number of
 // such markers already recorded — matching collect_lambdas's body order.
@@ -352,19 +383,15 @@ function build_expr(e: parser.Expr, s: BState): BState {
             // becomes its function address — a code pointer for an indirect
             // call. Capturing ones need a heap box (deferred), so they bail.
             var idfn: string = s.get_var_type(id.name);
-            if (idfn.len() > 3 && idfn[0:3] == "fn:") {
-                var idrest: string = idfn[3 : idfn.len()];
-                if (index_of_byte(idrest, 124) >= 0) { return s.fail(); }   // captures: no box yet
-                s = s.fresh();
-                var faa: i32[] = [];
-                return s.emit(SInst { kind: "funcaddr", result: s.cur_id(), args: faa, imm: 0, str: idrest });
+            // A no-capture lambda or a named top-level function used as a VALUE
+            // → a 1-slot closure box [funcaddr]. A capturing lambda binding
+            // ("fn:…|…") already holds its box in the var, so it falls through
+            // to the plain get_var copy below.
+            if (idfn.len() > 3 && idfn[0:3] == "fn:" && index_of_byte(idfn, 124) < 0) {
+                return emit_fn_box(s, idfn[3 : idfn.len()]);
             }
-            // A top-level function used as a value → its address (a code
-            // pointer for an indirect call).
             if (idfn.len() >= 4 && idfn[0:4] == "gfn:") {
-                s = s.fresh();
-                var gfa: i32[] = [];
-                return s.emit(SInst { kind: "funcaddr", result: s.cur_id(), args: gfa, imm: 0, str: id.name });
+                return emit_fn_box(s, id.name);
             }
             var v: i32 = s.get_var(id.name);
             if (v < 0) { return s.fail(); }
@@ -412,12 +439,13 @@ function build_expr(e: parser.Expr, s: BState): BState {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    // Indirect call: the callee is a function-VALUE local (a
-                    // param/var of type "fn", recorded "fnval"), holding a code
-                    // pointer. Lower to call_indirect — args[0] is the pointer,
-                    // args[1..] the call args. (A no-capture lambda passed by
-                    // name reaches here as that pointer via funcaddr.)
-                    if (s.get_var_type(cid.name) == "fnval") {
+                    // Indirect call: the callee is a function-VALUE local
+                    // (recorded "fnval"), holding a closure BOX — a tuple-style
+                    // (fn_addr, cap…). Load fn_addr from slot 0 and call through
+                    // it, passing the box itself as a trailing env arg. A
+                    // capturing lifted body reads its captures from that env; a
+                    // no-capture / named function ignores the extra register.
+                    if (is_boxed_fnty(s.get_var_type(cid.name))) {
                         var iav: i32[] = [];
                         var iai: i32 = 0;
                         while (iai < c.args.len()) {
@@ -426,10 +454,17 @@ function build_expr(e: parser.Expr, s: BState): BState {
                             iav = iav.push(s.cur_id());
                             iai = iai + 1;
                         }
-                        var fpv: i32 = s.get_var(cid.name);
-                        var icargs: i32[] = [fpv];
+                        var boxv: i32 = s.get_var(cid.name);
+                        s = s.kconst(0);
+                        var bzi: i32 = s.cur_id();
+                        s = s.fresh();
+                        var bla: i32[] = [boxv, bzi];
+                        s = s.emit(SInst { kind: "load_elem", result: s.cur_id(), args: bla, imm: 0, str: "" });
+                        var fnaddr: i32 = s.cur_id();
+                        var icargs: i32[] = [fnaddr];
                         var ica: i32 = 0;
                         while (ica < iav.len()) { icargs = icargs.push(iav[ica]); ica = ica + 1; }
+                        icargs = icargs.push(boxv);
                         s = s.fresh();
                         return s.emit(SInst { kind: "call_indirect", result: s.cur_id(), args: icargs, imm: 0, str: "" });
                     }
@@ -856,28 +891,51 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
                 }
                 return s;
             }
-            // A lambda binding `var f = function(...){...}` — the lambda is
-            // lifted to a top-level function <parent>$lam$<i> (collect_lambdas,
-            // body order). Record f in the var-type map as "fn:<name>" (plus
-            // "|cap,cap" when it captures) so a later direct call f(...)
-            // dispatches there and passes the captured values; the lambda has
-            // no SSA value of its own (so using f as a non-call value bails,
-            // falling back to the AST emitter — escaping closures aren't in the
-            // subset yet). The index is the count of fn: markers seen so far,
-            // matching collect_lambdas's body-order numbering; the capture set
-            // (lambda_free_caps over the in-scope vars) matches it too.
+            // A lambda binding `var f = function(...){...}` — lifted to a
+            // top-level function <parent>$lam$<i> (collect_lambdas, body order;
+            // the index is the running count of fn: markers, which matches).
+            // A NO-CAPTURE lambda just records the marker "fn:<name>" and is
+            // called directly (the fast path); used as a value it boxes on
+            // demand (emit_fn_box). A CAPTURING lambda is materialised right
+            // here as a closure box [funcaddr(<name>), cap…] bound to f, and
+            // recorded "fn:<name>|" so the marker still counts for indexing
+            // and `f(...)` / `f` dispatch through the box (is_boxed_fnty). The
+            // captures are stored by value (the same read-only contract as
+            // before); the lifted body reads them back from the box (env).
             match (v.init) {
                 parser.ExprLambda(lam) => {
                     var lidx: i32 = count_fn_markers(s.vt_types);
-                    var marker: string = "fn:" + s.name + "$lam$" + int_str(lidx);
+                    var lname: string = s.name + "$lam$" + int_str(lidx);
                     var lcaps: string[] = lambda_free_caps(lam, s.var_names);
-                    var mci: i32 = 0;
-                    while (mci < lcaps.len()) {
-                        if (mci == 0) { marker = marker + "|"; } else { marker = marker + ","; }
-                        marker = marker + lcaps[mci];
-                        mci = mci + 1;
+                    if (lcaps.len() == 0) { return s.set_var_type(v.name, "fn:" + lname); }
+                    // Build the box: alloc(1+ncaps), slot 0 = fn addr, slots
+                    // 1..n = captured values (32-bit slots; low-heap pointers
+                    // round-trip like array elements).
+                    s = s.fresh();
+                    var lfa: i32 = s.cur_id();
+                    var lea: i32[] = [];
+                    s = s.emit(SInst { kind: "funcaddr", result: lfa, args: lea, imm: 0, str: lname });
+                    s = s.fresh();
+                    var lbox: i32 = s.cur_id();
+                    var lna: i32[] = [];
+                    s = s.emit(SInst { kind: "alloc", result: lbox, args: lna, imm: lcaps.len() + 1, str: "" });
+                    s = s.kconst(0);
+                    var lz: i32 = s.cur_id();
+                    s = s.fresh();
+                    var lsa: i32[] = [lbox, lz, lfa];
+                    s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lsa, imm: 0, str: "" });
+                    var lci: i32 = 0;
+                    while (lci < lcaps.len()) {
+                        s = s.kconst(lci + 1);
+                        var lslot: i32 = s.cur_id();
+                        var lcv: i32 = s.get_var(lcaps[lci]);
+                        s = s.fresh();
+                        var lcsa: i32[] = [lbox, lslot, lcv];
+                        s = s.emit(SInst { kind: "store_elem", result: s.cur_id(), args: lcsa, imm: 0, str: "" });
+                        lci = lci + 1;
                     }
-                    return s.set_var_type(v.name, marker);
+                    s = s.set_var(v.name, lbox);
+                    return s.set_var_type(v.name, "fn:" + lname + "|");
                 },
                 _ => { }
             }
@@ -1711,26 +1769,45 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             var nm: string = fd.name + "$lam$" + int_str(cnt);
                             cnt = cnt + 1;
                             var caps: string[] = lambda_free_caps(lam, parent_locals_upto(fd, si));
-                            // A capture is passed by value at each call site.
-                            // That's unambiguously correct only when the capture
-                            // is never reassigned — in the parent (call-time
-                            // value would then differ from creation-time) or in
-                            // the lambda body (a by-value copy wouldn't propagate
-                            // the write out). Bail to the AST emitter otherwise,
-                            // or when a capture's type can't be resolved.
+                            var tp: string[] = [];
+                            if (caps.len() == 0) {
+                                // No captures: lift verbatim. Called directly
+                                // (fast path) or via a 1-slot box (env ignored).
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0 });
+                            } else {
+                            // Capturing: the closure is boxed [fn_addr, cap…] at
+                            // its binding; the lifted body reads captures back
+                            // from the box passed as a trailing `__env` param.
+                            // Prepend `var cap: T = __env.<1+i>;` (tuple-index
+                            // load) so the body sees each capture as a local.
+                            // A capture passed by value is unambiguous only when
+                            // never reassigned — in the parent (call-time vs
+                            // creation-time) or in the body (a copy can't write
+                            // back) — and its type must resolve; else don't lift
+                            // (the box's funcaddr → unbuilt name → AST fallback).
                             var lam_assigned: string[] = collect_assigned(lam.body);
-                            var params: parser.ParamDecl[] = lam.params;
+                            var ctypes: string[] = [];
                             var ok: boolean = true;
                             var ci: i32 = 0;
                             while (ci < caps.len()) {
                                 var ct: string = resolve_capture_type(caps[ci], fd);
                                 var muted: boolean = index_of_str(parent_assigned, caps[ci]) >= 0 || index_of_str(lam_assigned, caps[ci]) >= 0;
                                 if (ct.len() == 0 || muted) { ok = false; ci = caps.len(); }
-                                else { params = params.push(parser.ParamDecl { name: caps[ci], type_name: ct }); ci = ci + 1; }
+                                else { ctypes = ctypes.push(ct); ci = ci + 1; }
                             }
                             if (ok) {
-                                var tp: string[] = [];
-                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0 });
+                                var eparams: parser.ParamDecl[] = lam.params.push(parser.ParamDecl { name: "__env", type_name: "fn" });
+                                var ebody: parser.Stmt[] = [];
+                                var cj: i32 = 0;
+                                while (cj < caps.len()) {
+                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env" }, field: int_str(cj + 1) };
+                                    ebody = ebody.push(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0 });
+                                    cj = cj + 1;
+                                }
+                                var bk: i32 = 0;
+                                while (bk < lam.body.len()) { ebody = ebody.push(lam.body[bk]); bk = bk + 1; }
+                                out = out.push(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0 });
+                            }
                             }
                         },
                         _ => { }
@@ -2514,7 +2591,12 @@ pub function calls_all_known(f: SFunc, known: string[]): boolean {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            if (ins.kind == "call") {
+            // A direct call or a function-address (closure box slot 0) must
+            // target a known function. A capturing lambda whose lift was
+            // declined (unresolved capture type) leaves a funcaddr to an
+            // unbuilt name here, so this fails it and the whole program falls
+            // back to the AST emitter. (call_indirect has no static target.)
+            if (ins.kind == "call" || ins.kind == "funcaddr") {
                 var found: boolean = false;
                 var j: i32 = 0;
                 while (j < known.len()) { if (known[j] == ins.str) { found = true; } j = j + 1; }
