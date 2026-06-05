@@ -28,6 +28,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
 	"E003": true, // assignment / annotated-var type mismatch
 	"E008": true, // non-boolean if/while condition
+	"E009": true, // non-boolean operand of && / || / !
 	"E011": true, // break / continue outside a loop
 	"E012": true, // return without value in a non-void function
 	"E013": true, // duplicate var in the same block
@@ -184,6 +185,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"empty-array-no-annotation", "function main(): i32 { var x = []; return 0; }\n", []string{"E020"}},
 		{"empty-array-annotated-ok", "function main(): i32 { var x: i32[] = []; return 0; }\n", nil},
 		{"nonempty-array-ok", "function main(): i32 { var x = [1, 2]; return x[0]; }\n", nil},
+		{"and-on-ints", "function main(): i32 { if (1 && 2) { return 1; } return 0; }\n", []string{"E009"}},
+		{"not-on-int", "function main(): i32 { if (!5) { return 1; } return 0; }\n", []string{"E009"}},
+		{"and-on-bools-ok", "function main(): i32 { if ((1 < 2) && (2 < 3)) { return 1; } return 0; }\n", nil},
+		{"not-on-bool-ok", "function main(): i32 { if (!(1 < 2)) { return 1; } return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

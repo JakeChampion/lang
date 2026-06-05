@@ -143,8 +143,13 @@ same code(s) the Go checker does — restricted to
   skipped: it doesn't fire in the standalone `-check` path the differential
   gate uses — builtins aren't injected there — so it isn't differentially
   testable.)
+- **Slice 13 (done): boolean-operator operand type** (E009). `call_diags`
+  now also checks that `&&` / `||` operands and a `!` operand are boolean,
+  emitting E009 for a concrete non-bool operand (unknowns skipped). Scoped
+  to the always-boolean operators; arithmetic / integer / float operand
+  rules (also E009) and comparison mismatch (E041) follow.
 - **Later: pattern matching** (E014/E025/E036), traits (E021), unknown
-  field (E043), operator-type (E009/E041), tuples / maps / slices,
+  field (E043), comparison mismatch (E041), tuples / maps / slices,
   owned-parameter move checking (E050/E051), then source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
