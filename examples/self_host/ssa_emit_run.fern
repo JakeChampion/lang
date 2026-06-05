@@ -58,13 +58,13 @@ function main(): i32 {
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs);
+        var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs, mod.funcs);
         if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
     }
     var li: i32 = 0;
     while (li < lifted.len()) {
-        var lr: ssa.BResult = ssa.build_func(lifted[li], mod.structs);
+        var lr: ssa.BResult = ssa.build_func(lifted[li], mod.structs, mod.funcs);
         if (lr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(lr.func, ptr_ret))); }
         li = li + 1;
     }
@@ -74,7 +74,7 @@ function main(): i32 {
     var hi: i32 = 0;
     while (hi < hmod.funcs.len()) {
         if (ssa.calls_func(funcs, hmod.funcs[hi].name)) {
-            var hr: ssa.BResult = ssa.build_func(hmod.funcs[hi], mod.structs);
+            var hr: ssa.BResult = ssa.build_func(hmod.funcs[hi], mod.structs, mod.funcs);
             if (hr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
         }
         hi = hi + 1;

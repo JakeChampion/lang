@@ -282,6 +282,11 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
+                    // A call to a function that returns a function value: the
+                    // result is itself a function value (so a `var g = maker()`
+                    // dispatches calls indirectly).
+                    var cgt: string = s.get_var_type(cid.name);
+                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { if (cgt[4 : cgt.len()] == "fn") { return "fn"; } }
                 },
                 parser.ExprFieldAccess(fa2) => { if (fa2.field == "set") { return type_of_expr(fa2.obj, s); } },
                 _ => { }
@@ -353,6 +358,13 @@ function build_expr(e: parser.Expr, s: BState): BState {
                 s = s.fresh();
                 var faa: i32[] = [];
                 return s.emit(SInst { kind: "funcaddr", result: s.cur_id(), args: faa, imm: 0, str: idrest });
+            }
+            // A top-level function used as a value → its address (a code
+            // pointer for an indirect call).
+            if (idfn.len() >= 4 && idfn[0:4] == "gfn:") {
+                s = s.fresh();
+                var gfa: i32[] = [];
+                return s.emit(SInst { kind: "funcaddr", result: s.cur_id(), args: gfa, imm: 0, str: id.name });
             }
             var v: i32 = s.get_var(id.name);
             if (v < 0) { return s.fail(); }
@@ -878,6 +890,11 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // map-method / element-type resolution. An array type "T[]" lets a
             // later `a[i].field` recover the element type T (type_of_expr's
             // ExprIndex arm strips the trailing "[]").
+            // A function value flowing into a var — a call returning a function
+            // ("fn"), a lambda binding used as a value ("fn:…"), or a top-level
+            // function name ("gfn:…") — is recorded "fnval" so calls through it
+            // dispatch indirectly.
+            if (ity == "fn" || (ity.len() > 3 && ity[0:3] == "fn:") || (ity.len() >= 4 && ity[0:4] == "gfn:")) { return s.set_var_type(v.name, "fnval"); }
             if (ity == "Map" || ity == "SMap") { return s.set_var_type(v.name, ity); }
             if (ends_with_brackets(ity)) { return s.set_var_type(v.name, ity); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
@@ -1788,7 +1805,7 @@ function struct_field_width(structs: parser.StructDecl[], sname: string, field: 
     return 32;
 }
 
-pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BResult {
+pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): BResult {
     var f0: SFunc = SFunc { name: fd.name, nparams: 0, nvals: 0, blocks: [], entry: 0 };
     // Params occupy value ids 0..nparams-1, defined by "param" insts in
     // the entry block (block id 0). A pointer-shaped param — array / string
@@ -1811,6 +1828,16 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     var nparams: i32 = fd.params.len();
     var entryblk: SBlock = SBlock { id: 0, insts: insts0, term: t_none(), preds: [] };
     var s: BState = mk_bs(fd.name, nparams, nparams, 1, [], entryblk, pnames, pvals, true, lc_none(), structs, [], []);
+    // Seed the var-type map with every top-level function as "gfn:<ret>" so a
+    // name used as a VALUE (→ funcaddr) and a call's result type are both
+    // visible: `apply(work, …)` passes work's address, `var g = maker()` (maker
+    // returning a function) records g as a function value. Seeded first, so a
+    // param / local of the same name shadows it (last-wins lookup).
+    var gi: i32 = 0;
+    while (gi < funcs.len()) {
+        s = s.set_var_type(funcs[gi].name, "gfn:" + funcs[gi].ret_type);
+        gi = gi + 1;
+    }
     // Record struct- / string- / Map-typed params' types for field-access,
     // concat, and map-method (.len) resolution. A map param is spelled
     // `Map[K, V]`; record it as "Map" so `m.len()` dispatches to the helper.
