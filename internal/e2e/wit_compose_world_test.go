@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/wasm/component"
+	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
 // TestComposeStdoutFromWorld is P2's end-to-end gate: a stdout component whose
@@ -46,7 +47,11 @@ func TestComposeStdoutFromWorld(t *testing.T) {
 
 	// ComposeFromWorldAuto derives the wired imports from the core module's
 	// own imports (classified against the world) — no hardcoded list.
-	comp, err := component.ComposeFromWorldAuto(core, "fern")
+	w, err := componenttype.DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	comp, err := component.ComposeFromWorldAuto(core, w)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto: %v", err)
 	}
@@ -101,7 +106,11 @@ func TestComposeFsFromWorld(t *testing.T) {
 	}
 	core := componentCoreSection(t, ref)
 
-	comp, err := component.ComposeFromWorldAuto(core, "fern")
+	w, err := componenttype.DecodeWorld("fern")
+	if err != nil {
+		t.Fatalf("DecodeWorld: %v", err)
+	}
+	comp, err := component.ComposeFromWorldAuto(core, w)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto: %v", err)
 	}

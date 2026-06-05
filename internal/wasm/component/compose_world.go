@@ -16,14 +16,11 @@ import (
 // The native Compose path is untouched.
 
 // ComposeFromWorld wraps `core` into a component whose top-level imports are
-// the full `world` (decoded from the embedded component-type binary), lifting
-// `coreExportName` as wasi:cli/run. `imports` are the preview-2 imports the
-// core actually uses (the rest of the world is imported but unused).
-func ComposeFromWorld(core []byte, world, coreExportName string, imports []gImport) ([]byte, error) {
-	w, err := componenttype.DecodeWorld(world)
-	if err != nil {
-		return nil, err
-	}
+// the full decoded `w` world, lifting `coreExportName` as wasi:cli/run.
+// `imports` are the preview-2 imports the core actually uses (the rest of the
+// world is imported but unused). `w` may be an embedded world (DecodeWorld) or
+// a user-supplied one (DecodeWorldBytes) — the path is identical.
+func ComposeFromWorld(core []byte, w *componenttype.World, coreExportName string, imports []gImport) ([]byte, error) {
 	prefix, err := w.EmitWorldImports()
 	if err != nil {
 		return nil, err
@@ -179,11 +176,12 @@ func coreFuncImports(bin []byte) []coreFuncImport {
 // list. Every imported interface must be declared by the world, and
 // resource-drop imports are not handled yet (they appear in socket/http shapes,
 // not CLI/fs ones).
-func ComposeFromWorldAuto(core []byte, world string) ([]byte, error) {
-	w, err := componenttype.DecodeWorld(world)
-	if err != nil {
-		return nil, err
-	}
+// ComposeFromWorldAuto wraps `core` into a wasi:cli/run component, deriving the
+// imports it wires from the core module's own function imports classified
+// against the decoded world `w` (embedded or user-supplied). No hardcoded
+// import list. Every imported interface must be declared by the world;
+// resource-drop imports are not handled yet.
+func ComposeFromWorldAuto(core []byte, w *componenttype.World) ([]byte, error) {
 	byIface := map[string]componenttype.WorldInterface{}
 	for _, wi := range w.Interfaces() {
 		byIface[wi.Name] = wi
@@ -195,7 +193,7 @@ func ComposeFromWorldAuto(core []byte, world string) ([]byte, error) {
 		}
 		wi, ok := byIface[imp.module]
 		if !ok {
-			return nil, fmt.Errorf("component: core imports interface %q not declared by world %q", imp.module, world)
+			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
 		}
 		f, ok := worldFunc(wi, imp.name)
 		if !ok {
@@ -208,7 +206,7 @@ func ComposeFromWorldAuto(core []byte, world string) ([]byte, error) {
 			params: imp.params,
 		})
 	}
-	return ComposeFromWorld(core, world, "_lang_run", imports)
+	return ComposeFromWorld(core, w, "_lang_run", imports)
 }
 
 func worldFunc(wi componenttype.WorldInterface, name string) (componenttype.WorldFunc, bool) {
