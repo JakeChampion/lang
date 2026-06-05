@@ -247,31 +247,53 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"match-area", "struct Circle { r: i32 } struct Square { side: i32 } type Shape = Circle | Square; function area(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r * c.r * 3; }, Square(s) => { return s.side * s.side; } } return 0; } function main(): i32 { var a: Shape = Circle { r: 4 }; var b: Shape = Square { side: 5 }; return area(a) + area(b); }", 73},
 	}
 
+	// run assembles `asm` and asserts the program exits with tc.want.
+	run := func(t *testing.T, src string, want int, asm []byte) {
+		t.Helper()
+		asmPath := filepath.Join(dir, "prog.s")
+		binPath := filepath.Join(dir, "prog")
+		if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
+			t.Fatalf("write asm: %v", err)
+		}
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+			t.Fatalf("gcc failed for %q: %v\n%s\n--- asm ---\n%s", src, err, out, asm)
+		}
+		cmd := exec.Command(binPath)
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("emitted program did not exit normally for %q", src)
+		}
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("SSA→x86-64 of %q = %d, want %d", src, got, want)
+		}
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Run the driver to produce assembly on stdout.
 			emit := exec.Command(bin)
 			emit.Stdin = strings.NewReader(tc.src)
 			asm, err := emit.Output()
 			if err != nil {
 				t.Fatalf("emit driver failed for %q: %v", tc.src, err)
 			}
-			asmPath := filepath.Join(dir, "prog.s")
-			binPath := filepath.Join(dir, "prog")
-			if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
-				t.Fatalf("write asm: %v", err)
+			run(t, tc.src, tc.want, asm)
+		})
+	}
+
+	// Re-run every case through the register allocator (-regalloc). The default
+	// driver run above leaves the allocator off, but the CLI (fern.try_ssa)
+	// uses it — so without this pass, allocator bugs (e.g. the loop-invariant
+	// live-range clobber where a value live across a loop shared a register
+	// with a loop-body temp) ship untested. Same programs, same expected exits.
+	for _, tc := range cases {
+		t.Run("regalloc/"+tc.name, func(t *testing.T) {
+			emit := exec.Command(bin, "-regalloc")
+			emit.Stdin = strings.NewReader(tc.src)
+			asm, err := emit.Output()
+			if err != nil {
+				t.Fatalf("emit -regalloc driver failed for %q: %v", tc.src, err)
 			}
-			if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-				t.Fatalf("gcc failed for %q: %v\n%s\n--- asm ---\n%s", tc.src, err, out, asm)
-			}
-			cmd := exec.Command(binPath)
-			_ = cmd.Run()
-			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-				t.Fatalf("emitted program did not exit normally for %q", tc.src)
-			}
-			if got := cmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("SSA→x86-64 of %q = %d, want %d", tc.src, got, tc.want)
-			}
+			run(t, tc.src, tc.want, asm)
 		})
 	}
 }

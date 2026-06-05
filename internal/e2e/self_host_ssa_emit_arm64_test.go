@@ -213,25 +213,39 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"match-area", "struct Circle { r: i32 } struct Square { side: i32 } type Shape = Circle | Square; function area(sh: Shape): i32 { match (sh) { Circle(c) => { return c.r * c.r * 3; }, Square(s) => { return s.side * s.side; } } return 0; } function main(): i32 { var a: Shape = Circle { r: 4 }; var b: Shape = Square { side: 5 }; return area(a) + area(b); }", 73},
 	}
 
+	// run assembles arm64 `asm` (under qemu) and asserts the exit code.
+	run := func(t *testing.T, src string, want int, asm []byte) {
+		t.Helper()
+		asmPath := filepath.Join(dir, "prog.s")
+		binPath := filepath.Join(dir, "prog")
+		if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
+			t.Fatalf("write asm: %v", err)
+		}
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+			t.Fatalf("gcc failed for %q: %v\n%s\n--- asm ---\n%s", src, err, out, asm)
+		}
+		cmd := runArm64Bin(qemu, binPath)
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("emitted program did not exit normally for %q", src)
+		}
+		if got := cmd.ProcessState.ExitCode(); got != want {
+			t.Errorf("SSA→arm64 of %q = %d, want %d", src, got, want)
+		}
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runDriver(t, tc.src, "-target", "arm64")
-			asmPath := filepath.Join(dir, "prog.s")
-			binPath := filepath.Join(dir, "prog")
-			if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
-				t.Fatalf("write asm: %v", err)
-			}
-			if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-				t.Fatalf("gcc failed for %q: %v\n%s\n--- asm ---\n%s", tc.src, err, out, asm)
-			}
-			cmd := runArm64Bin(qemu, binPath)
-			_ = cmd.Run()
-			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-				t.Fatalf("emitted program did not exit normally for %q", tc.src)
-			}
-			if got := cmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("SSA→arm64 of %q = %d, want %d", tc.src, got, tc.want)
-			}
+			run(t, tc.src, tc.want, runDriver(t, tc.src, "-target", "arm64"))
+		})
+	}
+
+	// Re-run every case through the register allocator (-regalloc) — the path
+	// the CLI uses. Guards the allocator on arm64 (x12-x15 + the shared
+	// liveness fixes) the same way the x86 suite does.
+	for _, tc := range cases {
+		t.Run("regalloc/"+tc.name, func(t *testing.T) {
+			run(t, tc.src, tc.want, runDriver(t, tc.src, "-regalloc", "-target", "arm64"))
 		})
 	}
 }
