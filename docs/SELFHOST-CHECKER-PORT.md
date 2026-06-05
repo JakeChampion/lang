@@ -148,9 +148,14 @@ same code(s) the Go checker does — restricted to
   emitting E009 for a concrete non-bool operand (unknowns skipped). Scoped
   to the always-boolean operators; arithmetic / integer / float operand
   rules (also E009) and comparison mismatch (E041) follow.
+- **Slice 14 (done): equality comparison mismatch** (E041). `call_diags`
+  emits E041 for an `==` / `!=` whose operands aren't the same type — the
+  same rule `check_expr` applies. (Ordering ops `<` / `<=` / `>` / `>=` on
+  mismatched types are E009, not E041, and aren't handled here.)
 - **Later: pattern matching** (E014/E025/E036), traits (E021), unknown
-  field (E043), comparison mismatch (E041), tuples / maps / slices,
-  owned-parameter move checking (E050/E051), then source positions.
+  field (E043), arithmetic operand type (E009 integer/float),
+  tuples / maps / slices, owned-parameter move checking (E050/E051), then
+  source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
