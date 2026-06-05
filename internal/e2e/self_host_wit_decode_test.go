@@ -180,3 +180,95 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostWitWorldRoundTrip completes P1 of the self-host WIT decoder
+// port: it compiles, through the self-host, a driver that transcodes the
+// whole type and export sections of BOTH shipped worlds (fern + http) — the
+// full nested component/instance-type + decl/alias/externdesc grammar — and
+// asserts under wasmtime that each reproduces the original section bytes. The
+// payloads are injected from componenttype (single source of truth). This is
+// the self-host mirror of the Go decoder's fern.bin/http.bin round-trip.
+// Returns 0 on success; 1/2 = fern type/export, 3/4 = http type/export.
+func TestSelfHostWitWorldRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wit-world e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	leb, err := os.ReadFile("../../examples/self_host/leb128.fern")
+	if err != nil {
+		t.Fatalf("read leb128.fern: %v", err)
+	}
+	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
+	if err != nil {
+		t.Fatalf("read wit_decode.fern: %v", err)
+	}
+	source := string(leb) + "\n" + string(decode) + "\n" +
+		witPayloadFunc(t, "FERN_BIN", "fern") + witPayloadFunc(t, "HTTP_BIN", "http") + witWorldSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the wit-world self-test")
+	}
+	watPath := filepath.Join(dir, "wit_world_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("wit-world round-trip failed at check %d", code)
+	}
+}
+
+// witPayloadFunc emits `function <fn>(): string { return "<world bytes>"; }`.
+func witPayloadFunc(t *testing.T, fn, world string) string {
+	t.Helper()
+	payload, err := componenttype.PayloadFor(world)
+	if err != nil {
+		t.Fatalf("PayloadFor(%s): %v", world, err)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, `function %s(): string { return "`, fn)
+	for _, b := range payload {
+		fmt.Fprintf(&sb, `\x%02x`, b)
+	}
+	sb.WriteString("\"; }\n")
+	return sb.String()
+}
+
+const witWorldSelfTestMain = `
+function wit_bytes(s: string): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.push(s[i]); i = i + 1; }
+    return o;
+}
+function wit_eq2(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+function main(): i32 {
+    var fern: i32[] = wit_bytes(FERN_BIN());
+    if (!wit_eq2(wit_transcode_type_section(wit_section_body(fern, 7)), wit_section_body(fern, 7))) { return 1; }
+    if (!wit_eq2(wit_transcode_export_section(wit_section_body(fern, 11)), wit_section_body(fern, 11))) { return 2; }
+    var http: i32[] = wit_bytes(HTTP_BIN());
+    if (!wit_eq2(wit_transcode_type_section(wit_section_body(http, 7)), wit_section_body(http, 7))) { return 3; }
+    if (!wit_eq2(wit_transcode_export_section(wit_section_body(http, 11)), wit_section_body(http, 11))) { return 4; }
+    return 0;
+}
+`
