@@ -142,8 +142,8 @@ pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[] }
 // in the union and these stmts have no other state. The
 // surrounding while / for body handles the actual control
 // transfer.
-pub struct StmtBreak { tag: i32 }
-pub struct StmtContinue { tag: i32 }
+pub struct StmtBreak { tag: i32, line: i32, col: i32 }
+pub struct StmtContinue { tag: i32, line: i32, col: i32 }
 pub struct StmtUnknown { kind: string }
 
 // StmtDefer holds an action statement to run when the enclosing function
@@ -306,8 +306,10 @@ function s_while(cond: Expr, body: Stmt[]): Stmt {
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
     return StmtFor { var_name: var_name, iter: iter, body: body };
 }
-function s_break(): Stmt { return StmtBreak { tag: 0 }; }
-function s_continue(): Stmt { return StmtContinue { tag: 0 }; }
+function s_break(): Stmt { return StmtBreak { tag: 0, line: 0, col: 0 }; }
+function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line: line, col: col }; }
+function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0 }; }
+function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col }; }
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value, line: 0, col: 0 };
 }
@@ -1599,14 +1601,20 @@ function parse_stmt(p: Par): StmtResult {
         return StmtResult { par: p, stmt: s_return_at(val.expr, rline, rcol) };
     }
     if (kw == "break") {
+        // E011 is reported at the `break` keyword (Go's `Break{P}`).
+        var bkline: i32 = p.peek_line();
+        var bkcol: i32 = p.peek_col();
         p = p.advance();
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_break() };
+        return StmtResult { par: p, stmt: s_break_at(bkline, bkcol) };
     }
     if (kw == "continue") {
+        // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
+        var ckline: i32 = p.peek_line();
+        var ckcol: i32 = p.peek_col();
         p = p.advance();
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_continue() };
+        return StmtResult { par: p, stmt: s_continue_at(ckline, ckcol) };
     }
     // Expression statement — or (compound) assignment if `=`,
     // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't

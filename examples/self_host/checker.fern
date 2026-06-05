@@ -1629,11 +1629,11 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtBreak(_) => {
-                if (!in_loop) { out = out.push(dg("E011", "break outside of a loop or switch")); }
+            parser.StmtBreak(bk) => {
+                if (!in_loop) { out = out.push(dg_at("E011", "break outside of a loop or switch", bk.line, bk.col)); }
             },
-            parser.StmtContinue(_) => {
-                if (!in_loop) { out = out.push(dg("E011", "continue outside of a loop")); }
+            parser.StmtContinue(ck) => {
+                if (!in_loop) { out = out.push(dg_at("E011", "continue outside of a loop", ck.line, ck.col)); }
             },
             parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
             parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },

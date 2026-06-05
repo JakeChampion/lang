@@ -350,6 +350,12 @@ same code(s) the Go checker does — restricted to
   not i32) lands on the offending bound (`1:72` low, `1:74` high), all
   matching Go. Trivially fixpoint-safe (checker isn't in the bundle).
   Gated by a new `check-position-cond-slice`.
+- **Slice 38 (done): `StmtBreak` / `StmtContinue` positions → E011 line:col.**
+  Both gain `line`/`col`, captured at the keyword in `parse_stmt` via new
+  `s_break_at` / `s_continue_at` (matching the Go parser's `Break{P}` /
+  `Continue{P}`). **E011** (break / continue outside a loop) now prints
+  `1:24: error[E011]` for both, matching Go. Fixpoint-safe. Gated by a new
+  `check-position-break-continue`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
