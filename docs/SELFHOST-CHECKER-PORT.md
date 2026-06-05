@@ -97,8 +97,15 @@ same code(s) the Go checker does — restricted to
   the function) and emit E004 when a free-function call's argument count
   doesn't match the function's declared parameter count. Conservative:
   only a name that resolves to a module function sig (and isn't a local
-  binding) is checked; method and closure arity are deferred. Remaining
-  type-mismatch codes — E003 (assignment), E038 (argument type) — follow.
+  binding) is checked; method and closure arity are deferred.
+- **Slice 6 (done): assignment / annotated-var mismatch** (E003).
+  `stmts_assign_diags` walks each body (scope-threaded) and emits E003 for
+  an annotated `var x: T = v` whose init type isn't assignable to T, or an
+  assignment `x = v` whose value type isn't assignable to x's declared
+  type. Reuses the same `type_assignable` predicate check_stmt uses, so no
+  new false positives. The remaining type-mismatch code, E038 (argument
+  type), follows. (The scope-threaded walks — ret_diags / stmts_call_diags
+  / stmts_assign_diags — could later be unified into one pass.)
 - **Slice 4: control-flow + conditions** (E008, E011, E012).
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.

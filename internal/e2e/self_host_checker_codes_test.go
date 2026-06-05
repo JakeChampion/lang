@@ -26,6 +26,7 @@ var codeRE = regexp.MustCompile(`E\d{3}`)
 // slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
 var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
+	"E003": true, // assignment / annotated-var type mismatch
 	"E004": true, // free-function call arity
 	"E005": true, // struct literal missing field
 	"E006": true, // function / method redeclared
@@ -156,6 +157,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
 		{"call-shadowed-local-ok", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var f = function(x: i32): i32 { return x; }; return f(7); }\n", nil},
+		{"var-annotation-mismatch", "function main(): i32 { var x: i32 = \"no\"; return x; }\n", []string{"E003"}},
+		{"assign-mismatch", "function main(): i32 { var x: i32 = 1; x = \"no\"; return x; }\n", []string{"E003"}},
+		{"assign-ok", "function main(): i32 { var x: i32 = 1; x = 2; return x; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
