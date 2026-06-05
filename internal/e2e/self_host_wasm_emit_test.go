@@ -662,6 +662,19 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"inline-variant-display", "@derive(Display) enum Opt { Has(i32), Nil } function main(): i32 { write(Has(7).to_string()); write(\"|\"); write(Nil.to_string()); return 0; }", 0, "Has(7)|Nil"},
 		{"inline-variant-ord", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var r: i32 = 0; if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15, ""},
 		{"inline-enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { return Circle(3).area() + Square(4).area(); }", 43, ""},
+		// `dyn Trait` — a trait object whose concrete type varies at runtime.
+		// The wasm backend is static-dispatch, so `emit_dyn_dispatch` reads
+		// the receiver's runtime struct id (the tag at offset 0) and branches
+		// to the matching `$Struct__method`, over every struct that
+		// implements the method (mirroring the native runtime shape-compare).
+		// A heterogeneous `dyn Shape[]` summed via a loop: 3*3 + 2*5 = 19.
+		{"dyn-object-heterogeneous", "trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function sum(xs: dyn Shape[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }", 19, ""},
+		// A single `dyn Shape` parameter dispatches the same way: 4*4 + 3*6 = 34.
+		{"dyn-object-param", "trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function describe(s: dyn Shape): i32 { return s.area(); } function main(): i32 { var c: dyn Shape = Circle { r: 4 }; var r: dyn Shape = Rect { w: 3, h: 6 }; return describe(c) + describe(r); }", 34, ""},
+		// A `dyn Trait[]` of unit structs with a string-returning method —
+		// guards that the heterogeneous loop var stays on the runtime path
+		// (a struct-literal initializer must NOT pin it to the first variant).
+		{"dyn-object-string-method", "trait Named { function name(self: Self): string; } struct Cat { } struct Dog { } impl Named for Cat { function name(self: Self): string { return \"cat\"; } } impl Named for Dog { function name(self: Self): string { return \"dog\"; } } function main(): i32 { var xs: dyn Named[] = [Cat {}, Dog {}, Cat {}]; for x in xs { write(x.name()); } return 0; }", 0, "catdogcat"},
 		// Generic-struct monomorphisation reaches the wasm backend through
 		// the shared module_with_builtins pass: `Box[i32]` / `Box[string]`
 		// become concrete `Box__i32` / `Box__string` clones, and wasm's

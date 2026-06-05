@@ -190,8 +190,10 @@ not (no shape pointer) — that needs the monomorphisation path. The
 self-host checker (`checker.fern`) does not yet enforce object-safety or
 the coercion rule; the Go checker is the strict gate until it retires,
 at which point those rules move into `checker.fern`. The **wasm**
-self-host backend structures its for-loop element typing differently and
-is a separate follow-up.
+self-host backend (static-dispatch, no runtime shape-compare) now handles
+`dyn Trait` via `emit_dyn_dispatch`: it reads the receiver's struct id
+(the offset-0 type tag) and branches to the matching `$Struct__method`
+over every implementing struct — see TRAITS.md §7a slice 9.
 
 ## 5. Coercion (boxing) model
 
