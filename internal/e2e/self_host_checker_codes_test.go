@@ -28,6 +28,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E002": true, // return-type mismatch
 	"E003": true, // assignment / annotated-var type mismatch
 	"E008": true, // non-boolean if/while condition
+	"E011": true, // break / continue outside a loop
 	"E004": true, // free-function call arity
 	"E038": true, // free-function argument type
 	"E005": true, // struct literal missing field
@@ -167,6 +168,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"if-nonbool-cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", []string{"E008"}},
 		{"while-nonbool-cond", "function main(): i32 { while (\"x\") { return 1; } return 0; }\n", []string{"E008"}},
 		{"if-bool-cond-ok", "function main(): i32 { if (1 < 2) { return 1; } return 0; }\n", nil},
+		{"break-outside-loop", "function main(): i32 { break; return 0; }\n", []string{"E011"}},
+		{"continue-outside-loop", "function main(): i32 { continue; return 0; }\n", []string{"E011"}},
+		{"break-in-loop-ok", "function main(): i32 { while (1 < 2) { break; } return 0; }\n", nil},
+		{"break-in-match-outside-loop", "enum E { A, B }\nfunction main(): i32 { var e: E = A; match (e) { A => { break; }, B => { } } return 0; }\n", []string{"E011"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
