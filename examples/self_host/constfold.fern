@@ -185,7 +185,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             }
             var folded_base: parser.Expr = sl.base;
             if (sl.has_base) { folded_base = fold_expr(sl.base); }
-            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvs, has_base: sl.has_base, base: folded_base };
+            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvs, has_base: sl.has_base, base: folded_base, line: sl.line, col: sl.col };
         },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: fold_expr(fa.obj), field: fa.field };

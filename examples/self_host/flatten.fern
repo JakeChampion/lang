@@ -222,7 +222,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 field_names: slit.field_names,
                 field_values: fvs,
                 has_base: slit.has_base,
-                base: new_base
+                base: new_base,
+                line: slit.line, col: slit.col
             };
         },
         parser.ExprLambda(lm) => {

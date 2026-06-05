@@ -285,6 +285,14 @@ same code(s) the Go checker does — restricted to
   `s_assign_at`; rebuilds propagate, ssa for-loop increment carries 0. The
   assignment case of **E003** now prints `1:42: error[E003]`, matching Go.
   Fixpoint-safe. Gated by an extended `check-position-var`.
+- **Slice 31 (done): `ExprStructLit` positions → E005 line:col.**
+  `ExprStructLit` gains `line`/`col`, captured at the struct-literal type
+  name in `parse_primary`'s ident arm and threaded through `e_struct_lit`
+  / `e_struct_update` / `parse_struct_lit_body`; generic + qualified
+  callers pass 0 (safe under-report), and mono / `flatten` / `constfold`
+  rebuilds propagate. **E005** (struct literal missing field) now prints
+  `2:35: error[E005]`, matching Go. Fixpoint-safe (the field is
+  codegen-ignored). Gated by a new `check-position-structlit`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

@@ -1541,7 +1541,7 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
                     var d: i32 = 0;
                     while (d < ssig.field_names.len()) {
                         if (!name_in(sl.field_names, ssig.field_names[d])) {
-                            out = out.push(dg("E005", "struct literal missing field \"" + ssig.field_names[d] + "\""));
+                            out = out.push(dg_at("E005", "struct literal missing field \"" + ssig.field_names[d] + "\"", sl.line, sl.col));
                         }
                         d = d + 1;
                     }
