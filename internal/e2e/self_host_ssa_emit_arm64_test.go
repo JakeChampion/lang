@@ -268,4 +268,24 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		}
 		run(t, "scaling-600-functions", 36, asm)
 	})
+
+	// Scaling: a single large function must optimise in roughly linear time
+	// rather than O(n²) (the inline const_fold + in-place env_put fix). Mirrors
+	// the x86 suite; a 400-statement fold chain → the running sum of j%7 mod 256.
+	t.Run("scaling-large-function", func(t *testing.T) {
+		const n = 400
+		var b strings.Builder
+		b.WriteString("function main(): i32 {\n  var s = 0;\n")
+		sum := 0
+		for j := 0; j < n; j++ {
+			fmt.Fprintf(&b, "  s = s + %d;\n", j%7)
+			sum += j % 7
+		}
+		b.WriteString("  return s % 256;\n}\n")
+		asm := runDriver(t, b.String(), "-target", "arm64")
+		if len(asm) == 0 {
+			t.Fatalf("emit produced empty output for 400-statement function")
+		}
+		run(t, "scaling-large-function", sum%256, asm)
+	})
 }
