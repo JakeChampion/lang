@@ -1967,6 +1967,116 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     return out;
 }
 
+// ambiguous_variants returns the variant names that are declared in TWO
+// OR MORE enums — an unqualified reference to one of them is ambiguous
+// (E036). (A variant repeated within ONE enum is E017, counted once per
+// enum here so it doesn't masquerade as cross-enum ambiguity.)
+function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        var vn: string[] = enums[i].variant_names;
+        var k: i32 = 0;
+        while (k < vn.len()) {
+            var cnt: i32 = 0;
+            var j: i32 = 0;
+            while (j < enums.len()) {
+                if (name_in(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
+                j = j + 1;
+            }
+            if (cnt >= 2 && !name_in(out, vn[k])) { out = out.push(vn[k]); }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// vref_expr recurses an expression and emits E036 for a bare reference to
+// a variant name that's declared in multiple enums (so it must be
+// qualified). A name bound as a local (parameter / var) is skipped, and a
+// QUALIFIED reference `Enum.Variant` is an ExprFieldAccess whose field
+// isn't visited as a bare ident, so it's fine.
+function vref_expr(e: parser.Expr, s: Scope, ambig: string[]): Diag[] {
+    var out: Diag[] = [];
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (name_in(ambig, id.name) && is_unknown(s.lookup(id.name))) {
+                out = out.push(Diag { code: "E036", message: "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference" });
+            }
+        },
+        parser.ExprBinary(b) => { out = append_diags(vref_expr(b.left, s, ambig), vref_expr(b.right, s, ambig)); },
+        parser.ExprUnary(u) => { out = vref_expr(u.operand, s, ambig); },
+        parser.ExprCall(c) => {
+            out = vref_expr(c.callee, s, ambig);
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = append_diags(out, vref_expr(c.args[i], s, ambig)); i = i + 1; }
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { out = append_diags(out, vref_expr(a.elements[i], s, ambig)); i = i + 1; }
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = append_diags(out, vref_expr(t.elements[i], s, ambig)); i = i + 1; }
+        },
+        parser.ExprIndex(ix) => { out = append_diags(vref_expr(ix.array, s, ambig), vref_expr(ix.index, s, ambig)); },
+        parser.ExprSlice(s2) => { out = append_diags(vref_expr(s2.array, s, ambig), append_diags(vref_expr(s2.start, s, ambig), vref_expr(s2.end, s, ambig))); },
+        parser.ExprFieldAccess(fa) => { out = vref_expr(fa.obj, s, ambig); },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { out = append_diags(out, vref_expr(sl.field_values[i], s, ambig)); i = i + 1; }
+            if (sl.has_base) { out = append_diags(out, vref_expr(sl.base, s, ambig)); }
+        },
+        parser.ExprLambda(lm) => { out = vref_stmts(lm.body, s, ambig); },
+        _ => { }
+    }
+    return out;
+}
+
+// vref_stmts is the scope-threaded statement walk behind vref_expr (so a
+// variant name shadowed by a local `var` isn't flagged).
+function vref_stmts(stmts: parser.Stmt[], s: Scope, ambig: string[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => { out = append_diags(out, vref_expr(v.init, cur, ambig)); },
+            parser.StmtReturn(r) => { out = append_diags(out, vref_expr(r.value, cur, ambig)); },
+            parser.StmtExpr(x) => { out = append_diags(out, vref_expr(x.value, cur, ambig)); },
+            parser.StmtAssign(a) => { out = append_diags(out, vref_expr(a.value, cur, ambig)); },
+            parser.StmtIf(f) => {
+                out = append_diags(out, vref_expr(f.cond, cur, ambig));
+                out = append_diags(out, vref_stmts(f.then_body, cur, ambig));
+                out = append_diags(out, vref_stmts(f.else_body, cur, ambig));
+            },
+            parser.StmtWhile(w) => {
+                out = append_diags(out, vref_expr(w.cond, cur, ambig));
+                out = append_diags(out, vref_stmts(w.body, cur, ambig));
+            },
+            parser.StmtFor(fr) => {
+                out = append_diags(out, vref_expr(fr.iter, cur, ambig));
+                out = append_diags(out, vref_stmts(fr.body, cur, ambig));
+            },
+            parser.StmtMatch(m) => {
+                out = append_diags(out, vref_expr(m.scrutinee, cur, ambig));
+                var a2: i32 = 0;
+                while (a2 < m.arms.len()) { out = append_diags(out, vref_stmts(m.arms[a2].body, cur, ambig)); a2 = a2 + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, vref_stmts(one, cur, ambig));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
 // stmts_assign_diags walks a statement list (scope-threaded, recursing
 // into nested blocks) emitting statement-level type diagnostics: E003
 // when a value isn't assignable to its target (an annotated `var x: T = v`
@@ -2182,6 +2292,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
     var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
     var body_diags: Diag[] = [];
+    var ambig: string[] = ambiguous_variants(mod.enums);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
@@ -2203,6 +2314,10 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, loop_diags(mod.funcs[i].body, false));
         // E013: duplicate `var` in the same block (structural, no scope).
         body_diags = append_diags(body_diags, dupvar_diags(mod.funcs[i].body));
+        // E036: unqualified reference to a variant shared by 2+ enums.
+        if (ambig.len() > 0) {
+            body_diags = append_diags(body_diags, vref_stmts(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), ambig));
+        }
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -2218,6 +2333,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     body_diags = append_diags(body_diags, stmts_slit_diags(mod.top_stmts, structs));
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
+    if (ambig.len() > 0) {
+        body_diags = append_diags(body_diags, vref_stmts(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), ambig));
+    }
     body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
     body_diags = append_diags(body_diags, dupvar_diags(mod.top_stmts));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
