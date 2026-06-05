@@ -1656,6 +1656,45 @@ function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
     return out;
 }
 
+// dupvar_diags emits E013 for a `var` whose name was already declared by
+// an earlier `var` IN THE SAME BLOCK. Each block (function body, branch,
+// loop / match-arm body) gets its own fresh name set, so shadowing across
+// nested blocks — and a `var` shadowing a parameter or a loop / pattern
+// binding — is allowed, matching the Go checker. Purely structural.
+function dupvar_diags(stmts: parser.Stmt[]): Diag[] {
+    var out: Diag[] = [];
+    var declared: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (name_in(declared, v.name)) {
+                    out = out.push(Diag { code: "E013", message: "variable \"" + v.name + "\" already declared in this scope" });
+                } else {
+                    declared = declared.push(v.name);
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, dupvar_diags(f.then_body));
+                out = append_diags(out, dupvar_diags(f.else_body));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, dupvar_diags(w.body)); },
+            parser.StmtFor(fr) => { out = append_diags(out, dupvar_diags(fr.body)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, dupvar_diags(m.arms[a].body)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, dupvar_diags(one));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // itoa_nn renders a non-negative i32 as decimal (checker.fern has no
 // int→string, and diagnostic messages aren't part of the differential
 // gate, but a faithful count reads better).
@@ -1989,6 +2028,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, stmts_assign_diags(mod.funcs[i].body, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
         // E011: break / continue outside a loop (structural, no scope).
         body_diags = append_diags(body_diags, loop_diags(mod.funcs[i].body, false));
+        // E013: duplicate `var` in the same block (structural, no scope).
+        body_diags = append_diags(body_diags, dupvar_diags(mod.funcs[i].body));
         i = i + 1;
     }
     var s: Scope = new_scope_full(sigs, structs, unions, methods);
@@ -2005,6 +2046,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     body_diags = append_diags(body_diags, stmts_call_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods)));
     body_diags = append_diags(body_diags, stmts_assign_diags(mod.top_stmts, new_scope_full(sigs, structs, unions, methods), unions));
     body_diags = append_diags(body_diags, loop_diags(mod.top_stmts, false));
+    body_diags = append_diags(body_diags, dupvar_diags(mod.top_stmts));
     var dd: Diag[] = append_diags(collect_decl_diags(mod), body_diags);
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
