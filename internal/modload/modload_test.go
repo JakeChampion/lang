@@ -177,6 +177,43 @@ function main(): i32 { return x.f(); }`,
 	}
 }
 
+// Two distinct modules sharing a basename (a/util.fern + b/util.fern),
+// imported under distinct aliases, must each get a UNIQUE mangle prefix
+// so their decls don't both become `util__val` and trip a spurious
+// "redeclared" error. Regression for M2 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestLoadDisambiguatesSameBasenameModules(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a/util.fern": `pub function val(): i32 { return 1; }`,
+		"b/util.fern": `pub function val(): i32 { return 2; }`,
+		"main.fern": `import "./a/util" as au;
+import "./b/util" as bu;
+function main(): i32 { return au.val() * 10 + bu.val(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("same-basename modules under distinct aliases should load: %v", err)
+	}
+	// Both val() decls survive under distinct mangled names, and main's
+	// two call sites resolve to those distinct names.
+	var valCount int
+	for _, n := range funcNames(prog) {
+		if strings.HasSuffix(n, "__val") {
+			valCount++
+		}
+	}
+	if valCount != 2 {
+		t.Errorf("expected 2 distinct mangled val() decls, got %d in %v", valCount, funcNames(prog))
+	}
+	main := findFunc(prog, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if !callsDirect(main, "util__val") || !callsDirect(main, "util_1__val") {
+		t.Errorf("main should call both util__val and util_1__val; funcs: %v", funcNames(prog))
+	}
+}
+
 // Same-module function values get prefixed too: a non-callee
 // reference to an own-module function from a non-entry module is
 // still a reference to the now-mangled name.

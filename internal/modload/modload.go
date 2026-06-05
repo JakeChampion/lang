@@ -255,9 +255,17 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 // module bundles a parsed file with its canonical path and the
 // derived module name (basename without `.fern`).
 type module struct {
-	path    string
-	name    string
-	prog    *ast.Program
+	path string
+	name string
+	// manglePrefix is the `<prefix>__`-style string prepended to this
+	// module's non-entry decls (and used to rewrite cross-module
+	// references to them). Defaults to `name + "__"` — the historical
+	// basename scheme — but combine() resets the entry module's to ""
+	// and disambiguates non-stdlib modules whose basenames collide
+	// (e.g. a/util.fern + b/util.fern) so two distinct modules don't
+	// both mangle to `util__X`. See docs/ADVERSARIAL-REVIEW-2026-06.md (M2).
+	manglePrefix string
+	prog         *ast.Program
 	imports map[string]*module // local-name → loaded module
 	// importPaths mirrors imports keyed by the canonical child path
 	// rather than the loaded module pointer. Used to patch a nil
@@ -349,6 +357,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	mod := &module{
 		path:          path,
 		name:          importLocalName(path),
+		manglePrefix:  importLocalName(path) + "__",
 		prog:          prog,
 		imports:       map[string]*module{},
 		importPaths:   map[string]string{},
@@ -633,9 +642,10 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 			combined.LoadedStdlibPaths[path] = true
 		}
 	}
+	assignManglePrefixes(loaded, entryPath)
 	var firstErr error
 	for _, mod := range loaded {
-		errs := mod.rewriteAll(prefixFor(mod.path == entryPath, mod.name))
+		errs := mod.rewriteAll(mod.manglePrefix)
 		for _, e := range errs {
 			if firstErr == nil {
 				firstErr = e
@@ -677,14 +687,53 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 	return combined, nil
 }
 
-// prefixFor returns the mangling prefix to apply to a module's own
-// decls. Entry module gets no prefix; everything else gets
-// `<name>__`.
-func prefixFor(isEntry bool, name string) string {
-	if isEntry {
-		return ""
+// assignManglePrefixes finalises each loaded module's manglePrefix. The
+// entry module gets "" (its decls keep their original names). Every
+// other module defaults to `name + "__"`, preserving the historical
+// basename scheme — which stdlib dispatch and interp interop depend on
+// (e.g. `int__int_to_string`). The one adjustment: when two NON-stdlib
+// modules share a basename (a common `util.fern` / `types.fern`
+// per-directory layout), the later one in sorted-path order gets a
+// numeric disambiguator (`util_1__`, `util_2__`, …) so the two distinct
+// modules don't both mangle to `util__X` and trip a spurious "redeclared"
+// error. Processing in sorted-path order makes the assignment
+// deterministic (the common root prefix doesn't affect relative order),
+// so the combined Program — and the self-host byte-identical gate — stays
+// reproducible. stdlib modules are never disambiguated (they keep the
+// bare prefix); a colliding user module is what moves.
+func assignManglePrefixes(loaded map[string]*module, entryPath string) {
+	paths := make([]string, 0, len(loaded))
+	for p := range loaded {
+		paths = append(paths, p)
 	}
-	return name + "__"
+	sort.Strings(paths)
+
+	used := map[string]bool{}
+	// Reserve entry ("") and every stdlib / bare prefix first so a
+	// colliding user module is the one that moves, not stdlib.
+	for _, p := range paths {
+		m := loaded[p]
+		if m.path == entryPath {
+			m.manglePrefix = ""
+			continue
+		}
+		if strings.HasPrefix(m.path, stdlibPrefix) {
+			m.manglePrefix = m.name + "__"
+			used[m.manglePrefix] = true
+		}
+	}
+	for _, p := range paths {
+		m := loaded[p]
+		if m.path == entryPath || strings.HasPrefix(m.path, stdlibPrefix) {
+			continue
+		}
+		pref := m.name + "__"
+		for k := 1; used[pref]; k++ {
+			pref = fmt.Sprintf("%s_%d__", m.name, k)
+		}
+		m.manglePrefix = pref
+		used[pref] = true
+	}
 }
 
 // isRuntimeHelperName reports whether a function name should be
@@ -1016,11 +1065,11 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 		// rewrite to bare `foo()`, which the entry's mangled
 		// `int__foo` wouldn't match.
 		if r.skipPaths[mod.path] {
-			return mod, mod.name + "__", true
+			return mod, mod.manglePrefix, true
 		}
 		return mod, "", true
 	}
-	return mod, mod.name + "__", true
+	return mod, mod.manglePrefix, true
 }
 
 // rewriteFuncBody walks fn's body with a fresh local-var set
