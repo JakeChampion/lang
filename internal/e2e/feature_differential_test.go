@@ -344,6 +344,23 @@ function main(): i32 {
     return 0;
 }`},
 
+		// Map iteration order after a non-last delete must agree across
+		// the interpreter and every backend. The interp now mirrors the
+		// runtime's swap-with-last removal (it previously shifted down,
+		// giving a different order). Regression for M3 in
+		// docs/ADVERSARIAL-REVIEW-2026-06.md.
+		{"map_delete_order", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(8);
+    m.set(1, 10); m.set(2, 20); m.set(3, 30); m.set(4, 40);
+    m.delete(1);
+    var ks = m.keys();
+    var i: i32 = 0;
+    while (i < ks.len()) { print(ks[i].to_string()); i = i + 1; }
+    return 0;
+}`},
+
 		// ---- floats in aggregates (struct / tuple / array / map) ----
 		{"float_aggregates", `import "std/float";
 import "std/i32";
