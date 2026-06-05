@@ -26,13 +26,23 @@ function main(): i32 {
     }
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    // The map lowering (build_func) emits calls to injected helper functions
+    // (__ssa_map_*) defined in pure Fern (ssa.map_helpers_src). Parse them up
+    // front so their pointer-returning signatures join ptr_ret (the handle is
+    // an i32[]); they're only built + emitted when a program references a map.
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.map_helpers_src()));
     // Names of functions that return a pointer (array / string), so calls to
-    // them get a 64-bit result.
+    // them get a 64-bit result — user functions plus the map helpers.
     var ptr_ret: string[] = [];
     var pi: i32 = 0;
     while (pi < mod.funcs.len()) {
         if (ssa.is_ptr_type(mod.funcs[pi].ret_type) || ssa.is_struct_type(mod.funcs[pi].ret_type, mod.structs)) { ptr_ret = ptr_ret.push(mod.funcs[pi].name); }
         pi = pi + 1;
+    }
+    var hi0: i32 = 0;
+    while (hi0 < hmod.funcs.len()) {
+        if (ssa.is_ptr_type(hmod.funcs[hi0].ret_type)) { ptr_ret = ptr_ret.push(hmod.funcs[hi0].name); }
+        hi0 = hi0 + 1;
     }
     var funcs: ssa.SFunc[] = [];
     var i: i32 = 0;
@@ -40,6 +50,15 @@ function main(): i32 {
         var r: ssa.BResult = ssa.build_func(mod.funcs[i], mod.structs);
         if (r.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(r.func, ptr_ret))); }
         i = i + 1;
+    }
+    // Inject the map helper bodies only when the program actually calls one.
+    if (ssa.references_map(funcs)) {
+        var hi: i32 = 0;
+        while (hi < hmod.funcs.len()) {
+            var hr: ssa.BResult = ssa.build_func(hmod.funcs[hi], mod.structs);
+            if (hr.ok) { funcs = funcs.push(ssa.optimize(ssa.mark_ptr_calls(hr.func, ptr_ret))); }
+            hi = hi + 1;
+        }
     }
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
