@@ -330,6 +330,18 @@ same code(s) the Go checker does — restricted to
   mismatched `+`/arithmetic operands) prints `1:60` / `1:38` and **E041**
   (compare mismatch) prints `1:35`, all matching Go. Fixpoint-safe. Gated
   by a new `check-position-operator`.
+- **Slice 36 (done): `ExprFieldAccess` positions → E043 + E046 line:col.**
+  `ExprFieldAccess` gains `line`/`col`, captured at the **dot** (matching
+  the Go parser's `FieldAccess{P: dot.Pos}`) via `e_field_access_at`; the
+  flatten qualified-collapse / passthrough and the mono rebuilds
+  propagate, and the synthetic `.len()` / `__env` accesses in `ssa` carry
+  0. `expr_line` / `expr_col` gain an `ExprFieldAccess` arm. **E043**
+  (no such struct field) prints `2:55: error[E043]` and **E046** (bad
+  tuple index) prints `1:48: error[E046]`, both matching Go.
+  Fixpoint-safe. Gated by a new `check-position-field`. With this, every
+  expression node the self-host checker reports on (number / ident /
+  call / struct-lit / binary / unary / field-access) carries a source
+  position.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

@@ -81,7 +81,7 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
 pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32 }
 // Postfix field access `obj.field`. obj can be any Expr that
 // evaluates to a struct value.
-pub struct ExprFieldAccess { obj: Expr, field: string }
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32 }
 pub struct ExprUnknown { kind: string }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
@@ -274,7 +274,10 @@ function e_struct_update(type_name: string, field_names: string[], field_values:
     return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base, line: line, col: col };
 }
 function e_field_access(obj: Expr, field: string): Expr {
-    return ExprFieldAccess { obj: obj, field: field };
+    return ExprFieldAccess { obj: obj, field: field, line: 0, col: 0 };
+}
+function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr {
+    return ExprFieldAccess { obj: obj, field: field, line: line, col: col };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
     return ExprLambda { params: params, ret_type: ret_type, body: body };
@@ -618,6 +621,10 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             // ident (struct field) or a numeric literal
             // (tuple index — `.0`, `.1`, …). Both shapes
             // store the field name as a bare string.
+            // The Go parser positions a FieldAccess at its dot
+            // (`FieldAccess{P: dot.Pos}`), so E043 / E046 land there.
+            var dline: i32 = p.peek_line();
+            var dcol: i32 = p.peek_col();
             p = p.advance();
             var fname: string = p.peek_ident();
             if (fname.len() == 0) {
@@ -658,7 +665,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
                 p = qr.par;
                 base = qr.expr;
             } else {
-                base = e_field_access(base, fname);
+                base = e_field_access_at(base, fname, dline, dcol);
             }
         } else if (p.peek_keyword() == "as") {
             // `expr as Type` cast. Desugar to a unary op
@@ -2636,7 +2643,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
-                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2 }, args: nargs, line: c.line, col: c.col }, rins: cur };
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2, line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col }, rins: cur };
                                 }
                             }
                         },
@@ -2685,7 +2692,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = mono_expr(fa.obj, env, funcs, ins);
-            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field }, rins: o.rins };
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: o.rins };
         },
         ExprStructLit(s) => {
             var vals: Expr[] = [];
@@ -3130,7 +3137,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
-            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field }, rins: o.rins };
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: o.rins };
         },
         ExprStructLit(s) => {
             var cur: Insts = ins;

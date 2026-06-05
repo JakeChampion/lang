@@ -278,6 +278,24 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("check-position-field", func(t *testing.T) {
+		// E043 (no such struct field) and E046 (bad tuple index) are
+		// reported at the field-access dot.
+		for _, c := range []struct{ name, src, want string }{
+			{"no_field", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.y; }\n", "2:55: error[E043]"},
+			{"bad_tuple_idx", "function main(): i32 { var t = (1, 2); return t.foo; }\n", "1:48: error[E046]"},
+		} {
+			sp := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			out, _ := exec.Command(fernBin, "-check", sp).CombinedOutput()
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("%s: -check diagnostics = %q, want %q", c.name, out, c.want)
+			}
+		}
+	})
+
 	t.Run("check-position-operator", func(t *testing.T) {
 		// E009 (boolean/numeric operand) and E041 (compare mismatch) are
 		// reported at the operator token: the binary operator, or the
