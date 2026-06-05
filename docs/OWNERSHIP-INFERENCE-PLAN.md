@@ -305,13 +305,32 @@ analysis, which is independent, pure, and de-risks the design.
   the inc/dec for the non-escaping readers among them via the borrow
   fallback).
 
-- **Slice 3 — demote `own` to optional + add the checked guarantee.**
-  With inference driving reclaim, `own` is no longer required. Keep it
-  as an optional self-documenting annotation, and add a `fip`/`fbip`-
-  style *checked* annotation that verifies a function executes
-  fully-in-place (constant stack, no heap growth on unique arguments) —
-  Koka's model: verify, don't enable. E050 becomes a property of the
-  optional annotation rather than a always-on requirement.
+- **Slice 3 — `own` optional + the `fip` checked guarantee — DONE
+  (first cut).** With borrow inference driving reclaim, `own` is no longer
+  *required* for ownership — it stays as an optional annotation that still
+  carries the affine E050 use-after-move discipline (decision: keep `own` +
+  E050 as-is, an opt-in checked assertion; borrow inference is what made it
+  optional, so no semantics change was needed). The new `fip function`
+  modifier is the **checked guarantee**: a contextual parser modifier
+  (`fip function …` / `pub fip function …`, `fip` still usable as an
+  identifier) that the checker verifies (E053) performs **no heap
+  allocation** — a sound, conservative subset of Koka's fully-in-place.
+  Verify-don't-enable: the in-place lowering (reuse, the COW
+  unique-in-place branch, TRMC) already happens; `fip` only asserts and
+  checks it. Allowed: scalars/ops, field+index reads, control flow,
+  rebinding locals, **in-place index writes to an `own` array param** (the
+  COW unique branch — no copy), and calls to other `fip` functions +
+  whitelisted non-allocating builtins (`len`). Rejected: array/tuple/struct
+  /payload-enum literals, string concat/interpolation, writes through a
+  non-`own` heap value, and any call not proven allocation-free. Dogfooded:
+  `std/sort`'s `sort_i32_inplace_asc/_desc` are now `fip` (they sort the
+  owned buffer in place, allocating nothing). Parser + checker tests both
+  directions; `internal/diag/explanations/E053.md`.
+
+  **Future relaxation:** Koka's `fip` also permits allocation fully matched
+  by reuse (an FBIP `map` that reuses every cell). The current cut is
+  strictly allocation-free (the stricter, simpler guarantee); the
+  reuse-paired relaxation (`fip(n)` / `fbip`) is a follow-up.
 
 - **Later (independent of the above):** map key/value reclamation
   (leak #3), non-uniform/generic enum deep-drop (#4), nested-field deep

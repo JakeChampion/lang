@@ -313,7 +313,7 @@ pub function sort_strings_asc_ci(arr: string[]): string[] {
 
 // `sort_i32_inplace_asc(own arr)` — ascending insertion-sort performed directly
 // on the (owned) input buffer; returns that same buffer, now sorted.
-pub function sort_i32_inplace_asc(own arr: i32[]): i32[] {
+pub fip function sort_i32_inplace_asc(own arr: i32[]): i32[] {
     var n: i32 = arr.len();
     var k: i32 = 1;
     while (k < n) {
@@ -330,7 +330,7 @@ pub function sort_i32_inplace_asc(own arr: i32[]): i32[] {
 }
 
 // `sort_i32_inplace_desc(own arr)` — as above, descending.
-pub function sort_i32_inplace_desc(own arr: i32[]): i32[] {
+pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
     var n: i32 = arr.len();
     var k: i32 = 1;
     while (k < n) {

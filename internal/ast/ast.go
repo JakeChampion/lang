@@ -1602,6 +1602,15 @@ type FuncDecl struct {
 	// hoists these to top-level entries and rewrites captured-var
 	// references to read from a synthetic env argument.
 	IsLocal bool
+	// Fip marks a function the source annotated `fip function …` — a
+	// Koka-style fully-in-place CHECKED guarantee. The checker (E053)
+	// verifies the body performs no heap allocation (a sound, conservative
+	// subset: in-place index writes to `own` array params are allowed, but
+	// any allocating literal / string op / growing method / call to a
+	// non-`fip` function is rejected). It is a verify-don't-enable
+	// annotation — the in-place lowering already happens; `fip` only asserts
+	// and checks it. Default false. Set by the parser for `fip function`.
+	Fip bool
 	// IsSynthesisedHandlerMain marks the auto-`main()` the
 	// checker emits for handler-shaped programs (a top-level
 	// `handle(req: HttpRequest): HttpResponse` with no

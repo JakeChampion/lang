@@ -1993,6 +1993,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		c.checkFunction(fn)
 	}
 
+	c.checkFipFunctions(prog)
+
 	if len(c.errors) > 0 {
 		return c.info, diag.Errors(c.errors)
 	}
@@ -3771,6 +3773,122 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
+}
+
+// fipNonAllocMethods is the whitelist of builtin methods a `fip` function may
+// call: provably non-allocating, scalar-returning reads. Extend as more are
+// proven heap-neutral.
+var fipNonAllocMethods = map[string]bool{"len": true}
+
+// checkFipFunctions verifies every `fip function` performs no heap allocation —
+// a Koka-style fully-in-place CHECKED guarantee, as a SOUND, conservative
+// subset (E053). It is verify-don't-enable: the in-place lowering (reuse, COW's
+// unique-in-place branch, TRMC) already happens; `fip` only asserts and checks
+// the result. Default-deny: any construct not proven heap-neutral is rejected.
+//
+// Allowed: scalars, arithmetic / comparison / logical ops, field & index READS,
+// control flow, (re)binding locals, in-place index/field WRITES to an `own`
+// array parameter (the COW unique-in-place branch — no copy), calls to other
+// `fip` functions and the whitelisted non-allocating builtins (`len`).
+// Rejected: array / tuple / struct / payload-carrying-enum literals, string
+// concatenation / interpolation, writes to a non-`own` heap value (a copy), and
+// any call the checker can't prove allocation-free.
+func (c *checker) checkFipFunctions(prog *ast.Program) {
+	fip := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Fip {
+			fip[fn.Name] = true
+		}
+	}
+	if len(fip) == 0 {
+		return
+	}
+	for _, fn := range prog.Funcs {
+		if !fn.Fip || fn.Body == nil {
+			continue
+		}
+		own := map[string]bool{}
+		for _, p := range fn.Params {
+			if p.Own {
+				own[p.Name] = true
+			}
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.ArrayLit:
+				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (array literal)", fn.Name)
+			case *ast.TupleLit:
+				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (tuple literal)", fn.Name)
+			case *ast.StructLit:
+				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (struct literal %q)", fn.Name, x.TypeName)
+			case *ast.FString:
+				c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (string interpolation)", fn.Name)
+			case *ast.Binary:
+				if x.IsStringConcat {
+					c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (string concatenation)", fn.Name)
+				}
+			case *ast.Call:
+				if x.IsVariantCall {
+					if len(x.Args) > 0 {
+						c.errfCode(x.Pos(), "E053", "`fip` function %q may not allocate (enum variant construction)", fn.Name)
+					}
+					return true
+				}
+				if x.Method != nil {
+					if !fipNonAllocMethods[x.Method.Field] {
+						c.errfCode(x.Pos(), "E053", "`fip` function %q may not call method %q (not proven allocation-free)", fn.Name, x.Method.Field)
+					}
+					return true
+				}
+				if id, ok := x.Callee.(*ast.Ident); ok {
+					if !fip[id.Name] {
+						c.errfCode(x.Pos(), "E053", "`fip` function %q may only call other `fip` functions, not %q", fn.Name, id.Name)
+					}
+					return true
+				}
+				c.errfCode(x.Pos(), "E053", "`fip` function %q may not make an indirect call (not proven allocation-free)", fn.Name)
+			case *ast.Assign:
+				if fipWriteAllocates(x.Target, own) {
+					c.errfCode(x.Pos(), "E053", "`fip` function %q may not write to a non-`own` heap value (triggers a copy-on-write)", fn.Name)
+				}
+			}
+			return true
+		})
+	}
+}
+
+// fipWriteAllocates reports whether an assignment target can trigger a heap
+// allocation. (Re)binding a local slot allocates nothing; an index/field write
+// is in-place only when its root is an `own` parameter (the COW unique branch) —
+// otherwise it copies.
+func fipWriteAllocates(target ast.Expr, own map[string]bool) bool {
+	switch t := target.(type) {
+	case *ast.Ident:
+		return false
+	case *ast.Index:
+		return !own[fipRootIdent(t.Array)]
+	case *ast.FieldAccess:
+		return !own[fipRootIdent(t.Target)]
+	}
+	return true
+}
+
+// fipRootIdent unwraps nested index / field accesses to the base identifier
+// name (the container being written through), or "" if the base isn't a bare
+// identifier.
+func fipRootIdent(e ast.Expr) string {
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x.Name
+		case *ast.Index:
+			e = x.Array
+		case *ast.FieldAccess:
+			e = x.Target
+		default:
+			return ""
+		}
+	}
 }
 
 // needCoreMap flags a Map construction site (map_new / Map literal)
