@@ -302,6 +302,15 @@ function main(): i32 {
 
     if (mode_check) {
         var mt: checker.ModuleTypes = checker.check_module(merged);
+        // Surface the coded diagnostics (the same E0XX codes the Go
+        // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
+        // Positions aren't threaded through the AST yet, so a diagnostic
+        // is `error[E0XX]: message` without a line:col prefix for now.
+        var di: i32 = 0;
+        while (di < mt.diags.len()) {
+            eprint("error[" + mt.diags[di].code + "]: " + mt.diags[di].message + "\n");
+            di = di + 1;
+        }
         if (mt.all_well_typed) { return 0; }
         return 1;
     }
