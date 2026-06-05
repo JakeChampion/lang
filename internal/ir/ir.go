@@ -797,8 +797,12 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// through `__drop_tuple_<mangled>`, so the post-pass worklist can
 	// recover the element list when generating each drop body.
 	genTupleDrops := map[string]ast.TupleType{}
+	// Per-function "result never aliases a parameter" property — lets the
+	// stage-(b) arg-temp reclaim safely free an owned temp passed to a
+	// pointer-returning callee (findReturnsNoParamEscape).
+	returnsNoParamEscape := findReturnsNoParamEscape(prog, info)
 	for _, fn := range prog.Funcs {
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops)
+		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape)
 		if err != nil {
 			return nil, err
 		}
@@ -1062,11 +1066,170 @@ func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[stri
 	return out
 }
 
-// isPairFormEligible returns true if fn can be lowered with
-// the register-based pair-form return ABI. See findPairFormFuncs
-// for the eligibility rules; `pairForm` is the previous
-// fixpoint pass's known-pair-form set, used to authorise
-// tail-call returns into it.
+// findReturnsNoParamEscape computes, per user function, whether it provably
+// never lets a parameter's heap value escape into its return value — i.e. its
+// result can never alias (or transitively contain) any argument the caller
+// passed. When true, an owned temporary passed as a borrowed argument to that
+// function is DEAD the instant the call returns, so the stage-(b) post-call dec
+// can reclaim it even though the function returns a pointer — lifting the
+// conservative concrete-scalar-result gate that otherwise leaks the temp in a
+// nested call like `outer(inner(mk()))` (`sum(dup(build(n)))` leaked the
+// `build(n)` temp every iteration).
+//
+// Soundness: a function qualifies only when EVERY return expression is built
+// purely from definitely-scalar values, FRESH constructions (variant / struct /
+// tuple / array literals) whose pointer-typed slots are themselves qualifying,
+// and calls to OTHER qualifying functions. A bare pointer ident / field / index
+// (the identity- or projection-return that would alias a param) disqualifies
+// it. Generic / unknown payload types are treated as pointers (never assumed
+// scalar), so `wrap[T](x) { return Some(x); }` does NOT qualify. The fixpoint
+// starts optimistic (all true) and removes any function whose body contradicts
+// the property — the greatest fixpoint, so a self-recursive fresh-returner like
+// `dup` (returns `Cons(h, t.dup())`) correctly stays true.
+func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
+	// Variant-constructor name -> payload types, for the construction recursion.
+	variantPayloads := map[string][]ast.Type{}
+	for _, en := range info.Enums {
+		for _, v := range en.Variants {
+			variantPayloads[v.Name] = v.Payloads
+		}
+	}
+	q := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		q[fn.Name] = true
+	}
+	for {
+		changed := false
+		for _, fn := range prog.Funcs {
+			if !q[fn.Name] || fn.Body == nil {
+				continue
+			}
+			ok := true
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				if r, isRet := n.(*ast.Return); isRet && r.Value != nil {
+					if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q) {
+						ok = false
+					}
+				}
+				return true
+			})
+			if !ok {
+				q[fn.Name] = false
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return q
+}
+
+func isDefinitelyScalar(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
+		return true
+	}
+	return false
+}
+
+// exprNoParamEscape reports whether evaluating `e` to fill a slot of static type
+// `slot` can never place a parameter's heap value into that slot. `q` is the
+// in-progress greatest-fixpoint set from findReturnsNoParamEscape. Any shape it
+// can't prove safe returns false (conservative — preserves the prior safe-leak).
+func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool) bool {
+	// A definitely-scalar destination cannot hold a heap pointer at all, so
+	// whatever fills it carries no param heap. (Generic / unknown slot types are
+	// NOT assumed scalar — they fall through and must be proven structurally.)
+	if isDefinitelyScalar(slot) {
+		return true
+	}
+	switch x := e.(type) {
+	case *ast.Ident:
+		// A nullary variant constructor (`Nil`, `None`) parses as a bare ident
+		// and is a fresh constant — no parameter can escape through it. Any other
+		// bare pointer-typed ident (a parameter, a projection binding, or a fresh
+		// local) is conservatively an escape, preserving the prior safe-leak.
+		pls, isVariant := variantPayloads[x.Name]
+		return isVariant && len(pls) == 0
+	case *ast.IfExpr:
+		return exprNoParamEscape(x.Then, slot, info, variantPayloads, q) &&
+			exprNoParamEscape(x.Else, slot, info, variantPayloads, q)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if !exprNoParamEscape(arm.Body, slot, info, variantPayloads, q) {
+				return false
+			}
+		}
+		return true
+	case *ast.TupleLit:
+		tt, ok := slot.(ast.TupleType)
+		if !ok || len(tt.Elems) != len(x.Elems) {
+			return false
+		}
+		for i, el := range x.Elems {
+			if !exprNoParamEscape(el, tt.Elems[i], info, variantPayloads, q) {
+				return false
+			}
+		}
+		return true
+	case *ast.ArrayLit:
+		for _, el := range x.Elems {
+			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q) {
+				return false
+			}
+		}
+		return true
+	case *ast.StructLit:
+		if x.Base != nil {
+			return false // struct-update spreads the base's (possibly param) fields
+		}
+		sd, ok := info.Structs[x.TypeName]
+		if !ok {
+			return false
+		}
+		ftype := map[string]ast.Type{}
+		for _, f := range sd.Fields {
+			ftype[f.Name] = f.Type
+		}
+		for _, fi := range x.Fields {
+			ft, ok := ftype[fi.Name]
+			if !ok || !exprNoParamEscape(fi.Value, ft, info, variantPayloads, q) {
+				return false
+			}
+		}
+		return true
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		// Variant constructor: the result EMBEDS its payload args, so each
+		// pointer-typed payload slot must itself be filled escape-free.
+		if pls, isVariant := variantPayloads[id.Name]; isVariant {
+			for i, a := range x.Args {
+				var pt ast.Type
+				if i < len(pls) {
+					pt = pls[i]
+				}
+				if !exprNoParamEscape(a, pt, info, variantPayloads, q) {
+					return false
+				}
+			}
+			return true
+		}
+		// User function / method call: its result can't contain OUR args iff the
+		// callee itself never lets a param escape. Builtins / locals / unknowns
+		// (absent from q) are rejected.
+		return q[id.Name]
+	}
+	return false
+}
+
+// isPairFormEligible returns true if fn can be lowered with the register-based
+// pair-form return ABI. See findPairFormFuncs for the eligibility rules;
+// `pairForm` is the previous fixpoint pass's known-pair-form set, used to
+// authorise tail-call returns into it.
 //
 // Supported return-type shapes:
 //   - `Option[T]` where T is i32-stack-shaped — body must
@@ -1612,6 +1775,11 @@ type builder struct {
 	// drop-fn called by mangled name. dropFnNameFor records each
 	// distinct shape it routes through `__drop_tuple_<...>` here.
 	genTupleDrops map[string]ast.TupleType
+	// returnsNoParamEscape[name] is true for a user function the borrow
+	// analysis proved never returns (a value aliasing) any parameter — see
+	// findReturnsNoParamEscape. The stage-(b) arg-temp reclaim reads it to
+	// safely dec an owned temp passed to a POINTER-returning such callee.
+	returnsNoParamEscape map[string]bool
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -2379,7 +2547,19 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
 	}
-	if strings.HasPrefix(id.Name, "__") || b.pairForm[id.Name] {
+	if strings.HasPrefix(id.Name, "__") {
+		// `__`-prefixed callees are method lowerings. The builtin ones
+		// (`arr.push` / `m.set` / string / Reader / …) return the receiver's
+		// buffer in place at rc==1 (an uncounted alias), so reclaiming would free
+		// a live container. A USER method PROVEN to return a fresh value
+		// (returnsNoParamEscape — e.g. a recursive `map`/`dup` over an enum) is
+		// as safe to reclaim as a fresh free-function result; without this, a
+		// method-call result used as an arg (`sum(xs.dup())`) leaks every call.
+		if !b.returnsNoParamEscape[id.Name] {
+			return nil, false
+		}
+	}
+	if b.pairForm[id.Name] {
 		return nil, false
 	}
 	t := b.exprType(e)
@@ -5287,7 +5467,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5296,17 +5476,18 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		Captures:   fn.Captures,
 	}
 	b := &builder{
-		info:          info,
-		fn:            fn,
-		out:           out,
-		locals:        map[string]int32{},
-		scratchType:   map[int32]ast.Type{},
-		ptrW:          ptrW,
-		pairForm:      pairForm,
-		closureCaps:   closureCaps,
-		genEnumDrops:  genEnumDrops,
-		genTupleDrops: genTupleDrops,
-		thisIsPair:    pairForm[fn.Name],
+		info:                 info,
+		fn:                   fn,
+		out:                  out,
+		locals:               map[string]int32{},
+		scratchType:          map[int32]ast.Type{},
+		ptrW:                 ptrW,
+		pairForm:             pairForm,
+		closureCaps:          closureCaps,
+		genEnumDrops:         genEnumDrops,
+		genTupleDrops:        genTupleDrops,
+		returnsNoParamEscape: returnsNoParamEscape,
+		thisIsPair:           pairForm[fn.Name],
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
@@ -10710,7 +10891,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	_, calleeIsLocal := b.locals[id.Name]
 	_, calleeIsFunc := b.info.FuncSigs[id.Name]
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
-		resultCannotAliasArg(b.exprType(n)) &&
+		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name]) &&
 		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
