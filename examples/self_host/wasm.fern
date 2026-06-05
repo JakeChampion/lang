@@ -4281,6 +4281,17 @@ function emit_stmt(stmt: parser.Stmt, st: WState): WState {
                                 }
                                 return st.w("    (call $__fern_print_int " + emit_expr(c.args[0], st.cx, 0) + ")\n");
                             }
+                            // putchar(c): write c's low byte to stdout. Stash
+                            // the byte at scratch addr 16, point the iovec
+                            // (base@0, len@4) at it, and fd_write fd 1 — reusing
+                            // the same stdout path as write/print (the $fd_write
+                            // shim in component-io, the preview1 import otherwise).
+                            if (id.name == "putchar" && c.args.len() == 1) {
+                                st = st.w("    (i32.store8 (i32.const 16) " + emit_expr(c.args[0], st.cx, 0) + ")\n");
+                                st = st.w("    (i32.store (i32.const 0) (i32.const 16))\n");
+                                st = st.w("    (i32.store (i32.const 4) (i32.const 1))\n");
+                                return st.w("    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n");
+                            }
                             if (id.name == "__set_index" && c.args.len() == 3) {
                                 // arr[idx] = v  (parser desugar). Store v at
                                 // arr + 8 + idx*slot; an i64[]/f64[] uses an

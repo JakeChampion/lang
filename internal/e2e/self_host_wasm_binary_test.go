@@ -150,6 +150,9 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.
 		{"random-i32", "function main(): i32 { var r: i32 = random_i32(); return (r - r) + 42; }", 42},
+		// putchar(c): write c's low byte to stdout. Exits 0; the binary and
+		// WAT paths must agree on the emitted bytes ("Hi\n").
+		{"putchar", "function main(): i32 { putchar(72); putchar(105); putchar(10); return 0; }", 0},
 	}
 
 	for _, tc := range cases {
