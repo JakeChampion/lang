@@ -279,6 +279,12 @@ same code(s) the Go checker does — restricted to
   (return-type mismatch) and E012 (return without value) now point at the
   `return` keyword, matching Go. Fixpoint-safe (x86 + arm64). Gated by
   `TestSelfHostCLIX86_64/check-position-return`.
+- **Slice 30 (done): `StmtAssign` positions → E003-assign line:col.**
+  `StmtAssign` gains `line`/`col`, captured at the `=` token (where the Go
+  checker reports an assignment type error, not the lvalue) via a new
+  `s_assign_at`; rebuilds propagate, ssa for-loop increment carries 0. The
+  assignment case of **E003** now prints `1:42: error[E003]`, matching Go.
+  Fixpoint-safe. Gated by an extended `check-position-var`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).

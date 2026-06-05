@@ -247,6 +247,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			{"dup_var", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", "1:40: error[E013]"},
 			{"var_mismatch", "function main(): i32 { var x: i32 = \"no\"; return x; }\n", "1:24: error[E003]"},
 			{"empty_array", "function main(): i32 { var z = []; return 0; }\n", "1:24: error[E020]"},
+			{"assign_mismatch", "function main(): i32 { var x: i32 = 1; x = \"no\"; return x; }\n", "1:42: error[E003]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {

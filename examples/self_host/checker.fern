@@ -2216,7 +2216,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 var tt: Type = cur.lookup(a.target);
                 var vt: Type = check_expr(a.value, cur);
                 if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
-                    out = out.push(dg("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt)));
+                    out = out.push(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
                 }
             },
             parser.StmtIf(f) => {
