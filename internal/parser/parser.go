@@ -3250,9 +3250,25 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			}
 			n = v
 		} else {
-			for _, c := range t.Text {
-				n = n*10 + int64(c-'0')
+			// Decimal literal. Use strconv (like the hex path) so an
+			// out-of-range literal is reported instead of silently
+			// wrapping two's-complement — the old hand-rolled
+			// `n = n*10 + digit` overflowed without any diagnostic and
+			// the wrapped value could slip past the checker's range
+			// check. See docs/ADVERSARIAL-REVIEW-2026-06.md (F3).
+			v, err := strconv.ParseInt(t.Text, 10, 64)
+			if err != nil {
+				// A u64 literal can exceed i64 max yet still be valid;
+				// retry as unsigned and keep the bit pattern. The
+				// checker enforces the per-type range from the suffix /
+				// context.
+				if uv, uerr := strconv.ParseUint(t.Text, 10, 64); uerr == nil {
+					v = int64(uv)
+				} else {
+					p.errors = append(p.errors, p.errorf(t.Pos, "invalid integer literal %q: %v", t.Text, err))
+				}
 			}
+			n = v
 		}
 		lit := &ast.NumberLit{P: t.Pos, Value: n}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned
