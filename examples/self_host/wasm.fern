@@ -5157,7 +5157,7 @@ function emit_lambda(lm: parser.ExprLambda, idx: i32, cx: Ctx, caps: string[]): 
         name: "__lambda" + i32_to_string(idx),
         receiver_name: "", receiver_type: "",
         type_params: synth_tp,
-        params: ps, ret_type: rt, body: lm.body,
+        params: ps, ret_type: rt, body: lm.body, line: 0, col: 0,
     };
     // Captures that were strings in the enclosing scope stay string-typed;
     // struct captures keep their struct type so `cap.field` resolves.
@@ -6281,7 +6281,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             type_params: notp,
             params: noparams,
             ret_type: "i32",
-            body: mod.top_stmts,
+            body: mod.top_stmts, line: 0, col: 0,
         };
         out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], []);
     }
