@@ -67,7 +67,7 @@ function i32_to_string(n: i32): string {
 }
 
 function lit_i32(n: i32): parser.Expr {
-    return parser.ExprNumber { text: i32_to_string(n), suffix: "", is_float: false };
+    return parser.ExprNumber { text: i32_to_string(n), suffix: "", is_float: false, line: 0, col: 0 };
 }
 
 function lit_bool(b: boolean): parser.Expr {

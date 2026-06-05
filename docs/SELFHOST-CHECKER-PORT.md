@@ -302,6 +302,16 @@ same code(s) the Go checker does — restricted to
   `2:32: error[E004]`, matching Go. Fixpoint-safe. Gated by a new
   `check-position-call`. (E038 — per-argument type mismatch — reports at
   the *argument's* position, so it waits on leaf-expression positions.)
+- **Slice 33 (done): `ExprNumber` positions → E047 + E038(number) line:col.**
+  `ExprNumber` gains `line`/`col`, captured at the numeric literal in
+  `parse_primary` via `e_number_at`; constfold's fold-to-constant and the
+  synthetic `for`-desugar numbers in `ssa` carry 0. A new `expr_line` /
+  `expr_col` helper in the checker reads a positioned node's position, so
+  **E047** (literal out of range) prints `1:37: error[E047]` and the
+  number-argument case of **E038** prints `2:33: error[E038]`, both
+  matching Go. (E038 with a non-number argument still reports at 0 until
+  the matching leaf node is positioned.) Fixpoint-safe. Gated by a new
+  `check-position-number`.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
