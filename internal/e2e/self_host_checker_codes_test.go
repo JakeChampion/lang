@@ -1,0 +1,180 @@
+package e2e
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/modload"
+)
+
+// codeRE pulls stable diagnostic codes (E001…E0NN) out of a formatted
+// diagnostic string.
+var codeRE = regexp.MustCompile(`E\d{3}`)
+
+// selfHostImplementedCodes is the set of Go-checker codes the self-host
+// checker (checker.fern) already emits. The differential gate below
+// asserts parity ONLY on this set, so it stays green as the Go checker
+// emits codes the self-host port hasn't reached yet. Each checker-port
+// slice grows this set (see docs/SELFHOST-CHECKER-PORT.md).
+var selfHostImplementedCodes = map[string]bool{
+	"E007": true, // duplicate struct field
+	"E018": true, // duplicate parameter
+}
+
+// goCheckerCodes runs the production (Go) front end over src and returns
+// the sorted, de-duplicated set of diagnostic codes it reports.
+func goCheckerCodes(t *testing.T, dir, src string) []string {
+	t.Helper()
+	p := filepath.Join(dir, "gocheck_input.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write gocheck input: %v", err)
+	}
+	prog, _, err := modload.Load(p)
+	if err != nil {
+		// A parse/load failure isn't a checker code; treat as none.
+		return nil
+	}
+	_, err = checker.Check(prog)
+	if err == nil {
+		return nil
+	}
+	// The stable E0XX code lives in the diag formatting layer, not the
+	// checker error's bare message — format it the way `fern -check` does.
+	return uniqueSortedCodes(codeRE.FindAllString(diag.Format(p, src, err), -1))
+}
+
+func uniqueSortedCodes(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range in {
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// filterImplemented keeps only the codes the self-host checker is
+// expected to emit at this slice.
+func filterImplemented(codes []string) []string {
+	var out []string
+	for _, c := range codes {
+		if selfHostImplementedCodes[c] {
+			out = append(out, c)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestSelfHostCheckerCodesX86_64 is the differential gate for the
+// self-host type-checker port: it compiles the diag-printing checker
+// driver (checker_codes_run.fern) with the Go-built self-host bundle
+// compiler, runs it over a corpus, and asserts the set of diagnostic
+// CODES it prints matches what the production Go checker reports for the
+// same source — restricted to the codes the port has implemented so far
+// (selfHostImplementedCodes). As later slices teach checker.fern more
+// codes, the corpus + that set grow together.
+func TestSelfHostCheckerCodesX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
+	for _, name := range []string{"flatten.fern", "checker.fern", "bundle_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
+
+	lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
+	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
+	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
+	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
+	if err != nil {
+		t.Fatalf("read std/io.fern: %v", err)
+	}
+	runSrc, err := os.ReadFile("../../examples/self_host/checker_codes_run.fern")
+	if err != nil {
+		t.Fatalf("read checker_codes_run.fern: %v", err)
+	}
+	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
+	var bundle bytes.Buffer
+	bundle.WriteString("///MODULE lexer\n")
+	bundle.Write(lexerSrc)
+	bundle.WriteString("\n///MODULE parser\n")
+	bundle.Write(parserSrc)
+	bundle.WriteString("\n///MODULE checker\n")
+	bundle.Write(checkerSrc)
+	bundle.WriteString("\n///MODULE io\n")
+	bundle.Write(ioSrc)
+	bundle.WriteString("\n///MODULE main\n")
+	bundle.WriteString(driverMod)
+
+	checkerAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
+	if len(checkerAsm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes for the codes driver")
+	}
+	checkerBin := buildBin(t, gcc, dir, "codes", string(checkerAsm))
+
+	cases := []struct {
+		name string
+		src  string
+		want []string // codes the self-host checker should print
+	}{
+		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		{"dup-field", "struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E007"}},
+		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
+		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
+		{"clean-struct-and-func", "struct Q { a: i32, b: string }\nfunction h(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 { return 0; }\n", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			out, _ := cmd.Output()
+			got := uniqueSortedCodes(strings.Fields(string(out)))
+
+			want := uniqueSortedCodes(tc.want)
+			if !equalStrings(got, want) {
+				t.Errorf("%s: self-host codes = %v, want %v", tc.name, got, want)
+			}
+			// Differential: the self-host codes must match what the Go
+			// checker reports for the same source, restricted to the
+			// codes implemented so far.
+			goCodes := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			if !equalStrings(got, goCodes) {
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)", tc.name, got, goCodes)
+			}
+		})
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
