@@ -148,6 +148,12 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// keys() / values() snapshot the map's columns into fresh arrays.
 		{"map-keys-values", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var ks = m.keys(); var vs = m.values(); var s = 0; for k in ks { s = s + k; } for v in vs { s = s + v; } return s + ks.len(); }", 69},
 		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.set(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
+		// String-keyed maps (__ssa_smap_*, key compare by content via __streq).
+		{"smap-literal-get", "function main(): i32 { var m = Map { \"a\": 10, \"b\": 20, \"c\": 30 }; return m.get_or(\"b\", 0) + m.get_or(\"z\", 7) + m.len(); }", 30},
+		{"smap-set-has", "function main(): i32 { var m = Map { \"x\": 1 }; m.set(\"y\", 2); m.set(\"x\", 99); var r = 0; if (m.has(\"x\")) { r = r + m.get_or(\"x\", 0); } if (m.has(\"q\")) { r = r + 1000; } return r + m.get_or(\"y\", 0) + m.len(); }", 103},
+		{"smap-content-key", "function main(): i32 { var m = Map { \"foo\": 42 }; var k = \"fo\" + \"o\"; return m.get_or(k, 0); }", 42},
+		{"smap-param-delete", "function lookup(m: Map[string, i32], k: string): i32 { return m.get_or(k, 0); } function main(): i32 { var m = Map { \"hi\": 5, \"bye\": 9 }; m.delete(\"hi\"); return lookup(m, \"bye\") + m.len(); }", 10},
+		{"smap-iter", "function main(): i32 { var m = Map { \"a\": 100, \"b\": 50, \"c\": 30 }; var s = 0; for (k, v) in m { s = s + v + k.len(); } return s; }", 183},
 		// delete: removes a key (swap-with-last, count--), missing key no-op,
 		// and composes with set / iteration.
 		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},

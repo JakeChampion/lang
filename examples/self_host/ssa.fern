@@ -272,13 +272,18 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             return "";
         },
         parser.ExprCall(c) => {
-            // A map-producing expression is typed "Map" so `.len()` on it
-            // dispatches to the map helper (count) rather than the array
-            // length load: the constructor map_new_i32(…) and `.set(…)`
-            // (which returns the map, threading the construction chain).
+            // A map-producing expression is typed "Map" (i32 keys) or "SMap"
+            // (string keys) so `.len()` etc. dispatch to the map helpers and
+            // method-key compares pick the right one: the constructors
+            // map_new_i32(…) / map_new(…), and `.set(…)` (which returns the
+            // map, threading the construction chain — so it inherits the
+            // receiver's map type).
             match (c.callee) {
-                parser.ExprIdent(cid) => { if (cid.name == "map_new_i32") { return "Map"; } },
-                parser.ExprFieldAccess(fa2) => { if (fa2.field == "set") { return "Map"; } },
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "map_new_i32") { return "Map"; }
+                    if (cid.name == "map_new") { return "SMap"; }
+                },
+                parser.ExprFieldAccess(fa2) => { if (fa2.field == "set") { return type_of_expr(fa2.obj, s); } },
                 _ => { }
             }
             return "";
@@ -442,15 +447,30 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var naret: i32[] = [nahandle];
                         return s.emit(SInst { kind: "copy", result: s.cur_id(), args: naret, imm: 0, str: "" });
                     }
+                    // __streq(a, b) — content comparison of two string pointers
+                    // (1 if equal, else 0), used by the string-keyed map helpers
+                    // to compare keys (the buffer stores them as i32 slots, so
+                    // a Fern `==` there would be pointer, not content, equality).
+                    if (cid.name == "__streq" && c.args.len() == 2) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var sqa: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var sqb: i32 = s.cur_id();
+                        s = s.fresh();
+                        var sqargs: i32[] = [sqa, sqb];
+                        return s.emit(SInst { kind: "streq", result: s.cur_id(), args: sqargs, imm: 0, str: "" });
+                    }
                     // Map constructors. The parser desugars a `Map { … }`
                     // literal to map_new_i32(8)… (integer keys) or map_new(8)…
-                    // (string keys). i32 keys route to the injected helper;
-                    // string-keyed maps aren't in the subset yet, so map_new
-                    // bails (the whole function falls back to the AST emitter).
-                    // map_new_i32 is the FIRST call in the desugar chain, so a
-                    // bail here cleanly rejects the entire map expression.
+                    // (string keys); each routes to its injected helper
+                    // (i32-keyed __ssa_map_new_i32 / string-keyed
+                    // __ssa_smap_new). Both buffers share the same layout; the
+                    // string-keyed methods only differ in comparing keys by
+                    // content (__streq).
                     var callee_name: string = cid.name;
-                    if (callee_name == "map_new") { return s.fail(); }
+                    if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
                     if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
                     var argvals: i32[] = [];
                     var i: i32 = 0;
@@ -473,14 +493,24 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // the receiver passed as the first argument. The map handle
                     // is an i32[] buffer; mutations land in place (fixed
                     // capacity — see map_helpers_src).
+                    // i32-keyed maps are "Map", string-keyed are "SMap". The
+                    // key-comparing methods (set/get_or/has/delete) pick the
+                    // matching helper by the receiver's type; len/keys/values
+                    // copy slots only (no key compare), so they share the i32
+                    // helpers for both. An untyped receiver defaults to the i32
+                    // map (the prior, only-i32 behaviour).
+                    var mt: string = type_of_expr(fa.obj, s);
+                    var ismap: boolean = mt == "Map" || mt == "SMap";
+                    var pfx: string = "__ssa_map_";
+                    if (mt == "SMap") { pfx = "__ssa_smap_"; }
                     var mname: string = "";
-                    if (fa.field == "set" && c.args.len() == 2) { mname = "__ssa_map_set"; }
-                    else if (fa.field == "get_or" && c.args.len() == 2) { mname = "__ssa_map_get_or"; }
-                    else if (fa.field == "has" && c.args.len() == 1) { mname = "__ssa_map_has"; }
-                    else if (fa.field == "delete" && c.args.len() == 1) { mname = "__ssa_map_delete"; }
-                    else if (fa.field == "len" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_len"; }
-                    else if (fa.field == "keys" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_keys"; }
-                    else if (fa.field == "values" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_values"; }
+                    if (fa.field == "set" && c.args.len() == 2) { mname = pfx + "set"; }
+                    else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
+                    else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
+                    else if (fa.field == "delete" && c.args.len() == 1) { mname = pfx + "delete"; }
+                    else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
+                    else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
+                    else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }
                     else if (fa.field == "push" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
                     if (mname.len() > 0) {
                         s = build_expr(fa.obj, s);
@@ -756,7 +786,7 @@ function build_stmt(st: parser.Stmt, s: BState): BState {
             // map-method / element-type resolution. An array type "T[]" lets a
             // later `a[i].field` recover the element type T (type_of_expr's
             // ExprIndex arm strips the trailing "[]").
-            if (ity == "Map") { return s.set_var_type(v.name, "Map"); }
+            if (ity == "Map" || ity == "SMap") { return s.set_var_type(v.name, ity); }
             if (ends_with_brackets(ity)) { return s.set_var_type(v.name, ity); }
             if (is_struct_type(ity, s.structs) || ity == "string") { return s.set_var_type(v.name, ity); }
             if (ends_with_brackets(v.type_name)) { return s.set_var_type(v.name, v.type_name); }
@@ -1399,7 +1429,8 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[]): BRes
     var pj: i32 = 0;
     while (pj < fd.params.len()) {
         var ptn: string = fd.params[pj].type_name;
-        if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
+        if (ptn.len() >= 10 && ptn[0:10] == "Map[string") { s = s.set_var_type(fd.params[pj].name, "SMap"); }
+        else if (ptn.len() >= 3 && ptn[0:3] == "Map") { s = s.set_var_type(fd.params[pj].name, "Map"); }
         else if (ends_with_brackets(ptn)) { s = s.set_var_type(fd.params[pj].name, ptn); }
         else if (is_struct_type(ptn, structs) || ptn == "string") { s = s.set_var_type(fd.params[pj].name, ptn); }
         pj = pj + 1;
@@ -2591,6 +2622,37 @@ pub function ssa_helpers_src(): string {
     src = src + "  var n = m[0]; var b = __new_array(n); var i = 0;" + nl;
     src = src + "  while (i < n) { b[i] = m[2 + i * 2]; i = i + 1; }" + nl;
     src = src + "  return b;" + nl;
+    src = src + "}" + nl;
+    // String-keyed map helpers. The buffer layout is identical to the i32 one
+    // (so len / keys / values / key_at / val_at reuse the i32 helpers), but a
+    // key is a string stored in the i32 slot, compared by content via __streq
+    // rather than pointer ==. Value type is i32. Fixed capacity, same as i32.
+    src = src + "function __ssa_smap_new(n: i32): i32[] { return " + zeros + "; }" + nl;
+    src = src + "function __ssa_smap_set(m: i32[], k: string, v: i32): i32[] {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (__streq(m[1 + i * 2], k)) { m[2 + i * 2] = v; return m; } i = i + 1; }" + nl;
+    src = src + "  m[1 + n * 2] = k; m[2 + n * 2] = v; m[0] = n + 1; return m;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_smap_get_or(m: i32[], k: string, d: i32): i32 {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (__streq(m[1 + i * 2], k)) { return m[2 + i * 2]; } i = i + 1; }" + nl;
+    src = src + "  return d;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_smap_has(m: i32[], k: string): i32 {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) { if (__streq(m[1 + i * 2], k)) { return 1; } i = i + 1; }" + nl;
+    src = src + "  return 0;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_smap_delete(m: i32[], k: string): i32[] {" + nl;
+    src = src + "  var n = m[0]; var i = 0;" + nl;
+    src = src + "  while (i < n) {" + nl;
+    src = src + "    if (__streq(m[1 + i * 2], k)) {" + nl;
+    src = src + "      var last = n - 1;" + nl;
+    src = src + "      m[1 + i * 2] = m[1 + last * 2]; m[2 + i * 2] = m[2 + last * 2]; m[0] = last; return m;" + nl;
+    src = src + "    }" + nl;
+    src = src + "    i = i + 1;" + nl;
+    src = src + "  }" + nl;
+    src = src + "  return m;" + nl;
     src = src + "}" + nl;
     // arr.push(x) → a fresh length-(n+1) array (__new_array) with a's elements
     // copied in and x appended. Returns the new array (the caller reassigns);
