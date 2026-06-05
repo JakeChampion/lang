@@ -2608,7 +2608,11 @@ func TestWASMBulkMemoryPrimitives(t *testing.T) {
         77 as u8, 78 as u8, 79 as u8, 80 as u8
     ];
     var bs: [u8] = buf[0:16];
-    var base: i32 = (bs as i32);
+    // The data pointer is a memory address — type it usize (pointer
+    // width) so it flows into the usize-typed __memset / __memcpy params.
+    // Under F2, user code must reach usize via an explicit cast rather
+    // than the implicit i32<->usize hop. See docs/ADVERSARIAL-REVIEW-2026-06.md.
+    var base: usize = (bs as usize);
     __memset(base + 8, 0, 8);
     if (buf[0]  != 65)  { return 1; }
     if (buf[7]  != 72)  { return 2; }
