@@ -282,11 +282,12 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
-                    // A call to a function that returns a function value: the
-                    // result is itself a function value (so a `var g = maker()`
-                    // dispatches calls indirectly).
+                    // A call's result has the callee's declared return type
+                    // (seeded "gfn:<ret>"). So a struct-returning `foo().field`
+                    // resolves, a string-returning call's `.len()` dispatches,
+                    // and a function-returning call is a function value ("fn").
                     var cgt: string = s.get_var_type(cid.name);
-                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { if (cgt[4 : cgt.len()] == "fn") { return "fn"; } }
+                    if (cgt.len() >= 4 && cgt[0:4] == "gfn:") { return cgt[4 : cgt.len()]; }
                 },
                 parser.ExprFieldAccess(fa2) => {
                     if (fa2.field == "set") { return type_of_expr(fa2.obj, s); }
