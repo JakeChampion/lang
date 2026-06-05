@@ -156,6 +156,14 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"array-of-struct-string-field", "struct Named { id: i32, label: string } function main(): i32 { var a = [Named { id: 1, label: \"hello\" }, Named { id: 2, label: \"hi\" }]; return a[0].label.len() + a[1].label.len() + a[1].id; }", 9},
 		{"string-array-concat", "function main(): i32 { var a = [\"foo\", \"bar\"]; var c = a[0] + a[1]; return c.len(); }", 6},
 		{"string-array-eq", "function main(): i32 { var a = [\"add\", \"sub\"]; if (a[1] == \"sub\") { return 7; } return 0; }", 7},
+		// Tuples: a fixed-arity heap box (element i at offset i); `t.0` / `t.1`
+		// are positional indexes (a numeric field name is unambiguously a
+		// tuple index, since struct fields are never all-digits).
+		{"tuple-pair", "function main(): i32 { var t = (3, 4); return t.0 + t.1; }", 7},
+		{"tuple-triple", "function main(): i32 { var t = (10, 20, 30); return t.0 * 100 + t.1 * 10 + t.2; }", 1230 % 256},
+		{"tuple-in-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var t = (i, i * i); s = s + t.0 + t.1; i = i + 1; } return s; }", 8},
+		{"tuple-string-elem", "function main(): i32 { var t = (42, \"hello\"); return t.0 + t.1.len(); }", 47},
+		{"tuple-two", "function main(): i32 { var a = (1, 2); var b = (3, 4); return a.0 + a.1 + b.0 + b.1; }", 10},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
