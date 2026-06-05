@@ -1,0 +1,110 @@
+package e2e
+
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
+
+// Self-reassign of an owned struct/enum LOCAL through a method or call —
+// `s = s.emit(x)` — deep-drops the OLD value (freeing its nested array/struct
+// heap) instead of flat-dec'ing the box and orphaning the fields. This is the
+// self-host SSA-builder accumulator shape (`s.cur.insts.push(inst)` threaded
+// through method calls that rebuild the builder each step): the flat dec leaked
+// the old block's instruction buffer every emit → O(N^2) peak memory and OOM.
+//
+// SOUNDNESS BOUND: only structs that are transitively string- and Map-free
+// qualify (typeSelfDropSafe). Strings aren't rc-tracked — never inc'd at struct
+// construction — so a string field shared via a functional-copy reassign is an
+// UNCOUNTED alias the deep-drop would over-release (the self-host EmitState UAF
+// that an earlier, unrestricted attempt hit). Array / nested-struct / enum
+// fields ARE inc'd at construction, so their rc-gated drop is balanced. These
+// pin (1) the bounded-heap win for the string-free accumulator and (2) that a
+// string-FIELD accumulator stays correct (kept on the safe-leak flat dec).
+
+func selfReassignFieldBumpSrc(n string) string {
+	return `struct Blk { insts: i32[] }
+struct St { cur: Blk }
+function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.push(x) } }; }
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var s: St = St { cur: Blk { insts: [] } };
+    var i: i32 = 0;
+    while (i < ` + n + `) { s = s.emit(i); i = i + 1; }
+    if (s.cur.insts.len() != ` + n + `) { return 999; }
+    return (__heap_bump_bytes() - before) / 64;
+}`
+}
+
+// Value-correct + no over-release for the string-free accumulator.
+const selfReassignFieldSoundSrc = `struct Blk { insts: i32[] }
+struct St { cur: Blk }
+function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.push(x) } }; }
+function main(): i32 {
+    var s: St = St { cur: Blk { insts: [] } };
+    var i: i32 = 0;
+    while (i < 200) { s = s.emit(i * 2); i = i + 1; }
+    if (s.cur.insts.len() != 200) { return 100; }
+    if (s.cur.insts[199] != 398) { return 101; }
+    return __rc_underflow_count();
+}`
+
+// A struct with a HEAP STRING field, functional-copy self-reassigned in a loop
+// (the EmitState/`s = s.write(..)` shape). The deep-drop is correctly WITHHELD
+// here (strings are uncounted), so this must stay value-correct + over-release
+// free — the regression guard for the earlier UAF.
+const selfReassignStringFieldSoundSrc = `struct Acc { tag: string, xs: i32[] }
+function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.push(v) }; }
+function tagfor(i: i32): string { if (i % 2 == 0) { return "even-ish-longer"; } return "odd-ish-longer"; }
+function main(): i32 {
+    var a: Acc = Acc { tag: "seed-" + tagfor(0), xs: [] };
+    var i: i32 = 0;
+    while (i < 200) { a = a.step(i); i = i + 1; }
+    if (a.xs.len() != 200) { return 100; }
+    if (a.tag.len() < 5) { return 101; }
+    return __rc_underflow_count();
+}`
+
+func assertSubQuadratic(t *testing.T, backend string, n1, n2 int) {
+	t.Helper()
+	if n1 <= 0 {
+		t.Errorf("%s: expected non-zero bump, got %d", backend, n1)
+		return
+	}
+	if n2 > n1*3 {
+		t.Errorf("%s: bump grew %dx (N -> 2N: %d -> %d); want ~2x (O(N)), not quadratic", backend, n2/n1, n1, n2)
+	}
+}
+
+func TestX86_64SelfReassignFieldSound(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, selfReassignFieldSoundSrc); code != 0 {
+		t.Errorf("string-free accumulator: got %d, want 0 (100/101=value, >0=over-release)", code)
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, selfReassignStringFieldSoundSrc); code != 0 {
+		t.Errorf("string-field accumulator: got %d, want 0 (UAF regression guard)", code)
+	}
+}
+
+func TestArm64SelfReassignFieldSound(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, selfReassignFieldSoundSrc); code != 0 {
+		t.Errorf("string-free accumulator: got %d, want 0", code)
+	}
+	if _, code := compileAndRunArm64FreeOn(t, selfReassignStringFieldSoundSrc); code != 0 {
+		t.Errorf("string-field accumulator: got %d, want 0", code)
+	}
+}
+
+func TestWASMSelfReassignFieldBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	n1 := runWasm(t, selfReassignFieldBumpSrc("200"))
+	n2 := runWasm(t, selfReassignFieldBumpSrc("400"))
+	assertSubQuadratic(t, "wasm", n1, n2)
+	if got := runWasm(t, selfReassignFieldSoundSrc); got != 0 {
+		t.Errorf("string-free accumulator: got %d, want 0", got)
+	}
+	if got := runWasm(t, selfReassignStringFieldSoundSrc); got != 0 {
+		t.Errorf("string-field accumulator: got %d, want 0 (UAF regression guard)", got)
+	}
+}

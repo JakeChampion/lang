@@ -13753,7 +13753,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the overwrite dec is REQUIRED to balance that inc — this skip
 				// is disabled there and the normal enum-overwrite drop below
 				// fires.
-			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
 				// like a scope exit (or a loop reinit) would, so deep-drop the
@@ -14193,6 +14193,110 @@ func tupleTypeOfLocal(name string, b *builder) (ast.TupleType, bool) {
 // is included but dropFnNameFor declines it, so emitStructEnumSlotDrop
 // falls back to the flat dec for it (its self-mutation case is handled
 // earlier via isSelfMapMutation).
+// selfReassignOwnedLocal reports whether `name` is a LOCAL variable (not a
+// parameter) being self-reassigned — the RHS mentions `name`, as in
+// `s = s.emit(x)` / `s = f(s)`. Such a local owns its slot's value (struct
+// fields are always inc'd at construction, so the box rc is accurate — unlike a
+// borrowed param, whose box may be an rc undercount), and the old value is being
+// replaced, so the rc-gated deep-drop (emitStructEnumSlotDrop: is_unique on the
+// box, rc-gated field drops) reclaims it without ever over-releasing a value an
+// alias still holds — closing the O(N^2) accumulator leak where `x = x.m()`
+// flat-dec'd the old box and orphaned its array/struct fields. The conservative
+// freeEligible taint flags such an `x` (the call result may alias it), but that
+// aliasing is harmless for the drop precisely because the drop is rc-gated.
+func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type) bool {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return false
+		}
+	}
+	// SOUNDNESS: the deep-drop frees the old value's fields. Array / nested
+	// struct / enum fields are inc'd at construction, so the rc-gated drop
+	// (is_unique on the box, rc==0 on the buffer) is balanced even when the new
+	// value shares them. But STRINGS are not rc-tracked — never inc'd at struct
+	// construction — so a string field shared via a functional-copy reassign
+	// (`s = S{...s, ...}`) is an UNCOUNTED alias: deep-dropping the old value
+	// would free a buffer the new value still points at (the self-host
+	// EmitState/`s = s.write(..)` UAF). Map fields likewise have an incomplete
+	// (leaky) deep-drop. So restrict to structs whose deep drop is the
+	// fully-counted array/struct/enum/scalar walk — transitively string- and
+	// Map-free. (This is a sound subset; once strings are rc-tracked the
+	// restriction can lift.)
+	if !typeSelfDropSafe(ty, b.info, map[string]bool{}) {
+		return false
+	}
+	mentions := false
+	ast.Walk(rhs, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			mentions = true
+		}
+		return !mentions
+	})
+	return mentions
+}
+
+// typeSelfDropSafe reports whether a value of type `t` can be deep-dropped on a
+// self-reassign overwrite without risking an uncounted-alias over-release: no
+// string anywhere (strings aren't inc'd at construction) and no Map anywhere
+// (its deep drop is incomplete). Arrays / structs / enums / tuples of safe types
+// are fine — their pointer payloads are inc'd at construction, so the rc-gated
+// drop is balanced.
+func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	switch ty := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
+		return true
+	case ast.StringType:
+		return false
+	case ast.ArrayType:
+		return typeSelfDropSafe(ty.Elem, info, seen)
+	case ast.SliceType:
+		return typeSelfDropSafe(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !typeSelfDropSafe(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, f := range sd.Fields {
+			if !typeSelfDropSafe(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[ty.Name] {
+			return true
+		}
+		seen[ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !typeSelfDropSafe(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func structOrEnumTypeOfLocal(name string, b *builder) (ast.Type, bool) {
 	t, ok := b.localDeclType(name)
 	if !ok {
