@@ -121,6 +121,12 @@ type entry struct {
 	src      string               // entry-module source (non-literate fallback rendering)
 	entryAbs string               // abs path of the entry module
 	remaps   map[string]*litRemap // module path → its literate-document remap
+	// multiFile is true for a `file=`-multi-module literate entry, where
+	// every generated module shares the document source but has its own
+	// tangle line map. An unattributed error then can't be remapped
+	// safely (we don't know which line map applies). See
+	// docs/ADVERSARIAL-REVIEW-2026-06.md (L3).
+	multiFile bool
 }
 
 // litRemaps builds the per-module remap table for the literate modules
@@ -136,12 +142,15 @@ func litRemaps(litMods map[string]*modload.LiterateModule) map[string]*litRemap 
 // remapFor turns a tangle line map into a position remapper: a tangled
 // position (1-based line into the generated source) maps to its origin
 // line in the `.fern.md` document, with the column shifted back by the
-// indentation tangling prepended. Positions outside the map pass
-// through unchanged.
+// indentation tangling prepended. A position outside the map maps to the
+// zero Position so the renderer falls back to the bare message instead of
+// drawing a caret over an arbitrary document line — a generated line
+// number must never be used to index the document source. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (L4).
 func remapFor(lineMap []literate.Line) func(ast.Position) ast.Position {
 	return func(p ast.Position) ast.Position {
 		if p.Line < 1 || p.Line > len(lineMap) {
-			return p
+			return ast.Position{}
 		}
 		m := lineMap[p.Line-1]
 		col := p.Col - m.ColShift
@@ -247,7 +256,7 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 	for modPath, lr := range litRemaps(litMods) {
 		remaps[modPath] = lr // imported `.fern.md` libraries
 	}
-	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: resolve(entryRel), remaps: remaps}
+	e := entry{prog: prog, srcs: srcs, path: srcPath, src: litSrc, entryAbs: resolve(entryRel), remaps: remaps, multiFile: true}
 	if lerr != nil {
 		return e, e.format(lerr)
 	}
@@ -282,6 +291,14 @@ func (e entry) format(err error) error {
 		// The entry module, and any unattributed pre-decl error, render
 		// against the entry — remapped onto its document if literate.
 		if path == "" || path == e.entryAbs {
+			// In a multi-file literate document each generated module
+			// has its own tangle line map, so an unattributed error
+			// can't be remapped through the entry's map without landing
+			// on the wrong document line. Render the bare message
+			// instead. See docs/ADVERSARIAL-REVIEW-2026-06.md (L3).
+			if path == "" && e.multiFile {
+				return one.Error()
+			}
 			if lr, ok := e.remaps[e.entryAbs]; ok {
 				return renderRemap(lr, one)
 			}

@@ -57,9 +57,14 @@ const RootChunk = "*"
 
 // Line records where one line of tangled output came from in the
 // original literate document. Lit is the 1-based line number in the
-// `.fern.md` source; ColShift is the number of indentation characters
-// tangling prepended (so the original column C maps to tangled column
-// C+ColShift, and the inverse remap subtracts ColShift).
+// `.fern.md` source; ColShift is the net column delta tangling applied
+// (so the original column C maps to tangled column C+ColShift, and the
+// inverse remap subtracts ColShift). It is normally the count of
+// indentation characters prepended during expansion, but is reduced by
+// one for each escaped chunk marker (`\<<…>>`) whose backslash was
+// stripped at emit time — those removals shorten the tangled line
+// relative to the document, so ColShift can be less than the prepended
+// indentation (even negative). See docs/ADVERSARIAL-REVIEW-2026-06.md (L1).
 type Line struct {
 	Lit      int
 	ColShift int
@@ -157,6 +162,12 @@ type testBlock struct {
 func Parse(src string) *Document {
 	doc := &Document{chunks: map[string]*chunkDef{}, fileIndex: map[string]*fileRoot{}}
 	lines := strings.Split(src, "\n")
+	// srcEndsNL records whether the source ended with a newline, i.e.
+	// the final strings.Split element is the file-terminator artifact
+	// rather than a real line. The collector uses this to avoid an
+	// unclosed fence at EOF absorbing that artifact as a phantom blank
+	// body line. See docs/ADVERSARIAL-REVIEW-2026-06.md (L5).
+	srcEndsNL := len(lines) > 1 && lines[len(lines)-1] == ""
 	i := 0
 	n := len(lines)
 	for i < n {
@@ -177,6 +188,14 @@ func Parse(src string) *Document {
 				i++ // consume the closing fence
 			}
 			raw := strings.Join(lines[start:i], "\n")
+			// An unclosed fence runs to EOF and so swallows the
+			// trailing-newline artifact as a phantom blank body line.
+			// Drop it from the tangled body (but keep `raw` intact so
+			// Format still round-trips the source byte-for-byte). See
+			// docs/ADVERSARIAL-REVIEW-2026-06.md (L5).
+			if !closed && srcEndsNL && len(body) > 0 && body[len(body)-1].text == "" {
+				body = body[:len(body)-1]
+			}
 			if lang == "fern" {
 				switch d := parseFenceDirectives(info); {
 				case d.file != "":
@@ -348,7 +367,15 @@ func (doc *Document) expandBody(body []bodyLine, indent string, active map[strin
 			}
 			continue
 		}
-		emit(indent+deEscapeRef(bl.text), bl.litLine, len(indent))
+		deEscaped := deEscapeRef(bl.text)
+		// deEscapeRef strips the backslash from an escaped chunk marker
+		// (`\<<…>>` → `<<…>>`), so the tangled line is one byte shorter
+		// than the document line to the left of the marker. Reduce
+		// ColShift by the number of stripped bytes (0 or 1) so the
+		// inverse remap lands on the right document column instead of
+		// being off by one. See docs/ADVERSARIAL-REVIEW-2026-06.md (L1).
+		colShift := len(indent) - (len(bl.text) - len(deEscaped))
+		emit(indent+deEscaped, bl.litLine, colShift)
 	}
 	return nil
 }

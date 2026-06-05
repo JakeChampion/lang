@@ -226,10 +226,51 @@ func inlineMarkdown(s string) string {
 
 func renderEmphasis(seg string) string {
 	seg = htmlEscape(seg)
-	seg = reLink.ReplaceAllString(seg, `<a href="$2">$1</a>`)
+	// Build the <a> only for safe URL schemes. htmlEscape (above) already
+	// prevents attribute-quote breakout, but it does NOT stop scheme
+	// injection — a `[x](javascript:…)` link would otherwise emit a
+	// working javascript: href in the woven page. Drop the anchor for any
+	// non-allowlisted scheme, leaving the (escaped) link text as plain
+	// prose. See docs/ADVERSARIAL-REVIEW-2026-06.md (L2).
+	seg = reLink.ReplaceAllStringFunc(seg, func(m string) string {
+		sub := reLink.FindStringSubmatch(m)
+		text, url := sub[1], sub[2]
+		if !safeLinkURL(url) {
+			return text
+		}
+		return `<a href="` + url + `">` + text + `</a>`
+	})
 	seg = reBold.ReplaceAllString(seg, `<strong>$1</strong>`)
 	seg = reItalic.ReplaceAllString(seg, `<em>$1</em>`)
 	return seg
+}
+
+// safeLinkURL reports whether a Markdown link URL is safe to place in an
+// href. A relative URL (no scheme) is allowed; an absolute URL is allowed
+// only for the http / https / mailto schemes. Everything else — notably
+// javascript: and data: — is rejected to prevent script injection in
+// woven HTML. The URL has already been run through htmlEscape, which does
+// not alter the scheme prefix.
+func safeLinkURL(url string) bool {
+	for i := 0; i < len(url); i++ {
+		c := url[i]
+		if c == ':' {
+			switch strings.ToLower(url[:i]) {
+			case "http", "https", "mailto":
+				return true
+			default:
+				return false
+			}
+		}
+		isSchemeChar := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
+		if !isSchemeChar {
+			// Hit a non-scheme character before any ':' — this is a
+			// relative URL (path, query, or fragment), which is safe.
+			return true
+		}
+	}
+	return true // no ':' at all → relative
 }
 
 // backtickRun returns the length of the backtick run starting at i.
