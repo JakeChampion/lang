@@ -36,7 +36,7 @@ import "./lexer";
 
 pub struct ExprNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
 pub struct ExprIdent { name: string, line: i32, col: i32 }
-pub struct ExprString { value: string }
+pub struct ExprString { value: string, line: i32, col: i32 }
 pub struct ExprBool { value: boolean }
 pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32 }
 pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32 }
@@ -246,7 +246,8 @@ function e_number_at(text: string, suffix: string, is_float: boolean, line: i32,
 }
 function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, col: 0 }; }
 function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col }; }
-function e_string(value: string): Expr { return ExprString { value: value }; }
+function e_string(value: string): Expr { return ExprString { value: value, line: 0, col: 0 }; }
+function e_string_at(value: string, line: i32, col: i32): Expr { return ExprString { value: value, line: line, col: col }; }
 function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
 function e_binary(op: string, left: Expr, right: Expr): Expr {
     return ExprBinary { op: op, left: left, right: right, line: 0, col: 0 };
@@ -724,12 +725,14 @@ function parse_primary(p: Par): ExprResult {
             return parse_postfix(p, e_number_at(x.text, x.suffix, x.is_float, nline, ncol));
         },
         lexer.TokString(x) => {
+            var sline: i32 = p.peek_line();
+            var scol: i32 = p.peek_col();
             p = p.advance();
             // Allow postfix chains on string literals — e.g.
             // `"a,b,c".split(",")`. Without parse_postfix the
             // `.split` would dangle and the surrounding caller
             // would treat the literal as the whole expression.
-            return parse_postfix(p, e_string(x.value));
+            return parse_postfix(p, e_string_at(x.value, sline, scol));
         },
         lexer.TokKeyword(x) => {
             if (x.name == "true") {

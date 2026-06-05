@@ -75,7 +75,7 @@ function lit_bool(b: boolean): parser.Expr {
 }
 
 function lit_string(s: string): parser.Expr {
-    return parser.ExprString { value: s };
+    return parser.ExprString { value: s, line: 0, col: 0 };
 }
 
 // Optional-Int sentinel: lang-port has no Option in the stdlib
