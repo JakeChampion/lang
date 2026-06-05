@@ -1783,6 +1783,16 @@ function type_base(t: string): string {
     return t;
 }
 
+// dot_index returns the byte index of the first '.' in s, or -1. A
+// variant pattern that still carries a dot at check time is qualified by
+// an *enum* name (module qualifiers are mangled to `__` by flatten before
+// the checker runs), which the E029 check keys off.
+function dot_index(s: string): i32 {
+    var i: i32 = 0;
+    while (i < s.len()) { if (s[i] == 46) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
 // type_arity_diag checks one type annotation: if it supplies an explicit
 // `[...]` argument list whose count doesn't match the named struct's
 // declared type-parameter count, it's E019. Checked at param + struct-
@@ -2268,12 +2278,32 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                                     parser.PatWildcard(_) => { saw_wild = true; },
                                     parser.PatVariant(cpv) => {
                                         if (cpv.type_name.len() > 0) {
-                                            covered = covered.push(cpv.type_name);
-                                            // E014: a variant pattern that names
-                                            // something outside the scrutinee's
-                                            // enum/union, reported at the arm.
-                                            if (!name_in(usig.variants, cpv.type_name)) {
-                                                out = out.push(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                            var cdp: i32 = dot_index(cpv.type_name);
+                                            if (cdp >= 0) {
+                                                // Qualified pattern `Qual.Variant`.
+                                                var cqual: string = cpv.type_name[0:cdp];
+                                                var cbare: string = cpv.type_name[cdp + 1:cpv.type_name.len()];
+                                                if (cqual == mun.name) {
+                                                    // Correctly qualified — covers the bare variant.
+                                                    covered = covered.push(cbare);
+                                                    if (!name_in(usig.variants, cbare)) {
+                                                        out = out.push(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                    }
+                                                } else if (cur.lookup_union(cqual).name.len() > 0) {
+                                                    // E029: qualifier is a known enum/union, but
+                                                    // not the scrutinee's.
+                                                    out = out.push(dg_at("E029", "variant pattern qualifier \"" + cqual + "\" does not match scrutinee enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                }
+                                                // (unknown qualifier: Go reports a module-source
+                                                // mismatch this port doesn't model — left alone.)
+                                            } else {
+                                                covered = covered.push(cpv.type_name);
+                                                // E014: a variant pattern that names
+                                                // something outside the scrutinee's
+                                                // enum/union, reported at the arm.
+                                                if (!name_in(usig.variants, cpv.type_name)) {
+                                                    out = out.push(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, m.arms[ca].line, m.arms[ca].col));
+                                                }
                                             }
                                         }
                                     },

@@ -579,6 +579,21 @@ same code(s) the Go checker does — restricted to
   implemented-subset sets agree). Checker-only (fixpoint-safe). Gated by
   new corpus (`union-match-foreign-variant`) and
   `check-position-foreign-variant`.
+- **Slice 52 (done): E029 — variant pattern qualified by the wrong enum.**
+  A match arm can qualify a variant (`F.A`). Module qualifiers are mangled
+  to `__` by flatten before the checker runs, so a pattern that still
+  carries a `.` at check time is *enum*-qualified — a new `dot_index`
+  helper splits it. In the coverage loop: if the qualifier matches the
+  scrutinee union it covers the bare variant (and still E014-checks it);
+  if it's a *different* known enum/union it's E029 at the arm; an unknown
+  qualifier (Go's module-source mismatch, which this port doesn't model)
+  is left alone. This also fixes a latent divergence — `F.A` on an `E`
+  scrutinee previously emitted E014, now correctly E029
+  (`3:37: error[E029]`, matching Go). Zero E014/E029 false positives
+  across all fifteen modules; correctly-qualified `E.A` / `E.B` stays
+  clean. Checker-only (fixpoint-safe). Gated by new corpus
+  (`match-qualifier-mismatch`, `match-qualifier-correct-ok`) and
+  `check-position-qualifier-mismatch`.
 - **Slice 5: pattern matching** (E015/E025/E027/E036), incl. remaining
   match diagnostics.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
