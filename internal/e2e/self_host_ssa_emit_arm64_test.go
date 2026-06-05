@@ -142,6 +142,9 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		{"map-iter-built", "function main(): i32 { var m = Map { 0: 0 }; var i = 1; while (i <= 4) { m.set(i, i * 10); i = i + 1; } var sum = 0; for (k, v) in m { sum = sum + v; } return sum; }", 100},
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		{"map-iter-param", "function sumv(m: Map[i32, i32]): i32 { var s = 0; for (k, v) in m { s = s + v; } return s; } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return sumv(m); }", 66},
+		// keys() / values() snapshot the map's columns into fresh arrays.
+		{"map-keys-values", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var ks = m.keys(); var vs = m.values(); var s = 0; for k in ks { s = s + k; } for v in vs { s = s + v; } return s + ks.len(); }", 69},
+		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.set(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
 		// delete: removes a key (swap-with-last, count--), missing key no-op,
 		// and composes with set / iteration.
 		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},

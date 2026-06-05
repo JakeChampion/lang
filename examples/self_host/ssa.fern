@@ -479,6 +479,8 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     else if (fa.field == "has" && c.args.len() == 1) { mname = "__ssa_map_has"; }
                     else if (fa.field == "delete" && c.args.len() == 1) { mname = "__ssa_map_delete"; }
                     else if (fa.field == "len" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_len"; }
+                    else if (fa.field == "keys" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_keys"; }
+                    else if (fa.field == "values" && c.args.len() == 0 && type_of_expr(fa.obj, s) == "Map") { mname = "__ssa_map_values"; }
                     else if (fa.field == "push" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
                     if (mname.len() > 0) {
                         s = build_expr(fa.obj, s);
@@ -2548,6 +2550,18 @@ pub function ssa_helpers_src(): string {
     // `for (k, v) in m` desugar can walk the buffer by index.
     src = src + "function __ssa_map_key_at(m: i32[], i: i32): i32 { return m[1 + i * 2]; }" + nl;
     src = src + "function __ssa_map_val_at(m: i32[], i: i32): i32 { return m[2 + i * 2]; }" + nl;
+    // keys / values snapshot the map's key / value column into a fresh
+    // length-(count) array (__new_array), in insertion order.
+    src = src + "function __ssa_map_keys(m: i32[]): i32[] {" + nl;
+    src = src + "  var n = m[0]; var b = __new_array(n); var i = 0;" + nl;
+    src = src + "  while (i < n) { b[i] = m[1 + i * 2]; i = i + 1; }" + nl;
+    src = src + "  return b;" + nl;
+    src = src + "}" + nl;
+    src = src + "function __ssa_map_values(m: i32[]): i32[] {" + nl;
+    src = src + "  var n = m[0]; var b = __new_array(n); var i = 0;" + nl;
+    src = src + "  while (i < n) { b[i] = m[2 + i * 2]; i = i + 1; }" + nl;
+    src = src + "  return b;" + nl;
+    src = src + "}" + nl;
     // arr.push(x) → a fresh length-(n+1) array (__new_array) with a's elements
     // copied in and x appended. Returns the new array (the caller reassigns);
     // a's buffer is left untouched. Works for any element kind — pointer

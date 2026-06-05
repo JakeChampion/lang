@@ -149,6 +149,11 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"map-iter-break-continue", "function main(): i32 { var m = Map { 1: 5, 2: 6, 3: 7, 4: 8 }; var s = 0; for (k, v) in m { if (k == 2) { continue; } if (k == 4) { break; } s = s + v; } return s; }", 12},
 		// Iterating a Map passed across a call.
 		{"map-iter-param", "function sumv(m: Map[i32, i32]): i32 { var s = 0; for (k, v) in m { s = s + v; } return s; } function main(): i32 { var m = Map { 1: 11, 2: 22, 3: 33 }; return sumv(m); }", 66},
+		// keys() / values() snapshot a map's columns into fresh __new_array
+		// arrays (now possible with dynamic allocation): iterate / index them.
+		{"map-keys-values", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var ks = m.keys(); var vs = m.values(); var s = 0; for k in ks { s = s + k; } for v in vs { s = s + v; } return s + ks.len(); }", 69},
+		{"map-values-index", "function main(): i32 { var m = Map { 5: 10, 6: 20 }; m.set(7, 30); var vs = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s + vs.len(); }", 63},
+		{"map-keys-after-delete", "function main(): i32 { var m = Map { 9: 1 }; m.delete(9); var ks = m.keys(); return ks.len() + 42; }", 42},
 		// delete: removes a key (swap-with-last, count--), missing key is a
 		// no-op, and delete composes with set / iteration.
 		{"map-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m.delete(2); var r = 0; if (m.has(2)) { r = r + 1000; } r = r + m.len() * 100; r = r + m.get_or(1, 0); r = r + m.get_or(3, 0); return r; }", 240},
