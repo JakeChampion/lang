@@ -91,8 +91,21 @@ type WorldExport struct {
 }
 
 // DecodeWorld decodes the `component-type` payload for `world` into a World.
+// DecodeWorld decodes the `component-type` payload for an embedded world
+// ("fern" or "http") into a World.
 func DecodeWorld(world string) (*World, error) {
-	secs, err := DecodeSections(world)
+	payload, err := payloadFor(world)
+	if err != nil {
+		return nil, err
+	}
+	return DecodeWorldBytes(payload)
+}
+
+// DecodeWorldBytes decodes an arbitrary `component-type` payload (e.g. one
+// produced by `wasm-tools component embed` from a user's WIT) into a World —
+// the ingestion entry point for bring-your-own WIT (P3).
+func DecodeWorldBytes(payload []byte) (*World, error) {
+	secs, err := SplitComponentSections(payload)
 	if err != nil {
 		return nil, err
 	}
