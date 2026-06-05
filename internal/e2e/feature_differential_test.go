@@ -392,7 +392,7 @@ function main(): i32 {
     return 0;
 }`},
 		// A map built and returned by a function escapes correctly and is
-        // usable by the caller (rc transfers across the return).
+		// usable by the caller (rc transfers across the return).
 		{"map_cow_returned", `import "std/i32";
 import "core/map";
 function build(): Map[i32, i32] {

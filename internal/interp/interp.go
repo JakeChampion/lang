@@ -137,7 +137,7 @@ func (m *Map) clone() *Map {
 // dies (scope exit, reassignment of the old value, function return). The
 // net count is what set/delete/clear consult to decide mutate-in-place
 // vs copy. See docs/INTERP-MAP-COW-PLAN.md (M1).
-func retain(v Value) { adjustRC(v, +1) }
+func retain(v Value)  { adjustRC(v, +1) }
 func release(v Value) { adjustRC(v, -1) }
 
 func adjustRC(v Value, delta int) {
