@@ -1734,7 +1734,13 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
         parser.ExprCall(c) => {
-            out = call_diags(c.callee, s);
+            // A method-call callee (`obj.m(...)`) is an ExprFieldAccess
+            // whose field names a METHOD, not a field — recurse only into
+            // the object so it isn't mis-flagged as an unknown field (E043).
+            match (c.callee) {
+                parser.ExprFieldAccess(mfa) => { out = call_diags(mfa.obj, s); },
+                _ => { out = call_diags(c.callee, s); }
+            }
             var i: i32 = 0;
             while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
             match (c.callee) {
@@ -1808,7 +1814,25 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         parser.ExprSlice(s2) => {
             out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
         },
-        parser.ExprFieldAccess(fa) => { out = call_diags(fa.obj, s); },
+        parser.ExprFieldAccess(fa) => {
+            out = call_diags(fa.obj, s);
+            // E043: a field READ on a struct that has no such field (and no
+            // method of that name). Method-call callees never reach here
+            // (the ExprCall arm above recurses only into the object), so a
+            // field access here is a genuine read.
+            var ot: Type = check_expr(fa.obj, s);
+            match (ot) {
+                TypeStruct(sn) => {
+                    var fsig: StructSig = s.lookup_struct(sn.name);
+                    if (fsig.name.len() > 0
+                            && !name_in(fsig.field_names, fa.field)
+                            && s.lookup_method(fa.field, sn.name).name.len() == 0) {
+                        out = out.push(Diag { code: "E043", message: "struct " + sn.name + " has no field \"" + fa.field + "\"" });
+                    }
+                },
+                _ => { }
+            }
+        },
         parser.ExprStructLit(sl) => {
             var i: i32 = 0;
             while (i < sl.field_values.len()) { out = append_diags(out, call_diags(sl.field_values[i], s)); i = i + 1; }

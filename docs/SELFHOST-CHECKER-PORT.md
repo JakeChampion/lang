@@ -152,10 +152,15 @@ same code(s) the Go checker does — restricted to
   emits E041 for an `==` / `!=` whose operands aren't the same type — the
   same rule `check_expr` applies. (Ordering ops `<` / `<=` / `>` / `>=` on
   mismatched types are E009, not E041, and aren't handled here.)
-- **Later: pattern matching** (E014/E025/E036), traits (E021), unknown
-  field (E043), arithmetic operand type (E009 integer/float),
-  tuples / maps / slices, owned-parameter move checking (E050/E051), then
-  source positions.
+- **Slice 15 (done): unknown struct field** (E043). `call_diags` emits
+  E043 for a field READ on a struct that has no such field (and no method
+  of that name). A method-call callee (`obj.m(...)`) never reaches the
+  field-read path — the ExprCall arm recurses only into the object — so
+  method calls aren't mis-flagged. Reuses the same struct/field lookup
+  `check_expr` uses, so no new false positives.
+- **Later: pattern matching** (E014/E025/E036), traits (E021),
+  arithmetic operand type (E009 integer/float), tuples / maps / slices,
+  owned-parameter move checking (E050/E051), then source positions.
 - **Slice 5: pattern matching** (E014/E015/E025/E026/E027/E028/E036),
   incl. exhaustiveness.
 - **Slice 6: traits** (E021 conformance/coherence/object-safety/derive).
