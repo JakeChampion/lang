@@ -377,17 +377,18 @@ func evalPureOp(op *Op, val map[int32]latticeVal, defs map[int32]*Op) latticeVal
 			return latticeTop()
 		}
 	}
-	return foldOp(op.Kind, args)
+	return foldOp(op.Kind, op.Width == 64, args)
 }
 
 // foldOp evaluates a pure op with all-Const args. Mirrors the
 // per-Kind logic in constfold.go but operates on lattice values
-// rather than mutating an Op in place.
-func foldOp(k OpKind, args []latticeVal) latticeVal {
+// rather than mutating an Op in place. w64 is true for i64-width
+// integer ops; it selects 64-bit folding semantics (see foldint.go).
+func foldOp(k OpKind, w64 bool, args []latticeVal) latticeVal {
 	switch k {
 	case OpNeg:
 		if len(args) == 1 && args[0].kind == OpConstInt {
-			return latticeConstInt(-args[0].imm)
+			return latticeConstInt(negAtWidth(w64, args[0].imm))
 		}
 	case OpNot:
 		if len(args) == 1 && args[0].kind == OpConstBool {
@@ -409,86 +410,20 @@ func foldOp(k OpKind, args []latticeVal) latticeVal {
 		return latticeBottom()
 	}
 	if args[0].kind == OpConstInt && args[1].kind == OpConstInt {
-		return foldIntBinary(k, args[0].imm, args[1].imm)
+		res, isBool, boolRes, ok := foldIntBinaryAtWidth(k, w64, args[0].imm, args[1].imm)
+		if !ok {
+			return latticeBottom()
+		}
+		if isBool {
+			return latticeConstBool(boolRes)
+		}
+		return latticeConstInt(res)
 	}
 	if args[0].kind == OpConstBool && args[1].kind == OpConstBool {
 		return foldBoolBinary(k, args[0].imm != 0, args[1].imm != 0)
 	}
 	if args[0].kind == OpConstFloat && args[1].kind == OpConstFloat {
 		return foldFloatBinary(k, args[0].f64, args[1].f64)
-	}
-	return latticeBottom()
-}
-
-func foldIntBinary(k OpKind, a, b int64) latticeVal {
-	switch k {
-	case OpAdd:
-		return latticeConstInt(a + b)
-	case OpSub:
-		return latticeConstInt(a - b)
-	case OpMul:
-		return latticeConstInt(a * b)
-	case OpDiv:
-		if b == 0 {
-			return latticeBottom()
-		}
-		return latticeConstInt(a / b)
-	case OpDivU:
-		if b == 0 {
-			return latticeBottom()
-		}
-		return latticeConstInt(int64(uint64(a) / uint64(b)))
-	case OpRem:
-		if b == 0 {
-			return latticeBottom()
-		}
-		return latticeConstInt(a % b)
-	case OpRemU:
-		if b == 0 {
-			return latticeBottom()
-		}
-		return latticeConstInt(int64(uint64(a) % uint64(b)))
-	case OpAnd:
-		return latticeConstInt(a & b)
-	case OpOr:
-		return latticeConstInt(a | b)
-	case OpXor:
-		return latticeConstInt(a ^ b)
-	case OpShl:
-		if b < 0 || b >= 64 {
-			return latticeBottom()
-		}
-		return latticeConstInt(a << uint(b))
-	case OpShr:
-		if b < 0 || b >= 64 {
-			return latticeBottom()
-		}
-		return latticeConstInt(a >> uint(b))
-	case OpShrU:
-		if b < 0 || b >= 64 {
-			return latticeBottom()
-		}
-		return latticeConstInt(int64(uint64(a) >> uint(b)))
-	case OpEq:
-		return latticeConstBool(a == b)
-	case OpNe:
-		return latticeConstBool(a != b)
-	case OpLt:
-		return latticeConstBool(a < b)
-	case OpLtU:
-		return latticeConstBool(uint64(a) < uint64(b))
-	case OpLe:
-		return latticeConstBool(a <= b)
-	case OpLeU:
-		return latticeConstBool(uint64(a) <= uint64(b))
-	case OpGt:
-		return latticeConstBool(a > b)
-	case OpGtU:
-		return latticeConstBool(uint64(a) > uint64(b))
-	case OpGe:
-		return latticeConstBool(a >= b)
-	case OpGeU:
-		return latticeConstBool(uint64(a) >= uint64(b))
 	}
 	return latticeBottom()
 }

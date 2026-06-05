@@ -26,6 +26,41 @@ func TestDCEDropsUnusedAdd(t *testing.T) {
 	}
 }
 
+// TestDCEKeepsUnusedTrappingDiv — an integer division whose result is
+// never read must NOT be removed: it traps at runtime on a zero divisor,
+// and deleting it would erase that observable trap. Regression for I2 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md. OpRem/OpDivU/OpRemU share the
+// MayTrap guard. (An unused OpMul, by contrast, is removed — see
+// TestDCEDropsUnusedAdd.)
+func TestDCEKeepsUnusedTrappingDiv(t *testing.T) {
+	for _, k := range []OpKind{OpDiv, OpDivU, OpRem, OpRemU} {
+		t.Run(k.String(), func(t *testing.T) {
+			f := NewFunc("f")
+			a := f.AddParam()
+			b := f.AddParam()
+			entry := f.NewBlock()
+			used := f.AddOp(entry, OpAdd, a, b)
+			_ = f.AddOp(entry, k, a, b) // result unused, but may trap
+			f.SetRet(entry, used)
+
+			DCE(f)
+
+			var kept bool
+			for _, op := range entry.Ops {
+				if op != nil && op.Kind == k {
+					kept = true
+				}
+			}
+			if !kept {
+				t.Errorf("%v with unused result was removed by DCE; it may trap and must survive", k)
+			}
+			if err := Verify(f); err != nil {
+				t.Errorf("Verify after DCE: %v", err)
+			}
+		})
+	}
+}
+
 // TestDCEKeepsTerminatorUse — value used by Ret terminator is
 // not dead.
 func TestDCEKeepsTerminatorUse(t *testing.T) {

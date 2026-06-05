@@ -18,6 +18,7 @@ func TestFoldDivU(t *testing.T) {
 	b := f.AddOp(entry, OpConstInt)
 	entry.Ops[1].Imm = 2
 	r := f.AddOp(entry, OpDivU, a, b)
+	entry.Ops[2].Width = 64 // i64 op: fold with u64 semantics
 	f.SetRet(entry, r)
 
 	Fold(f)
@@ -54,6 +55,7 @@ func TestFoldShrU(t *testing.T) {
 	b := f.AddOp(entry, OpConstInt)
 	entry.Ops[1].Imm = 4
 	r := f.AddOp(entry, OpShrU, a, b)
+	entry.Ops[2].Width = 64 // i64 op: fold with u64 semantics
 	f.SetRet(entry, r)
 
 	Fold(f)

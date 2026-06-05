@@ -38,22 +38,27 @@ func TestShiftFoldShr(t *testing.T) {
 	}
 }
 
-// TestShiftOutOfRangeNotFolded — count < 0 or >= 64 leaves
-// the op untouched (runtime owns the trap).
-func TestShiftOutOfRangeNotFolded(t *testing.T) {
+// TestShiftCountMaskedWhenFolded — a shift count >= the operand width
+// does NOT trap: wasm (and arm/x86) mask the count to the operand width
+// (i32: count mod 32). So `1 << 64` on an i32 op is `1 << (64 mod 32)`
+// = `1 << 0` = 1, and folding to that masked result matches the runtime
+// (mirroring internal/ir/fold.go). Regression for I1 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md (the old folder left it unfolded
+// under the mistaken belief that an out-of-range shift trapped).
+func TestShiftCountMaskedWhenFolded(t *testing.T) {
 	f := NewFunc("f")
 	entry := f.NewBlock()
 	a := f.AddOp(entry, OpConstInt)
 	entry.Ops[0].Imm = 1
 	b := f.AddOp(entry, OpConstInt)
 	entry.Ops[1].Imm = 64
-	r := f.AddOp(entry, OpShl, a, b)
+	r := f.AddOp(entry, OpShl, a, b) // i32 (Width 0): 1 << (64 & 31) = 1
 	f.SetRet(entry, r)
 
 	Fold(f)
 
-	if got := entry.Ops[2]; got.Kind != OpShl {
-		t.Errorf("out-of-range shift folded to %v; expected to stay as OpShl", got.Kind)
+	if got := entry.Ops[2]; got.Kind != OpConstInt || got.Imm != 1 {
+		t.Errorf("1<<64 (i32) = {%v %d}, want {OpConstInt 1} (count masked mod 32)", got.Kind, got.Imm)
 	}
 }
 

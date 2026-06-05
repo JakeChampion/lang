@@ -41,6 +41,22 @@ func IsPure(k OpKind) bool {
 	}
 }
 
+// MayTrap reports whether an op can fault at runtime independent of
+// whether its result is consumed. Today that is the integer
+// divide/remainder ops: they trap on a zero divisor (wasm i32.div_s
+// traps; arm64/x86 raise SIGFPE/#DE). Such an op must not be deleted by
+// DCE or hoisted by LICM even when its result is dead, or the program's
+// observable trap behavior changes. IsPure can still report these as
+// pure for CSE (deduplicating two identical divisions is safe).
+// See docs/ADVERSARIAL-REVIEW-2026-06.md (I2).
+func MayTrap(k OpKind) bool {
+	switch k {
+	case OpDiv, OpDivU, OpRem, OpRemU:
+		return true
+	}
+	return false
+}
+
 // IsConst reports whether `k` produces a compile-time
 // constant Value (and so participates in fold/strength
 // reduction lookups).

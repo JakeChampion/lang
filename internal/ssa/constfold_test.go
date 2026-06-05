@@ -34,6 +34,73 @@ func TestFoldSimpleAdd(t *testing.T) {
 	}
 }
 
+// TestFoldI32AddWraps — an i32 add (Width 0) must fold with 32-bit
+// wraparound: 2_000_000_000 + 2_000_000_000 overflows i32 to
+// -294_967_296, NOT 4_000_000_000. The old folder computed in int64 and
+// stored the un-wrapped value, so a following `< 0` test mis-folded.
+// Regression for I1 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestFoldI32AddWraps(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 2000000000
+	b := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 2000000000
+	sum := f.AddOp(entry, OpAdd, a, b) // i32 (Width 0)
+	f.SetRet(entry, sum)
+
+	Fold(f)
+
+	if got := entry.Ops[2]; got.Kind != OpConstInt || got.Imm != -294967296 {
+		t.Errorf("2e9+2e9 (i32) = {%v %d}, want {OpConstInt -294967296} (wrapped)", got.Kind, got.Imm)
+	}
+}
+
+// TestFoldI32OverflowLessThanZero — the wraparound is observable through
+// a comparison: (2e9 + 2e9) < 0 is TRUE at i32 width because the sum
+// wraps negative. The old folder folded the sum to 4e9 and the compare
+// to false. Pins the full mis-fold chain from I1.
+func TestFoldI32OverflowLessThanZero(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 2000000000
+	b := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 2000000000
+	sum := f.AddOp(entry, OpAdd, a, b)
+	zero := f.AddOp(entry, OpConstInt)
+	entry.Ops[3].Imm = 0
+	lt := f.AddOp(entry, OpLt, sum, zero) // i32 signed compare
+	f.SetRet(entry, lt)
+
+	Fold(f)
+
+	if got := entry.Ops[4]; got.Kind != OpConstBool || got.Imm != 1 {
+		t.Errorf("(2e9+2e9)<0 = {%v %d}, want {OpConstBool 1} (true after i32 wrap)", got.Kind, got.Imm)
+	}
+}
+
+// TestFoldI64AddNoWrap — the same operands at i64 width (Width 64) do
+// NOT wrap; the sum stays 4_000_000_000. Guards that the width-aware
+// folder still produces full-width results for genuine i64 ops.
+func TestFoldI64AddNoWrap(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	a := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 2000000000
+	b := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 2000000000
+	sum := f.AddOp(entry, OpAdd, a, b)
+	entry.Ops[2].Width = 64
+	f.SetRet(entry, sum)
+
+	Fold(f)
+
+	if got := entry.Ops[2]; got.Kind != OpConstInt || got.Imm != 4000000000 {
+		t.Errorf("2e9+2e9 (i64) = {%v %d}, want {OpConstInt 4000000000}", got.Kind, got.Imm)
+	}
+}
+
 // TestFoldChain — `(1 + 2) * (3 - 1)` cascades through Fold's
 // single pass because the def-site map updates as we go.
 func TestFoldChain(t *testing.T) {

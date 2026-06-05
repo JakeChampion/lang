@@ -63,6 +63,13 @@ func isDeadOp(op *Op, uses map[int32]int) bool {
 		// must keep them even when nobody reads the result.
 		return false
 	}
+	if MayTrap(op.Kind) {
+		// Integer div/rem trap on a zero divisor. Deleting an unused
+		// division would erase that runtime trap, so keep it even
+		// though its result is dead (LICM refuses to hoist these for
+		// the same reason).
+		return false
+	}
 	return uses[op.Result.ID] == 0
 }
 
