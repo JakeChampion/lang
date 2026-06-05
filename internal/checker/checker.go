@@ -5557,6 +5557,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// raises the missing-annotation error.
 			return ast.ArrayType{Elem: nil}
 		}
+		// Union element hint: an `N[]` literal whose elements are bare
+		// variant structs (`[A { … }, B { … }]`) needs each element wrapped
+		// into the union the same way a single `var n: N = A { … }`, a
+		// `return`, or an `arr.push(A { … })` argument is — otherwise the
+		// elements are stored as un-tagged structs and a later `match`
+		// misfires (the push path wraps via the Call-argument coercion; the
+		// array literal had no equivalent). maybeWrapForUnion is a no-op for
+		// elements that are already enum values or don't match a variant.
+		if eu, ok := hint.(ast.EnumType); ok {
+			for i := range n.Elems {
+				et := c.checkExpr(n.Elems[i], s)
+				et = c.maybeWrapForUnion(eu, &n.Elems[i], et, s)
+				if et != nil && !c.assignable(eu, et) {
+					c.errfCode(n.Elems[i].Pos(), "E034", "array element type %s, expected %s", et, eu)
+				}
+			}
+			n.ElemType = eu
+			return ast.ArrayType{Elem: eu}
+		}
 		elemT := c.checkExpr(n.Elems[0], s)
 		for _, el := range n.Elems[1:] {
 			t := c.checkExpr(el, s)
