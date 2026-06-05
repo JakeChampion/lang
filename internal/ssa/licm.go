@@ -172,9 +172,8 @@ func isLoopInvariant(op *Op, lp *Loop, blockOf map[int32]*Block) bool {
 	}
 	// Divide/remainder can trap if the divisor is zero. Hoisting
 	// would cause the trap on a path where the loop body might
-	// never execute. Conservative skip.
-	switch op.Kind {
-	case OpDiv, OpDivU, OpRem, OpRemU:
+	// never execute. Conservative skip (shared with DCE via MayTrap).
+	if MayTrap(op.Kind) {
 		return false
 	}
 	if !op.Result.IsValid() {

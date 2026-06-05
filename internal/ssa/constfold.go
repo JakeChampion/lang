@@ -63,7 +63,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		if !ok {
 			return
 		}
-		rewriteInt(op, -v)
+		rewriteInt(op, negAtWidth(op.Width == 64, v))
 		return
 	case OpTrunc:
 		if len(op.Args) != 1 {
@@ -247,74 +247,17 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		return
 	}
 
-	switch op.Kind {
-	case OpAdd:
-		rewriteInt(op, lhs+rhs)
-	case OpSub:
-		rewriteInt(op, lhs-rhs)
-	case OpMul:
-		rewriteInt(op, lhs*rhs)
-	case OpDiv:
-		if rhs == 0 {
-			return
-		}
-		rewriteInt(op, lhs/rhs)
-	case OpDivU:
-		if rhs == 0 {
-			return
-		}
-		rewriteInt(op, int64(uint64(lhs)/uint64(rhs)))
-	case OpRem:
-		if rhs == 0 {
-			return
-		}
-		rewriteInt(op, lhs%rhs)
-	case OpRemU:
-		if rhs == 0 {
-			return
-		}
-		rewriteInt(op, int64(uint64(lhs)%uint64(rhs)))
-	case OpAnd:
-		rewriteInt(op, lhs&rhs)
-	case OpOr:
-		rewriteInt(op, lhs|rhs)
-	case OpXor:
-		rewriteInt(op, lhs^rhs)
-	case OpShl:
-		if rhs < 0 || rhs >= 64 {
-			return
-		}
-		rewriteInt(op, lhs<<uint(rhs))
-	case OpShr:
-		if rhs < 0 || rhs >= 64 {
-			return
-		}
-		rewriteInt(op, lhs>>uint(rhs))
-	case OpShrU:
-		if rhs < 0 || rhs >= 64 {
-			return
-		}
-		rewriteInt(op, int64(uint64(lhs)>>uint(rhs)))
-	case OpEq:
-		rewriteBool(op, lhs == rhs)
-	case OpNe:
-		rewriteBool(op, lhs != rhs)
-	case OpLt:
-		rewriteBool(op, lhs < rhs)
-	case OpLtU:
-		rewriteBool(op, uint64(lhs) < uint64(rhs))
-	case OpLe:
-		rewriteBool(op, lhs <= rhs)
-	case OpLeU:
-		rewriteBool(op, uint64(lhs) <= uint64(rhs))
-	case OpGt:
-		rewriteBool(op, lhs > rhs)
-	case OpGtU:
-		rewriteBool(op, uint64(lhs) > uint64(rhs))
-	case OpGe:
-		rewriteBool(op, lhs >= rhs)
-	case OpGeU:
-		rewriteBool(op, uint64(lhs) >= uint64(rhs))
+	// Fold at the op's integer width (i32 unless Width==64) so the
+	// constant matches what the backend would compute at runtime —
+	// wraparound, masked shift counts, and u32 unsigned compares.
+	res, isBool, boolRes, ok := foldIntBinaryAtWidth(op.Kind, op.Width == 64, lhs, rhs)
+	if !ok {
+		return
+	}
+	if isBool {
+		rewriteBool(op, boolRes)
+	} else {
+		rewriteInt(op, res)
 	}
 }
 
