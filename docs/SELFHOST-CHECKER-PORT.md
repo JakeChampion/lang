@@ -179,6 +179,12 @@ same code(s) the Go checker does — restricted to
   that aren't matching i32 / f64 (`%` is i32-only) — the same overload
   rules `check_expr` applies, so E009 fires only where check_expr already
   rejects the operands.
+- **Slice 19 (done): integer literal out of i32 range** (E047). The
+  structural `var` walk emits E047 when an un-suffixed integer literal
+  assigned to an `i32` var exceeds i32's max — `digits_fit_i32` compares
+  the decimal digit string against "2147483647" (length, then char-by-char
+  at 10 digits). Scoped to `i32`-annotated vars (other integer widths /
+  contexts are under-reported — safe).
 - **Later: pattern matching** (E014/E025/E036), traits (E021), maps
   (E045), owned-parameter move checking (E050/E051), then source
   positions, then wiring the self-host checker in as the gate.
