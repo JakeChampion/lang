@@ -173,17 +173,37 @@ analysis, which is independent, pure, and de-risks the design.
   rc-counted so the early deep-drop is rc-protected). Differentially
   gated (free-on == free-off, full corpus, all backends).
 
-  **Blocked (the real prize): ENUM precise drops.** `preciseDroppableType`
-  *soundly excludes enums* — enum construction MOVES its payloads without
-  an rc inc (the consuming/taint model), so an early deep-drop could free
-  a payload a live local still aliases; and `initMayAliasLive` excludes
-  the variant-constructor inits anyway. So the FBIP list/tree case (the
-  headline) cannot take precise drops until enum construction **rc-counts
-  its pointer payloads** the way `StructLit`/`TupleLit` already do. That
-  inc-on-store + matching dec is a real rc-balance change across every
-  enum site and is the genuine Slice-1 body; the struct/tuple extension
-  above lands the infrastructure (`safeForControlFlowDrop`) it will reuse.
-  Sequenced as its own slice (1b) given the risk surface.
+  **Blocked (the real prize): ENUM precise drops — Slice 1b.** Investigated
+  in depth (and reverted — see below). The FBIP list/tree case cannot take
+  precise drops, and the block is the SAME root cause at *three* layers,
+  all stemming from enum construction MOVING its pointer payloads without
+  an rc inc (unlike `StructLit`/`TupleLit`, which inc):
+
+    1. `preciseDroppableType` excludes `EnumType`.
+    2. `computeFreeEligible` TAINTS a pointer-payload enum construction
+       (`var xs = Cons(1, tail)`) — the escape analysis keeps the local
+       ineligible so the moved-in payload's borrow isn't freed out from
+       under. So enum-of-pointers locals are never even `freeEligible`,
+       the gate *before* `preciseDroppableType`.
+    3. Scalar-only enums (`enum Opt { Some(i32), None }`) sidestep (2)
+       but are **pair-form** (returned/held in registers, not heap-boxed),
+       so there is no box to precise-drop — moot.
+
+  A first attempt (admit `EnumType` to `preciseDroppableType` + an
+  `exprIsFresh` init guard) was **non-functional**: layer (2) rejects the
+  pointer-payload enums before the new code runs, and layer (3) makes the
+  scalar enums boxless. Reverted rather than land dead code.
+
+  **The genuine Slice 1b is: make enum construction rc-count its pointer
+  payloads** (inc-on-store + matching dec-on-drop), which dissolves all
+  three layers at once. That is a large, sound-critical rc-balance change
+  that touches the consuming match (C1/C2 rely on the move-without-inc
+  semantics), the move analysis (the iterative-build over-release fix
+  #2026), and the reuse machinery — a dedicated project, **not a quick
+  slice**, and one worth explicit sign-off before starting given its blast
+  radius on the carefully-balanced enum rc. The struct/tuple control-flow
+  placement (Slice 1, shipped) and `inferParamEscapes` (Slice 0) stand on
+  their own meanwhile.
 
 - **Slice 2 — owned-by-default behind a flag.** Flip parameter
   ownership to owned-by-default, driving reclaim from Slice-0's
