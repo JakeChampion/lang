@@ -1,0 +1,19 @@
+// Regression: an iteratively-built list (`acc = Cons(v, acc)` loop) consumed by
+// an `own` match. The loop moves the old acc into the new tail; suppressing the
+// (spurious) overwrite drop keeps every node at rc 1 so the consuming free is
+// balanced. Differentially pinned: free-on == free-off, reuse-on == reuse-off,
+// plus the interp oracle.
+enum List { Cons(i32, List), Nil }
+
+function eat(own xs: List): i32 {
+    match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } }
+}
+function ib(n: i32): List {
+    var acc: List = Nil;
+    var i: i32 = 0;
+    while (i < n) { acc = Cons(3, acc); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    return eat(ib(11));   // 11 nodes * 3 = 33
+}
